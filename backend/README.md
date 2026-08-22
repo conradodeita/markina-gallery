@@ -1,6 +1,6 @@
-# backend — API PhotoCRM (FastAPI)
+# backend — API Markina Gallery (FastAPI)
 
-Scaffolding da fundação: apenas `GET /health` e um worker placeholder. **Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra do PhotoCRM existe aqui ainda.**
+Scaffolding da fundação: apenas `GET /health` e um worker placeholder. **Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra da Markina Gallery existe aqui ainda.**
 
 Comandos (Windows; no Linux use `.venv/bin/...`):
 

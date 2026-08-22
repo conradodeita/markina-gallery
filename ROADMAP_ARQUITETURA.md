@@ -1,4 +1,4 @@
-# PhotoCRM — Roadmap Arquitetural
+# Markina Gallery — Roadmap Arquitetural
 
 Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a especificação de implementação para o executor.
 

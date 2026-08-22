@@ -1,4 +1,4 @@
-# .github/workflows — CI do PhotoCRM
+# .github/workflows — CI da Markina Gallery
 
 `ci.yml` executa em pull requests (e em pushes na `develop`):
 

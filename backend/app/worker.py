@@ -8,7 +8,7 @@ import time
 
 
 def main() -> None:
-    print("photocrm-worker: scaffolding ativo, aguardando fila de trabalhos", flush=True)
+    print("markina-gallery-worker: scaffolding ativo, aguardando fila de trabalhos", flush=True)
     while True:
         time.sleep(30)
 

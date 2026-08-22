@@ -1,8 +1,8 @@
-"""PhotoCRM API — scaffolding da fundação (apenas /health)."""
+"""Markina Gallery API — scaffolding da fundação (apenas /health)."""
 
 from fastapi import FastAPI
 
-app = FastAPI(title="PhotoCRM API", version="0.1.0")
+app = FastAPI(title="Markina Gallery API", version="0.1.0")
 
 
 @app.get("/health")

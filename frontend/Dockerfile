@@ -1,4 +1,4 @@
-# PhotoCRM — frontend (Next.js) — scaffolding da fundação
+# Markina Gallery — frontend (Next.js) — scaffolding da fundação
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./

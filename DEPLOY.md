@@ -1,6 +1,6 @@
-# DEPLOY — PhotoCRM (homologação e produção)
+# DEPLOY — Markina Gallery (homologação e produção)
 
-> **Regra de ouro:** os servidores executam outros projetos. Toda ação é limitada ao PhotoCRM e nunca
+> **Regra de ouro:** os servidores executam outros projetos. Toda ação é limitada à Markina Gallery e nunca
 > altera containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de terceiros.
 
 ## Ambientes
@@ -8,22 +8,22 @@
 | Ambiente | Banco | Segredos | Integrações | Domínio |
 |---|---|---|---|---|
 | local | PostgreSQL do Compose local | `docker/.env` (não versionado) | sandbox | localhost |
-| homolog | PostgreSQL exclusivo do PhotoCRM | `docker/.env.homolog` no servidor | homologação | subdomínio próprio |
-| prod | PostgreSQL exclusivo do PhotoCRM | `docker/.env.prod` no servidor | produção | subdomínio próprio |
+| homolog | PostgreSQL exclusivo da Markina Gallery | `docker/.env.homolog` no servidor | homologação | subdomínio próprio |
+| prod | PostgreSQL exclusivo da Markina Gallery | `docker/.env.prod` no servidor | produção | subdomínio próprio |
 
 Cada ambiente tem banco, Redis, segredos, WhatsApp e integrações totalmente distintos.
 
 ## Isolamento obrigatório no servidor (Oracle)
 
-- Diretório próprio do PhotoCRM (ex.: `/opt/photocrm`)
+- Diretório próprio da Markina Gallery (ex.: `/opt/markina-gallery`)
 - Usuário/serviço próprio quando aplicável
-- Projeto Compose exclusivo: `photocrm` — sempre `docker compose -p photocrm -f docker/docker-compose.yml ...`
-- Redes, volumes e containers com prefixo `photocrm`
-- Banco (PostgreSQL) e Redis exclusivos do PhotoCRM
+- Projeto Compose exclusivo: `markina-gallery` — sempre `docker compose -p markina-gallery -f docker/docker-compose.yml ...`
+- Redes, volumes e containers com prefixo `markina-gallery`
+- Banco (PostgreSQL) e Redis exclusivos da Markina Gallery
 - Portas internas próprias; no host, apenas o Nginx (porta definida no `.env` do ambiente)
 - Subdomínio próprio no proxy reverso existente, **sem alterar rotas de outros projetos**
-- Backups e logs em diretórios próprios do PhotoCRM
-- Procedimento de deploy e rollback documentado e **limitado ao PhotoCRM**
+- Backups e logs em diretórios próprios da Markina Gallery
+- Procedimento de deploy e rollback documentado e **limitado à Markina Gallery**
 
 ## Antes de qualquer ação em homologação/produção (gate obrigatório)
 
@@ -34,7 +34,7 @@ Cada ambiente tem banco, Redis, segredos, WhatsApp e integrações totalmente di
 ## Proibido em servidores compartilhados
 
 - `docker system prune`, `docker container prune`, `docker volume prune`, `docker network prune`
-- `docker compose down` sem o par `-p photocrm -f docker/docker-compose.yml`
+- `docker compose down` sem o par `-p markina-gallery -f docker/docker-compose.yml`
 - Alterar proxy reverso, firewall, DNS ou certificados existentes sem identificar com precisão o impacto
 
 ## Segredos

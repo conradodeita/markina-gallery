@@ -1,4 +1,4 @@
-# scripts — Scripts operacionais do PhotoCRM
+# scripts — Scripts operacionais da Markina Gallery
 
 Nesta fundação, o diretório está vazio por decisão de escopo.
 

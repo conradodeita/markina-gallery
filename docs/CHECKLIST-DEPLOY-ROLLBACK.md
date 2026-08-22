@@ -1,6 +1,6 @@
-# Checklist de deploy e rollback — PhotoCRM
+# Checklist de deploy e rollback — Markina Gallery
 
-Limitado ao PhotoCRM. Nunca afeta containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de outros projetos.
+Limitado à Markina Gallery. Nunca afeta containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de outros projetos.
 
 ## 0. Gate obrigatório (antes de qualquer ação em homologação/produção)
 
@@ -11,8 +11,8 @@ Limitado ao PhotoCRM. Nunca afeta containers, imagens, redes, volumes, proxy, fi
 
 ## 1. Preparação (uma vez por servidor)
 
-- [ ] Diretório próprio do PhotoCRM criado (ex.: `/opt/photocrm`)
-- [ ] Usuário/serviço próprio do PhotoCRM, quando aplicável
+- [ ] Diretório próprio da Markina Gallery criado (ex.: `/opt/markina-gallery`)
+- [ ] Usuário/serviço próprio da Markina Gallery, quando aplicável
 - [ ] `docker/.env.<ambiente>` criado fora do Git, com permissões restritas e segredos fortes gerados (`secrets.token_urlsafe`)
 - [ ] Subdomínio próprio apontado no proxy reverso existente, sem alterar rotas de outros projetos
 - [ ] Diretórios próprios de backups e logs criados
@@ -20,20 +20,20 @@ Limitado ao PhotoCRM. Nunca afeta containers, imagens, redes, volumes, proxy, fi
 ## 2. Deploy (por ambiente, homolog antes de prod)
 
 - [ ] Código na branch correta (release/`main` após PR aprovado)
-- [ ] `docker compose -p photocrm -f docker/docker-compose.yml config` válido
-- [ ] Imagens construídas: `docker compose -p photocrm -f docker/docker-compose.yml build`
-- [ ] Stack sobe: `docker compose -p photocrm -f docker/docker-compose.yml up -d`
-- [ ] Healthchecks verdes: `docker compose -p photocrm -f docker/docker-compose.yml ps`
+- [ ] `docker compose -p markina-gallery -f docker/docker-compose.yml config` válido
+- [ ] Imagens construídas: `docker compose -p markina-gallery -f docker/docker-compose.yml build`
+- [ ] Stack sobe: `docker compose -p markina-gallery -f docker/docker-compose.yml up -d`
+- [ ] Healthchecks verdes: `docker compose -p markina-gallery -f docker/docker-compose.yml ps`
 - [ ] Smoke test: `curl https://<subdominio>/healthz` e `curl https://<subdominio>/api/health`
 - [ ] Nenhum segredo em logs (revisar saída dos containers)
 - [ ] Validação OpenSpec da mudança: `openspec validate --strict`
 - [ ] Varredura de segredos: gitleaks sem achados
 - [ ] Backups do banco confirmados (manuais até a mudança `media-storage`)
 
-## 3. Rollback (somente o PhotoCRM)
+## 3. Rollback (somente a Markina Gallery)
 
 - [ ] Identificar versão anterior saudável (imagem/tag ou commit)
-- [ ] `docker compose -p photocrm -f docker/docker-compose.yml up -d` com a versão anterior
+- [ ] `docker compose -p markina-gallery -f docker/docker-compose.yml up -d` com a versão anterior
 - [ ] Healthchecks verdes e smoke test repetidos
 - [ ] Se necessário, restaurar banco a partir do backup do dia (procedimento de restauração testado em homologação)
 - [ ] Registrar incidente e causa no relatório do proprietário

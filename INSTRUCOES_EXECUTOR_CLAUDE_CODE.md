@@ -1,8 +1,8 @@
-# PhotoCRM — Especificação de Execução para Claude Code
+# Markina Gallery — Especificação de Execução para Claude Code
 
 ## 1. Mandato e resultado esperado
 
-Implemente o **PhotoCRM**, plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. O produto deve priorizar:
+Implemente a **Markina Gallery**, plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. O produto deve priorizar:
 
 - poucos passos e navegação mobile-first para responsáveis;
 - administração operacional rápida para um fotógrafo;

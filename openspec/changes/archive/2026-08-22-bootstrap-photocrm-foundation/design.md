@@ -13,7 +13,7 @@ Ponto de partida: diretório com apenas os dois documentos do proprietário (`IN
 
 **Non-Goals:**
 
-- Nenhum código de negócio: sem autenticação, sem CRUD, sem regras do PhotoCRM e sem migration de banco; nenhum deploy.
+- Nenhum código de negócio: sem autenticação, sem CRUD, sem regras da Markina Gallery e sem migration de banco; nenhum deploy.
 - Nenhuma funcionalidade de produto — cada uma virá em mudança própria, com delta spec criada junto da implementação.
 - Nenhuma spec antecipada de domínio em `openspec/specs/` — a fonte de verdade reflete apenas comportamento implementado.
 - Criação do repositório GitHub remoto (depende do proprietário fornecer o repositório privado).

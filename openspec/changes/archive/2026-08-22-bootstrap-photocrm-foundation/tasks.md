@@ -9,14 +9,14 @@
 ## 2. OpenSpec
 
 - [x] 2.1 OpenSpec inicializado para Claude Code e Codex, com comandos `/opsx:*` e skills em `.claude/` e `.agents/` — verificar com `openspec doctor` sem problemas e listando os comandos de `.claude/commands/opsx/`
-- [x] 2.2 Contexto do projeto (`openspec/config.yaml`) preenchido com stack, convenções e restrições do PhotoCRM em português — verificar com `openspec context --json` exibindo o contexto
+- [x] 2.2 Contexto do projeto (`openspec/config.yaml`) preenchido com stack, convenções e restrições da Markina Gallery em português — verificar com `openspec context --json` exibindo o contexto
 - [x] 2.3 Mudança validada sem erros — verificar com `openspec validate bootstrap-photocrm-foundation --strict`
 - [x] 2.4 Revisão humana da proposta, das specs e das tarefas (gate obrigatório antes de aplicar) — verificar com aprovação explícita do proprietário
 
 ## 3. Estrutura inicial e scaffolding mínimo
 
 - [x] 3.1 Criar diretórios `frontend/`, `backend/`, `docker/`, `scripts/`, `docs/` e `.github/workflows/`, cada um com README curto descrevendo sua responsabilidade — verificar listando a árvore de diretórios
-- [x] 3.2 Criar scaffolding técnico mínimo: estruturas vazias de `frontend/` (Next.js) e `backend/` (FastAPI) com endpoints `/health` reais — sem autenticação, CRUD, regras de negócio ou funcionalidades do PhotoCRM — verificar que `/health` responde 200 e que nenhuma rota de negócio existe
+- [x] 3.2 Criar scaffolding técnico mínimo: estruturas vazias de `frontend/` (Next.js) e `backend/` (FastAPI) com endpoints `/health` reais — sem autenticação, CRUD, regras de negócio ou funcionalidades da Markina Gallery — verificar que `/health` responde 200 e que nenhuma rota de negócio existe
 - [x] 3.3 Garantir que nenhum código de negócio foi escrito nesta mudança — verificar revisando o diff completo do commit
 
 ## 4. Docker Compose (ambiente local)

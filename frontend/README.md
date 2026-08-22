@@ -1,6 +1,6 @@
-# frontend — Portal PhotoCRM (Next.js)
+# frontend — Portal Markina Gallery (Next.js)
 
-Scaffolding da fundação: apenas `GET /api/health` e uma página placeholder. **Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra do PhotoCRM existe aqui ainda.**
+Scaffolding da fundação: apenas `GET /api/health` e uma página placeholder. **Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra da Markina Gallery existe aqui ainda.**
 
 Comandos:
 

@@ -1,8 +1,8 @@
-# PhotoCRM
+# Markina Gallery
 
 Plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. Experiência mobile-first para responsáveis, painel administrativo rápido para um único fotógrafo, galerias privadas importadas do DigiKam e eventos coletivos com liberação individual de resultados.
 
-> **Status: fundação (scaffolding).** Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra do PhotoCRM foi implementada ainda — apenas estrutura, Compose, CI, health checks e documentação.
+> **Status: fundação (scaffolding).** Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra da Markina Gallery foi implementada ainda — apenas estrutura, Compose, CI, health checks e documentação.
 
 ## Documentos do proprietário
 
@@ -19,7 +19,7 @@ Next.js (App Router, TypeScript) · FastAPI (Python) · PostgreSQL 17 · Redis 7
 |---|---|
 | `frontend/` | Portal Next.js (scaffolding: `/api/health` + página placeholder) |
 | `backend/` | API FastAPI + worker (scaffolding: `/health` + worker placeholder) |
-| `docker/` | `docker-compose.yml` (projeto `photocrm`) e configuração do Nginx |
+| `docker/` | `docker-compose.yml` (projeto `markina-gallery`) e configuração do Nginx |
 | `scripts/` | Scripts operacionais (backup/restauração virão com a mudança de mídia) |
 | `docs/` | Decisões técnicas e checklists |
 | `.github/workflows/` | CI (lint, testes, build, OpenSpec, gitleaks) |
@@ -33,21 +33,21 @@ Docker com Compose v2, Node 24+, Python 3.12+ (para desenvolvimento fora de cont
 
 ```bash
 cp .env.example docker/.env   # ajuste valores locais; docker/.env nunca é versionado
-docker compose -p photocrm -f docker/docker-compose.yml up -d --build
+docker compose -p markina-gallery -f docker/docker-compose.yml up -d --build
 curl http://localhost:8080/healthz        # Nginx
 curl http://localhost:8080/api/health     # FastAPI via Nginx
 curl http://localhost:8080/               # Next.js
 ```
 
-Única porta publicada no host: Nginx em `${PHOTOCRM_PORT:-8080}`. `db` e `redis` nunca publicam portas; volumes `photocrm_pgdata`/`photocrm_redisdata`; rede `photocrm_internal`.
+Única porta publicada no host: Nginx em `${MARKINA_GALLERY_PORT:-8080}`. `db` e `redis` nunca publicam portas; volumes `markina-gallery_pgdata`/`markina-gallery_redisdata`; rede `markina-gallery_internal`.
 
-Verificar saúde: `docker compose -p photocrm -f docker/docker-compose.yml ps`
-Parar somente o PhotoCRM: `docker compose -p photocrm -f docker/docker-compose.yml down`
+Verificar saúde: `docker compose -p markina-gallery -f docker/docker-compose.yml ps`
+Parar somente a Markina Gallery: `docker compose -p markina-gallery -f docker/docker-compose.yml down`
 
 > ⚠️ **Máquinas/servidores compartilhados:** outros projetos Docker podem estar em execução. Nunca rode
-> `docker compose down` sem `-p photocrm -f docker/docker-compose.yml`, nunca rode prunes, e nunca altere
+> `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`, nunca rode prunes, e nunca altere
 > containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de outros projetos.
-> Se a porta local estiver ocupada, mude `PHOTOCRM_PORT` no `docker/.env` — sem tocar no outro projeto.
+> Se a porta local estiver ocupada, mude `MARKINA_GALLERY_PORT` no `docker/.env` — sem tocar no outro projeto.
 
 ## Desenvolvimento fora de container
 
