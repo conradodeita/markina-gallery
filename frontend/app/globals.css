@@ -1,0 +1,11 @@
+/* PhotoCRM — estilos mínimos do scaffolding (Tailwind virá com as mudanças de UI) */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #f8f8f8;
+  color: #1a1a1a;
+}

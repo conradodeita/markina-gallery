@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop]
+
+jobs:
+  backend:
+    name: Backend (lint, testes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instalar dependências
+        run: pip install -r backend/requirements.txt
+      - name: Lint (ruff)
+        run: ruff check backend/app backend/tests
+      - name: Testes (pytest)
+        run: pytest backend/tests -q
+
+  frontend:
+    name: Frontend (lint, testes, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependências
+        run: npm ci
+        working-directory: frontend
+      - name: Lint (eslint)
+        run: npm run lint
+        working-directory: frontend
+      - name: Testes (vitest)
+        run: npm test
+        working-directory: frontend
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+
+  openspec:
+    name: Validação OpenSpec (strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validar mudanças e specs
+        run: npx -y @fission-ai/openspec@latest validate --strict --all
+
+  gitleaks:
+    name: Varredura de segredos (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Executar gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,36 @@
+schema: spec-driven
+
+context: |
+  Language: pt
+  All artifacts must be written in pt.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  # PhotoCRM — contexto do projeto
+  Produto: plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos.
+  Mandato: INSTRUCOES_EXECUTOR_CLAUDE_CODE.md (fonte operacional) e ROADMAP_ARQUITETURA.md (decisões de segurança e privacidade obrigatórias).
+  Stack: Next.js (App Router, TypeScript, Tailwind), FastAPI (SQLAlchemy 2, Alembic, Pydantic), PostgreSQL, Redis + worker de filas, Nginx, Docker Compose, Google Drive (cópia/arquivo frio/backups), adaptadores WhatsApp (Evolution API inicial), e-mail SMTP e pagamentos (PIX manual; Infinity Pay pós-MVP).
+  Convenções: UUIDs públicos, UTC no banco, valores monetários em centavos inteiros; segredos nunca no Git, frontend ou tabelas comuns; Conventional Commits; branches main (protegida), develop e feature/*.
+  Restrições: sem grade pública de evento coletivo, sem RAWs, sem servir prévias do Google Drive, sem automatizar criação de álbuns no Google Photos; busca facial apenas após spike validado; dados reais de crianças nunca em homologação; deploy zero-impact: esta máquina e o servidor Oracle executam outros projetos — nunca alterar containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de terceiros, nunca usar prunes ou `docker compose down` sem `-p photocrm -f docker/docker-compose.yml`, e apresentar inventário + portas/subdomínio + plano de impacto zero para aprovação explícita antes de qualquer ação em homologação/produção.
+  Domínios: auth, client-access, gallery-sales, media-storage, messaging, privacy-biometric, deployment-operations.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

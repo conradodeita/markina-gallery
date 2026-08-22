@@ -1,0 +1,106 @@
+# PhotoCRM — fundação (scaffolding)
+#
+# Projeto Compose exclusivo: photocrm (use sempre -p photocrm -f docker/docker-compose.yml).
+# Única porta publicada no host: nginx em ${PHOTOCRM_PORT:-8080}.
+# db e redis NUNCA publicam portas; apenas a rede interna photocrm_internal.
+# Volumes: photocrm_pgdata e photocrm_redisdata.
+#
+# Uso local:
+#   1) cp .env.example docker/.env   (ajuste valores locais; nunca versionar)
+#   2) docker compose -p photocrm -f docker/docker-compose.yml up -d --build
+#   3) curl http://localhost:8080/healthz
+name: photocrm
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${PHOTOCRM_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+      - api
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - internal
+
+  web:
+    build: ../frontend
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - internal
+
+  api:
+    build: ../backend
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - internal
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-photocrm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-photocrm_dev_local}
+      POSTGRES_DB: ${POSTGRES_DB:-photocrm}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-photocrm} -d ${POSTGRES_DB:-photocrm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  worker:
+    build: ../backend
+    command: ["python", "-m", "app.worker"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f \"app.worker\" >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - internal
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  internal:
+    driver: bridge

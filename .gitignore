@@ -1,0 +1,57 @@
+# ============================================================
+# Segredos e ambiente — nunca versionar
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+secrets.yaml
+secrets.yml
+
+# ============================================================
+# Dependências e build
+# ============================================================
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+*.egg-info/
+
+# ============================================================
+# Dados locais, volumes e backups
+# ============================================================
+data/
+media/
+backups/
+pgdata/
+redisdata/
+
+# ============================================================
+# Logs e sistema
+# ============================================================
+*.log
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Editores e ferramentas locais
+# ============================================================
+.idea/
+.vscode/
+*.swp
