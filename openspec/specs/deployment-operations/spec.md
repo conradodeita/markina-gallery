@@ -52,11 +52,11 @@ O projeto SHALL entregar workflows de CI que executam lint, testes e build, alé
 - **THEN** lint, testes, build e validação OpenSpec são executados
 
 ### Requirement: Repositório com branches protegidas
-O repositório SHALL adotar `main` protegida, `develop` e branches de funcionalidade, com pull requests e Conventional Commits documentados.
+O repositório SHALL adotar `main` protegida por convenção — alterações somente via pull request com CI verde e revisão —, além de `develop` e branches de funcionalidade, com Conventional Commits documentados. O enforcement técnico de proteção de branch no GitHub permanece pendente de plano compatível (recurso pago em repositórios privados; decisão do proprietário: manter o plano gratuito).
 
 #### Scenario: Alteração direta na main
 - **WHEN** alguém tenta alterar a `main` diretamente
-- **THEN** a proteção de branch exige pull request com revisão e CI
+- **THEN** o fluxo de trabalho exige pull request com CI verde e revisão antes do merge, conforme a convenção documentada
 
 ### Requirement: Documentação de desenvolvimento, deploy e rollback
 O projeto SHALL documentar desenvolvimento, deploy de homologação/produção, decisões técnicas e checklist de rollback.

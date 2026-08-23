@@ -66,7 +66,7 @@ Fluxo por mudança: `/opsx:propose <change-id>` → revisão humana → `/opsx:a
 ## Convenções de commits e branches
 
 - **Conventional Commits**: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:` — mensagens objetivas.
-- **Branches**: `main` protegida (somente via pull request); `develop` como integração; `feature/*` para funcionalidades.
+- **Branches**: `main` protegida **por convenção** — alterações somente via pull request com CI verde e revisão (o plano gratuito do GitHub não oferece enforcement técnico em repositórios privados); `develop` como integração; `feature/*` para funcionalidades.
 - Nunca commitar segredos, chaves, `.env*` (exceto `.env.example`) ou artefatos de build.
 
 ## Segredos
