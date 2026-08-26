@@ -18,9 +18,9 @@ Não copie banco, senha, TOTP, token DuckDNS, token WhatsApp ou segredo de produ
 ## Sequência de homologação
 
 1. Confirmar que o diretório de destino e o arquivo `.env.homolog` pertencem ao serviço da Markina Gallery e não são legíveis por outros usuários.
-2. Executar `docker compose -p markina-gallery -f docker/docker-compose.yml config` com o arquivo de ambiente selecionado.
+2. Executar `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml config`.
 3. Construir e subir somente a Markina Gallery. O serviço `migrate` executa `alembic upgrade head` antes da API e do worker.
-4. Criar o administrador inicial uma única vez com `docker compose -p markina-gallery -f docker/docker-compose.yml --profile bootstrap run --rm seed-admin`. A senha e o TOTP ficam disponíveis apenas durante esse container temporário, nunca na API em execução.
+4. Criar o administrador inicial uma única vez com `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml --profile bootstrap run --rm seed-admin`. A senha e o TOTP ficam disponíveis apenas durante esse container temporário, nunca na API em execução.
 5. Configurar no Nginx Proxy Manager apenas o host `markina-homolog.duckdns.org` apontando para `127.0.0.1:8080`, com certificado HTTPS para esse host. Não editar hosts existentes.
 
 ## Smoke test
@@ -30,6 +30,7 @@ Não copie banco, senha, TOTP, token DuckDNS, token WhatsApp ou segredo de produ
 - Abrir a tela inicial e confirmar os contextos Cliente e Fotógrafo.
 - Confirmar senha + TOTP do administrador inicial; o WhatsApp continua em sandbox e não envia mensagem real.
 - Conferir `docker compose -p markina-gallery -f docker/docker-compose.yml ps` e os logs da Markina Gallery, sem exibir segredos.
+- Após o smoke test aprovado, remover qualquer arquivo temporário de credenciais iniciais, mantendo somente o `.env.homolog` protegido para a operação do ambiente.
 
 ## Rollback
 
