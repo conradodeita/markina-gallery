@@ -17,7 +17,19 @@ from uuid import UUID, uuid4
 from argon2 import PasswordHasher
 from fastapi import HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, create_engine, func, select
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    func,
+    select,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -75,6 +87,120 @@ class GalleryAccess(Base):
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     gallery_id: Mapped[UUID] = mapped_column(index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ParentGallery(Base):
+    """Acervo-mãe privado, administrado exclusivamente pelo fotógrafo."""
+
+    __tablename__ = "parent_gallery"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(200))
+    event_name: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoAsset(Base):
+    """Arquivo pertencente ao acervo-mãe; nunca é duplicado para o cliente."""
+
+    __tablename__ = "photo_asset"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(512))
+    display_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    storage_key: Mapped[str] = mapped_column(String(1024), unique=True)
+    available: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DerivedGallery(Base):
+    """Galeria privada que referencia fotos de um único acervo-mãe para um cliente."""
+
+    __tablename__ = "derived_gallery"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    custom_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selection_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    access_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    favorites_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DerivedGalleryPhoto(Base):
+    """Referência de uma foto do acervo-mãe atribuída à galeria derivada."""
+
+    __tablename__ = "derived_gallery_photo"
+    __table_args__ = (UniqueConstraint("derived_gallery_id", "photo_asset_id"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoSelection(Base):
+    __tablename__ = "photo_selection"
+    __table_args__ = (UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoFavorite(Base):
+    __tablename__ = "photo_favorite"
+    __table_args__ = (UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoComment(Base):
+    __tablename__ = "photo_comment"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SaleOrder(Base):
+    __tablename__ = "sale_order"
+    __table_args__ = (
+        CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled')"),
+        CheckConstraint("total_cents >= 0"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    payment_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    total_cents: Mapped[int] = mapped_column(Integer)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class SaleOrderItem(Base):
+    __tablename__ = "sale_order_item"
+    __table_args__ = (UniqueConstraint("sale_order_id", "photo_asset_id"), CheckConstraint("unit_price_cents >= 0"))
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    sale_order_id: Mapped[UUID] = mapped_column(ForeignKey("sale_order.id"), index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    filename_snapshot: Mapped[str] = mapped_column(String(512))
+    unit_price_cents: Mapped[int] = mapped_column(Integer)
 
 
 class AuthChallenge(Base):

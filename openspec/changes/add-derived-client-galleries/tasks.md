@@ -1,7 +1,7 @@
 ## 1. Modelo e autorização
 
-- [ ] 1.1 Modelar acervo-mãe, galeria derivada, referências, configurações, interações e relações comerciais em migration aditiva.
-- [ ] 1.2 Implementar APIs autorizadas para criação, acesso, prazo, mensagem e permissões por galeria derivada.
+- [x] 1.1 Modelar acervo-mãe, galeria derivada, referências, configurações, interações e relações comerciais em migration aditiva.
+- [x] 1.2 Implementar APIs autorizadas para criação, acesso, prazo, mensagem e permissões por galeria derivada.
 - [ ] 1.3 Implementar seleções, favoritos e comentários privados com desfazer, remoção e auditoria.
 
 ## 2. Estatísticas e interface
@@ -21,4 +21,6 @@
 - Aplicação iniciada após aprovação do proprietário. Os artefatos OpenSpec foram lidos e o código existente foi mapeado; nenhuma tarefa de implementação está concluída.
 - O ambiente de homologação autentica o administrador corretamente, mas o frontend ainda não possui a rota `/admin`; após o login visual ocorre `404`. A criação da base administrativa será tratada dentro desta mudança, sem declarar a interface como pronta antes disso.
 - Busca facial permanece integralmente fora do escopo desta mudança e depende de `spike-private-facial-discovery`.
-- A base visual de `/admin` foi iniciada no frontend para eliminar o 404 pós-login, mas ainda não foi validada nem marcada como concluída.
+- A base visual de `/admin` foi iniciada no frontend para eliminar o 404 pós-login. O build do frontend foi validado localmente em 2026-08-26; a página de estatísticas ainda será entregue na tarefa 2.2.
+- A tarefa 1.1 foi concluída em 2026-08-26 com modelos e migration aditiva `20260826_0002`. A migration foi aplicada em banco SQLite descartável e criou todas as tabelas previstas, sem alterar as tabelas de autenticação existentes.
+- A tarefa 1.2 foi concluída em 2026-08-26. As APIs administrativas criam acervo-mãe, registram fotos e criam/configuram galerias derivadas; a biblioteca do cliente retorna somente galerias derivadas ativas atribuídas à sua sessão. Foram adicionados testes de referência sem cópia, pertencimento da foto ao acervo e ausência de exposição por acesso legado.

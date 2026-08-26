@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 import pyotp
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,7 +19,11 @@ from app.auth import (
     ChallengeVerification,
     Client,
     ClientChallengeInput,
+    DerivedGallery,
+    DerivedGalleryPhoto,
     GalleryAccess,
+    ParentGallery,
+    PhotoAsset,
     Role,
     SessionLocal,
     audit,
@@ -39,12 +45,67 @@ from app.auth import (
 app = FastAPI(title="Markina Gallery API", version="0.2.0")
 
 
+class ParentGalleryInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    event_name: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=5_000)
+
+
+class PhotoAssetInput(BaseModel):
+    filename: str = Field(min_length=1, max_length=512)
+    display_name: str | None = Field(default=None, max_length=512)
+    storage_key: str = Field(min_length=1, max_length=1_024)
+
+
+class DerivedGalleryInput(BaseModel):
+    parent_gallery_id: UUID
+    client_id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    photo_ids: list[UUID] = Field(min_length=1)
+    custom_message: str | None = Field(default=None, max_length=5_000)
+    selection_expires_at: datetime | None = None
+    access_enabled: bool = True
+    favorites_enabled: bool = False
+    comments_enabled: bool = False
+
+
+class DerivedGallerySettingsInput(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    custom_message: str | None = Field(default=None, max_length=5_000)
+    selection_expires_at: datetime | None = None
+    access_enabled: bool | None = None
+    favorites_enabled: bool | None = None
+    comments_enabled: bool | None = None
+
+
 def db_session():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+def require_admin(request: Request) -> None:
+    current_session(request, Role.ADMIN)
+
+
+def derived_gallery_for_client(
+    db: Session, gallery_id: UUID, client_id: UUID, *, require_access_enabled: bool = True
+) -> DerivedGallery:
+    gallery = db.get(DerivedGallery, gallery_id)
+    if not gallery or gallery.client_id != client_id:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    access = db.scalar(
+        select(GalleryAccess).where(
+            GalleryAccess.gallery_id == gallery_id,
+            GalleryAccess.client_id == client_id,
+            GalleryAccess.active,
+        )
+    )
+    if not access or (require_access_enabled and not gallery.access_enabled):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    return gallery
 
 
 @app.get("/health")
@@ -194,14 +255,127 @@ def revoke_all(request: Request, response: Response) -> Response:
 
 @app.get("/admin")
 def admin_area(request: Request) -> dict[str, str]:
-    current_session(request, Role.ADMIN)
+    require_admin(request)
     return {"status": "authorized"}
+
+
+@app.post("/admin/parent-galleries", status_code=status.HTTP_201_CREATED)
+def create_parent_gallery(
+    payload: ParentGalleryInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    require_admin(request)
+    gallery = ParentGallery(**payload.model_dump())
+    db.add(gallery)
+    db.flush()
+    audit(db, "parent_gallery.created", str(gallery.id))
+    db.commit()
+    return {"id": str(gallery.id)}
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/photos", status_code=status.HTTP_201_CREATED)
+def register_photo_asset(
+    parent_gallery_id: UUID,
+    payload: PhotoAssetInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_admin(request)
+    if not db.get(ParentGallery, parent_gallery_id):
+        raise HTTPException(status_code=404, detail="Acervo não encontrado.")
+    asset = PhotoAsset(parent_gallery_id=parent_gallery_id, **payload.model_dump())
+    db.add(asset)
+    db.flush()
+    audit(db, "photo_asset.registered", str(asset.id))
+    db.commit()
+    return {"id": str(asset.id)}
+
+
+@app.post("/admin/derived-galleries", status_code=status.HTTP_201_CREATED)
+def create_derived_gallery(
+    payload: DerivedGalleryInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    require_admin(request)
+    if not db.get(ParentGallery, payload.parent_gallery_id) or not db.get(Client, payload.client_id):
+        raise HTTPException(status_code=404, detail="Acervo ou cliente não encontrado.")
+    requested_photo_ids = set(payload.photo_ids)
+    photos = list(
+        db.scalars(
+            select(PhotoAsset).where(
+                PhotoAsset.parent_gallery_id == payload.parent_gallery_id,
+                PhotoAsset.id.in_(requested_photo_ids),
+            )
+        )
+    )
+    if len(photos) != len(requested_photo_ids):
+        raise HTTPException(status_code=422, detail="Todas as fotos devem pertencer ao acervo informado.")
+    gallery = DerivedGallery(**payload.model_dump(exclude={"photo_ids"}))
+    db.add(gallery)
+    db.flush()
+    db.add(GalleryAccess(client_id=payload.client_id, gallery_id=gallery.id, active=payload.access_enabled))
+    db.add_all(
+        [DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id) for photo in photos]
+    )
+    audit(db, "derived_gallery.created", str(gallery.id))
+    db.commit()
+    return {"id": str(gallery.id)}
+
+
+@app.patch("/admin/derived-galleries/{gallery_id}")
+def update_derived_gallery(
+    gallery_id: UUID,
+    payload: DerivedGallerySettingsInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_admin(request)
+    gallery = db.get(DerivedGallery, gallery_id)
+    if not gallery:
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    for field in payload.model_fields_set:
+        setattr(gallery, field, getattr(payload, field))
+    if "access_enabled" in payload.model_fields_set:
+        access = db.scalar(
+            select(GalleryAccess).where(
+                GalleryAccess.gallery_id == gallery.id, GalleryAccess.client_id == gallery.client_id
+            )
+        )
+        if access:
+            access.active = gallery.access_enabled
+    audit(db, "derived_gallery.updated", str(gallery.id))
+    db.commit()
+    return {"id": str(gallery.id)}
+
+
+@app.get("/library")
+def client_library(request: Request, db: Session = Depends(db_session)) -> dict[str, list[dict[str, str]]]:
+    session = current_session(request, Role.CLIENT)
+    galleries = db.scalars(
+        select(DerivedGallery)
+        .join(GalleryAccess, GalleryAccess.gallery_id == DerivedGallery.id)
+        .where(
+            DerivedGallery.client_id == session.subject_id,
+            DerivedGallery.access_enabled,
+            GalleryAccess.client_id == session.subject_id,
+            GalleryAccess.active,
+        )
+        .order_by(DerivedGallery.created_at.desc())
+    )
+    return {
+        "galleries": [
+            {"id": str(gallery.id), "name": gallery.name, "message": gallery.custom_message or ""}
+            for gallery in galleries
+        ]
+    }
 
 
 @app.get("/gallery/{gallery_id}")
 def gallery_area(gallery_id: UUID, request: Request) -> dict[str, str]:
     session = current_session(request, Role.CLIENT)
     with SessionLocal() as db:
+        derived = db.get(DerivedGallery, gallery_id)
+        if derived:
+            derived_gallery_for_client(db, gallery_id, session.subject_id)
+            return {"status": "authorized"}
         authorized = db.scalar(
             select(GalleryAccess).where(
                 GalleryAccess.client_id == session.subject_id,
