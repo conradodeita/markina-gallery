@@ -15,3 +15,9 @@
 - [ ] 3.1 Cobrir isolamento entre clientes, comentários, métricas, TXT e expiração com testes automatizados.
 - [ ] 3.2 Validar lint, build, migration, OpenSpec e homologação com dados sintéticos.
 - [ ] 3.3 Atualizar documentação e registrar que busca facial depende do spike separado.
+
+## Registro de continuidade — 2026-08-26
+
+- Aplicação iniciada após aprovação do proprietário. Os artefatos OpenSpec foram lidos e o código existente foi mapeado; nenhuma tarefa de implementação está concluída.
+- O ambiente de homologação autentica o administrador corretamente, mas o frontend ainda não possui a rota `/admin`; após o login visual ocorre `404`. A criação da base administrativa será tratada dentro desta mudança, sem declarar a interface como pronta antes disso.
+- Busca facial permanece integralmente fora do escopo desta mudança e depende de `spike-private-facial-discovery`.
