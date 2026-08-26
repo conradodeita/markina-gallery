@@ -26,6 +26,10 @@ O primeiro passo de aplicação será exclusivamente leitura: containers, Compos
 
 Todos os recursos usarão o projeto Compose `markina-gallery`, arquivos de ambiente externos ao Git e serviços exclusivos. Essa separação reduz o risco de colisão com aplicações existentes e evita reutilizar banco, Redis ou segredos de produção.
 
+### Decisão: entrada privada pelo Proxy Manager sem usar a rede do ClearBudget
+
+O Proxy Manager executa em container e não alcança `127.0.0.1` do host. A Markina manterá a porta de diagnóstico limitada ao loopback e conectará somente seu serviço `nginx` à rede externa existente `npm-network`, usando o alias exclusivo `markina-homolog-nginx`. O Proxy Manager receberá apenas um host novo para `markina-homolog.duckdns.org`, encaminhado para esse alias na porta `80`, com certificado próprio. Nenhum container da Markina será conectado a `clearbudget_default`, e nenhum serviço, host, rede, volume ou configuração existente será alterado, reiniciado ou removido.
+
 ### Decisão: migration explícita e reversível
 
 A migration Alembic será executada como operação deliberada antes do início da API. A versão anterior saudável e o backup serão confirmados antes de qualquer upgrade, para permitir rollback do projeto sem executar comandos globais de Docker.
@@ -36,6 +40,7 @@ A migration Alembic será executada como operação deliberada antes do início 
 - [Segredo real não fornecido] → manter o ambiente não publicável; nunca usar valores de exemplo.
 - [Falha de migration ou smoke test] → não expor tráfego externo e retornar a versão anterior da Markina Gallery.
 - [Adaptador WhatsApp ainda sandbox] → homologar o restante do fluxo e registrar que o envio real requer mudança/aprovação de integração separada.
+- [Proxy compartilhado] → criar somente um host novo, após backup e aprovação explícita; se o alias não responder, interromper sem mudar hosts existentes ou expor porta pública.
 
 ## Migration Plan
 

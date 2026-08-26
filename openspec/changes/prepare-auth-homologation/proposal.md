@@ -21,5 +21,5 @@ A autenticação unificada está validada localmente, mas não pode ser levada a
 
 ## Impact
 
-- Documentação e checklist de operação; nenhum deploy, DNS, proxy, firewall, container ou segredo real será alterado nesta mudança de planejamento.
-- A futura aplicação poderá atualizar Docker Compose, scripts e documentação apenas após revisão humana desta proposta.
+- Homologação controlada da Markina Gallery e um host HTTPS novo no Proxy Manager, somente após aprovação humana explícita.
+- Nenhum recurso existente de terceiros será editado, removido ou reiniciado; o único compartilhamento autorizado é a associação do nginx da Markina à rede de entrada já usada pelo Proxy Manager.

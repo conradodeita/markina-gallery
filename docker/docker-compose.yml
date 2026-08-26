@@ -28,7 +28,10 @@ services:
       retries: 5
       start_period: 5s
     networks:
-      - internal
+      internal: {}
+      npm:
+        aliases:
+          - markina-homolog-nginx
 
   web:
     build: ../frontend
@@ -147,3 +150,6 @@ volumes:
 networks:
   internal:
     driver: bridge
+  npm:
+    name: npm-network
+    external: true

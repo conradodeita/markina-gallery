@@ -14,6 +14,11 @@ O sistema SHALL ter um procedimento de homologação para a autenticação que e
 - **WHEN** a homologação for aprovada
 - **THEN** o operador cria recursos exclusivos da Markina Gallery, mantém segredos fora do Git, aplica a migration Alembic de forma explícita e não expõe PostgreSQL nem Redis publicamente
 
+#### Scenario: Entrada HTTPS compartilhada e isolada
+
+- **WHEN** o Proxy Manager for necessário para expor a homologação
+- **THEN** o operador conecta somente o nginx da Markina à rede de entrada autorizada com alias exclusivo, cria somente um host novo e certificado para o subdomínio de homologação, e não altera recursos existentes de outros projetos
+
 #### Scenario: Verificação e rollback da autenticação
 
 - **WHEN** a versão de homologação estiver disponível

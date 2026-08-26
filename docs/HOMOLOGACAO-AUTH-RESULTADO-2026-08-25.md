@@ -21,7 +21,7 @@
 ## Limitações e gate restante
 
 - O host `markina-homolog.duckdns.org` já resolve para o servidor, mas ainda não existe proxy host/certificado HTTPS exclusivo no Nginx Proxy Manager compartilhado. A tentativa HTTPS falhou no handshake; nenhum host existente foi alterado.
-- A validação externa do cookie `Secure` e do fluxo pela URL pública fica pendente até que um administrador do Nginx Proxy Manager crie somente o host `markina-homolog.duckdns.org` apontando para `127.0.0.1:8080`, com certificado próprio.
+- A validação externa do cookie `Secure` e do fluxo pela URL pública fica pendente até que o nginx da Markina esteja associado à `npm-network` com o alias `markina-homolog-nginx`, e um administrador do Nginx Proxy Manager crie somente o host `markina-homolog.duckdns.org` apontando para `markina-homolog-nginx:80`, com certificado próprio.
 - Não há versão anterior da Markina Gallery neste servidor para um rollback real. O rollback permanece documentado e restrito ao projeto `markina-gallery`; não foi executado para não interromper a primeira instância saudável.
 
 ## Próxima ação autorizável
