@@ -220,6 +220,18 @@ def test_admin_operational_catalog_creates_and_lists_only_authorized_data(client
     }
 
 
+def test_admin_validation_summary_is_authorized_and_has_no_client_phone(client: TestClient):
+    with SessionLocal() as db:
+        db.add(Client(full_name="Cliente do resumo", phone_e164="+5511999999999"))
+        db.commit()
+    assert client.get("/admin/validation-summary").status_code == 403
+    authenticate_admin(client)
+    response = client.get("/admin/validation-summary")
+    assert response.status_code == 200
+    assert response.json()["counts"]["clients"] == 1
+    assert "phone" not in response.text
+
+
 def test_client_interactions_are_private_reversible_and_audited(client: TestClient):
     with SessionLocal() as db:
         person = Client(full_name="Cliente", phone_e164="+5511666666666")

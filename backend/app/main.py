@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
+from os import getenv
 from typing import Annotated
 from uuid import UUID
 
@@ -393,6 +394,38 @@ def revoke_all(request: Request, response: Response) -> Response:
 def admin_area(request: Request) -> dict[str, str]:
     require_admin(request)
     return {"status": "authorized"}
+
+
+@app.get("/admin/validation-summary")
+def admin_validation_summary(request: Request, db: Session = Depends(db_session)) -> dict[str, object]:
+    """Resumo seguro para o painel visual do fotógrafo."""
+    require_admin(request)
+    jobs = list(db.scalars(select(MediaJob)))
+    job_states: defaultdict[str, int] = defaultdict(int)
+    for job in jobs:
+        job_states[job.status] += 1
+    galleries = list(db.scalars(select(DerivedGallery).order_by(DerivedGallery.created_at.desc())))
+    return {
+        "environment": getenv("APP_ENV", "development"),
+        "version": getenv("APP_VERSION", "local"),
+        "counts": {
+            "clients": len(list(db.scalars(select(Client.id)))),
+            "parent_galleries": len(list(db.scalars(select(ParentGallery.id)))),
+            "derived_galleries": len(galleries),
+            "imports": dict(job_states),
+        },
+        "recent_galleries": [
+            {
+                "id": str(gallery.id),
+                "name": gallery.name,
+                "access_enabled": gallery.access_enabled,
+                "selection_expires_at": gallery.selection_expires_at.isoformat()
+                if gallery.selection_expires_at
+                else None,
+            }
+            for gallery in galleries[:5]
+        ],
+    }
 
 
 @app.get("/admin/clients")
