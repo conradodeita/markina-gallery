@@ -21,3 +21,4 @@
 - Aplicação iniciada após aprovação do proprietário. Os artefatos OpenSpec foram lidos e o código existente foi mapeado; nenhuma tarefa de implementação está concluída.
 - O ambiente de homologação autentica o administrador corretamente, mas o frontend ainda não possui a rota `/admin`; após o login visual ocorre `404`. A criação da base administrativa será tratada dentro desta mudança, sem declarar a interface como pronta antes disso.
 - Busca facial permanece integralmente fora do escopo desta mudança e depende de `spike-private-facial-discovery`.
+- A base visual de `/admin` foi iniciada no frontend para eliminar o 404 pós-login, mas ainda não foi validada nem marcada como concluída.
