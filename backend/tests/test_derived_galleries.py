@@ -197,8 +197,15 @@ def test_client_interactions_are_private_reversible_and_audited(client: TestClie
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, person)
     authenticate_client(client, person.phone_e164)
+    review = client.get(f"/gallery/{gallery_id}/review")
+    assert review.status_code == 200
+    assert review.json()["gallery"]["favorites_enabled"] is True
+    assert review.json()["photos"][0]["selected"] is False
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 201
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 201
+    review = client.get(f"/gallery/{gallery_id}/review")
+    assert review.json()["photos"][0]["selected"] is True
+    assert review.json()["photos"][0]["favorited"] is True
     comment = client.post(
         f"/gallery/{gallery_id}/photos/{photo_id}/comments", json={"body": "Prefiro esta."}
     )
@@ -301,6 +308,12 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
         db.commit()
     assert client.get("/admin/statistics").status_code == 403
     authenticate_admin(client)
+    filters = client.get("/admin/statistics/filters")
+    assert filters.status_code == 200
+    assert filters.json()["clients"] == [
+        {"id": str(first_client.id), "name": "Primeiro cliente"},
+        {"id": str(second_client.id), "name": "Segundo cliente"},
+    ]
     response = client.get(f"/admin/statistics?client_id={first_client.id}")
     assert response.status_code == 200
     assert response.json()["purchased_count"] == 1

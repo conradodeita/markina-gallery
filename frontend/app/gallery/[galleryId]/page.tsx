@@ -1,25 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { ProtectedPhoto, ProtectedPhotoViewer } from "../../protected-photo-viewer";
 
+type ReviewPhoto = ProtectedPhoto & { selected: boolean; favorited: boolean };
+type Comment = { id: string; photo_id: string; body: string };
+type Review = { gallery: { name: string; message: string; selection_expires_at: string | null; selection_open: boolean; favorites_enabled: boolean; comments_enabled: boolean }; photos: ReviewPhoto[] };
+
 export default function GalleryPage() {
   const { galleryId } = useParams<{ galleryId: string }>();
-  const [photos, setPhotos] = useState<ProtectedPhoto[] | null>(null);
-
-  useEffect(() => {
-    fetch(`/api/gallery/${galleryId}/photos`, { credentials: "same-origin" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const result = await response.json();
-        setPhotos(result.photos.map((photo: { id: string; name: string; preview_url: string }) => ({ ...photo, previewUrl: photo.preview_url })));
-      })
-      .catch(() => setPhotos([]));
-  }, [galleryId]);
-
-  if (photos === null) return <main className="admin-shell">Carregando galeria…</main>;
-  if (!photos.length) return <main className="admin-shell"><h1>Galeria indisponível</h1><p className="intro">Verifique se o acesso está ativo ou tente novamente mais tarde.</p></main>;
-  return <main className="admin-shell"><p className="eyebrow">Markina Gallery · Galeria privada</p><h1>Suas fotos</h1><ProtectedPhotoViewer label="Prévia da foto selecionada" photos={photos} /></main>;
+  const [review, setReview] = useState<Review | null>(null);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [activePhotoId, setActivePhotoId] = useState("");
+  const [message, setMessage] = useState("");
+  function load() { fetch(`/api/gallery/${galleryId}/review`, { credentials: "same-origin" }).then(async (response) => { if (!response.ok) throw new Error(); const result = await response.json(); setReview({ ...result, photos: result.photos.map((photo: { id: string; name: string; preview_url: string; selected: boolean; favorited: boolean }) => ({ id: photo.id, name: photo.name, previewUrl: photo.preview_url, selected: photo.selected, favorited: photo.favorited })) }); setActivePhotoId((current) => current || result.photos[0]?.id || ""); }).catch(() => setReview({ gallery: { name: "", message: "", selection_expires_at: null, selection_open: false, favorites_enabled: false, comments_enabled: false }, photos: [] })); }
+  function loadComments() { fetch(`/api/gallery/${galleryId}/comments`, { credentials: "same-origin" }).then(async (response) => { if (!response.ok) throw new Error(); setComments((await response.json()).comments); }).catch(() => setComments([])); }
+  useEffect(() => { load(); loadComments(); }, [galleryId]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function interaction(photo: ReviewPhoto, kind: "selection" | "favorite") { const active = kind === "selection" ? photo.selected : photo.favorited; const response = await fetch(`/api/gallery/${galleryId}/photos/${photo.id}/${kind}`, { method: active ? "DELETE" : "POST", credentials: "same-origin" }); setMessage(response.ok ? "Alteração salva." : "Não foi possível salvar esta alteração."); if (response.ok) load(); }
+  async function addComment(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const body = new FormData(event.currentTarget).get("body"); const response = await fetch(`/api/gallery/${galleryId}/photos/${activePhotoId}/comments`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body }) }); setMessage(response.ok ? "Comentário enviado." : "Não foi possível enviar o comentário."); if (response.ok) { event.currentTarget.reset(); loadComments(); } }
+  async function removeComment(id: string) { const response = await fetch(`/api/gallery/${galleryId}/comments/${id}`, { method: "DELETE", credentials: "same-origin" }); if (response.ok) loadComments(); }
+  if (review === null) return <main className="admin-shell">Carregando galeria…</main>;
+  if (!review.photos.length) return <main className="admin-shell"><h1>Galeria indisponível</h1><p className="intro">Verifique se o acesso está ativo ou tente novamente mais tarde.</p></main>;
+  const activeComments = comments.filter((comment) => comment.photo_id === activePhotoId);
+  return <main className="admin-shell"><p className="eyebrow">Markina Gallery · Galeria privada</p><h1>{review.gallery.name}</h1>{review.gallery.message && <p className="intro">{review.gallery.message}</p>}{!review.gallery.selection_open && <p className="notice">O prazo para novas seleções terminou. Seu histórico continua disponível.</p>}{review.gallery.selection_expires_at && review.gallery.selection_open && <p className="form-message">Seleções até {new Date(review.gallery.selection_expires_at).toLocaleDateString("pt-BR")}</p>}<ProtectedPhotoViewer label="Prévia da foto selecionada" photos={review.photos} /><section className="admin-card"><h2>Revisar fotos</h2><div className="review-grid">{review.photos.map((photo) => <article key={photo.id}><strong>{photo.name}</strong><div><button className="secondary" disabled={!review.gallery.selection_open} onClick={() => interaction(photo, "selection")}>{photo.selected ? "Desfazer seleção" : "Selecionar"}</button>{review.gallery.favorites_enabled && <button className="secondary" onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "Remover favorito" : "Favoritar"}</button>}</div></article>)}</div></section>{review.gallery.comments_enabled && <section className="admin-card"><h2>Comentários</h2><label>Foto<select value={activePhotoId} onChange={(event) => setActivePhotoId(event.target.value)}>{review.photos.map((photo) => <option key={photo.id} value={photo.id}>{photo.name}</option>)}</select></label><form className="auth-form" onSubmit={addComment}><label>Comentário<input name="body" maxLength={2000} required /></label><button className="primary">Enviar comentário</button></form><ul className="photo-list">{activeComments.map((comment) => <li key={comment.id}>{comment.body}<button className="link-button" onClick={() => removeComment(comment.id)}>Remover</button></li>)}</ul>{!activeComments.length && <p className="form-message">Nenhum comentário nesta foto.</p>}</section>}{message && <p className="form-message" role="status">{message}</p>}</main>;
 }

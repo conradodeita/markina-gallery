@@ -7,14 +7,14 @@
 ## 2. Estatísticas e interface
 
 - [x] 2.1 Implementar agregados de compra confirmada, seleção não comprada, listas e exportação TXT autorizada, inclusive filtro por cliente.
-- [ ] 2.2 Implementar página administrativa responsiva de estatísticas, filtros, gráfico temporal e conferência de compras com preview administrativo protegido.
-- [ ] 2.3 Implementar portal do cliente para revisão, favoritos, comentários, estados de permissão/prazo e histórico de compras com prévias protegidas.
+- [x] 2.2 Implementar página administrativa responsiva de estatísticas, filtros, gráfico temporal e conferência de compras com preview administrativo protegido.
+- [x] 2.3 Implementar portal do cliente para revisão, favoritos, comentários, estados de permissão/prazo e histórico de compras com prévias protegidas.
 
 ## 3. Qualidade e operação
 
-- [ ] 3.1 Cobrir isolamento entre clientes, comentários, métricas, TXT e expiração com testes automatizados.
+- [x] 3.1 Cobrir isolamento entre clientes, comentários, métricas, TXT e expiração com testes automatizados.
 - [ ] 3.2 Validar lint, build, migration, OpenSpec e homologação com dados sintéticos.
-- [ ] 3.3 Atualizar documentação e registrar que busca facial depende do spike separado.
+- [x] 3.3 Atualizar documentação e registrar que busca facial depende do spike separado.
 
 ## Registro de continuidade — 2026-08-26
 
@@ -27,3 +27,6 @@
 - A tarefa 1.3 foi concluída em 2026-08-26. Seleções respeitam o prazo, favoritos e comentários respeitam as permissões da galeria, e desfazer/remoção registram auditoria. O fotógrafo pode consultar e remover comentários da respectiva galeria privada.
 - Em 2026-08-26, o proprietário aprovou ampliar esta mudança com filtro por cliente nas estatísticas e histórico de compras para ambos os papéis. A prévia sem marca-d'água, ampliação e exportação de compras ficam restritas ao fotógrafo; o cliente vê somente prévias protegidas. A integração WhatsApp de confirmação de pagamento foi separada na mudança `add-payment-confirmation-notifications`.
 - A tarefa 2.1 foi concluída em 2026-08-26. A API administrativa calcula fotos compradas distintas, selecionadas sem compra, receita confirmada e série diária, com filtros por período, cliente, evento, acervo e galeria derivada. Os TXT de compradas e não compradas contêm exclusivamente identificador e nome de arquivo.
+- A tarefa 2.2 foi concluída em 2026-08-26. A rota administrativa `/admin/statistics` oferece filtros com seletores autorizados, indicadores, gráfico temporal, listas e TXT filtrado; a conferência protegida de compras permanece em `/admin/purchases`.
+- A tarefa 2.3 foi concluída em 2026-08-26. A rota privada `/gallery/{id}` exibe a revisão, a mensagem, o prazo e as permissões da galeria, com seleção, favorito e comentários reversíveis; o histórico protegido permanece em `/library`.
+- A tarefa 3.1 foi concluída em 2026-08-26 com testes de isolamento, prazo, interações, métricas, exportação e prévias por papel. A tarefa 3.3 registra que reconhecimento facial continua condicionado exclusivamente ao spike `spike-private-facial-discovery`.

@@ -604,6 +604,28 @@ def admin_statistics(
     }
 
 
+@app.get("/admin/statistics/filters")
+def admin_statistics_filters(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, str]]]:
+    """Opções mínimas para os filtros operacionais, sem expor telefone de clientes."""
+    require_admin(request)
+    clients = list(db.scalars(select(Client).order_by(Client.full_name)))
+    parents = list(db.scalars(select(ParentGallery).order_by(ParentGallery.name)))
+    galleries = list(db.scalars(select(DerivedGallery).order_by(DerivedGallery.name)))
+    return {
+        "clients": [{"id": str(client.id), "name": client.full_name} for client in clients],
+        "parent_galleries": [
+            {"id": str(gallery.id), "name": gallery.name, "event_name": gallery.event_name or ""}
+            for gallery in parents
+        ],
+        "derived_galleries": [
+            {"id": str(gallery.id), "name": gallery.name, "client_id": str(gallery.client_id)}
+            for gallery in galleries
+        ],
+    }
+
+
 @app.get("/admin/statistics/selected-not-purchased.txt", response_class=PlainTextResponse)
 def export_selected_not_purchased_txt(
     request: Request,
@@ -758,6 +780,64 @@ def gallery_photos(
             }
             for photo in photos
         ]
+    }
+
+
+@app.get("/gallery/{gallery_id}/review")
+def gallery_review(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    """Estado privado de revisão para cliente, incluindo permissões e interações próprias."""
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
+    photos = list(
+        db.scalars(
+            select(PhotoAsset)
+            .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
+            .where(DerivedGalleryPhoto.derived_gallery_id == gallery_id)
+            .order_by(PhotoAsset.created_at, PhotoAsset.filename)
+        )
+    )
+    photo_ids = {photo.id for photo in photos}
+    selections = set(
+        db.scalars(
+            select(PhotoSelection.photo_asset_id).where(
+                PhotoSelection.derived_gallery_id == gallery_id,
+                PhotoSelection.client_id == session.subject_id,
+            )
+        )
+    )
+    favorites = set(
+        db.scalars(
+            select(PhotoFavorite.photo_asset_id).where(
+                PhotoFavorite.derived_gallery_id == gallery_id,
+                PhotoFavorite.client_id == session.subject_id,
+            )
+        )
+    )
+    return {
+        "gallery": {
+            "name": gallery.name,
+            "message": gallery.custom_message or "",
+            "selection_expires_at": (
+                gallery.selection_expires_at.isoformat() if gallery.selection_expires_at else None
+            ),
+            "selection_open": not gallery.selection_expires_at
+            or not expired(gallery.selection_expires_at),
+            "favorites_enabled": gallery.favorites_enabled,
+            "comments_enabled": gallery.comments_enabled,
+        },
+        "photos": [
+            {
+                "id": str(photo.id),
+                "name": photo.display_name or photo.filename,
+                "preview_url": f"/gallery/{gallery_id}/photos/{photo.id}/preview",
+                "selected": photo.id in selections,
+                "favorited": photo.id in favorites,
+            }
+            for photo in photos
+            if photo.id in photo_ids
+        ],
     }
 
 
