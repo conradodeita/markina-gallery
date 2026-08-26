@@ -1,5 +1,5 @@
 from datetime import timedelta
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pyotp
 import pytest
@@ -12,7 +12,8 @@ from app.auth import (
     AuthChallenge,
     Base,
     Client,
-    GalleryAccess,
+    DerivedGallery,
+    ParentGallery,
     SessionLocal,
     engine,
     now,
@@ -46,13 +47,16 @@ def otp_for(challenge_id):
 
 
 def test_client_otp_redirects_to_single_gallery(client):
-    gallery_id = uuid4()
     with SessionLocal() as db:
         person = Client(full_name="Responsável", phone_e164="+5511999999999")
+        parent = ParentGallery(name="Evento")
         db.add(person)
+        db.add(parent)
         db.flush()
-        db.add(GalleryAccess(client_id=person.id, gallery_id=gallery_id))
+        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=person.id, name="Privada")
+        db.add(gallery)
         db.commit()
+        gallery_id = gallery.id
     response = client.post(
         "/auth/client/challenge", json={"full_name": "Responsável", "phone": "+55 (11) 99999-9999"}
     )
@@ -70,12 +74,15 @@ def test_client_otp_redirects_to_single_gallery(client):
 def test_client_multiple_galleries_and_used_or_expired_otp(client):
     with SessionLocal() as db:
         person = Client(full_name="Responsável", phone_e164="+5511888888888")
+        first_parent = ParentGallery(name="Evento 1")
+        second_parent = ParentGallery(name="Evento 2")
         db.add(person)
+        db.add_all([first_parent, second_parent])
         db.flush()
         db.add_all(
             [
-                GalleryAccess(client_id=person.id, gallery_id=uuid4()),
-                GalleryAccess(client_id=person.id, gallery_id=uuid4()),
+                DerivedGallery(parent_gallery_id=first_parent.id, client_id=person.id, name="Privada 1"),
+                DerivedGallery(parent_gallery_id=second_parent.id, client_id=person.id, name="Privada 2"),
             ]
         )
         db.commit()

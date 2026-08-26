@@ -14,10 +14,11 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryPhoto,
-    GalleryAccess,
     ParentGallery,
+    ParentGalleryRegistration,
     PhotoAsset,
     PhotoSelection,
+    PhotoView,
     SaleOrder,
     SaleOrderItem,
     SessionLocal,
@@ -43,17 +44,18 @@ def client():
 
 
 def authenticate_admin(client: TestClient) -> None:
-    secret = pyotp.random_base32()
     with SessionLocal() as db:
-        db.add(
-            AdminUser(
+        admin = db.scalar(select(AdminUser).where(AdminUser.email == "foto@markina.test"))
+        if not admin:
+            admin = AdminUser(
                 email="foto@markina.test",
                 password_hash=password_hasher.hash("senha-segura"),
                 email_verified=True,
-                totp_secret=secret,
+                totp_secret=pyotp.random_base32(),
             )
-        )
-        db.commit()
+            db.add(admin)
+            db.commit()
+        secret = admin.totp_secret
     challenge = client.post(
         "/auth/admin/password", json={"email": "foto@markina.test", "password": "senha-segura"}
     ).json()["challenge_id"]
@@ -130,11 +132,7 @@ def test_admin_creates_private_derived_gallery_without_copying_photo(client: Tes
     assert response.status_code == 201
     gallery_id = UUID(response.json()["id"])
     with SessionLocal() as db:
-        assert db.scalar(
-            select(GalleryAccess).where(
-                GalleryAccess.gallery_id == gallery_id, GalleryAccess.client_id == client_id
-            )
-        )
+        assert db.get(DerivedGallery, gallery_id).client_id == client_id
         reference = db.scalar(
             select(DerivedGalleryPhoto).where(
                 DerivedGalleryPhoto.derived_gallery_id == gallery_id
@@ -172,9 +170,6 @@ def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
     with SessionLocal() as db:
         person = Client(full_name="Cliente", phone_e164="+5511777777777")
         db.add(person)
-        db.flush()
-        gallery_access = GalleryAccess(client_id=person.id, gallery_id=UUID("00000000-0000-0000-0000-000000000001"))
-        db.add(gallery_access)
         db.commit()
     response = client.post(
         "/auth/client/challenge", json={"full_name": "Cliente", "phone": "+5511777777777"}
@@ -272,6 +267,120 @@ def test_expired_selection_and_foreign_client_interactions_are_denied(client: Te
     client.cookies.clear()
     authenticate_client(client, outsider.phone_e164)
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 403
+
+
+def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    authenticate_client(client, owner.phone_e164)
+    assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["purchase_state"] == "nova"
+    with SessionLocal() as db:
+        db.add(PhotoView(derived_gallery_id=gallery_id, client_id=owner.id, photo_asset_id=photo_id))
+        db.commit()
+    assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["purchase_state"] == "visualizada mas não comprada"
+    with SessionLocal() as db:
+        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="confirmed", total_cents=100, confirmed_at=now())
+        db.add(order)
+        db.flush()
+        db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photo_id, filename_snapshot="IMG_0001.jpg", unit_price_cents=100))
+        db.commit()
+    assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["purchase_state"] == "já comprada"
+
+
+def test_phone_change_preserves_gallery_owner_and_retires_old_phone(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
+        db.add(owner)
+        db.commit()
+    gallery_id, _ = create_gallery_for_client(client, owner)
+    authenticate_admin(client)
+    challenge = client.post("/auth/client/challenge", json={"full_name": owner.full_name, "phone": "+5511666666666"}).json()["challenge_id"]
+    with SessionLocal() as db:
+        db.get(AuthChallenge, UUID(challenge)).secret_hash = token_hash("123456")
+        db.commit()
+    assert client.post(f"/admin/clients/{owner.id}/phone", json={"phone_e164": "+5511666666666", "challenge_id": challenge, "code": "123456"}).status_code == 200
+    client.cookies.clear()
+    authenticate_client(client, "+5511666666666")
+    assert client.get(f"/gallery/{gallery_id}/review").status_code == 200
+    client.cookies.clear()
+    old = client.post("/auth/client/challenge", json={"full_name": owner.full_name, "phone": owner.phone_e164}).json()["challenge_id"]
+    with SessionLocal() as db:
+        db.get(AuthChallenge, UUID(old)).secret_hash = token_hash("123456")
+        db.commit()
+    assert client.post("/auth/client/verify", json={"challenge_id": old, "code": "123456"}).status_code == 401
+
+
+def test_unlisted_source_link_registers_client_without_exposing_photos(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
+        parent = ParentGallery(name="Evento coletivo")
+        db.add_all([owner, parent])
+        db.commit()
+    challenge = client.post("/auth/client/challenge", json={"full_name": owner.full_name, "phone": owner.phone_e164, "parent_gallery_id": str(parent.id)}).json()["challenge_id"]
+    with SessionLocal() as db:
+        db.get(AuthChallenge, UUID(challenge)).secret_hash = token_hash("123456")
+        db.commit()
+    assert client.post("/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}).json() == {"destination": "/library?registration=pending"}
+    with SessionLocal() as db:
+        assert db.scalar(select(ParentGalleryRegistration).where(ParentGalleryRegistration.parent_gallery_id == parent.id, ParentGalleryRegistration.client_id == owner.id)).status == "pending"
+
+
+def test_cloned_gallery_is_isolated_and_individually_blocked(client: TestClient):
+    with SessionLocal() as db:
+        mother = Client(full_name="Mãe", phone_e164="+5511555555555")
+        father = Client(full_name="Pai", phone_e164="+5511444444444")
+        db.add_all([mother, father])
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, mother)
+    authenticate_admin(client)
+    cloned = client.post(f"/admin/derived-galleries/{gallery_id}/clone", json={"client_id": str(father.id), "idempotency_key": "father-clone-key-0001"})
+    assert cloned.status_code == 201
+    father_gallery_id = cloned.json()["id"]
+    assert client.post(f"/admin/derived-galleries/{gallery_id}/clone", json={"client_id": str(father.id), "idempotency_key": "father-clone-key-0001"}).json()["id"] == father_gallery_id
+    client.cookies.clear()
+    authenticate_client(client, father.phone_e164)
+    assert client.post(f"/gallery/{father_gallery_id}/photos/{photo_id}/selection").status_code == 201
+    client.cookies.clear()
+    authenticate_client(client, mother.phone_e164)
+    assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["selected"] is False
+    client.cookies.clear()
+    authenticate_admin(client)
+    selection = client.get(f"/admin/derived-galleries/{father_gallery_id}/selection")
+    assert selection.status_code == 200
+    assert selection.json()["selection_count"] == 1
+    assert selection.json()["photos"][0]["filename"] == "IMG_0001.jpg"
+    exported = client.get(f"/admin/derived-galleries/{father_gallery_id}/selection/export.txt")
+    assert exported.status_code == 200
+    assert "IMG_0001.jpg" in exported.text
+    assert client.get(f"/admin/derived-galleries/{father_gallery_id}/selection/export.csv").headers["content-type"].startswith("text/csv")
+    overview = client.get("/admin/parent-galleries/overview?query=Evento")
+    assert overview.status_code == 200
+    assert overview.json()["parent_galleries"][0]["private_gallery_count"] == 2
+    assert client.patch(f"/admin/derived-galleries/{father_gallery_id}", json={"access_enabled": False}).status_code == 200
+    client.cookies.clear()
+    authenticate_client(client, father.phone_e164)
+    assert client.get(f"/gallery/{father_gallery_id}/review").status_code == 403
+    client.cookies.clear()
+    authenticate_client(client, mother.phone_e164)
+    assert client.get(f"/gallery/{gallery_id}/review").status_code == 200
+
+
+def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
+    with SessionLocal() as db:
+        person = Client(full_name="Responsável", phone_e164="+5511333333333")
+        db.add(person)
+        db.commit()
+    gallery_id, _ = create_gallery_for_client(client, person, expires=True)
+    authenticate_admin(client)
+    frozen = client.get("/admin/derived-galleries?tab=frozen&query=Responsável")
+    assert frozen.status_code == 200
+    assert frozen.json()["total"] == 1
+    renewed = client.post(f"/admin/derived-galleries/{gallery_id}/renew", json={"selection_expires_at": (now() + timedelta(days=2)).isoformat()})
+    assert renewed.status_code == 200
+    assert client.get("/admin/derived-galleries?tab=active").json()["total"] == 1
 
 
 def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):

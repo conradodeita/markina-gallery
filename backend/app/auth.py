@@ -81,8 +81,21 @@ class Client(Base):
     phone_e164: Mapped[str] = mapped_column(String(16), unique=True, index=True)
 
 
+class ClientPhone(Base):
+    __tablename__ = "client_phone"
+    __table_args__ = (UniqueConstraint("phone_e164", "active"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    phone_e164: Mapped[str] = mapped_column(String(16), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class GalleryAccess(Base):
     __tablename__ = "gallery_access"
+    __table_args__ = (UniqueConstraint("client_id", "gallery_id"),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     gallery_id: Mapped[UUID] = mapped_column(index=True)
@@ -101,6 +114,19 @@ class ParentGallery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class ParentGalleryRegistration(Base):
+    """Registro de entrada pelo link não listado; não concede leitura de fotos."""
+
+    __tablename__ = "parent_gallery_registration"
+    __table_args__ = (UniqueConstraint("parent_gallery_id", "client_id"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class PhotoAsset(Base):
     """Arquivo pertencente ao acervo-mãe; nunca é duplicado para o cliente."""
 
@@ -115,7 +141,7 @@ class PhotoAsset(Base):
 
 
 class DerivedGallery(Base):
-    """Galeria privada que referencia fotos de um único acervo-mãe para um cliente."""
+    """Galeria privada pertencente a uma única cliente/responsável."""
 
     __tablename__ = "derived_gallery"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -164,6 +190,17 @@ class PhotoFavorite(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class PhotoView(Base):
+    __tablename__ = "photo_view"
+    __table_args__ = (UniqueConstraint("derived_gallery_id", "client_id", "photo_asset_id"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    first_viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class PhotoComment(Base):
     __tablename__ = "photo_comment"
 
@@ -189,6 +226,8 @@ class SaleOrder(Base):
     payment_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     total_cents: Mapped[int] = mapped_column(Integer)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    client_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    client_phone_snapshot: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -255,6 +294,7 @@ class AuthChallenge(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     resend_count: Mapped[int] = mapped_column(Integer, default=0)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
 
 
 class AuthSession(Base):

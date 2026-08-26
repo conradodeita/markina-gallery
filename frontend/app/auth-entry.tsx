@@ -12,9 +12,10 @@ export function AuthEntry() {
   const [challengeId, setChallengeId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [galleryId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("gallery_id") ?? "");
   async function requestCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget); setLoading(true); setMessage("");
-    try { const response = await fetch(context === "client" ? "/api/auth/client/challenge" : "/api/auth/admin/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context === "client" ? { full_name: data.get("fullName"), phone: data.get("phone") } : { email: data.get("email"), password: data.get("password") }) }); const result = await response.json(); if (!response.ok) throw new Error(); setChallengeId(result.challenge_id); setMessage(result.message); setStep("code"); } catch { setMessage(genericError); } finally { setLoading(false); }
+    try { const response = await fetch(context === "client" ? "/api/auth/client/challenge" : "/api/auth/admin/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context === "client" ? { full_name: data.get("fullName"), phone: data.get("phone"), ...(galleryId ? { gallery_id: galleryId } : {}) } : { email: data.get("email"), password: data.get("password") }) }); const result = await response.json(); if (!response.ok) throw new Error(); setChallengeId(result.challenge_id); setMessage(result.message); setStep("code"); } catch { setMessage(genericError); } finally { setLoading(false); }
   }
   async function verifyCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const code = new FormData(event.currentTarget).get("code"); setLoading(true); setMessage("");

@@ -1,0 +1,37 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+type PrivateGallery = { id: string; name: string; cover_preview_url: string | null; frozen: boolean; blocked: boolean; payment_pending: boolean; selection_in_progress: boolean };
+type SourceGallery = { id: string; name: string; event_name: string; private_gallery_count: number; registration_count: number; frozen_gallery_count: number };
+
+export default function GalleriesPage() {
+  const [view, setView] = useState<"sources" | "private">("sources");
+  const [tab, setTab] = useState<"active" | "frozen">("active");
+  const [query, setQuery] = useState("");
+  const [privateGalleries, setPrivateGalleries] = useState<PrivateGallery[]>([]);
+  const [sources, setSources] = useState<SourceGallery[]>([]);
+  const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const path = view === "sources" ? "/api/admin/parent-galleries/overview" : "/api/admin/derived-galleries";
+    const params = new URLSearchParams(view === "sources" ? {} : { tab });
+    if (query) params.set("query", query);
+    queueMicrotask(() => setLoading(true));
+    fetch(`${path}?${params}`, { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Falha ao carregar galerias");
+        const data = await response.json();
+        if (view === "sources") setSources(data.parent_galleries);
+        else setPrivateGalleries(data.galleries);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false));
+  }, [query, tab, view]);
+
+  const empty = view === "sources" ? !sources.length : !privateGalleries.length;
+  return <main className="admin-shell"><p className="eyebrow">Markina Gallery · Fotógrafo</p><h1>Galerias</h1><p className="intro">O acervo-fonte fica privado. Cada responsável recebe a sua própria galeria, seleção e histórico.</p><div className="context-tabs" role="tablist" aria-label="Tipo de galeria"><button role="tab" aria-selected={view === "sources"} className={view === "sources" ? "selected" : ""} onClick={() => setView("sources")}>Acervos-fonte</button><button role="tab" aria-selected={view === "private"} className={view === "private" ? "selected" : ""} onClick={() => setView("private")}>Galerias privadas</button></div>{view === "private" ? <div className="context-tabs" role="tablist" aria-label="Estado da galeria privada"><button role="tab" aria-selected={tab === "active"} className={tab === "active" ? "selected" : ""} onClick={() => setTab("active")}>Ativas</button><button role="tab" aria-selected={tab === "frozen"} className={tab === "frozen" ? "selected" : ""} onClick={() => setTab("frozen")}>Congeladas</button></div> : null}<label className="gallery-search">Buscar por galeria, nome ou telefone<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>{loading ? <p className="form-message" role="status">Carregando galerias…</p> : null}{!loading && failed ? <p className="notice" role="alert">Não foi possível carregar as galerias.</p> : null}{!loading && !failed && empty ? <p className="notice">Nenhum resultado nesta visão.</p> : null}{!loading && !failed && !empty && view === "sources" ? <section className="gallery-admin-list" aria-label="Acervos-fonte">{sources.map((source) => <Link key={source.id} href={`/admin/operations?parent_gallery_id=${source.id}`}><div className="gallery-cover">Acervo</div><div><strong>{source.name}</strong><small>{source.event_name || "Evento sem nome"}</small><span>{source.registration_count} pessoas registradas · {source.private_gallery_count} galerias privadas · {source.frozen_gallery_count} congeladas</span></div></Link>)}</section> : null}{!loading && !failed && !empty && view === "private" ? <section className="gallery-admin-list" aria-label="Galerias privadas">{privateGalleries.map((gallery) => <Link key={gallery.id} href={`/admin/galleries/${gallery.id}`}><div className="gallery-cover">{gallery.cover_preview_url ? <img src={`/api${gallery.cover_preview_url}`} alt="" /> : "Sem capa"}</div><div><strong>{gallery.name}</strong><small>1 responsável · histórico independente</small><span>{gallery.frozen ? "Prazo expirado" : gallery.blocked ? "Acesso bloqueado" : gallery.payment_pending ? "Pagamento pendente" : gallery.selection_in_progress ? "Seleção em andamento" : "Disponível"}</span></div></Link>)}</section> : null}</main>;
+}
