@@ -203,6 +203,48 @@ class SaleOrderItem(Base):
     unit_price_cents: Mapped[int] = mapped_column(Integer)
 
 
+class MediaDerivative(Base):
+    """Derivado local de uma foto; paths nunca são recebidos do navegador."""
+
+    __tablename__ = "media_derivative"
+    __table_args__ = (
+        UniqueConstraint("photo_asset_id", "variant"),
+        CheckConstraint("variant IN ('thumbnail', 'client_preview', 'admin_preview')"),
+        CheckConstraint("status IN ('queued', 'ready', 'failed')"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    variant: Mapped[str] = mapped_column(String(32))
+    relative_path: Mapped[str | None] = mapped_column(String(1024), nullable=True, unique=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MediaJob(Base):
+    """Job retomável para geração de derivados, isolado por foto e tipo."""
+
+    __tablename__ = "media_job"
+    __table_args__ = (
+        UniqueConstraint("photo_asset_id", "kind"),
+        CheckConstraint("kind IN ('generate_derivatives')"),
+        CheckConstraint("status IN ('queued', 'processing', 'completed', 'failed')"),
+        CheckConstraint("attempts >= 0"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="generate_derivatives")
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class AuthChallenge(Base):
     __tablename__ = "auth_challenge"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

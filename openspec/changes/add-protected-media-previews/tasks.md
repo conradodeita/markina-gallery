@@ -1,6 +1,6 @@
 ## 1. Derivados e processamento
 
-- [ ] 1.1 Criar migration aditiva para metadados de derivados e jobs de mídia, verificando upgrade e downgrade em banco sintético.
+- [x] 1.1 Criar migration aditiva para metadados de derivados e jobs de mídia, verificando upgrade e downgrade em banco sintético.
 - [ ] 1.2 Implementar importação local de JPEG e geração idempotente de miniatura, prévia protegida e prévia administrativa, verificando dimensões, ausência de EXIF/GPS e ausência de exposição do original.
 - [ ] 1.3 Configurar fila e volume exclusivo da Markina para processamento de mídia, verificando que paths e jobs não alcançam recursos de outros projetos.
 
