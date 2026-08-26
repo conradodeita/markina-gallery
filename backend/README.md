@@ -1,6 +1,6 @@
 # backend — API Markina Gallery (FastAPI)
 
-Scaffolding da fundação: apenas `GET /health` e um worker placeholder. **Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra da Markina Gallery existe aqui ainda.**
+Inclui autenticação unificada com OTP sandbox do cliente e senha + TOTP do administrador. O cookie de sessão é opaco, `HttpOnly`, `Secure` fora de desenvolvimento e `SameSite=Lax`; `/admin` e `/gallery/{id}` são autorizados no servidor.
 
 Comandos (Windows; no Linux use `.venv/bin/...`):
 

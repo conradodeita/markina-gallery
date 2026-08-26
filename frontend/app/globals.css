@@ -1,4 +1,4 @@
-/* Markina Gallery — estilos mínimos do scaffolding (Tailwind virá com as mudanças de UI) */
+:root { --ink: #1d211d; --muted: #626960; --paper: #fcfbf7; --accent: #35694c; --line: #d9ddd5; --focus: #1f6feb; }
 * {
   box-sizing: border-box;
 }
@@ -6,6 +6,7 @@
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #f8f8f8;
-  color: #1a1a1a;
+  background: var(--paper);
+  color: var(--ink);
 }
+button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #edf2eb, var(--paper) 58%); }.auth-card { width: min(100%, 440px); padding: 32px 24px; border: 1px solid var(--line); border-radius: 20px; background: #fff; box-shadow: 0 18px 60px #293a2b1c; }.eyebrow { margin: 0; color: var(--accent); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: .75rem; }h1 { margin: 10px 0 8px; font-size: clamp(2rem, 8vw, 2.75rem); line-height: 1.04; letter-spacing: -.05em; }.intro { margin: 0 0 24px; color: var(--muted); line-height: 1.5; }.context-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: #edf0eb; border-radius: 10px; }.context-tabs button, .secondary { border: 0; padding: 11px; cursor: pointer; border-radius: 7px; background: transparent; color: var(--ink); }.context-tabs .selected { background: #fff; box-shadow: 0 1px 3px #0002; font-weight: 700; }.auth-form { display: grid; gap: 16px; margin-top: 24px; }.auth-form label { display: grid; gap: 7px; font-weight: 600; }.auth-form input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); }.auth-form input:focus-visible, button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }.primary { border: 0; border-radius: 8px; background: var(--accent); color: #fff; padding: 13px; font-weight: 700; cursor: pointer; }.primary:disabled { opacity: .65; cursor: wait; }.secondary { border: 1px solid var(--line); }.link-button { border: 0; background: transparent; color: var(--accent); cursor: pointer; text-decoration: underline; }.form-message { margin: 18px 0 0; color: var(--muted); line-height: 1.45; }
