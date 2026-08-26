@@ -15,7 +15,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from starlette.responses import PlainTextResponse
+from starlette.responses import FileResponse, PlainTextResponse
 
 from app.auth import (
     AdminPasswordInput,
@@ -28,6 +28,7 @@ from app.auth import (
     DerivedGallery,
     DerivedGalleryPhoto,
     GalleryAccess,
+    MediaDerivative,
     ParentGallery,
     PhotoAsset,
     PhotoComment,
@@ -52,7 +53,7 @@ from app.auth import (
     revoke_subject_sessions,
     whatsapp_provider,
 )
-from app.media import enqueue_derivatives, safe_source_path
+from app.media import enqueue_derivatives, safe_derivative_path, safe_source_path
 
 app = FastAPI(title="Markina Gallery API", version="0.2.0")
 
@@ -141,6 +142,18 @@ def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID) ->
 def require_selection_window(gallery: DerivedGallery) -> None:
     if gallery.selection_expires_at and expired(gallery.selection_expires_at):
         raise HTTPException(status_code=403, detail="O prazo para novas seleções expirou.")
+
+
+def protected_preview_response(path, filename: str) -> FileResponse:
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        filename=filename,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 def statistics_data(
@@ -436,6 +449,70 @@ async def import_photo_source(
     return {"status": "queued"}
 
 
+@app.get("/admin/photo-assets/{photo_id}/preview")
+def admin_photo_preview(
+    photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> FileResponse:
+    """Prévia sem marca para conferência administrativa; nunca é o original."""
+    require_admin(request)
+    photo = db.get(PhotoAsset, photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    derivative = db.scalar(
+        select(MediaDerivative).where(
+            MediaDerivative.photo_asset_id == photo_id,
+            MediaDerivative.variant == "admin_preview",
+            MediaDerivative.status == "ready",
+        )
+    )
+    if not derivative:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    try:
+        path = safe_derivative_path(derivative)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.") from exc
+    audit(db, "media_preview.admin_viewed", str(photo_id))
+    db.commit()
+    return protected_preview_response(path, f"conferencia-{photo.filename}")
+
+
+@app.get("/admin/purchases")
+def admin_purchase_history(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, object]]]:
+    """Histórico confirmado para conferência exclusiva do fotógrafo."""
+    require_admin(request)
+    orders = db.scalars(
+        select(SaleOrder)
+        .where(SaleOrder.payment_status == "confirmed")
+        .order_by(SaleOrder.confirmed_at.desc(), SaleOrder.created_at.desc())
+    )
+    result: list[dict[str, object]] = []
+    for order in orders:
+        client = db.get(Client, order.client_id)
+        gallery = db.get(DerivedGallery, order.derived_gallery_id)
+        items = db.scalars(
+            select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)
+        )
+        result.append(
+            {
+                "id": str(order.id),
+                "client_name": client.full_name if client else "Cliente removido",
+                "gallery_name": gallery.name if gallery else "Galeria removida",
+                "total_cents": order.total_cents,
+                "items": [
+                    {
+                        "photo_id": str(item.photo_asset_id),
+                        "name": item.filename_snapshot,
+                        "preview_url": f"/admin/photo-assets/{item.photo_asset_id}/preview",
+                    }
+                    for item in items
+                ],
+            }
+        )
+    return {"orders": result}
+
+
 @app.post("/admin/derived-galleries", status_code=status.HTTP_201_CREATED)
 def create_derived_gallery(
     payload: DerivedGalleryInput, request: Request, db: Session = Depends(db_session)
@@ -597,6 +674,46 @@ def client_library(request: Request, db: Session = Depends(db_session)) -> dict[
     }
 
 
+@app.get("/library/purchases")
+def client_purchase_history(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, object]]]:
+    """Histórico confirmado da própria cliente, sem variante administrativa."""
+    session = current_session(request, Role.CLIENT)
+    orders = db.scalars(
+        select(SaleOrder)
+        .join(GalleryAccess, GalleryAccess.gallery_id == SaleOrder.derived_gallery_id)
+        .where(
+            SaleOrder.client_id == session.subject_id,
+            SaleOrder.payment_status == "confirmed",
+            GalleryAccess.client_id == session.subject_id,
+            GalleryAccess.active,
+        )
+        .order_by(SaleOrder.confirmed_at.desc(), SaleOrder.created_at.desc())
+    )
+    result: list[dict[str, object]] = []
+    for order in orders:
+        gallery = db.get(DerivedGallery, order.derived_gallery_id)
+        items = db.scalars(
+            select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)
+        )
+        result.append(
+            {
+                "id": str(order.id),
+                "gallery_name": gallery.name if gallery else "Galeria",
+                "items": [
+                    {
+                        "photo_id": str(item.photo_asset_id),
+                        "name": item.filename_snapshot,
+                        "preview_url": f"/gallery/{order.derived_gallery_id}/photos/{item.photo_asset_id}/preview",
+                    }
+                    for item in items
+                ],
+            }
+        )
+    return {"orders": result}
+
+
 @app.get("/gallery/{gallery_id}")
 def gallery_area(gallery_id: UUID, request: Request) -> dict[str, str]:
     session = current_session(request, Role.CLIENT)
@@ -617,6 +734,57 @@ def gallery_area(gallery_id: UUID, request: Request) -> dict[str, str]:
             db.commit()
             raise HTTPException(status_code=403, detail="Acesso negado.")
     return {"status": "authorized"}
+
+
+@app.get("/gallery/{gallery_id}/photos")
+def gallery_photos(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, str]]]:
+    """Lista somente os identificadores e nomes atribuídos à galeria privada."""
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    photos = db.scalars(
+        select(PhotoAsset)
+        .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
+        .where(DerivedGalleryPhoto.derived_gallery_id == gallery_id)
+        .order_by(PhotoAsset.created_at, PhotoAsset.filename)
+    )
+    return {
+        "photos": [
+            {
+                "id": str(photo.id),
+                "name": photo.display_name or photo.filename,
+                "preview_url": f"/gallery/{gallery_id}/photos/{photo.id}/preview",
+            }
+            for photo in photos
+        ]
+    }
+
+
+@app.get("/gallery/{gallery_id}/photos/{photo_id}/preview")
+def client_photo_preview(
+    gallery_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> FileResponse:
+    """Entrega somente o derivado com marca à cliente autorizada na galeria privada."""
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    assigned_photo_for_gallery(db, gallery_id, photo_id)
+    derivative = db.scalar(
+        select(MediaDerivative).where(
+            MediaDerivative.photo_asset_id == photo_id,
+            MediaDerivative.variant == "client_preview",
+            MediaDerivative.status == "ready",
+        )
+    )
+    if not derivative:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    try:
+        path = safe_derivative_path(derivative)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.") from exc
+    audit(db, "media_preview.client_viewed", str(gallery_id))
+    db.commit()
+    return protected_preview_response(path, f"previa-{photo_id}.jpg")
 
 
 @app.post("/gallery/{gallery_id}/photos/{photo_id}/selection", status_code=status.HTTP_201_CREATED)

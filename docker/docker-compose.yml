@@ -3,7 +3,7 @@
 # Projeto Compose exclusivo: markina-gallery (use sempre -p markina-gallery -f docker/docker-compose.yml).
 # Única porta publicada no host: nginx em ${MARKINA_GALLERY_PORT:-8080}.
 # db e redis NUNCA publicam portas; apenas a rede interna markina-gallery_internal.
-# Volumes: markina-gallery_pgdata e markina-gallery_redisdata.
+# Volumes: dados, Redis e mídia são exclusivos do projeto markina-gallery.
 #
 # Uso local:
 #   1) cp .env.example docker/.env   (ajuste valores locais; nunca versionar)
@@ -57,6 +57,12 @@ services:
       SESSION_DAYS: ${SESSION_DAYS:-7}
       AUTH_RATE_LIMIT_WINDOW_MINUTES: ${AUTH_RATE_LIMIT_WINDOW_MINUTES:-15}
       AUTH_RATE_LIMIT_MAX_REQUESTS: ${AUTH_RATE_LIMIT_MAX_REQUESTS:-5}
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+    volumes:
+      - media-source:/var/lib/markina/source
+      - media-derivatives:/var/lib/markina/derivatives
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -131,6 +137,12 @@ services:
     command: ["python", "-m", "app.worker"]
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+    volumes:
+      - media-source:/var/lib/markina/source
+      - media-derivatives:/var/lib/markina/derivatives
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -146,6 +158,8 @@ services:
 volumes:
   pgdata:
   redisdata:
+  media-source:
+  media-derivatives:
 
 networks:
   internal:

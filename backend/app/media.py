@@ -35,6 +35,18 @@ def safe_source_path(photo: PhotoAsset) -> Path:
     return candidate
 
 
+def safe_derivative_path(derivative: MediaDerivative) -> Path:
+    """Resolve um derivado persistido sem aceitar caminhos vindos do browser."""
+    if not derivative.relative_path:
+        raise ValueError("Prévia indisponível.")
+    candidate = (derivatives_root() / derivative.relative_path).resolve()
+    try:
+        candidate.relative_to(derivatives_root())
+    except ValueError as exc:
+        raise ValueError("Caminho de mídia inválido.") from exc
+    return candidate
+
+
 def watermark(image: Image.Image) -> Image.Image:
     """Incorpora uma marca simples no bitmap que será entregue ao cliente."""
     marked = image.copy()
@@ -61,12 +73,15 @@ def enqueue_derivatives(db: Session, photo: PhotoAsset) -> MediaJob:
     return job
 
 
-def generate_derivatives(db: Session, photo: PhotoAsset) -> list[MediaDerivative]:
+def generate_derivatives(
+    db: Session, photo: PhotoAsset, job: MediaJob | None = None
+) -> list[MediaDerivative]:
     """Gera variantes JPEG sem EXIF; segura para reexecução da mesma foto."""
-    job = enqueue_derivatives(db, photo)
-    job.status = "processing"
-    job.attempts += 1
-    job.updated_at = now()
+    job = job or enqueue_derivatives(db, photo)
+    if job.status != "processing":
+        job.status = "processing"
+        job.attempts += 1
+        job.updated_at = now()
     source = safe_source_path(photo)
     if not source.is_file():
         job.status = "failed"
