@@ -24,6 +24,9 @@ from app.auth import (
     GalleryAccess,
     ParentGallery,
     PhotoAsset,
+    PhotoComment,
+    PhotoFavorite,
+    PhotoSelection,
     Role,
     SessionLocal,
     audit,
@@ -78,6 +81,10 @@ class DerivedGallerySettingsInput(BaseModel):
     comments_enabled: bool | None = None
 
 
+class PhotoCommentInput(BaseModel):
+    body: str = Field(min_length=1, max_length=2_000)
+
+
 def db_session():
     db = SessionLocal()
     try:
@@ -106,6 +113,22 @@ def derived_gallery_for_client(
     if not access or (require_access_enabled and not gallery.access_enabled):
         raise HTTPException(status_code=403, detail="Acesso negado.")
     return gallery
+
+
+def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID) -> None:
+    assigned = db.scalar(
+        select(DerivedGalleryPhoto).where(
+            DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+            DerivedGalleryPhoto.photo_asset_id == photo_id,
+        )
+    )
+    if not assigned:
+        raise HTTPException(status_code=404, detail="Foto não encontrada na galeria.")
+
+
+def require_selection_window(gallery: DerivedGallery) -> None:
+    if gallery.selection_expires_at and expired(gallery.selection_expires_at):
+        raise HTTPException(status_code=403, detail="O prazo para novas seleções expirou.")
 
 
 @app.get("/health")
@@ -388,3 +411,213 @@ def gallery_area(gallery_id: UUID, request: Request) -> dict[str, str]:
             db.commit()
             raise HTTPException(status_code=403, detail="Acesso negado.")
     return {"status": "authorized"}
+
+
+@app.post("/gallery/{gallery_id}/photos/{photo_id}/selection", status_code=status.HTTP_201_CREATED)
+def select_photo(
+    gallery_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
+    require_selection_window(gallery)
+    assigned_photo_for_gallery(db, gallery_id, photo_id)
+    existing = db.scalar(
+        select(PhotoSelection).where(
+            PhotoSelection.derived_gallery_id == gallery_id,
+            PhotoSelection.photo_asset_id == photo_id,
+            PhotoSelection.client_id == session.subject_id,
+        )
+    )
+    if not existing:
+        db.add(
+            PhotoSelection(
+                derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=session.subject_id
+            )
+        )
+        audit(db, "photo_selection.created", str(gallery_id))
+        db.commit()
+    return {"status": "selected"}
+
+
+@app.delete("/gallery/{gallery_id}/photos/{photo_id}/selection", status_code=status.HTTP_204_NO_CONTENT)
+def unselect_photo(
+    gallery_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> Response:
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    selection = db.scalar(
+        select(PhotoSelection).where(
+            PhotoSelection.derived_gallery_id == gallery_id,
+            PhotoSelection.photo_asset_id == photo_id,
+            PhotoSelection.client_id == session.subject_id,
+        )
+    )
+    if selection:
+        db.delete(selection)
+        audit(db, "photo_selection.removed", str(gallery_id))
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/gallery/{gallery_id}/photos/{photo_id}/favorite", status_code=status.HTTP_201_CREATED)
+def favorite_photo(
+    gallery_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
+    if not gallery.favorites_enabled:
+        raise HTTPException(status_code=403, detail="Favoritos não estão habilitados nesta galeria.")
+    assigned_photo_for_gallery(db, gallery_id, photo_id)
+    existing = db.scalar(
+        select(PhotoFavorite).where(
+            PhotoFavorite.derived_gallery_id == gallery_id,
+            PhotoFavorite.photo_asset_id == photo_id,
+            PhotoFavorite.client_id == session.subject_id,
+        )
+    )
+    if not existing:
+        db.add(
+            PhotoFavorite(
+                derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=session.subject_id
+            )
+        )
+        audit(db, "photo_favorite.created", str(gallery_id))
+        db.commit()
+    return {"status": "favorited"}
+
+
+@app.delete("/gallery/{gallery_id}/photos/{photo_id}/favorite", status_code=status.HTTP_204_NO_CONTENT)
+def unfavorite_photo(
+    gallery_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> Response:
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    favorite = db.scalar(
+        select(PhotoFavorite).where(
+            PhotoFavorite.derived_gallery_id == gallery_id,
+            PhotoFavorite.photo_asset_id == photo_id,
+            PhotoFavorite.client_id == session.subject_id,
+        )
+    )
+    if favorite:
+        db.delete(favorite)
+        audit(db, "photo_favorite.removed", str(gallery_id))
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/gallery/{gallery_id}/photos/{photo_id}/comments", status_code=status.HTTP_201_CREATED)
+def create_photo_comment(
+    gallery_id: UUID,
+    photo_id: UUID,
+    payload: PhotoCommentInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
+    if not gallery.comments_enabled:
+        raise HTTPException(status_code=403, detail="Comentários não estão habilitados nesta galeria.")
+    assigned_photo_for_gallery(db, gallery_id, photo_id)
+    comment = PhotoComment(
+        derived_gallery_id=gallery_id,
+        photo_asset_id=photo_id,
+        client_id=session.subject_id,
+        body=payload.body.strip(),
+    )
+    db.add(comment)
+    db.flush()
+    audit(db, "photo_comment.created", str(comment.id))
+    db.commit()
+    return {"id": str(comment.id)}
+
+
+@app.get("/gallery/{gallery_id}/comments")
+def client_comments(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, str]]]:
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    comments = db.scalars(
+        select(PhotoComment)
+        .where(
+            PhotoComment.derived_gallery_id == gallery_id,
+            PhotoComment.client_id == session.subject_id,
+            PhotoComment.removed_at.is_(None),
+        )
+        .order_by(PhotoComment.created_at.asc())
+    )
+    return {
+        "comments": [
+            {"id": str(comment.id), "photo_id": str(comment.photo_asset_id), "body": comment.body}
+            for comment in comments
+        ]
+    }
+
+
+@app.delete("/gallery/{gallery_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_own_comment(
+    gallery_id: UUID, comment_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> Response:
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    comment = db.scalar(
+        select(PhotoComment).where(
+            PhotoComment.id == comment_id,
+            PhotoComment.derived_gallery_id == gallery_id,
+            PhotoComment.client_id == session.subject_id,
+            PhotoComment.removed_at.is_(None),
+        )
+    )
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comentário não encontrado.")
+    comment.removed_at = now()
+    audit(db, "photo_comment.removed_by_client", str(comment.id))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/admin/derived-galleries/{gallery_id}/comments")
+def admin_comments(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, str]]]:
+    require_admin(request)
+    if not db.get(DerivedGallery, gallery_id):
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    comments = db.scalars(
+        select(PhotoComment)
+        .where(PhotoComment.derived_gallery_id == gallery_id, PhotoComment.removed_at.is_(None))
+        .order_by(PhotoComment.created_at.asc())
+    )
+    return {
+        "comments": [
+            {
+                "id": str(comment.id),
+                "photo_id": str(comment.photo_asset_id),
+                "body": comment.body,
+            }
+            for comment in comments
+        ]
+    }
+
+
+@app.delete(
+    "/admin/derived-galleries/{gallery_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def remove_comment_as_admin(
+    gallery_id: UUID, comment_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> Response:
+    require_admin(request)
+    comment = db.scalar(
+        select(PhotoComment).where(
+            PhotoComment.id == comment_id,
+            PhotoComment.derived_gallery_id == gallery_id,
+            PhotoComment.removed_at.is_(None),
+        )
+    )
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comentário não encontrado.")
+    comment.removed_at = now()
+    audit(db, "photo_comment.removed_by_admin", str(comment.id))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

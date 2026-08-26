@@ -2,7 +2,7 @@
 
 - [x] 1.1 Modelar acervo-mãe, galeria derivada, referências, configurações, interações e relações comerciais em migration aditiva.
 - [x] 1.2 Implementar APIs autorizadas para criação, acesso, prazo, mensagem e permissões por galeria derivada.
-- [ ] 1.3 Implementar seleções, favoritos e comentários privados com desfazer, remoção e auditoria.
+- [x] 1.3 Implementar seleções, favoritos e comentários privados com desfazer, remoção e auditoria.
 
 ## 2. Estatísticas e interface
 
@@ -24,3 +24,4 @@
 - A base visual de `/admin` foi iniciada no frontend para eliminar o 404 pós-login. O build do frontend foi validado localmente em 2026-08-26; a página de estatísticas ainda será entregue na tarefa 2.2.
 - A tarefa 1.1 foi concluída em 2026-08-26 com modelos e migration aditiva `20260826_0002`. A migration foi aplicada em banco SQLite descartável e criou todas as tabelas previstas, sem alterar as tabelas de autenticação existentes.
 - A tarefa 1.2 foi concluída em 2026-08-26. As APIs administrativas criam acervo-mãe, registram fotos e criam/configuram galerias derivadas; a biblioteca do cliente retorna somente galerias derivadas ativas atribuídas à sua sessão. Foram adicionados testes de referência sem cópia, pertencimento da foto ao acervo e ausência de exposição por acesso legado.
+- A tarefa 1.3 foi concluída em 2026-08-26. Seleções respeitam o prazo, favoritos e comentários respeitam as permissões da galeria, e desfazer/remoção registram auditoria. O fotógrafo pode consultar e remover comentários da respectiva galeria privada.

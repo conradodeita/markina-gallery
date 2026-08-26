@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import UUID
 
 import pyotp
@@ -7,6 +8,7 @@ from sqlalchemy import select
 
 from app.auth import (
     AdminUser,
+    AuditEvent,
     AuthChallenge,
     Base,
     Client,
@@ -16,6 +18,7 @@ from app.auth import (
     engine,
     password_hasher,
     token_hash,
+    now,
 )
 from app.main import app
 
@@ -51,6 +54,43 @@ def authenticate_admin(client: TestClient) -> None:
     assert client.post(
         "/auth/admin/totp", json={"challenge_id": challenge, "code": pyotp.TOTP(secret).now()}
     ).status_code == 200
+
+
+def authenticate_client(client: TestClient, phone: str) -> None:
+    challenge = client.post(
+        "/auth/client/challenge", json={"full_name": "Cliente", "phone": phone}
+    ).json()["challenge_id"]
+    with SessionLocal() as db:
+        stored = db.get(AuthChallenge, UUID(challenge))
+        stored.secret_hash = token_hash("123456")
+        db.commit()
+    assert client.post(
+        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    ).status_code == 200
+
+
+def create_gallery_for_client(client: TestClient, person: Client, *, expires=False) -> tuple[UUID, UUID]:
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento"}).json()["id"])
+    photo_id = UUID(
+        client.post(
+            f"/admin/parent-galleries/{parent_id}/photos",
+            json={"filename": "IMG_0001.jpg", "storage_key": "events/one/img-0001.jpg"},
+        ).json()["id"]
+    )
+    payload = {
+        "parent_gallery_id": str(parent_id),
+        "client_id": str(person.id),
+        "name": "Fotos privadas",
+        "photo_ids": [str(photo_id)],
+        "favorites_enabled": True,
+        "comments_enabled": True,
+    }
+    if expires:
+        payload["selection_expires_at"] = (now() - timedelta(minutes=1)).isoformat()
+    gallery_id = UUID(client.post("/admin/derived-galleries", json=payload).json()["id"])
+    client.cookies.clear()
+    return gallery_id, photo_id
 
 
 def test_admin_creates_private_derived_gallery_without_copying_photo(client: TestClient):
@@ -142,3 +182,38 @@ def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
         "/auth/client/verify", json={"challenge_id": str(challenge_id), "code": "123456"}
     ).status_code == 200
     assert client.get("/library").json() == {"galleries": []}
+
+
+def test_client_interactions_are_private_reversible_and_audited(client: TestClient):
+    with SessionLocal() as db:
+        person = Client(full_name="Cliente", phone_e164="+5511666666666")
+        db.add(person)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, person)
+    authenticate_client(client, person.phone_e164)
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 201
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 201
+    comment = client.post(
+        f"/gallery/{gallery_id}/photos/{photo_id}/comments", json={"body": "Prefiro esta."}
+    )
+    assert comment.status_code == 201
+    assert client.get(f"/gallery/{gallery_id}/comments").json()["comments"][0]["body"] == "Prefiro esta."
+    assert client.delete(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 204
+    assert client.delete(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 204
+    assert client.delete(f"/gallery/{gallery_id}/comments/{comment.json()['id']}").status_code == 204
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent).where(AuditEvent.event == "photo_comment.removed_by_client"))
+
+
+def test_expired_selection_and_foreign_client_interactions_are_denied(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
+        outsider = Client(full_name="Outro cliente", phone_e164="+5511444444444")
+        db.add_all([owner, outsider])
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner, expires=True)
+    authenticate_client(client, owner.phone_e164)
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 403
+    client.cookies.clear()
+    authenticate_client(client, outsider.phone_e164)
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 403
