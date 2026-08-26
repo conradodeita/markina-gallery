@@ -13,5 +13,5 @@
 ## 3. Segurança e operação
 
 - [x] 3.1 Cobrir processamento idempotente, remoção de metadados, marca incorporada, autorização e auditoria com testes automatizados.
-- [ ] 3.2 Validar lint, build, migration e homologação com imagens sintéticas, incluindo inventário de volume e plano de impacto zero antes de alteração no servidor.
+- [x] 3.2 Validar lint, build, migration e homologação com imagens sintéticas, incluindo inventário de volume e plano de impacto zero antes de alteração no servidor.
 - [x] 3.3 Atualizar documentação de capacidade, retenção, proteção visual e limites conhecidos de captura de tela, verificando que não há imagens ou segredos reais versionados.
