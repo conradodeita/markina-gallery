@@ -32,7 +32,8 @@ export default function OperationsPage() {
   }
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     const file = data.get("jpeg");
     const selectedParentId = String(data.get("parent") || "");
     if (!(file instanceof File) || !file.size) { setMessage("Escolha um JPEG."); return; }
@@ -42,7 +43,7 @@ export default function OperationsPage() {
     const { id } = await registered.json();
     const imported = await fetch(`/api/admin/photo-assets/${id}/source`, { method: "PUT", credentials: "same-origin", headers: { "Content-Type": "image/jpeg" }, body: file });
     if (!imported.ok) { setMessage("O JPEG não pôde ser importado."); return; }
-    event.currentTarget.reset();
+    form.reset();
     setParentId(selectedParentId);
     refreshPhotos(selectedParentId);
     setMessage("JPEG recebido. As prévias estão sendo processadas.");
