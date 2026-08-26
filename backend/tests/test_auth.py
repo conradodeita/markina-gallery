@@ -19,6 +19,7 @@ from app.auth import (
     password_hasher,
 )
 from app.main import app
+from app.seed_admin import seed_admin
 
 
 @pytest.fixture(autouse=True)
@@ -216,3 +217,13 @@ def test_production_cookie_is_secure_and_session_is_rotated(monkeypatch, client)
     assert "Secure" in response.headers["set-cookie"]
     with SessionLocal() as db:
         assert db.scalar(select(AuditEvent).where(AuditEvent.event == "session.created"))
+
+
+def test_seed_admin_is_idempotent_and_requires_external_values(monkeypatch):
+    monkeypatch.setenv("ADMIN_SEED_EMAIL", "admin@markina.test")
+    monkeypatch.setenv("ADMIN_SEED_PASSWORD", "senha-inicial-segura")
+    monkeypatch.setenv("ADMIN_SEED_TOTP_SECRET", pyotp.random_base32())
+    seed_admin()
+    seed_admin()
+    with SessionLocal() as db:
+        assert len(list(db.scalars(select(AdminUser)))) == 1
