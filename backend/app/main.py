@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
 
 import pyotp
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.responses import PlainTextResponse
 
 from app.auth import (
     AdminPasswordInput,
@@ -28,6 +30,8 @@ from app.auth import (
     PhotoFavorite,
     PhotoSelection,
     Role,
+    SaleOrder,
+    SaleOrderItem,
     SessionLocal,
     audit,
     consume_challenge,
@@ -129,6 +133,88 @@ def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID) ->
 def require_selection_window(gallery: DerivedGallery) -> None:
     if gallery.selection_expires_at and expired(gallery.selection_expires_at):
         raise HTTPException(status_code=403, detail="O prazo para novas seleções expirou.")
+
+
+def statistics_data(
+    db: Session,
+    *,
+    starts_at: datetime | None,
+    ends_at: datetime | None,
+    client_id: UUID | None,
+    parent_gallery_id: UUID | None,
+    derived_gallery_id: UUID | None,
+    event_name: str | None,
+) -> dict[str, object]:
+    gallery_query = select(DerivedGallery.id).join(ParentGallery)
+    if client_id:
+        gallery_query = gallery_query.where(DerivedGallery.client_id == client_id)
+    if parent_gallery_id:
+        gallery_query = gallery_query.where(DerivedGallery.parent_gallery_id == parent_gallery_id)
+    if derived_gallery_id:
+        gallery_query = gallery_query.where(DerivedGallery.id == derived_gallery_id)
+    if event_name:
+        gallery_query = gallery_query.where(ParentGallery.event_name == event_name)
+    gallery_ids = set(db.scalars(gallery_query))
+    if not gallery_ids:
+        return {
+            "purchased": [],
+            "selected_not_purchased": [],
+            "revenue_cents": 0,
+            "revenue_by_day": [],
+        }
+
+    orders_query = select(SaleOrder).where(
+        SaleOrder.payment_status == "confirmed", SaleOrder.derived_gallery_id.in_(gallery_ids)
+    )
+    if starts_at:
+        orders_query = orders_query.where(SaleOrder.confirmed_at >= starts_at)
+    if ends_at:
+        orders_query = orders_query.where(SaleOrder.confirmed_at <= ends_at)
+    confirmed_orders = list(db.scalars(orders_query))
+    order_ids = {order.id for order in confirmed_orders}
+    purchased_by_photo: dict[UUID, str] = {}
+    if order_ids:
+        for item in db.scalars(select(SaleOrderItem).where(SaleOrderItem.sale_order_id.in_(order_ids))):
+            purchased_by_photo.setdefault(item.photo_asset_id, item.filename_snapshot)
+
+    selections_query = select(PhotoSelection).where(PhotoSelection.derived_gallery_id.in_(gallery_ids))
+    if starts_at:
+        selections_query = selections_query.where(PhotoSelection.created_at >= starts_at)
+    if ends_at:
+        selections_query = selections_query.where(PhotoSelection.created_at <= ends_at)
+    selected_ids = set(db.scalars(selections_query.with_only_columns(PhotoSelection.photo_asset_id)))
+    selected_not_purchased_ids = selected_ids - set(purchased_by_photo)
+    selected_names: dict[UUID, str] = {}
+    if selected_not_purchased_ids:
+        for photo in db.scalars(select(PhotoAsset).where(PhotoAsset.id.in_(selected_not_purchased_ids))):
+            selected_names[photo.id] = photo.filename
+
+    revenue_by_day: defaultdict[str, int] = defaultdict(int)
+    for order in confirmed_orders:
+        if order.confirmed_at:
+            revenue_by_day[order.confirmed_at.date().isoformat()] += order.total_cents
+    return {
+        "purchased": [
+            {"id": str(photo_id), "filename": filename}
+            for photo_id, filename in sorted(purchased_by_photo.items(), key=lambda item: item[1])
+        ],
+        "selected_not_purchased": [
+            {"id": str(photo_id), "filename": filename}
+            for photo_id, filename in sorted(selected_names.items(), key=lambda item: item[1])
+        ],
+        "revenue_cents": sum(order.total_cents for order in confirmed_orders),
+        "revenue_by_day": [
+            {"date": day, "revenue_cents": cents} for day, cents in sorted(revenue_by_day.items())
+        ],
+    }
+
+
+def statistics_txt(entries: list[dict[str, str]]) -> PlainTextResponse:
+    content = "".join(f"{entry['id']}\t{entry['filename']}\n" for entry in entries)
+    return PlainTextResponse(
+        content,
+        headers={"Content-Disposition": 'attachment; filename="markina-gallery-lista.txt"'},
+    )
 
 
 @app.get("/health")
@@ -367,6 +453,89 @@ def update_derived_gallery(
     audit(db, "derived_gallery.updated", str(gallery.id))
     db.commit()
     return {"id": str(gallery.id)}
+
+
+@app.get("/admin/statistics")
+def admin_statistics(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    data = statistics_data(
+        db,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        client_id=client_id,
+        parent_gallery_id=parent_gallery_id,
+        derived_gallery_id=derived_gallery_id,
+        event_name=event_name,
+    )
+    purchased = data["purchased"]
+    selected_not_purchased = data["selected_not_purchased"]
+    return {
+        "purchased_count": len(purchased),
+        "selected_not_purchased_count": len(selected_not_purchased),
+        "revenue_cents": data["revenue_cents"],
+        "revenue_by_day": data["revenue_by_day"],
+        "purchased_photos": purchased[offset : offset + limit],
+        "selected_not_purchased_photos": selected_not_purchased[offset : offset + limit],
+    }
+
+
+@app.get("/admin/statistics/selected-not-purchased.txt", response_class=PlainTextResponse)
+def export_selected_not_purchased_txt(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    db: Session = Depends(db_session),
+) -> PlainTextResponse:
+    require_admin(request)
+    data = statistics_data(
+        db,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        client_id=client_id,
+        parent_gallery_id=parent_gallery_id,
+        derived_gallery_id=derived_gallery_id,
+        event_name=event_name,
+    )
+    return statistics_txt(data["selected_not_purchased"])
+
+
+@app.get("/admin/statistics/purchased.txt", response_class=PlainTextResponse)
+def export_purchased_txt(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    db: Session = Depends(db_session),
+) -> PlainTextResponse:
+    require_admin(request)
+    data = statistics_data(
+        db,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        client_id=client_id,
+        parent_gallery_id=parent_gallery_id,
+        derived_gallery_id=derived_gallery_id,
+        event_name=event_name,
+    )
+    return statistics_txt(data["purchased"])
 
 
 @app.get("/library")

@@ -6,7 +6,7 @@
 
 ## 2. Estatísticas e interface
 
-- [ ] 2.1 Implementar agregados de compra confirmada, seleção não comprada, listas e exportação TXT autorizada, inclusive filtro por cliente.
+- [x] 2.1 Implementar agregados de compra confirmada, seleção não comprada, listas e exportação TXT autorizada, inclusive filtro por cliente.
 - [ ] 2.2 Implementar página administrativa responsiva de estatísticas, filtros, gráfico temporal e conferência de compras com preview administrativo protegido.
 - [ ] 2.3 Implementar portal do cliente para revisão, favoritos, comentários, estados de permissão/prazo e histórico de compras com prévias protegidas.
 
@@ -26,3 +26,4 @@
 - A tarefa 1.2 foi concluída em 2026-08-26. As APIs administrativas criam acervo-mãe, registram fotos e criam/configuram galerias derivadas; a biblioteca do cliente retorna somente galerias derivadas ativas atribuídas à sua sessão. Foram adicionados testes de referência sem cópia, pertencimento da foto ao acervo e ausência de exposição por acesso legado.
 - A tarefa 1.3 foi concluída em 2026-08-26. Seleções respeitam o prazo, favoritos e comentários respeitam as permissões da galeria, e desfazer/remoção registram auditoria. O fotógrafo pode consultar e remover comentários da respectiva galeria privada.
 - Em 2026-08-26, o proprietário aprovou ampliar esta mudança com filtro por cliente nas estatísticas e histórico de compras para ambos os papéis. A prévia sem marca-d'água, ampliação e exportação de compras ficam restritas ao fotógrafo; o cliente vê somente prévias protegidas. A integração WhatsApp de confirmação de pagamento foi separada na mudança `add-payment-confirmation-notifications`.
+- A tarefa 2.1 foi concluída em 2026-08-26. A API administrativa calcula fotos compradas distintas, selecionadas sem compra, receita confirmada e série diária, com filtros por período, cliente, evento, acervo e galeria derivada. Os TXT de compradas e não compradas contêm exclusivamente identificador e nome de arquivo.

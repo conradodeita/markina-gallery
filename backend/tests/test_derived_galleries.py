@@ -12,8 +12,14 @@ from app.auth import (
     AuthChallenge,
     Base,
     Client,
+    DerivedGallery,
     DerivedGalleryPhoto,
     GalleryAccess,
+    ParentGallery,
+    PhotoAsset,
+    PhotoSelection,
+    SaleOrder,
+    SaleOrderItem,
     SessionLocal,
     engine,
     password_hasher,
@@ -217,3 +223,95 @@ def test_expired_selection_and_foreign_client_interactions_are_denied(client: Te
     client.cookies.clear()
     authenticate_client(client, outsider.phone_e164)
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 403
+
+
+def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
+    with SessionLocal() as db:
+        first_client = Client(full_name="Primeiro cliente", phone_e164="+5511333333333")
+        second_client = Client(full_name="Segundo cliente", phone_e164="+5511222222222")
+        parent = ParentGallery(name="Evento", event_name="Festa")
+        db.add_all([first_client, second_client, parent])
+        db.flush()
+        bought = PhotoAsset(
+            parent_gallery_id=parent.id, filename="comprada.jpg", storage_key="event/comprada.jpg"
+        )
+        selected = PhotoAsset(
+            parent_gallery_id=parent.id, filename="selecionada.jpg", storage_key="event/selecionada.jpg"
+        )
+        other = PhotoAsset(
+            parent_gallery_id=parent.id, filename="outra.jpg", storage_key="event/outra.jpg"
+        )
+        first_gallery = DerivedGallery(
+            parent_gallery_id=parent.id, client_id=first_client.id, name="Primeira"
+        )
+        second_gallery = DerivedGallery(
+            parent_gallery_id=parent.id, client_id=second_client.id, name="Segunda"
+        )
+        db.add_all([bought, selected, other, first_gallery, second_gallery])
+        db.flush()
+        db.add_all(
+            [
+                DerivedGalleryPhoto(derived_gallery_id=first_gallery.id, photo_asset_id=bought.id),
+                DerivedGalleryPhoto(derived_gallery_id=first_gallery.id, photo_asset_id=selected.id),
+                DerivedGalleryPhoto(derived_gallery_id=second_gallery.id, photo_asset_id=other.id),
+                PhotoSelection(
+                    derived_gallery_id=first_gallery.id,
+                    photo_asset_id=selected.id,
+                    client_id=first_client.id,
+                ),
+                PhotoSelection(
+                    derived_gallery_id=second_gallery.id,
+                    photo_asset_id=other.id,
+                    client_id=second_client.id,
+                ),
+            ]
+        )
+        first_order = SaleOrder(
+            derived_gallery_id=first_gallery.id,
+            client_id=first_client.id,
+            payment_status="confirmed",
+            total_cents=1_250,
+            confirmed_at=now(),
+        )
+        second_order = SaleOrder(
+            derived_gallery_id=second_gallery.id,
+            client_id=second_client.id,
+            payment_status="confirmed",
+            total_cents=800,
+            confirmed_at=now(),
+        )
+        db.add_all([first_order, second_order])
+        db.flush()
+        db.add_all(
+            [
+                SaleOrderItem(
+                    sale_order_id=first_order.id,
+                    photo_asset_id=bought.id,
+                    filename_snapshot="comprada.jpg",
+                    unit_price_cents=1_250,
+                ),
+                SaleOrderItem(
+                    sale_order_id=second_order.id,
+                    photo_asset_id=other.id,
+                    filename_snapshot="outra.jpg",
+                    unit_price_cents=800,
+                ),
+            ]
+        )
+        db.commit()
+    assert client.get("/admin/statistics").status_code == 403
+    authenticate_admin(client)
+    response = client.get(f"/admin/statistics?client_id={first_client.id}")
+    assert response.status_code == 200
+    assert response.json()["purchased_count"] == 1
+    assert response.json()["selected_not_purchased_count"] == 1
+    assert response.json()["revenue_cents"] == 1_250
+    assert response.json()["selected_not_purchased_photos"] == [
+        {"id": str(selected.id), "filename": "selecionada.jpg"}
+    ]
+    exported = client.get(f"/admin/statistics/selected-not-purchased.txt?client_id={first_client.id}")
+    assert exported.headers["content-type"].startswith("text/plain")
+    assert exported.text == f"{selected.id}\tselecionada.jpg\n"
+    assert "Primeiro cliente" not in exported.text
+    purchased_export = client.get(f"/admin/statistics/purchased.txt?client_id={first_client.id}")
+    assert purchased_export.text == f"{bought.id}\tcomprada.jpg\n"
