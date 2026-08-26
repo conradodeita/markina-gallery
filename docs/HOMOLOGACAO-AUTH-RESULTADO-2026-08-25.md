@@ -27,8 +27,8 @@
 ## Limitações operacionais
 
 - O adaptador de WhatsApp permanece em sandbox e não enviou mensagens reais.
-- A conta administrativa inicial e o segredo TOTP estão apenas em arquivos externos ao Git, com permissões `0600`. O proprietário deve guardar essas credenciais por canal seguro e, então, remover o arquivo temporário `INITIAL_ADMIN_CREDENTIALS.txt`; o `.env.homolog` continua protegido no servidor.
+- A conta administrativa inicial e o segredo TOTP foram entregues ao proprietário por canal seguro. O arquivo temporário `INITIAL_ADMIN_CREDENTIALS.txt` foi removido do servidor após a confirmação; o `.env.homolog` continua protegido no servidor.
 
 ## Próxima ação autorizável
 
-Guardar as credenciais iniciais por canal seguro, confirmar o acesso humano no navegador e remover o arquivo temporário de credenciais iniciais do servidor. A promoção para produção requer change e aprovação próprios.
+Confirmar o acesso humano no navegador. A promoção para produção requer change e aprovação próprios.
