@@ -7,7 +7,7 @@ Validar somente dados sintéticos: duas responsáveis, um acervo-fonte, duas gal
 ## Inventário e impacto zero
 
 - Projeto autorizado: `markina-gallery` em `/opt/markina-gallery`.
-- Comando permitido: `docker compose -p markina-gallery -f docker/docker-compose.yml`.
+- Comando permitido em homologação: `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml`.
 - Não alterar containers, redes, volumes, proxy, firewall, DNS, certificados ou arquivos de qualquer outro projeto.
 - Antes do deploy, registrar versões dos containers Markina, portas publicadas e healthchecks; interromper caso algum recurso externo ao projeto apareça no inventário.
 
@@ -40,4 +40,9 @@ Se houver falha, interromper a atualização somente do projeto Markina e restau
 ## Registro de execução
 
 - Preparação local: concluída em 2026-08-26, com banco SQLite local migrado e autenticação administrativa validada.
-- Homologação remota: pendente de aprovação explícita e de inventário de impacto zero no servidor.
+- Homologação remota: aplicada em 2026-08-26 após aprovação explícita e inventário de impacto zero.
+- Versão anterior: `1f0d5b0`; versão implantada: `09c9e92`.
+- Backup lógico exclusivo do banco Markina: `/opt/markina-gallery/backups/pre-09c9e92-20260826T230027Z.sql`.
+- Migration confirmada: `20260826_0004`; API, web, worker, banco, Redis e Nginx Markina ficaram saudáveis. O endpoint externo `https://markina-homolog.duckdns.org/api/health` respondeu `{"status":"ok","service":"api"}`.
+- Verificação de isolamento: os containers ClearBudget permaneceram em execução, sem recriação ou alteração.
+- Rollback registrado: fazer checkout destacado de `1f0d5b0` no diretório Markina e executar somente `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml up -d --build`; restaurar o backup apenas se a alteração de código não resolver a ocorrência.

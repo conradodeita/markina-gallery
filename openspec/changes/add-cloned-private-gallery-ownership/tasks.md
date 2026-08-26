@@ -28,4 +28,4 @@
 
 - [x] 5.1 Executar `pytest backend/tests -q`, `ruff check backend/app backend/tests`, `npm run lint` e `npm run build`; corrigir falhas antes de marcar esta tarefa.
 - [x] 5.2 Validar o change com `npx --yes @fission-ai/openspec@latest validate add-cloned-private-gallery-ownership --strict`; registrar qualquer bloqueio restante.
-- [ ] 5.3 Preparar validação manual com dados sintéticos e plano de impacto zero para homologação; obter aprovação explícita antes de qualquer deploy e registrar versão, resultado e rollback.
+- [x] 5.3 Preparar validação manual com dados sintéticos e plano de impacto zero para homologação; obter aprovação explícita antes de qualquer deploy e registrar versão, resultado e rollback.
