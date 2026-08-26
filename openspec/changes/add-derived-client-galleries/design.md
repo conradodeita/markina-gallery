@@ -25,6 +25,14 @@ Seleções, favoritos e comentários terão chaves de cliente, galeria derivada 
 
 As métricas usarão pagamentos confirmados e valores congelados do pedido; seleção não comprada será calculada por foto dentro do filtro atual. Agregações serão feitas no backend, com paginação para listas e TXT UTF-8 gerado sob autorização admin.
 
+### Histórico por papel e mídia protegida
+
+Cliente e fotógrafo consultarão o mesmo histórico de compras da galeria derivada. O cliente receberá somente a representação protegida disponível à sua sessão; o fotógrafo autenticado poderá abrir uma prévia sem marca-d'água para conferência, inclusive em ampliação. A mídia administrativa será servida por autorização de backend de curta duração, nunca por URL pública nem incluída em exportações.
+
+### Filtro e exportação operacional
+
+As estatísticas aceitarão filtro por cliente além de período, evento, acervo-mãe e galeria derivada. A tela HTML é a superfície estruturada de consulta; TXT UTF-8 permanece a exportação inicial de identificador e nome de arquivo. PDF e CSV não pertencem a esta entrega, podendo ser propostos depois conforme necessidade operacional.
+
 ## Risks / Trade-offs
 
 - [Mudança da foto-mãe] → preservar histórico comercial e indicar indisponibilidade sem conceder acesso ao acervo.

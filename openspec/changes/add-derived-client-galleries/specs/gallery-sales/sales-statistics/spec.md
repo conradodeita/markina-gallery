@@ -6,7 +6,12 @@ Oferecer ao fotógrafo indicadores auditáveis de conversão de fotos selecionad
 
 ### Requirement: Estatísticas de seleção e compra
 
-O sistema SHALL disponibilizar ao fotógrafo uma página administrativa com contagens de fotos distintas compradas e de fotos selecionadas sem compra confirmada, filtráveis por período, evento, acervo-mãe e galeria derivada.
+O sistema SHALL disponibilizar ao fotógrafo uma página administrativa com contagens de fotos distintas compradas e de fotos selecionadas sem compra confirmada, filtráveis por período, cliente, evento, acervo-mãe e galeria derivada.
+
+#### Scenario: Filtro por cliente
+
+- **WHEN** o fotógrafo filtra as estatísticas por um cliente
+- **THEN** contagens, listas, receita, gráfico e TXT consideram somente as galerias derivadas daquele cliente, sem incluir seus dados pessoais no arquivo exportado
 
 #### Scenario: Foto comprada
 
@@ -26,6 +31,25 @@ O sistema SHALL exibir as listas de fotos compradas e selecionadas não comprada
 
 - **WHEN** o fotógrafo solicita o TXT após aplicar filtros de estatística
 - **THEN** o sistema gera o arquivo correspondente à lista não comprada visível, sem incluir dados pessoais de clientes ou URLs de mídia
+
+### Requirement: Histórico privado de compras
+
+O sistema SHALL disponibilizar o histórico de compras confirmadas ao cliente autorizado e ao fotógrafo, limitado à galeria derivada e aos pedidos correspondentes.
+
+#### Scenario: Histórico do cliente
+
+- **WHEN** o cliente autenticado consulta o histórico da sua galeria derivada
+- **THEN** o sistema exibe somente suas compras e prévias protegidas, sem expor originais ou compras de outros clientes
+
+#### Scenario: Conferência pelo fotógrafo
+
+- **WHEN** o fotógrafo abre as compras de um cliente na administração
+- **THEN** o sistema permite identificar cada foto por nome ou número e abrir uma prévia sem marca-d'água, exclusivamente sob autorização administrativa
+
+#### Scenario: Exportação da compra
+
+- **WHEN** o fotógrafo exporta uma lista de fotos compradas
+- **THEN** o sistema gera arquivo TXT UTF-8 com identificador e nome de arquivo, sem URL de mídia nem dados pessoais do cliente
 
 ### Requirement: Receita confirmada ao longo do tempo
 

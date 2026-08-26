@@ -7,7 +7,8 @@ O fotógrafo precisa transformar fotos encontradas ou selecionadas em um espaço
 - Criar galerias privadas derivadas de um acervo-mãe, com fotos referenciadas sem duplicar arquivos, acesso, prazo e mensagem próprios.
 - Permitir que o cliente autorizado selecione, favorite e comente fotos na sua galeria derivada, podendo desfazer favoritos e excluir seus próprios comentários.
 - Permitir ao fotógrafo habilitar ou desabilitar favoritos e comentários por galeria derivada; comentários permanecem privados entre o cliente e o fotógrafo.
-- Criar a página administrativa de estatísticas com fotos compradas, selecionadas não compradas, listas nominais e exportação TXT, receita de pagamentos confirmados e gráfico temporal.
+- Criar a página administrativa de estatísticas com fotos compradas, selecionadas não compradas, listas nominais, filtro por cliente, exportação TXT e receita de pagamentos confirmados com gráfico temporal.
+- Disponibilizar histórico de compras ao cliente e ao fotógrafo, com previews protegidos para o cliente e previews sem marca-d'água, ampliação e exportação somente para o fotógrafo.
 
 ## Capabilities
 
@@ -15,7 +16,7 @@ O fotógrafo precisa transformar fotos encontradas ou selecionadas em um espaço
 
 - `client-access/derived-galleries`: acesso privado do cliente a galerias derivadas, com prazo, mensagem e permissões próprias.
 - `gallery-sales/photo-engagement`: seleção, favoritos e comentários privados controlados pelo fotógrafo.
-- `gallery-sales/sales-statistics`: indicadores de seleção e compra, exportação TXT e receita temporal administrativa.
+- `gallery-sales/sales-statistics`: indicadores de seleção e compra, filtro por cliente, exportação TXT e receita temporal administrativa.
 
 ### Modified Capabilities
 
