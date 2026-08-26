@@ -20,7 +20,7 @@ Não copie banco, senha, TOTP, token DuckDNS, token WhatsApp ou segredo de produ
 1. Confirmar que o diretório de destino e o arquivo `.env.homolog` pertencem ao serviço da Markina Gallery e não são legíveis por outros usuários.
 2. Executar `docker compose -p markina-gallery -f docker/docker-compose.yml config` com o arquivo de ambiente selecionado.
 3. Construir e subir somente a Markina Gallery. O serviço `migrate` executa `alembic upgrade head` antes da API e do worker.
-4. Criar o administrador inicial uma única vez com `docker compose -p markina-gallery -f docker/docker-compose.yml run --rm api python -m app.seed_admin`.
+4. Criar o administrador inicial uma única vez com `docker compose -p markina-gallery -f docker/docker-compose.yml --profile bootstrap run --rm seed-admin`. A senha e o TOTP ficam disponíveis apenas durante esse container temporário, nunca na API em execução.
 5. Configurar no Nginx Proxy Manager apenas o host `markina-homolog.duckdns.org` apontando para `127.0.0.1:8080`, com certificado HTTPS para esse host. Não editar hosts existentes.
 
 ## Smoke test

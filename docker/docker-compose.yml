@@ -78,6 +78,22 @@ services:
     networks:
       - internal
 
+  seed-admin:
+    build: ../backend
+    command: ["python", "-m", "app.seed_admin"]
+    profiles: ["bootstrap"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      ADMIN_SEED_EMAIL: ${ADMIN_SEED_EMAIL:?Defina ADMIN_SEED_EMAIL somente no .env externo}
+      ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:?Defina ADMIN_SEED_PASSWORD somente no .env externo}
+      ADMIN_SEED_TOTP_SECRET: ${ADMIN_SEED_TOTP_SECRET:?Defina ADMIN_SEED_TOTP_SECRET somente no .env externo}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      - internal
+
   db:
     image: postgres:17-alpine
     environment:
