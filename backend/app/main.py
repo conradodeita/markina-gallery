@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
+from typing import Annotated
 from uuid import UUID
 
 import pyotp
+from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -98,6 +100,9 @@ def db_session():
         yield db
     finally:
         db.close()
+
+
+DatabaseSession = Annotated[Session, Depends(db_session)]
 
 
 def require_admin(request: Request) -> None:
@@ -288,7 +293,7 @@ def admin_password(
     if admin and admin.email_verified:
         try:
             valid = password_hasher.verify(admin.password_hash, payload.password)
-        except Exception:
+        except VerificationError:
             valid = False
     if not valid:
         audit(db, "admin_password.failed", email)

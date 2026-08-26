@@ -22,9 +22,9 @@ from app.auth import (
     SaleOrderItem,
     SessionLocal,
     engine,
+    now,
     password_hasher,
     token_hash,
-    now,
 )
 from app.main import app
 
