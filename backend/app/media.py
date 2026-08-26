@@ -106,9 +106,9 @@ def generate_derivatives(db: Session, photo: PhotoAsset) -> list[MediaDerivative
         job.updated_at = now()
         db.commit()
         return derivatives
-    except Exception as exc:
+    except Exception:
         job.status = "failed"
         job.last_error = "Falha ao gerar derivados."
         job.updated_at = now()
         db.commit()
-        raise exc
+        raise
