@@ -16,6 +16,12 @@ O deploy foi executado somente em `/opt/markina-gallery`, com o projeto Docker C
 - `GET /api/admin/clients` sem sessão respondeu `403`, confirmando a fronteira administrativa.
 - O container `firefly_api` do ClearBudget permaneceu em execução.
 
-## Pendência deliberada
+## Estado inicial
 
-Não foram inseridos clientes, acervos ou fotos sintéticos no banco de homologação e não foram usadas credenciais administrativas reais. A validação autenticada ponta a ponta do fluxo de cadastro, importação e criação de galeria deve ocorrer em uma sessão administrativa autorizada, com dados sintéticos descartáveis.
+Na primeira publicação não foram inseridos clientes, acervos ou fotos sintéticos no banco de homologação e não foram usadas credenciais administrativas reais. A validação autenticada foi executada posteriormente, conforme registrado abaixo.
+
+## Validação autenticada posterior
+
+Com uma sessão administrativa autorizada, foram criados em homologação um cliente, um acervo e uma galeria identificados como `Teste Operacional 20260826`, além de duas importações de uma imagem JPEG sintética de cor sólida, sem pessoa ou metadados reais. Ambas terminaram em `completed`; as fotos ficaram disponíveis para atribuição e a galeria privada foi criada com favoritos e comentários habilitados.
+
+Durante esse teste foi identificado e corrigido um erro de interface após o envio de arquivo: a limpeza do formulário ocorria após a referência do evento ter sido descartada. A correção `13846a4` foi publicada somente no serviço web do Markina Gallery e retestada com sucesso. O ClearBudget permaneceu em execução durante toda a operação.

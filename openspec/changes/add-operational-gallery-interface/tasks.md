@@ -11,5 +11,5 @@
 ## 3. Qualidade e entrega
 
 - [x] 3.1 Cobrir fluxos de criação, isolamento, importação e estados de interface backend-driven com testes.
-- [ ] 3.2 Validar lint, build, OpenSpec e homologação com dados sintéticos.
+- [x] 3.2 Validar lint, build, OpenSpec e homologação com dados sintéticos.
 - [x] 3.3 Atualizar documentação operacional e limites de importação.
