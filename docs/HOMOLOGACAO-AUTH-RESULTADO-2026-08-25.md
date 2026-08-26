@@ -17,13 +17,18 @@
 - Seed do administrador `conradodeita@gmail.com`: concluído sem expor senha ou segredo TOTP.
 - Smoke de administrador: senha, TOTP e autorização de `/api/admin` aprovados internamente. O cookie permanece `Secure` em homologação.
 - Desafio de acesso de cliente em adaptador sandbox: `POST /api/auth/client/challenge` retornou `202`, sem envio externo de WhatsApp.
+- O nginx da Markina foi associado exclusivamente à `npm-network` com o alias `markina-homolog-nginx`; a rede possui apenas esse container e o `nginx-proxy-manager` como membros relacionados ao encaminhamento.
+- Host HTTPS exclusivo criado: `markina-homolog.duckdns.org` encaminha para `markina-homolog-nginx:80`, está online e possui certificado Let's Encrypt próprio. O host existente do ClearBudget não foi alterado.
+- HTTP redireciona para HTTPS (`301`); os healthchecks público e API retornaram sucesso por HTTPS.
+- Smoke externo de administrador: senha, TOTP, cookie `Secure` e autorização de `/api/admin` aprovados.
+- Smoke externo de cliente: conta sintética sem dados reais concluiu desafio, verificação, redirecionamento e autorização de galeria por HTTPS.
+- Rollback testado somente no nginx da Markina: retorno ao commit saudável `17911c8` e restauração do commit `a16c27d`, ambos com healthcheck local aprovado. Nenhum recurso externo foi reiniciado ou editado.
 
-## Limitações e gate restante
+## Limitações operacionais
 
-- O host `markina-homolog.duckdns.org` já resolve para o servidor, mas ainda não existe proxy host/certificado HTTPS exclusivo no Nginx Proxy Manager compartilhado. A tentativa HTTPS falhou no handshake; nenhum host existente foi alterado.
-- A validação externa do cookie `Secure` e do fluxo pela URL pública fica pendente até que o nginx da Markina esteja associado à `npm-network` com o alias `markina-homolog-nginx`, e um administrador do Nginx Proxy Manager crie somente o host `markina-homolog.duckdns.org` apontando para `markina-homolog-nginx:80`, com certificado próprio.
-- Não há versão anterior da Markina Gallery neste servidor para um rollback real. O rollback permanece documentado e restrito ao projeto `markina-gallery`; não foi executado para não interromper a primeira instância saudável.
+- O adaptador de WhatsApp permanece em sandbox e não enviou mensagens reais.
+- A conta administrativa inicial e o segredo TOTP estão apenas em arquivos externos ao Git, com permissões `0600`. O proprietário deve guardar essas credenciais por canal seguro e, então, remover o arquivo temporário `INITIAL_ADMIN_CREDENTIALS.txt`; o `.env.homolog` continua protegido no servidor.
 
 ## Próxima ação autorizável
 
-Um administrador do Nginx Proxy Manager deve cadastrar o host e o certificado exclusivos acima. Após isso, repetir os smoke tests por HTTPS, conferir o cookie seguro no navegador e remover o arquivo temporário de credenciais iniciais do servidor.
+Guardar as credenciais iniciais por canal seguro, confirmar o acesso humano no navegador e remover o arquivo temporário de credenciais iniciais do servidor. A promoção para produção requer change e aprovação próprios.

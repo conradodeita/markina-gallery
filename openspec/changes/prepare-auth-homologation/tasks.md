@@ -12,7 +12,7 @@
 ## 3. Validação e gate de publicação
 
 - [x] 3.1 Executar testes, lint, build, geração da migration e validação OpenSpec, registrando os resultados no change.
-- [ ] 3.2 Após aprovação de 1.2, executar a homologação no ambiente isolado e verificar healthchecks, login de cliente, login administrativo e rollback; sem aprovação, registrar o bloqueio e não realizar mudanças externas.
+- [x] 3.2 Após aprovação de 1.2, executar a homologação no ambiente isolado e verificar healthchecks, login de cliente, login administrativo e rollback; sem aprovação, registrar o bloqueio e não realizar mudanças externas.
 - [x] 3.3 Registrar decisões, limitações e evidências de homologação no change antes de sincronizar ou arquivar qualquer spec.
 
 ## Registro de continuidade — 2026-08-25
@@ -24,3 +24,4 @@
 - Próximo dado necessário para 3.2: e-mail da conta administrativa inicial. A senha e o segredo TOTP serão gerados no servidor e não serão armazenados no Git nem enviados pelo chat.
 - Homologação isolada iniciada no commit `17911c8`: migration, healthchecks, seed do administrador `conradodeita@gmail.com`, autenticação administrativa interna e desafio de cliente sandbox foram aprovados. Evidências sem segredos em `docs/HOMOLOGACAO-AUTH-RESULTADO-2026-08-25.md`.
 - Revisão de arquitetura: como o Proxy Manager é um container, `127.0.0.1:8080` não é um destino válido para ele. O nginx da Markina usará somente a rede externa `npm-network`, sob o alias `markina-homolog-nginx`; nenhum recurso será conectado à rede do ClearBudget. A execução da revisão foi aprovada explicitamente pelo proprietário em 2026-08-25.
+- Homologação pública concluída: host e certificado exclusivos ativos, redirecionamento HTTP -> HTTPS, fluxos externos de administrador e cliente (sintético) aprovados, e rollback do nginx da Markina ao commit `17911c8` seguido de restauração ao `a16c27d` verificados. Nenhum recurso do ClearBudget foi modificado, reiniciado ou removido.
