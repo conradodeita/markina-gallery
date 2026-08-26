@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+from io import BytesIO
 from uuid import UUID
 
 import pyotp
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from PIL import Image
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -48,6 +50,7 @@ from app.auth import (
     revoke_subject_sessions,
     whatsapp_provider,
 )
+from app.media import enqueue_derivatives, safe_source_path
 
 app = FastAPI(title="Markina Gallery API", version="0.2.0")
 
@@ -397,6 +400,35 @@ def register_photo_asset(
     audit(db, "photo_asset.registered", str(asset.id))
     db.commit()
     return {"id": str(asset.id)}
+
+
+@app.put("/admin/photo-assets/{photo_id}/source", status_code=status.HTTP_202_ACCEPTED)
+async def import_photo_source(
+    photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    """Recebe somente JPEG para processamento local, nunca para entrega web direta."""
+    require_admin(request)
+    if not (request.headers.get("content-type") or "").lower().startswith("image/jpeg"):
+        raise HTTPException(status_code=415, detail="Envie uma imagem JPEG.")
+    body = await request.body()
+    if not body or len(body) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="A imagem excede o limite permitido.")
+    try:
+        with Image.open(BytesIO(body)) as image:
+            if image.format != "JPEG":
+                raise ValueError
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
+    photo = db.get(PhotoAsset, photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    destination = safe_source_path(photo)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(body)
+    enqueue_derivatives(db, photo)
+    audit(db, "photo_asset.imported", str(photo.id))
+    db.commit()
+    return {"status": "queued"}
 
 
 @app.post("/admin/derived-galleries", status_code=status.HTTP_201_CREATED)
