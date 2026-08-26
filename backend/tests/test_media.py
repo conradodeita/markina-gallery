@@ -141,6 +141,7 @@ def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, mo
             headers={"content-type": "image/jpeg"},
         )
         assert response.status_code == 202
+        assert client.get(f"/admin/photo-assets/{photo_id}/media-status").json() == {"status": "queued"}
         assert client.get("/media/source/privado/foto.jpg").status_code == 404
     assert (source_root / "privado" / "foto.jpg").is_file()
     with SessionLocal() as db:

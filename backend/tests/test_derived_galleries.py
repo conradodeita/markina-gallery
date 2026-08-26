@@ -190,6 +190,36 @@ def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
     assert client.get("/library").json() == {"galleries": []}
 
 
+def test_admin_operational_catalog_creates_and_lists_only_authorized_data(client: TestClient):
+    assert client.get("/admin/clients").status_code == 403
+    authenticate_admin(client)
+    created_client = client.post(
+        "/admin/clients", json={"full_name": "Cliente Operacional", "phone_e164": "+55 11 98888-7777"}
+    )
+    assert created_client.status_code == 201
+    assert client.post(
+        "/admin/clients", json={"full_name": "Cliente Operacional", "phone_e164": "+5511988887777"}
+    ).status_code == 409
+    parent = client.post("/admin/parent-galleries", json={"name": "Acervo operacional"})
+    assert parent.status_code == 201
+    parent_id = parent.json()["id"]
+    photo = client.post(
+        f"/admin/parent-galleries/{parent_id}/photos",
+        json={"filename": "operacional.jpg", "storage_key": "operacional/foto.jpg"},
+    )
+    assert photo.status_code == 201
+    assert client.get("/admin/clients").json()["clients"] == [
+        {"id": created_client.json()["id"], "name": "Cliente Operacional"}
+    ]
+    assert client.get("/admin/parent-galleries").json()["parent_galleries"][0]["id"] == parent_id
+    assert client.get(f"/admin/parent-galleries/{parent_id}/photos").json()["photos"] == [
+        {"id": photo.json()["id"], "name": "operacional.jpg"}
+    ]
+    assert client.get(f"/admin/photo-assets/{photo.json()['id']}/media-status").json() == {
+        "status": "not_imported"
+    }
+
+
 def test_client_interactions_are_private_reversible_and_audited(client: TestClient):
     with SessionLocal() as db:
         person = Client(full_name="Cliente", phone_e164="+5511666666666")

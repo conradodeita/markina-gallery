@@ -29,6 +29,7 @@ from app.auth import (
     DerivedGalleryPhoto,
     GalleryAccess,
     MediaDerivative,
+    MediaJob,
     ParentGallery,
     PhotoAsset,
     PhotoComment,
@@ -62,6 +63,11 @@ class ParentGalleryInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     event_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=5_000)
+
+
+class ClientInput(BaseModel):
+    full_name: str = Field(min_length=3, max_length=200)
+    phone_e164: str = Field(min_length=8, max_length=32)
 
 
 class PhotoAssetInput(BaseModel):
@@ -389,6 +395,58 @@ def admin_area(request: Request) -> dict[str, str]:
     return {"status": "authorized"}
 
 
+@app.get("/admin/clients")
+def admin_clients(request: Request, db: Session = Depends(db_session)) -> dict[str, list[dict[str, str]]]:
+    require_admin(request)
+    clients = db.scalars(select(Client).order_by(Client.full_name))
+    return {"clients": [{"id": str(item.id), "name": item.full_name} for item in clients]}
+
+
+@app.post("/admin/clients", status_code=status.HTTP_201_CREATED)
+def create_client(
+    payload: ClientInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    require_admin(request)
+    phone = normalize_e164(payload.phone_e164)
+    if db.scalar(select(Client).where(Client.phone_e164 == phone)):
+        raise HTTPException(status_code=409, detail="Já existe cliente com este WhatsApp.")
+    client = Client(full_name=payload.full_name.strip(), phone_e164=phone)
+    db.add(client)
+    db.flush()
+    audit(db, "client.created_by_admin", str(client.id))
+    db.commit()
+    return {"id": str(client.id)}
+
+
+@app.get("/admin/parent-galleries")
+def admin_parent_galleries(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, str]]]:
+    require_admin(request)
+    galleries = db.scalars(select(ParentGallery).order_by(ParentGallery.created_at.desc()))
+    return {
+        "parent_galleries": [
+            {"id": str(item.id), "name": item.name, "event_name": item.event_name or ""}
+            for item in galleries
+        ]
+    }
+
+
+@app.get("/admin/parent-galleries/{parent_gallery_id}/photos")
+def admin_parent_gallery_photos(
+    parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, str]]]:
+    require_admin(request)
+    if not db.get(ParentGallery, parent_gallery_id):
+        raise HTTPException(status_code=404, detail="Acervo não encontrado.")
+    photos = db.scalars(
+        select(PhotoAsset)
+        .where(PhotoAsset.parent_gallery_id == parent_gallery_id)
+        .order_by(PhotoAsset.filename)
+    )
+    return {"photos": [{"id": str(item.id), "name": item.display_name or item.filename} for item in photos]}
+
+
 @app.post("/admin/parent-galleries", status_code=status.HTTP_201_CREATED)
 def create_parent_gallery(
     payload: ParentGalleryInput, request: Request, db: Session = Depends(db_session)
@@ -447,6 +505,20 @@ async def import_photo_source(
     audit(db, "photo_asset.imported", str(photo.id))
     db.commit()
     return {"status": "queued"}
+
+
+@app.get("/admin/photo-assets/{photo_id}/media-status")
+def photo_media_status(
+    photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    """Estado de processamento usado pela interface administrativa."""
+    require_admin(request)
+    if not db.get(PhotoAsset, photo_id):
+        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    job = db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == photo_id))
+    if not job:
+        return {"status": "not_imported"}
+    return {"status": job.status}
 
 
 @app.get("/admin/photo-assets/{photo_id}/preview")
