@@ -609,6 +609,13 @@ def _parent_gallery_or_404(db: Session, parent_gallery_id: UUID) -> ParentGaller
     return gallery
 
 
+def _unlisted_link(request: Request, gallery_id: UUID) -> str:
+    """Gera link compartilhável absoluto, respeitando o proxy TLS de homologação."""
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc)).split(",")[0].strip()
+    return f"{scheme}://{host}/?parent_gallery_id={gallery_id}"
+
+
 def _gallery_cover_photo(db: Session, gallery: ParentGallery) -> PhotoAsset | None:
     if gallery.cover_photo_id:
         cover = db.get(PhotoAsset, gallery.cover_photo_id)
@@ -677,7 +684,7 @@ def parent_gallery_editor(
             "watermark_size": gallery.watermark_size,
             "watermark_direction": gallery.watermark_direction,
             "folder_display_mode": gallery.folder_display_mode,
-            "unlisted_link": f"/?parent_gallery_id={gallery.id}",
+            "unlisted_link": _unlisted_link(request, gallery.id),
             "cover_photo_id": str(gallery.cover_photo_id) if gallery.cover_photo_id else None,
             "cover_preview_url": _cover_preview_url(db, gallery),
         },
@@ -763,7 +770,7 @@ def parent_gallery_summary(
     clients = parent_gallery_clients(parent_gallery_id, request, db)["clients"]
     return {
         "id": str(gallery.id), "name": gallery.name, "event_name": gallery.event_name or "",
-        "active": gallery.active, "unlisted_link": f"/?parent_gallery_id={gallery.id}",
+        "active": gallery.active, "unlisted_link": _unlisted_link(request, gallery.id),
         "cover_preview_url": _cover_preview_url(db, gallery),
         "counts": {"folders": len(folders), "photos": photo_count, "clients": len(clients)},
         "clients": clients,
