@@ -28,7 +28,7 @@ const editor = {
 };
 
 function response(value: object, status = 200) {
-  return Promise.resolve(new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } }));
+  return Promise.resolve(new Response(status === 204 ? null : JSON.stringify(value), { status, headers: { "content-type": "application/json" } }));
 }
 
 describe("editor administrativo de galeria", () => {
@@ -83,12 +83,34 @@ describe("editor administrativo de galeria", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Apresentação/ }));
     const expand = await screen.findByRole("button", { name: "Ampliar FOTO_001.jpg" });
     fireEvent.click(expand);
-    expect(await screen.findByRole("dialog", { name: "Prévia ampliada de FOTO_001.jpg" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Prévia ampliada de FOTO_001.jpg" });
+    expect(dialog).toBeTruthy();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Usar como capa" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/source-1/cover",
       expect.objectContaining({ method: "PUT" }),
+    ));
+  });
+
+  it("confirma a exclusão no contexto da pasta, sem criar dados no navegador", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: null, released_at: null }] });
+      if (path.endsWith("/clients")) return response({ clients: [] });
+      if (path.endsWith("/photos") && !init?.method) return response({ photos: [{ id: "photo-1", name: "FOTO_001.jpg", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", status: "completed", error: null, can_delete: true, is_cover: false }] });
+      if (path.endsWith("/photos/photo-1") && init?.method === "DELETE") return response({}, 204);
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Apresentação/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/photo-folders/folder-1/photos/photo-1",
+      expect.objectContaining({ method: "DELETE" }),
     ));
   });
 });

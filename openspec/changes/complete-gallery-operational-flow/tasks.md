@@ -9,8 +9,8 @@
 ## 2. Experiência administrativa de imagens e capa
 
 - [x] 2.1 Completar a etapa Imagens com cartões de pasta, contagem, capa/preview padrão e estados de processamento retornados pelo backend; verificar duas pastas com fotos somente em uma delas.
-- [ ] 2.2 Implementar grade de prévias administrativas com marca d’água e modal acessível de ampliação; verificar teclado, fechamento, viewport móvel e ausência de URL do original.
-- [ ] 2.3 Implementar comandos de exclusão de foto e escolha/troca de capa com confirmação e mensagens de bloqueio do backend; verificar que foto comprada não oferece remoção efetiva e que apagar capa recompõe o fallback.
+- [x] 2.2 Implementar grade de prévias administrativas com marca d’água e modal acessível de ampliação; verificar teclado, fechamento, viewport móvel e ausência de URL do original.
+- [x] 2.3 Implementar comandos de exclusão de foto e escolha/troca de capa com confirmação e mensagens de bloqueio do backend; verificar que foto comprada não oferece remoção efetiva e que apagar capa recompõe o fallback.
 - [ ] 2.4 Manter retorno e avanço entre as cinco etapas sem efeitos colaterais de navegação; verificar recarga, foco, etapa atual e ausência de criação duplicada.
 
 ## 3. Clientes, resumo e compartilhamento
