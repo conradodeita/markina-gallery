@@ -128,6 +128,10 @@ class ParentGallery(Base):
     watermark_size: Mapped[int] = mapped_column(Integer, default=24)
     watermark_direction: Mapped[str] = mapped_column(String(16), default="diagonal")
     folder_display_mode: Mapped[str] = mapped_column(String(16), default="individual")
+    cover_title_font: Mapped[str] = mapped_column(String(80), default="sans-serif")
+    cover_title_color: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
+    cover_title_size: Mapped[int] = mapped_column(Integer, default=32)
+    cover_title_position: Mapped[str] = mapped_column(String(16), default="bottom-left")
     cover_photo_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("photo_asset.id", use_alter=True, name="fk_parent_gallery_cover_photo"), nullable=True
     )

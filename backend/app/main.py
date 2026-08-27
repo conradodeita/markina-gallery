@@ -81,6 +81,10 @@ class ParentGallerySettingsInput(BaseModel):
     watermark_size: int | None = Field(default=None, ge=10, le=96)
     watermark_direction: str | None = Field(default=None, pattern=r"^(horizontal|vertical|diagonal)$")
     folder_display_mode: str | None = Field(default=None, pattern=r"^(individual|sequential)$")
+    cover_title_font: str | None = Field(default=None, max_length=80)
+    cover_title_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    cover_title_size: int | None = Field(default=None, ge=12, le=96)
+    cover_title_position: str | None = Field(default=None, pattern=r"^(top-left|top-center|top-right|middle-left|middle-center|middle-right|bottom-left|bottom-center|bottom-right)$")
 
 
 class ParentGalleryCoverInput(BaseModel):
@@ -684,6 +688,10 @@ def parent_gallery_editor(
             "watermark_size": gallery.watermark_size,
             "watermark_direction": gallery.watermark_direction,
             "folder_display_mode": gallery.folder_display_mode,
+            "cover_title_font": gallery.cover_title_font,
+            "cover_title_color": gallery.cover_title_color,
+            "cover_title_size": gallery.cover_title_size,
+            "cover_title_position": gallery.cover_title_position,
             "unlisted_link": _unlisted_link(request, gallery.id),
             "cover_photo_id": str(gallery.cover_photo_id) if gallery.cover_photo_id else None,
             "cover_preview_url": _cover_preview_url(db, gallery),
@@ -740,6 +748,10 @@ def parent_gallery_settings(
         "watermark_size": gallery.watermark_size,
         "watermark_direction": gallery.watermark_direction,
         "folder_display_mode": gallery.folder_display_mode,
+        "cover_title_font": gallery.cover_title_font,
+        "cover_title_color": gallery.cover_title_color,
+        "cover_title_size": gallery.cover_title_size,
+        "cover_title_position": gallery.cover_title_position,
     }
 
 
