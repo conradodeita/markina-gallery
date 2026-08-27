@@ -30,4 +30,4 @@
 
 - [x] 5.1 Cobrir APIs de lote/liberação e fluxos críticos das duas superfícies com testes backend/frontend; executar `ruff check backend/app backend/tests`, `pytest backend/tests -q`, `npm run lint`, `npm test` e `npm run build`.
 - [x] 5.2 Validar a mudança com `npx --yes @fission-ai/openspec@latest validate launch-original-gallery-interface --strict` e corrigir falhas antes de marcar a tarefa.
-- [ ] 5.3 Preparar e executar homologação com JPEGs e clientes sintéticos, inventário de impacto zero e aprovação explícita antes de deploy; registrar versão, resultado, rollback e solicitar a validação humana somente após a interface final estar disponível.
+- [x] 5.3 Preparar e executar homologação com JPEGs e clientes sintéticos, inventário de impacto zero e aprovação explícita antes de deploy; registrar versão, resultado, rollback e solicitar a validação humana somente após a interface final estar disponível.
