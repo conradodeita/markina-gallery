@@ -1091,6 +1091,34 @@ def create_parent_gallery(
     return {"id": str(gallery.id)}
 
 
+@app.delete("/admin/parent-galleries/{parent_gallery_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_parent_gallery(
+    parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> Response:
+    """Remove somente uma galeria do evento que ainda não possui conteúdo nem vínculos."""
+    require_admin(request)
+    gallery = _parent_gallery_or_404(db, parent_gallery_id)
+    has_content = db.scalar(
+        select(PhotoFolder.id).where(PhotoFolder.parent_gallery_id == gallery.id)
+    ) or db.scalar(select(PhotoAsset.id).where(PhotoAsset.parent_gallery_id == gallery.id))
+    has_clients = db.scalar(
+        select(ParentGalleryRegistration.id).where(
+            ParentGalleryRegistration.parent_gallery_id == gallery.id
+        )
+    ) or db.scalar(
+        select(DerivedGallery.id).where(DerivedGallery.parent_gallery_id == gallery.id)
+    )
+    if has_content or has_clients:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta galeria possui pastas, fotos ou responsáveis vinculados e não pode ser excluída.",
+        )
+    audit(db, "parent_gallery.deleted", str(gallery.id))
+    db.delete(gallery)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.post("/admin/derived-galleries/{gallery_id}/clone", status_code=status.HTTP_201_CREATED)
 def clone_derived_gallery(
     gallery_id: UUID, payload: CloneGalleryInput, request: Request, db: Session = Depends(db_session)

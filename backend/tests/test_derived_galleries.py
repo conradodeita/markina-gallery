@@ -1033,3 +1033,15 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
     assert summary["clients"] == [
         {"client_id": str(ana_id), "name": "Ana", "phone": "+5511999999901", "registration_status": None, "derived_gallery_id": first.json()["id"]}
     ]
+
+
+def test_admin_deletes_only_empty_parent_gallery(client: TestClient) -> None:
+    authenticate_admin(client)
+    empty_id = UUID(client.post("/admin/parent-galleries", json={"name": "Rascunho"}).json()["id"])
+    assert client.delete(f"/admin/parent-galleries/{empty_id}").status_code == 204
+
+    occupied_id = UUID(client.post("/admin/parent-galleries", json={"name": "Com pasta"}).json()["id"])
+    create_folder_photo(client, occupied_id, storage_key="ocupada/foto.jpg")
+    blocked = client.delete(f"/admin/parent-galleries/{occupied_id}")
+    assert blocked.status_code == 409
+    assert "pastas, fotos ou responsáveis" in blocked.json()["detail"]

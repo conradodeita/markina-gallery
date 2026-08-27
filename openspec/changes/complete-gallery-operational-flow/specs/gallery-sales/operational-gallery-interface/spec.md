@@ -34,6 +34,11 @@ O sistema SHALL fornecer ao fotógrafo autenticado telas para criar e operar cli
 - **WHEN** o fotógrafo avança ou retorna entre etapas após salvar dados válidos
 - **THEN** a interface recupera do backend os dados persistidos da mesma galeria e não cria galerias, pastas ou vínculos duplicados
 
+#### Scenario: Exclusão de galeria vazia
+
+- **WHEN** o fotógrafo abre uma galeria do evento que ainda não possui pasta, foto nem responsável vinculado
+- **THEN** a interface apresenta o comando explícito “Excluir galeria vazia” e o backend permite a exclusão somente nesse estado
+
 ### Requirement: Resumo e responsáveis da galeria-mãe
 
 O sistema SHALL apresentar um resumo administrativo da galeria-mãe com capa protegida, contagens, link não listado e responsáveis vinculados. A lista de clientes SHALL ser ordenada alfabeticamente e permitir busca por nome completo ou número de WhatsApp antes de criar um novo cadastro.

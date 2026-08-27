@@ -18,6 +18,7 @@
 - [x] 3.1 Completar a etapa Clientes com lista alfabética, busca por nome/WhatsApp, estado vazio e cadastro contextual; verificar que o resultado e as permissões vêm exclusivamente do backend.
 - [x] 3.2 Implementar vínculo de cliente existente e criação/vínculo de nova cliente para a galeria atual; verificar que clientes e galerias privadas de outras origens não são misturados.
 - [x] 3.3 Implementar resumo da galeria-mãe com capa protegida, contagens, status, responsáveis vinculados e link não listado copiável; verificar atualização após criar pasta, enviar foto, escolher capa e vincular cliente.
+- [ ] 3.4 Exibir comandos textuais de edição e exclusão de galeria no resumo administrativo; permitir excluir somente galeria do evento sem pastas, fotos ou responsáveis, com confirmação e motivo retornado pelo backend.
 
 ## 4. Validação, documentação e homologação contínua
 
