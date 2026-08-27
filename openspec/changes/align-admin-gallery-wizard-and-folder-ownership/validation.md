@@ -26,3 +26,11 @@ Use somente uma galeria e clientes de teste. Não use fotos de pessoas reais nem
 - `npm run lint`: aprovado, com sete avisos preexistentes sobre imagens/navegação em telas fora deste editor.
 - `npm test -- --pool=threads --maxWorkers=1`: 14 testes aprovados.
 - `npm run build`: aprovado.
+
+## Homologação executada em 27/08/2026
+
+- Commit implantado: `11ffe3b`.
+- Backup exclusivo do PostgreSQL do Markina criado em `/opt/markina-gallery/backups/markina-gallery-predeploy-20260827.sql` e verificado por SHA-256 antes da atualização.
+- O host compartilhado foi inventariado antes da execução; somente o projeto Compose `markina-gallery` foi usado, sempre com `-p markina-gallery -f docker/docker-compose.yml` e `--env-file docker/.env.homolog`.
+- A migration aplicada no PostgreSQL de homologação é `20260827_0006`.
+- Serviços `api`, `db`, `nginx`, `redis`, `web` e `worker` estão saudáveis. As verificações `http://127.0.0.1:8080/healthz`, `http://127.0.0.1:8080/api/health` e `https://markina-homolog.duckdns.org/api/health` retornaram sucesso.

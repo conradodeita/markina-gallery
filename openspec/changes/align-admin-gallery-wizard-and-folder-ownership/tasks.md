@@ -40,4 +40,4 @@
 - [x] 6.1 Atualizar documentação operacional e de arquitetura com a hierarquia galeria-mãe → pasta → foto → referências derivadas e verificar que não reste orientação de upload avulso.
 - [ ] 6.2 Manter estes artefatos e checkboxes sincronizados durante a aplicação e validar a mudança com OpenSpec em modo estrito; verificar que proposal, specs, design e implementação permaneçam coerentes.
 - [x] 6.3 Preparar roteiro de validação humana das cinco etapas e critérios de aceite para o fotógrafo, sem arquivar a mudança antes da aprovação visual; verificar que o roteiro usa somente dados sintéticos.
-- [ ] 6.4 Antes de qualquer homologação, apresentar inventário do host compartilhado, backup exclusivo do Markina, comandos Compose explicitamente limitados ao projeto e plano de impacto zero; verificar aprovação explícita antes de executar deploy.
+- [x] 6.4 Antes de qualquer homologação, apresentar inventário do host compartilhado, backup exclusivo do Markina, comandos Compose explicitamente limitados ao projeto e plano de impacto zero; verificar aprovação explícita antes de executar deploy.
