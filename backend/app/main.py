@@ -100,6 +100,10 @@ class PhotoFolderRenameInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class PhotoBulkDeleteInput(BaseModel):
+    photo_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
 class PhotoFolderReleaseInput(BaseModel):
     gallery_ids: list[UUID] = Field(min_length=1, max_length=100)
 
@@ -1006,6 +1010,37 @@ def delete_folder_photo_asset(folder_id: UUID, photo_id: UUID, request: Request,
             # A limpeza física é idempotente. Uma nova rotina de mídia poderá remover o resíduo seguro.
             continue
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.delete("/admin/photo-folders/{folder_id}/photos")
+def delete_folder_photo_assets(
+    folder_id: UUID,
+    payload: PhotoBulkDeleteInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, list[str]]:
+    """Exclui em massa as fotos elegíveis e informa as protegidas."""
+    require_admin(request)
+    if not db.get(PhotoFolder, folder_id):
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    deleted: list[str] = []
+    blocked: list[str] = []
+    missing: list[str] = []
+    for photo_id in dict.fromkeys(payload.photo_ids):
+        photo = db.get(PhotoAsset, photo_id)
+        if not photo or photo.folder_id != folder_id:
+            missing.append(str(photo_id))
+            continue
+        if db.scalar(
+            select(SaleOrderItem.id)
+            .join(SaleOrder)
+            .where(SaleOrderItem.photo_asset_id == photo.id, SaleOrder.payment_status == "confirmed")
+        ):
+            blocked.append(str(photo_id))
+            continue
+        delete_folder_photo_asset(folder_id, photo_id, request, db)
+        deleted.append(str(photo_id))
+    return {"deleted_ids": deleted, "blocked_ids": blocked, "missing_ids": missing}
 
 
 @app.post("/admin/photo-folders/{folder_id}/photos", status_code=status.HTTP_201_CREATED)

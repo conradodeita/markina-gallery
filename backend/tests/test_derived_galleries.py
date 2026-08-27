@@ -1017,6 +1017,25 @@ def test_photo_deletion_rejects_other_folder_and_confirmed_purchase(client: Test
     assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{second_photo}").status_code == 204
 
 
+def test_photo_bulk_deletion_reports_confirmed_items(client: TestClient) -> None:
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento em lote"}).json()["id"])
+    folder_id, first_photo = create_folder_photo(client, parent_id, storage_key="evento/lote-1.jpg")
+    second_photo = UUID(client.post(f"/admin/photo-folders/{folder_id}/photos", json={"filename": "lote-2.jpg", "storage_key": "evento/lote-2.jpg"}).json()["id"])
+    client_id = UUID(client.post("/admin/clients", json={"full_name": "Cliente Lote", "phone_e164": "+5511999999988"}).json()["id"])
+    gallery_id = UUID(client.post("/admin/derived-galleries", json={"parent_gallery_id": str(parent_id), "client_id": str(client_id), "name": "Lote", "photo_ids": []}).json()["id"])
+    with SessionLocal() as db:
+        order = SaleOrder(derived_gallery_id=gallery_id, client_id=client_id, payment_status="confirmed", total_cents=1000, confirmed_at=now())
+        db.add(order)
+        db.flush()
+        db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=second_photo, filename_snapshot="lote-2.jpg", unit_price_cents=1000))
+        db.commit()
+    response = client.request("DELETE", f"/admin/photo-folders/{folder_id}/photos", json={"photo_ids": [str(first_photo), str(second_photo)]})
+    assert response.status_code == 200
+    assert response.json()["deleted_ids"] == [str(first_photo)]
+    assert response.json()["blocked_ids"] == [str(second_photo)]
+
+
 def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: TestClient) -> None:
     authenticate_admin(client)
     ana_id = UUID(client.post("/admin/clients", json={"full_name": "Ana", "phone_e164": "+5511999999901"}).json()["id"])
