@@ -57,6 +57,16 @@
 
 Após a recriação da API, o Nginx interno do Markina conservou temporariamente o endereço anterior do upstream e `/api/health` respondeu 502. Foi recriado somente `markina-gallery-nginx-1`, com `--force-recreate --no-deps`; o Nginx Proxy Manager não foi alterado. Depois disso, `/healthz` e `/api/health` responderam 200 e todos os healthchecks ficaram verdes.
 
+### Correção após validação visual
+
+- A primeira autenticação visual com a cliente sintética revelou que o grid e o ampliador requisitavam a prévia protegida sem o prefixo `/api`; a API respondia corretamente, mas o frontend consultava uma rota visual do Next.js.
+- A tarefa 5.3 foi reaberta imediatamente e a interface passou a normalizar o caminho autenticado, com teste automatizado para o grid e o ampliador.
+- Correção publicada e implantada no commit `23b27f7c17690b9668be210fbd6afa260ea807b6`, após CI completo verde.
+- Rollback do frontend registrado em `/opt/markina-gallery/backups/pre-preview-fix-20260827T122805Z.manifest.txt`.
+- O redeploy reconstruiu somente `web` e recriou somente o Nginx interno do Markina; API, banco, Redis e worker não foram reiniciados.
+- A sessão sintética foi recarregada no navegador e confirmou a miniatura e a imagem do ampliador, sem o estado “prévia indisponível”.
+- `/healthz` e `/api/health` permaneceram com HTTP 200; os seis serviços do Markina ficaram saudáveis e o ClearBudget permaneceu `running(4)`.
+
 ### Evidência sintética
 
 - Acervo: `5162aa4e-886a-4dc6-bdfb-78c2323a7a20`.
