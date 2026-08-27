@@ -18,6 +18,7 @@ from app.auth import (
     MediaJob,
     ParentGallery,
     PhotoAsset,
+    PhotoFolder,
     Role,
     SaleOrder,
     SaleOrderItem,
@@ -51,8 +52,14 @@ def test_generates_idempotent_protected_derivatives_without_exif(tmp_path, monke
         parent = ParentGallery(name="Evento")
         db.add(parent)
         db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        db.add(folder)
+        db.flush()
         photo = PhotoAsset(
-            parent_gallery_id=parent.id, filename="foto.jpg", storage_key="event/foto.jpg"
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="foto.jpg",
+            storage_key="event/foto.jpg",
         )
         db.add(photo)
         db.commit()
@@ -80,8 +87,14 @@ def test_worker_processes_only_markina_media_job(tmp_path, monkeypatch):
         parent = ParentGallery(name="Evento")
         db.add(parent)
         db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        db.add(folder)
+        db.flush()
         photo = PhotoAsset(
-            parent_gallery_id=parent.id, filename="worker.jpg", storage_key="event/worker.jpg"
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="worker.jpg",
+            storage_key="event/worker.jpg",
         )
         db.add(photo)
         db.flush()
@@ -111,8 +124,14 @@ def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, mo
         parent = ParentGallery(name="Evento")
         db.add_all([admin, parent])
         db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        db.add(folder)
+        db.flush()
         photo = PhotoAsset(
-            parent_gallery_id=parent.id, filename="foto.jpg", storage_key="privado/foto.jpg"
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="foto.jpg",
+            storage_key="privado/foto.jpg",
         )
         db.add(photo)
         db.flush()
@@ -164,7 +183,20 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
         parent = ParentGallery(name="Evento")
         db.add_all([admin, client_owner, client_other, parent])
         db.flush()
-        photo = PhotoAsset(parent_gallery_id=parent.id, filename="original.jpg", storage_key="raw.jpg")
+        folder = PhotoFolder(
+            parent_gallery_id=parent.id,
+            name="Rodada 1",
+            status="released",
+            released_at=now(),
+        )
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="original.jpg",
+            storage_key="raw.jpg",
+        )
         gallery = DerivedGallery(
             parent_gallery_id=parent.id, client_id=client_owner.id, name="Galeria privada"
         )

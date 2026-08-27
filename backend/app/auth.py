@@ -22,11 +22,13 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
     UniqueConstraint,
     create_engine,
+    event,
     func,
     select,
 )
@@ -52,6 +54,16 @@ engine = create_engine(
     database_url(),
     connect_args={"check_same_thread": False} if database_url().startswith("sqlite") else {},
 )
+
+
+if database_url().startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 password_hasher = PasswordHasher()
 
@@ -131,9 +143,16 @@ class PhotoAsset(Base):
     """Arquivo pertencente ao acervo-mãe; nunca é duplicado para o cliente."""
 
     __tablename__ = "photo_asset"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["folder_id", "parent_gallery_id"],
+            ["photo_folder.id", "photo_folder.parent_gallery_id"],
+            name="fk_photo_asset_folder_gallery",
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
-    folder_id: Mapped[UUID | None] = mapped_column(ForeignKey("photo_folder.id"), nullable=True, index=True)
+    folder_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(512))
     display_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     storage_key: Mapped[str] = mapped_column(String(1024), unique=True)
@@ -145,7 +164,10 @@ class PhotoFolder(Base):
     """Lote de fotos preparado pelo fotógrafo antes de sua liberação."""
 
     __tablename__ = "photo_folder"
-    __table_args__ = (UniqueConstraint("parent_gallery_id", "position"),)
+    __table_args__ = (
+        UniqueConstraint("parent_gallery_id", "position"),
+        UniqueConstraint("id", "parent_gallery_id", name="uq_photo_folder_id_parent"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)

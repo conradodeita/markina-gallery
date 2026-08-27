@@ -3,7 +3,6 @@ import Link from "next/link";
 const navigation = [
   ["Visão geral", "/admin"],
   ["Galerias", "/admin/galleries"],
-  ["Clientes e operação", "/admin/operations"],
   ["Vendas", "/admin/purchases"],
   ["Estatísticas", "/admin/statistics"],
 ];
