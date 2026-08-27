@@ -14,7 +14,7 @@ from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
 
@@ -35,6 +35,7 @@ from app.auth import (
     ParentGallery,
     ParentGalleryRegistration,
     PhotoAsset,
+    PhotoFolder,
     PhotoComment,
     PhotoFavorite,
     PhotoSelection,
@@ -80,11 +81,23 @@ class PhotoAssetInput(BaseModel):
     storage_key: str = Field(min_length=1, max_length=1_024)
 
 
+class PhotoFolderInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class PhotoFolderRenameInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class PhotoFolderReleaseInput(BaseModel):
+    gallery_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
 class DerivedGalleryInput(BaseModel):
     parent_gallery_id: UUID
     client_id: UUID
     name: str = Field(min_length=1, max_length=200)
-    photo_ids: list[UUID] = Field(min_length=1)
+    photo_ids: list[UUID] = Field(default_factory=list)
     custom_message: str | None = Field(default=None, max_length=5_000)
     selection_expires_at: datetime | None = None
     access_enabled: bool = True
@@ -153,9 +166,13 @@ def derived_gallery_for_client(
 
 def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID) -> None:
     assigned = db.scalar(
-        select(DerivedGalleryPhoto).where(
+        select(DerivedGalleryPhoto)
+        .join(PhotoAsset, PhotoAsset.id == DerivedGalleryPhoto.photo_asset_id)
+        .outerjoin(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .where(
             DerivedGalleryPhoto.derived_gallery_id == gallery_id,
             DerivedGalleryPhoto.photo_asset_id == photo_id,
+            or_(PhotoAsset.folder_id.is_(None), PhotoFolder.status == "released"),
         )
     )
     if not assigned:
@@ -451,6 +468,8 @@ def admin_validation_summary(request: Request, db: Session = Depends(db_session)
             "parent_galleries": len(list(db.scalars(select(ParentGallery.id)))),
             "derived_galleries": len(galleries),
             "imports": dict(job_states),
+            "folders_preparing": len(list(db.scalars(select(PhotoFolder.id).where(PhotoFolder.status == "preparing")))),
+            "folders_released": len(list(db.scalars(select(PhotoFolder.id).where(PhotoFolder.status == "released")))),
         },
         "recent_galleries": [
             {
@@ -548,6 +567,168 @@ def admin_parent_gallery_photos(
         .order_by(PhotoAsset.filename)
     )
     return {"photos": [{"id": str(item.id), "name": item.display_name or item.filename} for item in photos]}
+
+
+@app.get("/admin/parent-galleries/{parent_gallery_id}/folders")
+def admin_parent_gallery_folders(
+    parent_gallery_id: UUID,
+    request: Request,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    if not db.get(ParentGallery, parent_gallery_id):
+        raise HTTPException(status_code=404, detail="Acervo não encontrado.")
+    folders = list(db.scalars(select(PhotoFolder).where(
+        PhotoFolder.parent_gallery_id == parent_gallery_id
+    ).order_by(PhotoFolder.position, PhotoFolder.created_at)))
+    rows = []
+    for folder in folders:
+        count = db.scalar(select(func.count()).select_from(PhotoAsset).where(PhotoAsset.folder_id == folder.id)) or 0
+        rows.append({"id": str(folder.id), "name": folder.name, "status": folder.status, "position": folder.position, "photo_count": count, "released_at": folder.released_at.isoformat() if folder.released_at else None})
+    return {"total": len(rows), "folders": rows[offset : offset + limit]}
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/folders", status_code=status.HTTP_201_CREATED)
+def create_photo_folder(
+    parent_gallery_id: UUID, payload: PhotoFolderInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    if not db.get(ParentGallery, parent_gallery_id):
+        raise HTTPException(status_code=404, detail="Acervo não encontrado.")
+    position = (db.scalar(select(func.max(PhotoFolder.position)).where(
+        PhotoFolder.parent_gallery_id == parent_gallery_id
+    )) or -1) + 1
+    folder = PhotoFolder(parent_gallery_id=parent_gallery_id, name=payload.name.strip(), position=position)
+    db.add(folder)
+    db.flush()
+    audit(db, "photo_folder.created", str(folder.id))
+    db.commit()
+    return {"id": str(folder.id), "status": folder.status, "position": folder.position}
+
+
+@app.patch("/admin/photo-folders/{folder_id}")
+def rename_photo_folder(
+    folder_id: UUID, payload: PhotoFolderRenameInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    require_admin(request)
+    folder = db.get(PhotoFolder, folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    if folder.status == "released":
+        raise HTTPException(status_code=409, detail="Uma pasta liberada não pode ser renomeada.")
+    folder.name = payload.name.strip()
+    audit(db, "photo_folder.renamed", str(folder.id))
+    db.commit()
+    return {"id": str(folder.id), "name": folder.name}
+
+
+@app.delete("/admin/photo-folders/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_photo_folder(folder_id: UUID, request: Request, db: Session = Depends(db_session)) -> Response:
+    require_admin(request)
+    folder = db.get(PhotoFolder, folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    if folder.status == "released" or db.scalar(select(PhotoAsset.id).where(PhotoAsset.folder_id == folder.id)):
+        raise HTTPException(status_code=409, detail="Apenas pasta vazia em preparação pode ser excluída.")
+    audit(db, "photo_folder.deleted", str(folder.id))
+    db.delete(folder)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/admin/photo-folders/{folder_id}/photos")
+def admin_photo_folder_photos(
+    folder_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    """Estado administrativo por arquivo, sem expor a origem privada."""
+    require_admin(request)
+    if not (folder := db.get(PhotoFolder, folder_id)):
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    photos = db.scalars(
+        select(PhotoAsset).where(PhotoAsset.folder_id == folder.id).order_by(PhotoAsset.filename)
+    )
+    rows = []
+    for photo in photos:
+        job = db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == photo.id))
+        rows.append(
+            {
+                "id": str(photo.id),
+                "name": photo.display_name or photo.filename,
+                "preview_url": f"/admin/photo-assets/{photo.id}/preview" if job and job.status == "completed" else None,
+                "status": job.status if job else "not_imported",
+                "error": job.last_error if job else None,
+            }
+        )
+    return {"folder": {"id": str(folder.id), "status": folder.status}, "total": len(rows), "photos": rows}
+
+
+@app.post("/admin/photo-folders/{folder_id}/photos", status_code=status.HTTP_201_CREATED)
+def register_folder_photo_asset(
+    folder_id: UUID,
+    payload: PhotoAssetInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    """Registra uma foto exclusivamente dentro de uma pasta ainda em preparação."""
+    require_admin(request)
+    folder = db.get(PhotoFolder, folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    if folder.status != "preparing":
+        raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
+    asset = PhotoAsset(parent_gallery_id=folder.parent_gallery_id, folder_id=folder.id, **payload.model_dump())
+    db.add(asset)
+    db.flush()
+    audit(db, "photo_asset.registered_in_folder", str(asset.id))
+    db.commit()
+    return {"id": str(asset.id)}
+
+
+@app.post("/admin/photo-folders/{folder_id}/release")
+def release_photo_folder(
+    folder_id: UUID,
+    payload: PhotoFolderReleaseInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    """Disponibiliza um lote concluído apenas nas galerias privadas indicadas."""
+    require_admin(request)
+    folder = db.get(PhotoFolder, folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    gallery_ids = set(payload.gallery_ids)
+    galleries = list(db.scalars(select(DerivedGallery).where(DerivedGallery.id.in_(gallery_ids))))
+    if len(galleries) != len(gallery_ids) or any(
+        gallery.parent_gallery_id != folder.parent_gallery_id or not gallery.access_enabled
+        for gallery in galleries
+    ):
+        raise HTTPException(status_code=422, detail="Cada destino deve ser uma galeria privada ativa deste acervo.")
+    photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.folder_id == folder.id)))
+    new_links = 0
+    for gallery in galleries:
+        existing_ids = set(db.scalars(select(DerivedGalleryPhoto.photo_asset_id).where(
+            DerivedGalleryPhoto.derived_gallery_id == gallery.id,
+            DerivedGalleryPhoto.photo_asset_id.in_([photo.id for photo in photos]),
+        ))) if photos else set()
+        for photo in photos:
+            if photo.id not in existing_ids:
+                db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id))
+                new_links += 1
+    if folder.status == "preparing":
+        folder.status = "released"
+        folder.released_at = now()
+        audit(db, "photo_folder.released", str(folder.id))
+    elif folder.status != "released":
+        raise HTTPException(status_code=409, detail="A pasta não pode ser liberada.")
+    db.commit()
+    return {
+        "id": str(folder.id),
+        "status": folder.status,
+        "photo_count": len(photos),
+        "new_gallery_photo_links": new_links,
+    }
 
 
 @app.post("/admin/parent-galleries", status_code=status.HTTP_201_CREATED)
@@ -740,6 +921,10 @@ async def import_photo_source(
     photo = db.get(PhotoAsset, photo_id)
     if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    if photo.folder_id:
+        folder = db.get(PhotoFolder, photo.folder_id)
+        if not folder or folder.status != "preparing":
+            raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
     destination = safe_source_path(photo)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(body)
@@ -845,6 +1030,12 @@ def create_derived_gallery(
     )
     if len(photos) != len(requested_photo_ids):
         raise HTTPException(status_code=422, detail="Todas as fotos devem pertencer ao acervo informado.")
+    if any(
+        photo.folder_id
+        and (not (folder := db.get(PhotoFolder, photo.folder_id)) or folder.status != "released")
+        for photo in photos
+    ):
+        raise HTTPException(status_code=409, detail="Fotos de pasta em preparação não podem ser distribuídas.")
     gallery = DerivedGallery(**payload.model_dump(exclude={"photo_ids"}))
     db.add(gallery)
     db.flush()
@@ -854,6 +1045,23 @@ def create_derived_gallery(
     audit(db, "derived_gallery.created", str(gallery.id))
     db.commit()
     return {"id": str(gallery.id)}
+
+
+@app.delete("/admin/derived-galleries/{gallery_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_derived_gallery(gallery_id: UUID, request: Request, db: Session = Depends(db_session)) -> Response:
+    require_admin(request)
+    gallery = db.get(DerivedGallery, gallery_id)
+    if not gallery:
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    has_photos = db.scalar(select(DerivedGalleryPhoto.id).where(DerivedGalleryPhoto.derived_gallery_id == gallery.id))
+    has_selections = db.scalar(select(PhotoSelection.id).where(PhotoSelection.derived_gallery_id == gallery.id))
+    has_orders = db.scalar(select(SaleOrder.id).where(SaleOrder.derived_gallery_id == gallery.id))
+    if has_photos or has_selections or has_orders:
+        raise HTTPException(status_code=409, detail="Esta galeria possui histórico e deve ser congelada ou bloqueada.")
+    audit(db, "derived_gallery.deleted", str(gallery.id))
+    db.delete(gallery)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def gallery_operational_status(db: Session, gallery: DerivedGallery) -> dict[str, object]:
@@ -900,6 +1108,7 @@ def list_derived_galleries(
         cover = db.scalar(select(DerivedGalleryPhoto.photo_asset_id).where(DerivedGalleryPhoto.derived_gallery_id == gallery.id).limit(1))
         entries.append({
             "id": str(gallery.id), "name": gallery.name,
+            "parent_gallery_id": str(gallery.parent_gallery_id),
             "selection_expires_at": gallery.selection_expires_at.isoformat() if gallery.selection_expires_at else None,
             "cover_preview_url": f"/admin/photo-assets/{cover}/preview" if cover else None,
             "responsible_count": 1,
@@ -920,7 +1129,7 @@ def derived_gallery_detail(gallery_id: UUID, request: Request, db: Session = Dep
     selected_count = db.scalar(select(func.count()).select_from(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery.id, PhotoSelection.client_id == gallery.client_id)) or 0
     orders = list(db.scalars(select(SaleOrder).where(SaleOrder.derived_gallery_id == gallery.id, SaleOrder.client_id == gallery.client_id)))
     responsible = {"id": str(owner.id), "name": owner.full_name, "phone": owner.phone_e164, "active": gallery.access_enabled, "selected_count": selected_count, "payment_pending": any(order.payment_status == "pending" for order in orders), "confirmed_order_count": sum(order.payment_status == "confirmed" for order in orders)} if owner else None
-    return {"id": str(gallery.id), "parent_gallery_id": str(gallery.parent_gallery_id), "name": gallery.name, "link": f"/?parent_gallery_id={gallery.parent_gallery_id}", "selection_expires_at": gallery.selection_expires_at.isoformat() if gallery.selection_expires_at else None, "cover_preview_url": f"/admin/photo-assets/{cover}/preview" if cover else None, "responsible": responsible, **status_data}
+    return {"id": str(gallery.id), "parent_gallery_id": str(gallery.parent_gallery_id), "name": gallery.name, "link": f"/?parent_gallery_id={gallery.parent_gallery_id}", "custom_message": gallery.custom_message or "", "favorites_enabled": gallery.favorites_enabled, "comments_enabled": gallery.comments_enabled, "selection_expires_at": gallery.selection_expires_at.isoformat() if gallery.selection_expires_at else None, "cover_preview_url": f"/admin/photo-assets/{cover}/preview" if cover else None, "responsible": responsible, **status_data}
 
 
 @app.patch("/admin/derived-galleries/{gallery_id}")
@@ -1063,7 +1272,7 @@ def export_purchased_txt(
 
 
 @app.get("/library")
-def client_library(request: Request, db: Session = Depends(db_session)) -> dict[str, list[dict[str, str]]]:
+def client_library(request: Request, db: Session = Depends(db_session)) -> dict[str, list[dict[str, object]]]:
     session = current_session(request, Role.CLIENT)
     galleries = db.scalars(
         select(DerivedGallery)
@@ -1073,12 +1282,24 @@ def client_library(request: Request, db: Session = Depends(db_session)) -> dict[
         )
         .order_by(DerivedGallery.created_at.desc())
     )
-    return {
-        "galleries": [
-            {"id": str(gallery.id), "name": gallery.name, "message": gallery.custom_message or ""}
-            for gallery in galleries
-        ]
-    }
+    rows: list[dict[str, object]] = []
+    for gallery in galleries:
+        folders = list(db.scalars(
+            select(PhotoFolder)
+            .join(PhotoAsset, PhotoAsset.folder_id == PhotoFolder.id)
+            .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
+            .where(DerivedGalleryPhoto.derived_gallery_id == gallery.id, PhotoFolder.status == "released")
+            .distinct()
+            .order_by(PhotoFolder.position, PhotoFolder.created_at)
+        ))
+        rows.append({
+            "id": str(gallery.id),
+            "name": gallery.name,
+            "message": gallery.custom_message or "",
+            "selection_expires_at": gallery.selection_expires_at.isoformat() if gallery.selection_expires_at else None,
+            "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
+        })
+    return {"galleries": rows}
 
 
 @app.get("/library/purchases")
@@ -1136,7 +1357,11 @@ def gallery_photos(
     photos = db.scalars(
         select(PhotoAsset)
         .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
-        .where(DerivedGalleryPhoto.derived_gallery_id == gallery_id)
+        .outerjoin(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .where(
+            DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+            or_(PhotoAsset.folder_id.is_(None), PhotoFolder.status == "released"),
+        )
         .order_by(PhotoAsset.created_at, PhotoAsset.filename)
     )
     return {
@@ -1149,6 +1374,33 @@ def gallery_photos(
             for photo in photos
         ]
     }
+
+
+@app.get("/gallery/{gallery_id}/folders")
+def gallery_released_folders(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    """Lista somente os lotes liberados e vinculados à galeria privada da cliente."""
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    folders = db.scalars(
+        select(PhotoFolder)
+        .join(PhotoAsset, PhotoAsset.folder_id == PhotoFolder.id)
+        .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
+        .where(DerivedGalleryPhoto.derived_gallery_id == gallery_id, PhotoFolder.status == "released")
+        .distinct()
+        .order_by(PhotoFolder.position, PhotoFolder.created_at)
+    )
+    rows = []
+    for folder in folders:
+        count = db.scalar(
+            select(func.count())
+            .select_from(PhotoAsset)
+            .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
+            .where(DerivedGalleryPhoto.derived_gallery_id == gallery_id, PhotoAsset.folder_id == folder.id)
+        ) or 0
+        rows.append({"id": str(folder.id), "name": folder.name, "position": folder.position, "photo_count": count})
+    return {"total": len(rows), "folders": rows}
 
 
 @app.get("/gallery/{gallery_id}/review")

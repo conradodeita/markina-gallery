@@ -1,0 +1,22 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
+
+import { ConfirmDialog, MarkinaButton, StatusBadge, SystemState } from "./ui-kit";
+
+describe("componentes visuais Markina", () => {
+  it("comunica estado e variante de ação", () => {
+    render(<><MarkinaButton variant="secondary">Voltar</MarkinaButton><StatusBadge tone="success">Liberada</StatusBadge><SystemState title="Sem galerias" detail="Aguarde a liberação." /></>);
+    expect(screen.getByRole("button", { name: "Voltar" }).className).toContain("secondary");
+    expect(screen.getByText("Liberada").className).toContain("success");
+    expect(screen.getByRole("status").textContent).toContain("Sem galerias");
+  });
+
+  it("permite cancelar diálogo por Escape", () => {
+    const onCancel = vi.fn();
+    render(<ConfirmDialog open title="Liberar lote" detail="Esta ação não inclui novas fotos depois." confirmLabel="Liberar" onCancel={onCancel} onConfirm={vi.fn()} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+});

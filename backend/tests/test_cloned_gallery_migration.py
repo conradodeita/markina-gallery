@@ -40,5 +40,12 @@ def test_upgrade_preserves_existing_client_and_confirmed_order(tmp_path: Path):
     with engine.connect() as connection:
         phone = connection.execute(text("SELECT phone_e164, active FROM client_phone WHERE client_id = :client"), {"client": client_id.hex}).one()
         snapshot = connection.execute(text("SELECT client_name_snapshot, client_phone_snapshot FROM sale_order WHERE id = :id"), {"id": order_id.hex}).one()
+        folder_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(photo_folder)"))}
+        asset_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(photo_asset)"))}
     assert phone == ("+5511999999999", 1)
     assert snapshot == ("Cliente legado", "+5511999999999")
+    assert {"id", "name", "status", "position", "released_at"} <= folder_columns
+    assert "folder_id" in asset_columns
+    alembic(database_url, "downgrade", "20260826_0004")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT full_name FROM client WHERE id = :id"), {"id": client_id.hex}).scalar_one() == "Cliente legado"

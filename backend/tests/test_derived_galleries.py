@@ -1,9 +1,11 @@
 from datetime import timedelta
+from io import BytesIO
 from uuid import UUID
 
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import select
 
 from app.auth import (
@@ -17,6 +19,7 @@ from app.auth import (
     ParentGallery,
     ParentGalleryRegistration,
     PhotoAsset,
+    PhotoFolder,
     PhotoSelection,
     PhotoView,
     SaleOrder,
@@ -479,3 +482,177 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
     assert "Primeiro cliente" not in exported.text
     purchased_export = client.get(f"/admin/statistics/purchased.txt?client_id={first_client.id}")
     assert purchased_export.text == f"{bought.id}\tcomprada.jpg\n"
+
+
+def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient) -> None:
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Festa escolar"}).json()["id"])
+
+    created = client.post(
+        f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Entrega inicial"}
+    )
+    assert created.status_code == 201
+    folder_id = UUID(created.json()["id"])
+    assert created.json() == {"id": str(folder_id), "status": "preparing", "position": 0}
+
+    listing = client.get(f"/admin/parent-galleries/{parent_id}/folders")
+    assert listing.status_code == 200
+    assert listing.json() == {
+        "total": 1,
+        "folders": [
+            {
+                "id": str(folder_id),
+                "name": "Entrega inicial",
+                "status": "preparing",
+                "position": 0,
+                "photo_count": 0,
+                "released_at": None,
+            }
+        ],
+    }
+    assert "storage_key" not in listing.text
+
+    renamed = client.patch(f"/admin/photo-folders/{folder_id}", json={"name": "Dia da apresentação"})
+    assert renamed.status_code == 200
+    assert renamed.json() == {"id": str(folder_id), "name": "Dia da apresentação"}
+
+    with SessionLocal() as db:
+        db.get(PhotoFolder, folder_id).status = "released"  # type: ignore[union-attr]
+        db.commit()
+    locked = client.patch(f"/admin/photo-folders/{folder_id}", json={"name": "Não pode"})
+    assert locked.status_code == 409
+
+
+def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Formatura"}).json()["id"])
+    folder_id = UUID(
+        client.post(f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Lote 1"}).json()["id"]
+    )
+    photo_id = UUID(
+        client.post(
+            f"/admin/photo-folders/{folder_id}/photos",
+            json={"filename": "IMG_001.jpg", "storage_key": "formatura/lote-1/IMG_001.jpg"},
+        ).json()["id"]
+    )
+    rejected = client.put(
+        f"/admin/photo-assets/{photo_id}/source", content=b"not-a-jpeg", headers={"content-type": "image/jpeg"}
+    )
+    assert rejected.status_code == 422
+
+    image = BytesIO()
+    Image.new("RGB", (16, 16), color=(10, 20, 30)).save(image, format="JPEG")
+    uploaded = client.put(
+        f"/admin/photo-assets/{photo_id}/source",
+        content=image.getvalue(),
+        headers={"content-type": "image/jpeg"},
+    )
+    assert uploaded.status_code == 202
+    listing = client.get(f"/admin/photo-folders/{folder_id}/photos")
+    assert listing.json()["photos"] == [
+        {"id": str(photo_id), "name": "IMG_001.jpg", "preview_url": None, "status": "queued", "error": None}
+    ]
+    assert "storage_key" not in listing.text
+
+    with SessionLocal() as db:
+        db.get(PhotoFolder, folder_id).status = "released"  # type: ignore[union-attr]
+        db.commit()
+    assert client.post(
+        f"/admin/photo-folders/{folder_id}/photos",
+        json={"filename": "IMG_002.jpg", "storage_key": "formatura/lote-1/IMG_002.jpg"},
+    ).status_code == 409
+    assert client.put(
+        f"/admin/photo-assets/{photo_id}/source",
+        content=image.getvalue(),
+        headers={"content-type": "image/jpeg"},
+    ).status_code == 409
+
+
+def test_folder_release_is_idempotent_and_only_exposes_authorized_destination(client: TestClient) -> None:
+    owner = Client(full_name="Dona da galeria", phone_e164="+5511999998888")
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento público")
+        db.add_all([owner, parent])
+        db.flush()
+        private_gallery = DerivedGallery(
+            parent_gallery_id=parent.id, client_id=owner.id, name="Fotos da família"
+        )
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        db.add_all([private_gallery, folder])
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="FILHO_001.jpg",
+            storage_key="event/round-1/FILHO_001.jpg",
+        )
+        db.add(photo)
+        db.commit()
+        gallery_id, folder_id, photo_id = private_gallery.id, folder.id, photo.id
+
+    authenticate_client(client, "+5511999998888")
+    assert client.get(f"/gallery/{gallery_id}/photos").json() == {"photos": []}
+    client.cookies.clear()
+    authenticate_admin(client)
+    first = client.post(
+        f"/admin/photo-folders/{folder_id}/release", json={"gallery_ids": [str(gallery_id)]}
+    )
+    assert first.status_code == 200
+    assert first.json()["new_gallery_photo_links"] == 1
+    second = client.post(
+        f"/admin/photo-folders/{folder_id}/release", json={"gallery_ids": [str(gallery_id)]}
+    )
+    assert second.status_code == 200
+    assert second.json()["new_gallery_photo_links"] == 0
+
+    client.cookies.clear()
+    authenticate_client(client, "+5511999998888")
+    visible = client.get(f"/gallery/{gallery_id}/photos")
+    assert visible.status_code == 200
+    assert visible.json()["photos"] == [
+        {"id": str(photo_id), "name": "FILHO_001.jpg", "preview_url": f"/gallery/{gallery_id}/photos/{photo_id}/preview"}
+    ]
+    assert client.get(f"/gallery/{gallery_id}/folders").json() == {
+        "total": 1,
+        "folders": [{"id": str(folder_id), "name": "Rodada 1", "position": 0, "photo_count": 1}],
+    }
+    assert client.get("/library").json()["galleries"] == [{
+        "id": str(gallery_id),
+        "name": "Fotos da família",
+        "message": "",
+        "selection_expires_at": None,
+        "folders": [{"id": str(folder_id), "name": "Rodada 1"}],
+    }]
+
+
+def test_admin_can_create_empty_private_gallery_before_releasing_a_folder(client: TestClient) -> None:
+    authenticate_admin(client)
+    client_id = UUID(client.post("/admin/clients", json={"full_name": "Responsável", "phone_e164": "+5511999997777"}).json()["id"])
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento"}).json()["id"])
+    created = client.post("/admin/derived-galleries", json={
+        "parent_gallery_id": str(parent_id), "client_id": str(client_id), "name": "Histórico da família", "photo_ids": []
+    })
+    assert created.status_code == 201
+
+
+def test_admin_deletes_only_empty_folder_and_gallery_without_history(client: TestClient) -> None:
+    authenticate_admin(client)
+    owner_id = UUID(client.post("/admin/clients", json={"full_name": "Responsável", "phone_e164": "+5511999996666"}).json()["id"])
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento seguro"}).json()["id"])
+    empty_folder_id = UUID(client.post(f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Vazia"}).json()["id"])
+    assert client.delete(f"/admin/photo-folders/{empty_folder_id}").status_code == 204
+
+    gallery_id = UUID(client.post("/admin/derived-galleries", json={"parent_gallery_id": str(parent_id), "client_id": str(owner_id), "name": "Sem histórico", "photo_ids": []}).json()["id"])
+    assert client.delete(f"/admin/derived-galleries/{gallery_id}").status_code == 204
+
+    protected_gallery_id = UUID(client.post("/admin/derived-galleries", json={"parent_gallery_id": str(parent_id), "client_id": str(owner_id), "name": "Com histórico", "photo_ids": []}).json()["id"])
+    with SessionLocal() as db:
+        photo = PhotoAsset(parent_gallery_id=parent_id, filename="preservada.jpg", storage_key="event/preservada.jpg")
+        db.add(photo)
+        db.flush()
+        db.add(DerivedGalleryPhoto(derived_gallery_id=protected_gallery_id, photo_asset_id=photo.id))
+        db.commit()
+    assert client.delete(f"/admin/derived-galleries/{protected_gallery_id}").status_code == 409

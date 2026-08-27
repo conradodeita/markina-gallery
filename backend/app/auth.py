@@ -133,11 +133,28 @@ class PhotoAsset(Base):
     __tablename__ = "photo_asset"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    folder_id: Mapped[UUID | None] = mapped_column(ForeignKey("photo_folder.id"), nullable=True, index=True)
     filename: Mapped[str] = mapped_column(String(512))
     display_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     storage_key: Mapped[str] = mapped_column(String(1024), unique=True)
     available: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotoFolder(Base):
+    """Lote de fotos preparado pelo fotógrafo antes de sua liberação."""
+
+    __tablename__ = "photo_folder"
+    __table_args__ = (UniqueConstraint("parent_gallery_id", "position"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(16), default="preparing", index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class DerivedGallery(Base):
