@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 const editor = {
-  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1" },
+  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1", cover_photo_id: null, cover_preview_url: null },
   steps: [
     { id: "ajustes", label: "Ajustes", status: "complete", available: true },
     { id: "vendas", label: "Vendas", status: "unavailable", available: false },
@@ -67,5 +67,28 @@ describe("editor administrativo de galeria", () => {
     fireEvent.change(screen.getByLabelText("Título da galeria"), { target: { value: "Nova galeria" } });
     fireEvent.click(screen.getByRole("button", { name: "Criar e continuar" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-new/edit/ajustes"));
+  });
+
+  it("abre a prévia protegida em modal e envia a escolha de capa ao backend", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: "/admin/photo-assets/photo-1/watermarked-preview", released_at: null }] });
+      if (path.endsWith("/clients")) return response({ clients: [] });
+      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "FOTO_001.jpg", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", status: "completed", error: null, can_delete: true, is_cover: false }] });
+      if (path.endsWith("/cover") && init?.method === "PUT") return response({ photo_id: "photo-1", preview_url: "/admin/photo-assets/photo-1/watermarked-preview" });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Apresentação/ }));
+    const expand = await screen.findByRole("button", { name: "Ampliar FOTO_001.jpg" });
+    fireEvent.click(expand);
+    expect(await screen.findByRole("dialog", { name: "Prévia ampliada de FOTO_001.jpg" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Usar como capa" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/source-1/cover",
+      expect.objectContaining({ method: "PUT" }),
+    ));
   });
 });

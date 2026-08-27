@@ -17,6 +17,8 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryPhoto,
+    MediaDerivative,
+    MediaJob,
     ParentGallery,
     ParentGalleryRegistration,
     PhotoAsset,
@@ -650,9 +652,10 @@ def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient
                 "id": str(folder_id),
                 "name": "Entrega inicial",
                 "status": "preparing",
-                "position": 0,
-                "photo_count": 0,
-                "released_at": None,
+                    "position": 0,
+                    "photo_count": 0,
+                    "preview_url": None,
+                    "released_at": None,
             }
         ],
     }
@@ -722,7 +725,15 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
     assert uploaded.status_code == 202
     listing = client.get(f"/admin/photo-folders/{folder_id}/photos")
     assert listing.json()["photos"] == [
-        {"id": str(photo_id), "name": "IMG_001.jpg", "preview_url": None, "status": "queued", "error": None}
+        {
+            "id": str(photo_id),
+            "name": "IMG_001.jpg",
+            "preview_url": None,
+            "status": "queued",
+            "error": None,
+            "can_delete": True,
+            "is_cover": False,
+        }
     ]
     assert "storage_key" not in listing.text
 
@@ -840,6 +851,7 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
         "status": "released",
         "position": 0,
         "photo_count": 1,
+        "preview_url": None,
     }
     assert folders[0]["released_at"] is not None
     assert folders[1:] == [
@@ -849,6 +861,7 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
             "status": "preparing",
             "position": 1,
             "photo_count": 0,
+            "preview_url": None,
             "released_at": None,
         },
     ]
@@ -908,3 +921,115 @@ def test_admin_deletes_only_empty_folder_and_gallery_without_history(client: Tes
         db.add(DerivedGalleryPhoto(derived_gallery_id=protected_gallery_id, photo_asset_id=photo.id))
         db.commit()
     assert client.delete(f"/admin/derived-galleries/{protected_gallery_id}").status_code == 409
+
+
+def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestClient, tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Festa de teste"}).json()["id"])
+    folder_id, photo_id = create_folder_photo(
+        client, parent_id, filename="FOTO_001.jpg", storage_key="festa/FOTO_001.jpg"
+    )
+    source = tmp_path / "source" / "festa" / "FOTO_001.jpg"
+    preview = tmp_path / "derivatives" / str(photo_id) / "client_preview.jpg"
+    source.parent.mkdir(parents=True)
+    preview.parent.mkdir(parents=True)
+    source.write_bytes(b"synthetic-jpeg")
+    preview.write_bytes(b"watermarked-preview")
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                MediaJob(photo_asset_id=photo_id, status="completed"),
+                MediaDerivative(
+                    photo_asset_id=photo_id,
+                    variant="client_preview",
+                    relative_path=f"{photo_id}/client_preview.jpg",
+                    status="ready",
+                ),
+            ]
+        )
+        db.commit()
+
+    listing = client.get(f"/admin/photo-folders/{folder_id}/photos")
+    assert listing.status_code == 200
+    assert listing.json()["photos"][0] == {
+        "id": str(photo_id),
+        "name": "FOTO_001.jpg",
+        "preview_url": f"/admin/photo-assets/{photo_id}/watermarked-preview",
+        "status": "completed",
+        "error": None,
+        "can_delete": True,
+        "is_cover": False,
+    }
+    assert client.put(
+        f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(photo_id)}
+    ).status_code == 200
+    summary = client.get(f"/admin/parent-galleries/{parent_id}/summary").json()
+    assert summary["cover_preview_url"] == f"/admin/photo-assets/{photo_id}/watermarked-preview"
+
+    assert client.delete(f"/admin/photo-folders/{folder_id}/photos/{photo_id}").status_code == 204
+    assert not source.exists()
+    assert not preview.exists()
+    assert client.get(f"/admin/parent-galleries/{parent_id}/summary").json()["cover_preview_url"] is None
+
+
+def test_photo_deletion_rejects_other_folder_and_confirmed_purchase(client: TestClient) -> None:
+    authenticate_admin(client)
+    client_id = UUID(
+        client.post("/admin/clients", json={"full_name": "Ana", "phone_e164": "+5511999999911"}).json()["id"]
+    )
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento"}).json()["id"])
+    first_folder, first_photo = create_folder_photo(client, parent_id, storage_key="evento/primeira.jpg")
+    second_folder, second_photo = create_folder_photo(
+        client, parent_id, folder_name="Segunda", storage_key="evento/segunda.jpg"
+    )
+    gallery_id = UUID(
+        client.post(
+            "/admin/derived-galleries",
+            json={"parent_gallery_id": str(parent_id), "client_id": str(client_id), "name": "Ana", "photo_ids": []},
+        ).json()["id"]
+    )
+    with SessionLocal() as db:
+        order = SaleOrder(
+            derived_gallery_id=gallery_id,
+            client_id=client_id,
+            payment_status="confirmed",
+            total_cents=1000,
+            confirmed_at=now(),
+        )
+        db.add(order)
+        db.flush()
+        db.add(
+            SaleOrderItem(
+                sale_order_id=order.id,
+                photo_asset_id=first_photo,
+                filename_snapshot="primeira.jpg",
+                unit_price_cents=1000,
+            )
+        )
+        db.commit()
+
+    assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{first_photo}").status_code == 404
+    blocked = client.delete(f"/admin/photo-folders/{first_folder}/photos/{first_photo}")
+    assert blocked.status_code == 409
+    assert "compra confirmada" in blocked.json()["detail"]
+    assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{second_photo}").status_code == 204
+
+
+def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: TestClient) -> None:
+    authenticate_admin(client)
+    ana_id = UUID(client.post("/admin/clients", json={"full_name": "Ana", "phone_e164": "+5511999999901"}).json()["id"])
+    client.post("/admin/clients", json={"full_name": "Zuleica", "phone_e164": "+5511999999902"})
+    assert [item["name"] for item in client.get("/admin/clients").json()["clients"]] == ["Ana", "Zuleica"]
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Formatura"}).json()["id"])
+    payload = {"parent_gallery_id": str(parent_id), "client_id": str(ana_id), "name": "Fotos da Ana", "photo_ids": []}
+    first = client.post("/admin/derived-galleries", json=payload)
+    second = client.post("/admin/derived-galleries", json=payload)
+    assert first.status_code == second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    summary = client.get(f"/admin/parent-galleries/{parent_id}/summary").json()
+    assert summary["counts"] == {"folders": 0, "photos": 0, "clients": 1}
+    assert summary["clients"] == [
+        {"client_id": str(ana_id), "name": "Ana", "phone": "+5511999999901", "registration_status": None, "derived_gallery_id": first.json()["id"]}
+    ]

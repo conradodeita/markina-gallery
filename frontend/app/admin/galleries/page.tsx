@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type PrivateGallery = { id: string; name: string; cover_preview_url: string | null; frozen: boolean; blocked: boolean; payment_pending: boolean; selection_in_progress: boolean };
-type SourceGallery = { id: string; name: string; event_name: string; private_gallery_count: number; registration_count: number; frozen_gallery_count: number };
+type SourceGallery = { id: string; name: string; event_name: string; cover_preview_url: string | null; private_gallery_count: number; registration_count: number; frozen_gallery_count: number };
 
 export default function GalleriesPage() {
   const [view, setView] = useState<"sources" | "private">("sources");
@@ -50,7 +50,7 @@ export default function GalleriesPage() {
       {loading ? <p className="form-message" role="status">Carregando galerias…</p> : null}
       {!loading && failed ? <p className="notice" role="alert">Não foi possível carregar as galerias.</p> : null}
       {!loading && !failed && empty ? <p className="notice">Nenhum resultado nesta visão.</p> : null}
-      {!loading && !failed && !empty && view === "sources" ? <section className="gallery-admin-list" aria-label="Galerias-mãe">{sources.map((source) => <Link key={source.id} href={`/admin/galleries/sources/${source.id}`}><div className="gallery-cover">Galeria</div><div><strong>{source.name}</strong><small>{source.event_name || "Evento sem nome"}</small><span>{source.registration_count} pessoas registradas · {source.private_gallery_count} galerias privadas · {source.frozen_gallery_count} congeladas</span></div></Link>)}</section> : null}
+      {!loading && !failed && !empty && view === "sources" ? <section className="gallery-admin-list" aria-label="Galerias do evento">{sources.map((source) => <Link key={source.id} href={`/admin/galleries/sources/${source.id}`}><div className="gallery-cover">{source.cover_preview_url ? <img src={`/api${source.cover_preview_url}`} alt="" /> : "Sem capa"}</div><div><strong>{source.name}</strong><small>{source.event_name || "Evento sem nome"}</small><span>{source.registration_count} pessoas registradas · {source.private_gallery_count} galerias privadas · {source.frozen_gallery_count} congeladas</span></div></Link>)}</section> : null}
       {!loading && !failed && !empty && view === "private" ? <section className="gallery-admin-list" aria-label="Galerias privadas">{privateGalleries.map((gallery) => <Link key={gallery.id} href={`/admin/galleries/${gallery.id}`}><div className="gallery-cover">{gallery.cover_preview_url ? <img src={`/api${gallery.cover_preview_url}`} alt="" /> : "Sem capa"}</div><div><strong>{gallery.name}</strong><small>1 responsável · histórico independente</small><span>{gallery.frozen ? "Prazo expirado" : gallery.blocked ? "Acesso bloqueado" : gallery.payment_pending ? "Pagamento pendente" : gallery.selection_in_progress ? "Seleção em andamento" : "Disponível"}</span></div></Link>)}</section> : null}
     </main>
   );

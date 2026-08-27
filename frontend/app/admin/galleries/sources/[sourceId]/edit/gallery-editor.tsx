@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkinaButton, StatusBadge, SystemState } from "../../../../../ui-kit";
 
 type StepId = "ajustes" | "vendas" | "detalhes" | "imagens" | "clientes";
 type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | "unavailable"; available: boolean };
-type Editor = { gallery: { id: string; name: string; event_name: string; description: string; active: boolean; unlisted_link: string }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean } };
-type Folder = { id: string; name: string; status: string; position: number; photo_count: number; released_at: string | null };
-type Photo = { id: string; name: string; preview_url: string | null; status: string; error: string | null };
+type Editor = { gallery: { id: string; name: string; event_name: string; description: string; active: boolean; unlisted_link: string; cover_photo_id: string | null; cover_preview_url: string | null }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean } };
+type Folder = { id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null };
+type Photo = { id: string; name: string; preview_url: string | null; status: string; error: string | null; can_delete: boolean; is_cover: boolean };
 type ClientRow = { client_id: string; name: string; phone: string; registration_status: string | null; derived_gallery_id: string | null };
 type ClientOption = { id: string; name: string; phone: string };
 type Availability = { available: false; reason: string; capabilities: string[] };
@@ -30,6 +30,7 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
   const [editor, setEditor] = useState<Editor | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [expandedPhoto, setExpandedPhoto] = useState<Photo | null>(null);
   const [openFolderId, setOpenFolderId] = useState("");
   const [linkedClients, setLinkedClients] = useState<ClientRow[]>([]);
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
@@ -40,6 +41,11 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const previewDialog = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (expandedPhoto) previewDialog.current?.focus();
+  }, [expandedPhoto]);
 
   useEffect(() => {
     let active = true;
@@ -116,6 +122,34 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
       setPhotos(data.photos ?? []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível abrir a pasta.");
+    }
+  }
+
+  async function setCover(photo: Photo) {
+    try {
+      await jsonRequest(`/api/admin/parent-galleries/${sourceId}/cover`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ photo_id: photo.id }),
+      });
+      setPhotos((current) => current.map((item) => ({ ...item, is_cover: item.id === photo.id })));
+      setMessage("Foto definida como capa da galeria.");
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível definir a capa.");
+    }
+  }
+
+  async function deletePhoto(photo: Photo) {
+    if (!window.confirm(`Excluir ${photo.name}? Esta ação não pode ser desfeita.`)) return;
+    try {
+      await jsonRequest(`/api/admin/photo-folders/${openFolderId}/photos/${photo.id}`, { method: "DELETE" });
+      setMessage("Foto excluída da pasta.");
+      setExpandedPhoto(null);
+      await inspectFolder(openFolderId);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível excluir a foto.");
     }
   }
 
@@ -204,9 +238,9 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
       <div className="gallery-editor-heading">
         <div>
           <Link href="/admin/galleries">← Galerias</Link>
-          <p className="eyebrow">Galeria-mãe não listada</p>
+          <p className="eyebrow">Galeria do evento · link não listado</p>
           <h1>{editor.gallery.name}</h1>
-          <p className="intro">Pastas, fotos e clientes permanecem vinculados a esta galeria durante todo o fluxo.</p>
+          <p className="intro">Organize as pastas, revise as fotos e vincule responsáveis sem sair desta galeria.</p>
         </div>
         <StatusBadge tone={editor.gallery.active ? "success" : "danger"}>{editor.gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
       </div>
@@ -243,8 +277,8 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
           <div className="section-heading"><div><p className="eyebrow">Etapa 4</p><h2>Imagens e pastas</h2></div><StatusBadge>{folders.length} pasta(s)</StatusBadge></div>
           <p className="gallery-scope-note">Crie a pasta nesta galeria, carregue todos os JPEGs e libere a rodada somente quando estiver completa.</p>
           <form className="gallery-inline-form" onSubmit={createFolder}><label>Nome da nova pasta<input name="name" required placeholder="Ex.: Apresentação da manhã" /></label><MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton></form>
-          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={folder.id === openFolderId ? "is-open" : ""}><button type="button" onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Liberada" : "Em preparação"}</small></button>{folder.status === "preparing" ? <div className="gallery-folder-actions"><button type="button" className="link-button" onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button>{folder.photo_count === 0 ? <button type="button" className="link-button" onClick={() => { if (window.confirm("Excluir esta pasta vazia?")) mutate(`/api/admin/photo-folders/${folder.id}`, "DELETE"); }}>Excluir</button> : null}</div> : null}</article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
-          {selectedFolder ? <div className="gallery-folder-workspace"><div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Liberada" : "Em preparação"}</StatusBadge></div>{photos.length ? <div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id}>{photo.preview_url ? <img src={`/api${photo.preview_url}`} alt={`Prévia administrativa de ${photo.name}`} /> : <div className="gallery-cover">Processando</div>}<strong>{photo.name}</strong><small>{photo.error ?? photo.status}</small></article>)}</div> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}{selectedFolder.status === "preparing" ? <><form className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><label>JPEGs desta pasta<input name="jpeg" type="file" accept="image/jpeg" multiple required /></label><MarkinaButton disabled={!editor.actions.can_upload}>Carregar fotos</MarkinaButton></form><fieldset className="gallery-destinations"><legend>Liberar para galerias privadas</legend>{linkedClients.filter((person) => person.derived_gallery_id).map((person) => <label key={person.client_id}><input type="checkbox" checked={destinations.includes(person.derived_gallery_id!)} onChange={(event) => setDestinations((current) => event.target.checked ? [...current, person.derived_gallery_id!] : current.filter((id) => id !== person.derived_gallery_id))} />{person.name}</label>)}{!linkedClients.some((person) => person.derived_gallery_id) ? <p>Vincule uma cliente na etapa Clientes antes de liberar.</p> : null}<MarkinaButton type="button" disabled={!photos.length || !destinations.length} onClick={() => mutate(`/api/admin/photo-folders/${selectedFolder.id}/release`, "POST", { gallery_ids: destinations })}>Liberar pasta concluída</MarkinaButton></fieldset></> : null}</div> : null}
+          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={folder.id === openFolderId ? "is-open" : ""}><button type="button" onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Liberada para clientes" : "Em preparação"}</small></button>{folder.status === "preparing" ? <div className="gallery-folder-actions"><button type="button" className="link-button" onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button>{folder.photo_count === 0 ? <button type="button" className="link-button" onClick={() => { if (window.confirm("Excluir esta pasta vazia?")) mutate(`/api/admin/photo-folders/${folder.id}`, "DELETE"); }}>Excluir</button> : null}</div> : null}</article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
+          {selectedFolder ? <div className="gallery-folder-workspace"><div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Liberada" : "Em preparação"}</StatusBadge></div>{photos.length ? <div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id}>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Processando</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.status === "completed" ? "Prévia pronta" : "Processando")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={!photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={!photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}{selectedFolder.status === "preparing" ? <><form className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><label>JPEGs desta pasta<input name="jpeg" type="file" accept="image/jpeg" multiple required /></label><MarkinaButton disabled={!editor.actions.can_upload}>Carregar fotos</MarkinaButton></form><fieldset className="gallery-destinations"><legend>Liberar para galerias privadas</legend>{linkedClients.filter((person) => person.derived_gallery_id).map((person) => <label key={person.client_id}><input type="checkbox" checked={destinations.includes(person.derived_gallery_id!)} onChange={(event) => setDestinations((current) => event.target.checked ? [...current, person.derived_gallery_id!] : current.filter((id) => id !== person.derived_gallery_id))} />{person.name}</label>)}{!linkedClients.some((person) => person.derived_gallery_id) ? <p>Vincule uma cliente na etapa Clientes antes de liberar.</p> : null}<MarkinaButton type="button" disabled={!photos.length || !destinations.length} onClick={() => mutate(`/api/admin/photo-folders/${selectedFolder.id}/release`, "POST", { gallery_ids: destinations })}>Liberar pasta concluída</MarkinaButton></fieldset></> : null}</div> : null}
         </section>
       ) : null}
 
@@ -252,10 +286,11 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
         <section className="gallery-editor-panel">
           <div className="section-heading"><div><p className="eyebrow">Etapa 5</p><h2>Clientes e acesso</h2></div><StatusBadge>{linkedClients.length} vínculo(s)</StatusBadge></div>
           <div className="unlisted-link"><span>Link único e não listado</span><code>{editor.gallery.unlisted_link}</code><small>A cliente ainda precisará concluir o login por nome, telefone e código.</small></div>
-          <div className="gallery-client-columns"><div><h3>Clientes vinculados</h3>{linkedClients.length ? <div className="dashboard-recent">{linkedClients.map((person) => <div key={person.client_id}><div><strong>{person.name}</strong><small>{person.phone}</small></div>{person.derived_gallery_id ? <Link href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <StatusBadge tone="warning">Cadastro pendente</StatusBadge>}</div>)}</div> : <SystemState title="Nenhuma cliente vinculada" detail="Busque uma cliente existente ou cadastre uma nova." />}</div><div><h3>Vincular cliente existente</h3><label className="gallery-client-search">Buscar por nome ou WhatsApp<input value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Ex.: Ana ou 11999999999" /></label><div className="client-option-list">{clientOptions.filter((option) => !linkedClients.some((linked) => linked.client_id === option.id)).map((option) => <button type="button" key={option.id} onClick={() => bindClient(option.id, option.name)}><span><strong>{option.name}</strong><small>{option.phone}</small></span>Vincular</button>)}</div><h3>Cadastrar e vincular</h3><form className="gallery-settings-form" onSubmit={createClientAndGallery}><label>Nome completo<input name="full_name" required minLength={3} /></label><label>Número do WhatsApp<input name="phone_e164" required placeholder="+55 11 99999-9999" /></label><MarkinaButton>Cadastrar cliente</MarkinaButton></form></div></div>
+          <div className="gallery-client-columns"><div><h3>Responsáveis vinculados</h3>{linkedClients.length ? <div className="dashboard-recent">{linkedClients.map((person) => <div key={person.client_id}><div><strong>{person.name}</strong><small>{person.phone}</small></div>{person.derived_gallery_id ? <Link href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <StatusBadge tone="warning">Cadastro pendente</StatusBadge>}</div>)}</div> : <SystemState title="Nenhum responsável vinculado" detail="Busque um cadastro existente ou faça um novo cadastro." />}</div><div><h3>Vincular responsável existente</h3><label className="gallery-client-search">Buscar por nome ou WhatsApp<input value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Ex.: Ana ou 11999999999" /></label>{clientOptions.filter((option) => !linkedClients.some((linked) => linked.client_id === option.id)).length ? <div className="client-option-list">{clientOptions.filter((option) => !linkedClients.some((linked) => linked.client_id === option.id)).map((option) => <button type="button" key={option.id} onClick={() => bindClient(option.id, option.name)}><span><strong>{option.name}</strong><small>{option.phone}</small></span>Vincular</button>)}</div> : <SystemState title="Nenhum cadastro encontrado" detail="Cadastre o responsável abaixo para vinculá-lo a esta galeria." />}<h3>Cadastrar e vincular</h3><form className="gallery-settings-form" onSubmit={createClientAndGallery}><label>Nome completo<input name="full_name" required minLength={3} /></label><label>Número do WhatsApp<input name="phone_e164" required placeholder="+55 11 99999-9999" /></label><MarkinaButton>Cadastrar responsável</MarkinaButton></form></div></div>
         </section>
       ) : null}
 
+      {expandedPhoto ? <div className="photo-preview-dialog" role="presentation" onMouseDown={() => setExpandedPhoto(null)}><div ref={previewDialog} role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhoto(null); }} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="photo-preview-close" onClick={() => setExpandedPhoto(null)}>Fechar</button><img src={`/api${expandedPhoto.preview_url}`} alt={`Prévia com marca d’água ampliada de ${expandedPhoto.name}`} /><p>{expandedPhoto.name}</p></div></div> : null}
       {message ? <p className="notice" role="status">{message}</p> : null}
       <footer className="gallery-editor-footer">
         {previous ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/${previous}`}>← Voltar</Link> : <span />}

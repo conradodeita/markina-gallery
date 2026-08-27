@@ -122,6 +122,9 @@ class ParentGallery(Base):
     name: Mapped[str] = mapped_column(String(200))
     event_name: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_photo_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("photo_asset.id", use_alter=True, name="fk_parent_gallery_cover_photo"), nullable=True
+    )
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 

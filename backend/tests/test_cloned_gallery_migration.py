@@ -210,3 +210,28 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
         assert connection.execute(
             text("SELECT folder_id FROM photo_asset WHERE id = :id"), {"id": photo_id.hex}
         ).scalar_one() == folder_id
+
+
+def test_parent_gallery_cover_migration_is_reversible(tmp_path: Path):
+    database = tmp_path / "parent-gallery-cover.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260827_0006")
+    engine = create_engine(database_url)
+    parent_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO parent_gallery (id, name, active, created_at) VALUES (:id, :name, :active, :created_at)"),
+            {"id": parent_id.hex, "name": "Evento legado", "active": True, "created_at": datetime.now(UTC)},
+        )
+    alembic(database_url, "upgrade", "head")
+    with engine.connect() as connection:
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(parent_gallery)"))}
+        assert connection.execute(
+            text("SELECT cover_photo_id FROM parent_gallery WHERE id = :id"), {"id": parent_id.hex}
+        ).scalar_one() is None
+    assert "cover_photo_id" in columns
+
+    alembic(database_url, "downgrade", "20260827_0006")
+    with engine.connect() as connection:
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(parent_gallery)"))}
+    assert "cover_photo_id" not in columns

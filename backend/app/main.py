@@ -14,7 +14,7 @@ from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
 
@@ -75,6 +75,10 @@ class ParentGallerySettingsInput(BaseModel):
     event_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=5_000)
     active: bool | None = None
+
+
+class ParentGalleryCoverInput(BaseModel):
+    photo_id: UUID
 
 
 class ClientInput(BaseModel):
@@ -499,7 +503,7 @@ def admin_clients(
     db: Session = Depends(db_session),
 ) -> dict[str, list[dict[str, str]]]:
     require_admin(request)
-    statement = select(Client).order_by(Client.full_name)
+    statement = select(Client).order_by(func.lower(Client.full_name), Client.id)
     if query:
         normalized = query.strip()
         statement = statement.where(
@@ -573,7 +577,18 @@ def parent_gallery_overview(
         ):
             continue
         frozen = sum(bool(gallery.selection_expires_at and expired(gallery.selection_expires_at)) for gallery in galleries)
-        rows.append({"id": str(parent.id), "name": parent.name, "event_name": parent.event_name or "", "active": parent.active, "private_gallery_count": len(galleries), "registration_count": len(registrations), "frozen_gallery_count": frozen})
+        rows.append(
+            {
+                "id": str(parent.id),
+                "name": parent.name,
+                "event_name": parent.event_name or "",
+                "active": parent.active,
+                "cover_preview_url": _cover_preview_url(db, parent),
+                "private_gallery_count": len(galleries),
+                "registration_count": len(registrations),
+                "frozen_gallery_count": frozen,
+            }
+        )
     return {"total": len(rows), "parent_galleries": rows[offset : offset + limit]}
 
 
@@ -582,6 +597,39 @@ def _parent_gallery_or_404(db: Session, parent_gallery_id: UUID) -> ParentGaller
     if not gallery:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
     return gallery
+
+
+def _gallery_cover_photo(db: Session, gallery: ParentGallery) -> PhotoAsset | None:
+    if gallery.cover_photo_id:
+        cover = db.get(PhotoAsset, gallery.cover_photo_id)
+        if cover and cover.parent_gallery_id == gallery.id:
+            return cover
+    return db.scalar(
+        select(PhotoAsset)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .join(MediaDerivative, MediaDerivative.photo_asset_id == PhotoAsset.id)
+        .where(
+            PhotoAsset.parent_gallery_id == gallery.id,
+            MediaDerivative.variant == "client_preview",
+            MediaDerivative.status == "ready",
+        )
+        .order_by(PhotoFolder.position, PhotoAsset.created_at, PhotoAsset.filename)
+        .limit(1)
+    )
+
+
+def _cover_preview_url(db: Session, gallery: ParentGallery) -> str | None:
+    cover = _gallery_cover_photo(db, gallery)
+    if not cover:
+        return None
+    ready = db.scalar(
+        select(MediaDerivative.id).where(
+            MediaDerivative.photo_asset_id == cover.id,
+            MediaDerivative.variant == "client_preview",
+            MediaDerivative.status == "ready",
+        )
+    )
+    return f"/admin/photo-assets/{cover.id}/watermarked-preview" if ready else None
 
 
 @app.get("/admin/parent-galleries/{parent_gallery_id}/editor")
@@ -614,6 +662,8 @@ def parent_gallery_editor(
             "description": gallery.description or "",
             "active": gallery.active,
             "unlisted_link": f"/?parent_gallery_id={gallery.id}",
+            "cover_photo_id": str(gallery.cover_photo_id) if gallery.cover_photo_id else None,
+            "cover_preview_url": _cover_preview_url(db, gallery),
         },
         "steps": [
             {"id": "ajustes", "label": "Ajustes", "status": "complete", "available": True},
@@ -680,6 +730,51 @@ def update_parent_gallery_settings(
     return parent_gallery_settings(parent_gallery_id, request, db)
 
 
+@app.get("/admin/parent-galleries/{parent_gallery_id}/summary")
+def parent_gallery_summary(
+    parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    gallery = _parent_gallery_or_404(db, parent_gallery_id)
+    folders = list(db.scalars(select(PhotoFolder).where(PhotoFolder.parent_gallery_id == gallery.id)))
+    photo_count = db.scalar(select(func.count()).select_from(PhotoAsset).where(PhotoAsset.parent_gallery_id == gallery.id)) or 0
+    clients = parent_gallery_clients(parent_gallery_id, request, db)["clients"]
+    return {
+        "id": str(gallery.id), "name": gallery.name, "event_name": gallery.event_name or "",
+        "active": gallery.active, "unlisted_link": f"/?parent_gallery_id={gallery.id}",
+        "cover_preview_url": _cover_preview_url(db, gallery),
+        "counts": {"folders": len(folders), "photos": photo_count, "clients": len(clients)},
+        "clients": clients,
+    }
+
+
+@app.put("/admin/parent-galleries/{parent_gallery_id}/cover")
+def set_parent_gallery_cover(
+    parent_gallery_id: UUID, payload: ParentGalleryCoverInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    gallery = _parent_gallery_or_404(db, parent_gallery_id)
+    photo = db.get(PhotoAsset, payload.photo_id)
+    if not photo or photo.parent_gallery_id != gallery.id:
+        raise HTTPException(status_code=422, detail="A capa precisa pertencer a esta galeria.")
+    if not db.scalar(select(MediaDerivative.id).where(MediaDerivative.photo_asset_id == photo.id, MediaDerivative.variant == "client_preview", MediaDerivative.status == "ready")):
+        raise HTTPException(status_code=409, detail="A foto ainda não possui prévia pronta para capa.")
+    gallery.cover_photo_id = photo.id
+    audit(db, "parent_gallery.cover_set", str(gallery.id))
+    db.commit()
+    return {"photo_id": str(photo.id), "preview_url": _cover_preview_url(db, gallery)}
+
+
+@app.delete("/admin/parent-galleries/{parent_gallery_id}/cover", status_code=status.HTTP_204_NO_CONTENT)
+def clear_parent_gallery_cover(parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)) -> Response:
+    require_admin(request)
+    gallery = _parent_gallery_or_404(db, parent_gallery_id)
+    gallery.cover_photo_id = None
+    audit(db, "parent_gallery.cover_cleared", str(gallery.id))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/admin/parent-galleries/{parent_gallery_id}/sales")
 def parent_gallery_sales(
     parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
@@ -738,7 +833,30 @@ def admin_parent_gallery_folders(
     rows = []
     for folder in folders:
         count = db.scalar(select(func.count()).select_from(PhotoAsset).where(PhotoAsset.folder_id == folder.id)) or 0
-        rows.append({"id": str(folder.id), "name": folder.name, "status": folder.status, "position": folder.position, "photo_count": count, "released_at": folder.released_at.isoformat() if folder.released_at else None})
+        preview_photo_id = db.scalar(
+            select(PhotoAsset.id)
+            .join(MediaDerivative, MediaDerivative.photo_asset_id == PhotoAsset.id)
+            .where(
+                PhotoAsset.folder_id == folder.id,
+                MediaDerivative.variant == "client_preview",
+                MediaDerivative.status == "ready",
+            )
+            .order_by(PhotoAsset.created_at, PhotoAsset.filename)
+            .limit(1)
+        )
+        rows.append(
+            {
+                "id": str(folder.id),
+                "name": folder.name,
+                "status": folder.status,
+                "position": folder.position,
+                "photo_count": count,
+                "preview_url": f"/admin/photo-assets/{preview_photo_id}/watermarked-preview"
+                if preview_photo_id
+                else None,
+                "released_at": folder.released_at.isoformat() if folder.released_at else None,
+            }
+        )
     return {"total": len(rows), "folders": rows[offset : offset + limit]}
 
 
@@ -802,9 +920,24 @@ def admin_photo_folder_photos(
     require_admin(request)
     if not (folder := db.get(PhotoFolder, folder_id)):
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
-    photos = db.scalars(
-        select(PhotoAsset).where(PhotoAsset.folder_id == folder.id).order_by(PhotoAsset.filename)
+    photos = list(
+        db.scalars(select(PhotoAsset).where(PhotoAsset.folder_id == folder.id).order_by(PhotoAsset.filename))
     )
+    confirmed_photo_ids = (
+        set(
+            db.scalars(
+                select(SaleOrderItem.photo_asset_id)
+                .join(SaleOrder)
+                .where(
+                    SaleOrderItem.photo_asset_id.in_([photo.id for photo in photos]),
+                    SaleOrder.payment_status == "confirmed",
+                )
+            )
+        )
+        if photos
+        else set()
+    )
+    parent = db.get(ParentGallery, folder.parent_gallery_id)
     rows = []
     for photo in photos:
         job = db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == photo.id))
@@ -812,12 +945,67 @@ def admin_photo_folder_photos(
             {
                 "id": str(photo.id),
                 "name": photo.display_name or photo.filename,
-                "preview_url": f"/admin/photo-assets/{photo.id}/preview" if job and job.status == "completed" else None,
+                "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview"
+                if job and job.status == "completed"
+                else None,
                 "status": job.status if job else "not_imported",
                 "error": job.last_error if job else None,
+                "can_delete": photo.id not in confirmed_photo_ids,
+                "is_cover": bool(parent and parent.cover_photo_id == photo.id),
             }
         )
     return {"folder": {"id": str(folder.id), "status": folder.status}, "total": len(rows), "photos": rows}
+
+
+@app.delete("/admin/photo-folders/{folder_id}/photos/{photo_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_folder_photo_asset(folder_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(db_session)) -> Response:
+    """Exclui foto contextual apenas se não houver pagamento confirmado."""
+    require_admin(request)
+    folder, photo = db.get(PhotoFolder, folder_id), db.get(PhotoAsset, photo_id)
+    if not folder or not photo or photo.folder_id != folder.id or photo.parent_gallery_id != folder.parent_gallery_id:
+        raise HTTPException(status_code=404, detail="Foto não encontrada nesta pasta.")
+    if db.scalar(select(SaleOrderItem.id).join(SaleOrder).where(SaleOrderItem.photo_asset_id == photo.id, SaleOrder.payment_status == "confirmed")):
+        raise HTTPException(status_code=409, detail="Esta foto possui compra confirmada e não pode ser excluída.")
+    paths_to_remove = []
+    try:
+        paths_to_remove.append(safe_source_path(photo))
+    except ValueError:
+        # Um caminho corrompido não deve impedir a limpeza dos registros, nem autorizar apagar fora do storage.
+        pass
+    derivatives = list(db.scalars(select(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id)))
+    for derivative in derivatives:
+        try:
+            paths_to_remove.append(safe_derivative_path(derivative))
+        except ValueError:
+            continue
+    parent = db.get(ParentGallery, photo.parent_gallery_id)
+    if parent and parent.cover_photo_id == photo.id:
+        parent.cover_photo_id = None
+    db.execute(delete(PhotoComment).where(PhotoComment.photo_asset_id == photo.id))
+    db.execute(delete(PhotoFavorite).where(PhotoFavorite.photo_asset_id == photo.id))
+    db.execute(delete(PhotoView).where(PhotoView.photo_asset_id == photo.id))
+    db.execute(delete(PhotoSelection).where(PhotoSelection.photo_asset_id == photo.id))
+    db.execute(delete(DerivedGalleryPhoto).where(DerivedGalleryPhoto.photo_asset_id == photo.id))
+    db.execute(
+        delete(SaleOrderItem).where(
+            SaleOrderItem.photo_asset_id == photo.id,
+            SaleOrderItem.sale_order_id.in_(
+                select(SaleOrder.id).where(SaleOrder.payment_status != "confirmed")
+            ),
+        )
+    )
+    db.execute(delete(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id))
+    db.execute(delete(MediaJob).where(MediaJob.photo_asset_id == photo.id))
+    db.delete(photo)
+    audit(db, "photo_asset.deleted", str(photo_id))
+    db.commit()
+    for path in paths_to_remove:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # A limpeza física é idempotente. Uma nova rotina de mídia poderá remover o resíduo seguro.
+            continue
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.post("/admin/photo-folders/{folder_id}/photos", status_code=status.HTTP_201_CREATED)
@@ -984,7 +1172,10 @@ def parent_gallery_clients(
         gallery = next((item for item in galleries if item.client_id == client_id), None)
         registration = next((item for item in registrations if item.client_id == client_id), None)
         rows.append({"client_id": str(client_id), "name": client.full_name if client else "Cliente", "phone": client.phone_e164 if client else "", "registration_status": registration.status if registration else None, "derived_gallery_id": str(gallery.id) if gallery else None})
-    return {"parent_gallery_id": str(parent_gallery_id), "clients": sorted(rows, key=lambda item: item["name"])}
+    return {
+        "parent_gallery_id": str(parent_gallery_id),
+        "clients": sorted(rows, key=lambda item: (item["name"].casefold(), item["client_id"])),
+    }
 
 
 @app.get("/admin/derived-galleries/{gallery_id}/selection")
@@ -1132,6 +1323,33 @@ def admin_photo_preview(
     return protected_preview_response(path, f"conferencia-{photo.filename}")
 
 
+@app.get("/admin/photo-assets/{photo_id}/watermarked-preview")
+def admin_watermarked_photo_preview(
+    photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> FileResponse:
+    """Prévia marcada para organizar pastas sem expor o arquivo de origem."""
+    require_admin(request)
+    photo = db.get(PhotoAsset, photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    derivative = db.scalar(
+        select(MediaDerivative).where(
+            MediaDerivative.photo_asset_id == photo_id,
+            MediaDerivative.variant == "client_preview",
+            MediaDerivative.status == "ready",
+        )
+    )
+    if not derivative:
+        raise HTTPException(status_code=404, detail="Prévia com marca d’água indisponível.")
+    try:
+        path = safe_derivative_path(derivative)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Prévia com marca d’água indisponível.") from exc
+    audit(db, "media_preview.admin_watermarked_viewed", str(photo_id))
+    db.commit()
+    return protected_preview_response(path, f"amostra-{photo.filename}")
+
+
 @app.get("/admin/purchases")
 def admin_purchase_history(
     request: Request, db: Session = Depends(db_session)
@@ -1194,13 +1412,36 @@ def create_derived_gallery(
         for photo in photos
     ):
         raise HTTPException(status_code=409, detail="Fotos de pasta em preparação não podem ser distribuídas.")
-    gallery = DerivedGallery(**payload.model_dump(exclude={"photo_ids"}))
-    db.add(gallery)
-    db.flush()
-    db.add_all(
-        [DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id) for photo in photos]
+    gallery = db.scalar(
+        select(DerivedGallery).where(
+            DerivedGallery.parent_gallery_id == payload.parent_gallery_id,
+            DerivedGallery.client_id == payload.client_id,
+        )
     )
-    audit(db, "derived_gallery.created", str(gallery.id))
+    if gallery:
+        existing_photo_ids = set(
+            db.scalars(
+                select(DerivedGalleryPhoto.photo_asset_id).where(
+                    DerivedGalleryPhoto.derived_gallery_id == gallery.id
+                )
+            )
+        )
+        db.add_all(
+            [
+                DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id)
+                for photo in photos
+                if photo.id not in existing_photo_ids
+            ]
+        )
+        audit(db, "derived_gallery.reused", str(gallery.id))
+    else:
+        gallery = DerivedGallery(**payload.model_dump(exclude={"photo_ids"}))
+        db.add(gallery)
+        db.flush()
+        db.add_all(
+            [DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id) for photo in photos]
+        )
+        audit(db, "derived_gallery.created", str(gallery.id))
     db.commit()
     return {"id": str(gallery.id)}
 
