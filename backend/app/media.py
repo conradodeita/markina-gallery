@@ -5,11 +5,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import MediaDerivative, MediaJob, PhotoAsset, now
+from app.auth import MediaDerivative, MediaJob, ParentGallery, PhotoAsset, now
 
 VARIANTS = {
     "thumbnail": (480, False),
@@ -47,14 +47,28 @@ def safe_derivative_path(derivative: MediaDerivative) -> Path:
     return candidate
 
 
-def watermark(image: Image.Image) -> Image.Image:
+def watermark(image: Image.Image, gallery: ParentGallery | None = None) -> Image.Image:
     """Incorpora uma marca simples no bitmap que será entregue ao cliente."""
     marked = image.copy()
     draw = ImageDraw.Draw(marked, "RGBA")
-    text = os.getenv("MEDIA_WATERMARK_TEXT", "MARKINA • PRÉVIA")
+    text = (gallery.watermark_text if gallery else None) or os.getenv("MEDIA_WATERMARK_TEXT", "MARKINA • PRÉVIA")
+    direction = gallery.watermark_direction if gallery else "diagonal"
+    color = gallery.watermark_color if gallery else "#FFFFFF"
+    try:
+        rgb = tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
+    except (ValueError, IndexError):
+        rgb = (255, 255, 255)
+    angle = {"horizontal": 0, "vertical": 90, "diagonal": 35}.get(direction, 35)
+    size = max(10, min(96, gallery.watermark_size if gallery else 24))
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", size=size)
+    except OSError:
+        font = ImageFont.load_default()
     for y in range(20, marked.height, 180):
         for x in range(12, marked.width, 280):
-            draw.text((x, y), text, fill=(255, 255, 255, 105), stroke_width=1, stroke_fill=(0, 0, 0, 80))
+            draw.text((x, y), text, font=font, fill=(*rgb, 105), stroke_width=1, stroke_fill=(0, 0, 0, 80), anchor=None)
+    if angle:
+        marked = marked.rotate(angle, expand=False, resample=Image.Resampling.BICUBIC)
     return marked
 
 
@@ -89,6 +103,7 @@ def generate_derivatives(
         db.commit()
         raise FileNotFoundError("Arquivo de origem indisponível.")
     try:
+        gallery = db.get(ParentGallery, photo.parent_gallery_id)
         with Image.open(source) as opened:
             original = ImageOps.exif_transpose(opened).convert("RGB")
             derivatives: list[MediaDerivative] = []
@@ -96,7 +111,7 @@ def generate_derivatives(
                 rendered = original.copy()
                 rendered.thumbnail((max_width, max_width * 2), Image.Resampling.LANCZOS)
                 if protected:
-                    rendered = watermark(rendered)
+                    rendered = watermark(rendered, gallery)
                 destination = derivatives_root() / str(photo.id) / f"{variant}.jpg"
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 temporary = destination.with_suffix(".tmp")

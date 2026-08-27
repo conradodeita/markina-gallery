@@ -75,6 +75,12 @@ class ParentGallerySettingsInput(BaseModel):
     event_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=5_000)
     active: bool | None = None
+    watermark_text: str | None = Field(default=None, max_length=120)
+    watermark_font: str | None = Field(default=None, max_length=80)
+    watermark_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    watermark_size: int | None = Field(default=None, ge=10, le=96)
+    watermark_direction: str | None = Field(default=None, pattern=r"^(horizontal|vertical|diagonal)$")
+    folder_display_mode: str | None = Field(default=None, pattern=r"^(individual|sequential)$")
 
 
 class ParentGalleryCoverInput(BaseModel):
@@ -665,6 +671,12 @@ def parent_gallery_editor(
             "event_name": gallery.event_name or "",
             "description": gallery.description or "",
             "active": gallery.active,
+            "watermark_text": gallery.watermark_text,
+            "watermark_font": gallery.watermark_font,
+            "watermark_color": gallery.watermark_color,
+            "watermark_size": gallery.watermark_size,
+            "watermark_direction": gallery.watermark_direction,
+            "folder_display_mode": gallery.folder_display_mode,
             "unlisted_link": f"/?parent_gallery_id={gallery.id}",
             "cover_photo_id": str(gallery.cover_photo_id) if gallery.cover_photo_id else None,
             "cover_preview_url": _cover_preview_url(db, gallery),
@@ -715,6 +727,12 @@ def parent_gallery_settings(
         "event_name": gallery.event_name or "",
         "description": gallery.description or "",
         "active": gallery.active,
+        "watermark_text": gallery.watermark_text,
+        "watermark_font": gallery.watermark_font,
+        "watermark_color": gallery.watermark_color,
+        "watermark_size": gallery.watermark_size,
+        "watermark_direction": gallery.watermark_direction,
+        "folder_display_mode": gallery.folder_display_mode,
     }
 
 

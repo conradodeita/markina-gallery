@@ -122,6 +122,12 @@ class ParentGallery(Base):
     name: Mapped[str] = mapped_column(String(200))
     event_name: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    watermark_text: Mapped[str] = mapped_column(String(120), default="MARKINA • PRÉVIA")
+    watermark_font: Mapped[str] = mapped_column(String(80), default="sans-serif")
+    watermark_color: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
+    watermark_size: Mapped[int] = mapped_column(Integer, default=24)
+    watermark_direction: Mapped[str] = mapped_column(String(16), default="diagonal")
+    folder_display_mode: Mapped[str] = mapped_column(String(16), default="individual")
     cover_photo_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("photo_asset.id", use_alter=True, name="fk_parent_gallery_cover_photo"), nullable=True
     )
