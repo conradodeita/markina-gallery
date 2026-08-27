@@ -6,6 +6,9 @@ export type ProtectedPhoto = { id: string; name: string; previewUrl: string };
 
 function PreviewImage({ photo }: { photo: ProtectedPhoto }) {
   const [state, setState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const previewUrl = photo.previewUrl.startsWith("/api/")
+    ? photo.previewUrl
+    : `/api${photo.previewUrl}`;
   return <div className="viewer-stage" aria-live="polite">
     {state === "loading" && <p className="viewer-state">Carregando prévia protegida…</p>}
     {state === "unavailable" && <p className="viewer-state">Esta prévia está indisponível no momento.</p>}
@@ -14,7 +17,7 @@ function PreviewImage({ photo }: { photo: ProtectedPhoto }) {
     <img
       alt={photo.name}
       className={state === "ready" ? "viewer-image" : "viewer-image is-hidden"}
-      src={photo.previewUrl}
+      src={previewUrl}
       onLoad={() => setState("ready")}
       onError={() => setState("unavailable")}
     />

@@ -23,6 +23,12 @@ describe("galeria privada da cliente", () => {
     expect(await screen.findByText("Festa escolar")).toBeTruthy();
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getByText("já comprada")).toBeTruthy();
+    expect(
+      screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("src"),
+    ).toBe("/api/gallery/gallery-1/photos/new-1/preview");
+    expect(screen.getByRole("img", { name: "IMG_001.jpg" }).getAttribute("src")).toBe(
+      "/api/gallery/gallery-1/photos/new-1/preview",
+    );
     const selectButtons = screen.getAllByRole("button", { name: "Selecionar" });
     expect((selectButtons[1] as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(selectButtons[0]);
