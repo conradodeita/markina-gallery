@@ -30,7 +30,7 @@
 
 ## 5. Qualidade funcional e visual
 
-- [ ] 5.1 Criar testes frontend para a sequência completa, retorno entre etapas, falhas do backend, ausência de duplicação e indisponibilidade comercial; verificar a suíte de componentes sem mocks de autorização ou registros persistentes no browser.
+- [x] 5.1 Criar testes frontend para a sequência completa, retorno entre etapas, falhas do backend, ausência de duplicação e indisponibilidade comercial; verificar a suíte de componentes sem mocks de autorização ou registros persistentes no browser. Evidência: `frontend/app/admin/galleries/gallery-editor.test.tsx` cobre sequência, retorno/avanço contextual, erro de contrato, filtro de responsável já vinculada e indisponibilidade comercial; `npx vitest run app/admin/galleries/gallery-editor.test.tsx --pool=threads --maxWorkers=1` (10 testes), `npx eslint app/admin/galleries/gallery-editor.test.tsx` e `npx tsc --noEmit` passaram em 2026-08-28.
 - [x] 5.2 Executar o fluxo funcional com dados sintéticos: criar galeria, percorrer etapas, criar duas pastas, carregar JPEG, liberar uma pasta e vincular cliente; verificar que a outra pasta permanece administrativa e que a cliente vê somente referências autorizadas.
 - [ ] 5.3 Revisar a interface em desktop e smartphone conforme as referências de fluxo e as diretrizes visuais próprias da Markina; verificar legibilidade, responsividade, estados vazios, confirmações e prévias protegidas.
 - [x] 5.4 Executar `ruff check backend/app backend/tests`, testes backend, lint, testes e build frontend; registrar comandos e resultados, mantendo qualquer falha como tarefa aberta.

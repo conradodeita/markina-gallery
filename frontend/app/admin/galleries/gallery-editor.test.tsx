@@ -54,6 +54,32 @@ describe("editor administrativo de galeria", () => {
     expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/photo-folders", expect.anything());
   });
 
+  it("oferece retorno e avanço dentro do contexto da mesma galeria", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [], clients: [] })));
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    await screen.findByRole("heading", { name: "Imagens e pastas" });
+    expect(screen.getByRole("link", { name: "← Voltar" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/detalhes");
+    expect(screen.getByRole("link", { name: "Avançar →" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
+  });
+
+  it("informa indisponibilidade quando o contrato do editor falha", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "Sessão expirada" }), { status: 401, headers: { "content-type": "application/json" } })));
+    render(<GalleryEditor sourceId="source-1" step="ajustes" />);
+    expect((await screen.findByRole("alert")).textContent).toContain("Galeria indisponível");
+  });
+
+  it("não oferece novo vínculo para responsável já associado à galeria", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Responsável", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1" };
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
+      return response({ clients: [{ id: "client-1", name: "Ana Responsável", phone: "+5511999999999" }] });
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    expect(await screen.findByText("Ana Responsável")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Vincular/ })).toBeNull();
+  });
+
   it("mostra capacidade comercial indisponível sem inventar configuração", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ available: false, reason: "Configuração comercial será liberada em uma mudança própria.", capabilities: [] })));
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
