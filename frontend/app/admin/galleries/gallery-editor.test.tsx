@@ -113,4 +113,14 @@ describe("editor administrativo de galeria", () => {
       expect.objectContaining({ method: "DELETE" }),
     ));
   });
+
+  it("oferece tipografias controladas pelo contrato e mantém navegação contextual", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [] })));
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
+    expect(screen.getByLabelText("Tipografia da marca-d’água")).toBeInstanceOf(HTMLSelectElement);
+    expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
+    expect(screen.getByRole("link", { name: /Ajustes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/ajustes");
+    expect(screen.getByRole("link", { name: /Clientes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
+  });
 });
