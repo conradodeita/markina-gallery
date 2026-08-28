@@ -25,6 +25,7 @@ type Review = {
     selection_open: boolean;
     favorites_enabled: boolean;
     comments_enabled: boolean;
+    cover_preview_url: string | null;
   };
   photos: ReviewPhoto[];
 };
@@ -32,6 +33,7 @@ type Review = {
 export default function GalleryPage() {
   const { galleryId } = useParams<{ galleryId: string }>();
   const [review, setReview] = useState<Review | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
   const [activePhotoId, setActivePhotoId] = useState("");
@@ -67,22 +69,14 @@ export default function GalleryPage() {
             }),
           ),
         });
+        setLoadFailed(false);
         setReleasedFolders(folderResult.folders ?? []);
         setActivePhotoId((current) => current || result.photos[0]?.id || "");
       })
-      .catch(() =>
-        setReview({
-          gallery: {
-            name: "",
-            message: "",
-            selection_expires_at: null,
-            selection_open: false,
-            favorites_enabled: false,
-            comments_enabled: false,
-          },
-          photos: [],
-        }),
-      );
+      .catch(() => {
+        setReview(null);
+        setLoadFailed(true);
+      });
   }
   function loadComments() {
     fetch(`/api/gallery/${galleryId}/comments`, { credentials: "same-origin" })
@@ -141,6 +135,14 @@ export default function GalleryPage() {
     });
     if (response.ok) loadComments();
   }
+  if (loadFailed)
+    return (
+      <SystemState
+        tone="error"
+        title="Não foi possível abrir esta galeria"
+        detail="Verifique se você entrou com a conta correta e atualize a página."
+      />
+    );
   if (review === null)
     return (
       <SystemState
@@ -187,7 +189,7 @@ export default function GalleryPage() {
         ))}
       </nav>
       {!visiblePhotos.length && <p className="notice">Nenhuma foto nesta categoria.</p>}
-      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} emptyDetail="Nenhuma foto desta categoria está disponível neste momento." renderPhotoDetails={(photo) => <>
+      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} coverUrl={review.gallery.cover_preview_url ? `/api${review.gallery.cover_preview_url}` : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} emptyDetail="Nenhuma foto desta categoria está disponível neste momento." renderPhotoDetails={(photo) => <>
             <StatusBadge
               tone={
                 photo.purchaseState === "já comprada"

@@ -2,7 +2,27 @@
 
 ### Requirement: Operação administrativa de galerias privadas
 
-O sistema SHALL fornecer ao fotógrafo autenticado uma prévia da galeria com a mesma composição visual base usada pela cliente: capa, contexto, navegação por pastas, grade de prévias protegidas, estados e visualizador. A prévia SHALL permanecer identificada como modo fotógrafo e SHALL respeitar as permissões administrativas sem criar ou conceder autorização de cliente.
+O sistema SHALL fornecer ao fotógrafo autenticado uma interface original para criar e operar clientes, acervos-fonte não listados, galerias privadas, pastas e JPEGs. A interface SHALL apresentar fluxo claro de criação, edição, preparação e liberação, sem expor acervos a clientes antes da autorização e liberação aplicáveis. A prévia administrativa SHALL usar a mesma composição visual base usada pela cliente — capa, contexto, navegação por pastas, grade de prévias protegidas, estados e visualizador — mantendo-se identificada como modo fotógrafo e sem conceder autorização de cliente.
+
+#### Scenario: Criação guiada
+
+- **WHEN** o fotógrafo conclui o fluxo administrativo com dados válidos
+- **THEN** o sistema cria somente as referências privadas escolhidas e apresenta confirmação ou erro acessível
+
+#### Scenario: Segunda responsável
+
+- **WHEN** o fotógrafo vincula uma nova responsável a fotos já disponibilizadas para outra responsável
+- **THEN** o sistema cria ou vincula uma galeria privada independente para a nova responsável sem alterar seleção, prazo, pedido ou histórico da primeira
+
+#### Scenario: Pasta em preparação
+
+- **WHEN** o fotógrafo abre uma pasta ainda não liberada
+- **THEN** ele vê os JPEGs, o estado de processamento e as ações de edição ou liberação disponíveis somente para ele
+
+#### Scenario: Proteção do acervo
+
+- **WHEN** uma cliente acessa a interface
+- **THEN** o sistema não revela controles administrativos nem fotos fora de sua galeria derivada e pastas liberadas
 
 #### Scenario: Fotógrafo revisa a apresentação da galeria
 
@@ -13,6 +33,8 @@ O sistema SHALL fornecer ao fotógrafo autenticado uma prévia da galeria com a 
 
 - **WHEN** a galeria não possui capa ou ainda não possui prévias disponíveis
 - **THEN** a prévia mostra um estado visual claro e orienta o fotógrafo sem apresentar uma estrutura quebrada ou conteúdo de cliente
+
+## ADDED Requirements
 
 ### Requirement: Personalização visual administrativa orientada à prévia
 

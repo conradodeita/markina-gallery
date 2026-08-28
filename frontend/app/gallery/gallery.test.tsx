@@ -8,7 +8,7 @@ import GalleryPage from "./[galleryId]/page";
 afterEach(() => vi.restoreAllMocks());
 
 const review = {
-  gallery: { name: "Festa escolar", message: "Escolha suas favoritas", selection_expires_at: null, selection_open: true, favorites_enabled: true, comments_enabled: true },
+  gallery: { name: "Festa escolar", message: "Escolha suas favoritas", selection_expires_at: null, selection_open: true, favorites_enabled: true, comments_enabled: true, cover_preview_url: "/gallery/gallery-1/photos/new-1/preview" },
   photos: [
     { id: "new-1", name: "IMG_001.jpg", folder_id: "folder-1", preview_url: "/gallery/gallery-1/photos/new-1/preview", selected: false, favorited: false, purchase_state: "nova" },
     { id: "bought-1", name: "IMG_002.jpg", folder_id: "folder-1", preview_url: "/gallery/gallery-1/photos/bought-1/preview", selected: false, favorited: false, purchase_state: "já comprada" },
@@ -30,6 +30,7 @@ describe("galeria privada da cliente", () => {
     expect(
       screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("src"),
     ).toBe("/api/gallery/gallery-1/photos/new-1/preview");
+    expect(screen.getByRole("img", { name: "Capa de Festa escolar" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/new-1/preview");
     fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de IMG_001.jpg" }));
     expect(await screen.findByRole("dialog", { name: "Prévia ampliada de IMG_001.jpg" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
@@ -59,5 +60,12 @@ describe("galeria privada da cliente", () => {
     fireEvent.click(secondFolder);
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_003.jpg" })).toBeTruthy();
     expect(screen.queryByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeNull();
+  });
+
+  it("explicita falha de autorização em vez de confundir com galeria vazia", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 403 }))));
+    render(<GalleryPage />);
+    expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível abrir esta galeria");
+    expect(screen.getByText(/conta correta/i)).toBeTruthy();
   });
 });

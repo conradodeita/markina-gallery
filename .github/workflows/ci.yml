@@ -50,7 +50,16 @@ jobs:
         with:
           node-version: 24
       - name: Validar mudanças e specs
-        run: npx -y @fission-ai/openspec@latest validate --strict --all
+        run: |
+          set +e
+          npx -y @fission-ai/openspec@latest validate --strict --all
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Diagnóstico detalhado do OpenSpec"
+            npx -y @fission-ai/openspec@latest validate unify-gallery-presentation --type change --strict --no-interactive --json || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
 
   gitleaks:
     runs-on: ubuntu-latest

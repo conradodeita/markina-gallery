@@ -901,10 +901,16 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
             json={"filename": "TESTE_001.jpg", "storage_key": "synthetic/round-1/TESTE_001.jpg"},
         ).json()["id"]
     )
+    preparing_photo_id = UUID(
+        client.post(
+            f"/admin/photo-folders/{second_folder_id}/photos",
+            json={"filename": "AINDA_NAO_LIBERADA.jpg", "storage_key": "synthetic/round-2/AINDA_NAO_LIBERADA.jpg"},
+        ).json()["id"]
+    )
     released = client.post(
         f"/admin/photo-folders/{first_folder_id}/release", json={"gallery_ids": [str(derived_gallery_id)]}
     )
-    assert released.status_code == 200
+    assert released.status_code == 200, released.json()
     folders = client.get(f"/admin/parent-galleries/{parent_id}/folders").json()["folders"]
     assert {key: value for key, value in folders[0].items() if key != "released_at"} == {
         "id": str(first_folder_id),
@@ -921,11 +927,17 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
             "name": "Rodada 2",
             "status": "preparing",
             "position": 1,
-            "photo_count": 0,
+            "photo_count": 1,
             "preview_url": None,
             "released_at": None,
         },
     ]
+
+    with SessionLocal() as db:
+        db.add(DerivedGalleryPhoto(derived_gallery_id=derived_gallery_id, photo_asset_id=preparing_photo_id))
+        db.add(MediaDerivative(photo_asset_id=photo_id, variant="client_preview", relative_path=f"{photo_id}/preview.jpg", status="ready"))
+        db.commit()
+    assert client.put(f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(photo_id)}).status_code == 200
 
     client.cookies.clear()
     authenticate_client(client, "+5511999991234")
@@ -939,6 +951,10 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
     assert client.get(f"/gallery/{derived_gallery_id}/folders").json()["folders"] == [
         {"id": str(first_folder_id), "name": "Rodada 1", "position": 0, "photo_count": 1}
     ]
+    review = client.get(f"/gallery/{derived_gallery_id}/review")
+    assert review.status_code == 200
+    assert review.json()["gallery"]["cover_preview_url"] == f"/gallery/{derived_gallery_id}/photos/{photo_id}/preview"
+    assert [photo["id"] for photo in review.json()["photos"]] == [str(photo_id)]
 
 
 def test_admin_can_create_empty_private_gallery_before_releasing_a_folder(client: TestClient) -> None:

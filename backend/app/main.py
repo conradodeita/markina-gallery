@@ -2072,11 +2072,30 @@ def gallery_review(
         db.scalars(
             select(PhotoAsset)
             .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
-            .where(DerivedGalleryPhoto.derived_gallery_id == gallery_id)
+            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+            .where(
+                DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+                PhotoFolder.status == "released",
+            )
             .order_by(PhotoAsset.created_at, PhotoAsset.filename)
         )
     )
     photo_ids = {photo.id for photo in photos}
+    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    cover = next(
+        (photo for photo in photos if parent and photo.id == parent.cover_photo_id),
+        photos[0] if photos else None,
+    )
+    cover_ready = bool(
+        cover
+        and db.scalar(
+            select(MediaDerivative.id).where(
+                MediaDerivative.photo_asset_id == cover.id,
+                MediaDerivative.variant == "client_preview",
+                MediaDerivative.status == "ready",
+            )
+        )
+    )
     selections = set(
         db.scalars(
             select(PhotoSelection.photo_asset_id).where(
@@ -2113,6 +2132,9 @@ def gallery_review(
             or not expired(gallery.selection_expires_at),
             "favorites_enabled": gallery.favorites_enabled,
             "comments_enabled": gallery.comments_enabled,
+            "cover_preview_url": (
+                f"/gallery/{gallery_id}/photos/{cover.id}/preview" if cover_ready and cover else None
+            ),
         },
         "photos": [
             {
