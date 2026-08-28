@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
 from os import getenv
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
@@ -63,6 +64,45 @@ from app.auth import (
 from app.media import enqueue_derivatives, safe_derivative_path, safe_source_path
 
 app = FastAPI(title="Markina Gallery API", version="0.2.0")
+
+BRANDING_ASSETS = {
+    "logo": {"formats": {"PNG": (".png", "image/png"), "JPEG": (".jpg", "image/jpeg"), "WEBP": (".webp", "image/webp")}, "max_bytes": 2 * 1024 * 1024},
+    "app-icon": {"formats": {"PNG": (".png", "image/png"), "JPEG": (".jpg", "image/jpeg"), "WEBP": (".webp", "image/webp"), "ICO": (".ico", "image/x-icon")}, "max_bytes": 1024 * 1024},
+    "favicon": {"formats": {"PNG": (".png", "image/png"), "ICO": (".ico", "image/x-icon")}, "max_bytes": 512 * 1024},
+}
+
+
+def branding_root() -> Path:
+    """Return the Markina-only storage root for validated branding assets."""
+    return Path(getenv("BRANDING_ASSETS_ROOT", "media/branding")).resolve()
+
+
+def branding_asset_path(key: str) -> Path:
+    root = branding_root()
+    candidate = (root / key).resolve()
+    if candidate.parent != root:
+        raise ValueError("Chave de ativo de marca inválida.")
+    return candidate
+
+
+def validate_branding_asset(asset: str, content_type: str | None, body: bytes) -> tuple[str, str]:
+    rules = BRANDING_ASSETS[asset]
+    if not body or len(body) > rules["max_bytes"]:
+        raise HTTPException(status_code=413, detail="O arquivo excede o limite permitido.")
+    try:
+        with Image.open(BytesIO(body)) as image:
+            image_format = image.format or ""
+            width, height = image.size
+            image.verify()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Imagem de marca inválida.") from exc
+    allowed = rules["formats"]
+    if image_format not in allowed or not (16 <= width <= 4096 and 16 <= height <= 4096):
+        raise HTTPException(status_code=422, detail="Formato ou dimensão de imagem não permitido.")
+    suffix, media_type = allowed[image_format]
+    if content_type and content_type.lower().split(";", 1)[0] != media_type:
+        raise HTTPException(status_code=415, detail="O tipo informado não corresponde à imagem enviada.")
+    return suffix, media_type
 
 
 class ParentGalleryInput(BaseModel):
@@ -537,6 +577,62 @@ def update_admin_branding(payload: BrandingSettingsInput, request: Request, db: 
     audit(db, "branding.settings_updated", str(settings.id))
     db.commit()
     return _branding_payload(settings)
+
+
+@app.put("/admin/branding/{asset}")
+async def upload_branding_asset(
+    asset: str, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str | None]:
+    """Store one validated branding image; paths never come from the browser."""
+    require_admin(request)
+    if asset not in BRANDING_ASSETS:
+        raise HTTPException(status_code=404, detail="Ativo de marca não encontrado.")
+    body = await request.body()
+    suffix, _ = validate_branding_asset(asset, request.headers.get("content-type"), body)
+    key = f"{asset}{suffix}"
+    destination = branding_asset_path(key)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(f"{suffix}.uploading")
+    temporary.write_bytes(body)
+    temporary.replace(destination)
+    settings = db.scalar(select(BrandingSettings).limit(1))
+    if not settings:
+        settings = BrandingSettings()
+        db.add(settings)
+    if asset == "logo":
+        settings.logo_key = key
+    elif asset == "app-icon":
+        settings.app_icon_key = key
+    else:
+        settings.favicon_key = key
+    audit(db, "branding.asset_uploaded", f"{settings.id}:{asset}")
+    db.commit()
+    return _branding_payload(settings)
+
+
+@app.get("/branding/{asset}")
+def public_branding_asset(asset: str, db: Session = Depends(db_session)) -> FileResponse:
+    if asset not in BRANDING_ASSETS:
+        raise HTTPException(status_code=404, detail="Ativo de marca não encontrado.")
+    settings = db.scalar(select(BrandingSettings).limit(1))
+    key = None if not settings else {
+        "logo": settings.logo_key,
+        "app-icon": settings.app_icon_key,
+        "favicon": settings.favicon_key,
+    }[asset]
+    if not key:
+        raise HTTPException(status_code=404, detail="Ativo de marca não configurado.")
+    try:
+        path = branding_asset_path(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Ativo de marca indisponível.") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Ativo de marca indisponível.")
+    suffix = path.suffix.lower()
+    media_type = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon"}.get(suffix)
+    if not media_type:
+        raise HTTPException(status_code=404, detail="Ativo de marca indisponível.")
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "public, max-age=300"})
 
 
 @app.get("/admin/validation-summary")

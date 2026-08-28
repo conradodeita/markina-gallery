@@ -117,6 +117,32 @@ def test_branding_public_defaults_and_admin_plain_text_update(client: TestClient
     assert rejected.status_code == 422
 
 
+def branding_image_bytes(image_format: str = "PNG", size: tuple[int, int] = (64, 64)) -> bytes:
+    body = BytesIO()
+    Image.new("RGB", size, color=(40, 80, 60)).save(body, format=image_format)
+    return body.getvalue()
+
+
+def test_branding_assets_require_admin_and_validate_storage(client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("BRANDING_ASSETS_ROOT", str(tmp_path / "branding"))
+    image = branding_image_bytes()
+    assert client.put("/admin/branding/logo", content=image, headers={"content-type": "image/png"}).status_code == 403
+
+    authenticate_admin(client)
+    for asset in ("logo", "app-icon", "favicon"):
+        response = client.put(f"/admin/branding/{asset}", content=image, headers={"content-type": "image/png"})
+        assert response.status_code == 200
+        assert response.json()[f"{asset.replace('-', '_')}_url"] == f"/branding/{asset}"
+        public = client.get(f"/branding/{asset}")
+        assert public.status_code == 200
+        assert public.headers["content-type"].startswith("image/png")
+        assert public.content == image
+
+    assert client.put("/admin/branding/logo", content=image, headers={"content-type": "image/jpeg"}).status_code == 415
+    assert client.put("/admin/branding/favicon", content=branding_image_bytes("JPEG"), headers={"content-type": "image/jpeg"}).status_code == 422
+    assert client.put("/admin/branding/logo", content=branding_image_bytes(size=(8, 8)), headers={"content-type": "image/png"}).status_code == 422
+
+
 def create_folder_photo(
     client: TestClient,
     parent_id: UUID,
