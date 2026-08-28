@@ -38,7 +38,13 @@ from app.main import app
 
 @pytest.fixture(autouse=True)
 def clean_database():
-    Base.metadata.drop_all(engine)
+    with engine.connect() as connection:
+        if engine.dialect.name == "sqlite":
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        Base.metadata.drop_all(connection)
+        if engine.dialect.name == "sqlite":
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        connection.commit()
     Base.metadata.create_all(engine)
     yield
 
