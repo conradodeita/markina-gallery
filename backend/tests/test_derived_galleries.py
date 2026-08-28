@@ -1059,6 +1059,43 @@ def test_admin_deletes_only_empty_parent_gallery(client: TestClient) -> None:
     empty_id = UUID(client.post("/admin/parent-galleries", json={"name": "Rascunho"}).json()["id"])
     assert client.delete(f"/admin/parent-galleries/{empty_id}").status_code == 204
 
+
+def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(client: TestClient) -> None:
+    """Exercita o ciclo administrativo antes de venda, WhatsApp ou biometria."""
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento completo"}).json()["id"])
+    first_folder, cover_photo = create_folder_photo(
+        client, parent_id, folder_name="Lote inicial", filename="CAPA.jpg", storage_key="evento/capa.jpg"
+    )
+    second_folder, removable_photo = create_folder_photo(
+        client, parent_id, folder_name="Lote complementar", filename="REMOVER.jpg", storage_key="evento/remover.jpg"
+    )
+    # A capa só pode ser escolhida quando o derivado protegido está pronto.
+    with SessionLocal() as db:
+        db.add(MediaJob(photo_asset_id=cover_photo, status="completed"))
+        db.add(MediaDerivative(photo_asset_id=cover_photo, variant="client_preview", relative_path=f"{cover_photo}/preview.jpg", status="ready"))
+        db.commit()
+    assert client.put(f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(cover_photo)}).status_code == 200
+
+    created = client.post("/admin/clients", json={"full_name": "Cliente Fluxo", "phone_e164": "+5511999994321"})
+    assert created.status_code == 201
+    client_id = UUID(created.json()["id"])
+    assert client.get("/admin/clients?query=99994321").json()["clients"][0]["id"] == str(client_id)
+    private_payload = {"parent_gallery_id": str(parent_id), "client_id": str(client_id), "name": "Galeria da cliente", "photo_ids": []}
+    first_link = client.post("/admin/derived-galleries", json=private_payload)
+    second_link = client.post("/admin/derived-galleries", json=private_payload)
+    assert first_link.status_code == second_link.status_code == 201
+    assert first_link.json()["id"] == second_link.json()["id"]
+
+    summary = client.get(f"/admin/parent-galleries/{parent_id}/summary")
+    assert summary.status_code == 200
+    assert summary.json()["counts"] == {"folders": 2, "photos": 2, "clients": 1}
+    assert summary.json()["cover_preview_url"] == f"/admin/photo-assets/{cover_photo}/watermarked-preview"
+    assert summary.json()["clients"][0]["name"] == "Cliente Fluxo"
+    assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{removable_photo}").status_code == 204
+    assert client.get(f"/admin/parent-galleries/{parent_id}/summary").json()["counts"]["photos"] == 1
+    assert client.get(f"/admin/parent-galleries/{parent_id}/folders").json()["folders"][0]["name"] == "Lote inicial"
+
     occupied_id = UUID(client.post("/admin/parent-galleries", json={"name": "Com pasta"}).json()["id"])
     create_folder_photo(client, occupied_id, storage_key="ocupada/foto.jpg")
     blocked = client.delete(f"/admin/parent-galleries/{occupied_id}")
