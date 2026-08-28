@@ -13,7 +13,7 @@ import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
@@ -22,6 +22,7 @@ from app.auth import (
     AdminPasswordInput,
     AdminUser,
     AuditEvent,
+    BrandingSettings,
     AuthChallenge,
     ChallengeResendInput,
     ChallengeVerification,
@@ -116,6 +117,21 @@ class PhotoBulkDeleteInput(BaseModel):
 
 class PhotoFolderReleaseInput(BaseModel):
     gallery_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class BrandingSettingsInput(BaseModel):
+    login_title: str = Field(min_length=1, max_length=120)
+    login_intro: str = Field(min_length=1, max_length=300)
+    login_helper: str = Field(min_length=1, max_length=240)
+
+    @field_validator("login_title", "login_intro", "login_helper")
+    @classmethod
+    def reject_markup(cls, value: str) -> str:
+        """Keep configurable entry copy as plain text, never executable markup."""
+        cleaned = value.strip()
+        if "<" in cleaned or ">" in cleaned:
+            raise ValueError("Os textos devem conter apenas texto simples")
+        return cleaned
 
 
 class DerivedGalleryInput(BaseModel):
@@ -474,6 +490,53 @@ def revoke_all(request: Request, response: Response) -> Response:
 def admin_area(request: Request) -> dict[str, str]:
     require_admin(request)
     return {"status": "authorized"}
+
+
+def _branding_payload(settings: BrandingSettings) -> dict[str, str | None]:
+    return {
+        "login_title": settings.login_title,
+        "login_intro": settings.login_intro,
+        "login_helper": settings.login_helper,
+        "logo_url": "/branding/logo" if settings.logo_key else None,
+        "app_icon_url": "/branding/app-icon" if settings.app_icon_key else None,
+        "favicon_url": "/branding/favicon" if settings.favicon_key else None,
+    }
+
+
+@app.get("/branding")
+def public_branding(db: Session = Depends(db_session)) -> dict[str, str | None]:
+    settings = db.scalar(select(BrandingSettings).limit(1))
+    if not settings:
+        settings = BrandingSettings()
+        db.add(settings)
+        db.commit()
+    return _branding_payload(settings)
+
+
+@app.get("/admin/branding")
+def admin_branding(request: Request, db: Session = Depends(db_session)) -> dict[str, str | None]:
+    require_admin(request)
+    settings = db.scalar(select(BrandingSettings).limit(1))
+    if not settings:
+        settings = BrandingSettings()
+        db.add(settings)
+        db.commit()
+    return _branding_payload(settings)
+
+
+@app.patch("/admin/branding")
+def update_admin_branding(payload: BrandingSettingsInput, request: Request, db: Session = Depends(db_session)) -> dict[str, str | None]:
+    require_admin(request)
+    settings = db.scalar(select(BrandingSettings).limit(1))
+    if not settings:
+        settings = BrandingSettings()
+        db.add(settings)
+    settings.login_title = payload.login_title.strip()
+    settings.login_intro = payload.login_intro.strip()
+    settings.login_helper = payload.login_helper.strip()
+    audit(db, "branding.settings_updated", str(settings.id))
+    db.commit()
+    return _branding_payload(settings)
 
 
 @app.get("/admin/validation-summary")

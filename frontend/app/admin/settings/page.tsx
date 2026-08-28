@@ -1,0 +1,16 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import { SystemState } from "../../ui-kit";
+
+type Branding = { login_title: string; login_intro: string; login_helper: string; logo_url: string | null; app_icon_url: string | null; favicon_url: string | null };
+const fallback: Branding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar.", logo_url: null, app_icon_url: null, favicon_url: null };
+
+export default function AdminSettingsPage() {
+  const [settings, setSettings] = useState<Branding | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => { fetch("/api/admin/branding", { credentials: "same-origin" }).then(async (response) => { if (!response.ok) throw new Error(); setSettings({ ...fallback, ...(await response.json()) }); }).catch(() => setMessage("Não foi possível carregar as configurações.")); }, []);
+  async function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!settings) return; const data = new FormData(event.currentTarget); const response = await fetch("/api/admin/branding", { method: "PATCH", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login_title: data.get("login_title"), login_intro: data.get("login_intro"), login_helper: data.get("login_helper") }) }); setMessage(response.ok ? "Textos da entrada salvos." : "Não foi possível salvar os textos."); if (response.ok) setSettings({ ...settings, ...(await response.json()) }); }
+  if (!settings) return <SystemState tone={message ? "error" : "loading"} title={message ? "Configurações indisponíveis" : "Carregando configurações"} detail={message || "Consultando a identidade da sua entrada."} />;
+  return <main className="admin-shell"><p className="eyebrow">Markina Gallery · Fotógrafo</p><h1>Configurações de entrada</h1><p className="intro">Personalize a mensagem que clientes e fotógrafos encontram antes de entrar. Os textos são simples, sem HTML ou scripts.</p><form className="gallery-editor-panel gallery-settings-form" onSubmit={save}><label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label><label>Texto introdutório<textarea name="login_intro" defaultValue={settings.login_intro} maxLength={300} rows={3} required /></label><label>Orientação auxiliar<input name="login_helper" defaultValue={settings.login_helper} maxLength={240} required /></label><div className="auth-preview"><p className="eyebrow">Prévia</p><h2>{settings.login_title}</h2><p>{settings.login_intro}</p><small>{settings.login_helper}</small></div><button className="primary">Salvar textos</button></form><section className="admin-card"><h2>Identidade visual</h2><p className="intro">Logo, ícone do aplicativo e favicon serão adicionados quando os arquivos oficiais forem enviados.</p><ul className="photo-list"><li>Logo principal: {settings.logo_url ? "configurada" : "fallback Markina"}</li><li>Ícone do aplicativo: {settings.app_icon_url ? "configurado" : "fallback Markina"}</li><li>Favicon: {settings.favicon_url ? "configurado" : "fallback Markina"}</li></ul></section>{message ? <p className="form-message" role="status">{message}</p> : null}</main>;
+}

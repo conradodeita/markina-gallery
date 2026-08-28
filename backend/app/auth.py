@@ -77,6 +77,20 @@ class Role(StrEnum):
     CLIENT = "client"
 
 
+class BrandingSettings(Base):
+    """Configuração única e segura da marca e dos textos de entrada."""
+
+    __tablename__ = "branding_settings"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    login_title: Mapped[str] = mapped_column(String(120), default="Sua galeria, do seu jeito.")
+    login_intro: Mapped[str] = mapped_column(String(300), default="Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.")
+    login_helper: Mapped[str] = mapped_column(String(240), default="Escolha seu tipo de acesso para continuar.")
+    logo_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    app_icon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    favicon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class AdminUser(Base):
     __tablename__ = "admin_user"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

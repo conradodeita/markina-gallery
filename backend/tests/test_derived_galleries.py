@@ -83,6 +83,34 @@ def authenticate_client(client: TestClient, phone: str) -> None:
     ).status_code == 200
 
 
+def test_branding_public_defaults_and_admin_plain_text_update(client: TestClient) -> None:
+    public = client.get("/branding")
+    assert public.status_code == 200
+    assert public.json()["login_title"] == "Sua galeria, do seu jeito."
+    assert client.get("/admin/branding").status_code == 403
+
+    authenticate_admin(client)
+    updated = client.patch(
+        "/admin/branding",
+        json={
+            "login_title": "Acesso da sua galeria",
+            "login_intro": "Fotos selecionadas com cuidado.",
+            "login_helper": "Informe seus dados para continuar.",
+        },
+    )
+    assert updated.status_code == 200
+    assert client.get("/branding").json()["login_title"] == "Acesso da sua galeria"
+    rejected = client.patch(
+        "/admin/branding",
+        json={
+            "login_title": "<script>alert(1)</script>",
+            "login_intro": "Texto",
+            "login_helper": "Ajuda",
+        },
+    )
+    assert rejected.status_code == 422
+
+
 def create_folder_photo(
     client: TestClient,
     parent_id: UUID,

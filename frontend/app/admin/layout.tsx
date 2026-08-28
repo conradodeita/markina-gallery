@@ -5,6 +5,7 @@ const navigation = [
   ["Galerias", "/admin/galleries"],
   ["Vendas", "/admin/purchases"],
   ["Estatísticas", "/admin/statistics"],
+  ["Configurações", "/admin/settings"],
 ];
 
 export default function AdminLayout({ children }: Readonly<{ children: React.ReactNode }>) {
