@@ -53,3 +53,14 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .source-summary-cover img { object-fit:contain; background:#f1f1f1; }
 .gallery-preview-hero img { object-fit:contain; background:#111; }
 .gallery-preview-folder img { object-fit:contain; background:#111; }
+
+/* Área da cliente: a foto conduz a leitura, sem cortar o enquadramento original. */
+.admin-shell:has(.photo-card-grid) { max-width:1240px; }
+.photo-card-grid { grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:18px; }
+.photo-card { padding:12px; border-color:#dedede; border-radius:16px; box-shadow:0 8px 22px #0000000a; transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+.photo-card:hover { transform:translateY(-2px); box-shadow:0 14px 28px #00000014; }
+.photo-card.selected { border:2px solid #171717; background:#fafafa; }
+.photo-card img { aspect-ratio:4/3; object-fit:contain; background:#151515; }
+.photo-card > div:last-child { display:flex; flex-wrap:wrap; gap:8px; }
+.photo-card > div:last-child button { flex:1 1 110px; min-height:38px; }
+@media (max-width:620px) { .photo-card-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }.photo-card { padding:8px; border-radius:12px; }.photo-card > div:last-child button { flex-basis:100%; } }
