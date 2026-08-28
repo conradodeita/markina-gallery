@@ -17,4 +17,4 @@
 - [x] 3.1 Implementar visualização responsiva com aviso de modo administrador.
 - [x] 3.2 Criar testes backend e frontend para todos os cenários.
 - [x] 3.3 Executar ruff, testes, lint e build; revisar desktop/mobile.
-- [ ] 3.4 Fazer push/deploy somente após suíte verde, com backup exclusivo do Markina.
+- [x] 3.4 Fazer push/deploy somente após suíte verde, com backup exclusivo do Markina.
