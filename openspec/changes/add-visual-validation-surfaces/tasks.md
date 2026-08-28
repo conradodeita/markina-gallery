@@ -6,7 +6,7 @@
 ## 2. Superfície do fotógrafo
 
 - [x] 2.1 Evoluir `/admin` para painel visual backend-driven com atalhos, resumo operacional e orientação de validação; verificar renderização com e sem dados autorizados.
-- [ ] 2.2 Refinar a operação de galerias e importações com estados visuais de processamento, sucesso e falha; verificar importação JPEG sintética em homologação sem URL de original.
+- [x] 2.2 Refinar a operação de galerias e importações com estados visuais de processamento, sucesso e falha; verificar importação JPEG sintética em homologação sem URL de original.
 
 ## 3. Superfície da cliente
 

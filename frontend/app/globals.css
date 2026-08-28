@@ -53,6 +53,7 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .source-summary-cover img { object-fit:contain; background:#f1f1f1; }
 .gallery-preview-hero img { object-fit:contain; background:#111; }
 .gallery-preview-folder img { object-fit:contain; background:#111; }
+.upload-status { display:grid; gap:4px; padding:12px 14px; border:1px solid #d6d6d6; border-left:4px solid #555; border-radius:10px; background:#fafafa; }.upload-status span { color:#666; font-size:.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.upload-status progress { width:100%; height:8px; accent-color:#171717; }.upload-status--success { border-left-color:#347a4a; background:#f2f8f3; }.upload-status--error { border-left-color:#a22b2b; background:#fff5f5; }
 
 /* Área da cliente: a foto conduz a leitura, sem cortar o enquadramento original. */
 .admin-shell:has(.photo-card-grid) { max-width:1240px; }
