@@ -23,6 +23,10 @@ describe("galeria privada da cliente", () => {
     expect(await screen.findByText("Festa escolar")).toBeTruthy();
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getByText("já comprada")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Novas fotos/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Já compradas/ }));
+    expect(screen.getByRole("img", { name: "Prévia protegida de IMG_002.jpg" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Todas/ }));
     expect(
       screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("src"),
     ).toBe("/api/gallery/gallery-1/photos/new-1/preview");
