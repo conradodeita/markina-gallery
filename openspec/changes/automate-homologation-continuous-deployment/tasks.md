@@ -12,8 +12,8 @@
 
 ## 3. Ativação externa e validação de homologação
 
-- [ ] 3.1 Definir e configurar o GitHub Environment de homologação, com aprovador obrigatório e secrets de conexão, e instalar no servidor a credencial Git somente leitura; verificar a aprovação pendente no GitHub e acesso remoto autenticado sem expor chaves.
-- [ ] 3.2 Executar o bootstrap autorizado no servidor após inventário de `/opt/markina-gallery`, portas e subdomínio, confirmando origem GitHub, checkout limpo e isolamento do ClearBudget; verificar que nenhum serviço ou arquivo de outro projeto foi alterado.
+- [x] 3.1 Definir e configurar o GitHub Environment de homologação, com aprovador obrigatório e secrets de conexão, e instalar no servidor a credencial Git somente leitura; verificar a aprovação pendente no GitHub e acesso remoto autenticado sem expor chaves. (Environment público `homolog` configurado com aprovador `conradodeita`, proteção de branch e seis secrets; chaves dedicadas Actions→servidor e servidor→GitHub verificadas em 2026-08-28)
+- [x] 3.2 Executar o bootstrap autorizado no servidor após inventário de `/opt/markina-gallery`, portas e subdomínio, confirmando origem GitHub, checkout limpo e isolamento do ClearBudget; verificar que nenhum serviço ou arquivo de outro projeto foi alterado. (origem GitHub somente leitura, `core.sshCommand` dedicado, diretórios `/var/lib/markina-gallery/{deploy-state,backups}` em modo 700, Compose/config e healthchecks aprovados; inventário Docker idêntico antes/depois em 2026-08-28)
 - [ ] 3.3 Validar um deploy controlado de commit já aprovado em `develop`, confirmando SHA remoto, migrations aditivas, healthchecks externos e fluxo de rollback por SHA; registrar a evidência operacional sem versionar logs sensíveis.
 
 ## Registro de bloqueio — 2026-08-28
