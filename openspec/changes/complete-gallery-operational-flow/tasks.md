@@ -23,7 +23,7 @@
 ## 4. Validação, documentação e homologação contínua
 
 - [x] 4.1 Criar testes backend para fluxo sintético completo: criar galeria, duas pastas, enviar JPEG, processar prévia, escolher capa, excluir foto elegível, buscar/vincular cliente e obter resumo; verificar que WhatsApp, biometria e venda não são acionados.
-- [ ] 4.2 Criar testes frontend para pasta, ampliação, exclusão, capa, busca, vínculo, navegação e estados de erro; verificar que não há autorização ou persistência simulada no browser.
+- [x] 4.2 Criar testes frontend para pasta, ampliação, exclusão, capa, busca, vínculo, navegação e estados de erro; verificar que não há autorização ou persistência simulada no browser.
 - [x] 4.3 Executar ruff, testes backend, lint, testes e build frontend; registrar resultados e manter falhas abertas até correção.
 - [ ] 4.4 Revisar visualmente em desktop e smartphone com dados sintéticos, seguindo as diretrizes próprias da Markina; verificar legibilidade, hierarquia, modal, confirmações e estados vazios.
 - [x] 4.5 Atualizar o roteiro de homologação e fazer push/deploy automático somente após a suíte verde, usando backup e Compose estritamente limitados ao Markina; verificar saúde, migration e URLs do ambiente.

@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), useParams: () => ({ sourceId: "source-1" }) }));
 
 import NewGalleryPage from "./new/page";
 import GalleryEditor from "./sources/[sourceId]/edit/gallery-editor";
+import SourceGalleryDetailPage from "./sources/[sourceId]/page";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -122,5 +123,18 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.getByRole("link", { name: /Ajustes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/ajustes");
     expect(screen.getByRole("link", { name: /Clientes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
+  });
+
+  it("renderiza o resumo com capa clicável, link e exclusão contextual", async () => {
+    const fetchMock = vi.fn((path: string) => path.endsWith("/folders")
+      ? response({ folders: [{ id: "folder-1", name: "Lote inicial", status: "preparing", photo_count: 2 }] })
+      : response({ name: "Evento completo", event_name: "Festa 2026", active: true, unlisted_link: "https://local.test/?parent_gallery_id=source-1", cover_preview_url: "/admin/photo-assets/photo-1/watermarked-preview", counts: { folders: 1, photos: 2, clients: 0 }, clients: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SourceGalleryDetailPage />);
+    expect(await screen.findByRole("heading", { name: "Evento completo" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Capa protegida da galeria" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/preview");
+    expect(screen.getByDisplayValue("https://local.test/?parent_gallery_id=source-1")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copiar link" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Excluir galeria vazia" })).toBeTruthy();
   });
 });
