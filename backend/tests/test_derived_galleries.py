@@ -1092,7 +1092,7 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     """Exercita o ciclo administrativo antes de venda, WhatsApp ou biometria."""
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento completo"}).json()["id"])
-    first_folder, cover_photo = create_folder_photo(
+    _first_folder, cover_photo = create_folder_photo(
         client, parent_id, folder_name="Lote inicial", filename="CAPA.jpg", storage_key="evento/capa.jpg"
     )
     second_folder, removable_photo = create_folder_photo(
