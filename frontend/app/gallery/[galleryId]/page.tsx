@@ -3,17 +3,19 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
-import {
-  ProtectedPhoto,
-  ProtectedPhotoViewer,
-} from "../../protected-photo-viewer";
+import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { StatusBadge, SystemState } from "../../ui-kit";
 
-type ReviewPhoto = ProtectedPhoto & {
+type ReviewPhoto = {
+  id: string;
+  name: string;
+  previewUrl: string;
+  folderId: string;
   selected: boolean;
   favorited: boolean;
   purchaseState: string;
 };
+type ReleasedFolder = { id: string; name: string; position: number; photo_count: number };
 type Comment = { id: string; photo_id: string; body: string };
 type Review = {
   gallery: {
@@ -31,20 +33,25 @@ export default function GalleryPage() {
   const { galleryId } = useParams<{ galleryId: string }>();
   const [review, setReview] = useState<Review | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
   const [activePhotoId, setActivePhotoId] = useState("");
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState<"all" | "nova" | "visualizada mas não comprada" | "já comprada">("all");
   function load() {
-    fetch(`/api/gallery/${galleryId}/review`, { credentials: "same-origin" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const result = await response.json();
+    Promise.all([
+      fetch(`/api/gallery/${galleryId}/review`, { credentials: "same-origin" }),
+      fetch(`/api/gallery/${galleryId}/folders`, { credentials: "same-origin" }),
+    ])
+      .then(async ([response, foldersResponse]) => {
+        if (!response.ok || !foldersResponse.ok) throw new Error();
+        const [result, folderResult] = await Promise.all([response.json(), foldersResponse.json()]);
         setReview({
           ...result,
           photos: result.photos.map(
             (photo: {
               id: string;
               name: string;
+              folder_id: string;
               preview_url: string;
               selected: boolean;
               favorited: boolean;
@@ -52,6 +59,7 @@ export default function GalleryPage() {
             }) => ({
               id: photo.id,
               name: photo.name,
+              folderId: photo.folder_id,
               previewUrl: `/api${photo.preview_url}`,
               selected: photo.selected,
               favorited: photo.favorited,
@@ -59,6 +67,7 @@ export default function GalleryPage() {
             }),
           ),
         });
+        setReleasedFolders(folderResult.folders ?? []);
         setActivePhotoId((current) => current || result.photos[0]?.id || "");
       })
       .catch(() =>
@@ -142,10 +151,7 @@ export default function GalleryPage() {
     );
   if (!review.photos.length)
     return (
-      <SystemState
-        title="Nenhuma foto liberada ainda"
-        detail="Quando o fotógrafo concluir uma rodada, ela aparecerá aqui."
-      />
+      <SystemState title="Nenhuma foto liberada ainda" detail="Quando o fotógrafo concluir uma rodada, ela aparecerá aqui." />
     );
   const activeComments = comments.filter(
     (comment) => comment.photo_id === activePhotoId,
@@ -155,13 +161,9 @@ export default function GalleryPage() {
     {} as Record<string, number>,
   );
   const visiblePhotos = filter === "all" ? review.photos : review.photos.filter((photo) => photo.purchaseState === filter);
+  const presentationFolders = releasedFolders.map((folder) => ({ id: folder.id, name: folder.name, photos: visiblePhotos.filter((photo) => photo.folderId === folder.id) })).filter((folder) => folder.photos.length);
   return (
     <main className="admin-shell">
-      <p className="eyebrow">Galeria privada</p>
-      <h1>{review.gallery.name}</h1>
-      {review.gallery.message && (
-        <p className="intro">{review.gallery.message}</p>
-      )}
       {!review.gallery.selection_open && (
         <p className="notice">
           O prazo para novas seleções terminou. Seu histórico continua
@@ -185,16 +187,7 @@ export default function GalleryPage() {
         ))}
       </nav>
       {!visiblePhotos.length && <p className="notice">Nenhuma foto nesta categoria.</p>}
-      <section className="photo-card-grid">
-        {visiblePhotos.map((photo) => (
-          <article
-            className={photo.selected ? "photo-card selected" : "photo-card"}
-            key={photo.id}
-          >
-            <img
-              src={photo.previewUrl}
-              alt={`Prévia protegida de ${photo.name}`}
-            />
+      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} emptyDetail="Nenhuma foto desta categoria está disponível neste momento." renderPhotoDetails={(photo) => <>
             <StatusBadge
               tone={
                 photo.purchaseState === "já comprada"
@@ -206,7 +199,6 @@ export default function GalleryPage() {
             >
               {photo.purchaseState}
             </StatusBadge>
-            <strong>{photo.name}</strong>
             <small>
               {photo.selected
                 ? "Selecionada"
@@ -214,7 +206,7 @@ export default function GalleryPage() {
                   ? "Favorita"
                   : "Disponível para revisão"}
             </small>
-            <div>
+            <div className="gallery-presentation-actions">
               <button
                 className="secondary"
                 disabled={
@@ -234,13 +226,7 @@ export default function GalleryPage() {
                 </button>
               )}
             </div>
-          </article>
-        ))}
-      </section>
-      <ProtectedPhotoViewer
-        label="Ampliar prévia protegida"
-        photos={review.photos}
-      />
+          </>} />
       {review.gallery.comments_enabled && (
         <section className="admin-card">
           <h2>Comentários</h2>

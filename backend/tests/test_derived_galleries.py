@@ -434,6 +434,7 @@ def test_client_interactions_are_private_reversible_and_audited(client: TestClie
     review = client.get(f"/gallery/{gallery_id}/review")
     assert review.status_code == 200
     assert review.json()["gallery"]["favorites_enabled"] is True
+    assert review.json()["photos"][0]["folder_id"]
     assert review.json()["photos"][0]["selected"] is False
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 201
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 201

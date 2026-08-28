@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 const editor = {
-  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1", cover_photo_id: null, cover_preview_url: null },
+  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1", cover_photo_id: null, cover_preview_url: null, watermark_text: "Markina", watermark_font: "sans-serif", watermark_color: "#FFFFFF", watermark_size: 32, watermark_direction: "diagonal", folder_display_mode: "individual", cover_title_font: "sans-serif", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" },
   steps: [
     { id: "ajustes", label: "Ajustes", status: "complete", available: true },
     { id: "vendas", label: "Vendas", status: "unavailable", available: false },
@@ -149,6 +149,17 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.getByRole("link", { name: /Ajustes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/ajustes");
     expect(screen.getByRole("link", { name: /Clientes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
+  });
+
+  it("organiza a personalização em painéis acessíveis e não oferece editor livre", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [] })));
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    await screen.findByRole("heading", { name: "Imagens e pastas" });
+    expect(screen.getByRole("group", { name: "Marca-d’água" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Capa e título" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Organização" })).toBeTruthy();
+    expect(screen.getByText(/Prévia disponível após definir uma capa/)).toBeTruthy();
+    expect(screen.queryByLabelText(/css/i)).toBeNull();
   });
 
   it("renderiza o resumo com capa clicável, link e exclusão contextual", async () => {

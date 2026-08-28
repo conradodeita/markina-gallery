@@ -2118,6 +2118,7 @@ def gallery_review(
             {
                 "id": str(photo.id),
                 "name": photo.display_name or photo.filename,
+                "folder_id": str(photo.folder_id),
                 "preview_url": f"/gallery/{gallery_id}/photos/{photo.id}/preview",
                 "selected": photo.id in selections,
                 "favorited": photo.id in favorites,
