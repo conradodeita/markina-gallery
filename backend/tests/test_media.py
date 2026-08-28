@@ -29,7 +29,7 @@ from app.auth import (
     token_hash,
 )
 from app.main import app
-from app.media import enqueue_derivatives, generate_derivatives
+from app.media import enqueue_derivatives, generate_derivatives, watermark
 from app.worker import process_next_media_job
 
 
@@ -73,6 +73,14 @@ def test_generates_idempotent_protected_derivatives_without_exif(tmp_path, monke
     with Image.open(client_preview) as rendered:
         assert rendered.width <= 1600
         assert not rendered.getexif()
+
+
+def test_watermark_direction_does_not_rotate_photo():
+    source = Image.new("RGB", (320, 180), color=(40, 60, 80))
+    gallery = ParentGallery(name="Evento", watermark_direction="diagonal")
+    rendered = watermark(source, gallery)
+    assert rendered.size == source.size
+    assert rendered.mode == "RGB"
 
 
 def test_worker_processes_only_markina_media_job(tmp_path, monkeypatch):

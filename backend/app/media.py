@@ -48,28 +48,34 @@ def safe_derivative_path(derivative: MediaDerivative) -> Path:
 
 
 def watermark(image: Image.Image, gallery: ParentGallery | None = None) -> Image.Image:
-    """Incorpora uma marca simples no bitmap que será entregue ao cliente."""
-    marked = image.copy()
-    draw = ImageDraw.Draw(marked, "RGBA")
+    """Incorpora marcas repetidas sem alterar orientação ou enquadramento da foto."""
+    marked = image.convert("RGBA")
     text = (gallery.watermark_text if gallery else None) or os.getenv("MEDIA_WATERMARK_TEXT", "MARKINA • PRÉVIA")
-    direction = gallery.watermark_direction if gallery else "diagonal"
-    color = gallery.watermark_color if gallery else "#FFFFFF"
+    direction = (gallery.watermark_direction if gallery else None) or "diagonal"
+    color = (gallery.watermark_color if gallery else None) or "#FFFFFF"
     try:
         rgb = tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
     except (ValueError, IndexError):
         rgb = (255, 255, 255)
     angle = {"horizontal": 0, "vertical": 90, "diagonal": 35}.get(direction, 35)
-    size = max(10, min(96, gallery.watermark_size if gallery else 24))
+    size = max(10, min(96, (gallery.watermark_size if gallery else None) or 24))
     try:
         font = ImageFont.truetype("DejaVuSans.ttf", size=size)
     except OSError:
         font = ImageFont.load_default()
+    probe = Image.new("RGBA", (1, 1))
+    probe_draw = ImageDraw.Draw(probe)
+    left, top, right, bottom = probe_draw.textbbox((0, 0), text, font=font, stroke_width=1)
+    layer_size = (max(1, right - left + 8), max(1, bottom - top + 8))
     for y in range(20, marked.height, 180):
         for x in range(12, marked.width, 280):
-            draw.text((x, y), text, font=font, fill=(*rgb, 105), stroke_width=1, stroke_fill=(0, 0, 0, 80), anchor=None)
-    if angle:
-        marked = marked.rotate(angle, expand=False, resample=Image.Resampling.BICUBIC)
-    return marked
+            layer = Image.new("RGBA", layer_size, (0, 0, 0, 0))
+            layer_draw = ImageDraw.Draw(layer)
+            layer_draw.text((4 - left, 4 - top), text, font=font, fill=(*rgb, 105), stroke_width=1, stroke_fill=(0, 0, 0, 80))
+            if angle:
+                layer = layer.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+            marked.alpha_composite(layer, (x, y))
+    return marked.convert("RGB")
 
 
 def enqueue_derivatives(db: Session, photo: PhotoAsset) -> MediaJob:
