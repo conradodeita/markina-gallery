@@ -21,6 +21,7 @@ describe("galeria privada da cliente", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
     expect(await screen.findByText("Festa escolar")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Resumo da seleção" }).textContent).toContain("0 fotos");
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getByText("já comprada")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Novas fotos/ })).toBeTruthy();

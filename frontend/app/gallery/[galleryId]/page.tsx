@@ -163,6 +163,7 @@ export default function GalleryPage() {
     {} as Record<string, number>,
   );
   const visiblePhotos = filter === "all" ? review.photos : review.photos.filter((photo) => photo.purchaseState === filter);
+  const selectedPhotos = review.photos.filter((photo) => photo.selected);
   const presentationFolders = releasedFolders.map((folder) => ({ id: folder.id, name: folder.name, photos: visiblePhotos.filter((photo) => photo.folderId === folder.id) })).filter((folder) => folder.photos.length);
   return (
     <main className="admin-shell">
@@ -180,6 +181,10 @@ export default function GalleryPage() {
           )}
         </p>
       )}
+      <section className="selection-summary" aria-live="polite" aria-label="Resumo da seleção">
+        <div><span>Sua seleção</span><strong>{selectedPhotos.length} foto{selectedPhotos.length === 1 ? "" : "s"}</strong></div>
+        <p>{review.gallery.selection_open ? "Use Selecionar em cada prévia. Suas escolhas ficam salvas nesta galeria." : "O prazo de novas seleções terminou; suas escolhas continuam identificadas abaixo."}</p>
+      </section>
       <nav className="gallery-photo-filters" aria-label="Filtrar fotos">
         {(["all", "nova", "visualizada mas não comprada", "já comprada"] as const).map((value) => (
           <button key={value} type="button" className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>

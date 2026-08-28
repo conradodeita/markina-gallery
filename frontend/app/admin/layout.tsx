@@ -1,13 +1,6 @@
 import Link from "next/link";
-
-const navigation = [
-  ["Visão geral", "/admin"],
-  ["Galerias", "/admin/galleries"],
-  ["Vendas", "/admin/purchases"],
-  ["Estatísticas", "/admin/statistics"],
-  ["Configurações", "/admin/settings"],
-];
+import { AdminNavigation } from "./admin-navigation";
 
 export default function AdminLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <div className="admin-frame"><header className="admin-topbar"><Link className="admin-brand" href="/admin"><span>MARKINA</span><strong>Gallery</strong></Link><nav aria-label="Navegação administrativa">{navigation.map(([label, href]) => <Link href={href} key={href}>{label}</Link>)}</nav><Link className="admin-exit" href="/">Sair</Link></header><main className="admin-content">{children}</main></div>;
+  return <div className="admin-frame"><header className="admin-topbar"><Link className="admin-brand" href="/admin"><span>MARKINA</span><strong>Gallery</strong><small>Central do fotógrafo</small></Link><AdminNavigation /><Link className="admin-exit" href="/">Sair</Link></header><main className="admin-content">{children}</main></div>;
 }

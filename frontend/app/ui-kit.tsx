@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { type ButtonHTMLAttributes, type ReactNode, useEffect } from "react";
 
-export function MarkinaButton({ children, variant = "primary", className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "quiet" }) {
+type ActionVariant = "primary" | "secondary" | "quiet";
+
+export function MarkinaButton({ children, variant = "primary", className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ActionVariant }) {
   return <button className={`mk-button mk-button--${variant} ${className}`} {...props}>{children}</button>;
 }
 
-export function MarkinaLink({ href, children, variant = "primary", className = "" }: { href: string; children: ReactNode; variant?: "primary" | "secondary" | "quiet"; className?: string }) {
+export function MarkinaLink({ href, children, variant = "primary", className = "" }: { href: string; children: ReactNode; variant?: ActionVariant; className?: string }) {
   return <Link className={`mk-button mk-button--${variant} ${className}`} href={href}>{children}</Link>;
 }
 
@@ -19,8 +21,16 @@ export function SurfaceCard({ children, className = "" }: { children: ReactNode;
   return <section className={`mk-card ${className}`}>{children}</section>;
 }
 
+export function PageHeading({ eyebrow, title, detail, actions }: { eyebrow?: string; title: string; detail?: string; actions?: ReactNode }) {
+  return <header className="mk-page-heading"><div>{eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}<h1>{title}</h1>{detail ? <p>{detail}</p> : null}</div>{actions ? <div className="mk-page-heading__actions">{actions}</div> : null}</header>;
+}
+
+export function MetricCard({ label, value, detail, tone = "neutral" }: { label: string; value: ReactNode; detail: string; tone?: "neutral" | "success" | "warning" | "danger" }) {
+  return <SurfaceCard className={`mk-metric mk-metric--${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></SurfaceCard>;
+}
+
 export function SystemState({ title, detail, tone = "empty" }: { title: string; detail: string; tone?: "empty" | "error" | "loading" }) {
-  return <div className={`mk-state mk-state--${tone}`} role={tone === "error" ? "alert" : "status"}><strong>{title}</strong><p>{detail}</p></div>;
+  return <div aria-live={tone === "loading" ? "polite" : undefined} className={`mk-state mk-state--${tone}`} role={tone === "error" ? "alert" : "status"}><strong>{title}</strong><p>{detail}</p></div>;
 }
 
 export function ConfirmDialog({ open, title, detail, confirmLabel, onConfirm, onCancel }: { open: boolean; title: string; detail: string; confirmLabel: string; onConfirm: () => void; onCancel: () => void }) {
