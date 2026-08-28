@@ -24,5 +24,5 @@
 
 - Frontend: `npx vitest run app/admin/galleries/gallery-editor.test.tsx app/admin/galleries/sources/[sourceId]/preview/page.test.tsx app/gallery/gallery.test.tsx --pool=threads --maxWorkers=1` — 15 testes aprovados.
 - Frontend: `npx tsc --noEmit`, `npm run lint` (sem erros; avisos preexistentes de `<img>`), `npm run build` — aprovados.
-- Backend: `DATABASE_URL` temporário fora do workspace com `.venv\\Scripts\\python.exe -m pytest tests/test_derived_galleries.py -k client_interactions_are_private_reversible_and_audited -q` — aprovado; `.venv\\Scripts\\python.exe -m ruff check app tests` — aprovado.
+- Backend: `DATABASE_URL` temporário fora do workspace com `.venv\\Scripts\\python.exe -m pytest tests/test_derived_galleries.py -q` — 31 testes aprovados; `.venv\\Scripts\\python.exe -m ruff check app tests` — aprovado.
 - Pendente: validação visual autenticada das duas superfícies em homologação (3.3) e validação estrita pela CLI do OpenSpec, indisponível neste ambiente (3.4).
