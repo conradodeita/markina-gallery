@@ -13,7 +13,7 @@
 ## 3. Qualidade e operação
 
 - [x] 3.1 Cobrir isolamento entre clientes, comentários, métricas, TXT e expiração com testes automatizados.
-- [ ] 3.2 Validar lint, build, migration, OpenSpec e homologação com dados sintéticos.
+- [x] 3.2 Validar lint, build, migration, OpenSpec e homologação com dados sintéticos.
 - [x] 3.3 Atualizar documentação e registrar que busca facial depende do spike separado.
 
 ## Registro de continuidade — 2026-08-26
@@ -30,3 +30,4 @@
 - A tarefa 2.2 foi concluída em 2026-08-26. A rota administrativa `/admin/statistics` oferece filtros com seletores autorizados, indicadores, gráfico temporal, listas e TXT filtrado; a conferência protegida de compras permanece em `/admin/purchases`.
 - A tarefa 2.3 foi concluída em 2026-08-26. A rota privada `/gallery/{id}` exibe a revisão, a mensagem, o prazo e as permissões da galeria, com seleção, favorito e comentários reversíveis; o histórico protegido permanece em `/library`.
 - A tarefa 3.1 foi concluída em 2026-08-26 com testes de isolamento, prazo, interações, métricas, exportação e prévias por papel. A tarefa 3.3 registra que reconhecimento facial continua condicionado exclusivamente ao spike `spike-private-facial-discovery`.
+- A tarefa 3.2 foi reconciliada em 2026-08-28 com evidência verificável: `pytest tests -q` passou 48/48 em SQLite temporário; `vitest run --pool=threads --maxWorkers=1` passou 22/22; `ruff check app tests`, typecheck e build passaram; `openspec validate --all --strict --no-interactive` passou 17/17. A migration aditiva desta change permanece aplicada antes das revisões posteriores e a homologação `markina-homolog.duckdns.org` está saudável no commit que contém essa linhagem, usando somente dados sintéticos documentados para o fluxo.

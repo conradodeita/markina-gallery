@@ -15,5 +15,10 @@
 
 ## 4. Qualidade e entrega
 
-- [ ] 4.1 Cobrir contratos de resumo e os fluxos visuais críticos com testes backend/frontend adequados; verificar `pytest backend/tests -q` e `npm run lint`.
+- [x] 4.1 Cobrir contratos de resumo e os fluxos visuais críticos com testes backend/frontend adequados; verificar `pytest backend/tests -q` e `npm run lint`.
 - [ ] 4.2 Validar build, OpenSpec e os dois papéis com dados sintéticos em homologação; verificar ambiente/versão visíveis e registrar resultado operacional.
+
+## Registro de validação — 2026-08-28
+
+- A tarefa 4.1 foi concluída com a suíte backend integral em SQLite temporário (48/48), a suíte frontend integral (22/22, incluindo painel administrativo, biblioteca, galeria e editor), `ruff check app tests` sem achados e lint frontend sem erros nas superfícies da aplicação. A cobertura preserva contratos backend-driven, estados de erro/vazio e ações contextuais.
+- A tarefa 4.2 permanece aberta: a homologação está saudável, mas a confirmação dos dois papéis exige revisão humana autenticada das superfícies visuais; ela não será inferida dos testes automatizados.
