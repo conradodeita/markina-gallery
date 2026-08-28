@@ -1,8 +1,8 @@
 ## 1. Contratos, integridade e migration
 
-- [ ] 1.1 Inventariar os contratos atuais de foto, prévia, pasta, resumo e cliente, e adicionar testes inicialmente falhos para capa, exclusão, busca e vínculos idempotentes; verificar que os testes cobrem escopo de galeria-mãe e compra confirmada.
-- [ ] 1.2 Adicionar o metadado opcional de capa da galeria-mãe e uma migration reversível que aceite somente foto da mesma origem; verificar upgrade e downgrade em SQLite e PostgreSQL efêmero sem dados reais.
-- [ ] 1.3 Implementar contratos autenticados para resumo completo da galeria, escolha/limpeza de capa e listagem ordenada de clientes; verificar ausência de originais, chaves de armazenamento e dados fora do escopo administrativo.
+- [x] 1.1 Inventariar os contratos atuais de foto, prévia, pasta, resumo e cliente, e adicionar testes inicialmente falhos para capa, exclusão, busca e vínculos idempotentes; verificar que os testes cobrem escopo de galeria-mãe e compra confirmada.
+- [x] 1.2 Adicionar o metadado opcional de capa da galeria-mãe e uma migration reversível que aceite somente foto da mesma origem; verificar upgrade e downgrade em SQLite e PostgreSQL efêmero sem dados reais.
+- [x] 1.3 Implementar contratos autenticados para resumo completo da galeria, escolha/limpeza de capa e listagem ordenada de clientes; verificar ausência de originais, chaves de armazenamento e dados fora do escopo administrativo.
 - [x] 1.4 Implementar exclusão contextual de foto sem compra confirmada, com limpeza idempotente de referências e mídia; verificar recusa de foto comprada, foto de outra pasta e foto de outra galeria.
 - [x] 1.5 Ajustar contratos de busca e vínculo de clientes para ordem alfabética, filtro por nome/WhatsApp e reutilização de galeria derivada da mesma origem; verificar que a busca não cria dados e que o vínculo não duplica histórico.
 
