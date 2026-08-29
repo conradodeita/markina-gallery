@@ -25,7 +25,7 @@ usage() {
 
 fail() {
   echo "deploy-homolog: $*" >&2
-  exit 1
+  return 1
 }
 
 compose() {
@@ -157,6 +157,8 @@ main() {
   compose build migrate
   compose run --rm --no-deps migrate
   next_revision="$(current_revision)"
+  [[ -n "$next_revision" && "$next_revision" == *"(head)"* ]] || fail "migration não alcançou o head do SHA alvo"
+  echo "migration Markina: ${previous_revision:-sem revisão} -> $next_revision"
   if [[ "$next_revision" != "$previous_revision" ]]; then
     MIGRATION_CHANGED=1
   fi
@@ -168,4 +170,6 @@ main() {
   echo "deploy-homolog concluído para $DEPLOY_SHA"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

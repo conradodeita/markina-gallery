@@ -28,8 +28,11 @@ def main() -> int:
     require('origin não aponta para o repositório GitHub esperado', "recusa de origem Git inesperada", SCRIPT)
     require('git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop', "validação de SHA em develop", SCRIPT)
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
+    require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
     require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
     require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('next_revision" == *"(head)"*', "confirmação de migration no head alvo", SCRIPT)
+    require('echo "migration Markina:', "registro não sensível da revisão aplicada", SCRIPT)
     require(
         'git switch --detach "$DEPLOY_SHA"\n'
         '  SHA_SWITCHED=1\n\n'
