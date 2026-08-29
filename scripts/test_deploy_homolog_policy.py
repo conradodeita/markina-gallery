@@ -45,6 +45,7 @@ def main() -> int:
     require('environment: homolog', "Environment protegido", WORKFLOW)
     require('secrets.HOMOLOG_SSH_PRIVATE_KEY', "chave via secret", WORKFLOW)
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
+    require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
     forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     print("deploy-homolog policy: ok")
