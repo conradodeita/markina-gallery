@@ -170,6 +170,6 @@ main() {
   echo "deploy-homolog concluído para $DEPLOY_SHA"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "${BASH_SOURCE[0]-$0}" == "$0" ]]; then
   main "$@"
 fi

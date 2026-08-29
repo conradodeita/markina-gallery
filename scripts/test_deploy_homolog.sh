@@ -16,6 +16,14 @@ fi
 
 grep -Fq 'o deploy só pode executar em /opt/markina-gallery' "$output"
 
+if MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -s -- --sha 0000000000000000000000000000000000000000 \
+  <"$DEPLOY_SCRIPT" >"$output" 2>&1; then
+  echo "o deploy via stdin aceitou execução fora de /opt/markina-gallery" >&2
+  exit 1
+fi
+grep -Fq 'o deploy só pode executar em /opt/markina-gallery' "$output"
+
 set +e
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" \
   MARKINA_EXPECTED_REPOSITORY="owner/repository" \
