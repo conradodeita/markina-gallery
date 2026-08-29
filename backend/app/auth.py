@@ -9,7 +9,6 @@ import hashlib
 import os
 import re
 import secrets
-from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from uuid import UUID, uuid4
@@ -18,6 +17,7 @@ from argon2 import PasswordHasher
 from fastapi import HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -33,6 +33,11 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+from app.messaging import (
+    WhatsAppProvider,
+    whatsapp_provider_from_environment,
+)
 
 
 def now() -> datetime:
@@ -284,6 +289,7 @@ class SaleOrder(Base):
     __table_args__ = (
         CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled')"),
         CheckConstraint("total_cents >= 0"),
+        UniqueConstraint("derived_gallery_id", "client_id", "checkout_key"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -294,6 +300,12 @@ class SaleOrder(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     client_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     client_phone_snapshot: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    price_rule_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    sales_message_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pix_copy_paste_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pix_qr_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pix_instructions_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checkout_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -306,6 +318,77 @@ class SaleOrderItem(Base):
     photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
     filename_snapshot: Mapped[str] = mapped_column(String(512))
     unit_price_cents: Mapped[int] = mapped_column(Integer)
+
+
+class PriceRule(Base):
+    __tablename__ = "price_rule"
+    __table_args__ = (
+        UniqueConstraint("derived_gallery_id", "minimum_quantity"),
+        CheckConstraint("minimum_quantity >= 1"),
+        CheckConstraint("maximum_quantity IS NULL OR maximum_quantity >= minimum_quantity"),
+        CheckConstraint("unit_price_cents >= 0"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    minimum_quantity: Mapped[int] = mapped_column(Integer)
+    maximum_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    unit_price_cents: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class PixCheckoutSettings(Base):
+    __tablename__ = "pix_checkout_settings"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), unique=True, index=True)
+    copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
+    qr_code_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class PaymentCommunication(Base):
+    __tablename__ = "payment_communication"
+    __table_args__ = (UniqueConstraint("sale_order_id", "idempotency_key"), CheckConstraint("status IN ('pending_review', 'confirmed', 'refused')"))
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    sale_order_id: Mapped[UUID] = mapped_column(ForeignKey("sale_order.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(20), default="pending_review", index=True)
+    decided_by_admin_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PaymentMessageTemplate(Base):
+    __tablename__ = "payment_message_template"
+    __table_args__ = (UniqueConstraint("kind"), CheckConstraint("kind IN ('confirmed', 'refused')"))
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(16))
+    body: Mapped[str] = mapped_column(String(500))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class PaymentNotificationOutbox(Base):
+    __tablename__ = "payment_notification_outbox"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        CheckConstraint("template_kind IN ('photographer_reported', 'confirmed', 'refused')"),
+        CheckConstraint("status IN ('queued', 'processing', 'sent', 'failed')"),
+        CheckConstraint("attempts >= 0"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    payment_communication_id: Mapped[UUID] = mapped_column(ForeignKey("payment_communication.id"), index=True)
+    recipient_phone: Mapped[str] = mapped_column(String(32))
+    template_kind: Mapped[str] = mapped_column(String(32))
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class MediaDerivative(Base):
@@ -381,21 +464,7 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
-class WhatsAppProvider(ABC):
-    """Porta de envio; provedores reais permanecem fora desta mudança."""
-
-    @abstractmethod
-    def send_otp(self, phone_e164: str, code: str) -> None: ...
-
-
-class SandboxWhatsAppProvider(WhatsAppProvider):
-    """Adaptador sem efeitos externos e sem registrar o código em logs."""
-
-    def send_otp(self, phone_e164: str, code: str) -> None:
-        del phone_e164, code
-
-
-whatsapp_provider: WhatsAppProvider = SandboxWhatsAppProvider()
+whatsapp_provider: WhatsAppProvider = whatsapp_provider_from_environment()
 
 
 class ClientChallengeInput(BaseModel):

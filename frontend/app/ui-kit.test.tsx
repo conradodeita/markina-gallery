@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
 
-import { ConfirmDialog, MarkinaButton, StatusBadge, SystemState } from "./ui-kit";
+import { ConfirmDialog, MarkinaButton, MetricCard, PageHeading, StatusBadge, SystemState } from "./ui-kit";
 
 describe("componentes visuais Markina", () => {
   it("comunica estado e variante de ação", () => {
@@ -18,5 +18,11 @@ describe("componentes visuais Markina", () => {
     render(<ConfirmDialog open title="Liberar lote" detail="Esta ação não inclui novas fotos depois." confirmLabel="Liberar" onCancel={onCancel} onConfirm={vi.fn()} />);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("mantém hierarquia e dados operacionais no kit compartilhado", () => {
+    render(<><PageHeading eyebrow="Operação" title="Pendências de hoje" detail="Acompanhe o que exige atenção." /><MetricCard label="Pagamentos" value={3} detail="Aguardando confirmação" tone="warning" /></>);
+    expect(screen.getByRole("heading", { name: "Pendências de hoje" })).toBeTruthy();
+    expect(screen.getByText("Pagamentos").closest("section")?.className).toContain("warning");
   });
 });

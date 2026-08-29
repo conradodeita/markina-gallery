@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 
-import { MarkinaLink, StatusBadge, SurfaceCard, SystemState } from "../ui-kit";
+import { MarkinaLink, MetricCard, PageHeading, StatusBadge, SurfaceCard, SystemState } from "../ui-kit";
 
 type Summary = {
   environment: string;
@@ -38,33 +38,24 @@ export default function AdminPage() {
   if (failed) return <SystemState tone="error" title="Acesso administrativo indisponível" detail="Entre novamente ou atualize a página." />;
   if (!summary) return <SystemState tone="loading" title="Preparando seu painel" detail="Consultando suas galerias e operações." />;
   const processing = (summary.counts.imports.queued ?? 0) + (summary.counts.imports.processing ?? 0);
+  const preparing = summary.counts.folders_preparing ?? 0;
   return (
     <div className="admin-dashboard">
-      <section className="dashboard-hero">
-        <div>
-          <p className="eyebrow">Área do fotógrafo</p>
-          <h1>Seu trabalho, organizado por galerias.</h1>
-          <p>Crie a galeria, configure suas etapas e prepare cada pasta de fotos dentro dela.</p>
-          <div className="dashboard-actions">
-            <MarkinaLink href="/admin/galleries/new">Nova galeria</MarkinaLink>
-            <MarkinaLink href="/admin/galleries" variant="secondary">Ver galerias</MarkinaLink>
-          </div>
-        </div>
-        <aside><span>Ambiente</span><strong>{summary.environment}</strong><small>versão {summary.version}</small></aside>
-      </section>
+      <PageHeading eyebrow="Central de operações" title="Seu próximo passo está à vista." detail="Acompanhe as galerias, conclua as pastas que estão em preparação e mantenha cada entrega no ritmo certo." actions={<><MarkinaLink href="/admin/galleries/new">Nova galeria</MarkinaLink><MarkinaLink href="/admin/galleries" variant="secondary">Ver galerias</MarkinaLink></>} />
+      <section className="dashboard-context" aria-label="Contexto do ambiente"><div><span>Ambiente de trabalho</span><strong>{summary.environment}</strong><small>versão {summary.version}</small></div><p>{processing ? `${processing} importação(ões) em processamento. Confira as pastas antes de liberar.` : "Nenhuma importação em andamento. Você pode revisar e liberar as pastas prontas."}</p></section>
       <section className="dashboard-metrics">
-        <SurfaceCard><span>Galerias-mãe</span><strong>{summary.counts.parent_galleries}</strong><small>eventos sob seu controle</small></SurfaceCard>
-        <SurfaceCard><span>Galerias privadas</span><strong>{summary.counts.derived_galleries}</strong><small>históricos independentes</small></SurfaceCard>
-        <SurfaceCard><span>Pastas em preparação</span><strong>{summary.counts.folders_preparing ?? 0}</strong><small>{processing} importação(ões) em andamento</small></SurfaceCard>
-        <SurfaceCard><span>Pastas liberadas</span><strong>{summary.counts.folders_released ?? 0}</strong><small>visíveis apenas às clientes autorizadas</small></SurfaceCard>
+        <MetricCard label="Galerias-fonte" value={summary.counts.parent_galleries} detail="eventos sob seu controle" />
+        <MetricCard label="Galerias privadas" value={summary.counts.derived_galleries} detail="históricos individuais ativos" tone="success" />
+        <MetricCard label="Pastas em preparação" value={preparing} detail={`${processing} importação(ões) em andamento`} tone={preparing ? "warning" : "success"} />
+        <MetricCard label="Pastas liberadas" value={summary.counts.folders_released ?? 0} detail="visíveis a clientes autorizadas" tone="success" />
       </section>
       <section className="dashboard-columns">
         <SurfaceCard>
-          <div className="section-heading"><div><p className="eyebrow">Atenção agora</p><h2>Próximos passos</h2></div></div>
+          <div className="section-heading"><div><p className="eyebrow">Atenção agora</p><h2>Ritual de publicação</h2><p className="dashboard-section-detail">Uma ordem simples para evitar liberar fotos incompletas.</p></div></div>
           <ol className="task-steps">
-            <li><b>1</b><div><strong>Abra uma galeria</strong><small>Revise ajustes e contexto do evento.</small></div></li>
-            <li><b>2</b><div><strong>Prepare uma pasta</strong><small>Envie JPEGs pela etapa Imagens.</small></div></li>
-            <li><b>3</b><div><strong>Vincule clientes</strong><small>Libere somente a rodada completa.</small></div></li>
+            <li><b>1</b><div><strong>Contextualize a galeria</strong><small>Confira identidade, prazo e mensagem antes de adicionar fotos.</small></div></li>
+            <li><b>2</b><div><strong>Prepare uma pasta completa</strong><small>Envie JPEGs e revise as prévias antes de disponibilizar.</small></div></li>
+            <li><b>3</b><div><strong>Libere para as clientes certas</strong><small>Vincule responsáveis e publique somente a rodada concluída.</small></div></li>
           </ol>
         </SurfaceCard>
         <SurfaceCard>

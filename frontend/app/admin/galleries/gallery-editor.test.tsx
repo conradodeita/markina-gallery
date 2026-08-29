@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 const editor = {
-  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1", cover_photo_id: null, cover_preview_url: null },
+  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1", cover_photo_id: null, cover_preview_url: null, watermark_text: "Markina", watermark_font: "sans-serif", watermark_color: "#FFFFFF", watermark_size: 32, watermark_direction: "diagonal", folder_display_mode: "individual", cover_title_font: "sans-serif", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" },
   steps: [
     { id: "ajustes", label: "Ajustes", status: "complete", available: true },
     { id: "vendas", label: "Vendas", status: "unavailable", available: false },
@@ -52,6 +52,32 @@ describe("editor administrativo de galeria", () => {
       expect.objectContaining({ method: "POST" }),
     ));
     expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/photo-folders", expect.anything());
+  });
+
+  it("oferece retorno e avanço dentro do contexto da mesma galeria", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [], clients: [] })));
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    await screen.findByRole("heading", { name: "Imagens e pastas" });
+    expect(screen.getByRole("link", { name: "← Voltar" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/detalhes");
+    expect(screen.getByRole("link", { name: "Avançar →" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
+  });
+
+  it("informa indisponibilidade quando o contrato do editor falha", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "Sessão expirada" }), { status: 401, headers: { "content-type": "application/json" } })));
+    render(<GalleryEditor sourceId="source-1" step="ajustes" />);
+    expect((await screen.findByRole("alert")).textContent).toContain("Galeria indisponível");
+  });
+
+  it("não oferece novo vínculo para responsável já associado à galeria", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Responsável", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1" };
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
+      return response({ clients: [{ id: "client-1", name: "Ana Responsável", phone: "+5511999999999" }] });
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    expect(await screen.findByText("Ana Responsável")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Vincular/ })).toBeNull();
   });
 
   it("mostra capacidade comercial indisponível sem inventar configuração", async () => {
@@ -123,6 +149,17 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.getByRole("link", { name: /Ajustes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/ajustes");
     expect(screen.getByRole("link", { name: /Clientes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
+  });
+
+  it("organiza a personalização em painéis acessíveis e não oferece editor livre", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [] })));
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    await screen.findByRole("heading", { name: "Imagens e pastas" });
+    expect(screen.getByRole("group", { name: "Marca-d’água" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Capa e título" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Organização" })).toBeTruthy();
+    expect(screen.getByText(/Prévia disponível após definir uma capa/)).toBeTruthy();
+    expect(screen.queryByLabelText(/css/i)).toBeNull();
   });
 
   it("renderiza o resumo com capa clicável, link e exclusão contextual", async () => {

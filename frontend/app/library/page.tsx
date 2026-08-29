@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { EmptyState } from "../validation-ui";
-import { StatusBadge, SystemState } from "../ui-kit";
+import { PageHeading, StatusBadge, SurfaceCard, SystemState } from "../ui-kit";
 import {
   ProtectedPhoto,
   ProtectedPhotoViewer,
@@ -50,12 +50,7 @@ export default function LibraryPage() {
     );
   return (
     <main className="admin-shell">
-      <p className="eyebrow">Sua biblioteca privada</p>
-      <h1>Suas galerias</h1>
-      <p className="intro">
-        Abra uma galeria para revisar fotos, selecionar e favoritar quando
-        permitido.
-      </p>
+      <PageHeading eyebrow="Sua biblioteca privada" title="Suas galerias" detail="As fotos que foram liberadas para você aparecem aqui. Abra uma galeria, revise com calma e marque suas favoritas." />
       <section className="gallery-card-grid">
         {galleries.length ? (
           galleries.map((gallery) => (
@@ -84,7 +79,7 @@ export default function LibraryPage() {
           />
         )}
       </section>
-      <section className="admin-card">
+      <SurfaceCard className="client-order-history">
         <h2>Compras confirmadas</h2>
         {orders.length ? (
           orders.map((order) => (
@@ -113,7 +108,7 @@ export default function LibraryPage() {
             detail="Suas compras futuras ficarão disponíveis neste histórico."
           />
         )}
-      </section>
+      </SurfaceCard>
       {selected.length > 0 && (
         <ProtectedPhotoViewer label="Fotos compradas" photos={selected} />
       )}

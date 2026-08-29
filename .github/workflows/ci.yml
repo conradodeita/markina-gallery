@@ -50,7 +50,16 @@ jobs:
         with:
           node-version: 24
       - name: Validar mudanças e specs
-        run: npx -y @fission-ai/openspec@latest validate --strict --all
+        run: |
+          set +e
+          npx -y @fission-ai/openspec@latest validate --strict --all
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Diagnóstico detalhado do OpenSpec"
+            npx -y @fission-ai/openspec@latest validate unify-gallery-presentation --type change --strict --no-interactive --json || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -62,3 +71,42 @@ jobs:
         run: curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar xz -C /tmp gitleaks
       - name: Executar varredura de segredos (histórico completo)
         run: /tmp/gitleaks git -v
+
+  deploy-homolog:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: [backend, frontend, openspec, gitleaks]
+    runs-on: ubuntu-latest
+    environment: homolog
+    permissions:
+      contents: read
+    env:
+      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
+      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
+      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
+      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
+      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
+      HOMOLOG_PUBLIC_BASE_URL: ${{ secrets.HOMOLOG_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validar automação de entrega
+        run: bash scripts/test_deploy_homolog.sh
+      - name: Publicar SHA aprovado em homologação
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS HOMOLOG_PUBLIC_BASE_URL; do
+            if [[ -z "${!required}" ]]; then
+              echo "Secret obrigatório ausente: $required" >&2
+              exit 1
+            fi
+          done
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          remote_command="$(printf 'env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$GITHUB_SHA")"
+          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh

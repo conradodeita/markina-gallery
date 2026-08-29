@@ -6,7 +6,7 @@ type Context = "client" | "admin";
 type Step = "details" | "code";
 const genericError =
   "Não foi possível concluir a autenticação. Confira os dados e tente novamente.";
-const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar." };
+const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar.", logo_url: null as string | null, app_icon_url: null as string | null, favicon_url: null as string | null };
 
 export function AuthEntry() {
   const [context, setContext] = useState<Context>("client");
@@ -26,10 +26,22 @@ export function AuthEntry() {
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const result = await response.json();
-        setBranding({ login_title: result.login_title || defaultBranding.login_title, login_intro: result.login_intro || defaultBranding.login_intro, login_helper: result.login_helper || defaultBranding.login_helper });
+        setBranding({ ...defaultBranding, ...result, login_title: result.login_title || defaultBranding.login_title, login_intro: result.login_intro || defaultBranding.login_intro, login_helper: result.login_helper || defaultBranding.login_helper });
       })
       .catch(() => undefined);
   }, []);
+  useEffect(() => {
+    if (!branding.favicon_url) return;
+    let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!icon) { icon = document.createElement("link"); icon.rel = "icon"; document.head.appendChild(icon); }
+    icon.href = `/api${branding.favicon_url}`;
+  }, [branding.favicon_url]);
+  useEffect(() => {
+    if (!branding.app_icon_url) return;
+    let icon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
+    if (!icon) { icon = document.createElement("link"); icon.rel = "apple-touch-icon"; document.head.appendChild(icon); }
+    icon.href = `/api${branding.app_icon_url}`;
+  }, [branding.app_icon_url]);
   async function requestCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -124,6 +136,7 @@ export function AuthEntry() {
   return (
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="entry-title">
+        {branding.logo_url ? <img className="auth-brand-logo" src={`/api${branding.logo_url}`} alt="Marca Markina Gallery" /> : null}
         <p className="eyebrow">Markina Gallery</p>
         <h1 id="entry-title">{branding.login_title}</h1>
         <p className="intro">{branding.login_intro}</p>

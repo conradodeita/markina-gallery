@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Política de contribuição
+    url: https://github.com/conradodeita/markina-gallery/blob/main/CONTRIBUTING.md
+    about: Leia o fluxo de contribuição e os limites de segurança antes de abrir uma issue.
