@@ -25,6 +25,10 @@ from app.auth import (
     PhotoFolder,
     PhotoSelection,
     PhotoView,
+    PixCheckoutSettings,
+    PaymentCommunication,
+    PaymentNotificationOutbox,
+    PriceRule,
     SaleOrder,
     SaleOrderItem,
     SessionLocal,
@@ -33,6 +37,7 @@ from app.auth import (
     password_hasher,
     token_hash,
 )
+from app.checkout import create_pending_checkout
 from app.main import app
 
 
@@ -467,6 +472,23 @@ def test_expired_selection_and_foreign_client_interactions_are_denied(client: Te
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 403
 
 
+def test_expired_gallery_rejects_checkout_of_existing_selection(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Expirada", phone_e164="+5511555555566")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner, expires=True)
+    with SessionLocal() as db:
+        db.add_all([
+            PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
+            PriceRule(derived_gallery_id=gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500),
+        ])
+        db.commit()
+    authenticate_client(client, owner.phone_e164)
+    response = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "expired-checkout-key-0001"})
+    assert response.status_code == 403
+
+
 def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
     with SessionLocal() as db:
         owner = Client(full_name="Cliente", phone_e164="+5511555555555")
@@ -486,6 +508,9 @@ def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
         db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photo_id, filename_snapshot="IMG_0001.jpg", unit_price_cents=100))
         db.commit()
     assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["purchase_state"] == "já comprada"
+    denied = client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection")
+    assert denied.status_code == 409
+    assert denied.json()["detail"] == "Foto indisponível para seleção."
 
 
 def test_phone_change_preserves_gallery_owner_and_retires_old_phone(client: TestClient):
@@ -1178,3 +1203,301 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     blocked = client.delete(f"/admin/parent-galleries/{occupied_id}")
     assert blocked.status_code == 409
     assert "pastas, fotos ou responsáveis" in blocked.json()["detail"]
+
+
+def test_pending_checkout_freezes_prices_pix_and_selection(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente PIX", phone_e164="+5511555554321")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    authenticate_client(client, owner.phone_e164)
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 201
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        db.add_all([
+            PriceRule(derived_gallery_id=gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=700),
+            PixCheckoutSettings(derived_gallery_id=gallery_id, copy_paste="pix-copia-cola", instructions="Confirme com o fotógrafo."),
+        ])
+        db.commit()
+        order = create_pending_checkout(db, gallery=gallery, client=owner, checkout_key="checkout-test-0001")
+        db.commit()
+        repeated = create_pending_checkout(db, gallery=gallery, client=owner, checkout_key="checkout-test-0001")
+        assert repeated.id == order.id
+        assert order.total_cents == 700
+        assert order.price_rule_snapshot["unit_price_cents"] == 700
+        assert order.pix_copy_paste_snapshot == "pix-copia-cola"
+        assert order.pix_instructions_snapshot == "Confirme com o fotógrafo."
+        assert not db.scalar(select(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery_id))
+        assert db.scalar(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)).unit_price_cents == 700
+
+
+def test_checkout_key_is_unique_for_the_same_client_and_gallery(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Concorrência", phone_e164="+5511555554322")
+        db.add(owner)
+        db.commit()
+    gallery_id, _ = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        db.add(SaleOrder(
+            derived_gallery_id=gallery_id,
+            client_id=owner.id,
+            payment_status="pending",
+            total_cents=100,
+            checkout_key="same-checkout-key-0001",
+        ))
+        db.commit()
+        db.add(SaleOrder(
+            derived_gallery_id=gallery_id,
+            client_id=owner.id,
+            payment_status="pending",
+            total_cents=100,
+            checkout_key="same-checkout-key-0001",
+        ))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+
+def test_client_cart_and_checkout_are_private(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Carrinho", phone_e164="+5511555554333")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        db.add(PriceRule(derived_gallery_id=gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500))
+        db.commit()
+    authenticate_client(client, owner.phone_e164)
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 201
+    cart = client.get(f"/gallery/{gallery_id}/cart")
+    assert cart.status_code == 200
+    assert cart.json()["total_cents"] == 500
+    checkout = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "client-checkout-0001"})
+    assert checkout.status_code == 201
+    assert checkout.json()["payment_status"] == "pending"
+    assert client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "client-checkout-0001"}).json()["id"] == checkout.json()["id"]
+
+
+def test_pending_order_is_private_and_preserves_pix_snapshot(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Pedido", phone_e164="+5511555554344")
+        other = Client(full_name="Outra Cliente", phone_e164="+5511555554355")
+        db.add_all([owner, other])
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        db.add_all([
+            PriceRule(derived_gallery_id=gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=1_200),
+            PixCheckoutSettings(derived_gallery_id=gallery_id, copy_paste="pix-seguro", qr_code_payload="qr-pix", instructions="Aguarde a confirmação."),
+        ])
+        db.commit()
+    authenticate_client(client, owner.phone_e164)
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 201
+    order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "client-order-0001"}).json()
+    private_order = client.get(f"/gallery/{gallery_id}/orders/{order['id']}")
+    assert private_order.status_code == 200
+    assert private_order.json()["pix"]["copy_paste"] == "pix-seguro"
+    assert private_order.json()["pix"]["confirmation"] == "A confirmação do pagamento é manual pelo fotógrafo."
+    authenticate_client(client, other.phone_e164)
+    denied = client.get(f"/gallery/{gallery_id}/orders/{order['id']}")
+    assert denied.status_code == 403
+    assert "pix-seguro" not in denied.text
+
+
+def test_client_reports_own_pending_payment_idempotently(client: TestClient, monkeypatch):
+    monkeypatch.setenv("WHATSAPP_PHOTOGRAPHER_PHONE_E164", "+5511555554000")
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Comunica", phone_e164="+5511555554388")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        db.add_all([PriceRule(derived_gallery_id=gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500), PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id)])
+        db.commit()
+    authenticate_client(client, owner.phone_e164)
+    order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "communication-order-key-0001"}).json()
+    first = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
+    second = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
+    third = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0002"})
+    assert first.status_code == second.status_code == third.status_code == 201
+    assert first.json()["id"] == second.json()["id"] == third.json()["id"]
+    assert first.json()["notification_status"] == "queued"
+    with SessionLocal() as db:
+        assert db.get(SaleOrder, UUID(order["id"])).payment_status == "pending"
+        outboxes = list(db.scalars(select(PaymentNotificationOutbox)))
+        assert len(outboxes) == 1
+        assert outboxes[0].template_kind == "photographer_reported"
+        assert outboxes[0].recipient_phone == "+5511555554000"
+    private_status = client.get(f"/gallery/{gallery_id}/payment-communications")
+    assert private_status.status_code == 200
+    assert private_status.json()["orders"][0]["communication"]["status"] == "pending_review"
+    assert "+5511555554000" not in private_status.text
+
+
+def test_admin_confirms_payment_communication_once(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Decide", phone_e164="+5511555554399")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500, client_phone_snapshot="+5511555554001")
+        db.add(order)
+        db.flush()
+        communication = PaymentCommunication(sale_order_id=order.id, client_id=owner.id, idempotency_key="decision-key-0001")
+        db.add(communication)
+        db.commit()
+        communication_id = communication.id
+        order_id = order.id
+    authenticate_admin(client)
+    first = client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "confirmed"})
+    second = client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "refused"})
+    assert first.json()["status"] == second.json()["status"] == "confirmed"
+    with SessionLocal() as db:
+        assert db.get(SaleOrder, order_id).payment_status == "confirmed"
+        assert db.scalar(select(AuditEvent).where(AuditEvent.event == "payment.communication_confirmed"))
+        outboxes = list(db.scalars(select(PaymentNotificationOutbox)))
+        assert len(outboxes) == 1
+        assert outboxes[0].template_kind == "confirmed"
+        assert outboxes[0].recipient_phone == owner.phone_e164
+
+
+def test_admin_lists_and_refuses_payment_communication_without_confirming_order(client: TestClient, monkeypatch):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Recusa", phone_e164="+5511555554400")
+        db.add(owner)
+        db.commit()
+    gallery_id, _ = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500)
+        db.add(order)
+        db.flush()
+        communication = PaymentCommunication(sale_order_id=order.id, client_id=owner.id, idempotency_key="refusal-key-0001")
+        db.add(communication)
+        db.commit()
+        communication_id, order_id = communication.id, order.id
+    authenticate_admin(client)
+    listed = client.get("/admin/payment-communications")
+    assert listed.status_code == 200
+    assert listed.json()["communications"][0]["id"] == str(communication_id)
+    assert listed.json()["communications"][0]["client_name"] == "Cliente Recusa"
+    assert owner.phone_e164 not in listed.text
+    assert client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "refused"}).json()["status"] == "refused"
+    assert client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "confirmed"}).json()["status"] == "refused"
+    with SessionLocal() as db:
+        assert db.get(SaleOrder, order_id).payment_status == "pending"
+        outboxes = list(db.scalars(select(PaymentNotificationOutbox)))
+        assert len(outboxes) == 1
+        assert outboxes[0].template_kind == "refused"
+        outbox_id = outboxes[0].id
+        outboxes[0].status = "failed"
+        outboxes[0].attempts = 1
+        db.commit()
+    monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "2")
+    assert client.post(f"/admin/payment-notifications/{outbox_id}/retry").json()["status"] == "queued"
+    with SessionLocal() as db:
+        outbox = db.get(PaymentNotificationOutbox, outbox_id)
+        outbox.status = "failed"
+        outbox.attempts = 2
+        db.commit()
+    assert client.post(f"/admin/payment-notifications/{outbox_id}/retry").status_code == 409
+
+
+def test_admin_payment_templates_are_controlled_and_have_safe_defaults(client: TestClient):
+    authenticate_admin(client)
+    defaults = client.get("/admin/payment-message-templates")
+    assert defaults.status_code == 200
+    assert set(defaults.json()["templates"]) == {"confirmed", "refused"}
+    assert defaults.json()["allowed_variables"] == ["cliente", "galeria", "pedido"]
+    invalid = client.put(
+        "/admin/payment-message-templates/confirmed",
+        json={"body": "Acesse https://exemplo.invalid/{{pedido}}"},
+    )
+    assert invalid.status_code == 422
+    saved = client.put(
+        "/admin/payment-message-templates/confirmed",
+        json={"body": "Olá {{cliente}}, o pedido {{pedido}} da {{galeria}} foi confirmado."},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["body"].startswith("Olá {{cliente}}")
+
+
+def test_payment_communication_contracts_enforce_role_and_gallery_owner(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Autorizada", phone_e164="+5511555554477")
+        other = Client(full_name="Cliente Terceira", phone_e164="+5511555554488")
+        db.add_all([owner, other])
+        db.commit()
+    gallery_id, _ = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500)
+        db.add(order)
+        db.commit()
+        order_id = order.id
+
+    authenticate_client(client, other.phone_e164)
+    denied_status = client.get(f"/gallery/{gallery_id}/payment-communications")
+    denied_report = client.post(
+        f"/gallery/{gallery_id}/orders/{order_id}/payment-communications",
+        json={"idempotency_key": "unauthorized-report-0001"},
+    )
+    denied_admin = client.get("/admin/payment-communications")
+    assert denied_status.status_code == denied_report.status_code == denied_admin.status_code == 403
+    assert "Cliente Autorizada" not in denied_status.text + denied_report.text + denied_admin.text
+
+
+def test_admin_pricing_requires_contiguous_tiers_and_returns_jump_warning(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Preço", phone_e164="+5511555554366")
+        db.add(owner)
+        db.commit()
+    gallery_id, _ = create_gallery_for_client(client, owner)
+    authenticate_admin(client)
+    invalid = client.put(
+        f"/admin/derived-galleries/{gallery_id}/pricing",
+        json={"tiers": [{"minimum_quantity": 2, "maximum_quantity": None, "unit_price_cents": 500}], "pix": {}},
+    )
+    assert invalid.status_code == 422
+    saved = client.put(
+        f"/admin/derived-galleries/{gallery_id}/pricing",
+        json={
+            "tiers": [
+                {"minimum_quantity": 1, "maximum_quantity": 10, "unit_price_cents": 700},
+                {"minimum_quantity": 11, "maximum_quantity": None, "unit_price_cents": 500},
+            ],
+            "pix": {"copy_paste": "pix-controlado", "instructions": "Confirme depois do PIX."},
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["has_downward_jump"] is True
+    assert client.get(f"/admin/derived-galleries/{gallery_id}/pricing").json()["pix"]["copy_paste"] == "pix-controlado"
+
+
+def test_admin_sees_pending_order_snapshots_without_confirming_it(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Conferência", phone_e164="+5511555554377")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        db.add_all([
+            PriceRule(derived_gallery_id=gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=900),
+            PixCheckoutSettings(derived_gallery_id=gallery_id, copy_paste="pix-snapshot", instructions="Confirmação manual."),
+            PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
+        ])
+        db.commit()
+        create_pending_checkout(db, gallery=gallery, client=owner, checkout_key="admin-order-snapshot-0001")
+        db.commit()
+    authenticate_admin(client)
+    response = client.get(f"/admin/derived-galleries/{gallery_id}/orders")
+    assert response.status_code == 200
+    order = response.json()["orders"][0]
+    assert order["payment_status"] == "pending"
+    assert order["total_cents"] == 900
+    assert order["price_rule"]["unit_price_cents"] == 900
+    assert order["pix"]["copy_paste"] == "pix-snapshot"
+    assert order["items"] == [{"photo_id": str(photo_id), "name": "IMG_0001.jpg", "unit_price_cents": 900}]
+    with SessionLocal() as db:
+        assert db.scalar(select(SaleOrder).where(SaleOrder.derived_gallery_id == gallery_id)).payment_status == "pending"

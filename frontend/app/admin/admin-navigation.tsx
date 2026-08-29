@@ -7,6 +7,7 @@ const navigation = [
   { href: "/admin", label: "Visão geral" },
   { href: "/admin/galleries", label: "Galerias" },
   { href: "/admin/operations", label: "Operação" },
+  { href: "/admin/payments", label: "Pagamentos" },
   { href: "/admin/purchases", label: "Vendas" },
   { href: "/admin/statistics", label: "Estatísticas" },
   { href: "/admin/settings", label: "Configurações" },

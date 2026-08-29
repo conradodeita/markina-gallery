@@ -69,4 +69,69 @@ describe("galeria privada da cliente", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível abrir esta galeria");
     expect(screen.getByText(/conta correta/i)).toBeTruthy();
   });
+
+  it("mostra o total do carrinho e cria pedido PIX pendente", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 1, unit_price_cents: 700, total_cents: 700 }), { status: 200 }));
+      if (path.endsWith("/checkout")) return Promise.resolve(new Response(JSON.stringify({ id: "order-1", total_cents: 700, payment_status: "pending" }), { status: 201 }));
+      if (path.endsWith("/folders")) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }), { status: 200 }));
+      if (path.endsWith("/comments")) return Promise.resolve(new Response(JSON.stringify({ comments: [] }), { status: 200 }));
+      void options;
+      return Promise.resolve(new Response(JSON.stringify(review), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryPage />);
+    expect(await screen.findByText(/total estimado R\$ 7,00/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /finalizar 1 foto por pix/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/gallery/gallery-1/checkout", expect.objectContaining({ method: "POST" })));
+    expect(await screen.findByText(/pedido pendente de confirmação/i)).toBeTruthy();
+    expect(screen.getByText(/confirmação não é automática/i)).toBeTruthy();
+  });
+
+  it("remove uma foto diretamente do carrinho privado", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 1, items: [{ id: "new-1", name: "IMG_001.jpg" }] }), { status: 200 }));
+      if (path.endsWith("/folders")) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }), { status: 200 }));
+      if (path.endsWith("/comments")) return Promise.resolve(new Response(JSON.stringify({ comments: [] }), { status: 200 }));
+      void options;
+      return Promise.resolve(new Response(JSON.stringify(review), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryPage />);
+    expect(await screen.findByRole("list", { name: "Fotos no carrinho" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remover do carrinho" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/gallery/gallery-1/photos/new-1/selection",
+      expect.objectContaining({ method: "DELETE" }),
+    ));
+  });
+
+  it("comunica o PIX e acompanha a revisão sem confirmar automaticamente", async () => {
+    let reported = false;
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path.endsWith("/payment-communications") && path.includes("/orders/") && options?.method === "POST") {
+        reported = true;
+        return Promise.resolve(new Response(JSON.stringify({ id: "communication-1", status: "pending_review" }), { status: 201 }));
+      }
+      if (path.endsWith("/payment-communications")) return Promise.resolve(new Response(JSON.stringify({ orders: [{
+        order_id: "order-1", total_cents: 700, payment_status: "pending",
+        communication: reported ? { id: "communication-1", status: "pending_review" } : null,
+        notification: null,
+      }] }), { status: 200 }));
+      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 0 }), { status: 200 }));
+      if (path.endsWith("/folders")) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }), { status: 200 }));
+      if (path.endsWith("/comments")) return Promise.resolve(new Response(JSON.stringify({ comments: [] }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify(review), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryPage />);
+    expect(await screen.findByText("Pagamento ainda não comunicado")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Já fiz o PIX" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/gallery/gallery-1/orders/order-1/payment-communications",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    expect(await screen.findByText("Pagamento informado · aguardando revisão")).toBeTruthy();
+    expect(screen.getByText(/Aguarde a revisão do fotógrafo/i)).toBeTruthy();
+  });
 });

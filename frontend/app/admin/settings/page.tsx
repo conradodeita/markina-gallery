@@ -13,6 +13,7 @@ type Branding = {
 };
 
 type Asset = "logo" | "app-icon" | "favicon";
+type PaymentTemplates = { confirmed: string; refused: string };
 
 const fallback: Branding = {
   login_title: "Sua galeria, do seu jeito.",
@@ -32,6 +33,7 @@ const assetDetails: Record<Asset, { label: string; accept: string; help: string;
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Branding | null>(null);
   const [message, setMessage] = useState("");
+  const [paymentTemplates, setPaymentTemplates] = useState<PaymentTemplates | null>(null);
 
   useEffect(() => {
     fetch("/api/admin/branding", { credentials: "same-origin" })
@@ -40,6 +42,16 @@ export default function AdminSettingsPage() {
         setSettings({ ...fallback, ...(await response.json()) });
       })
       .catch(() => setMessage("Não foi possível carregar as configurações."));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/admin/payment-message-templates", { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json();
+        if (result.templates?.confirmed && result.templates?.refused) setPaymentTemplates(result.templates);
+      })
+      .catch(() => setPaymentTemplates(null));
   }, []);
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -79,6 +91,19 @@ export default function AdminSettingsPage() {
     event.target.value = "";
   }
 
+  async function savePaymentTemplate(kind: keyof PaymentTemplates, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = String(new FormData(event.currentTarget).get("body") ?? "");
+    const response = await fetch(`/api/admin/payment-message-templates/${kind}`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    });
+    setMessage(response.ok ? "Mensagem transacional salva." : "Não foi possível salvar: use apenas texto e variáveis permitidas.");
+    if (response.ok && paymentTemplates) setPaymentTemplates({ ...paymentTemplates, [kind]: (await response.json()).body });
+  }
+
   if (!settings) {
     return <SystemState tone={message ? "error" : "loading"} title={message ? "Configurações indisponíveis" : "Carregando configurações"} detail={message || "Consultando a identidade da sua entrada."} />;
   }
@@ -86,7 +111,7 @@ export default function AdminSettingsPage() {
   return (
     <main className="admin-shell">
       <p className="eyebrow">Markina Gallery · Fotógrafo</p>
-      <h1>Configurações de entrada</h1>
+      <h1>Configurações</h1>
       <p className="intro">Personalize a mensagem que clientes e fotógrafos encontram antes de entrar. Os textos são simples, sem HTML ou scripts.</p>
       <form className="gallery-editor-panel gallery-settings-form" onSubmit={save}>
         <label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label>
@@ -116,6 +141,20 @@ export default function AdminSettingsPage() {
             </label>;
           })}
         </div>
+      </section>
+      <section className="admin-card" aria-labelledby="payment-messages-title">
+        <h2 id="payment-messages-title">Mensagens de pagamento</h2>
+        <p className="intro">Use somente texto simples e as variáveis controladas <code>{"{{cliente}}"}</code>, <code>{"{{pedido}}"}</code> e <code>{"{{galeria}}"}</code>. URLs, HTML e dados bancários não são aceitos.</p>
+        {paymentTemplates ? <div className="dashboard-columns">
+          <form className="gallery-settings-form" onSubmit={(event) => savePaymentTemplate("confirmed", event)}>
+            <label>Confirmação<textarea name="body" defaultValue={paymentTemplates.confirmed} maxLength={500} rows={5} required /></label>
+            <button className="primary">Salvar confirmação</button>
+          </form>
+          <form className="gallery-settings-form" onSubmit={(event) => savePaymentTemplate("refused", event)}>
+            <label>Pagamento não localizado<textarea name="body" defaultValue={paymentTemplates.refused} maxLength={500} rows={5} required /></label>
+            <button className="primary">Salvar recusa</button>
+          </form>
+        </div> : <SystemState title="Mensagens indisponíveis" detail="A configuração transacional não pôde ser carregada." />}
       </section>
       {message ? <p className="form-message" role="status">{message}</p> : null}
     </main>

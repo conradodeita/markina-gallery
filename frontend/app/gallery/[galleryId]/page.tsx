@@ -17,6 +17,20 @@ type ReviewPhoto = {
 };
 type ReleasedFolder = { id: string; name: string; position: number; photo_count: number };
 type Comment = { id: string; photo_id: string; body: string };
+type Cart = {
+  quantity: number;
+  total_cents?: number;
+  unit_price_cents?: number;
+  tier?: { minimum_quantity: number; maximum_quantity: number | null };
+  items?: { id: string; name: string }[];
+};
+type PaymentOrder = {
+  order_id: string;
+  total_cents: number;
+  payment_status: "pending" | "confirmed" | "cancelled";
+  communication: { id: string; status: "pending_review" | "confirmed" | "refused" } | null;
+  notification: { status: "queued" | "processing" | "sent" | "failed"; last_error: string | null } | null;
+};
 type Review = {
   gallery: {
     name: string;
@@ -35,6 +49,9 @@ export default function GalleryPage() {
   const [review, setReview] = useState<Review | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [cart, setCart] = useState<Cart>({ quantity: 0 });
+  const [pendingOrder, setPendingOrder] = useState<{ id: string; total_cents: number } | null>(null);
+  const [paymentOrders, setPaymentOrders] = useState<PaymentOrder[]>([]);
   const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
   const [activePhotoId, setActivePhotoId] = useState("");
   const [message, setMessage] = useState("");
@@ -86,9 +103,29 @@ export default function GalleryPage() {
       })
       .catch(() => setComments([]));
   }
+  function loadCart() {
+    fetch(`/api/gallery/${galleryId}/cart`, { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json();
+        setCart(typeof result.quantity === "number" ? result : { quantity: 0 });
+      })
+      .catch(() => setCart({ quantity: 0 }));
+  }
+  function loadPaymentOrders() {
+    fetch(`/api/gallery/${galleryId}/payment-communications`, { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json();
+        setPaymentOrders(Array.isArray(result.orders) ? result.orders : []);
+      })
+      .catch(() => setPaymentOrders([]));
+  }
   useEffect(() => {
     load();
     loadComments();
+    loadCart();
+    loadPaymentOrders();
   }, [galleryId]); // eslint-disable-line react-hooks/exhaustive-deps
   async function interaction(
     photo: ReviewPhoto,
@@ -104,7 +141,54 @@ export default function GalleryPage() {
         ? "Alteração salva."
         : "Não foi possível salvar esta alteração.",
     );
-    if (response.ok) load();
+    if (response.ok) {
+      load();
+      loadCart();
+    }
+  }
+  async function checkout() {
+    const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `checkout-${Date.now()}-${galleryId}`;
+    const response = await fetch(`/api/gallery/${galleryId}/checkout`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    });
+    if (!response.ok) {
+      setMessage("Não foi possível finalizar o pedido. Revise sua seleção e tente novamente.");
+      return;
+    }
+    const order = await response.json();
+    setPendingOrder({ id: order.id, total_cents: order.total_cents });
+    setMessage("Pedido criado. O pagamento será confirmado manualmente pelo fotógrafo.");
+    load();
+    loadCart();
+    loadPaymentOrders();
+  }
+  async function reportPayment(orderId: string) {
+    const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `payment-report-${Date.now()}-${orderId}`;
+    const response = await fetch(`/api/gallery/${galleryId}/orders/${orderId}/payment-communications`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    });
+    setMessage(response.ok ? "Pagamento comunicado. Aguarde a revisão do fotógrafo." : "Não foi possível comunicar o pagamento.");
+    if (response.ok) {
+      setPendingOrder(null);
+      loadPaymentOrders();
+    }
+  }
+  async function removeFromCart(photoId: string) {
+    const response = await fetch(`/api/gallery/${galleryId}/photos/${photoId}/selection`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    setMessage(response.ok ? "Foto removida do carrinho." : "Não foi possível remover esta foto do carrinho.");
+    if (response.ok) {
+      load();
+      loadCart();
+    }
   }
   async function addComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -184,7 +268,20 @@ export default function GalleryPage() {
       <section className="selection-summary" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{selectedPhotos.length} foto{selectedPhotos.length === 1 ? "" : "s"}</strong></div>
         <p>{review.gallery.selection_open ? "Use Selecionar em cada prévia. Suas escolhas ficam salvas nesta galeria." : "O prazo de novas seleções terminou; suas escolhas continuam identificadas abaixo."}</p>
+        {cart.total_cents !== undefined && <p>Faixa aplicada: R$ {(cart.unit_price_cents! / 100).toFixed(2).replace(".", ",")} por foto · total estimado R$ {(cart.total_cents / 100).toFixed(2).replace(".", ",")}.</p>}
+        {cart.items?.length ? <ul className="photo-list" aria-label="Fotos no carrinho">{cart.items.map((item) => <li key={item.id}>{item.name}<button type="button" className="link-button" onClick={() => removeFromCart(item.id)}>Remover do carrinho</button></li>)}</ul> : null}
+        <button className="primary" disabled={!review.gallery.selection_open || cart.quantity === 0} onClick={checkout}>Finalizar {cart.quantity} foto{cart.quantity === 1 ? "" : "s"} por PIX</button>
       </section>
+      {pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id) && <section className="admin-card" aria-live="polite"><h2>Pedido pendente de confirmação</h2><p>Pedido criado no valor de R$ {(pendingOrder.total_cents / 100).toFixed(2).replace(".", ",")}.</p><p>Envie o PIX conforme as instruções do fotógrafo. A confirmação não é automática.</p><button className="primary" type="button" onClick={() => reportPayment(pendingOrder.id)}>Já fiz o PIX</button></section>}
+      {paymentOrders.length > 0 && <section className="admin-card" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {
+        const status = order.communication?.status;
+        return <article className="upload-status" key={order.order_id}>
+          <strong>Pedido {order.order_id.slice(0, 8)} · R$ {(order.total_cents / 100).toFixed(2).replace(".", ",")}</strong>
+          <span>{status === "confirmed" ? "Pagamento confirmado" : status === "refused" ? "Pagamento não localizado" : status === "pending_review" ? "Pagamento informado · aguardando revisão" : "Pagamento ainda não comunicado"}</span>
+          {order.notification?.status === "failed" && <span>A resposta por WhatsApp falhou. O status acima continua válido.</span>}
+          {order.payment_status === "pending" && (!status || status === "refused") && <button className="primary" type="button" onClick={() => reportPayment(order.order_id)}>Já fiz o PIX</button>}
+        </article>;
+      })}</section>}
       <nav className="gallery-photo-filters" aria-label="Filtrar fotos">
         {(["all", "nova", "visualizada mas não comprada", "já comprada"] as const).map((value) => (
           <button key={value} type="button" className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>

@@ -7,7 +7,7 @@ from datetime import datetime
 from io import BytesIO
 from os import getenv
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 import pyotp
@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
 
@@ -42,6 +43,11 @@ from app.auth import (
     PhotoFolder,
     PhotoSelection,
     PhotoView,
+    PixCheckoutSettings,
+    PaymentCommunication,
+    PaymentMessageTemplate,
+    PaymentNotificationOutbox,
+    PriceRule,
     Role,
     SaleOrder,
     SaleOrderItem,
@@ -61,7 +67,15 @@ from app.auth import (
     revoke_subject_sessions,
     whatsapp_provider,
 )
+from app.checkout import CheckoutError, create_pending_checkout
 from app.media import enqueue_derivatives, safe_derivative_path, safe_source_path
+from app.messaging import (
+    WhatsAppConfigurationError,
+    configured_photographer_phone,
+    payment_notification_max_attempts,
+)
+from app.pricing import PriceTier, PricingRuleError, has_downward_jump, quote, validate_tiers
+from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
 
 app = FastAPI(title="Markina Gallery API", version="0.2.0")
 
@@ -217,6 +231,39 @@ class PhoneChangeInput(BaseModel):
 
 class PhotoCommentInput(BaseModel):
     body: str = Field(min_length=1, max_length=2_000)
+
+
+class CheckoutInput(BaseModel):
+    idempotency_key: str = Field(min_length=12, max_length=128)
+
+
+class PaymentCommunicationInput(BaseModel):
+    idempotency_key: str = Field(min_length=12, max_length=128)
+
+
+class PaymentDecisionInput(BaseModel):
+    decision: Literal["confirmed", "refused"]
+
+
+class PaymentTemplateInput(BaseModel):
+    body: str = Field(min_length=1, max_length=500)
+
+
+class PriceTierInput(BaseModel):
+    minimum_quantity: int = Field(ge=1, le=10_000)
+    maximum_quantity: int | None = Field(default=None, ge=1, le=10_000)
+    unit_price_cents: int = Field(ge=0, le=10_000_000)
+
+
+class PixCheckoutSettingsInput(BaseModel):
+    copy_paste: str | None = Field(default=None, max_length=4_000)
+    qr_code_payload: str | None = Field(default=None, max_length=8_000)
+    instructions: str | None = Field(default=None, max_length=500)
+
+
+class GalleryPricingInput(BaseModel):
+    tiers: list[PriceTierInput] = Field(min_length=1, max_length=20)
+    pix: PixCheckoutSettingsInput = Field(default_factory=PixCheckoutSettingsInput)
 
 
 def db_session():
@@ -1646,6 +1693,139 @@ def admin_purchase_history(
     return {"orders": result}
 
 
+def pricing_payload(db: Session, gallery_id: UUID) -> dict[str, object]:
+    rules = list(
+        db.scalars(
+            select(PriceRule)
+            .where(PriceRule.derived_gallery_id == gallery_id)
+            .order_by(PriceRule.minimum_quantity)
+        )
+    )
+    settings = db.scalar(
+        select(PixCheckoutSettings).where(PixCheckoutSettings.derived_gallery_id == gallery_id)
+    )
+    return {
+        "tiers": [
+            {
+                "minimum_quantity": rule.minimum_quantity,
+                "maximum_quantity": rule.maximum_quantity,
+                "unit_price_cents": rule.unit_price_cents,
+            }
+            for rule in rules
+        ],
+        "pix": {
+            "copy_paste": settings.copy_paste if settings else None,
+            "qr_code_payload": settings.qr_code_payload if settings else None,
+            "instructions": settings.instructions if settings else None,
+        },
+    }
+
+
+@app.get("/admin/derived-galleries/{gallery_id}/pricing")
+def admin_gallery_pricing(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    if not db.get(DerivedGallery, gallery_id):
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    return pricing_payload(db, gallery_id)
+
+
+@app.put("/admin/derived-galleries/{gallery_id}/pricing")
+def save_admin_gallery_pricing(
+    gallery_id: UUID, payload: GalleryPricingInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    if not db.get(DerivedGallery, gallery_id):
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    try:
+        tiers = validate_tiers(
+            [
+                PriceTier(
+                    tier.minimum_quantity,
+                    tier.maximum_quantity,
+                    tier.unit_price_cents,
+                )
+                for tier in payload.tiers
+            ]
+        )
+    except PricingRuleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.execute(delete(PriceRule).where(PriceRule.derived_gallery_id == gallery_id))
+    db.add_all(
+        [
+            PriceRule(
+                derived_gallery_id=gallery_id,
+                minimum_quantity=tier.minimum_quantity,
+                maximum_quantity=tier.maximum_quantity,
+                unit_price_cents=tier.unit_price_cents,
+            )
+            for tier in tiers
+        ]
+    )
+    settings = db.scalar(
+        select(PixCheckoutSettings).where(PixCheckoutSettings.derived_gallery_id == gallery_id)
+    )
+    if not settings:
+        settings = PixCheckoutSettings(derived_gallery_id=gallery_id)
+        db.add(settings)
+    settings.copy_paste = payload.pix.copy_paste.strip() if payload.pix.copy_paste else None
+    settings.qr_code_payload = payload.pix.qr_code_payload.strip() if payload.pix.qr_code_payload else None
+    settings.instructions = payload.pix.instructions.strip() if payload.pix.instructions else None
+    audit(db, "pricing.settings_updated", str(gallery_id))
+    db.commit()
+    return {**pricing_payload(db, gallery_id), "has_downward_jump": has_downward_jump(tiers)}
+
+
+@app.get("/admin/derived-galleries/{gallery_id}/orders")
+def admin_gallery_orders(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, object]]]:
+    """Exibe snapshots de pedidos sem executar confirmação financeira."""
+    require_admin(request)
+    if not db.get(DerivedGallery, gallery_id):
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    orders = list(
+        db.scalars(
+            select(SaleOrder)
+            .where(SaleOrder.derived_gallery_id == gallery_id)
+            .order_by(SaleOrder.created_at.desc())
+        )
+    )
+    return {
+        "orders": [
+            {
+                "id": str(order.id),
+                "payment_status": order.payment_status,
+                "total_cents": order.total_cents,
+                "client_name": order.client_name_snapshot,
+                "created_at": order.created_at.isoformat(),
+                "confirmed_at": order.confirmed_at.isoformat() if order.confirmed_at else None,
+                "price_rule": order.price_rule_snapshot,
+                "sales_message": order.sales_message_snapshot,
+                "pix": {
+                    "copy_paste": order.pix_copy_paste_snapshot,
+                    "qr_code_payload": order.pix_qr_code_snapshot,
+                    "instructions": order.pix_instructions_snapshot,
+                },
+                "items": [
+                    {
+                        "photo_id": str(item.photo_asset_id),
+                        "name": item.filename_snapshot,
+                        "unit_price_cents": item.unit_price_cents,
+                    }
+                    for item in db.scalars(
+                        select(SaleOrderItem)
+                        .where(SaleOrderItem.sale_order_id == order.id)
+                        .order_by(SaleOrderItem.filename_snapshot)
+                    )
+                ],
+            }
+            for order in orders
+        ]
+    }
+
+
 @app.post("/admin/derived-galleries", status_code=status.HTTP_201_CREATED)
 def create_derived_gallery(
     payload: DerivedGalleryInput, request: Request, db: Session = Depends(db_session)
@@ -2197,6 +2377,18 @@ def select_photo(
     gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
     require_selection_window(gallery)
     assigned_photo_for_gallery(db, gallery_id, photo_id)
+    already_confirmed = db.scalar(
+        select(SaleOrderItem.id)
+        .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
+        .where(
+            SaleOrder.derived_gallery_id == gallery_id,
+            SaleOrder.client_id == session.subject_id,
+            SaleOrder.payment_status == "confirmed",
+            SaleOrderItem.photo_asset_id == photo_id,
+        )
+    )
+    if already_confirmed:
+        raise HTTPException(status_code=409, detail="Foto indisponível para seleção.")
     existing = db.scalar(
         select(PhotoSelection).where(
             PhotoSelection.derived_gallery_id == gallery_id,
@@ -2233,6 +2425,360 @@ def unselect_photo(
         audit(db, "photo_selection.removed", str(gallery_id))
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/gallery/{gallery_id}/cart")
+def client_cart(gallery_id: UUID, request: Request, db: Session = Depends(db_session)) -> dict[str, object]:
+    """Carrinho privado calculado no servidor para a cliente autorizada."""
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
+    selections = list(db.scalars(select(PhotoSelection).where(
+        PhotoSelection.derived_gallery_id == gallery.id,
+        PhotoSelection.client_id == session.subject_id,
+    )))
+    rules = list(db.scalars(select(PriceRule).where(PriceRule.derived_gallery_id == gallery.id)))
+    result: dict[str, object] = {"quantity": len(selections), "items": []}
+    if not selections or not rules:
+        return result
+    try:
+        tier, total = quote(len(selections), [PriceTier(rule.minimum_quantity, rule.maximum_quantity, rule.unit_price_cents) for rule in rules])
+    except PricingRuleError:
+        return result
+    photos = {photo.id: photo for photo in db.scalars(select(PhotoAsset).where(PhotoAsset.id.in_([item.photo_asset_id for item in selections])))}
+    result.update({
+        "items": [{"id": str(item.photo_asset_id), "name": photos[item.photo_asset_id].display_name or photos[item.photo_asset_id].filename} for item in selections if item.photo_asset_id in photos],
+        "unit_price_cents": tier.unit_price_cents,
+        "total_cents": total,
+        "tier": {"minimum_quantity": tier.minimum_quantity, "maximum_quantity": tier.maximum_quantity},
+    })
+    return result
+
+
+@app.post("/gallery/{gallery_id}/checkout", status_code=status.HTTP_201_CREATED)
+def checkout_gallery(
+    gallery_id: UUID, payload: CheckoutInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
+    require_selection_window(gallery)
+    client = db.get(Client, session.subject_id)
+    if not client:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    try:
+        order = create_pending_checkout(db, gallery=gallery, client=client, checkout_key=payload.idempotency_key)
+        db.commit()
+    except CheckoutError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": str(order.id), "payment_status": order.payment_status, "total_cents": order.total_cents}
+
+
+@app.post("/gallery/{gallery_id}/orders/{order_id}/payment-communications", status_code=status.HTTP_201_CREATED)
+def communicate_payment(gallery_id: UUID, order_id: UUID, payload: PaymentCommunicationInput, request: Request, db: Session = Depends(db_session)) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    order = db.scalar(select(SaleOrder).where(SaleOrder.id == order_id, SaleOrder.derived_gallery_id == gallery_id, SaleOrder.client_id == session.subject_id))
+    if not order or order.payment_status != "pending":
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    existing = db.scalar(
+        select(PaymentCommunication)
+        .where(
+            PaymentCommunication.sale_order_id == order.id,
+            (
+                (PaymentCommunication.idempotency_key == payload.idempotency_key)
+                | (PaymentCommunication.status == "pending_review")
+            ),
+        )
+        .order_by(PaymentCommunication.created_at.desc())
+    )
+    if existing:
+        return {"id": str(existing.id), "status": existing.status, "message": "Comunicação aguardando revisão do fotógrafo."}
+    communication = PaymentCommunication(sale_order_id=order.id, client_id=session.subject_id, idempotency_key=payload.idempotency_key)
+    db.add(communication)
+    db.flush()
+    notification_state = "configuration_required"
+    try:
+        photographer_phone = configured_photographer_phone()
+    except WhatsAppConfigurationError:
+        photographer_phone = None
+    if photographer_phone:
+        db.add(
+            PaymentNotificationOutbox(
+                payment_communication_id=communication.id,
+                recipient_phone=photographer_phone,
+                template_kind="photographer_reported",
+                idempotency_key=f"payment-reported:{communication.id}",
+            )
+        )
+        notification_state = "queued"
+    else:
+        audit(db, "payment.notification_configuration_required", str(communication.id))
+    audit(db, "payment.communication_reported", str(order.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(
+            select(PaymentCommunication)
+            .where(
+                PaymentCommunication.sale_order_id == order.id,
+                PaymentCommunication.idempotency_key == payload.idempotency_key,
+            )
+        )
+        if not existing:
+            raise
+        communication = existing
+    return {"id": str(communication.id), "status": communication.status, "notification_status": notification_state, "message": "Comunicação aguardando revisão do fotógrafo."}
+
+
+@app.post("/admin/payment-communications/{communication_id}/decision")
+def decide_payment_communication(communication_id: UUID, payload: PaymentDecisionInput, request: Request, db: Session = Depends(db_session)) -> dict[str, str]:
+    session = current_session(request, Role.ADMIN)
+    communication = db.scalar(
+        select(PaymentCommunication)
+        .where(PaymentCommunication.id == communication_id)
+        .with_for_update()
+    )
+    if not communication:
+        raise HTTPException(status_code=404, detail="Comunicação não encontrada.")
+    if communication.status != "pending_review":
+        return {"status": communication.status}
+    order = db.get(SaleOrder, communication.sale_order_id)
+    if not order or order.payment_status != "pending":
+        raise HTTPException(status_code=409, detail="Pedido indisponível para decisão.")
+    communication.status = payload.decision
+    communication.decided_by_admin_id = session.subject_id
+    communication.decided_at = now()
+    if payload.decision == "confirmed":
+        order.payment_status = "confirmed"
+        order.confirmed_at = communication.decided_at
+    client = db.get(Client, communication.client_id)
+    if client and client.id == order.client_id:
+        db.add(PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind=payload.decision, idempotency_key=f"payment-decision:{communication.id}:{payload.decision}"))
+    audit(db, f"payment.communication_{payload.decision}", str(communication.id))
+    db.commit()
+    return {"status": communication.status}
+
+
+@app.put("/admin/payment-message-templates/{kind}")
+def save_payment_template(kind: Literal["confirmed", "refused"], payload: PaymentTemplateInput, request: Request, db: Session = Depends(db_session)) -> dict[str, str]:
+    require_admin(request)
+    try:
+        body = validate_template(payload.body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    template = db.scalar(select(PaymentMessageTemplate).where(PaymentMessageTemplate.kind == kind))
+    if template:
+        template.body = body
+    else:
+        db.add(PaymentMessageTemplate(kind=kind, body=body))
+    db.commit()
+    return {"kind": kind, "body": body}
+
+
+@app.get("/admin/payment-message-templates")
+def list_payment_templates(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    configured = {
+        template.kind: template.body
+        for template in db.scalars(select(PaymentMessageTemplate))
+    }
+    return {
+        "templates": {
+            kind: configured.get(kind, default)
+            for kind, default in DEFAULT_PAYMENT_TEMPLATES.items()
+        },
+        "allowed_variables": sorted(["cliente", "pedido", "galeria"]),
+    }
+
+
+@app.get("/admin/payment-communications")
+def list_payment_communications(request: Request, db: Session = Depends(db_session)) -> dict[str, list[dict[str, object]]]:
+    require_admin(request)
+    rows = list(db.scalars(select(PaymentCommunication).order_by(PaymentCommunication.created_at.desc())))
+    max_attempts = payment_notification_max_attempts()
+    communications = []
+    for item in rows:
+        order = db.get(SaleOrder, item.sale_order_id)
+        client = db.get(Client, item.client_id)
+        gallery = db.get(DerivedGallery, order.derived_gallery_id) if order else None
+        outboxes = list(
+            db.scalars(
+                select(PaymentNotificationOutbox).where(
+                    PaymentNotificationOutbox.payment_communication_id == item.id
+                )
+            )
+        )
+        photographer_delivery = next(
+            (outbox for outbox in outboxes if outbox.template_kind == "photographer_reported"),
+            None,
+        )
+        client_delivery = next(
+            (outbox for outbox in outboxes if outbox.template_kind in {"confirmed", "refused"}),
+            None,
+        )
+        communications.append(
+            {
+                "id": str(item.id),
+                "status": item.status,
+                "order_id": str(item.sale_order_id),
+                "client_name": client.full_name if client else "Cliente indisponível",
+                "gallery_name": gallery.name if gallery else "Galeria indisponível",
+                "total_cents": order.total_cents if order else 0,
+                "created_at": item.created_at.isoformat(),
+                "decided_at": item.decided_at.isoformat() if item.decided_at else None,
+                "photographer_notification": _delivery_payload(photographer_delivery, max_attempts),
+                "client_notification": _delivery_payload(client_delivery, max_attempts),
+            }
+        )
+    return {"communications": communications}
+
+
+def _delivery_payload(
+    outbox: PaymentNotificationOutbox | None, max_attempts: int
+) -> dict[str, object] | None:
+    if not outbox:
+        return None
+    return {
+        "id": str(outbox.id),
+        "status": outbox.status,
+        "attempts": outbox.attempts,
+        "last_error": outbox.last_error,
+        "can_retry": outbox.status == "failed" and outbox.attempts < max_attempts,
+    }
+
+
+@app.post("/admin/payment-notifications/{notification_id}/retry")
+def retry_payment_notification(
+    notification_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    require_admin(request)
+    outbox = db.get(PaymentNotificationOutbox, notification_id)
+    if not outbox:
+        raise HTTPException(status_code=404, detail="Notificação não encontrada.")
+    if outbox.status != "failed" or outbox.attempts >= payment_notification_max_attempts():
+        raise HTTPException(status_code=409, detail="Notificação indisponível para reenvio.")
+    outbox.status = "queued"
+    outbox.last_error = None
+    outbox.updated_at = now()
+    audit(db, "payment.notification_requeued", str(outbox.id))
+    db.commit()
+    return {"status": outbox.status}
+
+
+@app.get("/gallery/{gallery_id}/payment-communications")
+def client_payment_communications(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, list[dict[str, object]]]:
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id, require_access_enabled=False)
+    orders = list(
+        db.scalars(
+            select(SaleOrder)
+            .where(
+                SaleOrder.derived_gallery_id == gallery_id,
+                SaleOrder.client_id == session.subject_id,
+            )
+            .order_by(SaleOrder.created_at.desc())
+        )
+    )
+    result = []
+    for order in orders:
+        communication = db.scalar(
+            select(PaymentCommunication)
+            .where(
+                PaymentCommunication.sale_order_id == order.id,
+                PaymentCommunication.client_id == session.subject_id,
+            )
+            .order_by(PaymentCommunication.created_at.desc())
+        )
+        delivery = None
+        if communication and communication.status in {"confirmed", "refused"}:
+            delivery = db.scalar(
+                select(PaymentNotificationOutbox).where(
+                    PaymentNotificationOutbox.payment_communication_id == communication.id,
+                    PaymentNotificationOutbox.template_kind == communication.status,
+                )
+            )
+        result.append(
+            {
+                "order_id": str(order.id),
+                "total_cents": order.total_cents,
+                "payment_status": order.payment_status,
+                "created_at": order.created_at.isoformat(),
+                "communication": (
+                    {
+                        "id": str(communication.id),
+                        "status": communication.status,
+                        "created_at": communication.created_at.isoformat(),
+                        "decided_at": communication.decided_at.isoformat()
+                        if communication.decided_at
+                        else None,
+                    }
+                    if communication
+                    else None
+                ),
+                "notification": (
+                    {
+                        "status": delivery.status,
+                        "last_error": delivery.last_error,
+                    }
+                    if delivery
+                    else None
+                ),
+            }
+        )
+    return {"orders": result}
+
+
+@app.get("/gallery/{gallery_id}/orders/{order_id}")
+def client_pending_order(
+    gallery_id: UUID, order_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    """Entrega somente o snapshot PIX pendente à cliente proprietária."""
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    order = db.scalar(
+        select(SaleOrder).where(
+            SaleOrder.id == order_id,
+            SaleOrder.derived_gallery_id == gallery_id,
+            SaleOrder.client_id == session.subject_id,
+        )
+    )
+    if not order:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    if order.payment_status != "pending":
+        raise HTTPException(status_code=409, detail="Este pedido não está pendente de confirmação.")
+    items = list(
+        db.scalars(
+            select(SaleOrderItem)
+            .where(SaleOrderItem.sale_order_id == order.id)
+            .order_by(SaleOrderItem.filename_snapshot)
+        )
+    )
+    return {
+        "id": str(order.id),
+        "payment_status": order.payment_status,
+        "total_cents": order.total_cents,
+        "price_rule": order.price_rule_snapshot,
+        "sales_message": order.sales_message_snapshot,
+        "pix": {
+            "copy_paste": order.pix_copy_paste_snapshot,
+            "qr_code_payload": order.pix_qr_code_snapshot,
+            "instructions": order.pix_instructions_snapshot,
+            "confirmation": "A confirmação do pagamento é manual pelo fotógrafo.",
+        },
+        "items": [
+            {
+                "photo_id": str(item.photo_asset_id),
+                "name": item.filename_snapshot,
+                "unit_price_cents": item.unit_price_cents,
+            }
+            for item in items
+        ],
+    }
 
 
 @app.post("/gallery/{gallery_id}/photos/{photo_id}/favorite", status_code=status.HTTP_201_CREATED)
