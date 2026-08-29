@@ -6,7 +6,7 @@
 
 ## 2. Publicação isolada e recuperação segura
 
-- [ ] 2.1 Implementar no script o registro do SHA saudável, backup lógico exclusivo da Markina, `alembic upgrade head`, reconstrução limitada aos serviços Markina e healthchecks/smoke tests; verificar em ambiente de teste controlado que um deploy saudável registra a revisão publicada.
+- [x] 2.1 Implementar no script o registro do SHA saudável, backup lógico exclusivo da Markina, `alembic upgrade head`, reconstrução limitada aos serviços Markina e healthchecks/smoke tests; verificar em ambiente de teste controlado que um deploy saudável registra a revisão publicada. (run `33279596997`: backup lógico criado, migration construída no SHA alvo, Alembic `20260829_0014 (head)`, serviços saudáveis, SHA `751d746878aaad27885ba9297c88cf05ef5737f6` registrado e smokes externos 200 em 2026-08-29)
 - [ ] 2.2 Implementar interrupção segura para checkout remoto sujo, migration falha ou healthcheck falho, com rollback somente de código/serviços Markina quando compatível e sem restauração automática do banco; verificar cenários simulados de falha e confirmar que nenhum recurso ClearBudget, proxy, DNS, firewall, rede ou volume de terceiros é acionado.
 - [x] 2.3 Documentar bootstrap, inventário de impacto zero, procedimento de aprovação, rollback por SHA e limites de recuperação sem expor valores de secrets; verificar que a documentação identifica as configurações externas necessárias e não contém credenciais reais. (documentado em `docs/DEPLOY-CONTINUO-HOMOLOGACAO.md` e verificado pela política de secrets em 2026-08-28)
 
@@ -20,3 +20,9 @@
 
 - As tarefas 2.1 e 2.2 têm a implementação versionada em `scripts/deploy-homolog.sh`, mas não podem ser marcadas como concluídas sem executar o deploy e os cenários controlados no servidor de homologação.
 - As tarefas 3.1–3.3 exigem configuração externa do GitHub Environment `homolog`, secrets de SSH, chave Git de leitura no servidor e inventário aprovado de `/opt/markina-gallery`. Nenhum secret, `.env`, credencial, servidor ou recurso compartilhado foi modificado nesta execução.
+
+## Atualização operacional — 2026-08-29
+
+- O run `33278642428` recusou corretamente a execução fora de `/opt/markina-gallery`, antes de backup ou mutação. O run `33278955408` criou backup, selecionou somente o SHA Markina e interrompeu ao detectar o worker ausente; a investigação identificou e corrigiu a imagem de migration antiga. O run saudável `33279596997` comprovou a tarefa 2.1 e manteve todos os recursos fora do projeto Compose `markina-gallery` fora do escopo.
+- A tarefa 2.2 permanece pendente porque o host compartilhado não foi submetido deliberadamente a uma migration falha nem a um rollback operacional real. A propagação sintética ao trap, a recusa de diretório inesperado e as proibições de recursos de terceiros passaram em `scripts/test_deploy_homolog.sh` e `scripts/test_deploy_homolog_policy.py`; a validação destrutiva real continua exigindo um ensaio humano controlado.
+- A tarefa 3.3 permanece pendente apenas quanto à execução operacional do rollback por SHA. SHA remoto, migrations aditivas e healthchecks externos foram confirmados no run saudável acima; o procedimento e a seleção de SHA estão cobertos por política e documentação, mas nenhum rollback real foi provocado no host compartilhado.
