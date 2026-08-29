@@ -151,6 +151,10 @@ main() {
   git switch --detach "$DEPLOY_SHA"
   SHA_SWITCHED=1
 
+  # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.
+  # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente
+  # as revisions do commit que será iniciado nos demais serviços.
+  compose build migrate
   compose run --rm --no-deps migrate
   next_revision="$(current_revision)"
   if [[ "$next_revision" != "$previous_revision" ]]; then

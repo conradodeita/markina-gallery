@@ -28,7 +28,19 @@ def main() -> int:
     require('origin não aponta para o repositório GitHub esperado', "recusa de origem Git inesperada", SCRIPT)
     require('git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop', "validação de SHA em develop", SCRIPT)
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
+    require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
     require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require(
+        'git switch --detach "$DEPLOY_SHA"\n'
+        '  SHA_SWITCHED=1\n\n'
+        '  # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.\n'
+        '  # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente\n'
+        '  # as revisions do commit que será iniciado nos demais serviços.\n'
+        '  compose build migrate\n'
+        '  compose run --rm --no-deps migrate',
+        "build da migration entre a seleção do SHA e sua execução",
+        SCRIPT,
+    )
     require('compose up -d --build --no-deps api web worker', "recriação limitada de serviços", SCRIPT)
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
     require('rollback automático de código não é seguro após mudança de schema', "bloqueio de rollback de banco", SCRIPT)
