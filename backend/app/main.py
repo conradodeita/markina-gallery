@@ -37,6 +37,9 @@ from app.auth import (
     MediaJob,
     ParentGallery,
     ParentGalleryRegistration,
+    PaymentCommunication,
+    PaymentMessageTemplate,
+    PaymentNotificationOutbox,
     PhotoAsset,
     PhotoComment,
     PhotoFavorite,
@@ -44,9 +47,6 @@ from app.auth import (
     PhotoSelection,
     PhotoView,
     PixCheckoutSettings,
-    PaymentCommunication,
-    PaymentMessageTemplate,
-    PaymentNotificationOutbox,
     PriceRule,
     Role,
     SaleOrder,
@@ -74,8 +74,8 @@ from app.messaging import (
     configured_photographer_phone,
     payment_notification_max_attempts,
 )
-from app.pricing import PriceTier, PricingRuleError, has_downward_jump, quote, validate_tiers
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
+from app.pricing import PriceTier, PricingRuleError, has_downward_jump, quote, validate_tiers
 
 app = FastAPI(title="Markina Gallery API", version="0.2.0")
 

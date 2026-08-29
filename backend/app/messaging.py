@@ -90,7 +90,7 @@ class EvolutionWhatsAppProvider(WhatsAppProvider):
             },
         )
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            with urlopen(request, timeout=self.timeout_seconds) as response:
                 if response.status >= 400:
                     raise WhatsAppDeliveryError(
                         "Provedor recusou a entrega.", transient=response.status >= 500

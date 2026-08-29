@@ -131,13 +131,8 @@ def process_next_payment_notification() -> bool:
                 idempotency_key=item.idempotency_key,
             )
             item.status, item.last_error = "sent", None
-        except Exception as exc:  # o adaptador converte detalhes externos em categorias seguras
-            if isinstance(exc, WhatsAppConfigurationError):
-                transient = False
-            elif isinstance(exc, WhatsAppDeliveryError):
-                transient = exc.transient
-            else:
-                transient = True
+        except (WhatsAppConfigurationError, WhatsAppDeliveryError) as exc:
+            transient = isinstance(exc, WhatsAppDeliveryError) and exc.transient
             item.status = "queued" if transient and item.attempts < max_attempts else "failed"
             item.last_error = sanitized_delivery_error(exc)
         item.updated_at = now()

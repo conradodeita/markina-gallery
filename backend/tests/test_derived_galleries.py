@@ -21,13 +21,13 @@ from app.auth import (
     MediaJob,
     ParentGallery,
     ParentGalleryRegistration,
+    PaymentCommunication,
+    PaymentNotificationOutbox,
     PhotoAsset,
     PhotoFolder,
     PhotoSelection,
     PhotoView,
     PixCheckoutSettings,
-    PaymentCommunication,
-    PaymentNotificationOutbox,
     PriceRule,
     SaleOrder,
     SaleOrderItem,
@@ -1340,7 +1340,7 @@ def test_admin_confirms_payment_communication_once(client: TestClient):
         owner = Client(full_name="Cliente Decide", phone_e164="+5511555554399")
         db.add(owner)
         db.commit()
-    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    gallery_id, _ = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
         order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500, client_phone_snapshot="+5511555554001")
         db.add(order)

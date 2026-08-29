@@ -17,13 +17,13 @@ from argon2 import PasswordHasher
 from fastapi import HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
