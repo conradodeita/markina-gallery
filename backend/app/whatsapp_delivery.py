@@ -13,7 +13,6 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.messaging import WhatsAppConfigurationError
 
-
 STATUS_RANK = {
     "queued": 0,
     "processing": 1,

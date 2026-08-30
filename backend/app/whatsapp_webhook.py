@@ -19,7 +19,6 @@ from app.messaging import _normalized_remote_jid
 from app.whatsapp_channel import app_environment
 from app.whatsapp_delivery import apply_delivery_status
 
-
 MESSAGE_EVENTS = {"messages.update", "send.message.update"}
 CONNECTION_EVENTS = {"connection.update"}
 

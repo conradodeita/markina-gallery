@@ -32,7 +32,6 @@ from app.messaging import (
     WhatsAppDeliveryResult,
     WhatsAppPairingResult,
 )
-from app.worker import process_next_whatsapp_delivery
 from app.whatsapp_delivery import (
     apply_delivery_status,
     decrypt_otp,
@@ -40,6 +39,7 @@ from app.whatsapp_delivery import (
     otp_encryption_key,
     transition_status,
 )
+from app.worker import process_next_whatsapp_delivery
 
 
 @pytest.fixture(autouse=True)

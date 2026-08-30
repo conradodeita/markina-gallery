@@ -17,10 +17,10 @@ from app.auth import (
     GalleryAccess,
     MediaDerivative,
     MediaJob,
+    ParentGallery,
     PaymentCommunication,
     PaymentMessageTemplate,
     PaymentNotificationOutbox,
-    ParentGallery,
     PhotoAsset,
     PhotoFolder,
     Role,
@@ -34,8 +34,8 @@ from app.auth import (
 )
 from app.main import app
 from app.media import enqueue_derivatives, generate_derivatives, watermark
-from app.worker import process_next_media_job, process_next_payment_notification
 from app.messaging import WhatsAppDeliveryError, WhatsAppDeliveryResult
+from app.worker import process_next_media_job, process_next_payment_notification
 
 
 @pytest.fixture(autouse=True)

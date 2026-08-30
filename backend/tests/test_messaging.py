@@ -4,7 +4,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-import app.messaging as messaging
+from app import messaging
 from app.messaging import (
     EvolutionWhatsAppProvider,
     SandboxWhatsAppProvider,
