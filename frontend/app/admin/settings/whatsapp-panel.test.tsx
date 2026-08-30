@@ -77,8 +77,11 @@ describe("configuração administrativa do WhatsApp", () => {
     render(<WhatsAppPanel />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Parear aparelho" }));
-    expect(await screen.findByText("ABCD-1234")).toBeTruthy();
-    expect(screen.getByAltText(/QR code efêmero/)).toBeTruthy();
+    const pairingCode = await screen.findByText("ABCD-1234");
+    const pairingQr = screen.getByAltText(/QR code efêmero/);
+    expect(pairingCode.closest(".whatsapp-pairing-controls")).toBeTruthy();
+    expect(pairingQr.closest(".whatsapp-pairing-visual")).toBeTruthy();
+    expect(pairingQr.closest(".whatsapp-pairing-controls")).toBeNull();
 
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(screen.queryByText("ABCD-1234")).toBeNull();

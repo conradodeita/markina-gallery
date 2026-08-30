@@ -23,6 +23,7 @@
 
 - [x] 4.1 Implementar endpoints administrativos para consultar estado mascarado, salvar número esperado, iniciar pareamento e atualizar prontidão, exigindo sessão de fotógrafo e auditoria; verificar acesso negado para cliente/anônimo, E.164 inválido, divergência e ausência de segredos nas respostas.
 - [x] 4.2 Adicionar em `Configurações → WhatsApp` um painel responsivo com provedor/ambiente, número esperado e conectado mascarados, estado, última verificação, pendências e fluxo de QR/pairing; verificar acessibilidade, estados de carga/erro/expiração e testes de componente após consultar a documentação local do Next.js exigida por `frontend/AGENTS.md`.
+  - Correção validada em 2026-08-30: QR e pairing code separados em regiões estruturais distintas no desktop e no smartphone, impedindo sobreposição; teste de componente 10/10, typecheck e lint sem erros.
 - [x] 4.3 Bloquear visualmente a promessa de canal pronto enquanto conexão e identidade não coincidirem e explicar que o número precisa ser pareado; verificar os estados sandbox, pendente, conectando, pronto, divergente e desconectado em desktop e smartphone.
 
 ## 5. Infraestrutura e operação isoladas
