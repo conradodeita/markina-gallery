@@ -203,12 +203,20 @@ def test_whatsapp_transport_migration_upgrades_and_downgrades(tmp_path: Path) ->
             text("SELECT COUNT(*) FROM payment_notification_outbox WHERE id = :id"),
             {"id": legacy_id},
         ) == 1
+        columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(auth_challenge)"))
+        }
+        assert "client_name" in columns
     _alembic(database_url, "downgrade", "20260829_0015")
     with migration_engine.connect() as connection:
         assert connection.scalar(
             text("SELECT COUNT(*) FROM payment_notification_outbox WHERE id = :id"),
             {"id": legacy_id},
         ) == 1
+        columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(auth_challenge)"))
+        }
+        assert "client_name" not in columns
     _alembic(database_url, "upgrade", "head")
 
 

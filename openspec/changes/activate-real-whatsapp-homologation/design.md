@@ -79,6 +79,16 @@ A tela de cliente apresentará `+55` como prefixo fixo e solicitará somente DDD
 
 Alternativa descartada: manter um campo internacional livre ou acrescentar `9` automaticamente a dez dígitos. O primeiro deixa o padrão local ambíguo; o segundo pode transformar um número incorreto em outro destinatário válido.
 
+### 10. Primeiro cadastro exige contexto de galeria e ocorre somente após o OTP
+
+O desafio de cliente persistirá temporariamente o nome normalizado junto do telefone e do identificador opcional da galeria-fonte. Um telefone já vinculado a cliente continuará podendo entrar diretamente e será encaminhado conforme suas galerias privadas. Um telefone desconhecido sem contexto de galeria consumirá o OTP válido, mas receberá resposta `403` explícita para abrir um link compartilhado; não será criada conta nem sessão.
+
+Quando o telefone desconhecido vier de um link não listado de galeria-fonte ativa, a API criará a conta somente depois de provar a posse pelo OTP e criará ou reutilizará o vínculo individual `pending`. O destino será uma galeria privada já autorizada para aquela pessoa ou `/library?registration=pending`. O vínculo e a sessão não concedem leitura do acervo-fonte coletivo.
+
+O nome é necessário depois da verificação e, por isso, fica em coluna anulável do desafio de curta duração em vez de antecipar um cadastro não validado. A migration é aditiva e reversível; desafios antigos sem nome continuam válidos para clientes já existentes, mas não podem originar novas contas.
+
+Alternativas descartadas: criar `Client` ao solicitar o código, pois cadastraria telefones sem prova de posse; permitir autocadastro pela raiz, pois eliminaria o filtro solicitado; mostrar fotos do acervo-fonte após o OTP, pois o link não listado não é autorização de leitura.
+
 ## Risks / Trade-offs
 
 - [Baileys é integração não oficial e pode desconectar ou sofrer bloqueio] → usar número exclusivo, mostrar estado, persistir sessão, bloquear envio quando degradado e manter caminho de futura migração para Meta.
@@ -88,6 +98,7 @@ Alternativa descartada: manter um campo internacional livre ou acrescentar `9` a
 - [Três serviços extras consomem recursos do Oracle] → inventário pré-deploy, limites de recursos e healthchecks; nenhum serviço ou volume de terceiro é alterado.
 - [Webhook falso altera diagnóstico] → rede interna, segredo dedicado, comparação constante, limites e deduplicação.
 - [O número configurado pode divergir do dispositivo pareado] → fail closed até coincidência verificada.
+- [Um link pode ser desativado entre solicitação e validação] → revalidar a galeria-fonte ativa no consumo do OTP e não criar conta quando o contexto deixou de ser válido.
 
 ## Migration Plan
 

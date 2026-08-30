@@ -104,4 +104,125 @@ describe("entrada com identidade configurável", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Cliente" }));
     expect(screen.getByLabelText("WhatsApp").getAttribute("value")).toBe("");
   });
+
+  it("explica a falta de vínculo após OTP válido sem criar um falso erro de código", async () => {
+    const denial =
+      "Este número ainda não possui acesso. Abra o link compartilhado de uma galeria para se cadastrar.";
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/branding"))
+        return Promise.resolve(new Response(null, { status: 500 }));
+      if (url.includes("/challenge"))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ challenge_id: "challenge-denied", message: "Código enviado." }),
+            { status: 202 },
+          ),
+        );
+      return Promise.resolve(
+        new Response(JSON.stringify({ detail: denial }), { status: 403 }),
+      );
+    });
+    const navigate = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={navigate} />);
+
+    fireEvent.change(screen.getByLabelText("Nome completo"), {
+      target: { value: "Pessoa sem convite" },
+    });
+    fireEvent.change(screen.getByLabelText("WhatsApp"), {
+      target: { value: "11987654321" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+    await screen.findByLabelText("Código enviado por WhatsApp");
+    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+
+    expect(await screen.findByText(denial)).toBeTruthy();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("usa o destino autorizado retornado depois do OTP", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/branding"))
+        return Promise.resolve(new Response(null, { status: 500 }));
+      if (url.includes("/challenge"))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ challenge_id: "challenge-ok", message: "Código enviado." }),
+            { status: 202 },
+          ),
+        );
+      return Promise.resolve(
+        new Response(JSON.stringify({ destination: "/library?registration=pending" }), {
+          status: 200,
+        }),
+      );
+    });
+    const navigate = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={navigate} />);
+
+    fireEvent.change(screen.getByLabelText("Nome completo"), {
+      target: { value: "Pessoa convidada" },
+    });
+    fireEvent.change(screen.getByLabelText("WhatsApp"), {
+      target: { value: "11987654321" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+    await screen.findByLabelText("Código enviado por WhatsApp");
+    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/library?registration=pending"),
+    );
+  });
+
+  it("mantém a mensagem neutra para OTP inválido", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/branding"))
+        return Promise.resolve(new Response(null, { status: 500 }));
+      if (url.includes("/challenge"))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ challenge_id: "challenge-invalid", message: "Código enviado." }),
+            { status: 202 },
+          ),
+        );
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ detail: "Não foi possível concluir a autenticação." }),
+          { status: 401 },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Nome completo"), {
+      target: { value: "Pessoa convidada" },
+    });
+    fireEvent.change(screen.getByLabelText("WhatsApp"), {
+      target: { value: "11987654321" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+    await screen.findByLabelText("Código enviado por WhatsApp");
+    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), {
+      target: { value: "000000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+
+    expect(
+      await screen.findByText(
+        "O código expirou ou não pôde ser validado. Solicite outro e tente novamente.",
+      ),
+    ).toBeTruthy();
+  });
 });

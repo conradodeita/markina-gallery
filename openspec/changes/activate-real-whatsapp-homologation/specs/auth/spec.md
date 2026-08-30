@@ -30,8 +30,18 @@ O sistema SHALL autenticar cliente/responsável mediante nome completo, telefone
 
 #### Scenario: Cliente valida código
 
-- **WHEN** o cliente informa o OTP correto dentro do prazo
-- **THEN** o sistema invalida o desafio, cria sessão com papel `client` e encaminha o cliente conforme suas galerias autorizadas
+- **WHEN** um cliente já cadastrado informa o OTP correto dentro do prazo
+- **THEN** o sistema invalida o desafio, cria sessão com papel `client` e encaminha o cliente conforme suas galerias autorizadas, usando a biblioteca vazia quando ainda não houver galeria ativa
+
+#### Scenario: Primeiro acesso direto sem vínculo
+
+- **WHEN** um telefone ainda desconhecido conclui o OTP sem contexto válido de galeria compartilhada
+- **THEN** o sistema consome o desafio, não cria cliente nem sessão e explica que o primeiro cadastro exige abrir um link compartilhado de galeria
+
+#### Scenario: Primeiro acesso por link compartilhado
+
+- **WHEN** um telefone ainda desconhecido conclui o OTP iniciado por um link não listado de galeria-fonte ativa
+- **THEN** o sistema cria o cliente com o nome informado somente após a validação, cria seu vínculo individual e encaminha para a galeria privada autorizada ou para o estado de aguardando aprovação
 
 #### Scenario: OTP inválido, usado ou expirado
 

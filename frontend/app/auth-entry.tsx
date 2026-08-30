@@ -10,6 +10,10 @@ const brazilPhoneError =
   "Informe DDD e celular com o nono dígito: (11) 99999-9999.";
 const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar.", logo_url: null as string | null, app_icon_url: null as string | null, favicon_url: null as string | null };
 
+type AuthEntryProps = {
+  navigate?: (destination: string) => void;
+};
+
 export function brazilPhoneDigits(value: string) {
   const digits = value.replace(/\D/g, "");
   return (digits.startsWith("55") && digits.length > 11
@@ -33,7 +37,9 @@ export function brazilMobileE164(value: string) {
   return /^\d{2}9\d{8}$/.test(digits) ? `+55${digits}` : null;
 }
 
-export function AuthEntry() {
+export function AuthEntry({
+  navigate = (destination) => window.location.assign(destination),
+}: AuthEntryProps = {}) {
   const [context, setContext] = useState<Context>("client");
   const [step, setStep] = useState<Step>("details");
   const [challengeId, setChallengeId] = useState("");
@@ -126,8 +132,18 @@ export function AuthEntry() {
         },
       );
       const result = await response.json();
-      if (!response.ok) throw new Error();
-      window.location.assign(result.destination);
+      if (!response.ok) {
+        if (
+          context === "client" &&
+          response.status === 403 &&
+          typeof result.detail === "string"
+        ) {
+          setMessage(result.detail);
+          return;
+        }
+        throw new Error();
+      }
+      navigate(result.destination);
     } catch {
       setMessage(
         context === "client"
