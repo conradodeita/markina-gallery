@@ -8,7 +8,7 @@ O workflow `CI` publica em homologação somente após um push integrado em `dev
 - O script recusa checkout sujo, SHA fora de `origin/develop`, origem Git diferente do repositório GitHub esperado e configuração Compose inválida.
 - São recriados somente `api`, `web`, `worker` e o Nginx interno da Markina. Não há `docker compose down`, prune, remoção de volumes ou alteração de ClearBudget, proxy, DNS, firewall, certificados e redes de terceiros.
 - Antes da migration, é criado um dump lógico exclusivo em `/var/lib/markina-gallery/backups`. O banco **nunca** é restaurado automaticamente.
-- Em falha sem mudança de revisão Alembic, o script pode voltar apenas o código e os serviços Markina ao SHA anterior. Se a revisão do schema mudou, ele para para decisão humana.
+- Em falha antes de Alembic começar, ou após comprovar que a revisão permaneceu idêntica, o script pode voltar apenas o código e os serviços Markina ao SHA anterior. Depois que Alembic começa, qualquer falha mantém o rollback automático bloqueado até revisão humana, pois o schema pode ter sido parcialmente alterado. O banco nunca é restaurado automaticamente.
 
 ## Bootstrap externo único
 
@@ -22,4 +22,4 @@ Execute estas ações somente após inventário aprovado de containers, portas, 
 
 ## Recuperação
 
-Para recuperar uma falha com schema inalterado, reexecute o workflow com o SHA saudável por procedimento aprovado. Se qualquer migration tiver sido aplicada, interrompa e avalie compatibilidade e restauração de banco com aprovação humana explícita. Nunca use `git reset --hard`, `git checkout -- .`, `git clean`, `docker compose down` sem escopo nem restore automático de banco.
+Para recuperar uma falha com schema comprovadamente inalterado, reexecute o workflow com o SHA saudável por procedimento aprovado. Se qualquer migration tiver sido iniciada e não houver comprovação de revisão idêntica, interrompa e avalie compatibilidade e restauração de banco com aprovação humana explícita. Nunca use `git reset --hard`, `git checkout -- .`, `git clean`, `docker compose down` sem escopo nem restore automático de banco.

@@ -31,17 +31,23 @@ def main() -> int:
     require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
     require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
     require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('SCHEMA_ROLLBACK_UNSAFE=1', "bloqueio conservador após início da migration", SCRIPT)
+    require('SCHEMA_ROLLBACK_UNSAFE=0', "liberação somente após revisão inalterada", SCRIPT)
     require('next_revision" == *"(head)"*', "confirmação de migration no head alvo", SCRIPT)
     require('echo "migration Markina:', "registro não sensível da revisão aplicada", SCRIPT)
     require(
         'git switch --detach "$DEPLOY_SHA"\n'
-        '  SHA_SWITCHED=1\n\n'
+        '  SHA_SWITCHED=1\n'
+        '  apply_target_migrations "$previous_revision"',
+        "migration executada somente após a seleção explícita do SHA",
+        SCRIPT,
+    )
+    require(
         '  # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.\n'
         '  # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente\n'
         '  # as revisions do commit que será iniciado nos demais serviços.\n'
-        '  compose build migrate\n'
-        '  compose run --rm --no-deps migrate',
-        "build da migration entre a seleção do SHA e sua execução",
+        '  compose build migrate || {',
+        "build da migration antes de sua execução",
         SCRIPT,
     )
     require('compose up -d --build --no-deps api web worker', "recriação limitada de serviços", SCRIPT)

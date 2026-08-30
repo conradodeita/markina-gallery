@@ -17,6 +17,7 @@ DEPLOY_SHA=""
 PUBLIC_BASE_URL="${MARKINA_PUBLIC_BASE_URL:-}"
 PREVIOUS_SHA=""
 MIGRATION_CHANGED=0
+SCHEMA_ROLLBACK_UNSAFE=0
 SHA_SWITCHED=0
 
 usage() {
@@ -30,6 +31,10 @@ fail() {
 
 compose() {
   docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+}
+
+verify_clean_checkout() {
+  [[ -z "$(git status --porcelain)" ]] || fail "checkout remoto possui alterações locais; reconciliação humana necessária"
 }
 
 parse_arguments() {
@@ -59,7 +64,7 @@ verify_target() {
   [[ -f "$COMPOSE_FILE" ]] || fail "arquivo Compose esperado não encontrado"
   [[ -f "$ENV_FILE" ]] || fail "arquivo de ambiente de homologação não encontrado"
   [[ "$(git rev-parse --show-toplevel)" == "$PROJECT_ROOT" ]] || fail "o diretório não é o checkout esperado"
-  [[ -z "$(git status --porcelain)" ]] || fail "checkout remoto possui alterações locais; reconciliação humana necessária"
+  verify_clean_checkout
 
   local origin_url
   origin_url="$(git remote get-url origin)"
@@ -78,6 +83,41 @@ record_revision() {
 
 current_revision() {
   compose run --rm --no-deps migrate alembic current 2>/dev/null | tr -d '\r' | tail -n 1
+}
+
+apply_target_migrations() {
+  local previous_revision="$1" next_revision
+
+  # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.
+  # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente
+  # as revisions do commit que será iniciado nos demais serviços.
+  compose build migrate || {
+    fail "não foi possível construir a migration do SHA alvo"
+    return 1
+  }
+
+  # Depois que Alembic começa, uma falha pode significar schema parcialmente
+  # alterado. O rollback automático de código fica bloqueado até comprovarmos
+  # que a revisão permaneceu exatamente igual à anterior.
+  SCHEMA_ROLLBACK_UNSAFE=1
+  compose run --rm --no-deps migrate || {
+    fail "migration do SHA alvo falhou; banco preservado para revisão humana"
+    return 1
+  }
+  next_revision="$(current_revision)" || {
+    fail "não foi possível confirmar a revisão após a migration"
+    return 1
+  }
+  [[ -n "$next_revision" && "$next_revision" == *"(head)"* ]] || {
+    fail "migration não alcançou o head do SHA alvo"
+    return 1
+  }
+  echo "migration Markina: ${previous_revision:-sem revisão} -> $next_revision"
+  if [[ "$next_revision" != "$previous_revision" ]]; then
+    MIGRATION_CHANGED=1
+  else
+    SCHEMA_ROLLBACK_UNSAFE=0
+  fi
 }
 
 create_backup() {
@@ -120,7 +160,7 @@ wait_for_health() {
 rollback_code_if_safe() {
   local exit_code="$1"
   trap - ERR
-  if [[ "$SHA_SWITCHED" -eq 1 && "$MIGRATION_CHANGED" -eq 0 && -n "$PREVIOUS_SHA" ]]; then
+  if [[ "$SHA_SWITCHED" -eq 1 && "$MIGRATION_CHANGED" -eq 0 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 0 && -n "$PREVIOUS_SHA" ]]; then
     echo "falha antes de mudança de schema; restaurando somente código Markina para $PREVIOUS_SHA" >&2
     git switch --detach "$PREVIOUS_SHA"
     compose up -d --build --no-deps api web worker
@@ -146,22 +186,11 @@ main() {
   record_revision "previous" "$PREVIOUS_SHA"
   create_backup
 
-  local previous_revision next_revision
+  local previous_revision
   previous_revision="$(current_revision)"
   git switch --detach "$DEPLOY_SHA"
   SHA_SWITCHED=1
-
-  # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.
-  # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente
-  # as revisions do commit que será iniciado nos demais serviços.
-  compose build migrate
-  compose run --rm --no-deps migrate
-  next_revision="$(current_revision)"
-  [[ -n "$next_revision" && "$next_revision" == *"(head)"* ]] || fail "migration não alcançou o head do SHA alvo"
-  echo "migration Markina: ${previous_revision:-sem revisão} -> $next_revision"
-  if [[ "$next_revision" != "$previous_revision" ]]; then
-    MIGRATION_CHANGED=1
-  fi
+  apply_target_migrations "$previous_revision"
 
   compose up -d --build --no-deps api web worker
   compose up -d --force-recreate --no-deps nginx
