@@ -36,7 +36,7 @@ QR, pairing code, API key, chave OTP e sessão nunca devem aparecer em ticket, c
 
 1. Gere separadamente, no host autorizado, uma API key, um segredo de webhook, uma senha PostgreSQL e uma chave AES-GCM urlsafe-base64 de 32 bytes. Não copie valores entre ambientes.
 2. Grave-os somente em `docker/.env.homolog`, com permissão restrita. Configure:
-   - `APP_ENV=homolog` e `WHATSAPP_CREDENTIAL_ENV=homolog`;
+   - `WHATSAPP_CREDENTIAL_ENV` exatamente igual ao `APP_ENV` já usado pelo ambiente; no host de homologação atual ambos são `staging`;
    - `WHATSAPP_PROVIDER=evolution`;
    - `COMPOSE_PROFILES=whatsapp-real`;
    - `WHATSAPP_API_URL=http://evolution-api:8080`;

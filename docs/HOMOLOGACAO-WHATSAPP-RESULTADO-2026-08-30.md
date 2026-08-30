@@ -30,3 +30,9 @@
 ## Gate humano restante
 
 O proprietário deve autenticar-se na área administrativa, abrir `Configurações → WhatsApp`, salvar seu número próprio em E.164 e ler o QR ou usar o pairing code no aparelho autorizado. Depois disso devem ser confirmadas identidade coincidente, recuperação após reinício, OTP real sintético, login de cliente e mensagens transacionais. O QR, código de pareamento, telefone completo e credenciais não devem ser registrados neste documento.
+
+## Correção operacional anterior ao pareamento
+
+Na primeira tentativa humana, o número esperado foi salvo, mas o QR não foi exibido. O bloqueio fail-closed ocorreu porque o host já utilizava `APP_ENV=staging` enquanto o bootstrap havia configurado `WHATSAPP_CREDENTIAL_ENV=homolog`. Nenhuma instância ou mensagem foi criada por essa tentativa.
+
+O marcador não secreto foi alinhado para `staging`, preservando todos os segredos e o número esperado. API e worker foram recriados pelo Compose explícito e voltaram saudáveis. A instância dedicada foi criada durante o diagnóstico e permanece sem identidade conectada. A validação interna posterior confirmou ambientes coincidentes e resposta de pareamento com QR e pairing code presentes; seus valores não foram impressos nem persistidos em documentação e nenhuma mensagem foi enviada.
