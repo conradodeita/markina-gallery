@@ -73,6 +73,12 @@ Alternativa considerada: reutilizar PostgreSQL/Redis da aplicação. Foi rejeita
 
 O domínio dependerá de operações como `send`, `connection_status`, `sender_identity` e `reconcile`, não de DTOs Evolution. O adaptador traduz payloads e estados. QR/pairing é uma extensão operacional Baileys separada do envio, permitindo outro adaptador substituir o canal sem reescrever OTP, pagamentos ou futuras entregas.
 
+### 9. Entrada de cliente explicita o formato móvel brasileiro
+
+A tela de cliente apresentará `+55` como prefixo fixo e solicitará somente DDD e número móvel nacional. O controle aceitará digitação ou colagem com pontuação e também removerá um `55` inicial quando a pessoa colar o E.164 completo, mas só solicitará o OTP depois de obter exatamente onze dígitos nacionais no formato `DD9XXXXXXXX`. O payload seguirá para o backend como `+55DD9XXXXXXXX`; o frontend não tentará inferir ou inserir silenciosamente um nono dígito ausente.
+
+Alternativa descartada: manter um campo internacional livre ou acrescentar `9` automaticamente a dez dígitos. O primeiro deixa o padrão local ambíguo; o segundo pode transformar um número incorreto em outro destinatário válido.
+
 ## Risks / Trade-offs
 
 - [Baileys é integração não oficial e pode desconectar ou sofrer bloqueio] → usar número exclusivo, mostrar estado, persistir sessão, bloquear envio quando degradado e manter caminho de futura migração para Meta.

@@ -6,12 +6,38 @@ type Context = "client" | "admin";
 type Step = "details" | "code";
 const genericError =
   "Não foi possível concluir a autenticação. Confira os dados e tente novamente.";
+const brazilPhoneError =
+  "Informe DDD e celular com o nono dígito: (11) 99999-9999.";
 const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar.", logo_url: null as string | null, app_icon_url: null as string | null, favicon_url: null as string | null };
+
+export function brazilPhoneDigits(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return (digits.startsWith("55") && digits.length > 11
+    ? digits.slice(2)
+    : digits
+  ).slice(0, 11);
+}
+
+export function formatBrazilPhone(value: string) {
+  const digits = brazilPhoneDigits(value);
+  if (!digits) return "";
+  if (digits.length <= 2) return `(${digits}`;
+  const ddd = digits.slice(0, 2);
+  const mobile = digits.slice(2);
+  if (mobile.length <= 5) return `(${ddd}) ${mobile}`;
+  return `(${ddd}) ${mobile.slice(0, 5)}-${mobile.slice(5)}`;
+}
+
+export function brazilMobileE164(value: string) {
+  const digits = brazilPhoneDigits(value);
+  return /^\d{2}9\d{8}$/.test(digits) ? `+55${digits}` : null;
+}
 
 export function AuthEntry() {
   const [context, setContext] = useState<Context>("client");
   const [step, setStep] = useState<Step>("details");
   const [challengeId, setChallengeId] = useState("");
+  const [clientPhone, setClientPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [branding, setBranding] = useState(defaultBranding);
@@ -45,6 +71,11 @@ export function AuthEntry() {
   async function requestCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const clientPhoneE164 = brazilMobileE164(clientPhone);
+    if (context === "client" && !clientPhoneE164) {
+      setMessage(brazilPhoneError);
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -59,7 +90,7 @@ export function AuthEntry() {
             context === "client"
               ? {
                   full_name: data.get("fullName"),
-                  phone: data.get("phone"),
+                  phone: clientPhoneE164,
                   ...(galleryId ? { parent_gallery_id: galleryId } : {}),
                 }
               : { email: data.get("email"), password: data.get("password") },
@@ -132,6 +163,7 @@ export function AuthEntry() {
     setStep("details");
     setMessage("");
     setChallengeId("");
+    setClientPhone("");
   }
   return (
     <main className="auth-shell">
@@ -171,16 +203,30 @@ export function AuthEntry() {
                   Nome completo
                   <input name="fullName" autoComplete="name" required />
                 </label>
-                <label>
-                  WhatsApp com código do país
+                <div className="auth-phone-field">
+                  <label htmlFor="client-phone">WhatsApp</label>
+                  <div className="auth-phone-control">
+                    <span aria-hidden="true">+55</span>
                   <input
+                    id="client-phone"
                     name="phone"
                     inputMode="tel"
                     autoComplete="tel"
-                    placeholder="+55 11 99999-9999"
+                    placeholder="(11) 99999-9999"
+                    value={clientPhone}
+                    onChange={(event) =>
+                      setClientPhone(formatBrazilPhone(event.target.value))
+                    }
+                    pattern="\(\d{2}\) 9\d{4}-\d{4}"
+                    maxLength={15}
+                    aria-describedby="client-phone-help"
                     required
                   />
-                </label>
+                  </div>
+                  <small id="client-phone-help">
+                    Código do Brasil (+55). Digite o DDD e o celular com o 9.
+                  </small>
+                </div>
               </>
             ) : (
               <>

@@ -20,7 +20,7 @@ O login de cliente e as notificações transacionais já passam por uma abstraç
 
 ### Modified Capabilities
 
-- Nenhuma. O OTP de cliente e as notificações de pagamento já exigem envio por adaptador WhatsApp; esta change fornece o transporte real e sua operação sem alterar as regras desses domínios.
+- `auth`: a entrada de cliente prepara explicitamente o telefone móvel brasileiro com país `+55`, DDD e nono dígito antes de solicitar o OTP pelo transporte real.
 
 ## Impact
 
