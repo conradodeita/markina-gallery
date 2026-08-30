@@ -16,7 +16,7 @@ from app.auth import (
     now,
 )
 from app.messaging import _normalized_remote_jid
-from app.whatsapp_channel import app_environment
+from app.whatsapp_channel import app_environment, whatsapp_identities_match
 from app.whatsapp_delivery import apply_delivery_status
 
 MESSAGE_EVENTS = {"messages.update", "send.message.update"}
@@ -113,7 +113,9 @@ def process_whatsapp_webhook(
             )
             settings.connected_phone_e164 = connected
             settings.last_checked_at = now()
-            if state == "open" and connected == settings.expected_phone_e164:
+            if state == "open" and whatsapp_identities_match(
+                settings.expected_phone_e164, connected
+            ):
                 settings.status = "ready"
                 settings.last_error = None
             elif state == "open":

@@ -32,6 +32,7 @@ from app.messaging import (
     WhatsAppDeliveryResult,
     WhatsAppPairingResult,
 )
+from app.whatsapp_channel import whatsapp_identities_match
 from app.whatsapp_delivery import (
     apply_delivery_status,
     decrypt_otp,
@@ -403,6 +404,48 @@ def test_admin_whatsapp_channel_blocks_mismatched_sender(monkeypatch) -> None:
         assert "+5511555559999" not in str(payload)
 
 
+@pytest.mark.parametrize(
+    ("expected", "connected", "matches"),
+    [
+        ("+5511998761049", "+5511998761049", True),
+        ("+5511998761049", "+551198761049", True),
+        ("+551198761049", "+5511998761049", True),
+        ("+5511998761049", "+552198761049", False),
+        ("+5511998761049", "+551198761048", False),
+        ("+14155552671", "+141955552671", False),
+        ("+5511998761049", None, False),
+    ],
+)
+def test_whatsapp_identity_matching_is_strict(
+    expected: str, connected: str | None, matches: bool
+) -> None:
+    assert whatsapp_identities_match(expected, connected) is matches
+
+
+def test_admin_whatsapp_channel_accepts_brazilian_legacy_jid(monkeypatch) -> None:
+    expected = "+5511998761049"
+    connected = "+551198761049"
+
+    class LegacyJidProvider:
+        def connection_status(self):
+            return WhatsAppConnectionStatus("open", connected)
+
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
+    monkeypatch.setattr(
+        "app.main.whatsapp_provider_from_environment", lambda: LegacyJidProvider()
+    )
+    with authenticated_admin_client() as client:
+        assert client.patch(
+            "/admin/whatsapp/channel", json={"expected_phone_e164": expected}
+        ).status_code == 200
+        payload = client.get("/admin/whatsapp/channel").json()
+        assert payload["status"] == "ready"
+        assert payload["last_error"] is None
+        assert expected not in str(payload)
+        assert connected not in str(payload)
+
+
 def test_whatsapp_webhook_is_authenticated_deduplicated_and_monotonic(
     monkeypatch,
 ) -> None:
@@ -480,6 +523,33 @@ def test_connection_webhook_updates_ready_state(monkeypatch) -> None:
         assert response.json() == {"status": "connection_updated"}
     with SessionLocal() as db:
         assert db.get(WhatsAppChannelSettings, settings_id).status == "ready"
+
+
+def test_connection_webhook_accepts_brazilian_legacy_jid(monkeypatch) -> None:
+    expected = "+5511998761049"
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_WEBHOOK_SECRET", "synthetic-webhook-secret")
+    with SessionLocal() as db:
+        settings = WhatsAppChannelSettings(
+            environment="homolog", expected_phone_e164=expected, status="connecting"
+        )
+        db.add(settings)
+        db.commit()
+        settings_id = settings.id
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/whatsapp/webhook",
+            json={
+                "event": "connection.update",
+                "data": {"state": "open", "ownerJid": "551198761049@s.whatsapp.net"},
+            },
+            headers={"X-Markina-Webhook-Secret": "synthetic-webhook-secret"},
+        )
+        assert response.json() == {"status": "connection_updated"}
+    with SessionLocal() as db:
+        settings = db.get(WhatsAppChannelSettings, settings_id)
+        assert settings.status == "ready"
+        assert settings.last_error is None
 
 
 def test_workers_reserve_delivery_once_under_concurrency(monkeypatch) -> None:

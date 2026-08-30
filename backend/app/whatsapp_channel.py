@@ -23,6 +23,30 @@ def app_environment() -> str:
     return os.getenv("APP_ENV", "development").strip()
 
 
+def whatsapp_identities_match(
+    expected_phone_e164: str | None, connected_phone_e164: str | None
+) -> bool:
+    """Compara a identidade exata, incluindo o JID brasileiro móvel legado."""
+    if not expected_phone_e164 or not connected_phone_e164:
+        return False
+    if expected_phone_e164 == connected_phone_e164:
+        return True
+
+    longer, shorter = sorted(
+        (expected_phone_e164, connected_phone_e164), key=len, reverse=True
+    )
+    return (
+        len(longer) == 14
+        and len(shorter) == 13
+        and longer.startswith("+55")
+        and shorter.startswith("+55")
+        and longer[3:].isdigit()
+        and shorter[3:].isdigit()
+        and longer[5] == "9"
+        and longer[:5] + longer[6:] == shorter
+    )
+
+
 def channel_settings(db: Session) -> WhatsAppChannelSettings:
     environment = app_environment()
     settings = db.scalar(
@@ -65,7 +89,9 @@ def refresh_channel(
     if result.state == "open":
         if not settings.expected_phone_e164:
             settings.status = "pending_pairing"
-        elif result.connected_phone_e164 == settings.expected_phone_e164:
+        elif whatsapp_identities_match(
+            settings.expected_phone_e164, result.connected_phone_e164
+        ):
             settings.status = "ready"
         else:
             settings.status = "mismatch"
