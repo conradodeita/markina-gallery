@@ -235,21 +235,25 @@ export default function WhatsAppPanel() {
       </div>
 
       {pairing ? <aside className="whatsapp-pairing" aria-labelledby="whatsapp-pairing-title">
-        <div>
+        <div className="whatsapp-pairing-intro">
           <p className="eyebrow">Uso único · expira em 60 segundos</p>
           <h3 id="whatsapp-pairing-title">Conecte o aparelho de homologação</h3>
           <p>Abra “Aparelhos conectados” no WhatsApp e leia o QR. Se o provedor oferecer código, use-o apenas no aparelho autorizado.</p>
         </div>
-        {pairing.qr_base64 ? <Image
-          className="whatsapp-pairing-qr"
-          src={pairingImage(pairing.qr_base64)}
-          alt="QR code efêmero para parear o WhatsApp de homologação"
-          width={240}
-          height={240}
-          unoptimized
-        /> : null}
-        {pairing.pairing_code ? <p className="whatsapp-pairing-code"><span>Código de pareamento</span><strong>{pairing.pairing_code}</strong></p> : null}
-        <button className="secondary" type="button" onClick={() => setPairing(null)}>Ocultar agora</button>
+        {pairing.qr_base64 ? <div className="whatsapp-pairing-visual">
+          <Image
+            className="whatsapp-pairing-qr"
+            src={pairingImage(pairing.qr_base64)}
+            alt="QR code efêmero para parear o WhatsApp de homologação"
+            width={240}
+            height={240}
+            unoptimized
+          />
+        </div> : null}
+        <div className="whatsapp-pairing-controls">
+          {pairing.pairing_code ? <p className="whatsapp-pairing-code"><span>Código de pareamento</span><strong>{pairing.pairing_code}</strong></p> : null}
+          <button className="secondary" type="button" onClick={() => setPairing(null)}>Ocultar agora</button>
+        </div>
       </aside> : null}
 
       {feedback ? <p className="form-message" role="alert">{feedback}</p> : null}
