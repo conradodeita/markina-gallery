@@ -26,6 +26,8 @@
 - [x] 4.2 Adicionar em `Configurações → WhatsApp` um painel responsivo com provedor/ambiente, número esperado e conectado mascarados, estado, última verificação, pendências e fluxo de QR/pairing; verificar acessibilidade, estados de carga/erro/expiração e testes de componente após consultar a documentação local do Next.js exigida por `frontend/AGENTS.md`.
   - Correção validada em 2026-08-30: QR e pairing code separados em regiões estruturais distintas no desktop e no smartphone, impedindo sobreposição; teste de componente 10/10, typecheck e lint sem erros.
 - [x] 4.3 Bloquear visualmente a promessa de canal pronto enquanto conexão e identidade não coincidirem e explicar que o número precisa ser pareado; verificar os estados sandbox, pendente, conectando, pronto, divergente e desconectado em desktop e smartphone.
+- [x] 4.4 Preparar o telefone do login de cliente para o padrão móvel brasileiro com prefixo `+55` visível, máscara de DDD+nono dígito e envio E.164; verificar digitação, colagem com/sem país, número incompleto, ausência do `9`, troca de contexto e payload do desafio em testes de componente.
+  - Evidência em 2026-08-30: `auth-entry.test.tsx` valida prefixo fixo, máscara, payload `+55DD9XXXXXXXX`, colagem com/sem país, bloqueio de dez dígitos ou móvel sem `9` e limpeza na troca de contexto; suíte frontend 62/62, typecheck e build aprovados, lint com zero erros e apenas 16 avisos preexistentes.
 
 ## 5. Infraestrutura e operação isoladas
 
