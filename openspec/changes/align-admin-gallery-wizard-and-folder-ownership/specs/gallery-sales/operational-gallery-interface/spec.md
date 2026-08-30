@@ -33,3 +33,23 @@ O sistema SHALL fornecer ao fotógrafo autenticado uma interface orientada por g
 
 - **WHEN** o fotógrafo avança ou retorna entre etapas após salvar dados válidos
 - **THEN** a interface recupera do backend os dados persistidos da mesma galeria e não cria galerias, pastas ou vínculos duplicados
+
+#### Scenario: Detalhes configuráveis
+
+- **WHEN** o fotógrafo acessa a etapa Detalhes
+- **THEN** a interface apresenta e persiste capa, título e organização suportados para aquela galeria, sem misturar upload, marca-d’água global ou opções simuladas
+
+#### Scenario: Operação legada fora da navegação
+
+- **WHEN** o fotógrafo usa a navegação administrativa
+- **THEN** a interface apresenta Galerias como entrada operacional e não apresenta Operação como destino ativo, preservando somente o redirecionamento de URLs antigas
+
+#### Scenario: Clientes agrupados por intenção
+
+- **WHEN** o fotógrafo abre a etapa Clientes
+- **THEN** responsáveis vinculados, busca de cadastro existente e novo cadastro aparecem em blocos distintos, responsivos e com ações textuais visíveis
+
+#### Scenario: Legibilidade das ações administrativas
+
+- **WHEN** um botão está disponível, em foco, sob ponteiro ou desabilitado
+- **THEN** seu texto permanece visível, seu estado é distinguível e o agrupamento visual deixa claro qual bloco será afetado

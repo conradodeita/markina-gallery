@@ -45,6 +45,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   const availableFolders = folders.filter((folder) => folder.photos.length > 0);
   const [activeFolderId, setActiveFolderId] = useState(availableFolders[0]?.id ?? "");
   const [expandedPhotoId, setExpandedPhotoId] = useState<string | null>(null);
+  const [protectionMessage, setProtectionMessage] = useState("Prévia protegida: cópias e downloads diretos estão desativados.");
   const dialog = useRef<HTMLDivElement>(null);
   const photos = useMemo(() => availableFolders.flatMap((folder) => folder.photos), [availableFolders]);
   const activeFolder = availableFolders.find((folder) => folder.id === activeFolderId) ?? availableFolders[0];
@@ -54,6 +55,21 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   useEffect(() => {
     if (expandedPhoto) dialog.current?.focus();
   }, [expandedPhoto]);
+
+  useEffect(() => {
+    function detectScreenshot(event: KeyboardEvent) {
+      if (event.key === "PrintScreen") {
+        setProtectionMessage("Captura detectada. O navegador não consegue impedir screenshots; a prévia continua identificada pela marca-d’água.");
+      }
+    }
+    window.addEventListener("keyup", detectScreenshot);
+    return () => window.removeEventListener("keyup", detectScreenshot);
+  }, []);
+
+  function protectPreview(event: { preventDefault: () => void }) {
+    event.preventDefault();
+    setProtectionMessage("Conteúdo protegido: arraste, menu de contexto e cópia direta estão desativados. A marca-d’água identifica esta prévia.");
+  }
 
   function moveExpanded(step: number) {
     if (!photos.length || expandedIndex < 0) return;
@@ -68,32 +84,44 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
 
   return (
     <section className="gallery-presentation" aria-label={`Apresentação de ${galleryName}`}>
-      {modeLabel ? <div className="gallery-presentation-mode">{modeLabel}</div> : null}
-      <header className="gallery-presentation-hero">
-        {coverUrl ? <img src={coverUrl} alt={`Capa de ${galleryName}`} /> : <div className="gallery-presentation-hero-empty" role="status">Capa ainda não definida</div>}
-        <div className={`gallery-presentation-title title-${titleStyle?.position ?? "bottom-left"}`} style={heroTitleStyle}>
+      <header className="gallery-presentation-header">
+        <div className="gallery-presentation-intro">
           <p className="eyebrow">Galeria privada</p>
           <h1>{galleryName}</h1>
           {context ? <div className="gallery-presentation-context">{context}</div> : null}
         </div>
+        {modeLabel ? <aside className="gallery-presentation-mode" aria-label="Contexto da visualização">{modeLabel}</aside> : null}
       </header>
 
+      <p className="gallery-protection-notice" role="status" aria-live="polite"><span aria-hidden="true">◈</span>{protectionMessage}</p>
+
+      <div className="gallery-presentation-hero gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
+        {coverUrl ? <img src={coverUrl} alt={`Capa de ${galleryName}`} draggable={false} /> : <div className="gallery-presentation-hero-empty" role="status">Capa ainda não definida</div>}
+        <div className={`gallery-presentation-title title-${titleStyle?.position ?? "bottom-left"}`} style={heroTitleStyle}>
+          <span>Apresentação</span>
+          <strong>{galleryName}</strong>
+        </div>
+      </div>
+
       {availableFolders.length > 1 ? (
-        <nav className="gallery-presentation-folders" aria-label="Pastas da galeria">
-          {availableFolders.map((folder) => <button key={folder.id} type="button" aria-pressed={activeFolder?.id === folder.id} onClick={() => setActiveFolderId(folder.id)}>{folder.name}<span>{folder.photos.length}</span></button>)}
-        </nav>
+        <section className="gallery-presentation-folder-section" aria-labelledby="gallery-folders-title">
+          <div><p className="eyebrow">Navegação</p><h2 id="gallery-folders-title">Coleções</h2></div>
+          <nav className="gallery-presentation-folders" aria-label="Pastas da galeria">
+            {availableFolders.map((folder) => <button key={folder.id} type="button" aria-pressed={activeFolder?.id === folder.id} onClick={() => setActiveFolderId(folder.id)}>{folder.name}<span>{folder.photos.length}</span></button>)}
+          </nav>
+        </section>
       ) : null}
 
       {activeFolder ? (
         <section className="gallery-presentation-collection" aria-labelledby={`folder-${activeFolder.id}`}>
           <div className="gallery-presentation-collection-heading"><div><p className="eyebrow">Fotos protegidas</p><h2 id={`folder-${activeFolder.id}`}>{activeFolder.name}</h2></div><span>{activeFolder.photos.length} foto{activeFolder.photos.length === 1 ? "" : "s"}</span></div>
           <div className="gallery-presentation-grid">
-            {activeFolder.photos.map((photo) => <article className="gallery-presentation-photo" key={photo.id}><button type="button" className="gallery-presentation-photo-image" onClick={() => setExpandedPhotoId(photo.id)} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} /></button><div className="gallery-presentation-photo-details"><strong>{photo.name}</strong>{renderPhotoDetails?.(photo)}</div></article>)}
+            {activeFolder.photos.map((photo) => <article className="gallery-presentation-photo" key={photo.id}><button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => setExpandedPhotoId(photo.id)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} /></button><div className="gallery-presentation-photo-details"><strong>{photo.name}</strong>{renderPhotoDetails?.(photo)}</div></article>)}
           </div>
         </section>
       ) : <section className="gallery-presentation-empty" role="status"><h2>Nenhuma foto pronta para mostrar</h2><p>{emptyDetail}</p></section>}
 
-      {expandedPhoto ? <div className="gallery-presentation-dialog-backdrop" role="presentation" onMouseDown={() => setExpandedPhotoId(null)}><div ref={dialog} className="gallery-presentation-dialog" role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhotoId(null); if (event.key === "ArrowLeft") moveExpanded(-1); if (event.key === "ArrowRight") moveExpanded(1); }}><button type="button" className="gallery-presentation-close" onClick={() => setExpandedPhotoId(null)}>Fechar</button><img src={expandedPhoto.previewUrl} alt={`Prévia protegida ampliada de ${expandedPhoto.name}`} /><div className="gallery-presentation-dialog-footer"><strong>{expandedPhoto.name}</strong>{photos.length > 1 ? <div><button type="button" onClick={() => moveExpanded(-1)}>Anterior</button><button type="button" onClick={() => moveExpanded(1)}>Próxima</button></div> : null}</div></div></div> : null}
+      {expandedPhoto ? <div className="gallery-presentation-dialog-backdrop" role="presentation" onMouseDown={() => setExpandedPhotoId(null)}><div ref={dialog} className="gallery-presentation-dialog" role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhotoId(null); if (event.key === "ArrowLeft") moveExpanded(-1); if (event.key === "ArrowRight") moveExpanded(1); }}><div className="gallery-presentation-dialog-header"><span>Prévia protegida</span><button type="button" className="gallery-presentation-close" onClick={() => setExpandedPhotoId(null)}>Fechar</button></div><div className="gallery-presentation-dialog-media gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}><img src={expandedPhoto.previewUrl} alt={`Prévia protegida ampliada de ${expandedPhoto.name}`} draggable={false} /></div><div className="gallery-presentation-dialog-footer"><strong>{expandedPhoto.name}</strong>{photos.length > 1 ? <div><button type="button" onClick={() => moveExpanded(-1)}>Anterior</button><button type="button" onClick={() => moveExpanded(1)}>Próxima</button></div> : null}</div></div></div> : null}
     </section>
   );
 }

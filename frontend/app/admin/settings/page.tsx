@@ -91,14 +91,14 @@ export default function AdminSettingsPage() {
 
   function updateProtectionPreview(event: FormEvent<HTMLFormElement>) {
     const data = new FormData(event.currentTarget);
-    setProtectionPreview({
-      ...protectionPreview,
+    setProtectionPreview((current) => ({
+      ...current,
       watermark_text: String(data.get("watermark_text") ?? ""),
       watermark_font: String(data.get("watermark_font") ?? "sans-serif"),
       watermark_color: String(data.get("watermark_color") ?? "#FFFFFF"),
       watermark_size: Number(data.get("watermark_size") ?? 24),
       watermark_direction: String(data.get("watermark_direction") ?? "diagonal"),
-    });
+    }));
   }
 
   async function upload(asset: Asset, event: ChangeEvent<HTMLInputElement>) {
@@ -195,17 +195,43 @@ export default function AdminSettingsPage() {
           })}
         </div>
       </section>
-      <section className="admin-card" aria-labelledby="visual-protection-title">
-        <h2 id="visual-protection-title">Proteção visual das galerias</h2>
-        <p className="intro">Esta marca-d’água é única para todas as prévias protegidas. A alteração é aplicada com segurança pelo servidor; originais nunca são enviados ao navegador.</p>
-        <form className="gallery-settings-form" onSubmit={saveProtection} onChange={updateProtectionPreview}>
-          <label>Texto da marca-d’água<input name="watermark_text" defaultValue={settings.watermark_text} maxLength={120} required /></label>
-          <label>Tipografia da marca-d’água<select name="watermark_font" defaultValue={settings.watermark_font}><option value="sans-serif">Sans-serif</option><option value="serif">Serifada</option><option value="monospace">Monoespaçada</option><option value="DejaVuSans">DejaVu Sans</option><option value="DejaVuSerif">DejaVu Serif</option></select></label>
-          <label>Cor da marca-d’água<input name="watermark_color" type="color" defaultValue={settings.watermark_color} /></label>
-          <label>Tamanho da marca-d’água<input name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /></label>
-          <label>Direção<select name="watermark_direction" defaultValue={settings.watermark_direction}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="diagonal">Diagonal</option></select></label>
-          <div className={`gallery-customization-preview gallery-customization-preview-empty watermark-preview--${protectionPreview.watermark_direction}`} aria-live="polite"><p className="eyebrow">Prévia global</p><strong style={{ color: protectionPreview.watermark_color, fontFamily: protectionPreview.watermark_font, fontSize: `${Math.min(protectionPreview.watermark_size, 32)}px` }}>{protectionPreview.watermark_text || "MARKINA • PRÉVIA"}</strong><span>A proteção será repetida sobre as prévias protegidas de todas as galerias.</span></div>
-          <button className="primary">Salvar proteção global</button>
+      <section className="admin-card protection-settings" aria-labelledby="visual-protection-title">
+        <div className="protection-settings-heading">
+          <div>
+            <p className="eyebrow">Padrão global</p>
+            <h2 id="visual-protection-title">Proteção visual das galerias</h2>
+          </div>
+          <span className="protection-settings-status">Aplicada pelo servidor</span>
+        </div>
+        <p className="intro">Defina a identificação que será gravada nas prévias protegidas. Os arquivos originais permanecem fora do navegador; esta camada desestimula cópias, mas não promete bloquear capturas de tela.</p>
+        <form className="protection-settings-form" onSubmit={saveProtection} onChange={updateProtectionPreview}>
+          <div className="protection-settings-controls">
+            <fieldset className="protection-settings-group">
+              <legend>Conteúdo</legend>
+              <p>Use uma identificação curta e reconhecível em todas as galerias.</p>
+              <label>Texto da marca-d’água<input name="watermark_text" defaultValue={settings.watermark_text} maxLength={120} required /></label>
+              <label>Tipografia da marca-d’água<select name="watermark_font" defaultValue={settings.watermark_font}><option value="sans-serif">Sans-serif</option><option value="serif">Serifada</option><option value="monospace">Monoespaçada</option><option value="DejaVuSans">DejaVu Sans</option><option value="DejaVuSerif">DejaVu Serif</option></select></label>
+            </fieldset>
+            <fieldset className="protection-settings-group protection-settings-appearance">
+              <legend>Aparência</legend>
+              <p>A prova ao lado ajuda a conferir legibilidade em fundos opostos.</p>
+              <label>Cor da marca-d’água<span className="protection-color-control"><input name="watermark_color" type="color" defaultValue={settings.watermark_color} /><code>{protectionPreview.watermark_color.toUpperCase()}</code></span></label>
+              <label>Tamanho da marca-d’água<input name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /></label>
+              <label>Direção<select name="watermark_direction" defaultValue={settings.watermark_direction}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="diagonal">Diagonal</option></select></label>
+            </fieldset>
+            <button className="primary protection-settings-save">Salvar proteção global</button>
+          </div>
+          <aside className="protection-settings-preview" aria-labelledby="protection-preview-title" aria-live="polite">
+            <div>
+              <p className="eyebrow">Prova de contraste</p>
+              <h3 id="protection-preview-title">Como a identificação se comporta</h3>
+              <p>Superfícies neutras para avaliar leitura. Elas não simulam uma fotografia.</p>
+            </div>
+            <div className="protection-preview-surfaces">
+              {(["dark", "light"] as const).map((surface) => <div className={`protection-preview-surface is-${surface}`} key={surface}><span className={`protection-preview-mark watermark-preview--${protectionPreview.watermark_direction}`} style={{ color: protectionPreview.watermark_color, fontFamily: protectionPreview.watermark_font, fontSize: `${Math.min(protectionPreview.watermark_size, 32)}px` }}>{protectionPreview.watermark_text || "MARKINA • PRÉVIA"}</span><small>{surface === "dark" ? "Fundo escuro" : "Fundo claro"}</small></div>)}
+            </div>
+            <p className="protection-settings-note">A marca será repetida sobre cada prévia protegida depois do salvamento e do processamento seguro.</p>
+          </aside>
         </form>
       </section>
       <section className="admin-card" aria-labelledby="payment-messages-title">

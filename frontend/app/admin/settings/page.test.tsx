@@ -50,10 +50,25 @@ describe("configurações administrativas de marca", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminSettingsPage />);
     fireEvent.change(await screen.findByLabelText("Texto da marca-d’água"), { target: { value: "MARCA GLOBAL" } });
-    expect(await screen.findByText("MARCA GLOBAL")).toBeTruthy();
+    expect((await screen.findAllByText("MARCA GLOBAL")).length).toBe(2);
+    expect(screen.getByRole("group", { name: "Conteúdo" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Aparência" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Como a identificação se comporta" }).textContent).toContain("não simulam uma fotografia");
+    expect(screen.getByText(/não promete bloquear capturas de tela/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/branding/protection", expect.objectContaining({ method: "PATCH" })));
     expect(await screen.findByText(/Proteção visual global salva/)).toBeTruthy();
+  });
+
+  it("mantém os controles disponíveis e informa falha de salvamento", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => Promise.resolve(
+      new Response(JSON.stringify(branding), { status: path.endsWith("/protection") && options?.method === "PATCH" ? 500 : 200 }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminSettingsPage />);
+    await screen.findByLabelText("Direção");
+    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
+    expect(await screen.findByText("Não foi possível salvar a proteção visual.")).toBeTruthy();
   });
 
   it("salva templates de pagamento com variáveis controladas", async () => {

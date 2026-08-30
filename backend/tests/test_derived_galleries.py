@@ -435,13 +435,16 @@ def test_parent_gallery_editor_is_backend_driven_and_contextual(client: TestClie
     ]
     assert editor.json()["capabilities"] == {
         "sales_configuration": False,
-        "visual_customization": False,
+        "visual_customization": True,
         "folder_management": True,
         "client_links": True,
     }
     assert "storage_key" not in editor.text
     assert client.get(f"/admin/parent-galleries/{parent_id}/sales").json()["available"] is False
-    assert client.get(f"/admin/parent-galleries/{parent_id}/details").json()["available"] is False
+    details = client.get(f"/admin/parent-galleries/{parent_id}/details").json()
+    assert details["available"] is True
+    assert details["capabilities"] == ["cover", "title", "folder_organization"]
+    assert details["settings"]["folder_display_mode"] == "individual"
     updated = client.patch(
         f"/admin/parent-galleries/{parent_id}/settings",
         json={"name": "Evento atualizado", "description": "Seleção das famílias"},

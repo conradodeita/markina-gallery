@@ -74,6 +74,18 @@ A pasta e os arquivos permanecerão no agregado da galeria-mãe. A liberação a
 
 Alternativa descartada: clonar pasta e arquivos por cliente. Isso multiplicaria armazenamento, permitiria divergência editorial e dificultaria reconhecer que a mesma foto foi comprada por pessoas diferentes.
 
+### Remediação da revisão visual em homologação
+
+A navegação administrativa removerá a entrada **Operação**, pois a rota já é somente compatibilidade e redireciona para Galerias. O redirecionamento será preservado para favoritos antigos, mas não será apresentado como área ativa.
+
+A etapa **Detalhes** deixará de exibir indisponibilidade genérica e receberá os controles persistidos de capa, título e organização hoje misturados em Imagens. A etapa Imagens voltará a concentrar pastas, upload, processamento e liberação. Vendas continuará orientada pela capacidade real do backend e não ganhará campos simulados.
+
+O shell administrativo usará uma gramática visual neutra, com canvas cinza claro, superfícies brancas, ações primárias pretas, bordas cinzas e espaçamento derivado dos tokens existentes. Cada assunto formará um card ou bloco com cabeçalho, explicação, controles e feedback próprios. Botões SHALL manter texto visível e contraste em estado normal, hover, foco e desabilitado.
+
+Clientes será dividido em três superfícies: responsáveis vinculados, busca/vínculo de cadastro existente e cadastro de nova responsável. Resultados de busca usarão linhas ou cards com nome, telefone e ação textual inequívoca, empilhados no smartphone.
+
+Alternativa descartada: manter Detalhes como placeholder e apenas melhorar seu texto. A revisão humana confirmou que uma etapa numerada sem configuração real comunica fluxo incompleto e impede operar a apresentação pela homologação.
+
 ## Risks / Trade-offs
 
 - [Fotos legadas possuem vínculos inesperados] → executar inventário e testes de preservação antes da restrição; interromper a migration diante de órfãos.
@@ -82,6 +94,7 @@ Alternativa descartada: clonar pasta e arquivos por cliente. Isso multiplicaria 
 - [Mudança de navegação quebrar favoritos administrativos antigos] → manter redirecionamentos contextuais para o novo editor durante a transição.
 - [Conflito com mudanças ativas de acesso compartilhado] → limitar esta mudança à propriedade de mídia e consumir os contratos de vínculo vigentes, sem reimplementar titularidade.
 - [Migração longa em acervo grande] → inventariar contagens e estimar duração antes de homologação; executar somente no projeto Markina com backup e plano de rollback próprios.
+- [Reorganização visual esconder ações existentes] → preservar contratos e nomes de ação, testar texto/contraste e cobrir desktop e smartphone antes de nova aprovação humana.
 
 ## Migration Plan
 

@@ -9,6 +9,8 @@ A prévia do fotógrafo e a galeria da cliente têm estruturas visuais diferente
 - Centralizar em Configurações a personalização de marca-d’água e proteção visual, aplicada de forma consistente às prévias protegidas de todas as galerias; manter no editor da galeria somente as decisões de apresentação que pertencem àquela galeria, incluindo a organização das pastas.
 - Manter os dados, permissões e ações específicos de cada papel: a cliente recebe somente fotos liberadas e autorizadas; o fotógrafo vê a mesma composição em modo de prévia, sem conceder acesso adicional à cliente.
 - Tornar erros de carregamento e ausência de capa/fotos visualmente explícitos e recuperáveis.
+- Remediar o retorno visual de homologação com uma composição editorial mais clara para fotógrafo e cliente, reduzindo ruído, uniformizando espaços e priorizando a fotografia.
+- Acrescentar dissuasão honesta contra cópia casual nas prévias: impedir arraste, menu de contexto e cópia comum, exibir aviso de conteúdo protegido e manter a marca-d’água incorporada no arquivo servido, sem prometer bloqueio impossível de screenshot pelo sistema operacional.
 
 ## Capabilities
 
@@ -24,5 +26,6 @@ Nenhuma.
 ## Impact
 
 - Frontend Next.js das rotas de prévia administrativa, galeria privada, Configurações e componentes visuais, além dos testes correspondentes.
+- Interações de dissuasão no navegador e mensagens acessíveis de proteção, sem alterar a autorização ou expor originais.
 - APIs existentes poderão receber somente campos de apresentação indispensáveis e a configuração global de proteção, sem expor originais, dados de terceiros ou conteúdo não autorizado.
 - Há somente migration aditiva para guardar a proteção visual global; ela não remove nem modifica dados existentes. Não há alteração de pagamentos, biometria, dados de produção nem integração externa.
