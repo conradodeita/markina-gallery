@@ -26,7 +26,7 @@ O sistema SHALL encaminhar OTP e mensagens WhatsApp originadas por eventos já e
 
 ### Requirement: Identidade remetente pareada e verificável
 
-O sistema SHALL tratar como remetente o número realmente conectado à instância do provedor e SHALL enviar externamente somente quando ele coincidir com o número esperado configurado pelo fotógrafo para o ambiente.
+O sistema SHALL tratar como remetente o número realmente conectado à instância do provedor e SHALL enviar externamente somente quando ele coincidir com o número esperado configurado pelo fotógrafo para o ambiente. A comparação SHALL aceitar como equivalentes somente a forma E.164 brasileira atual e o JID legado do mesmo número que omite exatamente o nono dígito `9` depois do país e DDD, mantendo todos os demais dígitos idênticos; qualquer outra diferença SHALL permanecer bloqueada.
 
 #### Scenario: Fotógrafo configura o número esperado
 - **WHEN** o fotógrafo autenticado salva um número internacional válido na configuração WhatsApp
@@ -35,6 +35,14 @@ O sistema SHALL tratar como remetente o número realmente conectado à instânci
 #### Scenario: Número conectado coincide
 - **WHEN** o provedor informa conexão aberta e identidade remetente igual ao número esperado
 - **THEN** o painel apresenta o canal como pronto e permite que o worker entregue mensagens autorizadas
+
+#### Scenario: JID brasileiro legado omite o nono dígito
+- **WHEN** o número esperado brasileiro contém o nono dígito `9` e o provedor informa o mesmo país, DDD e demais dígitos em um JID legado sem esse único dígito
+- **THEN** o sistema considera as duas representações da mesma identidade, preserva as máscaras e permite marcar o canal como pronto
+
+#### Scenario: Diferença não explicada pelo JID brasileiro legado
+- **WHEN** país, DDD, posição do dígito ou qualquer outro dígito diverge entre a identidade esperada e a conectada
+- **THEN** o sistema não aplica equivalência aproximada e mantém os envios bloqueados
 
 #### Scenario: Número conectado diverge
 - **WHEN** a identidade conectada não coincide com o número esperado

@@ -25,7 +25,7 @@ A Evolution API 2.3.7 oficial suporta Baileys, criação/conexão/consulta de in
 
 ### 1. A instância conectada, e não o campo de telefone, define o remetente
 
-O painel armazenará somente o número esperado, normalizado em E.164, e metadados operacionais não secretos. O backend consultará a instância dedicada e só considerará o canal `ready` quando estado e identidade conectada coincidirem. A troca do número esperado move o canal para `pending_pairing`; ela não altera magicamente o remetente.
+O painel armazenará somente o número esperado, normalizado em E.164, e metadados operacionais não secretos. O backend consultará a instância dedicada e só considerará o canal `ready` quando estado e identidade conectada coincidirem. Como Baileys pode devolver para contas brasileiras o JID legado sem o nono dígito, a igualdade canônica aceita exclusivamente a inserção/remoção de um `9` na posição posterior a `+55` e ao DDD, desde que todo o restante seja idêntico; país, DDD ou qualquer outra diferença continuam em fail closed. A troca do número esperado move o canal para `pending_pairing`; ela não altera magicamente o remetente.
 
 Alternativa descartada: um campo livre `número remetente` que seja usado no payload. Baileys envia pelo dispositivo pareado e não permite provar posse apenas com texto configurado.
 
