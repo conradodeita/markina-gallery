@@ -20,6 +20,13 @@
 - [ ] 3.3 Validar as duas superfícies em desktop e smartphone na homologação com dados sintéticos; verificar que a composição é reconhecivelmente a mesma e que cada papel vê apenas o escopo autorizado.
 - [x] 3.4 Validar a change em modo estrito no OpenSpec e manter artefatos sincronizados.
 
+## 4. Reconciliação da proteção visual global
+
+- [x] 4.1 Centralizar no contrato administrativo e no armazenamento seguro os valores globais de marca-d’água/proteção, garantindo que toda prévia protegida entregue após a alteração use a fonte única sem expor originais.
+- [x] 4.2 Adicionar em Configurações o painel acessível de proteção visual global, com prévia, fallback e validação dos valores suportados pelo backend.
+- [x] 4.3 Retirar do editor de galeria os controles locais de marca-d’água, preservar os campos específicos da galeria e manter a organização de pastas como opção por galeria.
+- [x] 4.4 Cobrir a configuração global, a ausência de substituição local e a aplicação consistente nas prévias protegidas com testes relevantes; executar lint, typecheck, build e validação estrita do OpenSpec.
+
 ## Evidências de validação
 
 - Frontend: `npx vitest run app/admin/galleries/gallery-editor.test.tsx app/admin/galleries/sources/[sourceId]/preview/page.test.tsx app/gallery/gallery.test.tsx --pool=threads --maxWorkers=1` — 15 testes aprovados. A cobertura da galeria privada também verifica capa servida pela rota protegida, exclusão de foto atribuída mas ainda em pasta `preparing` e estado explícito para falha de autorização.
@@ -30,3 +37,4 @@
 - Pendente: validação visual autenticada das duas superfícies em homologação (3.3), incluindo desktop humano e sessão OTP da cliente sintética. A execução completa da suíte backend também está temporariamente indisponível porque o interpretador-base Python 3.12 referenciado por `backend/.venv` não existe mais na máquina; os testes específicos haviam sido aprovados antes dessa indisponibilidade.
 - OpenSpec (2026-08-28): `npx -y @fission-ai/openspec@latest validate unify-gallery-presentation --type change --strict --no-interactive` e `npx -y @fission-ai/openspec@latest validate --strict --all --no-interactive` — aprovados (18 itens, 0 falhas).
 - Bloqueio atual de 3.3 (2026-08-28): o reset autorizado do banco sintético de homologação removeu a conta administrativa, a galeria sintética e a sessão OTP usadas na evidência anterior. A nova validação requer provisionamento autorizado desses dados e interação humana de fotógrafa e cliente; não foi criada nem contornada uma sessão de autenticação.
+- Proteção visual global (2026-08-29): `frontend` executou `npm exec vitest run app/admin/settings/page.test.tsx app/admin/galleries/gallery-editor.test.tsx -- --pool=threads --maxWorkers=1` (15 testes aprovados), `npx tsc --noEmit`, `npm run lint` (0 erros, 16 avisos preexistentes) e `npm run build` (aprovado). A API executou a suíte completa com `python -m pytest -q` (79 testes aprovados, 12 avisos de depreciação do SQLite), além de `python -m ruff check app tests migrations/versions/20260829_0015_global_visual_protection.py` (aprovado). Os testes confirmam autenticação administrativa, não exposição pública, persistência validada, invalidação da prévia anterior, reenfileiramento e uso da fonte global pelo gerador; a geração e a alteração são serializadas para impedir a entrega tardia de uma configuração anterior. A migration aditiva `20260829_0015`, imediatamente após o head implantado `20260829_0014`, foi aplicada do zero até o head em SQLite temporário e removida em seguida. A change e todos os 21 itens OpenSpec foram validados em modo estrito sem falhas.

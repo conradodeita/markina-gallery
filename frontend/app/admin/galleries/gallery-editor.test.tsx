@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 const editor = {
-  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1", cover_photo_id: null, cover_preview_url: null, watermark_text: "Markina", watermark_font: "sans-serif", watermark_color: "#FFFFFF", watermark_size: 32, watermark_direction: "diagonal", folder_display_mode: "individual", cover_title_font: "sans-serif", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" },
+  gallery: { id: "source-1", name: "Festa escolar", event_name: "Festa 2026", description: "", active: true, unlisted_link: "/?parent_gallery_id=source-1", cover_photo_id: null, cover_preview_url: null, folder_display_mode: "individual", cover_title_font: "sans-serif", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" },
   steps: [
     { id: "ajustes", label: "Ajustes", status: "complete", available: true },
     { id: "vendas", label: "Vendas", status: "unavailable", available: false },
@@ -141,23 +141,24 @@ describe("editor administrativo de galeria", () => {
     ));
   });
 
-  it("oferece tipografias controladas pelo contrato e mantém navegação contextual", async () => {
+  it("mantém controles de apresentação próprios e direciona a proteção global", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [] })));
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
-    expect(screen.getByLabelText("Tipografia da marca-d’água")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
+    expect(screen.queryByLabelText("Tipografia da marca-d’água")).toBeNull();
+    expect(screen.getByText(/marca-d’água é global/i)).toBeTruthy();
     expect(screen.getByRole("link", { name: /Ajustes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/ajustes");
     expect(screen.getByRole("link", { name: /Clientes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
   });
 
-  it("organiza a personalização em painéis acessíveis e não oferece editor livre", async () => {
+  it("organiza a apresentação por galeria sem controles locais de proteção", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [] })));
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     await screen.findByRole("heading", { name: "Imagens e pastas" });
-    expect(screen.getByRole("group", { name: "Marca-d’água" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Capa e título" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Organização" })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Marca-d’água" })).toBeNull();
     expect(screen.getByText(/Prévia disponível após definir uma capa/)).toBeTruthy();
     expect(screen.queryByLabelText(/css/i)).toBeNull();
   });

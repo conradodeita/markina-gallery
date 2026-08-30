@@ -34,9 +34,11 @@ Ausência de capa, pasta sem fotos, carregamento e erro usarão componentes de e
 
 A grade será mobile-first, com duas colunas em telas estreitas e expansão progressiva no desktop. As imagens usarão somente prévias protegidas devolvidas pelo backend, com `object-fit: contain` onde necessário para não cortar enquadramentos.
 
-### Personalização visual orientada à prévia
+### Proteção visual global e apresentação por galeria
 
-As configurações administrativas serão agrupadas em três painéis curtos: **Marca-d’água**, **Capa e título** e **Organização**. Cada painel explicará o efeito no resultado, preservará os valores controlados pelo backend e terá uma prévia protegida representativa quando houver mídia disponível. Cor, fonte, tamanho e direção não serão distribuídos em um formulário técnico longo.
+Marca-d’água e demais controles de proteção visual pertencem à identidade operacional do fotógrafo, não a uma galeria isolada. Eles serão configurados em **Configurações**, em um painel curto e acessível, e serão a fonte única usada na entrega de prévias protegidas de todas as galerias. A alteração de configuração deverá ser refletida nas prévias protegidas servidas após sua persistência, sem expor originais nem exigir que o fotógrafo replique valores galeria a galeria.
+
+O editor da galeria não oferecerá controles locais de texto, fonte, cor, tamanho ou direção da marca-d’água. Ele preservará os campos próprios da galeria, como capa/título quando aplicáveis, e manterá a **Organização** das pastas como escolha explícita daquela galeria. A interface separará esses assuntos para não sugerir que uma alteração global afeta apenas a galeria aberta.
 
 Alternativa descartada: adicionar campos de CSS, posicionamento livre ou templates arbitrários. Isso conflita com a personalização controlada do produto e inviabiliza garantia de contraste e responsividade.
 
@@ -50,6 +52,7 @@ Alternativa descartada: adicionar campos de CSS, posicionamento livre ou templat
 ## Migration Plan
 
 1. Criar componente compartilhado e adaptadores sem alterar contratos de autorização.
-2. Cobrir desktop e mobile com testes de componente para ambos os papéis.
-3. Validar em homologação com dados sintéticos e sessão de fotógrafo e cliente.
-4. Publicar somente após lint, typecheck, build e validação OpenSpec.
+2. Centralizar os controles de proteção visual em Configurações e retirar os controles locais de marca-d’água do editor de galeria, preservando a organização de pastas por galeria.
+3. Cobrir desktop e mobile com testes de componente para ambos os papéis e para a configuração global.
+4. Validar em homologação com dados sintéticos e sessão de fotógrafo e cliente.
+5. Publicar somente após lint, typecheck, build e validação OpenSpec.

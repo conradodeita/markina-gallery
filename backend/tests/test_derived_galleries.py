@@ -14,6 +14,7 @@ from app.auth import (
     AuditEvent,
     AuthChallenge,
     Base,
+    BrandingSettings,
     Client,
     DerivedGallery,
     DerivedGalleryPhoto,
@@ -39,6 +40,7 @@ from app.auth import (
 )
 from app.checkout import create_pending_checkout
 from app.main import app
+from app.media import generate_derivatives
 
 
 @pytest.fixture(autouse=True)
@@ -146,6 +148,84 @@ def test_branding_assets_require_admin_and_validate_storage(client: TestClient, 
     assert client.put("/admin/branding/logo", content=image, headers={"content-type": "image/jpeg"}).status_code == 415
     assert client.put("/admin/branding/favicon", content=branding_image_bytes("JPEG"), headers={"content-type": "image/jpeg"}).status_code == 422
     assert client.put("/admin/branding/logo", content=branding_image_bytes(size=(8, 8)), headers={"content-type": "image/png"}).status_code == 422
+
+
+def test_global_visual_protection_requeues_existing_derivatives(client: TestClient) -> None:
+    assert client.patch("/admin/branding/protection", json={
+        "watermark_text": "NÃO AUTORIZADA", "watermark_font": "serif", "watermark_color": "#112233", "watermark_size": 30, "watermark_direction": "horizontal",
+    }).status_code == 403
+    assert "watermark_text" not in client.get("/branding").json()
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        gallery = ParentGallery(name="Galeria protegida")
+        db.add(gallery)
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=gallery.id, name="Lote")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(parent_gallery_id=gallery.id, folder_id=folder.id, filename="foto.jpg", storage_key="lote/foto.jpg")
+        db.add(photo)
+        db.flush()
+        db.add(MediaJob(photo_asset_id=photo.id, status="completed"))
+        db.add(MediaDerivative(photo_asset_id=photo.id, variant="client_preview", relative_path=f"{photo.id}/client_preview.jpg", status="ready"))
+        db.commit()
+        photo_id = photo.id
+
+    response = client.patch("/admin/branding/protection", json={
+        "watermark_text": "FOTÓGRAFA • PRÉVIA",
+        "watermark_font": "serif",
+        "watermark_color": "#112233",
+        "watermark_size": 30,
+        "watermark_direction": "horizontal",
+    })
+    assert response.status_code == 200
+    assert response.json()["watermark_text"] == "FOTÓGRAFA • PRÉVIA"
+    with SessionLocal() as db:
+        settings = db.scalar(select(BrandingSettings).limit(1))
+        job = db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == photo_id))
+        derivative = db.scalar(select(MediaDerivative).where(MediaDerivative.photo_asset_id == photo_id, MediaDerivative.variant == "client_preview"))
+        assert settings and settings.watermark_font == "serif"
+        assert job and job.status == "queued"
+        assert derivative and derivative.status == "queued"
+    assert client.patch("/admin/branding/protection", json={
+        "watermark_text": "   ", "watermark_font": "serif", "watermark_color": "#112233", "watermark_size": 30, "watermark_direction": "horizontal",
+    }).status_code == 422
+
+
+def test_derivative_generation_uses_global_visual_protection(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source_root = tmp_path / "source"
+    derivatives_root = tmp_path / "derivatives"
+    source = source_root / "lote" / "foto.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (640, 480), color=(30, 60, 90)).save(source, format="JPEG")
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
+    observed: list[str | None] = []
+
+    def record_settings(image: Image.Image, settings: BrandingSettings | None) -> Image.Image:
+        observed.append(settings.watermark_text if settings else None)
+        return image
+
+    monkeypatch.setattr("app.media.watermark", record_settings)
+    with SessionLocal() as db:
+        db.add(BrandingSettings(watermark_text="PROTEÇÃO GLOBAL"))
+        gallery = ParentGallery(name="Galeria", watermark_text="VALOR LOCAL LEGADO")
+        db.add(gallery)
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=gallery.id, name="Lote")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=gallery.id,
+            folder_id=folder.id,
+            filename="foto.jpg",
+            storage_key="lote/foto.jpg",
+        )
+        db.add(photo)
+        db.commit()
+        generate_derivatives(db, photo)
+
+    assert observed == ["PROTEÇÃO GLOBAL"]
 
 
 def create_folder_photo(

@@ -10,6 +10,11 @@ type Branding = {
   logo_url: string | null;
   app_icon_url: string | null;
   favicon_url: string | null;
+  watermark_text: string;
+  watermark_font: string;
+  watermark_color: string;
+  watermark_size: number;
+  watermark_direction: string;
 };
 
 type Asset = "logo" | "app-icon" | "favicon";
@@ -22,6 +27,11 @@ const fallback: Branding = {
   logo_url: null,
   app_icon_url: null,
   favicon_url: null,
+  watermark_text: "MARKINA • PRÉVIA",
+  watermark_font: "sans-serif",
+  watermark_color: "#FFFFFF",
+  watermark_size: 24,
+  watermark_direction: "diagonal",
 };
 
 const assetDetails: Record<Asset, { label: string; accept: string; help: string; url: keyof Branding }> = {
@@ -32,6 +42,7 @@ const assetDetails: Record<Asset, { label: string; accept: string; help: string;
 
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Branding | null>(null);
+  const [protectionPreview, setProtectionPreview] = useState(fallback);
   const [message, setMessage] = useState("");
   const [paymentTemplates, setPaymentTemplates] = useState<PaymentTemplates | null>(null);
 
@@ -39,7 +50,9 @@ export default function AdminSettingsPage() {
     fetch("/api/admin/branding", { credentials: "same-origin" })
       .then(async (response) => {
         if (!response.ok) throw new Error();
-        setSettings({ ...fallback, ...(await response.json()) });
+        const loaded = { ...fallback, ...(await response.json()) };
+        setSettings(loaded);
+        setProtectionPreview(loaded);
       })
       .catch(() => setMessage("Não foi possível carregar as configurações."));
   }, []);
@@ -69,7 +82,23 @@ export default function AdminSettingsPage() {
       }),
     });
     setMessage(response.ok ? "Textos da entrada salvos." : "Não foi possível salvar os textos.");
-    if (response.ok) setSettings({ ...settings, ...(await response.json()) });
+    if (response.ok) {
+      const updated = { ...settings, ...(await response.json()) };
+      setSettings(updated);
+      setProtectionPreview(updated);
+    }
+  }
+
+  function updateProtectionPreview(event: FormEvent<HTMLFormElement>) {
+    const data = new FormData(event.currentTarget);
+    setProtectionPreview({
+      ...protectionPreview,
+      watermark_text: String(data.get("watermark_text") ?? ""),
+      watermark_font: String(data.get("watermark_font") ?? "sans-serif"),
+      watermark_color: String(data.get("watermark_color") ?? "#FFFFFF"),
+      watermark_size: Number(data.get("watermark_size") ?? 24),
+      watermark_direction: String(data.get("watermark_direction") ?? "diagonal"),
+    });
   }
 
   async function upload(asset: Asset, event: ChangeEvent<HTMLInputElement>) {
@@ -89,6 +118,30 @@ export default function AdminSettingsPage() {
     setSettings({ ...settings, ...(await response.json()) });
     setMessage(`${assetDetails[asset].label} atualizado.`);
     event.target.value = "";
+  }
+
+  async function saveProtection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!settings) return;
+    const data = new FormData(event.currentTarget);
+    const response = await fetch("/api/admin/branding/protection", {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        watermark_text: data.get("watermark_text"),
+        watermark_font: data.get("watermark_font"),
+        watermark_color: data.get("watermark_color"),
+        watermark_size: Number(data.get("watermark_size")),
+        watermark_direction: data.get("watermark_direction"),
+      }),
+    });
+    setMessage(response.ok ? "Proteção visual global salva. As prévias serão atualizadas com segurança." : "Não foi possível salvar a proteção visual.");
+    if (response.ok) {
+      const updated = { ...settings, ...(await response.json()) };
+      setSettings(updated);
+      setProtectionPreview(updated);
+    }
   }
 
   async function savePaymentTemplate(kind: keyof PaymentTemplates, event: FormEvent<HTMLFormElement>) {
@@ -141,6 +194,19 @@ export default function AdminSettingsPage() {
             </label>;
           })}
         </div>
+      </section>
+      <section className="admin-card" aria-labelledby="visual-protection-title">
+        <h2 id="visual-protection-title">Proteção visual das galerias</h2>
+        <p className="intro">Esta marca-d’água é única para todas as prévias protegidas. A alteração é aplicada com segurança pelo servidor; originais nunca são enviados ao navegador.</p>
+        <form className="gallery-settings-form" onSubmit={saveProtection} onChange={updateProtectionPreview}>
+          <label>Texto da marca-d’água<input name="watermark_text" defaultValue={settings.watermark_text} maxLength={120} required /></label>
+          <label>Tipografia da marca-d’água<select name="watermark_font" defaultValue={settings.watermark_font}><option value="sans-serif">Sans-serif</option><option value="serif">Serifada</option><option value="monospace">Monoespaçada</option><option value="DejaVuSans">DejaVu Sans</option><option value="DejaVuSerif">DejaVu Serif</option></select></label>
+          <label>Cor da marca-d’água<input name="watermark_color" type="color" defaultValue={settings.watermark_color} /></label>
+          <label>Tamanho da marca-d’água<input name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /></label>
+          <label>Direção<select name="watermark_direction" defaultValue={settings.watermark_direction}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="diagonal">Diagonal</option></select></label>
+          <div className={`gallery-customization-preview gallery-customization-preview-empty watermark-preview--${protectionPreview.watermark_direction}`} aria-live="polite"><p className="eyebrow">Prévia global</p><strong style={{ color: protectionPreview.watermark_color, fontFamily: protectionPreview.watermark_font, fontSize: `${Math.min(protectionPreview.watermark_size, 32)}px` }}>{protectionPreview.watermark_text || "MARKINA • PRÉVIA"}</strong><span>A proteção será repetida sobre as prévias protegidas de todas as galerias.</span></div>
+          <button className="primary">Salvar proteção global</button>
+        </form>
       </section>
       <section className="admin-card" aria-labelledby="payment-messages-title">
         <h2 id="payment-messages-title">Mensagens de pagamento</h2>
