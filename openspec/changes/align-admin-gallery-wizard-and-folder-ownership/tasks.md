@@ -9,7 +9,7 @@
 - [x] 2.1 Atualizar os modelos para exigir pasta na foto e coerência composta entre foto, pasta e galeria-mãe; verificar que a suíte de persistência rejeita vínculos inválidos.
 - [x] 2.2 Criar migration aditiva que inventaria órfãos, gera uma pasta de compatibilidade determinística por galeria, associa fotos legadas e só então aplica nulidade e chaves; verificar idempotência em banco sintético.
 - [x] 2.3 Cobrir upgrade e downgrade não destrutivo com galerias vazias, pastas existentes e históricos de compra; verificar que contagens, UUIDs, referências, seleções e pedidos permanecem iguais.
-- [ ] 2.4 Validar a migration nos comportamentos SQLite de teste e PostgreSQL da aplicação, sem dados reais; verificar constraints, índices e plano de rollback documentado.
+- [x] 2.4 Validar a migration nos comportamentos SQLite de teste e PostgreSQL da aplicação, sem dados reais; verificar constraints, índices e plano de rollback documentado. Evidência: `py -3.12 -m pytest backend/tests/test_cloned_gallery_migration.py -q` passou com 4 testes em 2026-08-30, incluindo PostgreSQL 17 efêmero habilitado por `TEST_POSTGRES_DATABASE_URL`; o teste confirma nulidade, índices, constraints compostas, rejeição de origem divergente e downgrade preservando pastas/vínculos. Plano não destrutivo registrado em `implementation-notes.md`.
 
 ## 3. Contratos backend-driven do editor
 

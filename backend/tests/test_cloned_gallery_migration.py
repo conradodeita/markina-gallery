@@ -7,7 +7,9 @@ from pathlib import Path
 from subprocess import run
 from uuid import uuid4
 
-from sqlalchemy import create_engine, text
+import pytest
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 
 def alembic(database_url: str, *arguments: str) -> None:
@@ -176,6 +178,7 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
         )
 
     alembic(database_url, "upgrade", "head")
+    inspector = inspect(engine)
     with engine.connect() as connection:
         folder_id = connection.execute(
             text("SELECT folder_id FROM photo_asset WHERE id = :id"), {"id": photo_id.hex}
@@ -196,12 +199,28 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
     assert folder == (parent_id.hex, "Importação anterior", "released")
     assert counts == (1, 1, 1, 1)
     assert folder_column[3] == 1
+    assert {item["name"] for item in inspector.get_indexes("photo_asset")} >= {
+        "ix_photo_asset_folder_id",
+        "ix_photo_asset_parent_gallery_id",
+    }
+    assert any(
+        constraint["name"] == "uq_photo_folder_id_parent"
+        and constraint["column_names"] == ["id", "parent_gallery_id"]
+        for constraint in inspector.get_unique_constraints("photo_folder")
+    )
+    assert any(
+        foreign_key["name"] == "fk_photo_asset_folder_gallery"
+        and foreign_key["constrained_columns"] == ["folder_id", "parent_gallery_id"]
+        and foreign_key["referred_columns"] == ["id", "parent_gallery_id"]
+        for foreign_key in inspector.get_foreign_keys("photo_asset")
+    )
 
     alembic(database_url, "upgrade", "head")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT COUNT(*) FROM photo_folder")).scalar_one() == 1
 
     alembic(database_url, "downgrade", "20260827_0005")
+    inspector = inspect(engine)
     with engine.connect() as connection:
         folder_column = next(
             row for row in connection.execute(text("PRAGMA table_info(photo_asset)")) if row[1] == "folder_id"
@@ -210,6 +229,154 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
         assert connection.execute(
             text("SELECT folder_id FROM photo_asset WHERE id = :id"), {"id": photo_id.hex}
         ).scalar_one() == folder_id
+    assert any(
+        foreign_key["name"] == "fk_photo_asset_folder"
+        and foreign_key["constrained_columns"] == ["folder_id"]
+        for foreign_key in inspector.get_foreign_keys("photo_asset")
+    )
+    assert not any(
+        constraint["name"] == "uq_photo_folder_id_parent"
+        for constraint in inspector.get_unique_constraints("photo_folder")
+    )
+
+
+def test_gallery_folder_ownership_on_postgresql_preserves_constraints_and_rollback():
+    database_url = os.getenv("TEST_POSTGRES_DATABASE_URL")
+    if not database_url:
+        pytest.skip("TEST_POSTGRES_DATABASE_URL não configurada")
+
+    alembic(database_url, "upgrade", "20260827_0005")
+    engine = create_engine(database_url)
+    first_parent_id, second_parent_id, first_photo_id, second_photo_id = (
+        uuid4() for _ in range(4)
+    )
+    existing_folder_id, invalid_photo_id = uuid4(), uuid4()
+    timestamp = datetime.now(UTC)
+    with engine.begin() as connection:
+        for parent_id, name in (
+            (first_parent_id, "Evento com pasta"),
+            (second_parent_id, "Evento sem pasta"),
+        ):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO parent_gallery (id, name, active, created_at)
+                    VALUES (:id, :name, true, :created_at)
+                    """
+                ),
+                {"id": parent_id, "name": name, "created_at": timestamp},
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO photo_folder
+                    (id, parent_gallery_id, name, status, position, created_at, updated_at)
+                VALUES (:id, :parent_id, 'Pasta existente', 'preparing', 0, :created_at, :updated_at)
+                """
+            ),
+            {
+                "id": existing_folder_id,
+                "parent_id": first_parent_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+        for photo_id, parent_id, filename in (
+            (first_photo_id, first_parent_id, "primeira.jpg"),
+            (second_photo_id, second_parent_id, "segunda.jpg"),
+        ):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO photo_asset
+                        (id, parent_gallery_id, folder_id, filename, storage_key, available, created_at)
+                    VALUES (:id, :parent_id, NULL, :filename, :storage_key, true, :created_at)
+                    """
+                ),
+                {
+                    "id": photo_id,
+                    "parent_id": parent_id,
+                    "filename": filename,
+                    "storage_key": f"legacy/{filename}",
+                    "created_at": timestamp,
+                },
+            )
+
+    alembic(database_url, "upgrade", "20260827_0006")
+    inspector = inspect(engine)
+    folder_column = next(
+        column for column in inspector.get_columns("photo_asset") if column["name"] == "folder_id"
+    )
+    assert folder_column["nullable"] is False
+    assert {item["name"] for item in inspector.get_indexes("photo_asset")} >= {
+        "ix_photo_asset_folder_id",
+        "ix_photo_asset_parent_gallery_id",
+    }
+    assert any(
+        constraint["name"] == "uq_photo_folder_id_parent"
+        and constraint["column_names"] == ["id", "parent_gallery_id"]
+        for constraint in inspector.get_unique_constraints("photo_folder")
+    )
+    assert any(
+        foreign_key["name"] == "fk_photo_asset_folder_gallery"
+        and foreign_key["constrained_columns"] == ["folder_id", "parent_gallery_id"]
+        and foreign_key["referred_columns"] == ["id", "parent_gallery_id"]
+        for foreign_key in inspector.get_foreign_keys("photo_asset")
+    )
+    with engine.connect() as connection:
+        compatibility_rows = connection.execute(
+            text(
+                """
+                SELECT parent_gallery_id, position, status
+                FROM photo_folder
+                WHERE name = 'Importação anterior'
+                ORDER BY parent_gallery_id
+                """
+            )
+        ).all()
+    assert sorted(row.position for row in compatibility_rows) == [0, 1]
+    assert {row.status for row in compatibility_rows} == {"released"}
+
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO photo_asset
+                    (id, parent_gallery_id, folder_id, filename, storage_key, available, created_at)
+                VALUES (:id, :parent_id, :folder_id, 'invalida.jpg', 'invalid/invalida.jpg',
+                        true, :created_at)
+                """
+            ),
+            {
+                "id": invalid_photo_id,
+                "parent_id": second_parent_id,
+                "folder_id": existing_folder_id,
+                "created_at": timestamp,
+            },
+        )
+
+    alembic(database_url, "downgrade", "20260827_0005")
+    inspector = inspect(engine)
+    folder_column = next(
+        column for column in inspector.get_columns("photo_asset") if column["name"] == "folder_id"
+    )
+    assert folder_column["nullable"] is True
+    assert any(
+        foreign_key["name"] == "fk_photo_asset_folder"
+        and foreign_key["constrained_columns"] == ["folder_id"]
+        for foreign_key in inspector.get_foreign_keys("photo_asset")
+    )
+    assert not any(
+        constraint["name"] == "uq_photo_folder_id_parent"
+        for constraint in inspector.get_unique_constraints("photo_folder")
+    )
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM photo_folder WHERE name = 'Importação anterior'")
+        ).scalar_one() == 2
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM photo_asset WHERE folder_id IS NOT NULL")
+        ).scalar_one() == 2
 
 
 def test_parent_gallery_cover_migration_is_reversible(tmp_path: Path):
