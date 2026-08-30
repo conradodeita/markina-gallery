@@ -36,16 +36,21 @@ O sistema SHALL fornecer ao fotógrafo autenticado uma interface original para c
 
 ## ADDED Requirements
 
-### Requirement: Personalização visual administrativa orientada à prévia
+### Requirement: Proteção visual global e organização por galeria
 
-O sistema SHALL apresentar as configurações de marca-d’água, capa/título e organização em painéis administrativos claros, acessíveis e responsivos. Os controles SHALL usar somente valores suportados pelo backend e SHALL explicar seu efeito na prévia protegida, sem oferecer CSS, templates ou posicionamento livres.
+O sistema SHALL apresentar em Configurações os controles globais de marca-d’água e proteção visual usados por todas as prévias protegidas. Os controles SHALL usar somente valores suportados pelo backend, ter explicação e prévia acessíveis e não oferecer CSS, templates ou posicionamento livres. O editor de cada galeria SHALL manter a organização de pastas como escolha específica da galeria e não SHALL oferecer substituições locais dos valores globais de proteção.
 
-#### Scenario: Fotógrafo ajusta marca-d’água
+#### Scenario: Fotógrafo ajusta a proteção visual global
 
-- **WHEN** o fotógrafo abre a personalização da galeria
-- **THEN** ele encontra texto, fonte, cor, tamanho e direção agrupados em um painel de marca-d’água com orientação e prévia protegida quando disponível
+- **WHEN** o fotógrafo altera texto, fonte, cor, tamanho ou direção da marca-d’água em Configurações
+- **THEN** o sistema persiste os valores globais validados e as prévias protegidas entregues em qualquer galeria passam a usar essa configuração única, sem expor originais
+
+#### Scenario: Fotógrafo organiza uma galeria
+
+- **WHEN** o fotógrafo abre o editor de uma galeria
+- **THEN** ele pode escolher a organização de pastas suportada para aquela galeria, sem receber controles locais de marca-d’água
 
 #### Scenario: Prévia sem fotografia disponível
 
-- **WHEN** não houver capa ou foto pronta para representar a personalização
+- **WHEN** não houver capa ou foto pronta para representar a configuração global
 - **THEN** a interface preserva os controles, informa o estado de prévia e orienta o fotógrafo a carregar ou processar uma foto, sem criar conteúdo simulado

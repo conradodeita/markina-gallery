@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import MediaDerivative, MediaJob, ParentGallery, PhotoAsset, now
+from app.auth import BrandingSettings, MediaDerivative, MediaJob, PhotoAsset, now
 
 VARIANTS = {
     "thumbnail": (480, False),
@@ -47,20 +47,28 @@ def safe_derivative_path(derivative: MediaDerivative) -> Path:
     return candidate
 
 
-def watermark(image: Image.Image, gallery: ParentGallery | None = None) -> Image.Image:
+def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> Image.Image:
     """Incorpora marcas repetidas sem alterar orientação ou enquadramento da foto."""
     marked = image.convert("RGBA")
-    text = (gallery.watermark_text if gallery else None) or os.getenv("MEDIA_WATERMARK_TEXT", "MARKINA • PRÉVIA")
-    direction = (gallery.watermark_direction if gallery else None) or "diagonal"
-    color = (gallery.watermark_color if gallery else None) or "#FFFFFF"
+    text = (settings.watermark_text if settings else None) or os.getenv("MEDIA_WATERMARK_TEXT", "MARKINA • PRÉVIA")
+    direction = (settings.watermark_direction if settings else None) or "diagonal"
+    color = (settings.watermark_color if settings else None) or "#FFFFFF"
     try:
         rgb = tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
     except (ValueError, IndexError):
         rgb = (255, 255, 255)
     angle = {"horizontal": 0, "vertical": 90, "diagonal": 35}.get(direction, 35)
-    size = max(10, min(96, (gallery.watermark_size if gallery else None) or 24))
+    size = max(10, min(96, (settings.watermark_size if settings else None) or 24))
+    font_name = (settings.watermark_font if settings else None) or "sans-serif"
+    font_file = {
+        "sans-serif": "DejaVuSans.ttf",
+        "serif": "DejaVuSerif.ttf",
+        "monospace": "DejaVuSansMono.ttf",
+        "DejaVuSans": "DejaVuSans.ttf",
+        "DejaVuSerif": "DejaVuSerif.ttf",
+    }.get(font_name, "DejaVuSans.ttf")
     try:
-        font = ImageFont.truetype("DejaVuSans.ttf", size=size)
+        font = ImageFont.truetype(font_file, size=size)
     except OSError:
         font = ImageFont.load_default()
     probe = Image.new("RGBA", (1, 1))
@@ -109,7 +117,9 @@ def generate_derivatives(
         db.commit()
         raise FileNotFoundError("Arquivo de origem indisponível.")
     try:
-        gallery = db.get(ParentGallery, photo.parent_gallery_id)
+        # Serializa a geração com alterações globais. Se uma geração começou
+        # antes, a atualização aguardará o commit e a reenfileirará em seguida.
+        settings = db.scalar(select(BrandingSettings).limit(1).with_for_update())
         with Image.open(source) as opened:
             original = ImageOps.exif_transpose(opened).convert("RGB")
             derivatives: list[MediaDerivative] = []
@@ -117,7 +127,7 @@ def generate_derivatives(
                 rendered = original.copy()
                 rendered.thumbnail((max_width, max_width * 2), Image.Resampling.LANCZOS)
                 if protected:
-                    rendered = watermark(rendered, gallery)
+                    rendered = watermark(rendered, settings)
                 destination = derivatives_root() / str(photo.id) / f"{variant}.jpg"
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 temporary = destination.with_suffix(".tmp")

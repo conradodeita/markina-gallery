@@ -10,6 +10,11 @@ const branding = {
   logo_url: null,
   app_icon_url: null,
   favicon_url: null,
+  watermark_text: "MARKINA • PRÉVIA",
+  watermark_font: "sans-serif",
+  watermark_color: "#FFFFFF",
+  watermark_size: 24,
+  watermark_direction: "diagonal",
 };
 
 afterEach(() => vi.restoreAllMocks());
@@ -38,6 +43,17 @@ describe("configurações administrativas de marca", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 403 })));
     render(<AdminSettingsPage />);
     expect(await screen.findByText("Configurações indisponíveis")).toBeTruthy();
+  });
+
+  it("salva a proteção visual global no endpoint administrativo", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(branding), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminSettingsPage />);
+    fireEvent.change(await screen.findByLabelText("Texto da marca-d’água"), { target: { value: "MARCA GLOBAL" } });
+    expect(await screen.findByText("MARCA GLOBAL")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/branding/protection", expect.objectContaining({ method: "PATCH" })));
+    expect(await screen.findByText(/Proteção visual global salva/)).toBeTruthy();
   });
 
   it("salva templates de pagamento com variáveis controladas", async () => {

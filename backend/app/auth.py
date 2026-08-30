@@ -93,6 +93,11 @@ class BrandingSettings(Base):
     logo_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     app_icon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     favicon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    watermark_text: Mapped[str] = mapped_column(String(120), default="MARKINA • PRÉVIA")
+    watermark_font: Mapped[str] = mapped_column(String(80), default="sans-serif")
+    watermark_color: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
+    watermark_size: Mapped[int] = mapped_column(Integer, default=24)
+    watermark_direction: Mapped[str] = mapped_column(String(16), default="diagonal")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 

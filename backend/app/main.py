@@ -130,11 +130,6 @@ class ParentGallerySettingsInput(BaseModel):
     event_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=5_000)
     active: bool | None = None
-    watermark_text: str | None = Field(default=None, max_length=120)
-    watermark_font: str | None = Field(default=None, max_length=80)
-    watermark_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
-    watermark_size: int | None = Field(default=None, ge=10, le=96)
-    watermark_direction: str | None = Field(default=None, pattern=r"^(horizontal|vertical|diagonal)$")
     folder_display_mode: str | None = Field(default=None, pattern=r"^(individual|sequential)$")
     cover_title_font: str | None = Field(default=None, max_length=80)
     cover_title_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
@@ -185,6 +180,22 @@ class BrandingSettingsInput(BaseModel):
         cleaned = value.strip()
         if "<" in cleaned or ">" in cleaned:
             raise ValueError("Os textos devem conter apenas texto simples")
+        return cleaned
+
+
+class VisualProtectionSettingsInput(BaseModel):
+    watermark_text: str = Field(min_length=1, max_length=120)
+    watermark_font: Literal["sans-serif", "serif", "monospace", "DejaVuSans", "DejaVuSerif"]
+    watermark_color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    watermark_size: int = Field(ge=10, le=96)
+    watermark_direction: Literal["horizontal", "vertical", "diagonal"]
+
+    @field_validator("watermark_text")
+    @classmethod
+    def require_plain_watermark(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("A marca-d’água não pode ficar vazia")
         return cleaned
 
 
@@ -579,8 +590,8 @@ def admin_area(request: Request) -> dict[str, str]:
     return {"status": "authorized"}
 
 
-def _branding_payload(settings: BrandingSettings) -> dict[str, str | None]:
-    return {
+def _branding_payload(settings: BrandingSettings, *, include_protection: bool = False) -> dict[str, str | int | None]:
+    payload: dict[str, str | int | None] = {
         "login_title": settings.login_title,
         "login_intro": settings.login_intro,
         "login_helper": settings.login_helper,
@@ -588,6 +599,15 @@ def _branding_payload(settings: BrandingSettings) -> dict[str, str | None]:
         "app_icon_url": "/branding/app-icon" if settings.app_icon_key else None,
         "favicon_url": "/branding/favicon" if settings.favicon_key else None,
     }
+    if include_protection:
+        payload.update({
+            "watermark_text": settings.watermark_text,
+            "watermark_font": settings.watermark_font,
+            "watermark_color": settings.watermark_color,
+            "watermark_size": settings.watermark_size,
+            "watermark_direction": settings.watermark_direction,
+        })
+    return payload
 
 
 @app.get("/branding")
@@ -601,18 +621,18 @@ def public_branding(db: Session = Depends(db_session)) -> dict[str, str | None]:
 
 
 @app.get("/admin/branding")
-def admin_branding(request: Request, db: Session = Depends(db_session)) -> dict[str, str | None]:
+def admin_branding(request: Request, db: Session = Depends(db_session)) -> dict[str, str | int | None]:
     require_admin(request)
     settings = db.scalar(select(BrandingSettings).limit(1))
     if not settings:
         settings = BrandingSettings()
         db.add(settings)
         db.commit()
-    return _branding_payload(settings)
+    return _branding_payload(settings, include_protection=True)
 
 
 @app.patch("/admin/branding")
-def update_admin_branding(payload: BrandingSettingsInput, request: Request, db: Session = Depends(db_session)) -> dict[str, str | None]:
+def update_admin_branding(payload: BrandingSettingsInput, request: Request, db: Session = Depends(db_session)) -> dict[str, str | int | None]:
     require_admin(request)
     settings = db.scalar(select(BrandingSettings).limit(1))
     if not settings:
@@ -623,7 +643,37 @@ def update_admin_branding(payload: BrandingSettingsInput, request: Request, db: 
     settings.login_helper = payload.login_helper.strip()
     audit(db, "branding.settings_updated", str(settings.id))
     db.commit()
-    return _branding_payload(settings)
+    return _branding_payload(settings, include_protection=True)
+
+
+@app.patch("/admin/branding/protection")
+def update_visual_protection(
+    payload: VisualProtectionSettingsInput, request: Request, db: Session = Depends(db_session)
+) -> dict[str, str | int | None]:
+    """Persiste uma única proteção visual e reprocessa derivados sem servir originais."""
+    require_admin(request)
+    settings = db.scalar(select(BrandingSettings).limit(1).with_for_update())
+    if not settings:
+        settings = BrandingSettings()
+        db.add(settings)
+        db.flush()
+    for field, value in payload.model_dump().items():
+        setattr(settings, field, value)
+    for photo in db.scalars(select(PhotoAsset)).all():
+        job = enqueue_derivatives(db, photo)
+        job.status = "queued"
+        job.last_error = None
+        derivative = db.scalar(
+            select(MediaDerivative).where(
+                MediaDerivative.photo_asset_id == photo.id,
+                MediaDerivative.variant == "client_preview",
+            )
+        )
+        if derivative:
+            derivative.status = "queued"
+    audit(db, "branding.visual_protection_updated", str(settings.id))
+    db.commit()
+    return _branding_payload(settings, include_protection=True)
 
 
 @app.put("/admin/branding/{asset}")
@@ -888,11 +938,6 @@ def parent_gallery_editor(
             "event_name": gallery.event_name or "",
             "description": gallery.description or "",
             "active": gallery.active,
-            "watermark_text": gallery.watermark_text,
-            "watermark_font": gallery.watermark_font,
-            "watermark_color": gallery.watermark_color,
-            "watermark_size": gallery.watermark_size,
-            "watermark_direction": gallery.watermark_direction,
             "folder_display_mode": gallery.folder_display_mode,
             "cover_title_font": gallery.cover_title_font,
             "cover_title_color": gallery.cover_title_color,
@@ -948,11 +993,6 @@ def parent_gallery_settings(
         "event_name": gallery.event_name or "",
         "description": gallery.description or "",
         "active": gallery.active,
-        "watermark_text": gallery.watermark_text,
-        "watermark_font": gallery.watermark_font,
-        "watermark_color": gallery.watermark_color,
-        "watermark_size": gallery.watermark_size,
-        "watermark_direction": gallery.watermark_direction,
         "folder_display_mode": gallery.folder_display_mode,
         "cover_title_font": gallery.cover_title_font,
         "cover_title_color": gallery.cover_title_color,

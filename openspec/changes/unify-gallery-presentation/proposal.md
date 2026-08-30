@@ -6,7 +6,7 @@ A prévia do fotógrafo e a galeria da cliente têm estruturas visuais diferente
 
 - Criar uma composição visual única de galeria, reutilizada pela prévia autenticada do fotógrafo e pela rota da cliente.
 - Organizar capa, contexto, navegação por pastas, grade de prévias protegidas, estados vazios e visualizador em uma hierarquia editorial e responsiva.
-- Reestruturar a personalização visual administrativa em grupos claros de marca-d’água, capa/título e organização, com prévia protegida e controles limitados às opções suportadas.
+- Centralizar em Configurações a personalização de marca-d’água e proteção visual, aplicada de forma consistente às prévias protegidas de todas as galerias; manter no editor da galeria somente as decisões de apresentação que pertencem àquela galeria, incluindo a organização das pastas.
 - Manter os dados, permissões e ações específicos de cada papel: a cliente recebe somente fotos liberadas e autorizadas; o fotógrafo vê a mesma composição em modo de prévia, sem conceder acesso adicional à cliente.
 - Tornar erros de carregamento e ausência de capa/fotos visualmente explícitos e recuperáveis.
 
@@ -23,6 +23,6 @@ Nenhuma.
 
 ## Impact
 
-- Frontend Next.js das rotas de prévia administrativa, galeria privada e personalização visual, componentes visuais e testes correspondentes.
-- APIs existentes poderão receber somente campos de apresentação indispensáveis, sem expor originais, dados de terceiros ou conteúdo não autorizado.
-- Não há migration, alteração de pagamentos, biometria, dados de produção nem integração externa.
+- Frontend Next.js das rotas de prévia administrativa, galeria privada, Configurações e componentes visuais, além dos testes correspondentes.
+- APIs existentes poderão receber somente campos de apresentação indispensáveis e a configuração global de proteção, sem expor originais, dados de terceiros ou conteúdo não autorizado.
+- Há somente migration aditiva para guardar a proteção visual global; ela não remove nem modifica dados existentes. Não há alteração de pagamentos, biometria, dados de produção nem integração externa.
