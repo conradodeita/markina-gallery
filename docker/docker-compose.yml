@@ -3,7 +3,7 @@
 # Projeto Compose exclusivo: markina-gallery (use sempre -p markina-gallery -f docker/docker-compose.yml).
 # Única porta publicada no host: nginx em ${MARKINA_GALLERY_PORT:-8080}.
 # db e redis NUNCA publicam portas; apenas a rede interna markina-gallery_internal.
-# Volumes: markina-gallery_pgdata e markina-gallery_redisdata.
+# Volumes: dados, Redis e mídia são exclusivos do projeto markina-gallery.
 #
 # Uso local:
 #   1) cp .env.example docker/.env   (ajuste valores locais; nunca versionar)
@@ -28,7 +28,10 @@ services:
       retries: 5
       start_period: 5s
     networks:
-      - internal
+      internal: {}
+      npm:
+        aliases:
+          - markina-homolog-nginx
 
   web:
     build: ../frontend
@@ -47,12 +50,64 @@ services:
     build: ../backend
     expose:
       - "8000"
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-markina_session}
+      SESSION_DAYS: ${SESSION_DAYS:-7}
+      AUTH_RATE_LIMIT_WINDOW_MINUTES: ${AUTH_RATE_LIMIT_WINDOW_MINUTES:-15}
+      AUTH_RATE_LIMIT_MAX_REQUESTS: ${AUTH_RATE_LIMIT_MAX_REQUESTS:-5}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
+      WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_PHOTOGRAPHER_PHONE_E164: ${WHATSAPP_PHOTOGRAPHER_PHONE_E164:-}
+      WHATSAPP_MAX_ATTEMPTS: ${WHATSAPP_MAX_ATTEMPTS:-3}
+      WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-10}
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+    volumes:
+      - media-source:/var/lib/markina/source
+      - media-derivatives:/var/lib/markina/derivatives
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - internal
+
+  migrate:
+    build: ../backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - internal
+
+  seed-admin:
+    build: ../backend
+    command: ["python", "-m", "app.seed_admin"]
+    profiles: ["bootstrap"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      ADMIN_SEED_EMAIL: ${ADMIN_SEED_EMAIL:-}
+      ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:-}
+      ADMIN_SEED_TOTP_SECRET: ${ADMIN_SEED_TOTP_SECRET:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
     networks:
       - internal
 
@@ -88,6 +143,26 @@ services:
   worker:
     build: ../backend
     command: ["python", "-m", "app.worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
+      WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_PHOTOGRAPHER_PHONE_E164: ${WHATSAPP_PHOTOGRAPHER_PHONE_E164:-}
+      WHATSAPP_MAX_ATTEMPTS: ${WHATSAPP_MAX_ATTEMPTS:-3}
+      WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-10}
+    volumes:
+      - media-source:/var/lib/markina/source
+      - media-derivatives:/var/lib/markina/derivatives
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f \"app.worker\" >/dev/null || exit 1"]
       interval: 15s
@@ -100,7 +175,12 @@ services:
 volumes:
   pgdata:
   redisdata:
+  media-source:
+  media-derivatives:
 
 networks:
   internal:
     driver: bridge
+  npm:
+    name: npm-network
+    external: true

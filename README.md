@@ -39,7 +39,7 @@ curl http://localhost:8080/api/health     # FastAPI via Nginx
 curl http://localhost:8080/               # Next.js
 ```
 
-Única porta publicada no host: Nginx em `${MARKINA_GALLERY_PORT:-8080}`. `db` e `redis` nunca publicam portas; volumes `markina-gallery_pgdata`/`markina-gallery_redisdata`; rede `markina-gallery_internal`.
+Única porta publicada no host: Nginx em `${MARKINA_GALLERY_PORT:-8080}`. `db` e `redis` nunca publicam portas; os volumes de banco, Redis e mídia são exclusivos do projeto; rede `markina-gallery_internal`. Veja também [prévia protegida de mídia](docs/MIDIA-PREVIAS-PROTEGIDAS.md).
 
 Verificar saúde: `docker compose -p markina-gallery -f docker/docker-compose.yml ps`
 Parar somente a Markina Gallery: `docker compose -p markina-gallery -f docker/docker-compose.yml down`
@@ -66,7 +66,7 @@ Fluxo por mudança: `/opsx:propose <change-id>` → revisão humana → `/opsx:a
 ## Convenções de commits e branches
 
 - **Conventional Commits**: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:` — mensagens objetivas.
-- **Branches**: `main` protegida (somente via pull request); `develop` como integração; `feature/*` para funcionalidades.
+- **Branches**: `main` protegida **por convenção** — alterações somente via pull request com CI verde e revisão (o plano gratuito do GitHub não oferece enforcement técnico em repositórios privados); `develop` como integração; `feature/*` para funcionalidades.
 - Nunca commitar segredos, chaves, `.env*` (exceto `.env.example`) ou artefatos de build.
 
 ## Segredos

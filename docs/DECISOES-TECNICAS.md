@@ -13,8 +13,9 @@ Documento vivo; revisar a cada mudança. Fonte completa das decisões: `openspec
 7. **CI no GitHub Actions**: lint, testes, build, validação OpenSpec (`--strict`) e gitleaks em pull requests.
 8. **Observabilidade mínima**: healthchecks reais (`/health`, `/api/health`, `/healthz`) desde a fundação; logs estruturados e correlação job/request virão com as mudanças de cada domínio.
 9. **Convenções de dados** (aplicadas nas próximas mudanças): UUIDs públicos, UTC no banco, valores monetários em centavos inteiros.
-10. **Convenções de repositório**: Conventional Commits; `main` protegida, `develop`, `feature/*`.
+10. **Convenções de repositório**: Conventional Commits; `main` protegida por convenção, `develop`, `feature/*`.
 11. **Marca oficial (2026-08-22)**: o produto passou a se chamar **Markina Gallery**, alinhado à marca existente **Markina Photographer**. Regras: (a) "Markina Gallery" é o nome público em títulos, documentação, interfaces e contexto OpenSpec; (b) `markina-gallery` é o nome do repositório GitHub, do projeto Docker Compose e o prefixo de containers, redes, volumes e serviços (ex.: `markina-gallery_internal`, `markina-gallery_pgdata`); (c) o change-id `bootstrap-photocrm-foundation` permanece como identificador de auditoria, sem renomeação; (d) domínio/subdomínio serão definidos antes do deploy no Oracle. Nome anterior: PhotoCRM.
+12. **Plano GitHub gratuito (2026-08-23)**: o proprietário mantém o plano gratuito — projeto pessoal, sem intenção de venda. Proteção técnica de branches em repositórios privados exige GitHub Pro (API e regras retornam 403 no plano gratuito). Portanto `main` é protegida **por convenção**: PR com CI verde e revisão antes do merge, registrado na spec `deployment-operations`. Se um dia houver upgrade, ativar a regra com os 4 checks da CI (`backend`, `frontend`, `openspec`, `gitleaks`).
 
 ## Versões fixadas no scaffolding
 

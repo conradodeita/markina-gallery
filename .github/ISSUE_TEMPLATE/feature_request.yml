@@ -1,0 +1,36 @@
+name: Proposta de melhoria
+description: Sugira uma melhoria alinhada ao roadmap e ao OpenSpec.
+title: "proposta: "
+labels: ["proposta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de propor, consulte o roadmap e as changes OpenSpec. Não inclua dados pessoais, credenciais ou detalhes de vulnerabilidades.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema esta melhoria resolve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposta inicial
+      description: Descreva o resultado esperado, não uma solução fechada.
+    validations:
+      required: true
+  - type: textarea
+    id: openspec
+    attributes:
+      label: Relação com roadmap e OpenSpec
+      description: Cite change/spec existente ou explique por que uma nova change seria necessária.
+    validations:
+      required: true
+  - type: textarea
+    id: safeguards
+    attributes:
+      label: Privacidade, segurança e operação
+      description: Indique impactos possíveis em dados, acesso, mídia, migrations ou deploy. Não inclua segredos.
+    validations:
+      required: true

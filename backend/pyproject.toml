@@ -2,5 +2,8 @@
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint.per-file-ignores]
+"app/main.py" = ["B008"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
