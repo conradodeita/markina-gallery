@@ -29,10 +29,28 @@
 
 ## Gate humano restante
 
-O proprietário deve autenticar-se na área administrativa, abrir `Configurações → WhatsApp`, salvar seu número próprio em E.164 e ler o QR ou usar o pairing code no aparelho autorizado. Depois disso devem ser confirmadas identidade coincidente, recuperação após reinício, OTP real sintético, login de cliente e mensagens transacionais. O QR, código de pareamento, telefone completo e credenciais não devem ser registrados neste documento.
+O pareamento, a identidade e a recuperação da sessão já foram validados. O proprietário ainda deve solicitar um novo OTP pela própria tela de cliente, confirmar o recebimento no aparelho e consumi-lo no login. Depois desse login, permanece a revisão visual autenticada em desktop e smartphone. O OTP, QR, código de pareamento, telefone completo e credenciais não devem ser registrados neste documento.
 
 ## Correção operacional anterior ao pareamento
 
 Na primeira tentativa humana, o número esperado foi salvo, mas o QR não foi exibido. O bloqueio fail-closed ocorreu porque o host já utilizava `APP_ENV=staging` enquanto o bootstrap havia configurado `WHATSAPP_CREDENTIAL_ENV=homolog`. Nenhuma instância ou mensagem foi criada por essa tentativa.
 
-O marcador não secreto foi alinhado para `staging`, preservando todos os segredos e o número esperado. API e worker foram recriados pelo Compose explícito e voltaram saudáveis. A instância dedicada foi criada durante o diagnóstico e permanece sem identidade conectada. A validação interna posterior confirmou ambientes coincidentes e resposta de pareamento com QR e pairing code presentes; seus valores não foram impressos nem persistidos em documentação e nenhuma mensagem foi enviada.
+O marcador não secreto foi alinhado para `staging`, preservando todos os segredos e o número esperado. API e worker foram recriados pelo Compose explícito e voltaram saudáveis. A validação interna posterior confirmou ambientes coincidentes e resposta de pareamento com QR e pairing code presentes; seus valores não foram impressos nem persistidos em documentação.
+
+## Pareamento, correção de identidade e recuperação
+
+- O proprietário concluiu o pareamento humano pelo material efêmero exibido no painel.
+- A Evolution/Baileys retornou para o mesmo número brasileiro a representação JID legada sem o nono dígito. A comparação literal bloqueou corretamente o envio até que a equivalência estrita fosse especificada e testada.
+- O PR `#17` integrou a correção no SHA `19a50db4f292a80468d8b0ed33a44e8e7b01388f`; o run `33337416038` e o deployment `6171668456` terminaram com sucesso.
+- A migration permaneceu em `20260830_0016 (head)`; SHA do checkout e `last-healthy.sha` coincidiram com o SHA publicado.
+- A consulta sanitizada confirmou provedor `open`, identidade coincidente, canal `ready` e ausência de erro.
+- Após reinício controlado somente de `evolution-api`, o serviço voltou `healthy`, recuperou a sessão `open` e o canal retornou `ready`, sem novo pareamento.
+
+## Mensagens sintéticas reais
+
+- Um cliente de homologação e seus objetos de galeria/pagamento foram criados com nomes sintéticos e somente o número próprio autorizado.
+- Um OTP terminou `accepted` em uma tentativa, com identificador externo presente e payload cifrado apagado; código e telefone não foram consultados nem registrados.
+- As notificações `confirmed`, `refused` e `photographer_reported` terminaram `accepted`/`sent`, cada uma em uma tentativa, com identificador externo e sem erro.
+- O destino operacional do fotógrafo foi definido no arquivo seguro do ambiente como o próprio número autorizado, após backup restrito; API e worker foram recriados e voltaram saudáveis.
+- A recriação da API invalidou temporariamente o upstream resolvido pelo Nginx e produziu um `502` no primeiro check; somente o Nginx Markina foi recriado, voltou `healthy` e os checks finais retornaram `/healthz` 200, `/api/health` 200 e webhook público 404.
+- O recebimento humano do OTP e seu consumo no login permanecem pendentes; estados aceitos pelo provedor não substituem essa confirmação.
