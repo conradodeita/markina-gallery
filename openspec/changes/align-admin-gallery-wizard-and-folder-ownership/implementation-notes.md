@@ -23,6 +23,13 @@ O caminho de escrita é obrigatório e único: **galeria-mãe → pasta em prepa
 
 O passo comercial e o de aparência permanecem visíveis no editor de cinco etapas, mas retornam indisponibilidade explícita do backend até que seus contratos tenham sido aprovados. Isso evita mostrar preços, formas de pagamento ou controles visuais simulados.
 
-## Limite de validação PostgreSQL
+## Validação da migration e rollback
 
-A migration foi exercitada integralmente em SQLite sintético, incluindo upgrade, reexecução idempotente e downgrade com histórico de compra. A validação em PostgreSQL permanece aberta: ela exige um banco efêmero e isolado, sem dados reais, antes de qualquer deploy ou homologação.
+A migration foi exercitada integralmente com dados sintéticos nos dois bancos suportados:
+
+- SQLite: upgrade, reexecução idempotente, preservação de histórico, nulidade, índices, chave candidata composta, chave estrangeira composta e downgrade.
+- PostgreSQL 17 efêmero: duas galerias, pasta preexistente, duas fotos legadas, posição das pastas de compatibilidade, rejeição de vínculo pasta/galeria divergente, índices e constraints refletidos pelo SQLAlchemy, além do downgrade não destrutivo. Nenhum dado real ou banco persistente foi usado.
+
+O teste PostgreSQL fica disponível em `backend/tests/test_cloned_gallery_migration.py` e é habilitado explicitamente com `TEST_POSTGRES_DATABASE_URL`; sem essa variável, a parte PostgreSQL é ignorada para que a suíte comum não dependa de infraestrutura externa.
+
+O rollback operacional SHALL partir de backup exclusivo do banco Markina e revisão conhecida. Se a aplicação nova falhar depois da migration, interromper novas escritas, executar `alembic downgrade 20260827_0005` no container/API do projeto e somente então restaurar a revisão anterior compatível. O downgrade torna `photo_asset.folder_id` novamente opcional, troca a chave estrangeira composta pela chave simples anterior e remove a chave candidata composta. Ele preserva as pastas de compatibilidade e os vínculos saneados; não apaga nem desassocia fotos. Antes de reabrir escritas, conferir a revisão Alembic, contagens e referências de fotos, seleções e pedidos. Qualquer restauração de backup ou reorganização destrutiva permanece uma operação separada e exige autorização humana.
