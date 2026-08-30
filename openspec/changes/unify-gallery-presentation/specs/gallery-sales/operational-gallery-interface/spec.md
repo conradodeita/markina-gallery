@@ -54,3 +54,13 @@ O sistema SHALL apresentar em Configurações os controles globais de marca-d’
 
 - **WHEN** não houver capa ou foto pronta para representar a configuração global
 - **THEN** a interface preserva os controles, informa o estado de prévia e orienta o fotógrafo a carregar ou processar uma foto, sem criar conteúdo simulado
+
+#### Scenario: Configuração visual agrupada
+
+- **WHEN** o fotógrafo abre a proteção visual global
+- **THEN** texto, tipografia, cor, tamanho, direção, explicação e prévia aparecem em blocos coerentes, responsivos e com ação de salvar inequivocamente visível
+
+#### Scenario: Composição compartilhada revisada
+
+- **WHEN** fotógrafo ou cliente abre uma galeria com fotos autorizadas
+- **THEN** contexto, capa, pastas, grade e visualizador formam uma hierarquia editorial consistente, responsiva e centrada nas fotografias, preservando as ações permitidas a cada papel

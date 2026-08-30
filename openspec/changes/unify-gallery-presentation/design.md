@@ -42,12 +42,27 @@ O editor da galeria não oferecerá controles locais de texto, fonte, cor, taman
 
 Alternativa descartada: adicionar campos de CSS, posicionamento livre ou templates arbitrários. Isso conflita com a personalização controlada do produto e inviabiliza garantia de contraste e responsividade.
 
+### Composição editorial revisada
+
+A superfície compartilhada será reorganizada em quatro zonas reconhecíveis: contexto e modo, capa, navegação de coleções e grade/visualizador. A capa não dominará toda a altura útil; título e contexto terão contraste controlado. Pastas usarão navegação textual clara e a grade aplicará proporção e espaçamento consistentes sem cortar o enquadramento.
+
+O modo fotógrafo usará exatamente a mesma composição, com uma barra de contexto discreta. A cliente receberá suas ações de seleção, favorito e compra em regiões secundárias que não competem com a fotografia. No smartphone, a navegação e as ações permanecerão tocáveis sem provocar overflow horizontal da página.
+
+### Dissuasão de cópia sem promessa falsa
+
+Toda imagem da composição compartilhada continuará sendo uma prévia autenticada, limitada, sem EXIF/GPS e com marca-d’água aplicada pelo servidor. O componente impedirá arraste, menu de contexto e eventos comuns de cópia sobre a mídia, desabilitará seleção visual e apresentará mensagem acessível explicando que a prévia é protegida. Quando o navegador informar a tecla `PrintScreen`, a mesma mensagem será exibida, sem alegar que a captura foi impedida.
+
+O produto SHALL NOT afirmar que bloqueia screenshots: navegadores não controlam capturas do sistema operacional, outros dispositivos ou ferramentas externas. A segurança material permanece na não entrega do original, na autorização, na resolução limitada e na marca-d’água incorporada.
+
+Alternativa descartada: sobrepor somente uma marca-d’água em CSS ou esconder a URL no DOM. Ambas podem ser removidas no cliente e não protegem o arquivo recebido.
+
 ## Risks / Trade-offs
 
 - [Diferença entre contratos de galeria-mãe e derivada] → criar adaptadores pequenos e testar que a estrutura não infere autorização no navegador.
 - [Prévia administrativa parecer acesso de cliente] → manter rótulo de modo fotógrafo e separar ações por papel.
 - [Galeria sem capa ou sem fotos] → fornecer estados visuais intencionais, sem cards vazios genéricos.
 - [Prévia sem mídia disponível] → manter a configuração utilizável e apresentar um estado de prévia que explica o próximo passo, sem simular fotografia.
+- [Bloqueios do navegador criarem falsa sensação de segurança] → comunicar explicitamente que são dissuasão e manter a proteção efetiva incorporada na prévia servida.
 
 ## Migration Plan
 

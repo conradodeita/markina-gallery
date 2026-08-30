@@ -265,23 +265,6 @@ export default function GalleryPage() {
           )}
         </p>
       )}
-      <section className="selection-summary" aria-live="polite" aria-label="Resumo da seleção">
-        <div><span>Sua seleção</span><strong>{selectedPhotos.length} foto{selectedPhotos.length === 1 ? "" : "s"}</strong></div>
-        <p>{review.gallery.selection_open ? "Use Selecionar em cada prévia. Suas escolhas ficam salvas nesta galeria." : "O prazo de novas seleções terminou; suas escolhas continuam identificadas abaixo."}</p>
-        {cart.total_cents !== undefined && <p>Faixa aplicada: R$ {(cart.unit_price_cents! / 100).toFixed(2).replace(".", ",")} por foto · total estimado R$ {(cart.total_cents / 100).toFixed(2).replace(".", ",")}.</p>}
-        {cart.items?.length ? <ul className="photo-list" aria-label="Fotos no carrinho">{cart.items.map((item) => <li key={item.id}>{item.name}<button type="button" className="link-button" onClick={() => removeFromCart(item.id)}>Remover do carrinho</button></li>)}</ul> : null}
-        <button className="primary" disabled={!review.gallery.selection_open || cart.quantity === 0} onClick={checkout}>Finalizar {cart.quantity} foto{cart.quantity === 1 ? "" : "s"} por PIX</button>
-      </section>
-      {pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id) && <section className="admin-card" aria-live="polite"><h2>Pedido pendente de confirmação</h2><p>Pedido criado no valor de R$ {(pendingOrder.total_cents / 100).toFixed(2).replace(".", ",")}.</p><p>Envie o PIX conforme as instruções do fotógrafo. A confirmação não é automática.</p><button className="primary" type="button" onClick={() => reportPayment(pendingOrder.id)}>Já fiz o PIX</button></section>}
-      {paymentOrders.length > 0 && <section className="admin-card" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {
-        const status = order.communication?.status;
-        return <article className="upload-status" key={order.order_id}>
-          <strong>Pedido {order.order_id.slice(0, 8)} · R$ {(order.total_cents / 100).toFixed(2).replace(".", ",")}</strong>
-          <span>{status === "confirmed" ? "Pagamento confirmado" : status === "refused" ? "Pagamento não localizado" : status === "pending_review" ? "Pagamento informado · aguardando revisão" : "Pagamento ainda não comunicado"}</span>
-          {order.notification?.status === "failed" && <span>A resposta por WhatsApp falhou. O status acima continua válido.</span>}
-          {order.payment_status === "pending" && (!status || status === "refused") && <button className="primary" type="button" onClick={() => reportPayment(order.order_id)}>Já fiz o PIX</button>}
-        </article>;
-      })}</section>}
       <nav className="gallery-photo-filters" aria-label="Filtrar fotos">
         {(["all", "nova", "visualizada mas não comprada", "já comprada"] as const).map((value) => (
           <button key={value} type="button" className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>
@@ -312,6 +295,7 @@ export default function GalleryPage() {
             </small>
             <div className="gallery-presentation-actions">
               <button
+                type="button"
                 className="secondary"
                 disabled={
                   !review.gallery.selection_open ||
@@ -323,14 +307,33 @@ export default function GalleryPage() {
               </button>
               {review.gallery.favorites_enabled && (
                 <button
+                  type="button"
                   className="secondary"
+                  aria-pressed={photo.favorited}
                   onClick={() => interaction(photo, "favorite")}
                 >
-                  {photo.favorited ? "★" : "☆"}
+                  {photo.favorited ? "★ Favorita" : "☆ Favoritar"}
                 </button>
               )}
             </div>
           </>} />
+      <section className="selection-summary" aria-live="polite" aria-label="Resumo da seleção">
+        <div><span>Sua seleção</span><strong>{selectedPhotos.length} foto{selectedPhotos.length === 1 ? "" : "s"}</strong></div>
+        <p>{review.gallery.selection_open ? "Use Selecionar em cada prévia. Suas escolhas ficam salvas nesta galeria." : "O prazo de novas seleções terminou; suas escolhas continuam identificadas abaixo."}</p>
+        {cart.total_cents !== undefined && <p>Faixa aplicada: R$ {(cart.unit_price_cents! / 100).toFixed(2).replace(".", ",")} por foto · total estimado R$ {(cart.total_cents / 100).toFixed(2).replace(".", ",")}.</p>}
+        {cart.items?.length ? <ul className="photo-list" aria-label="Fotos no carrinho">{cart.items.map((item) => <li key={item.id}>{item.name}<button type="button" className="link-button" onClick={() => removeFromCart(item.id)}>Remover do carrinho</button></li>)}</ul> : null}
+        <button type="button" className="primary" disabled={!review.gallery.selection_open || cart.quantity === 0} onClick={checkout}>Finalizar {cart.quantity} foto{cart.quantity === 1 ? "" : "s"} por PIX</button>
+      </section>
+      {pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id) && <section className="admin-card" aria-live="polite"><h2>Pedido pendente de confirmação</h2><p>Pedido criado no valor de R$ {(pendingOrder.total_cents / 100).toFixed(2).replace(".", ",")}.</p><p>Envie o PIX conforme as instruções do fotógrafo. A confirmação não é automática.</p><button className="primary" type="button" onClick={() => reportPayment(pendingOrder.id)}>Já fiz o PIX</button></section>}
+      {paymentOrders.length > 0 && <section className="admin-card" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {
+        const status = order.communication?.status;
+        return <article className="upload-status" key={order.order_id}>
+          <strong>Pedido {order.order_id.slice(0, 8)} · R$ {(order.total_cents / 100).toFixed(2).replace(".", ",")}</strong>
+          <span>{status === "confirmed" ? "Pagamento confirmado" : status === "refused" ? "Pagamento não localizado" : status === "pending_review" ? "Pagamento informado · aguardando revisão" : "Pagamento ainda não comunicado"}</span>
+          {order.notification?.status === "failed" && <span>A resposta por WhatsApp falhou. O status acima continua válido.</span>}
+          {order.payment_status === "pending" && (!status || status === "refused") && <button className="primary" type="button" onClick={() => reportPayment(order.order_id)}>Já fiz o PIX</button>}
+        </article>;
+      })}</section>}
       {review.gallery.comments_enabled && (
         <section className="admin-card">
           <h2>Comentários</h2>

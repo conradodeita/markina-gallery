@@ -12,6 +12,8 @@ A área administrativa atual separa acervos, pastas, fotos e galerias em operaç
 - Manter galerias privadas derivadas como referências autorizadas às fotos da galeria-mãe, sem duplicação de arquivos e com histórico individual de seleção, compra e acesso.
 - Preservar o caráter não listado da galeria-mãe: o link poderá ser compartilhado diretamente, mas não haverá catálogo público pesquisável e a visualização das fotos continuará condicionada à autenticação e às regras de liberação.
 - Manter telas, disponibilidade de ações, vínculos e estados integralmente orientados pelo backend.
+- Incorporar o retorno da validação humana em homologação: retirar a entrada obsoleta Operação, tornar Detalhes uma etapa configurável, corrigir a legibilidade de botões e reorganizar Clientes em blocos claros e responsivos.
+- Padronizar a área administrativa em superfícies pretas, brancas e cinzas, com cards, espaçamentos, hierarquia e estados consistentes, sem alterar permissões ou inventar capacidades no navegador.
 
 ## Capabilities
 
@@ -26,6 +28,7 @@ A área administrativa atual separa acervos, pastas, fotos e galerias em operaç
 ## Impact
 
 - Frontend Next.js da área administrativa: navegação de galerias, resumo, criação e edição guiada, componentes de etapas, fotos, pastas e clientes.
+- Design system administrativo e testes de contraste, texto visível, agrupamento e responsividade dos componentes revisados.
 - APIs FastAPI administrativas de galerias-mãe, pastas, fotos, vendas, aparência e vínculos de clientes.
 - Modelo SQLAlchemy e migration Alembic para tornar obrigatório o vínculo de foto com pasta após o saneamento dos dados legados.
 - Testes de API, migration, autorização, componentes e fluxo funcional, incluindo recusa de pasta ou foto sem galeria e preservação de históricos.

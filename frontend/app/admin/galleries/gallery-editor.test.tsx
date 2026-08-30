@@ -19,12 +19,12 @@ const editor = {
   steps: [
     { id: "ajustes", label: "Ajustes", status: "complete", available: true },
     { id: "vendas", label: "Vendas", status: "unavailable", available: false },
-    { id: "detalhes", label: "Detalhes", status: "unavailable", available: false },
+    { id: "detalhes", label: "Detalhes", status: "pending", available: true },
     { id: "imagens", label: "Imagens", status: "pending", available: true },
     { id: "clientes", label: "Clientes", status: "pending", available: true },
   ],
   counts: { folders: 0, registrations: 0, derived_galleries: 0 },
-  capabilities: { sales_configuration: false, visual_customization: false, folder_management: true, client_links: true },
+  capabilities: { sales_configuration: false, visual_customization: true, folder_management: true, client_links: true },
   actions: { can_create_folder: true, can_upload: true },
 };
 
@@ -78,6 +78,19 @@ describe("editor administrativo de galeria", () => {
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
     expect(await screen.findByText("Ana Responsável")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Vincular/ })).toBeNull();
+  });
+
+  it("separa vinculados, busca e novo cadastro em blocos responsivos", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
+      return response({ clients: [{ id: "client-2", name: "Beatriz Responsável", phone: "+5511888888888" }] });
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    expect(await screen.findByRole("region", { name: "Responsáveis vinculados" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Vincular responsável" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Cadastrar e vincular" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Beatriz Responsável.*Vincular/ })).toBeTruthy();
   });
 
   it("mostra capacidade comercial indisponível sem inventar configuração", async () => {
@@ -142,25 +155,43 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("mantém controles de apresentação próprios e direciona a proteção global", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [] })));
-    render(<GalleryEditor sourceId="source-1" step="imagens" />);
-    expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") return response({});
+      return path.endsWith("/editor") ? response(editor) : response({ available: true, capabilities: ["cover", "title", "folder_organization"] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="detalhes" />);
+    expect(await screen.findByRole("heading", { name: "Detalhes e apresentação" })).toBeTruthy();
     expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.queryByLabelText("Tipografia da marca-d’água")).toBeNull();
-    expect(screen.getByText(/marca-d’água é global/i)).toBeTruthy();
+    expect(screen.getByText(/marca-d’água continua global/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Tamanho do título"), { target: { value: "40" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar detalhes" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/source-1/settings",
+      expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"cover_title_size":40') }),
+    ));
     expect(screen.getByRole("link", { name: /Ajustes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/ajustes");
     expect(screen.getByRole("link", { name: /Clientes/ }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
   });
 
   it("organiza a apresentação por galeria sem controles locais de proteção", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [] })));
-    render(<GalleryEditor sourceId="source-1" step="imagens" />);
-    await screen.findByRole("heading", { name: "Imagens e pastas" });
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ available: true, capabilities: ["cover", "title", "folder_organization"] })));
+    render(<GalleryEditor sourceId="source-1" step="detalhes" />);
+    await screen.findByRole("heading", { name: "Detalhes e apresentação" });
     expect(screen.getByRole("group", { name: "Capa e título" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Organização" })).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Marca-d’água" })).toBeNull();
     expect(screen.getByText(/Prévia disponível após definir uma capa/)).toBeTruthy();
     expect(screen.queryByLabelText(/css/i)).toBeNull();
+  });
+
+  it("mantém Imagens focada em pastas e upload", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.endsWith("/folders") ? response({ folders: [] }) : response({ clients: [] })));
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    await screen.findByRole("heading", { name: "Imagens e pastas" });
+    expect(screen.queryByRole("group", { name: "Capa e título" })).toBeNull();
+    expect(screen.getByLabelText("Nome da nova pasta")).toBeTruthy();
   });
 
   it("renderiza o resumo com capa clicável, link e exclusão contextual", async () => {

@@ -7,9 +7,9 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/admin/galleries/sources
 import { AdminNavigation } from "./admin-navigation";
 
 describe("navegação administrativa", () => {
-  it("indica a seção atual sem esconder as rotas operacionais", () => {
+  it("indica Galerias como entrada operacional e omite a rota legada", () => {
     render(<AdminNavigation />);
     expect(screen.getByRole("link", { name: "Galerias" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("link", { name: "Operação" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Operação" })).toBeNull();
   });
 });

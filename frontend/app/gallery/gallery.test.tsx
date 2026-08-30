@@ -20,10 +20,11 @@ describe("galeria privada da cliente", () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(path.endsWith("/comments") ? { comments: [] } : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] } : review), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
-    expect(await screen.findByText("Festa escolar")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Festa escolar", level: 1 })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Resumo da seleção" }).textContent).toContain("0 fotos");
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getByText("já comprada")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "☆ Favoritar" }).length).toBe(2);
     expect(screen.getByRole("button", { name: /Novas fotos/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Já compradas/ }));
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_002.jpg" })).toBeTruthy();
@@ -31,7 +32,11 @@ describe("galeria privada da cliente", () => {
     expect(
       screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("src"),
     ).toBe("/api/gallery/gallery-1/photos/new-1/preview");
+    expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("draggable")).toBe("false");
     expect(screen.getByRole("img", { name: "Capa de Festa escolar" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/new-1/preview");
+    const presentation = screen.getByRole("region", { name: "Apresentação de Festa escolar" });
+    const selectionSummary = screen.getByRole("region", { name: "Resumo da seleção" });
+    expect(Boolean(presentation.compareDocumentPosition(selectionSummary) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de IMG_001.jpg" }));
     expect(await screen.findByRole("dialog", { name: "Prévia ampliada de IMG_001.jpg" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

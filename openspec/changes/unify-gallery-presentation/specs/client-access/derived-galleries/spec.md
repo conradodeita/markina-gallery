@@ -23,3 +23,18 @@ O sistema SHALL renderizar biblioteca, pastas, propriedade, permissões, prazo, 
 
 - **WHEN** uma pasta ou foto não está liberada para a cliente
 - **THEN** a composição compartilhada não a apresenta nem indica sua existência
+
+#### Scenario: Cliente tenta copiar uma prévia
+
+- **WHEN** a cliente tenta arrastar, abrir o menu de contexto ou copiar uma imagem protegida pela interface
+- **THEN** o navegador bloqueia a interação comum, mantém a prévia incorporada com marca-d’água e apresenta uma mensagem acessível de conteúdo protegido
+
+#### Scenario: Cliente aciona uma captura de tela detectável
+
+- **WHEN** o navegador informa uma tentativa pela tecla `PrintScreen`
+- **THEN** a interface apresenta o aviso de proteção sem afirmar que a captura do sistema operacional foi impedida
+
+#### Scenario: Navegador solicita a imagem exibida
+
+- **WHEN** a galeria renderiza capa, grade ou visualizador
+- **THEN** o navegador recebe somente a prévia autenticada, limitada e já marcada pelo servidor, nunca o original nem uma proteção dependente apenas de CSS

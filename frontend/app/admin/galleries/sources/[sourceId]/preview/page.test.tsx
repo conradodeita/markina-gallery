@@ -18,8 +18,15 @@ describe("prévia administrativa da galeria", () => {
     render(<AdminGalleryPreviewPage />);
     expect(await screen.findByText("Modo fotógrafo")).toBeTruthy();
     expect(screen.getByRole("region", { name: "Apresentação de Festa escolar" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Festa escolar", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Contexto da visualização" }).textContent).toContain("Prévia administrativa");
     expect(screen.getByRole("img", { name: "Prévia protegida de FOTO_001.jpg" }).getAttribute("src")).toBe("/api/admin/photo-assets/photo-1/watermarked-preview");
     expect(screen.queryByRole("button", { name: "Selecionar" })).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("cópias e downloads diretos estão desativados");
+    fireEvent.contextMenu(screen.getByRole("img", { name: "Prévia protegida de FOTO_001.jpg" }));
+    expect(screen.getByRole("status").textContent).toContain("arraste, menu de contexto e cópia direta");
+    fireEvent.keyUp(window, { key: "PrintScreen" });
+    expect(screen.getByRole("status").textContent).toContain("não consegue impedir screenshots");
     fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de FOTO_001.jpg" }));
     expect(await screen.findByRole("dialog", { name: "Prévia ampliada de FOTO_001.jpg" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

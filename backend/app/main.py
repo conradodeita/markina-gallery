@@ -950,7 +950,12 @@ def parent_gallery_editor(
         "steps": [
             {"id": "ajustes", "label": "Ajustes", "status": "complete", "available": True},
             {"id": "vendas", "label": "Vendas", "status": "unavailable", "available": False},
-            {"id": "detalhes", "label": "Detalhes", "status": "unavailable", "available": False},
+            {
+                "id": "detalhes",
+                "label": "Detalhes",
+                "status": "complete" if gallery.cover_photo_id else "pending",
+                "available": True,
+            },
             {
                 "id": "imagens",
                 "label": "Imagens",
@@ -973,7 +978,7 @@ def parent_gallery_editor(
         },
         "capabilities": {
             "sales_configuration": False,
-            "visual_customization": False,
+            "visual_customization": True,
             "folder_management": True,
             "client_links": True,
         },
@@ -1080,11 +1085,19 @@ def parent_gallery_details(
     parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     require_admin(request)
-    _parent_gallery_or_404(db, parent_gallery_id)
+    gallery = _parent_gallery_or_404(db, parent_gallery_id)
     return {
-        "available": False,
-        "reason": "Capa e aparência serão liberadas em uma mudança própria.",
-        "capabilities": [],
+        "available": True,
+        "capabilities": ["cover", "title", "folder_organization"],
+        "settings": {
+            "cover_photo_id": str(gallery.cover_photo_id) if gallery.cover_photo_id else None,
+            "cover_preview_url": _cover_preview_url(db, gallery),
+            "folder_display_mode": gallery.folder_display_mode,
+            "cover_title_font": gallery.cover_title_font,
+            "cover_title_color": gallery.cover_title_color,
+            "cover_title_size": gallery.cover_title_size,
+            "cover_title_position": gallery.cover_title_position,
+        },
     }
 
 
