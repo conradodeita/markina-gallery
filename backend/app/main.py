@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import secrets
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
+from hashlib import sha256
 from io import BytesIO
 from os import getenv
 from pathlib import Path
@@ -52,12 +55,14 @@ from app.auth import (
     SaleOrder,
     SaleOrderItem,
     SessionLocal,
+    WhatsAppDelivery,
     audit,
     consume_challenge,
     create_challenge,
     create_session,
     current_session,
     enforce_rate_limit,
+    enqueue_client_otp_delivery,
     expired,
     neutral_error,
     normalize_e164,
@@ -65,17 +70,26 @@ from app.auth import (
     password_hasher,
     resend_client_challenge,
     revoke_subject_sessions,
-    whatsapp_provider,
 )
 from app.checkout import CheckoutError, create_pending_checkout
 from app.media import enqueue_derivatives, safe_derivative_path, safe_source_path
 from app.messaging import (
     WhatsAppConfigurationError,
+    WhatsAppDeliveryError,
     configured_photographer_phone,
     payment_notification_max_attempts,
+    whatsapp_provider_from_environment,
 )
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
 from app.pricing import PriceTier, PricingRuleError, has_downward_jump, quote, validate_tiers
+from app.whatsapp_channel import (
+    channel_payload,
+    channel_settings,
+    configure_expected_phone,
+    refresh_channel,
+    start_channel_pairing,
+)
+from app.whatsapp_webhook import process_whatsapp_webhook
 
 app = FastAPI(title="Markina Gallery API", version="0.2.0")
 
@@ -197,6 +211,14 @@ class VisualProtectionSettingsInput(BaseModel):
         if not cleaned:
             raise ValueError("A marca-d’água não pode ficar vazia")
         return cleaned
+
+
+class WhatsAppChannelInput(BaseModel):
+    expected_phone_e164: str = Field(min_length=8, max_length=32)
+
+
+class WhatsAppRetryInput(BaseModel):
+    confirm_duplicate_risk: bool = False
 
 
 class DerivedGalleryInput(BaseModel):
@@ -422,6 +444,187 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "api"}
 
 
+@app.post("/internal/whatsapp/webhook")
+async def whatsapp_webhook(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, str]:
+    expected = getenv("WHATSAPP_WEBHOOK_SECRET", "")
+    provided = request.headers.get("X-Markina-Webhook-Secret", "")
+    if not expected or not provided or not secrets.compare_digest(expected, provided):
+        raise HTTPException(status_code=403, detail="Evento não autorizado.")
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 65_536:
+        raise HTTPException(status_code=413, detail="Evento excede o limite permitido.")
+    body = await request.body()
+    if len(body) > 65_536:
+        raise HTTPException(status_code=413, detail="Evento excede o limite permitido.")
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Evento inválido.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Evento inválido.")
+    _changed, outcome = process_whatsapp_webhook(db, payload)
+    return {"status": outcome}
+
+
+def whatsapp_admin_payload(db: Session, settings) -> dict:
+    payload = channel_payload(settings)
+    payload["deliveries"] = {
+        delivery_status: count
+        for delivery_status, count in db.execute(
+            select(WhatsAppDelivery.status, func.count())
+            .group_by(WhatsAppDelivery.status)
+            .order_by(WhatsAppDelivery.status)
+        )
+    }
+    return payload
+
+
+@app.get("/admin/whatsapp/channel")
+def admin_whatsapp_channel(
+    request: Request, db: Session = Depends(db_session)
+) -> dict:
+    current_session(request, Role.ADMIN)
+    try:
+        provider = whatsapp_provider_from_environment()
+        settings = refresh_channel(db, provider)
+    except (WhatsAppConfigurationError, WhatsAppDeliveryError):
+        settings = channel_settings(db)
+        settings.status = "error"
+        settings.last_error = "Configuração ou conexão do canal indisponível."
+        settings.last_checked_at = now()
+        db.commit()
+    return whatsapp_admin_payload(db, settings)
+
+
+@app.patch("/admin/whatsapp/channel")
+def update_admin_whatsapp_channel(
+    payload: WhatsAppChannelInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict:
+    current_session(request, Role.ADMIN)
+    try:
+        settings = configure_expected_phone(db, payload.expected_phone_e164)
+    except WhatsAppConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return whatsapp_admin_payload(db, settings)
+
+
+@app.post("/admin/whatsapp/channel/refresh")
+def refresh_admin_whatsapp_channel(
+    request: Request, db: Session = Depends(db_session)
+) -> dict:
+    current_session(request, Role.ADMIN)
+    try:
+        settings = refresh_channel(db, whatsapp_provider_from_environment())
+    except (WhatsAppConfigurationError, WhatsAppDeliveryError):
+        raise HTTPException(
+            status_code=503, detail="Não foi possível consultar o canal."
+        ) from None
+    return whatsapp_admin_payload(db, settings)
+
+
+@app.post("/admin/whatsapp/channel/pairing")
+def pair_admin_whatsapp_channel(
+    request: Request, response: Response, db: Session = Depends(db_session)
+) -> dict:
+    current_session(request, Role.ADMIN)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        settings, pairing = start_channel_pairing(
+            db, whatsapp_provider_from_environment()
+        )
+    except WhatsAppConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except WhatsAppDeliveryError:
+        raise HTTPException(
+            status_code=503, detail="Não foi possível iniciar o pareamento."
+        ) from None
+    result = whatsapp_admin_payload(db, settings)
+    result["pairing"] = {
+        "state": pairing.state,
+        "pairing_code": pairing.pairing_code,
+        "qr_base64": pairing.qr_base64,
+    }
+    return result
+
+
+@app.get("/admin/whatsapp/deliveries")
+def admin_whatsapp_deliveries(
+    request: Request,
+    delivery_status: str | None = Query(default=None, alias="status"),
+    db: Session = Depends(db_session),
+) -> list[dict]:
+    current_session(request, Role.ADMIN)
+    query = select(WhatsAppDelivery).order_by(WhatsAppDelivery.created_at.desc()).limit(100)
+    if delivery_status:
+        query = query.where(WhatsAppDelivery.status == delivery_status)
+    return [
+        {
+            "id": str(item.id),
+            "kind": item.kind,
+            "template_kind": item.template_kind,
+            "status": item.status,
+            "attempts": item.attempts,
+            "provider_status": item.provider_status,
+            "last_error": item.last_error,
+            "created_at": item.created_at.isoformat(),
+            "updated_at": item.updated_at.isoformat(),
+        }
+        for item in db.scalars(query)
+    ]
+
+
+@app.post("/admin/whatsapp/deliveries/{delivery_id}/retry")
+def retry_admin_whatsapp_delivery(
+    delivery_id: UUID,
+    payload: WhatsAppRetryInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    session = current_session(request, Role.ADMIN)
+    delivery = db.get(WhatsAppDelivery, delivery_id)
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Entrega não encontrada.")
+    try:
+        max_attempts = payment_notification_max_attempts()
+    except WhatsAppConfigurationError:
+        max_attempts = 1
+    if delivery.attempts >= max_attempts or delivery.status not in {"failed", "unknown"}:
+        raise HTTPException(status_code=409, detail="A entrega não pode ser reenfileirada.")
+    if delivery.expires_at and expired(delivery.expires_at):
+        delivery.status = "expired"
+        delivery.encrypted_payload = None
+        db.commit()
+        raise HTTPException(status_code=409, detail="A entrega expirou.")
+    if delivery.status == "unknown":
+        wait_seconds = max(
+            60, int(getenv("WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS", "300"))
+        )
+        updated_at = delivery.updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=now().tzinfo)
+        if now() < updated_at + timedelta(seconds=wait_seconds):
+            raise HTTPException(
+                status_code=409,
+                detail="A entrega ainda aguarda reconciliação do provedor.",
+            )
+        if not payload.confirm_duplicate_risk:
+            raise HTTPException(
+                status_code=409,
+                detail="Confirme explicitamente o risco de duplicidade.",
+            )
+    delivery.status = "queued"
+    delivery.next_attempt_at = None
+    delivery.last_error = None
+    delivery.updated_at = now()
+    audit(db, "whatsapp.delivery_requeued", f"{delivery.id}:{session.subject_id}")
+    db.commit()
+    return {"status": "queued"}
+
+
 @app.post("/auth/client/challenge", status_code=status.HTTP_202_ACCEPTED)
 def client_challenge(
     payload: ClientLinkChallengeInput, request: Request, db: Session = Depends(db_session)
@@ -438,7 +641,7 @@ def client_challenge(
             raise neutral_error()
         challenge.parent_gallery_id = payload.parent_gallery_id
         db.commit()
-    whatsapp_provider.send_otp(phone, code)
+    enqueue_client_otp_delivery(db, challenge, code)
     return {
         "challenge_id": str(challenge.id),
         "message": "Se os dados puderem receber acesso, enviaremos um código.",
@@ -1459,7 +1662,7 @@ def clone_derived_gallery(
     source = db.get(DerivedGallery, gallery_id)
     if not source or not db.get(Client, payload.client_id):
         raise HTTPException(status_code=404, detail="Galeria ou cliente não encontrado.")
-    audit_key = f"derived_gallery.clone:{gallery_id}:{payload.client_id}:{payload.idempotency_key}"
+    audit_key = f"derived_gallery.clone:{sha256(f'{gallery_id}:{payload.client_id}:{payload.idempotency_key}'.encode()).hexdigest()[:48]}"
     duplicate = db.scalar(select(AuditEvent).where(AuditEvent.event == audit_key))
     if duplicate:
         return {"id": duplicate.subject}

@@ -24,6 +24,7 @@ build/
 .turbo/
 __pycache__/
 *.py[cod]
+*.tsbuildinfo
 .venv/
 venv/
 .pytest_cache/
@@ -42,6 +43,10 @@ backups/
 pgdata/
 redisdata/
 backend/*.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # ============================================================
 # Logs e sistema

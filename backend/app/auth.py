@@ -34,10 +34,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from app.messaging import (
-    WhatsAppProvider,
-    whatsapp_provider_from_environment,
-)
+from app.messaging import WhatsAppConfigurationError, whatsapp_provider_name
+from app.whatsapp_delivery import encrypt_otp, otp_encryption_key
 
 
 def now() -> datetime:
@@ -396,6 +394,108 @@ class PaymentNotificationOutbox(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
+class WhatsAppChannelSettings(Base):
+    """Estado operacional não secreto do canal WhatsApp por ambiente."""
+
+    __tablename__ = "whatsapp_channel_settings"
+    __table_args__ = (
+        UniqueConstraint("environment"),
+        CheckConstraint(
+            "status IN ('sandbox', 'pending_pairing', 'connecting', 'ready', "
+            "'mismatch', 'disconnected', 'error')"
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    environment: Mapped[str] = mapped_column(String(32), index=True)
+    expected_phone_e164: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    connected_phone_e164: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="sandbox", index=True)
+    last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class WhatsAppDelivery(Base):
+    """Entrega genérica; conteúdo sensível nunca é persistido em texto puro."""
+
+    __tablename__ = "whatsapp_delivery"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        UniqueConstraint("external_message_id"),
+        CheckConstraint("kind IN ('otp', 'payment')"),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'accepted', 'delivered', 'read', "
+            "'failed', 'unknown', 'expired')"
+        ),
+        CheckConstraint("attempts >= 0"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    source_type: Mapped[str] = mapped_column(String(48), index=True)
+    source_id: Mapped[str] = mapped_column(String(128), index=True)
+    recipient_phone: Mapped[str] = mapped_column(String(16))
+    template_kind: Mapped[str] = mapped_column(String(48))
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True)
+    encrypted_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    external_message_id: Mapped[str | None] = mapped_column(
+        String(192), nullable=True, unique=True
+    )
+    provider_status: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class WhatsAppDeliveryAttempt(Base):
+    __tablename__ = "whatsapp_delivery_attempt"
+    __table_args__ = (
+        CheckConstraint(
+            "result IN ('accepted', 'transient_failure', 'permanent_failure', 'unknown')"
+        ),
+        CheckConstraint("attempt_number >= 1"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    delivery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("whatsapp_delivery.id"), index=True
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    result: Mapped[str] = mapped_column(String(24))
+    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WhatsAppWebhookReceipt(Base):
+    __tablename__ = "whatsapp_webhook_receipt"
+    __table_args__ = (UniqueConstraint("fingerprint"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    event_type: Mapped[str] = mapped_column(String(64))
+    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class MediaDerivative(Base):
     """Derivado local de uma foto; paths nunca são recebidos do navegador."""
 
@@ -467,9 +567,6 @@ class AuditEvent(Base):
     event: Mapped[str] = mapped_column(String(80), index=True)
     subject: Mapped[str] = mapped_column(String(320))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-
-
-whatsapp_provider: WhatsAppProvider = whatsapp_provider_from_environment()
 
 
 class ClientChallengeInput(BaseModel):
@@ -551,6 +648,47 @@ def create_challenge(
     return challenge, code
 
 
+def enqueue_client_otp_delivery(
+    db: Session, challenge: AuthChallenge, code: str
+) -> WhatsAppDelivery:
+    """Persiste uma entrega OTP sem depender da rede ou guardar o código aberto."""
+    key = f"otp:{challenge.id}:{challenge.resend_count}"
+    existing = db.scalar(
+        select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == key)
+    )
+    if existing:
+        return existing
+    delivery = WhatsAppDelivery(
+        kind="otp",
+        source_type="auth_challenge",
+        source_id=str(challenge.id),
+        recipient_phone=challenge.subject,
+        template_kind="client_otp",
+        idempotency_key=key,
+        expires_at=challenge.expires_at,
+    )
+    try:
+        cipher_key = otp_encryption_key()
+        delivery.encrypted_payload = encrypt_otp(code, key=cipher_key, context=key)
+    except WhatsAppConfigurationError:
+        if whatsapp_provider_name() == "sandbox":
+            instant = now()
+            delivery.status = "accepted"
+            delivery.provider_status = "accepted"
+            delivery.external_message_id = (
+                f"sandbox:{hashlib.sha256(key.encode()).hexdigest()[:24]}"
+            )
+            delivery.accepted_at = instant
+            delivery.last_error = None
+        else:
+            delivery.status = "failed"
+            delivery.last_error = "Configuração segura do OTP indisponível."
+    db.add(delivery)
+    audit(db, "client_otp.delivery_queued", str(challenge.id))
+    db.commit()
+    return delivery
+
+
 def resend_client_challenge(db: Session, challenge_id: UUID, ip_address: str) -> AuthChallenge:
     challenge = db.get(AuthChallenge, challenge_id)
     if (
@@ -565,11 +703,21 @@ def resend_client_challenge(db: Session, challenge_id: UUID, ip_address: str) ->
         raise neutral_error()
     enforce_rate_limit(db, "client_otp.resend", challenge.subject, ip_address)
     code = f"{secrets.randbelow(1_000_000):06d}"
+    for delivery in db.scalars(
+        select(WhatsAppDelivery).where(
+            WhatsAppDelivery.kind == "otp",
+            WhatsAppDelivery.source_id == str(challenge.id),
+            WhatsAppDelivery.status.in_(("queued", "processing", "unknown")),
+        )
+    ):
+        delivery.status = "expired"
+        delivery.encrypted_payload = None
+        delivery.updated_at = now()
     challenge.secret_hash = token_hash(code)
     challenge.resend_count += 1
     audit(db, "client_otp.resent", challenge.subject)
-    whatsapp_provider.send_otp(challenge.subject, code)
     db.commit()
+    enqueue_client_otp_delivery(db, challenge, code)
     return challenge
 
 
