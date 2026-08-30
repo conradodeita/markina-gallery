@@ -616,7 +616,11 @@ def test_phone_change_preserves_gallery_owner_and_retires_old_phone(client: Test
     with SessionLocal() as db:
         db.get(AuthChallenge, UUID(old)).secret_hash = token_hash("123456")
         db.commit()
-    assert client.post("/auth/client/verify", json={"challenge_id": old, "code": "123456"}).status_code == 401
+    denied = client.post(
+        "/auth/client/verify", json={"challenge_id": old, "code": "123456"}
+    )
+    assert denied.status_code == 403
+    assert "link compartilhado" in denied.json()["detail"]
 
 
 def test_unlisted_source_link_registers_client_without_exposing_photos(client: TestClient):

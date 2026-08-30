@@ -630,17 +630,22 @@ def client_challenge(
     payload: ClientLinkChallengeInput, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, str]:
     phone = normalize_e164(payload.phone)
+    client_name = " ".join(payload.full_name.split())
+    if len(client_name) < 3:
+        raise HTTPException(status_code=422, detail="Informe o nome completo.")
     enforce_rate_limit(
         db, "client_otp.challenge", phone, request.client.host if request.client else "unknown"
     )
     challenge, code = create_challenge(db, "client_otp", phone)
+    challenge.client_name = client_name
     if payload.parent_gallery_id:
-        if not db.get(ParentGallery, payload.parent_gallery_id):
+        parent_gallery = db.get(ParentGallery, payload.parent_gallery_id)
+        if not parent_gallery or not parent_gallery.active:
             audit(db, "client_otp.gallery_context_rejected", phone)
             db.commit()
             raise neutral_error()
         challenge.parent_gallery_id = payload.parent_gallery_id
-        db.commit()
+    db.commit()
     enqueue_client_otp_delivery(db, challenge, code)
     return {
         "challenge_id": str(challenge.id),
@@ -670,9 +675,34 @@ def client_verify(
         select(Client).where(Client.phone_e164 == challenge.subject)
     )
     if not client:
-        audit(db, "client_otp.failed", challenge.subject)
-        db.commit()
-        raise neutral_error()
+        parent_gallery = (
+            db.get(ParentGallery, challenge.parent_gallery_id)
+            if challenge.parent_gallery_id
+            else None
+        )
+        if not parent_gallery or not parent_gallery.active or not challenge.client_name:
+            audit(db, "client_otp.unlinked_denied", challenge.subject)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Este número ainda não possui acesso. "
+                    "Abra o link compartilhado de uma galeria para se cadastrar."
+                ),
+            )
+        try:
+            with db.begin_nested():
+                client = Client(
+                    full_name=challenge.client_name,
+                    phone_e164=challenge.subject,
+                )
+                db.add(client)
+                db.flush()
+        except IntegrityError:
+            client = db.scalar(select(Client).where(Client.phone_e164 == challenge.subject))
+            if not client:
+                raise
+        audit(db, "client.created_from_gallery_link", str(client.id))
     gallery_ids = list(db.scalars(select(DerivedGallery.id).where(
         DerivedGallery.client_id == client.id, DerivedGallery.access_enabled
     )))
@@ -682,10 +712,22 @@ def client_verify(
             ParentGalleryRegistration.client_id == client.id,
         ))
         if not registration:
-            registration = ParentGalleryRegistration(
-                parent_gallery_id=challenge.parent_gallery_id, client_id=client.id, status="pending"
-            )
-            db.add(registration)
+            try:
+                with db.begin_nested():
+                    registration = ParentGalleryRegistration(
+                        parent_gallery_id=challenge.parent_gallery_id,
+                        client_id=client.id,
+                        status="pending",
+                    )
+                    db.add(registration)
+                    db.flush()
+            except IntegrityError:
+                registration = db.scalar(select(ParentGalleryRegistration).where(
+                    ParentGalleryRegistration.parent_gallery_id == challenge.parent_gallery_id,
+                    ParentGalleryRegistration.client_id == client.id,
+                ))
+                if not registration:
+                    raise
         audit(db, "parent_gallery.registration_completed", str(registration.id))
         private_gallery = db.scalar(select(DerivedGallery.id).where(
             DerivedGallery.parent_gallery_id == challenge.parent_gallery_id,

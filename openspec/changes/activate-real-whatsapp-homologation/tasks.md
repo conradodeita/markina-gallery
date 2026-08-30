@@ -19,6 +19,8 @@
 - [x] 3.2 Migrar notificações de pagamento já especificadas para a outbox genérica, preservando destinatários verificados, templates, decisão financeira, idempotência, reenfileiramento e histórico; verificar os cenários atuais e uma migration com registros preexistentes.
 - [x] 3.3 Atualizar o worker para prioridade de OTP, validade, backoff, estados de entrega e retomada segura após reinício; verificar concorrência entre workers, crash durante processamento e ausência de mensagem duplicada.
 - [x] 3.4 Expor diagnóstico sanitizado de falhas e desconexão na operação administrativa existente sem retornar telefone completo, corpo, chave ou sessão; verificar autorização e payloads de erro com testes de API.
+- [x] 3.5 Persistir o nome normalizado no desafio e implementar primeiro cadastro somente após OTP iniciado por link não listado de galeria-fonte ativa; verificar cliente novo, cliente existente, vínculo idempotente, contexto desativado, entrada direta sem cadastro/sessão e ausência de acesso ao acervo-fonte.
+  - Evidência em 2026-08-30: `test_auth.py` cobre conta criada somente após OTP com galeria-fonte ativa, normalização do nome, vínculo pendente idempotente, cliente existente sem galeria, contexto desativado e entrada direta sem `Client`/`AuthSession`; `test_derived_galleries.py` preserva troca de telefone e vínculo existente; 14 cenários focados passaram. A migration `20260830_0017` teve upgrade, downgrade e novo upgrade aprovados sobre base sintética com preservação da outbox.
 
 ## 4. Configuração administrativa do WhatsApp
 
@@ -28,6 +30,8 @@
 - [x] 4.3 Bloquear visualmente a promessa de canal pronto enquanto conexão e identidade não coincidirem e explicar que o número precisa ser pareado; verificar os estados sandbox, pendente, conectando, pronto, divergente e desconectado em desktop e smartphone.
 - [x] 4.4 Preparar o telefone do login de cliente para o padrão móvel brasileiro com prefixo `+55` visível, máscara de DDD+nono dígito e envio E.164; verificar digitação, colagem com/sem país, número incompleto, ausência do `9`, troca de contexto e payload do desafio em testes de componente.
   - Evidência em 2026-08-30: `auth-entry.test.tsx` valida prefixo fixo, máscara, payload `+55DD9XXXXXXXX`, colagem com/sem país, bloqueio de dez dígitos ou móvel sem `9` e limpeza na troca de contexto; suíte frontend 62/62, typecheck e build aprovados, lint com zero erros e apenas 16 avisos preexistentes.
+- [x] 4.5 Exibir após OTP válido a negativa específica de primeiro acesso direto sem confundi-la com código expirado, preservando a mensagem neutra antes da prova de posse e o redirecionamento retornado pelo backend; verificar os três caminhos em teste de componente.
+  - Evidência em 2026-08-30: `auth-entry.test.tsx` diferencia a negativa `403` pós-posse, o erro neutro de OTP `401` e o destino autorizado retornado pelo backend; 10/10 testes do componente passaram.
 
 ## 5. Infraestrutura e operação isoladas
 
@@ -43,6 +47,7 @@
   - Evidência em 2026-08-30: `npm test -- --maxWorkers=1` — 57 aprovados; `npx tsc --noEmit` e `npm run build` — aprovados; `npm run lint` — 0 erros e 16 avisos preexistentes fora desta change.
   - Evidência em 2026-08-30: migration testada em upgrade/downgrade e banco sintético levado ao head `20260830_0016`; Compose base e perfil `whatsapp-real` validados com `config --quiet`; testes shell/policy do deploy aprovados.
   - Evidência em 2026-08-30: gitleaks sem achados no histórico de 106 commits, no diff e nos arquivos novos; `openspec validate --all --strict` — 22 itens aprovados.
+  - Revalidação em 2026-08-30 após o cadastro condicionado ao link: backend 119 aprovados e 1 ignorado; frontend 65/65, typecheck e build aprovados; lint frontend com zero erros e os mesmos 16 avisos preexistentes; Ruff aprovado nos arquivos alterados e OpenSpec da change aprovado em modo estrito. O Ruff global continua apontando 12 violações preexistentes em migrations antigas e `migrations/env.py`, sem alteração nesta task.
 - [x] 6.2 Apresentar antes do deploy o inventário Markina, consumo estimado, serviços/volumes novos, confirmação de nenhuma porta pública e plano de impacto zero/rollback; aguardar autorização humana explícita sem bloquear correções locais independentes.
   - Evidência em 2026-08-30: inventário apresentado e deploy explicitamente autorizado pelo proprietário; a autorização não inclui pareamento, exclusão de volumes ou alteração de recursos externos ao projeto Markina.
 - [x] 6.3 Após autorização, publicar pelo fluxo protegido, confirmar SHA, migrations, healthchecks e que o canal permanece sem efeitos externos até o pareamento; não marcar concluída sem evidência do deployment.

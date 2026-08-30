@@ -549,6 +549,7 @@ class AuthChallenge(Base):
     resend_count: Mapped[int] = mapped_column(Integer, default=0)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     parent_gallery_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    client_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class AuthSession(Base):

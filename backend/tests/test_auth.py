@@ -10,10 +10,12 @@ from app.auth import (
     AdminUser,
     AuditEvent,
     AuthChallenge,
+    AuthSession,
     Base,
     Client,
     DerivedGallery,
     ParentGallery,
+    ParentGalleryRegistration,
     SessionLocal,
     engine,
     now,
@@ -105,6 +107,125 @@ def test_client_multiple_galleries_and_used_or_expired_otp(client):
         ).status_code
         == 401
     )
+
+
+def test_existing_client_without_gallery_redirects_to_empty_library(client):
+    with SessionLocal() as db:
+        db.add(Client(full_name="Responsável sem galeria", phone_e164="+5511987654321"))
+        db.commit()
+    challenge = client.post(
+        "/auth/client/challenge",
+        json={"full_name": "Responsável sem galeria", "phone": "+5511987654321"},
+    ).json()["challenge_id"]
+    otp_for(challenge)
+
+    response = client.post(
+        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"destination": "/library"}
+
+
+def test_unknown_phone_without_gallery_link_is_not_registered(client):
+    challenge = client.post(
+        "/auth/client/challenge",
+        json={"full_name": "Pessoa sem convite", "phone": "+5511976543210"},
+    ).json()["challenge_id"]
+    otp_for(challenge)
+
+    response = client.post(
+        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "Este número ainda não possui acesso. "
+        "Abra o link compartilhado de uma galeria para se cadastrar."
+    )
+    assert "markina_session" not in response.cookies
+    with SessionLocal() as db:
+        stored_challenge = db.get(AuthChallenge, UUID(challenge))
+        assert stored_challenge.used_at is not None
+        assert stored_challenge.client_name == "Pessoa sem convite"
+        assert db.scalar(select(Client).where(Client.phone_e164 == "+5511976543210")) is None
+        assert db.scalar(select(AuthSession).where(AuthSession.role == "client")) is None
+
+
+def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation(client):
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento protegido")
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+    payload = {
+        "full_name": "  Nova   Responsável  ",
+        "phone": "+5511965432109",
+        "parent_gallery_id": str(parent_id),
+    }
+    challenge = client.post("/auth/client/challenge", json=payload).json()["challenge_id"]
+    with SessionLocal() as db:
+        assert db.scalar(select(Client).where(Client.phone_e164 == payload["phone"])) is None
+    otp_for(challenge)
+
+    response = client.post(
+        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"destination": "/library?registration=pending"}
+    assert client.get(f"/gallery/{parent_id}").status_code == 403
+    client.cookies.clear()
+
+    second = client.post("/auth/client/challenge", json=payload).json()["challenge_id"]
+    otp_for(second)
+    assert client.post(
+        "/auth/client/verify", json={"challenge_id": second, "code": "123456"}
+    ).json() == {"destination": "/library?registration=pending"}
+
+    with SessionLocal() as db:
+        registered = db.scalar(select(Client).where(Client.phone_e164 == payload["phone"]))
+        assert registered.full_name == "Nova Responsável"
+        registrations = list(
+            db.scalars(
+                select(ParentGalleryRegistration).where(
+                    ParentGalleryRegistration.parent_gallery_id == parent_id,
+                    ParentGalleryRegistration.client_id == registered.id,
+                )
+            )
+        )
+        assert len(registrations) == 1
+        assert registrations[0].status == "pending"
+
+
+def test_disabled_gallery_link_cannot_create_client_after_otp(client):
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento temporário")
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+    challenge = client.post(
+        "/auth/client/challenge",
+        json={
+            "full_name": "Pessoa convidada",
+            "phone": "+5511954321098",
+            "parent_gallery_id": str(parent_id),
+        },
+    ).json()["challenge_id"]
+    otp_for(challenge)
+    with SessionLocal() as db:
+        db.get(ParentGallery, parent_id).active = False
+        db.commit()
+
+    response = client.post(
+        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    )
+
+    assert response.status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(Client).where(Client.phone_e164 == "+5511954321098")) is None
+        assert db.scalar(select(ParentGalleryRegistration)) is None
 
 
 def test_admin_requires_totp_and_client_cannot_enter_admin(client):
