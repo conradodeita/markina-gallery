@@ -85,6 +85,21 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
 fi
 grep -Fq 'serviço Markina não ficou saudável: api (unhealthy)' "$health_output"
 
+whatsapp_output="$(mktemp)"
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$whatsapp_output"' EXIT
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    compose() {
+      if [[ "$*" == "config --services" ]]; then printf "evolution-api\n"; return 0; fi
+      if [[ "$1" == "ps" ]]; then printf "container-%s\n" "$3"; return 0; fi
+      printf "compose %s\n" "$*"
+    }
+    docker() { [[ "$1" == "inspect" ]] && printf "healthy\n"; }
+    start_whatsapp_infrastructure_if_active
+  ' >"$whatsapp_output" 2>&1
+grep -Fq 'compose up -d evolution-db evolution-redis evolution-api' "$whatsapp_output"
+
 set +e
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ROLLBACK_LOG="$rollback_log" \
   bash -c '

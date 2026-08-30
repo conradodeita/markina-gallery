@@ -157,6 +157,30 @@ wait_for_health() {
   fi
 }
 
+whatsapp_real_is_active() {
+  compose config --services | grep -Fxq evolution-api
+}
+
+start_whatsapp_infrastructure_if_active() {
+  if ! whatsapp_real_is_active; then
+    echo "WhatsApp real inativo; sandbox preservado"
+    return 0
+  fi
+  compose up -d evolution-db evolution-redis evolution-api
+  local service container status attempt
+  for service in evolution-db evolution-redis evolution-api; do
+    container="$(compose ps -q "$service")"
+    [[ -n "$container" ]] || fail "serviço WhatsApp Markina ausente: $service"
+    status="unknown"
+    for attempt in $(seq 1 60); do
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
+      [[ "$status" == "healthy" ]] && break
+      sleep 2
+    done
+    [[ "$status" == "healthy" ]] || fail "serviço WhatsApp Markina não ficou saudável: $service ($status)"
+  done
+}
+
 rollback_code_if_safe() {
   local exit_code="$1"
   trap - ERR
@@ -192,6 +216,7 @@ main() {
   SHA_SWITCHED=1
   apply_target_migrations "$previous_revision"
 
+  start_whatsapp_infrastructure_if_active
   compose up -d --build --no-deps api web worker
   compose up -d --force-recreate --no-deps nginx
   wait_for_health

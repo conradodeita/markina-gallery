@@ -51,6 +51,9 @@ def main() -> int:
         SCRIPT,
     )
     require('compose up -d --build --no-deps api web worker', "recriação limitada de serviços", SCRIPT)
+    require('compose up -d evolution-db evolution-redis evolution-api', "infraestrutura WhatsApp interna e explícita", SCRIPT)
+    require('compose config --services | grep -Fxq evolution-api', "ativação do perfil WhatsApp sem ler segredos", SCRIPT)
+    require('start_whatsapp_infrastructure_if_active', "gate do provedor real antes dos workers", SCRIPT)
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
     require('rollback automático de código não é seguro após mudança de schema', "bloqueio de rollback de banco", SCRIPT)
     require('MARKINA_EXPECTED_REPOSITORY', "validação de origem Git", SCRIPT)

@@ -10,6 +10,7 @@ from app.auth import (
     AuditEvent,
     AuthSession,
     Base,
+    BrandingSettings,
     Client,
     DerivedGallery,
     DerivedGalleryPhoto,
@@ -17,6 +18,9 @@ from app.auth import (
     MediaDerivative,
     MediaJob,
     ParentGallery,
+    PaymentCommunication,
+    PaymentMessageTemplate,
+    PaymentNotificationOutbox,
     PhotoAsset,
     PhotoFolder,
     Role,
@@ -30,7 +34,8 @@ from app.auth import (
 )
 from app.main import app
 from app.media import enqueue_derivatives, generate_derivatives, watermark
-from app.worker import process_next_media_job
+from app.messaging import WhatsAppDeliveryError, WhatsAppDeliveryResult
+from app.worker import process_next_media_job, process_next_payment_notification
 
 
 @pytest.fixture(autouse=True)
@@ -83,8 +88,8 @@ def test_generates_idempotent_protected_derivatives_without_exif(tmp_path, monke
 
 def test_watermark_direction_does_not_rotate_photo():
     source = Image.new("RGB", (320, 180), color=(40, 60, 80))
-    gallery = ParentGallery(name="Evento", watermark_direction="diagonal")
-    rendered = watermark(source, gallery)
+    settings = BrandingSettings(watermark_direction="diagonal", watermark_font="serif")
+    rendered = watermark(source, settings)
     assert rendered.size == source.size
     assert rendered.mode == "RGB"
 
@@ -301,3 +306,160 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
         events = set(db.scalars(select(AuditEvent.event)))
         assert "media_preview.client_viewed" in events
         assert "media_preview.admin_viewed" in events
+
+
+def test_worker_sends_payment_outbox_once_in_sandbox() -> None:
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente Sandbox", phone_e164="+5511555554411")
+        parent = ParentGallery(name="Evento Sandbox")
+        db.add_all([client, parent])
+        db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Sandbox")
+        db.add(gallery)
+        db.flush()
+        order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
+        db.add(order)
+        db.flush()
+        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-a")
+        db.add(communication)
+        db.flush()
+        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-a")
+        db.add(outbox)
+        db.commit()
+        outbox_id = outbox.id
+    assert process_next_payment_notification() is True
+    assert process_next_payment_notification() is False
+    with SessionLocal() as db:
+        delivered = db.get(PaymentNotificationOutbox, outbox_id)
+        assert delivered.status == "sent"
+        assert delivered.attempts == 1
+
+
+def test_worker_retries_transient_payment_delivery_until_limit(monkeypatch) -> None:
+    class FailingProvider:
+        def send_transactional(self, phone_e164, message, *, idempotency_key):
+            del phone_e164, message, idempotency_key
+            raise WhatsAppDeliveryError("Provedor indisponível temporariamente.", transient=True)
+
+    monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("WHATSAPP_RETRY_BASE_SECONDS", "0")
+    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: FailingProvider())
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente Retentativa", phone_e164="+5511555554422")
+        parent = ParentGallery(name="Evento Retentativa")
+        db.add_all([client, parent])
+        db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Retentativa")
+        db.add(gallery)
+        db.flush()
+        order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
+        db.add(order)
+        db.flush()
+        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-b")
+        db.add(communication)
+        db.flush()
+        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-b")
+        db.add(outbox)
+        db.commit()
+        outbox_id = outbox.id
+
+    assert process_next_payment_notification() is True
+    with SessionLocal() as db:
+        first_attempt = db.get(PaymentNotificationOutbox, outbox_id)
+        assert first_attempt.status == "queued"
+        assert first_attempt.attempts == 1
+        assert first_attempt.last_error == "Provedor indisponível temporariamente."
+
+    assert process_next_payment_notification() is True
+    assert process_next_payment_notification() is False
+    with SessionLocal() as db:
+        exhausted = db.get(PaymentNotificationOutbox, outbox_id)
+        assert exhausted.status == "failed"
+        assert exhausted.attempts == 2
+
+
+def test_worker_renders_controlled_template_without_financial_payload(monkeypatch) -> None:
+    sent: list[tuple[str, str, str]] = []
+
+    class RecordingProvider:
+        def send_transactional(self, phone_e164, message, *, idempotency_key):
+            sent.append((phone_e164, message, idempotency_key))
+            return WhatsAppDeliveryResult(
+                external_message_id="synthetic-template-message",
+                recipient_phone_e164=phone_e164,
+                provider_status="accepted",
+            )
+
+    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente Template", phone_e164="+5511555554433")
+        parent = ParentGallery(name="Evento Template")
+        db.add_all([client, parent])
+        db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Template")
+        db.add(gallery)
+        db.flush()
+        order = SaleOrder(
+            derived_gallery_id=gallery.id,
+            client_id=client.id,
+            payment_status="pending",
+            total_cents=100,
+            client_name_snapshot=client.full_name,
+            client_phone_snapshot=client.phone_e164,
+            pix_copy_paste_snapshot="dado-bancario-nao-enviar",
+        )
+        db.add(order)
+        db.flush()
+        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-c")
+        db.add(communication)
+        db.flush()
+        db.add(PaymentMessageTemplate(kind="confirmed", body="Olá {{cliente}}, pedido {{pedido}} da {{galeria}} confirmado."))
+        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-c")
+        db.add(outbox)
+        db.commit()
+
+    assert process_next_payment_notification() is True
+    assert len(sent) == 1
+    assert sent[0][0] == "+5511555554433"
+    assert "Cliente Template" in sent[0][1]
+    assert "Galeria Template" in sent[0][1]
+    assert "dado-bancario-nao-enviar" not in sent[0][1]
+    assert sent[0][2] == "box-c"
+
+
+def test_worker_blocks_unrelated_payment_recipient_without_sending(monkeypatch, capsys) -> None:
+    sent: list[str] = []
+
+    class RecordingProvider:
+        def send_transactional(self, phone_e164, message, *, idempotency_key):
+            del message, idempotency_key
+            sent.append(phone_e164)
+
+    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente Destino", phone_e164="+5511555554499")
+        parent = ParentGallery(name="Evento Destino")
+        db.add_all([client, parent])
+        db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Destino")
+        db.add(gallery)
+        db.flush()
+        order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100, client_phone_snapshot=client.phone_e164)
+        db.add(order)
+        db.flush()
+        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-d")
+        db.add(communication)
+        db.flush()
+        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone="+5511555554500", template_kind="confirmed", idempotency_key="box-d")
+        db.add(outbox)
+        db.commit()
+        outbox_id = outbox.id
+
+    assert process_next_payment_notification() is True
+    assert sent == []
+    with SessionLocal() as db:
+        blocked = db.get(PaymentNotificationOutbox, outbox_id)
+        assert blocked.status == "failed"
+        assert blocked.last_error == "Configuração do provedor indisponível."
+    captured = capsys.readouterr()
+    assert "+5511555554500" not in captured.out + captured.err

@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { SystemState } from "../../ui-kit";
+import WhatsAppPanel from "./whatsapp-panel";
 
 type Branding = {
   login_title: string;
@@ -166,6 +167,7 @@ export default function AdminSettingsPage() {
       <p className="eyebrow">Markina Gallery · Fotógrafo</p>
       <h1>Configurações</h1>
       <p className="intro">Personalize a mensagem que clientes e fotógrafos encontram antes de entrar. Os textos são simples, sem HTML ou scripts.</p>
+      <WhatsAppPanel />
       <form className="gallery-editor-panel gallery-settings-form" onSubmit={save}>
         <label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label>
         <label>Texto introdutório<textarea name="login_intro" defaultValue={settings.login_intro} maxLength={300} rows={3} required /></label>

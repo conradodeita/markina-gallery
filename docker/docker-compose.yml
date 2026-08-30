@@ -62,9 +62,13 @@ services:
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
       WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
       WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      WHATSAPP_OTP_ENCRYPTION_KEY: ${WHATSAPP_OTP_ENCRYPTION_KEY:-}
       WHATSAPP_PHOTOGRAPHER_PHONE_E164: ${WHATSAPP_PHOTOGRAPHER_PHONE_E164:-}
       WHATSAPP_MAX_ATTEMPTS: ${WHATSAPP_MAX_ATTEMPTS:-3}
       WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-10}
+      WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS: ${WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS:-300}
       MEDIA_SOURCE_ROOT: /var/lib/markina/source
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
       MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
@@ -140,6 +144,100 @@ services:
     networks:
       - internal
 
+  evolution-api:
+    profiles: ["whatsapp-real"]
+    image: evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      SERVER_NAME: markina-evolution
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      SERVER_URL: http://evolution-api:8080
+      DEL_INSTANCE: "false"
+      AUTHENTICATION_API_KEY: ${WHATSAPP_API_KEY:-}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "false"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_POSTGRES_USER:-markina_evolution}:${EVOLUTION_POSTGRES_PASSWORD:-}@evolution-db:5432/${EVOLUTION_POSTGRES_DB:-markina_evolution}?schema=evolution_api
+      DATABASE_CONNECTION_CLIENT_NAME: markina_gallery_evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      DATABASE_DELETE_MESSAGE: "true"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/0
+      CACHE_REDIS_PREFIX_KEY: markina_evolution
+      CACHE_REDIS_SAVE_INSTANCES: "true"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPDATE: "true"
+      WEBHOOK_EVENTS_SEND_MESSAGE_UPDATE: "true"
+      WEBHOOK_EVENTS_CONNECTION_UPDATE: "true"
+      TELEMETRY_ENABLED: "false"
+      LOG_LEVEL: ERROR,WARN
+      LOG_COLOR: "false"
+      QRCODE_LIMIT: 10
+    volumes:
+      - evolution-instances:/evolution/instances
+    depends_on:
+      evolution-db:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 0.75
+    networks:
+      - internal
+
+  evolution-db:
+    profiles: ["whatsapp-real"]
+    image: postgres:15-alpine@sha256:fe0737ba566a2c5b2a28f34433c0a423261900ec17b9bf7ad115e1aae7e57f1b
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${EVOLUTION_POSTGRES_USER:-markina_evolution}
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${EVOLUTION_POSTGRES_DB:-markina_evolution}
+    command: ["postgres", "-c", "max_connections=100", "-c", "listen_addresses=*"]
+    volumes:
+      - evolution-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EVOLUTION_POSTGRES_USER:-markina_evolution} -d ${EVOLUTION_POSTGRES_DB:-markina_evolution}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    cpus: 0.50
+    networks:
+      - internal
+
+  evolution-redis:
+    profiles: ["whatsapp-real"]
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - evolution-redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - internal
+
   worker:
     build: ../backend
     command: ["python", "-m", "app.worker"]
@@ -154,9 +252,13 @@ services:
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
       WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
       WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      WHATSAPP_OTP_ENCRYPTION_KEY: ${WHATSAPP_OTP_ENCRYPTION_KEY:-}
       WHATSAPP_PHOTOGRAPHER_PHONE_E164: ${WHATSAPP_PHOTOGRAPHER_PHONE_E164:-}
       WHATSAPP_MAX_ATTEMPTS: ${WHATSAPP_MAX_ATTEMPTS:-3}
       WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-10}
+      WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS: ${WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS:-300}
     volumes:
       - media-source:/var/lib/markina/source
       - media-derivatives:/var/lib/markina/derivatives
@@ -177,6 +279,9 @@ volumes:
   redisdata:
   media-source:
   media-derivatives:
+  evolution-instances:
+  evolution-pgdata:
+  evolution-redisdata:
 
 networks:
   internal:

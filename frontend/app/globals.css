@@ -238,5 +238,50 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
   .protection-settings-save { width:100%; }
 }
 
+/* Canal WhatsApp: identidade explícita, prontidão conservadora e pareamento efêmero. */
+.whatsapp-settings { display:grid; gap:20px; }
+.whatsapp-settings-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
+.whatsapp-settings-heading h2 { margin:4px 0 0; }
+.whatsapp-status { flex:0 0 auto; padding:7px 11px; border:1px solid #c9c9c9; border-radius:999px; background:#ededed; color:#3e3e3e; font-size:.78rem; font-weight:850; }
+.whatsapp-status--ready { border-color:#8ebc9a; background:#edf7ef; color:#255c32; }
+.whatsapp-status--mismatch,.whatsapp-status--error,.whatsapp-status--disconnected { border-color:#d5a2a2; background:#fff1f1; color:#822828; }
+.whatsapp-overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; overflow:hidden; border:1px solid #d7d7d7; border-radius:14px; background:#d7d7d7; }
+.whatsapp-overview > div { display:grid; gap:5px; min-width:0; padding:15px; background:#f8f8f8; }
+.whatsapp-overview span { color:#696969; font-size:.76rem; font-weight:750; text-transform:uppercase; letter-spacing:.04em; }
+.whatsapp-overview strong { overflow:hidden; color:#202020; font-size:.95rem; text-overflow:ellipsis; }
+.whatsapp-readiness { display:grid; gap:5px; padding:15px 16px; border:1px solid #cecece; border-left:5px solid #696969; border-radius:12px; background:#f3f3f3; }
+.whatsapp-readiness span { color:#5d5d5d; line-height:1.5; }
+.whatsapp-readiness--ready { border-left-color:#347849; background:#f1f8f3; }
+.whatsapp-readiness--mismatch,.whatsapp-readiness--error,.whatsapp-readiness--disconnected { border-left-color:#9c3030; background:#fff4f4; }
+.whatsapp-actions { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; align-items:end; padding:18px; border:1px solid #d8d8d8; border-radius:14px; background:#f8f8f8; }
+.whatsapp-phone-form { display:grid; gap:7px; min-width:0; }
+.whatsapp-phone-form label { font-weight:800; }
+.whatsapp-phone-form > div { display:flex; gap:9px; }
+.whatsapp-phone-form input { width:100%; min-height:44px; padding:10px 12px; border:1px solid #c8c8c8; border-radius:9px; background:#fff; color:#171717; font:inherit; }
+.whatsapp-phone-form small { color:#666; }
+.whatsapp-action-buttons { display:flex; flex-wrap:wrap; gap:9px; }
+.whatsapp-action-buttons button,.whatsapp-phone-form button,.whatsapp-pairing button { min-height:44px; padding:10px 14px; border-radius:9px; font-weight:800; }
+.whatsapp-pairing { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; align-items:center; padding:20px; border:1px solid #bdbdbd; border-radius:16px; background:#ededed; }
+.whatsapp-pairing h3 { margin:4px 0 7px; }
+.whatsapp-pairing p { margin:0; color:#565656; line-height:1.5; }
+.whatsapp-pairing-qr { grid-row:1/3; grid-column:2; width:min(240px,100%); height:auto; padding:8px; border:1px solid #bdbdbd; border-radius:12px; background:#fff; }
+.whatsapp-pairing-code { display:grid; gap:5px; justify-self:start; padding:11px 14px; border-radius:9px; background:#fff; }
+.whatsapp-pairing-code span { font-size:.75rem; font-weight:750; text-transform:uppercase; }
+.whatsapp-pairing-code strong { color:#171717; font-size:1.25rem; letter-spacing:.16em; }
+.whatsapp-pairing > button { justify-self:start; }
+@media (max-width:860px) {
+  .whatsapp-overview { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .whatsapp-actions { grid-template-columns:1fr; align-items:start; }
+}
+@media (max-width:620px) {
+  .whatsapp-settings-heading { display:grid; }
+  .whatsapp-status { justify-self:start; }
+  .whatsapp-overview { grid-template-columns:1fr; }
+  .whatsapp-phone-form > div,.whatsapp-action-buttons { align-items:stretch; flex-direction:column; }
+  .whatsapp-phone-form button,.whatsapp-action-buttons button { width:100%; }
+  .whatsapp-pairing { grid-template-columns:1fr; }
+  .whatsapp-pairing-qr { grid-row:auto; grid-column:auto; justify-self:center; }
+}
+
 /* Painéis de personalização: controles limitados e prévia protegida. */
 .gallery-visual-settings { max-width:none; }.gallery-customization-layout { display:grid; grid-column:1/-1; grid-template-columns:minmax(0,1.3fr) minmax(260px,.7fr); gap:18px; align-items:start; }.gallery-customization-panels { display:grid; gap:12px; }.gallery-customization-panel { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; min-width:0; padding:16px; border:1px solid #d9ded8; border-radius:14px; background:#fff; }.gallery-customization-panel legend { padding:0 6px; color:#26362a; font-size:1.05rem; font-weight:800; }.gallery-customization-panel > p { grid-column:1/-1; margin:0; color:#657166; font-size:.9rem; line-height:1.45; }.gallery-customization-panel label { display:grid; gap:6px; font-size:.9rem; font-weight:700; }.gallery-customization-preview { position:sticky; top:18px; display:grid; gap:10px; padding:15px; border:1px solid #d9ded8; border-radius:14px; background:#f6f8f4; }.gallery-customization-preview .eyebrow { margin:0; }.gallery-customization-preview-image { position:relative; overflow:hidden; min-height:240px; border-radius:10px; background:#111; }.gallery-customization-preview-image img { display:block; width:100%; min-height:240px; object-fit:contain; }.gallery-customization-preview-image strong { position:absolute; z-index:2; max-width:85%; padding:8px; text-shadow:0 2px 10px #000; }.gallery-customization-preview-image strong.title-top-left,.gallery-customization-preview-image strong.title-top-center,.gallery-customization-preview-image strong.title-top-right { top:8px; }.gallery-customization-preview-image strong.title-middle-left,.gallery-customization-preview-image strong.title-middle-center,.gallery-customization-preview-image strong.title-middle-right { top:50%; transform:translateY(-50%); }.gallery-customization-preview-image strong.title-bottom-left,.gallery-customization-preview-image strong.title-bottom-center,.gallery-customization-preview-image strong.title-bottom-right { bottom:8px; }.gallery-customization-preview-image strong.title-top-left,.gallery-customization-preview-image strong.title-middle-left,.gallery-customization-preview-image strong.title-bottom-left { left:8px; }.gallery-customization-preview-image strong.title-top-center,.gallery-customization-preview-image strong.title-middle-center,.gallery-customization-preview-image strong.title-bottom-center { left:50%; transform:translateX(-50%); text-align:center; }.gallery-customization-preview-image strong.title-middle-center { transform:translate(-50%,-50%); }.gallery-customization-preview-image strong.title-top-right,.gallery-customization-preview-image strong.title-middle-right,.gallery-customization-preview-image strong.title-bottom-right { right:8px; text-align:right; }.watermark-preview { position:absolute; z-index:2; left:50%; top:50%; display:block; width:max-content; max-width:88%; opacity:.8; text-shadow:0 2px 8px #000; transform:translate(-50%,-50%); white-space:nowrap; }.watermark-preview--vertical { transform:translate(-50%,-50%) rotate(-90deg); }.watermark-preview--diagonal { transform:translate(-50%,-50%) rotate(-26deg); }.gallery-customization-preview-empty span { font-size:.9rem; line-height:1.45; } @media (min-width:780px) { .gallery-presentation-grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; } } @media (min-width:1100px) { .gallery-presentation-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } } @media (max-width:700px) { .gallery-presentation-mode { flex-direction:column; }.gallery-presentation-title { padding:16px; }.gallery-presentation-title.title-top-center,.gallery-presentation-title.title-middle-center,.gallery-presentation-title.title-bottom-center { width:100%; }.gallery-customization-layout { grid-template-columns:1fr; }.gallery-customization-preview { position:static; }.gallery-customization-panel { grid-template-columns:1fr; }.gallery-customization-panel > p { grid-column:auto; } }
