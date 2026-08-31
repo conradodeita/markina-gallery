@@ -14,6 +14,8 @@ type AuthEntryProps = {
   navigate?: (destination: string) => void;
 };
 
+const defaultNavigate = (destination: string) => window.location.assign(destination);
+
 export function brazilPhoneDigits(value: string) {
   const digits = value.replace(/\D/g, "");
   return (digits.startsWith("55") && digits.length > 11
@@ -38,7 +40,7 @@ export function brazilMobileE164(value: string) {
 }
 
 export function AuthEntry({
-  navigate = (destination) => window.location.assign(destination),
+  navigate = defaultNavigate,
 }: AuthEntryProps = {}) {
   const [context, setContext] = useState<Context>("client");
   const [step, setStep] = useState<Step>("details");
@@ -47,12 +49,14 @@ export function AuthEntry({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [branding, setBranding] = useState(defaultBranding);
-  const [galleryId] = useState(() =>
-    typeof window === "undefined"
-      ? ""
-      : (new URLSearchParams(window.location.search).get("parent_gallery_id") ??
-        ""),
-  );
+  const [invitation] = useState(() => {
+    if (typeof window === "undefined") return { accessToken: "", returnTo: "" };
+    const params = new URLSearchParams(window.location.search);
+    return {
+      accessToken: params.get("access_token") ?? "",
+      returnTo: params.get("return_to") ?? "",
+    };
+  });
   useEffect(() => {
     fetch("/api/branding")
       .then(async (response) => {
@@ -74,6 +78,28 @@ export function AuthEntry({
     if (!icon) { icon = document.createElement("link"); icon.rel = "apple-touch-icon"; document.head.appendChild(icon); }
     icon.href = `/api${branding.app_icon_url}`;
   }, [branding.app_icon_url]);
+  useEffect(() => {
+    if (!invitation.accessToken) return;
+    let active = true;
+    fetch("/api/auth/destination", { credentials: "same-origin" })
+      .then(async (sessionResponse) => {
+        if (!active || !sessionResponse.ok) return;
+        const accessResponse = await fetch("/api/public-gallery/access", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            access_token: invitation.accessToken,
+            ...(invitation.returnTo ? { return_to: invitation.returnTo } : {}),
+          }),
+        });
+        if (!accessResponse.ok) return;
+        const result = await accessResponse.json();
+        if (active) navigate(result.destination);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [invitation, navigate]);
   async function requestCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -97,7 +123,8 @@ export function AuthEntry({
               ? {
                   full_name: data.get("fullName"),
                   phone: clientPhoneE164,
-                  ...(galleryId ? { parent_gallery_id: galleryId } : {}),
+                  ...(invitation.accessToken ? { access_token: invitation.accessToken } : {}),
+                  ...(invitation.returnTo ? { return_to: invitation.returnTo } : {}),
                 }
               : { email: data.get("email"), password: data.get("password") },
           ),

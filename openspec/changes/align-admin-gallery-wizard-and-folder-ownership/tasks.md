@@ -38,7 +38,7 @@
 ## 6. Documentação e preparação de homologação
 
 - [x] 6.1 Atualizar documentação operacional e de arquitetura com a hierarquia galeria-mãe → pasta → foto → referências derivadas e verificar que não reste orientação de upload avulso.
-- [ ] 6.2 Manter estes artefatos e checkboxes sincronizados durante a aplicação e validar a mudança com OpenSpec em modo estrito; verificar que proposal, specs, design e implementação permaneçam coerentes.
+- [x] 6.2 Manter estes artefatos e checkboxes sincronizados durante a aplicação e validar a mudança com OpenSpec em modo estrito; verificar que proposal, specs, design e implementação permaneçam coerentes.
 - [x] 6.3 Preparar roteiro de validação humana das cinco etapas e critérios de aceite para o fotógrafo, sem arquivar a mudança antes da aprovação visual; verificar que o roteiro usa somente dados sintéticos.
 - [x] 6.4 Antes de qualquer homologação, apresentar inventário do host compartilhado, backup exclusivo do Markina, comandos Compose explicitamente limitados ao projeto e plano de impacto zero; verificar aprovação explícita antes de executar deploy.
 
@@ -48,3 +48,7 @@
 - [x] 7.2 Tornar Detalhes uma etapa funcional para capa, título e organização da galeria, retirando esses controles de Imagens; verificar carregamento, persistência, erro e retomada sem duplicar dados. Evidência: o contrato marca `visual_customization` e Detalhes como disponíveis, `/details` devolve capacidades e configuração persistida, o PATCH existente continua como fonte única; teste backend direcionado e 12 testes do editor passaram, assim como ruff e eslint sem erros em 2026-08-30.
 - [x] 7.3 Reorganizar o shell, painéis e ações administrativos com superfícies neutras e espaçamento uniforme, corrigindo texto/contraste dos botões e separando os três blocos de Clientes; verificar desktop, smartphone, teclado e estados vazios. Evidência: tokens e regras responsivas cobrem o shell, stepper, cards, botões normais/desabilitados e empilhamento abaixo de 760 px; Clientes usa três regiões nomeadas e ação textual. Os 16 testes direcionados e eslint sem erros passaram em 2026-08-30.
 - [x] 7.4 Atualizar os testes frontend do wizard, navegação e Clientes; executar lint, typecheck, testes, build e validação OpenSpec estrita antes de nova revisão humana em homologação. Evidência de 2026-08-30: ruff passou; backend `79 passed, 1 skipped`; frontend lint sem erros, TypeScript aprovado, `46 passed` e build Next.js 16.3.2 concluído. A validação estrita da change passou após a reconciliação.
+
+## Registro de supersession — 2026-08-31
+
+- A implementação estrutural desta change não deve ser reaplicada para restaurar terminologia ou regras antigas. `improve-gallery-and-client-data-lifecycle` passa a reger modos de acesso, derivação sob demanda, disponibilidade versus seleção, navegação pública/privada autorizada e exclusão integral. A task 5.3 continua dependendo somente de revisão visual humana e não bloqueia o código independente da change sucessora.

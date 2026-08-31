@@ -13,7 +13,7 @@ export function MarkinaLink({ href, children, variant = "primary", className = "
   return <Link className={`mk-button mk-button--${variant} ${className}`} href={href}>{children}</Link>;
 }
 
-export function StatusBadge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "success" | "warning" | "danger" }) {
+export function StatusBadge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "success" | "warning" | "danger" | "dark" }) {
   return <span className={`mk-badge mk-badge--${tone}`}>{children}</span>;
 }
 

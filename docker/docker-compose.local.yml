@@ -1,0 +1,5 @@
+# Override exclusivamente local: isola o proxy da Markina de redes externas.
+networks:
+  npm:
+    name: markina-gallery-local-npm
+    external: false

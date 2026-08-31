@@ -7,6 +7,7 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryPhoto,
+    ParentGallery,
     PhotoAsset,
     PhotoFolder,
     PhotoSelection,
@@ -48,11 +49,17 @@ def create_pending_checkout(
     if not selections:
         raise CheckoutError("A seleção está vazia.")
     photo_ids = {selection.photo_asset_id for selection in selections}
-    photos = list(db.scalars(select(PhotoAsset).join(DerivedGalleryPhoto).join(PhotoFolder).where(
-        DerivedGalleryPhoto.derived_gallery_id == gallery.id,
-        PhotoAsset.id.in_(photo_ids),
-        PhotoFolder.status == "released",
-    )))
+    photos = list(db.scalars(
+        select(PhotoAsset)
+        .join(DerivedGalleryPhoto)
+        .join(PhotoFolder)
+        .where(
+            DerivedGalleryPhoto.derived_gallery_id == gallery.id,
+            PhotoAsset.id.in_(photo_ids),
+            PhotoFolder.status == "released",
+        )
+        .distinct()
+    ))
     if {photo.id for photo in photos} != photo_ids:
         raise CheckoutError("A seleção contém fotos indisponíveis.")
     already_confirmed = db.scalar(
@@ -67,17 +74,28 @@ def create_pending_checkout(
     )
     if already_confirmed:
         raise CheckoutError("A seleção contém fotos já confirmadas para esta cliente.")
-    rules = list(db.scalars(select(PriceRule).where(PriceRule.derived_gallery_id == gallery.id)))
+    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    if not parent:
+        raise CheckoutError("A Galeria pública desta seleção não está disponível.")
+    rules = list(
+        db.scalars(
+            select(PriceRule).where(PriceRule.parent_gallery_id == parent.id)
+        )
+    )
     try:
         tier, total = quote(len(photos), [PriceTier(rule.minimum_quantity, rule.maximum_quantity, rule.unit_price_cents) for rule in rules])
     except PricingRuleError as exc:
         raise CheckoutError("As regras de preço desta galeria não estão prontas.") from exc
-    settings = db.scalar(select(PixCheckoutSettings).where(PixCheckoutSettings.derived_gallery_id == gallery.id))
+    settings = db.scalar(
+        select(PixCheckoutSettings).where(
+            PixCheckoutSettings.parent_gallery_id == parent.id
+        )
+    )
     order = SaleOrder(
         derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=total,
         client_name_snapshot=client.full_name, client_phone_snapshot=client.phone_e164, checkout_key=checkout_key,
         price_rule_snapshot={"minimum_quantity": tier.minimum_quantity, "maximum_quantity": tier.maximum_quantity, "unit_price_cents": tier.unit_price_cents},
-        sales_message_snapshot=gallery.custom_message, pix_copy_paste_snapshot=settings.copy_paste if settings else None,
+        sales_message_snapshot=parent.sales_message, pix_copy_paste_snapshot=settings.copy_paste if settings else None,
         pix_qr_code_snapshot=settings.qr_code_payload if settings else None,
         pix_instructions_snapshot=settings.instructions if settings else None,
     )

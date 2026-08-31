@@ -1,0 +1,6 @@
+{
+  "name": "Markina Gallery",
+  "description": "Galeria privada e editorial de fotografia de casamentos com seleção de fotos, downloads em alta resolução e impressão Fine Art.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

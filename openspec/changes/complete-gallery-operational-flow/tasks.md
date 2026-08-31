@@ -27,3 +27,11 @@
 - [x] 4.3 Executar ruff, testes backend, lint, testes e build frontend; registrar resultados e manter falhas abertas até correção.
 - [ ] 4.4 Revisar visualmente em desktop e smartphone com dados sintéticos, seguindo as diretrizes próprias da Markina; verificar legibilidade, hierarquia, modal, confirmações e estados vazios.
 - [x] 4.5 Atualizar o roteiro de homologação e fazer push/deploy automático somente após a suíte verde, usando backup e Compose estritamente limitados ao Markina; verificar saúde, migration e URLs do ambiente.
+
+## Registro de bloqueio — 2026-08-28
+
+- A revisão visual 4.4 permanece pendente. Os testes de componente e a interface local existem, mas a validação completa requer sessão administrativa autenticada com dados sintéticos em navegador. A inserção de senha e OTP, mesmo sintéticos, exige confirmação imediata no ambiente de revisão visual; não foi realizada nesta execução autônoma. Nenhuma conclusão visual foi inferida a partir dos testes automatizados.
+
+## Registro de supersession — 2026-08-31
+
+- A task 4.4 continua sendo revisão visual humana da entrega histórica. Regras de exclusão, vínculo e derivação desta change não devem ser reaplicadas: `improve-gallery-and-client-data-lifecycle` é a autoridade para o novo ciclo de vida e pode avançar em trabalho local independente.

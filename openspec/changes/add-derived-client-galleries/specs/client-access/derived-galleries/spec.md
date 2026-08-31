@@ -2,6 +2,8 @@
 
 Permitir que cada cliente revise, retome e compre apenas as fotos privadas que lhe foram destinadas a partir de um acervo-mãe do evento.
 
+> **Supersession:** este delta registra o comportamento inicialmente entregue. Configuração independente, persistência obrigatória e navegação exclusivamente privada foram supersedidas por `improve-gallery-and-client-data-lifecycle`; a implementação futura SHALL seguir a herança da Galeria pública, a derivação sob demanda e o histórico comercial independente.
+
 ## ADDED Requirements
 
 ### Requirement: Galeria derivada privada por cliente

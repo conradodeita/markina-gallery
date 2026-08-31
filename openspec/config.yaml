@@ -14,6 +14,9 @@ context: |
   Restrições: sem grade pública de evento coletivo, sem RAWs, sem servir prévias do Google Drive, sem automatizar criação de álbuns no Google Photos; busca facial apenas após spike validado; dados reais de crianças nunca em homologação; deploy zero-impact: esta máquina e o servidor Oracle executam outros projetos — nunca alterar containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de terceiros, nunca usar prunes ou `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`, e apresentar inventário + portas/subdomínio + plano de impacto zero para aprovação explícita antes de qualquer ação em homologação/produção.
   Domínios: auth, client-access, gallery-sales, media-storage, messaging, privacy-biometric, deployment-operations.
 
+  # Continuidade entre executores
+  Todo executor (humano ou qualquer IA) SHALL documentar o trabalho no OpenSpec. Antes de agir, deve ler o mandato, o roadmap, as diretrizes relevantes, as specs principais e as mudanças ativas. Toda nova funcionalidade ou alteração de comportamento SHALL ter change-id próprio com proposal, delta spec, design quando houver decisão técnica e tasks verificáveis antes do código. Durante a implementação, o executor SHALL manter tasks, testes e documentação sincronizados, registrar desvios e decisões, e nunca deixar comportamento implementado sem spec correspondente. Ao concluir, deve validar, sincronizar a spec principal e arquivar a mudança somente após revisão humana. Se não puder executar uma etapa, deve registrar o bloqueio no artefato e não inventar que ela foi concluída. O próximo executor deve conseguir continuar apenas lendo o repositório, sem depender do contexto de uma conversa anterior.
+
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
 # Example:
@@ -25,6 +28,12 @@ context: |
 #       - Break tasks into chunks of max 2 hours
 
 # Per-operation guidance (optional)
+operations:
+  apply:
+    guidance:
+      - Continue por todas as tasks acionáveis; um bloqueio individual não bloqueia a change.
+      - Investigue e tente corrigir falhas técnicas antes de escalar.
+      - Relatório de progresso não é condição de parada; pare somente quando não houver trabalho acionável seguro.
 # Add advisory guidance for how apply and archive work should be conducted.
 # This is separate from artifact rules above.
 # Example:

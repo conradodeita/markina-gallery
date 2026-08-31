@@ -9,6 +9,7 @@ import {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  window.history.replaceState({}, "", "/");
   document.head.querySelectorAll('link[data-branding-test]').forEach((element) => element.remove());
 });
 
@@ -182,6 +183,43 @@ describe("entrada com identidade configurável", () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith("/library?registration=pending"),
     );
+  });
+
+  it("preserva capability e retorno interno durante o OTP", async () => {
+    window.history.replaceState({}, "", "/?access_token=token-seguro-com-mais-de-32-caracteres&return_to=%2Fpublic-galleries%2Fpublic-1");
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/destination")) return Promise.resolve(new Response(null, { status: 401 }));
+      if (url.includes("/auth/client/challenge")) return Promise.resolve(new Response(JSON.stringify({ challenge_id: "challenge-link", message: "Código enviado." }), { status: 202 }));
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Pessoa convidada" } });
+    fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11987654321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/client/challenge",
+      expect.objectContaining({ body: JSON.stringify({ full_name: "Pessoa convidada", phone: "+5511987654321", access_token: "token-seguro-com-mais-de-32-caracteres", return_to: "/public-galleries/public-1" }) }),
+    ));
+  });
+
+  it("aplica o link automaticamente quando a cliente já está autenticada", async () => {
+    window.history.replaceState({}, "", "/?access_token=token-seguro-com-mais-de-32-caracteres");
+    const navigate = vi.fn();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/destination")) return Promise.resolve(new Response(JSON.stringify({ destination: "/library" }), { status: 200 }));
+      if (url.includes("/public-gallery/access")) return Promise.resolve(new Response(JSON.stringify({ destination: "/public-galleries/public-1" }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={navigate} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-gallery/access",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ access_token: "token-seguro-com-mais-de-32-caracteres" }) }),
+    ));
+    expect(navigate).toHaveBeenCalledWith("/public-galleries/public-1");
   });
 
   it("mantém a mensagem neutra para OTP inválido", async () => {

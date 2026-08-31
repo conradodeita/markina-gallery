@@ -13,14 +13,19 @@ from app.auth import (
     AuthSession,
     Base,
     Client,
+    ClientPhone,
     DerivedGallery,
     ParentGallery,
     ParentGalleryRegistration,
     SessionLocal,
+    WhatsAppDelivery,
+    cleanup_expired_client_otp_pii,
     engine,
     now,
     password_hasher,
+    pii_fingerprint,
 )
+from app.gallery_access import issue_gallery_capability
 from app.main import app
 from app.seed_admin import seed_admin
 
@@ -89,8 +94,12 @@ def test_client_multiple_galleries_and_used_or_expired_otp(client):
         db.flush()
         db.add_all(
             [
-                DerivedGallery(parent_gallery_id=first_parent.id, client_id=person.id, name="Privada 1"),
-                DerivedGallery(parent_gallery_id=second_parent.id, client_id=person.id, name="Privada 2"),
+                DerivedGallery(
+                    parent_gallery_id=first_parent.id, client_id=person.id, name="Privada 1"
+                ),
+                DerivedGallery(
+                    parent_gallery_id=second_parent.id, client_id=person.id, name="Privada 2"
+                ),
             ]
         )
         db.commit()
@@ -147,22 +156,39 @@ def test_unknown_phone_without_gallery_link_is_not_registered(client):
     with SessionLocal() as db:
         stored_challenge = db.get(AuthChallenge, UUID(challenge))
         assert stored_challenge.used_at is not None
-        assert stored_challenge.client_name == "Pessoa sem convite"
+        assert stored_challenge.client_name is None
+        assert stored_challenge.subject is None
+        assert stored_challenge.subject_fingerprint == pii_fingerprint("+5511976543210")
+        delivery = db.scalar(
+            select(WhatsAppDelivery).where(WhatsAppDelivery.source_id == challenge)
+        )
+        assert delivery.recipient_phone is None
+        assert delivery.recipient_fingerprint == stored_challenge.subject_fingerprint
+        assert delivery.encrypted_payload is None
+        audit_subjects = list(db.scalars(select(AuditEvent.subject)))
+        assert not any(
+            "+5511976543210" in subject or "Pessoa sem convite" in subject
+            for subject in audit_subjects
+        )
         assert db.scalar(select(Client).where(Client.phone_e164 == "+5511976543210")) is None
         assert db.scalar(select(AuthSession).where(AuthSession.role == "client")) is None
 
 
 def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation(client):
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento protegido")
+        parent = ParentGallery(name="Evento protegido", access_mode="standard")
         db.add(parent)
+        db.flush()
+        _, access_token = issue_gallery_capability(
+            db, parent_gallery_id=parent.id, scope="public_gallery"
+        )
         db.commit()
         parent_id = parent.id
 
     payload = {
         "full_name": "  Nova   Responsável  ",
         "phone": "+5511965432109",
-        "parent_gallery_id": str(parent_id),
+        "access_token": access_token,
     }
     challenge = client.post("/auth/client/challenge", json=payload).json()["challenge_id"]
     with SessionLocal() as db:
@@ -174,19 +200,39 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
     )
 
     assert response.status_code == 200
-    assert response.json() == {"destination": "/library?registration=pending"}
+    assert response.json() == {"destination": f"/public-galleries/{parent_id}"}
     assert client.get(f"/gallery/{parent_id}").status_code == 403
     client.cookies.clear()
 
-    second = client.post("/auth/client/challenge", json=payload).json()["challenge_id"]
+    second = client.post(
+        "/auth/client/challenge",
+        json={**payload, "full_name": "Nome divergente não deve substituir"},
+    ).json()["challenge_id"]
     otp_for(second)
     assert client.post(
         "/auth/client/verify", json={"challenge_id": second, "code": "123456"}
-    ).json() == {"destination": "/library?registration=pending"}
+    ).json() == {"destination": f"/public-galleries/{parent_id}"}
 
     with SessionLocal() as db:
         registered = db.scalar(select(Client).where(Client.phone_e164 == payload["phone"]))
         assert registered.full_name == "Nova Responsável"
+        assert (
+            db.scalar(
+                select(ClientPhone).where(ClientPhone.phone_e164 == payload["phone"])
+            ).client_id
+            == registered.id
+        )
+        assert (
+            len(list(db.scalars(select(Client).where(Client.phone_e164 == payload["phone"])))) == 1
+        )
+        consumed_challenges = list(
+            db.scalars(
+                select(AuthChallenge).where(AuthChallenge.id.in_([UUID(challenge), UUID(second)]))
+            )
+        )
+        assert all(
+            item.subject is None and item.client_name is None for item in consumed_challenges
+        )
         registrations = list(
             db.scalars(
                 select(ParentGalleryRegistration).where(
@@ -196,13 +242,17 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
             )
         )
         assert len(registrations) == 1
-        assert registrations[0].status == "pending"
+        assert registrations[0].status == "active"
 
 
 def test_disabled_gallery_link_cannot_create_client_after_otp(client):
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento temporário")
+        parent = ParentGallery(name="Evento temporário", access_mode="standard")
         db.add(parent)
+        db.flush()
+        _, access_token = issue_gallery_capability(
+            db, parent_gallery_id=parent.id, scope="public_gallery"
+        )
         db.commit()
         parent_id = parent.id
     challenge = client.post(
@@ -210,7 +260,7 @@ def test_disabled_gallery_link_cannot_create_client_after_otp(client):
         json={
             "full_name": "Pessoa convidada",
             "phone": "+5511954321098",
-            "parent_gallery_id": str(parent_id),
+            "access_token": access_token,
         },
     ).json()["challenge_id"]
     otp_for(challenge)
@@ -326,6 +376,121 @@ def test_otp_resend_expiration_and_rate_limit(client):
         ).status_code
         == 429
     )
+
+
+def test_legacy_active_challenge_backfills_fingerprint_on_resend(client):
+    response = client.post(
+        "/auth/client/challenge",
+        json={"full_name": "Cliente Legada", "phone": "+5511777777711"},
+    )
+    challenge_id = response.json()["challenge_id"]
+    with SessionLocal() as db:
+        challenge = db.get(AuthChallenge, UUID(challenge_id))
+        challenge.subject_fingerprint = None
+        delivery = db.scalar(
+            select(WhatsAppDelivery).where(WhatsAppDelivery.source_id == challenge_id)
+        )
+        delivery.recipient_fingerprint = None
+        db.commit()
+
+    assert (
+        client.post("/auth/client/resend", json={"challenge_id": challenge_id}).status_code == 202
+    )
+    with SessionLocal() as db:
+        challenge = db.get(AuthChallenge, UUID(challenge_id))
+        assert challenge.subject == "+5511777777711"
+        assert challenge.subject_fingerprint == pii_fingerprint("+5511777777711")
+        deliveries = list(
+            db.scalars(select(WhatsAppDelivery).where(WhatsAppDelivery.source_id == challenge_id))
+        )
+        assert deliveries[-1].recipient_fingerprint == challenge.subject_fingerprint
+
+
+def test_terminal_invalid_otp_attempt_minimizes_transient_pii(client):
+    challenge_id = client.post(
+        "/auth/client/challenge",
+        json={"full_name": "Cliente Tentativas", "phone": "+5511777777755"},
+    ).json()["challenge_id"]
+    for _ in range(5):
+        assert (
+            client.post(
+                "/auth/client/verify",
+                json={"challenge_id": challenge_id, "code": "000000"},
+            ).status_code
+            == 401
+        )
+    with SessionLocal() as db:
+        challenge = db.get(AuthChallenge, UUID(challenge_id))
+        assert challenge.attempts == 5
+        assert challenge.subject is None
+        assert challenge.client_name is None
+        delivery = db.scalar(
+            select(WhatsAppDelivery).where(WhatsAppDelivery.source_id == challenge_id)
+        )
+        assert delivery.recipient_phone is None
+
+
+def test_periodic_otp_cleanup_is_idempotent_and_preserves_usable_challenge(
+    monkeypatch,
+):
+    monkeypatch.setenv("AUTH_OTP_PII_RETENTION_MINUTES", "60")
+    instant = now()
+    with SessionLocal() as db:
+        old = AuthChallenge(
+            kind="client_otp",
+            subject="+5511777777722",
+            subject_fingerprint=pii_fingerprint("+5511777777722"),
+            client_name="Cliente Abandonada",
+            secret_hash="hash",
+            expires_at=instant - timedelta(minutes=61),
+        )
+        recent = AuthChallenge(
+            kind="client_otp",
+            subject="+5511777777733",
+            subject_fingerprint=pii_fingerprint("+5511777777733"),
+            client_name="Cliente Ainda Retida",
+            secret_hash="hash",
+            expires_at=instant - timedelta(minutes=30),
+        )
+        usable = AuthChallenge(
+            kind="client_otp",
+            subject="+5511777777744",
+            subject_fingerprint=pii_fingerprint("+5511777777744"),
+            client_name="Cliente Ativa",
+            secret_hash="hash",
+            expires_at=instant + timedelta(minutes=5),
+        )
+        db.add_all([old, recent, usable])
+        db.flush()
+        db.add(
+            WhatsAppDelivery(
+                kind="otp",
+                source_type="auth_challenge",
+                source_id=str(old.id),
+                recipient_phone=old.subject,
+                recipient_fingerprint=old.subject_fingerprint,
+                template_kind="client_otp",
+                idempotency_key=f"otp:{old.id}:0",
+                encrypted_payload="ciphertext-sintético",
+                expires_at=old.expires_at,
+                status="accepted",
+            )
+        )
+        db.commit()
+        old_id, recent_id, usable_id = old.id, recent.id, usable.id
+
+    with SessionLocal() as db:
+        assert cleanup_expired_client_otp_pii(db, current_time=instant) == 1
+        assert cleanup_expired_client_otp_pii(db, current_time=instant) == 0
+        assert db.get(AuthChallenge, old_id).subject is None
+        assert db.get(AuthChallenge, old_id).client_name is None
+        assert db.get(AuthChallenge, recent_id).subject == "+5511777777733"
+        assert db.get(AuthChallenge, usable_id).subject == "+5511777777744"
+        delivery = db.scalar(
+            select(WhatsAppDelivery).where(WhatsAppDelivery.source_id == str(old_id))
+        )
+        assert delivery.recipient_phone is None
+        assert delivery.encrypted_payload is None
 
 
 def test_production_cookie_is_secure_and_session_is_rotated(monkeypatch, client):

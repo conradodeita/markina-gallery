@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
-import { StatusBadge, SystemState } from "../../ui-kit";
+import { MarkinaLink, StatusBadge, SystemState } from "../../ui-kit";
 
 type ReviewPhoto = {
   id: string;
@@ -55,6 +55,7 @@ export default function GalleryPage() {
   const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
   const [activePhotoId, setActivePhotoId] = useState("");
   const [message, setMessage] = useState("");
+  const [closedGallery, setClosedGallery] = useState<{ publicGalleryUrl: string | null } | null>(null);
   const [filter, setFilter] = useState<"all" | "nova" | "visualizada mas não comprada" | "já comprada">("all");
   function load() {
     Promise.all([
@@ -142,6 +143,10 @@ export default function GalleryPage() {
         : "Não foi possível salvar esta alteração.",
     );
     if (response.ok) {
+      if (response.headers.get("X-Markina-Gallery-Closed") === "true") {
+        setClosedGallery({ publicGalleryUrl: response.headers.get("X-Markina-Public-Gallery-Url") });
+        return;
+      }
       load();
       loadCart();
     }
@@ -186,6 +191,10 @@ export default function GalleryPage() {
     });
     setMessage(response.ok ? "Foto removida do carrinho." : "Não foi possível remover esta foto do carrinho.");
     if (response.ok) {
+      if (response.headers.get("X-Markina-Gallery-Closed") === "true") {
+        setClosedGallery({ publicGalleryUrl: response.headers.get("X-Markina-Public-Gallery-Url") });
+        return;
+      }
       load();
       loadCart();
     }
@@ -219,6 +228,23 @@ export default function GalleryPage() {
     });
     if (response.ok) loadComments();
   }
+  if (closedGallery)
+    return (
+      <main className="admin-shell private-gallery-closed">
+        <SystemState
+          title="Esta galeria privada foi encerrada"
+          detail="Você removeu a última foto disponível. Seu cadastro e seu histórico de compras continuam preservados."
+        />
+        <div className="private-gallery-closed__actions">
+          {closedGallery.publicGalleryUrl ? (
+            <MarkinaLink href={closedGallery.publicGalleryUrl}>Voltar à Galeria pública</MarkinaLink>
+          ) : null}
+          <MarkinaLink href="/library" variant={closedGallery.publicGalleryUrl ? "secondary" : "primary"}>
+            Ver minha biblioteca
+          </MarkinaLink>
+        </div>
+      </main>
+    );
   if (loadFailed)
     return (
       <SystemState

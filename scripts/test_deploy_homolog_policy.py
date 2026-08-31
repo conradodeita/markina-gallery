@@ -1,13 +1,13 @@
 """Verificações estruturais da automação de homologação, executáveis no CI."""
 
-from pathlib import Path
 import re
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (ROOT / "scripts" / "deploy-homolog.sh").read_text(encoding="utf-8")
 WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+COMPOSE = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
 
 
 def require(text: str, description: str, source: str) -> None:
@@ -25,6 +25,13 @@ def main() -> int:
     require('readonly PROJECT_NAME="markina-gallery"', "projeto Compose fixo", SCRIPT)
     require('[[ "$(pwd -P)" == "$PROJECT_ROOT" ]]', "recusa de diretório inesperado", SCRIPT)
     require('git status --porcelain', "recusa de checkout sujo", SCRIPT)
+    require('ensure_pii_fingerprint_salt', "configuração segura do fingerprint de PII", SCRIPT)
+    require('openssl rand -hex 32', "geração criptográfica do fingerprint de PII", SCRIPT)
+    require('chmod 600 "$ENV_FILE"', "permissão restrita do arquivo de ambiente", SCRIPT)
+    require('chmod 600 "$temp_file"', "permissão restrita do arquivo de ambiente temporário", SCRIPT)
+    require('record_predeploy_inventory', "inventário remoto antes do deploy", SCRIPT)
+    require('df -hP "$PROJECT_ROOT"', "registro de espaço livre", SCRIPT)
+    require('docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME"', "inventário limitado aos volumes Markina", SCRIPT)
     require('origin não aponta para o repositório GitHub esperado', "recusa de origem Git inesperada", SCRIPT)
     require('git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop', "validação de SHA em develop", SCRIPT)
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
@@ -62,6 +69,7 @@ def main() -> int:
     forbid(r'\bdocker\s+system\s+prune\b', "docker system prune", SCRIPT)
     forbid(r'\bcompose\s+down\b', "docker compose down", SCRIPT)
     forbid(r'\b(?:rm|rmdir)\s+-[A-Za-z]*r', "remoção recursiva", SCRIPT)
+    forbid(r'echo\s+.*\$salt', "impressão do segredo de fingerprint", SCRIPT)
 
     require('branches: [develop]', "gatilho restrito a develop", WORKFLOW)
     require('deploy-homolog:', "job de deploy", WORKFLOW)
@@ -71,6 +79,11 @@ def main() -> int:
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
     forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
+
+    require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)
+    require("  media-history:", "volume histórico persistente", COMPOSE)
+    if COMPOSE.count("- media-history:/var/lib/markina/history") != 2:
+        raise AssertionError("a mídia histórica deve ser compartilhada somente por API e worker")
 
     print("deploy-homolog policy: ok")
     return 0

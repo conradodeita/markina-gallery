@@ -1,5 +1,7 @@
 ## MODIFIED Requirements
 
+> **Supersession:** a composição visual e os limites de autorização permanecem válidos. A biblioteca passa a incluir Galerias públicas autenticadas, privadas e histórico conforme `improve-gallery-and-client-data-lifecycle`; este delta SHALL NOT ser reaplicado para ocultar uma Galeria pública autorizada.
+
 ### Requirement: Interface da cliente orientada pelo backend
 
 O sistema SHALL renderizar biblioteca, pastas, propriedade, permissões, prazo, interações, estados das fotos e histórico da cliente a partir de respostas autorizadas do backend. A galeria privada SHALL usar a mesma composição visual base da prévia do fotógrafo, adaptada ao conjunto de pastas liberadas e fotos atribuídas. A composição compartilhada SHALL NOT fazer o frontend inferir vínculo, revelar a galeria-mãe ou exibir conteúdo não autorizado.

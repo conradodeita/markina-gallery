@@ -1,5 +1,7 @@
 ## MODIFIED Requirements
 
+> **Supersession:** resumo, capa, pastas e navegação administrativa abaixo permanecem como base entregue. A exclusão somente de galeria vazia, a derivação imediata ao vínculo e a experiência exclusivamente privada foram supersedidas por `improve-gallery-and-client-data-lifecycle` e SHALL NOT orientar nova implementação.
+
 ### Requirement: Operação administrativa de galerias privadas
 
 O sistema SHALL fornecer ao fotógrafo autenticado telas para criar e operar clientes, galerias-mãe não listadas, galerias privadas derivadas, pastas e JPEGs. A criação e a edição de uma galeria-mãe SHALL seguir as etapas Ajustes, Vendas, Detalhes, Imagens e Clientes, preservando o contexto da galeria durante todo o fluxo. A interface SHALL apresentar criação, edição, preparação e liberação com clareza, sem expor conteúdo antes da autenticação, autorização e liberação aplicáveis. O fotógrafo SHALL poder retornar a uma etapa anterior ou avançar para uma etapa posterior sem criar galeria, pasta, foto ou vínculo duplicado.
@@ -8,6 +10,16 @@ O sistema SHALL fornecer ao fotógrafo autenticado telas para criar e operar cli
 
 - **WHEN** o fotógrafo inicia a criação ou edição de uma galeria-mãe
 - **THEN** a interface apresenta as cinco etapas na ordem definida, mantém a galeria selecionada como contexto e informa o estado de conclusão retornado pelo backend
+
+#### Scenario: Segunda responsável
+
+- **WHEN** o fotógrafo vincula uma nova responsável a fotos já disponibilizadas para outra responsável
+- **THEN** o sistema cria ou vincula uma galeria privada independente para a nova responsável sem alterar seleção, prazo, pedido ou histórico da primeira
+
+#### Scenario: Pasta em preparação
+
+- **WHEN** o fotógrafo abre uma pasta ainda não liberada
+- **THEN** ele vê os JPEGs, o estado de processamento e as ações de edição ou liberação disponíveis somente para ele
 
 #### Scenario: Pasta criada na etapa Imagens
 
