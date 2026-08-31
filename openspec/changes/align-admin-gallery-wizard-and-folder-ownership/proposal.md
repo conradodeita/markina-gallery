@@ -33,3 +33,7 @@ A área administrativa atual separa acervos, pastas, fotos e galerias em operaç
 - Modelo SQLAlchemy e migration Alembic para tornar obrigatório o vínculo de foto com pasta após o saneamento dos dados legados.
 - Testes de API, migration, autorização, componentes e fluxo funcional, incluindo recusa de pasta ou foto sem galeria e preservação de históricos.
 - Documentação OpenSpec e roteiro posterior de validação visual; sem ativar pagamento real, WhatsApp real, reconhecimento facial ou exposição pública do acervo.
+
+## Relação com a change sucessora
+
+Esta change permanece como registro da hierarquia Galeria pública → pasta → foto e do editor administrativo já implementado. A change `improve-gallery-and-client-data-lifecycle` supersede qualquer leitura deste artefato que limite a cliente exclusivamente à galeria privada, crie galeria privada no simples vínculo, libere fotos sem considerar o modo de acesso do backend ou restrinja a exclusão da Galeria pública a um agregado vazio. O único trabalho ainda pendente aqui é a revisão visual humana já registrada; nenhuma implementação futura SHALL reintroduzir as semânticas supersedidas.

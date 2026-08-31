@@ -20,8 +20,19 @@ from app.auth import (
     SessionLocal,
     WhatsAppDelivery,
     WhatsAppDeliveryAttempt,
+    cleanup_expired_client_otp_pii,
     expired,
     now,
+)
+from app.gallery_cleanup import (
+    prepare_lifecycle_history,
+    remove_operational_records,
+    remove_operational_storage,
+)
+from app.gallery_lifecycle import (
+    LifecycleStageHandler,
+    claim_next_operation,
+    process_claimed_operation,
 )
 from app.media import generate_derivatives
 from app.messaging import (
@@ -72,9 +83,7 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
     if communication.client_id != order.client_id or item.recipient_phone != client.phone_e164:
         raise WhatsAppConfigurationError("Destino da cliente não autorizado.")
     template = db.scalar(
-        select(PaymentMessageTemplate).where(
-            PaymentMessageTemplate.kind == item.template_kind
-        )
+        select(PaymentMessageTemplate).where(PaymentMessageTemplate.kind == item.template_kind)
     )
     body = template.body if template else DEFAULT_PAYMENT_TEMPLATES[item.template_kind]
     return render_template(
@@ -85,13 +94,9 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
     )
 
 
-def materialize_payment_delivery(
-    db: Session, item: PaymentNotificationOutbox
-) -> WhatsAppDelivery:
+def materialize_payment_delivery(db: Session, item: PaymentNotificationOutbox) -> WhatsAppDelivery:
     delivery = db.scalar(
-        select(WhatsAppDelivery).where(
-            WhatsAppDelivery.idempotency_key == item.idempotency_key
-        )
+        select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == item.idempotency_key)
     )
     if delivery:
         return delivery
@@ -102,9 +107,9 @@ def materialize_payment_delivery(
         recipient_phone=item.recipient_phone,
         template_kind=item.template_kind,
         idempotency_key=item.idempotency_key,
-        status="queued" if item.status in {"queued", "processing"} else (
-            "accepted" if item.status == "sent" else "failed"
-        ),
+        status="queued"
+        if item.status in {"queued", "processing"}
+        else ("accepted" if item.status == "sent" else "failed"),
         attempts=item.attempts,
         last_error=item.last_error,
     )
@@ -146,9 +151,7 @@ def delivery_message(db: Session, delivery: WhatsAppDelivery) -> str:
         try:
             item_id = UUID(delivery.source_id)
         except ValueError as exc:
-            raise WhatsAppConfigurationError(
-                "Relação da notificação indisponível."
-            ) from exc
+            raise WhatsAppConfigurationError("Relação da notificação indisponível.") from exc
         item = db.get(PaymentNotificationOutbox, item_id)
         if not item:
             raise WhatsAppConfigurationError("Relação da notificação indisponível.")
@@ -203,6 +206,31 @@ def process_next_media_job() -> bool:
         return True
 
 
+def process_next_gallery_lifecycle_operation(
+    *, handlers: dict[str, LifecycleStageHandler] | None = None
+) -> bool:
+    """Reserva e avança uma operação; etapas ausentes falham de modo sanitizado."""
+
+    with SessionLocal() as db:
+        claim = claim_next_operation(db)
+    if not claim:
+        return False
+    operation_id, lease_token = claim
+    with SessionLocal() as db:
+        process_claimed_operation(
+            db,
+            operation_id=operation_id,
+            lease_token=lease_token,
+            handlers=handlers
+            or {
+                "preparing_history": prepare_lifecycle_history,
+                "removing_storage": remove_operational_storage,
+                "removing_records": remove_operational_records,
+            },
+        )
+    return True
+
+
 def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
     with SessionLocal() as db:
         try:
@@ -211,9 +239,7 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
             max_attempts = 1
         instant = now()
         stale_before = instant - timedelta(
-            seconds=max(
-                30, int(os.getenv("WHATSAPP_PROCESSING_TIMEOUT_SECONDS", "120"))
-            )
+            seconds=max(30, int(os.getenv("WHATSAPP_PROCESSING_TIMEOUT_SECONDS", "120")))
         )
         recovered_stale = False
         for stale in db.scalars(
@@ -230,6 +256,7 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
         db.commit()
         filters = [
             WhatsAppDelivery.status == "queued",
+            WhatsAppDelivery.recipient_phone.is_not(None),
             WhatsAppDelivery.attempts < max_attempts,
             or_(
                 WhatsAppDelivery.next_attempt_at.is_(None),
@@ -353,9 +380,7 @@ def materialize_next_payment_notification() -> bool:
         if not item:
             return False
         existing = db.scalar(
-            select(WhatsAppDelivery).where(
-                WhatsAppDelivery.idempotency_key == item.idempotency_key
-            )
+            select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == item.idempotency_key)
         )
         if existing:
             mirror_payment_delivery(db, existing)
@@ -407,12 +432,30 @@ def main() -> None:
     print("markina-gallery-worker: pronto para filas privadas", flush=True)
     while True:
         if not (
-            process_next_media_job()
+            process_next_gallery_lifecycle_operation()
+            or process_next_media_job()
             or process_next_whatsapp_delivery()
             or materialize_next_payment_notification()
             or reconcile_next_unknown_delivery()
+            or process_otp_privacy_cleanup()
         ):
             time.sleep(2)
+
+
+_last_otp_privacy_cleanup = 0.0
+
+
+def process_otp_privacy_cleanup() -> bool:
+    """Executa a limpeza periódica sem transformar o loop em consulta contínua."""
+
+    global _last_otp_privacy_cleanup
+    instant = time.monotonic()
+    interval = max(5, int(os.getenv("AUTH_OTP_CLEANUP_INTERVAL_SECONDS", "60")))
+    if instant - _last_otp_privacy_cleanup < interval:
+        return False
+    _last_otp_privacy_cleanup = instant
+    with SessionLocal() as db:
+        return cleanup_expired_client_otp_pii(db) > 0
 
 
 if __name__ == "__main__":

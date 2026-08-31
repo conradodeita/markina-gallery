@@ -6,6 +6,7 @@ O módulo mantém autorização no servidor; o browser recebe apenas um cookie o
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -23,6 +24,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -31,6 +33,7 @@ from sqlalchemy import (
     event,
     func,
     select,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -60,6 +63,7 @@ engine = create_engine(
 
 
 if database_url().startswith("sqlite"):
+
     @event.listens_for(engine, "connect")
     def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
@@ -86,8 +90,13 @@ class BrandingSettings(Base):
     __tablename__ = "branding_settings"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     login_title: Mapped[str] = mapped_column(String(120), default="Sua galeria, do seu jeito.")
-    login_intro: Mapped[str] = mapped_column(String(300), default="Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.")
-    login_helper: Mapped[str] = mapped_column(String(240), default="Escolha seu tipo de acesso para continuar.")
+    login_intro: Mapped[str] = mapped_column(
+        String(300),
+        default="Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.",
+    )
+    login_helper: Mapped[str] = mapped_column(
+        String(240), default="Escolha seu tipo de acesso para continuar."
+    )
     logo_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     app_icon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     favicon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -117,7 +126,22 @@ class Client(Base):
 
 class ClientPhone(Base):
     __tablename__ = "client_phone"
-    __table_args__ = (UniqueConstraint("phone_e164", "active"),)
+    __table_args__ = (
+        Index(
+            "uq_client_phone_active_verified",
+            "phone_e164",
+            unique=True,
+            sqlite_where=text("active = 1 AND verified_at IS NOT NULL"),
+            postgresql_where=text("active AND verified_at IS NOT NULL"),
+        ),
+        Index(
+            "uq_client_phone_one_active_per_client",
+            "client_id",
+            unique=True,
+            sqlite_where=text("active = 1"),
+            postgresql_where=text("active"),
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     phone_e164: Mapped[str] = mapped_column(String(16), index=True)
@@ -137,9 +161,28 @@ class GalleryAccess(Base):
 
 
 class ParentGallery(Base):
-    """Acervo-mãe privado, administrado exclusivamente pelo fotógrafo."""
+    """Galeria pública administrada exclusivamente pelo fotógrafo."""
 
     __tablename__ = "parent_gallery"
+    __table_args__ = (
+        CheckConstraint(
+            "lifecycle_status IN ('active', 'deleting', 'deleted')",
+            name="ck_parent_gallery_lifecycle_status",
+        ),
+        CheckConstraint(
+            "access_mode IN ('standard', 'invite_only', 'collective_protected')",
+            name="ck_parent_gallery_access_mode",
+        ),
+        CheckConstraint(
+            "selection_duration_days IS NULL OR selection_duration_days BETWEEN 1 AND 3650",
+            name="ck_parent_gallery_selection_duration_days",
+        ),
+        Index(
+            "ix_parent_gallery_lifecycle_created",
+            "lifecycle_status",
+            "created_at",
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(200))
     event_name: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
@@ -155,9 +198,16 @@ class ParentGallery(Base):
     cover_title_size: Mapped[int] = mapped_column(Integer, default=32)
     cover_title_position: Mapped[str] = mapped_column(String(16), default="bottom-left")
     cover_photo_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("photo_asset.id", use_alter=True, name="fk_parent_gallery_cover_photo"), nullable=True
+        ForeignKey("photo_asset.id", use_alter=True, name="fk_parent_gallery_cover_photo"),
+        nullable=True,
     )
+    sales_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selection_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    favorites_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(16), default="active")
+    access_mode: Mapped[str] = mapped_column(String(24), default="invite_only")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -175,7 +225,7 @@ class ParentGalleryRegistration(Base):
 
 
 class PhotoAsset(Base):
-    """Arquivo pertencente ao acervo-mãe; nunca é duplicado para o cliente."""
+    """Arquivo pertencente à Galeria pública; nunca é duplicado para a cliente."""
 
     __tablename__ = "photo_asset"
     __table_args__ = (
@@ -215,15 +265,25 @@ class PhotoFolder(Base):
 
 
 class DerivedGallery(Base):
-    """Galeria privada pertencente a uma única cliente/responsável."""
+    """Galeria privada pertencente a uma única cliente."""
 
     __tablename__ = "derived_gallery"
+    __table_args__ = (
+        Index(
+            "ix_derived_gallery_parent_client",
+            "parent_gallery_id",
+            "client_id",
+            unique=True,
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     custom_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    selection_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    selection_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     access_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     favorites_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -231,20 +291,35 @@ class DerivedGallery(Base):
 
 
 class DerivedGalleryPhoto(Base):
-    """Referência de uma foto do acervo-mãe atribuída à galeria derivada."""
+    """Referência de uma foto da Galeria pública atribuída à galeria privada."""
 
     __tablename__ = "derived_gallery_photo"
-    __table_args__ = (UniqueConstraint("derived_gallery_id", "photo_asset_id"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "derived_gallery_id",
+            "photo_asset_id",
+            "origin",
+            name="uq_derived_gallery_photo_origin",
+        ),
+        CheckConstraint(
+            "origin IN ('admin', 'client', 'facial')",
+            name="ck_derived_gallery_photo_origin",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
     photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    origin: Mapped[str] = mapped_column(String(16), default="admin")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class PhotoSelection(Base):
     __tablename__ = "photo_selection"
-    __table_args__ = (UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),)
+    __table_args__ = (
+        UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),
+        Index("ix_photo_selection_gallery_client", "derived_gallery_id", "client_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
@@ -293,11 +368,28 @@ class SaleOrder(Base):
         CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled')"),
         CheckConstraint("total_cents >= 0"),
         UniqueConstraint("derived_gallery_id", "client_id", "checkout_key"),
+        Index(
+            "ix_sale_order_parent_payment_status",
+            "parent_gallery_id_snapshot",
+            "payment_status",
+        ),
+        Index(
+            "ix_sale_order_gallery_client_payment",
+            "derived_gallery_id",
+            "client_id",
+            "payment_status",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    derived_gallery_id_snapshot: Mapped[UUID] = mapped_column(index=True)
+    derived_gallery_name_snapshot: Mapped[str] = mapped_column(String(200))
+    parent_gallery_id_snapshot: Mapped[UUID] = mapped_column(index=True)
+    parent_gallery_name_snapshot: Mapped[str] = mapped_column(String(200))
     payment_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     total_cents: Mapped[int] = mapped_column(Integer)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -308,32 +400,244 @@ class SaleOrder(Base):
     pix_copy_paste_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     pix_qr_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     pix_instructions_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pii_minimized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     checkout_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class SaleOrderItem(Base):
     __tablename__ = "sale_order_item"
-    __table_args__ = (UniqueConstraint("sale_order_id", "photo_asset_id"), CheckConstraint("unit_price_cents >= 0"))
+    __table_args__ = (
+        UniqueConstraint("sale_order_id", "photo_asset_id"),
+        CheckConstraint("unit_price_cents >= 0"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     sale_order_id: Mapped[UUID] = mapped_column(ForeignKey("sale_order.id"), index=True)
-    photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
+    photo_asset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("photo_asset.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    photo_asset_id_snapshot: Mapped[UUID] = mapped_column(index=True)
     filename_snapshot: Mapped[str] = mapped_column(String(512))
+    checksum_sha256_snapshot: Mapped[str | None] = mapped_column(String(64), nullable=True)
     unit_price_cents: Mapped[int] = mapped_column(Integer)
+
+
+class GalleryLifecycleOperation(Base):
+    """Operação durável e auditável sobre o ciclo de vida de uma Galeria pública."""
+
+    __tablename__ = "gallery_lifecycle_operation"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_gallery_lifecycle_operation_idempotency"),
+        CheckConstraint(
+            "operation_type IN ('delete_parent_gallery', 'unlink_client')",
+            name="ck_gallery_lifecycle_operation_type",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'preparing_history', 'removing_storage', "
+            "'removing_records', 'completed', 'failed', 'cancelled')",
+            name="ck_gallery_lifecycle_operation_status",
+        ),
+        CheckConstraint(
+            "(operation_type = 'delete_parent_gallery' AND target_client_id IS NULL) OR "
+            "(operation_type = 'unlink_client' AND target_client_id IS NOT NULL)",
+            name="ck_gallery_lifecycle_operation_target",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_gallery_lifecycle_operation_attempts"),
+        Index(
+            "ix_gallery_lifecycle_operation_target_status",
+            "target_parent_gallery_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    operation_type: Mapped[str] = mapped_column(String(32), index=True)
+    target_parent_gallery_id: Mapped[UUID] = mapped_column(index=True)
+    target_client_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    actor_admin_id: Mapped[UUID] = mapped_column(index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    destructive_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class GalleryAccessCapability(Base):
+    """Capacidade opaca de acesso; somente o hash do token é persistido."""
+
+    __tablename__ = "gallery_access_capability"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_gallery_access_capability_token_hash"),
+        CheckConstraint(
+            "scope IN ('public_gallery', 'parent_invite', 'private_invite')",
+            name="ck_gallery_access_capability_scope",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'consumed', 'revoked', 'rotated', 'expired')",
+            name="ck_gallery_access_capability_status",
+        ),
+        CheckConstraint(
+            "length(token_hash) = 64",
+            name="ck_gallery_access_capability_token_hash",
+        ),
+        CheckConstraint(
+            "(scope = 'public_gallery' AND client_id IS NULL AND derived_gallery_id IS NULL) OR "
+            "(scope = 'parent_invite' AND client_id IS NOT NULL AND derived_gallery_id IS NULL) OR "
+            "(scope = 'private_invite' AND client_id IS NOT NULL AND derived_gallery_id IS NOT NULL)",
+            name="ck_gallery_access_capability_target",
+        ),
+        Index(
+            "ix_gallery_access_capability_parent_status",
+            "parent_gallery_id",
+            "status",
+        ),
+        Index(
+            "uq_gallery_access_capability_active_public",
+            "parent_gallery_id",
+            unique=True,
+            sqlite_where=text("scope = 'public_gallery' AND status = 'active'"),
+            postgresql_where=text("scope = 'public_gallery' AND status = 'active'"),
+        ),
+        Index(
+            "uq_gallery_access_capability_active_invite",
+            "parent_gallery_id",
+            "client_id",
+            "scope",
+            unique=True,
+            sqlite_where=text("scope <> 'public_gallery' AND status = 'active'"),
+            postgresql_where=text("scope <> 'public_gallery' AND status = 'active'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="CASCADE"), index=True
+    )
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    client_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("client.id"), nullable=True, index=True
+    )
+    scope: Mapped[str] = mapped_column(String(24), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotated_from_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("gallery_access_capability.id"), nullable=True, index=True
+    )
+    actor_admin_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class CommercialHistoryMedia(Base):
+    """Manifesto mínimo de mídia preservada para um item comercial."""
+
+    __tablename__ = "commercial_history_media"
+    __table_args__ = (
+        UniqueConstraint("sale_order_item_id", name="uq_commercial_history_media_item"),
+        CheckConstraint(
+            "status IN ('pending', 'preparing', 'ready', 'failed', 'purged')",
+            name="ck_commercial_history_media_status",
+        ),
+        CheckConstraint(
+            "size_bytes IS NULL OR size_bytes >= 0",
+            name="ck_commercial_history_media_size",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    sale_order_item_id: Mapped[UUID] = mapped_column(ForeignKey("sale_order_item.id"), index=True)
+    preview_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    delivery_storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    delivery_reference: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    media_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    retention_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+@event.listens_for(Session, "before_flush")
+def _materialize_required_commercial_snapshots(
+    session: Session, _flush_context, _instances
+) -> None:
+    """Garante snapshots em pedidos novos sem confiar em cada consumidor da ORM."""
+
+    for record in session.new:
+        if isinstance(record, SaleOrder):
+            if record.derived_gallery_id is None:
+                if not all(
+                    (
+                        record.derived_gallery_id_snapshot,
+                        record.derived_gallery_name_snapshot,
+                        record.parent_gallery_id_snapshot,
+                        record.parent_gallery_name_snapshot,
+                    )
+                ):
+                    raise ValueError("Pedido sem galeria operacional exige snapshots completos.")
+                continue
+            gallery = session.get(DerivedGallery, record.derived_gallery_id)
+            parent = session.get(ParentGallery, gallery.parent_gallery_id) if gallery else None
+            if not gallery or not parent:
+                raise ValueError("Não foi possível materializar o snapshot da galeria.")
+            record.derived_gallery_id_snapshot = record.derived_gallery_id_snapshot or gallery.id
+            record.derived_gallery_name_snapshot = (
+                record.derived_gallery_name_snapshot or gallery.name
+            )
+            record.parent_gallery_id_snapshot = record.parent_gallery_id_snapshot or parent.id
+            record.parent_gallery_name_snapshot = record.parent_gallery_name_snapshot or parent.name
+            client = session.get(Client, record.client_id)
+            if client:
+                record.client_name_snapshot = record.client_name_snapshot or client.full_name
+                record.client_phone_snapshot = record.client_phone_snapshot or client.phone_e164
+        elif isinstance(record, SaleOrderItem):
+            if record.photo_asset_id is None:
+                if not record.photo_asset_id_snapshot:
+                    raise ValueError("Item sem foto operacional exige snapshot do identificador.")
+                continue
+            photo = session.get(PhotoAsset, record.photo_asset_id)
+            if not photo:
+                raise ValueError("Não foi possível materializar o snapshot da foto.")
+            record.photo_asset_id_snapshot = record.photo_asset_id_snapshot or photo.id
+            record.filename_snapshot = (
+                record.filename_snapshot or photo.display_name or photo.filename
+            )
 
 
 class PriceRule(Base):
     __tablename__ = "price_rule"
     __table_args__ = (
-        UniqueConstraint("derived_gallery_id", "minimum_quantity"),
+        UniqueConstraint("parent_gallery_id", "minimum_quantity"),
         CheckConstraint("minimum_quantity >= 1"),
         CheckConstraint("maximum_quantity IS NULL OR maximum_quantity >= minimum_quantity"),
         CheckConstraint("unit_price_cents >= 0"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
     minimum_quantity: Mapped[int] = mapped_column(Integer)
     maximum_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     unit_price_cents: Mapped[int] = mapped_column(Integer)
@@ -345,7 +649,9 @@ class PixCheckoutSettings(Base):
     __tablename__ = "pix_checkout_settings"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), unique=True, index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id"), unique=True, index=True
+    )
     copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
     qr_code_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -354,13 +660,18 @@ class PixCheckoutSettings(Base):
 
 class PaymentCommunication(Base):
     __tablename__ = "payment_communication"
-    __table_args__ = (UniqueConstraint("sale_order_id", "idempotency_key"), CheckConstraint("status IN ('pending_review', 'confirmed', 'refused')"))
+    __table_args__ = (
+        UniqueConstraint("sale_order_id", "idempotency_key"),
+        CheckConstraint("status IN ('pending_review', 'confirmed', 'refused')"),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     sale_order_id: Mapped[UUID] = mapped_column(ForeignKey("sale_order.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     idempotency_key: Mapped[str] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(20), default="pending_review", index=True)
-    decided_by_admin_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
+    decided_by_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=True
+    )
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -383,7 +694,9 @@ class PaymentNotificationOutbox(Base):
         CheckConstraint("attempts >= 0"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    payment_communication_id: Mapped[UUID] = mapped_column(ForeignKey("payment_communication.id"), index=True)
+    payment_communication_id: Mapped[UUID] = mapped_column(
+        ForeignKey("payment_communication.id"), index=True
+    )
     recipient_phone: Mapped[str] = mapped_column(String(32))
     template_kind: Mapped[str] = mapped_column(String(32))
     idempotency_key: Mapped[str] = mapped_column(String(160))
@@ -411,12 +724,8 @@ class WhatsAppChannelSettings(Base):
     connected_phone_e164: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="sandbox", index=True)
     last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
-    last_checked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=now, onupdate=now
-    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class WhatsAppDelivery(Base):
@@ -437,7 +746,8 @@ class WhatsAppDelivery(Base):
     kind: Mapped[str] = mapped_column(String(24), index=True)
     source_type: Mapped[str] = mapped_column(String(48), index=True)
     source_id: Mapped[str] = mapped_column(String(128), index=True)
-    recipient_phone: Mapped[str] = mapped_column(String(16))
+    recipient_phone: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    recipient_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     template_kind: Mapped[str] = mapped_column(String(48))
     idempotency_key: Mapped[str] = mapped_column(String(160), unique=True)
     encrypted_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -446,25 +756,17 @@ class WhatsAppDelivery(Base):
     )
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    external_message_id: Mapped[str | None] = mapped_column(
-        String(192), nullable=True, unique=True
-    )
+    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True, unique=True)
     provider_status: Mapped[str | None] = mapped_column(String(48), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
-    accepted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    delivered_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=now, onupdate=now
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class WhatsAppDeliveryAttempt(Base):
@@ -476,9 +778,7 @@ class WhatsAppDeliveryAttempt(Base):
         CheckConstraint("attempt_number >= 1"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    delivery_id: Mapped[UUID] = mapped_column(
-        ForeignKey("whatsapp_delivery.id"), index=True
-    )
+    delivery_id: Mapped[UUID] = mapped_column(ForeignKey("whatsapp_delivery.id"), index=True)
     attempt_number: Mapped[int] = mapped_column(Integer)
     result: Mapped[str] = mapped_column(String(24))
     external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
@@ -542,13 +842,16 @@ class AuthChallenge(Base):
     __tablename__ = "auth_challenge"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     kind: Mapped[str] = mapped_column(String(32), index=True)
-    subject: Mapped[str] = mapped_column(String(320), index=True)
+    subject: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    subject_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     secret_hash: Mapped[str] = mapped_column(String(128))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     resend_count: Mapped[int] = mapped_column(Integer, default=0)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     parent_gallery_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    gallery_capability_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    return_to: Mapped[str | None] = mapped_column(String(512), nullable=True)
     client_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
@@ -600,6 +903,26 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def pii_fingerprint(value: str) -> str:
+    """Produz identificador estável não reversível usando segredo do servidor."""
+
+    salt = os.getenv("AUTH_PII_FINGERPRINT_SALT", "").strip()
+    if not salt:
+        if os.getenv("APP_ENV", "development") != "development":
+            raise RuntimeError("AUTH_PII_FINGERPRINT_SALT é obrigatório fora de desenvolvimento.")
+        salt = "markina-development-only-pii-fingerprint"
+    return hmac.new(salt.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def challenge_fingerprint(challenge: AuthChallenge) -> str:
+    if challenge.subject_fingerprint:
+        return challenge.subject_fingerprint
+    if challenge.subject:
+        challenge.subject_fingerprint = pii_fingerprint(challenge.subject)
+        return challenge.subject_fingerprint
+    return token_hash(str(challenge.id))
+
+
 def audit(db: Session, event: str, subject: str) -> None:
     db.add(AuditEvent(event=event, subject=subject))
 
@@ -640,11 +963,16 @@ def create_challenge(
     challenge = AuthChallenge(
         kind=kind,
         subject=subject,
+        subject_fingerprint=pii_fingerprint(subject) if kind == "client_otp" else None,
         secret_hash=token_hash(code),
         expires_at=now() + timedelta(minutes=10),
     )
     db.add(challenge)
-    audit(db, f"{kind}.requested", subject)
+    audit(
+        db,
+        f"{kind}.requested",
+        challenge.subject_fingerprint if kind == "client_otp" else subject,
+    )
     db.commit()
     return challenge, code
 
@@ -654,9 +982,7 @@ def enqueue_client_otp_delivery(
 ) -> WhatsAppDelivery:
     """Persiste uma entrega OTP sem depender da rede ou guardar o código aberto."""
     key = f"otp:{challenge.id}:{challenge.resend_count}"
-    existing = db.scalar(
-        select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == key)
-    )
+    existing = db.scalar(select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == key))
     if existing:
         return existing
     delivery = WhatsAppDelivery(
@@ -664,6 +990,7 @@ def enqueue_client_otp_delivery(
         source_type="auth_challenge",
         source_id=str(challenge.id),
         recipient_phone=challenge.subject,
+        recipient_fingerprint=challenge_fingerprint(challenge),
         template_kind="client_otp",
         idempotency_key=key,
         expires_at=challenge.expires_at,
@@ -702,7 +1029,12 @@ def resend_client_challenge(db: Session, challenge_id: UUID, ip_address: str) ->
         audit(db, "client_otp.resend_rejected", str(challenge_id))
         db.commit()
         raise neutral_error()
-    enforce_rate_limit(db, "client_otp.resend", challenge.subject, ip_address)
+    if not challenge.subject:
+        audit(db, "client_otp.resend_rejected", str(challenge_id))
+        db.commit()
+        raise neutral_error()
+    fingerprint = challenge_fingerprint(challenge)
+    enforce_rate_limit(db, "client_otp.resend", fingerprint, ip_address)
     code = f"{secrets.randbelow(1_000_000):06d}"
     for delivery in db.scalars(
         select(WhatsAppDelivery).where(
@@ -716,7 +1048,7 @@ def resend_client_challenge(db: Session, challenge_id: UUID, ip_address: str) ->
         delivery.updated_at = now()
     challenge.secret_hash = token_hash(code)
     challenge.resend_count += 1
-    audit(db, "client_otp.resent", challenge.subject)
+    audit(db, "client_otp.resent", fingerprint)
     db.commit()
     enqueue_client_otp_delivery(db, challenge, code)
     return challenge
@@ -736,12 +1068,71 @@ def consume_challenge(db: Session, challenge_id: UUID, kind: str, code: str) -> 
         raise neutral_error()
     challenge.attempts += 1
     if not secrets.compare_digest(challenge.secret_hash, token_hash(code)):
-        audit(db, f"{kind}.failed", challenge.subject)
+        audit(
+            db,
+            f"{kind}.failed",
+            challenge_fingerprint(challenge)
+            if kind == "client_otp"
+            else challenge.subject or str(challenge.id),
+        )
+        if kind == "client_otp" and challenge.attempts >= 5:
+            minimize_client_challenge_pii(db, challenge)
         db.commit()
         raise neutral_error()
     challenge.used_at = now()
-    audit(db, f"{kind}.validated", challenge.subject)
+    audit(
+        db,
+        f"{kind}.validated",
+        challenge_fingerprint(challenge)
+        if kind == "client_otp"
+        else challenge.subject or str(challenge.id),
+    )
     return challenge
+
+
+def minimize_client_challenge_pii(db: Session, challenge: AuthChallenge) -> None:
+    """Apaga PII transitória depois do consumo ou de uma negação terminal."""
+
+    fingerprint = challenge_fingerprint(challenge)
+    challenge.subject = None
+    challenge.client_name = None
+    instant = now()
+    for delivery in db.scalars(
+        select(WhatsAppDelivery).where(
+            WhatsAppDelivery.kind == "otp",
+            WhatsAppDelivery.source_type == "auth_challenge",
+            WhatsAppDelivery.source_id == str(challenge.id),
+        )
+    ):
+        delivery.recipient_fingerprint = delivery.recipient_fingerprint or fingerprint
+        delivery.recipient_phone = None
+        delivery.encrypted_payload = None
+        if delivery.status in {"queued", "processing", "unknown"}:
+            delivery.status = "expired"
+        delivery.updated_at = instant
+
+
+def cleanup_expired_client_otp_pii(db: Session, *, current_time: datetime | None = None) -> int:
+    """Minimiza desafios abandonados após a janela curta configurada."""
+
+    instant = current_time or now()
+    retention = timedelta(minutes=max(0, int(os.getenv("AUTH_OTP_PII_RETENTION_MINUTES", "60"))))
+    cutoff = instant - retention
+    challenges = list(
+        db.scalars(
+            select(AuthChallenge).where(
+                AuthChallenge.kind == "client_otp",
+                AuthChallenge.subject.is_not(None),
+                AuthChallenge.expires_at <= cutoff,
+            )
+        )
+    )
+    for challenge in challenges:
+        minimize_client_challenge_pii(db, challenge)
+    if challenges:
+        audit(db, "client_otp.pii_cleanup", f"count:{len(challenges)}")
+        db.commit()
+    return len(challenges)
 
 
 def create_session(db: Session, response: Response, role: Role, subject_id: UUID) -> str:

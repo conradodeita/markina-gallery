@@ -12,7 +12,7 @@ Implemente a **Markina Gallery**, plataforma self-hosted de gestão, prova, vend
 
 Não substituir o culling, a edição nem a entrega final do fotógrafo. O sistema recebe apenas JPEGs exportados após o culling. RAWs e edição de imagem final estão fora de escopo.
 
-Leia também [ROADMAP_ARQUITETURA.md](ROADMAP_ARQUITETURA.md). Em caso de conflito, esta especificação é a fonte operacional; decisões de segurança e privacidade do roadmap permanecem obrigatórias.
+Leia também [ROADMAP_ARQUITETURA.md](ROADMAP_ARQUITETURA.md) e [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md). Em caso de conflito, esta especificação é a fonte operacional; decisões de segurança, privacidade e UX dos documentos complementares permanecem obrigatórias.
 
 ## 1.1 OpenSpec é obrigatório
 
@@ -39,6 +39,20 @@ Fluxo padrão para cada mudança:
 
 Começar pela mudança `bootstrap-photocrm-foundation`, que cria infraestrutura, padrões, specs iniciais e a base mínima do projeto. Não criar um único change gigante que tente implementar o produto inteiro.
 
+## 1.2 Continuidade obrigatória entre executores
+
+O projeto poderá ser continuado por Claude Code, Codex, DeepSeek ou qualquer outro executor. **Nenhum executor pode depender do histórico da conversa para entender o projeto.** O repositório deve ser a fonte completa de contexto.
+
+- Antes de qualquer ação, ler este mandato, `ROADMAP_ARQUITETURA.md`, `DIRETRIZES_FRONTEND_MARKINA_GALLERY.md`, `openspec/config.yaml`, specs principais e mudanças ativas.
+- Toda funcionalidade ou alteração de comportamento deve possuir `change-id` próprio com proposal, delta spec, design quando houver decisão técnica e tasks antes da implementação.
+- Toda decisão nova, desvio do plano, limitação, risco ou bloqueio deve ser registrado nos artefatos OpenSpec ou na documentação técnica correspondente.
+- Durante a execução, atualizar `tasks.md`, testes e documentação junto com o código. Não marcar tarefa como concluída sem evidência verificável.
+- Ao finalizar, executar testes e validação OpenSpec, sincronizar somente o comportamento realmente implementado para `openspec/specs/` e arquivar a mudança após revisão humana.
+- Nunca declarar como implementado, validado, testado ou implantado algo que não tenha evidência no repositório ou no ambiente informado.
+- Se uma etapa não puder ser executada, registrar o bloqueio e o próximo passo necessário para o executor seguinte.
+
+O próximo executor deve conseguir retomar o trabalho lendo apenas o repositório, sem depender de memória externa, mensagens anteriores ou conhecimento implícito.
+
 ## 2. Limites de escopo
 
 ### MVP obrigatório
@@ -58,6 +72,12 @@ Começar pela mudança `bootstrap-photocrm-foundation`, que cria infraestrutura,
 - Infinity Pay por cartão, por meio de um `PaymentProvider` e webhooks assinados.
 - Busca facial: implementar apenas depois de um spike de compatibilidade ARM, licença comercial, desempenho e precisão.
 - Múltiplos administradores, impressos, laboratórios, produtos físicos e edição dentro da plataforma.
+
+### Limite de personalização visual
+
+Markina Gallery não é um CMS completo de páginas. O fotógrafo pode configurar identidade simples e opções controladas por galeria — cor, tipografia do nome, capa e layouts suportados — mas não terá construtor de páginas, editor livre de HTML/CSS ou coleção de templates de website. Consulte `DIRETRIZES_FRONTEND_MARKINA_GALLERY.md` para a direção completa do frontend e `docs/frontend-reference/README.md` para o uso do protótipo visual.
+
+O export do Google Stitch em `docs/frontend-reference/stitch-export/` é somente referência visual e funcional. **Não copiar diretamente seu código, componentes, mocks, dados, dependências ou estrutura para a aplicação oficial.** Reconstruir o frontend no stack oficial e conectá-lo às APIs, autenticação, permissões, regras de negócio e specs OpenSpec vigentes.
 
 ### Não fazer
 
@@ -107,6 +127,13 @@ Há um administrador no MVP, sem registro público.
 - Sessão configurável, padrão de 7 dias; renovação por OTP.
 - Convite: token opaco aleatório, hash no banco, uso único, expira em 72 horas, revogável e reenviável.
 - O vínculo de acesso pertence ao cliente/responsável, não ao token; após ativação, acessos posteriores usam OTP.
+
+### Entrada unificada e roteamento
+
+- Usar uma única tela/rota de entrada para `Cliente` e `Fotógrafo`, com escolha explícita do contexto na mesma experiência visual.
+- Cliente informa nome completo e telefone, recebe OTP pelo WhatsApp e, após validação, é encaminhado à galeria autorizada ou à biblioteca quando possuir várias galerias.
+- Fotógrafo informa e-mail e senha, valida TOTP do Google Authenticator/compatível e, somente após os dois fatores, é encaminhado à área administrativa.
+- O papel e o destino final são decididos e revalidados pelo backend; frontend, URL ou estado local nunca concedem autorização.
 
 ### Auditoria, incidente e configurações externas
 
@@ -172,7 +199,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 
 ### Seleção, preços e pagamento
 
-- Exigir login somente ao selecionar a primeira foto. Navegação de capa/informação pode ser pública se a galeria permitir.
+- Exigir login por telefone e OTP antes de entregar qualquer prévia fotográfica. Capa e informação sem fotografia identificável podem permanecer públicas quando a Galeria pública permitir; `standard`, `invite_only` e `collective_protected` são decididos e impostos pelo backend.
 - Mostrar marcador visual de favorito, contador sticky e valor estimado somente após autenticação.
 - Implementar preço por faixa aplicado a todas as fotos do pedido. Exemplo: 1–30 = R$7, 31–59 = R$6, 60+ = R$5.
 - Painel deve simular os totais e alertar ao fotógrafo se subir uma faixa diminuir o total comparado à faixa anterior.
@@ -194,6 +221,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 ### Portal do cliente
 
 - Mobile-first: 2 colunas no celular, 4 ou mais em desktop; carregamento progressivo e placeholders.
+- Após autenticação e autorização, permitir alternar entre Galerias públicas abertas, galerias privadas derivadas e histórico comercial; a privada herda configuração e apresentação da Galeria pública sem conceder acesso às privadas de terceiros.
 - Foto abre em ampliação; seleção é ação explícita por coração/check. Não selecionar involuntariamente ao ampliar.
 - Rodapé fixo com número de fotos, estimativa e CTA de carrinho/finalização.
 - Carrinho com miniaturas, remoção, preços, texto de venda e progresso até próxima faixa de desconto.

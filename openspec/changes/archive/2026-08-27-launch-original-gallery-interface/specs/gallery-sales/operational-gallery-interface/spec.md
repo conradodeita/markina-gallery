@@ -9,6 +9,11 @@ O sistema SHALL fornecer ao fotógrafo autenticado uma interface original para c
 - **WHEN** o fotógrafo conclui o fluxo administrativo com dados válidos
 - **THEN** o sistema cria somente as referências privadas escolhidas e apresenta confirmação ou erro acessível
 
+#### Scenario: Segunda responsável
+
+- **WHEN** o fotógrafo vincula uma nova responsável a fotos já disponibilizadas para outra responsável
+- **THEN** o sistema cria ou vincula uma galeria privada independente para a nova responsável sem alterar seleção, prazo, pedido ou histórico da primeira
+
 #### Scenario: Pasta em preparação
 
 - **WHEN** o fotógrafo abre uma pasta ainda não liberada
@@ -41,6 +46,13 @@ O sistema SHALL obter dados, permissões, disponibilidade e resultados de açõe
 
 - **WHEN** o fotógrafo abre ou altera uma tela operacional
 - **THEN** a interface consulta o backend e apresenta o estado retornado, sem criar autorização ou registros simulados no browser
+
+#### Scenario: Consulta por responsável
+
+- **WHEN** o fotógrafo busca por nome ou telefone na ficha de uma galeria-fonte
+- **THEN** o sistema retorna apenas os vínculos e estados autorizados da consulta e permite abrir a ficha individual da seleção
+
+## ADDED Requirements
 
 ### Requirement: Exclusão segura de galeria privada
 O sistema SHALL disponibilizar exclusão somente quando a galeria não tiver fotos, seleções ou pedidos. Galeria com compra confirmada SHALL ser preservada, podendo apenas ser congelada ou bloqueada.

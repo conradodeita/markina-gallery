@@ -29,3 +29,7 @@ Nenhuma.
 - Interações de dissuasão no navegador e mensagens acessíveis de proteção, sem alterar a autorização ou expor originais.
 - APIs existentes poderão receber somente campos de apresentação indispensáveis e a configuração global de proteção, sem expor originais, dados de terceiros ou conteúdo não autorizado.
 - Há somente migration aditiva para guardar a proteção visual global; ela não remove nem modifica dados existentes. Não há alteração de pagamentos, biometria, dados de produção nem integração externa.
+
+## Relação com a change sucessora
+
+A composição compartilhada, a proteção incorporada no arquivo e a comunicação honesta sobre screenshots permanecem válidas. `improve-gallery-and-client-data-lifecycle` amplia essa composição para Galerias públicas autenticadas, privadas e histórico, e define que a privada herda a apresentação efetiva da Galeria pública. A proteção visual continua possuindo fonte global; a Galeria pública consome essa fonte e transmite sua configuração efetiva às derivadas, sem override privado. Este artefato SHALL NOT ser interpretado como limitação da cliente a uma experiência exclusivamente privada.

@@ -28,3 +28,7 @@ O fotógrafo precisa transformar fotos encontradas ou selecionadas em um espaço
 - Frontend administrativo e portal do cliente, com permissões por galeria e estados acessíveis.
 - APIs de seleção, interação, estatísticas e exportação autenticadas e auditáveis.
 - Não inclui reconhecimento facial; resultados faciais só poderão alimentar galerias derivadas após o spike separado ser aprovado.
+
+## Relação com a change sucessora
+
+Esta change permanece como registro da primeira entrega de galerias derivadas, interações e métricas. `improve-gallery-and-client-data-lifecycle` supersede configuração independente por privada, criação no simples vínculo, persistência operacional obrigatória da privada e histórico dependente das entidades operacionais. A nova autoridade separa fotos disponíveis de seleções, herda configuração da Galeria pública, deriva somente por primeira seleção ou ação administrativa e preserva histórico comercial independente. Esta change concluída SHALL NOT ser reaplicada para restaurar as semânticas anteriores.

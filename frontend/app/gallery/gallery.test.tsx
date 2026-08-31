@@ -58,6 +58,46 @@ describe("galeria privada da cliente", () => {
     }
   });
 
+  it("mantém fotos administrativas com seleção zerada", async () => {
+    const administrativeReview = {
+      ...review,
+      photos: review.photos.slice(0, 1),
+    };
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] } : path.endsWith("/folders") ? { folders: [] } : administrativeReview,
+    ), { status: 200 }))));
+    render(<GalleryPage />);
+    expect(await screen.findByRole("heading", { name: "Festa escolar" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Resumo da seleção" }).textContent).toContain("0 fotos");
+    expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeTruthy();
+    expect(screen.getByText("Disponível para revisão")).toBeTruthy();
+  });
+
+  it("explica o encerramento e retorna à Galeria pública autorizada", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (options?.method === "DELETE" && path.endsWith("/selection")) {
+        return Promise.resolve(new Response(null, {
+          status: 204,
+          headers: {
+            "X-Markina-Gallery-Closed": "true",
+            "X-Markina-Public-Gallery-Url": "/public-galleries/public-1",
+          },
+        }));
+      }
+      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 1, items: [{ id: "new-1", name: "IMG_001.jpg" }] }), { status: 200 }));
+      if (path.endsWith("/comments")) return Promise.resolve(new Response(JSON.stringify({ comments: [] }), { status: 200 }));
+      if (path.endsWith("/folders")) return Promise.resolve(new Response(JSON.stringify({ folders: [] }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ ...review, photos: review.photos.slice(0, 1) }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remover do carrinho" }));
+    expect(await screen.findByText("Esta galeria privada foi encerrada")).toBeTruthy();
+    expect(screen.getByText(/histórico de compras continuam preservados/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Voltar à Galeria pública" }).getAttribute("href")).toBe("/public-galleries/public-1");
+    expect(screen.getByRole("link", { name: "Ver minha biblioteca" }).getAttribute("href")).toBe("/library");
+  });
+
   it("navega somente entre pastas liberadas pelo contrato da cliente", async () => {
     const groupedReview = { ...review, photos: [...review.photos, { id: "folder-2-photo", name: "IMG_003.jpg", folder_id: "folder-2", preview_url: "/gallery/gallery-1/photos/folder-2-photo/preview", selected: false, favorited: false, purchase_state: "nova" }] };
     vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(path.endsWith("/comments") ? { comments: [] } : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }, { id: "folder-2", name: "Encerramento", position: 1, photo_count: 1 }] } : groupedReview), { status: 200 }))));

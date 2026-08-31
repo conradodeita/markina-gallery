@@ -1,11 +1,15 @@
 # Markina Gallery — Roadmap Arquitetural
 
+> Direção detalhada de interface e UX: [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md).
+
 Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a especificação de implementação para o executor.
 
 ## Princípios do produto
 
 - Experiência mobile-first, com poucos passos para o responsável selecionar e comprar fotos.
 - Painel administrativo robusto, porém direto para um único fotógrafo no MVP.
+- O produto tem duas áreas — administração do fotógrafo e portal do cliente — com comportamento de CMS apenas para conteúdo estruturado de galerias, não para construção livre de websites.
+- Personalização visual controlada: cor da galeria, tipografia do nome, capa e templates suportados de organização; sem construtor de páginas ou múltiplos templates de website.
 - Galerias privadas organizadas previamente no DigiKam e eventos coletivos protegidos por busca facial privada.
 - Fotos exibidas são JPEGs exportados após o culling; RAW e edição final ficam fora do sistema.
 - Google Photos é o canal de entrega final criado manualmente pelo fotógrafo; o sistema controla o link e a comunicação.
@@ -60,6 +64,8 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 ## Fase 3 — Galerias e vendas
 
 - Galeria privada: importação DigiKam de fotos já separadas pelo fotógrafo, com vários responsáveis autorizados quando necessário.
+- Galeria pública é uma denominação de produto, não acesso anônimo: nenhuma prévia fotográfica é entregue antes do OTP, e o backend aplica `standard`, `invite_only` ou `collective_protected`.
+- Galerias privadas derivadas herdam a configuração efetiva da Galeria pública; fotos disponíveis e seleções comerciais são estados distintos.
 - Evento coletivo: acervo inteiro visível somente ao fotógrafo; clientes recebem somente resultado privado aprovado.
 - Cliente pode navegar, ampliar, favoritar e montar carrinho; identificação obrigatória na primeira intenção de compra.
 - Carrinho persistente por cliente e galeria; histórico de acessos, favoritos, remoções e abandono.

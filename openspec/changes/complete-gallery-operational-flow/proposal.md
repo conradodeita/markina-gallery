@@ -28,3 +28,7 @@ A homologação já dispõe de autenticação, modelo de galeria-mãe, pastas e 
 - Modelo e migration: metadados de capa, e validação de exclusão preservando pedidos e histórico.
 - Frontend Next.js: editor administrativo, página de resumo, gestão de pasta/foto e lista de clientes.
 - Testes e homologação: fluxo sintético completo com JPEGs de teste; nenhuma dependência de WhatsApp, biometria ou pagamentos.
+
+## Relação com a change sucessora
+
+Esta change documenta o fluxo administrativo entregue antes do ciclo de vida comercial completo. `improve-gallery-and-client-data-lifecycle` supersede a exclusão limitada a galeria vazia, a recusa permanente de remover mídia apenas por existir compra confirmada e a criação imediata de galeria privada ao simples vínculo. O comportamento sucessor SHALL usar operação idempotente acompanhável, histórico comercial independente e derivação por seleção ou criação administrativa explícita. A revisão visual humana pendente permanece válida somente para as superfícies já entregues.

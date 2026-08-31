@@ -37,6 +37,51 @@ verify_clean_checkout() {
   [[ -z "$(git status --porcelain)" ]] || fail "checkout remoto possui alterações locais; reconciliação humana necessária"
 }
 
+ensure_pii_fingerprint_salt() {
+  local key="AUTH_PII_FINGERPRINT_SALT" line value occurrences salt temp_file replaced=0
+  occurrences="$(grep -c "^${key}=" "$ENV_FILE" || true)"
+  [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  chmod 600 "$ENV_FILE"
+
+  if [[ "$occurrences" -eq 1 ]]; then
+    line="$(grep "^${key}=" "$ENV_FILE")"
+    value="${line#*=}"
+    if [[ -n "$value" ]]; then
+      [[ "${#value}" -ge 32 ]] || fail "$key deve possuir ao menos 32 caracteres"
+      return 0
+    fi
+  fi
+
+  command -v openssl >/dev/null 2>&1 || fail "openssl é obrigatório para gerar $key"
+  salt="$(openssl rand -hex 32)"
+  [[ "${#salt}" -eq 64 ]] || fail "não foi possível gerar $key com entropia suficiente"
+  temp_file="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s=%s\n' "$key" "$salt" >> "$temp_file"
+      replaced=1
+    else
+      printf '%s\n' "$line" >> "$temp_file"
+    fi
+  done < "$ENV_FILE"
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$salt" >> "$temp_file"
+  fi
+  mv "$temp_file" "$ENV_FILE"
+  unset salt value line
+  echo "$key configurado com segredo aleatório exclusivo de homologação"
+}
+
+record_predeploy_inventory() {
+  echo "inventário Markina pré-deploy"
+  df -hP "$PROJECT_ROOT"
+  compose ps
+  compose config --images
+  docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Name}}'
+}
+
 parse_arguments() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -71,7 +116,9 @@ verify_target() {
   [[ "$origin_url" =~ github\.com[:/]${EXPECTED_REPOSITORY//\//\/}(\.git)?$ ]] || fail "origin não aponta para o repositório GitHub esperado"
 
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
+  ensure_pii_fingerprint_salt
   compose config --quiet
+  record_predeploy_inventory
 }
 
 record_revision() {

@@ -57,6 +57,9 @@ services:
       SESSION_DAYS: ${SESSION_DAYS:-7}
       AUTH_RATE_LIMIT_WINDOW_MINUTES: ${AUTH_RATE_LIMIT_WINDOW_MINUTES:-15}
       AUTH_RATE_LIMIT_MAX_REQUESTS: ${AUTH_RATE_LIMIT_MAX_REQUESTS:-5}
+      AUTH_PII_FINGERPRINT_SALT: ${AUTH_PII_FINGERPRINT_SALT:-}
+      AUTH_OTP_PII_RETENTION_MINUTES: ${AUTH_OTP_PII_RETENTION_MINUTES:-60}
+      COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS: ${COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS:-}
       WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
       WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
@@ -71,10 +74,12 @@ services:
       WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS: ${WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS:-300}
       MEDIA_SOURCE_ROOT: /var/lib/markina/source
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_HISTORY_ROOT: /var/lib/markina/history
       MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
     volumes:
       - media-source:/var/lib/markina/source
       - media-derivatives:/var/lib/markina/derivatives
+      - media-history:/var/lib/markina/history
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -244,8 +249,13 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      AUTH_PII_FINGERPRINT_SALT: ${AUTH_PII_FINGERPRINT_SALT:-}
+      AUTH_OTP_PII_RETENTION_MINUTES: ${AUTH_OTP_PII_RETENTION_MINUTES:-60}
+      AUTH_OTP_CLEANUP_INTERVAL_SECONDS: ${AUTH_OTP_CLEANUP_INTERVAL_SECONDS:-60}
+      COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS: ${COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS:-}
       MEDIA_SOURCE_ROOT: /var/lib/markina/source
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_HISTORY_ROOT: /var/lib/markina/history
       MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
       WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
       WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
@@ -262,6 +272,7 @@ services:
     volumes:
       - media-source:/var/lib/markina/source
       - media-derivatives:/var/lib/markina/derivatives
+      - media-history:/var/lib/markina/history
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -279,6 +290,7 @@ volumes:
   redisdata:
   media-source:
   media-derivatives:
+  media-history:
   evolution-instances:
   evolution-pgdata:
   evolution-redisdata:
