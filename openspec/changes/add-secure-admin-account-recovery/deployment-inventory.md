@@ -7,7 +7,8 @@ Preparado em 2026-08-31 para a change `add-secure-admin-account-recovery`. A aut
 - SHA candidato da implementação: `8ee1f95e1be178d21c05d4797ed22f27b2ac5e10`.
 - Base `develop` antes da change: `2419ac8d046be8051366690edfa80e609f00b752`.
 - Último workflow `CI` bem-sucedido da base: run `33446777797`.
-- O SHA final integrado em `develop` e o run de publicação serão registrados após o merge protegido.
+- SHA funcional final integrado em `develop`: `b625c20d13d8ea3009c365b1a3d744be8b48bbc6` (PR `#23`).
+- Workflow de publicação bem-sucedido: run `33459767662`, job `deploy-homolog` `99707581785`, concluído em 2026-09-01.
 
 ## Escopo exclusivo
 
@@ -35,3 +36,13 @@ A aplicação passa a reconhecer `EMAIL_PROVIDER`, `EMAIL_CREDENTIAL_ENV`, `EMAI
 ## Verificação e rollback
 
 O workflow SHALL exigir CI backend/frontend/OpenSpec/gitleaks verde, backup, Alembic em head, saúde dos containers e respostas `200` em `/healthz` e `/api/health`. A migration aditiva pode permanecer em eventual rollback de aplicação; depois que Alembic inicia, a automação bloqueia rollback automático até revisão humana. Qualquer restauração de banco ou downgrade exige nova autorização explícita.
+
+## Resultado da publicação
+
+- backup lógico exclusivo da Markina criado antes da migration;
+- checkout remoto confirmado no SHA `b625c20d13d8ea3009c365b1a3d744be8b48bbc6`;
+- Alembic avançou de `20260831_0031 (head)` para `20260831_0032 (head)`;
+- `/healthz`: HTTP `200`, corpo `ok`;
+- `/api/health`: HTTP `200`, corpo `{\"status\":\"ok\",\"service\":\"api\"}`;
+- `/admin/reset-password` e `/admin/verify-email`: HTTP `200` e `Referrer-Policy: no-referrer`;
+- nenhuma configuração SMTP/DNS foi aplicada: o envio real de e-mail continua bloqueado até intervenção humana específica.
