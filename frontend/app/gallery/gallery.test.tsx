@@ -42,7 +42,8 @@ describe("galeria privada da cliente", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const selectButtons = screen.getAllByRole("button", { name: "Selecionar" });
-    expect((selectButtons[1] as HTMLButtonElement).disabled).toBe(true);
+    expect(selectButtons).toHaveLength(1);
+    expect(screen.getByText("Comprada")).toBeTruthy();
     fireEvent.click(selectButtons[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/gallery/gallery-1/photos/new-1/selection", expect.objectContaining({ method: "POST" })));
   });
@@ -70,7 +71,8 @@ describe("galeria privada da cliente", () => {
     expect(await screen.findByRole("heading", { name: "Festa escolar" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Resumo da seleção" }).textContent).toContain("0 fotos");
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeTruthy();
-    expect(screen.getByText("Disponível para revisão")).toBeTruthy();
+    expect(screen.getByText("nova")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Selecionar" })).toBeTruthy();
   });
 
   it("explica o encerramento e retorna à Galeria pública autorizada", async () => {

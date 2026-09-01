@@ -1,56 +1,50 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ galleryId: "gallery-1" }) }));
 
 import GalleryPricingPage from "./[galleryId]/pricing/page";
+import { appendContiguousTier, hasDownwardJump, removeContiguousTier } from "./pricing-rules";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("configuração comercial da galeria", () => {
-  it("alerta sobre salto comercial antes de enviar as faixas", async () => {
-    const fetchMock = vi.fn((_: string, options?: RequestInit) => {
-      if (options?.method === "PUT") return Promise.resolve(new Response(JSON.stringify({ tiers: [], pix: {} }), { status: 200 }));
-      return Promise.resolve(new Response(JSON.stringify({
-        tiers: [
-          { minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 },
-          { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 },
-        ],
-        pix: { copy_paste: null, qr_code_payload: null, instructions: null },
-      }), { status: 200 }));
-    });
+  it("remove a edição legada e encaminha para a etapa Vendas da Galeria pública", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      inherited_from_parent_gallery_id: "source-1",
+      editable: false,
+      tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }],
+      pix: { copy_paste: "snapshot-nao-editavel", qr_code_payload: null, instructions: null },
+    }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<GalleryPricingPage />);
 
-    expect((await screen.findByRole("alert")).textContent).toMatch(/reduz o total/i);
-    fireEvent.click(screen.getByRole("button", { name: /salvar regras comerciais/i }));
-    expect(confirm).toHaveBeenCalled();
-    await waitFor(() => expect(fetchMock).not.toHaveBeenCalledWith(
-      expect.anything(), expect.objectContaining({ method: "PUT" }),
-    ));
+    expect(await screen.findByRole("heading", { name: /Preço e PIX pertencem à Galeria pública/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Abrir etapa Vendas/i }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/vendas");
+    expect(screen.queryByRole("button", { name: /salvar/i })).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   });
 
-  it("permite acrescentar uma faixa contígua e salva instruções PIX", async () => {
-    const fetchMock = vi.fn((_: string, options?: RequestInit) => {
-      if (options?.method === "PUT") return Promise.resolve(new Response(JSON.stringify({
-        tiers: [{ minimum_quantity: 1, maximum_quantity: 1, unit_price_cents: 700 }, { minimum_quantity: 2, maximum_quantity: null, unit_price_cents: 600 }],
-        pix: { copy_paste: "pix-controlado", qr_code_payload: null, instructions: "Aguarde confirmação." },
-      }), { status: 200 }));
-      return Promise.resolve(new Response(JSON.stringify({ tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, instructions: null } }), { status: 200 }));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<GalleryPricingPage />);
+  it("mantém faixas contíguas ao acrescentar e remover", () => {
+    const appended = appendContiguousTier([{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }]);
+    expect(appended).toEqual([
+      { minimum_quantity: 1, maximum_quantity: 1, unit_price_cents: 700 },
+      { minimum_quantity: 2, maximum_quantity: null, unit_price_cents: 700 },
+    ]);
+    expect(removeContiguousTier(appended, 0)).toEqual([
+      { minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 },
+    ]);
+  });
 
-    await screen.findByRole("heading", { name: /preço e pix manual/i });
-    fireEvent.click(screen.getByRole("button", { name: /adicionar faixa/i }));
-    expect((screen.getByLabelText("Início da faixa 2") as HTMLInputElement).value).toBe("2");
-    fireEvent.change(screen.getByLabelText("Copia e cola"), { target: { value: "pix-controlado" } });
-    fireEvent.click(screen.getByRole("button", { name: /salvar regras comerciais/i }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/derived-galleries/gallery-1/pricing",
-      expect.objectContaining({ method: "PUT" }),
-    ));
-    expect(await screen.findByText(/nenhum pagamento foi confirmado/i)).toBeTruthy();
+  it("detecta o salto comercial usando valores inteiros em centavos", () => {
+    expect(hasDownwardJump([
+      { minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 },
+      { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 },
+    ])).toBe(true);
+    expect(hasDownwardJump([
+      { minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 },
+      { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 700 },
+    ])).toBe(false);
   });
 });

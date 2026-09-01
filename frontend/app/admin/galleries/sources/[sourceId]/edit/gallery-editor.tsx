@@ -1,31 +1,47 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkinaButton, StatusBadge, SystemState } from "../../../../../ui-kit";
+import { ClientGalleryCard, type ClientGalleryRow } from "../../../client-gallery-card";
+import { appendContiguousTier, hasDownwardJump, removeContiguousTier, type PriceTier } from "../../../pricing-rules";
 
 type StepId = "ajustes" | "vendas" | "detalhes" | "imagens" | "clientes";
 type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | "unavailable"; available: boolean };
 type Editor = { gallery: { id: string; name: string; event_name: string; description: string; active: boolean; access_mode: "standard" | "invite_only" | "collective_protected"; unlisted_link: string | null; public_link?: { status: string; capability_id: string | null; expires_at: string | null; secret_available: boolean }; cover_photo_id: string | null; cover_preview_url: string | null; folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean } };
-type Folder = { id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null };
-type Photo = { id: string; name: string; preview_url: string | null; status: string; error: string | null; can_delete: boolean; is_cover: boolean };
-type AvailablePhoto = { id: string; name: string; folder_name: string; preview_url: string | null };
-type ClientRow = { client_id: string; name: string; phone: string; registration_status: string | null; derived_gallery_id: string | null; available_count: number; selected_count: number; purchased_count: number; gallery_status: "pending_registration" | "no_selection" | "blocked" | "expired" | "active" };
+type PublicationCounts = { published: number; ready_to_publish: number; processing: number; failed: number };
+type Folder = { id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null; publication_counts?: PublicationCounts };
+type Photo = { id: string; name: string; preview_url: string | null; status: string; publication_state?: "published" | "ready_to_publish" | "processing" | "failed"; available?: boolean; width?: number | null; height?: number | null; error: string | null; can_delete: boolean; is_cover: boolean };
+type AvailablePhoto = { id: string; name: string; folder_name: string; preview_url: string | null; width?: number | null; height?: number | null };
+type ClientRow = ClientGalleryRow;
 type ClientOption = { id: string; name: string; phone: string };
-type Availability = { available: false; reason: string; capabilities: string[] };
+type SalesData = { available: boolean; reason?: string; capabilities: string[]; tiers: PriceTier[]; pix: { copy_paste: string | null; qr_code_payload: string | null; instructions: string | null }; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean; has_downward_jump?: boolean };
+type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
+type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing"; preview_url: string | null; width: number | null; height: number | null };
+type DetailsData = { available: boolean; capabilities: string[]; font_options: FontOption[]; cover_options: CoverOption[]; settings: { cover_photo_id: string | null; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string } };
 type VisualPreview = { folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
 type UnlinkPreview = { operation_type: "unlink_client"; target: { parent_gallery_id: string; parent_gallery_name: string; client_id: string; client_name: string }; inventory: { remove: Record<string, number>; preserve: Record<string, number | Record<string, number>> }; consequences: { gallery_relationship_removed: boolean; private_gallery_removed: boolean; client_preserved: boolean; commercial_history_preserved: boolean; other_gallery_relationships_preserved: boolean; restoration_available_after_start: boolean } };
 type LifecycleOperation = { operation_id: string; status: string; status_url: string; last_error: string | null; progress: { label: string; percent: number; failed_step: string | null }; actions: { can_cancel: boolean; can_retry: boolean; should_poll: boolean; poll_after_ms: number | null } };
 
 const stepOrder: StepId[] = ["ajustes", "vendas", "detalhes", "imagens", "clientes"];
-const clientGalleryStatus = {
-  pending_registration: { label: "Cadastro pendente", tone: "warning" },
-  no_selection: { label: "Sem seleção", tone: "warning" },
-  blocked: { label: "Galeria bloqueada", tone: "dark" },
-  expired: { label: "Galeria expirada", tone: "warning" },
-  active: { label: "Galeria ativa", tone: "success" },
-} as const;
+function folderPublicationClass(folder: Folder) {
+  if (folder.publication_counts?.failed) return "has-failures";
+  if (folder.publication_counts?.processing) return "is-processing";
+  if (folder.publication_counts?.ready_to_publish) return "is-ready";
+  if (folder.publication_counts?.published) return "is-published";
+  return "is-empty";
+}
+
+function FolderPublicationSummary({ folder }: { folder: Folder }) {
+  const counts = folder.publication_counts ?? { published: folder.status === "released" ? folder.photo_count : 0, ready_to_publish: 0, processing: 0, failed: 0 };
+  return <span className="folder-publication-summary" aria-label={`Publicação de ${folder.name}`}>
+    <small className="is-published">{counts.published} publicadas</small>
+    <small className="is-ready">{counts.ready_to_publish} prontas</small>
+    <small className="is-processing">{counts.processing} processando</small>
+    <small className="has-failures">{counts.failed} falhas</small>
+  </span>;
+}
 
 async function jsonRequest(path: string, init?: RequestInit) {
   const response = await fetch(path, { credentials: "same-origin", ...init });
@@ -36,7 +52,7 @@ async function jsonRequest(path: string, init?: RequestInit) {
   return response.status === 204 ? null : response.json();
 }
 
-export default function GalleryEditor({ sourceId, step }: { sourceId: string; step: string }) {
+export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: { sourceId: string; step: string; initialFolderId?: string }) {
   const currentStep = step as StepId;
   const [editor, setEditor] = useState<Editor | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -48,8 +64,8 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
   const [linkedClients, setLinkedClients] = useState<ClientRow[]>([]);
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [clientQuery, setClientQuery] = useState("");
-  const [destinations, setDestinations] = useState<string[]>([]);
-  const [availability, setAvailability] = useState<Availability | null>(null);
+  const [sales, setSales] = useState<SalesData | null>(null);
+  const [details, setDetails] = useState<DetailsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [uploadState, setUploadState] = useState<{ phase: "idle" | "uploading" | "success" | "error"; current: number; total: number; filename?: string }>({ phase: "idle", current: 0, total: 0 });
@@ -63,12 +79,19 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
   const [refresh, setRefresh] = useState(0);
   const previewDialog = useRef<HTMLDivElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
+  const coverUploadInput = useRef<HTMLInputElement>(null);
   const uploadForm = useRef<HTMLFormElement>(null);
   const unlinkIdempotencyKey = useRef("");
 
   useEffect(() => {
     if (expandedPhoto) previewDialog.current?.focus();
   }, [expandedPhoto]);
+
+  useEffect(() => {
+    if (currentStep !== "detalhes" || !details?.cover_options?.some((option) => option.status === "processing")) return;
+    const timer = window.setTimeout(() => setRefresh((value) => value + 1), 1500);
+    return () => window.clearTimeout(timer);
+  }, [currentStep, details]);
 
   useEffect(() => {
     if (!unlinkOperation?.actions.should_poll) return;
@@ -90,17 +113,13 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
       if (!active) return;
       setLoading(true);
       setFailed(false);
-      setMessage("");
     });
     const editorRequest = jsonRequest(`/api/admin/parent-galleries/${sourceId}/editor`);
     let sectionRequest: Promise<unknown> = Promise.resolve(null);
     if (currentStep === "ajustes") sectionRequest = jsonRequest(`/api/admin/parent-galleries/${sourceId}/settings`);
     if (currentStep === "vendas") sectionRequest = jsonRequest(`/api/admin/parent-galleries/${sourceId}/sales`);
     if (currentStep === "detalhes") sectionRequest = jsonRequest(`/api/admin/parent-galleries/${sourceId}/details`);
-    if (currentStep === "imagens") sectionRequest = Promise.all([
-      jsonRequest(`/api/admin/parent-galleries/${sourceId}/folders`),
-      jsonRequest(`/api/admin/parent-galleries/${sourceId}/clients`),
-    ]);
+    if (currentStep === "imagens") sectionRequest = jsonRequest(`/api/admin/parent-galleries/${sourceId}/folders`);
     if (currentStep === "clientes") sectionRequest = Promise.all([
       jsonRequest(`/api/admin/parent-galleries/${sourceId}/clients`),
       jsonRequest(`/api/admin/clients${clientQuery ? `?query=${encodeURIComponent(clientQuery)}` : ""}`),
@@ -111,12 +130,17 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
         if (!active) return;
         setEditor(editorData as Editor);
         const visual = (editorData as Editor).gallery;
-        setVisualPreview({ folder_display_mode: visual.folder_display_mode ?? "individual", cover_title_font: visual.cover_title_font ?? "sans-serif", cover_title_color: visual.cover_title_color ?? "#FFFFFF", cover_title_size: visual.cover_title_size ?? 32, cover_title_position: visual.cover_title_position ?? "bottom-left" });
-        if (currentStep === "vendas") setAvailability(sectionData as Availability);
+        setVisualPreview({ folder_display_mode: visual.folder_display_mode ?? "individual", cover_title_font: visual.cover_title_font ?? "system-sans", cover_title_color: visual.cover_title_color ?? "#FFFFFF", cover_title_size: visual.cover_title_size ?? 32, cover_title_position: visual.cover_title_position ?? "bottom-left" });
+        if (currentStep === "vendas") {
+          const salesData = sectionData as SalesData;
+          setSales({ ...salesData, tiers: salesData.tiers?.length ? salesData.tiers : [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 0 }] });
+        }
+        if (currentStep === "detalhes") setDetails(sectionData as DetailsData);
         if (currentStep === "imagens") {
-          const [folderData, clientData] = sectionData as [{ folders: Folder[] }, { clients: ClientRow[] }];
+          const folderData = sectionData as { folders: Folder[] };
           setFolders(folderData.folders ?? []);
-          setLinkedClients(clientData.clients ?? []);
+          const requested = initialFolderId && folderData.folders?.some((folder) => folder.id === initialFolderId) ? initialFolderId : "";
+          if (requested) queueMicrotask(() => inspectFolder(requested));
         }
         if (currentStep === "clientes") {
           const [clientData, optionData, photoData] = sectionData as [{ clients: ClientRow[] }, { clients: ClientOption[] }, { photos: AvailablePhoto[] }];
@@ -128,7 +152,7 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
       .catch(() => { if (active) setFailed(true); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [clientQuery, currentStep, refresh, sourceId]);
+  }, [clientQuery, currentStep, initialFolderId, refresh, sourceId]);
 
   const currentIndex = stepOrder.indexOf(currentStep);
   const previous = currentIndex > 0 ? stepOrder[currentIndex - 1] : null;
@@ -137,6 +161,8 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
     () => folders.find((folder) => folder.id === openFolderId) ?? null,
     [folders, openFolderId],
   );
+  const coverPreviewUrl = details?.cover_options?.find((option) => option.id === details.settings?.cover_photo_id)?.preview_url ?? details?.settings?.cover_preview_url ?? editor?.gallery.cover_preview_url ?? null;
+  const titleFontFamily = details?.font_options?.find((option) => option.token === visualPreview?.cover_title_font)?.css_family ?? "var(--font-system-sans)";
 
   async function mutate(path: string, method: string, body?: object) {
     try {
@@ -231,7 +257,6 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     await mutate(`/api/admin/parent-galleries/${sourceId}/settings`, "PATCH", {
-      folder_display_mode: form.get("folder_display_mode"),
       cover_title_font: form.get("cover_title_font"), cover_title_color: form.get("cover_title_color"),
       cover_title_size: Number(form.get("cover_title_size")), cover_title_position: form.get("cover_title_position"),
     });
@@ -239,7 +264,75 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
 
   function updateVisualPreview(event: FormEvent<HTMLFormElement>) {
     const form = new FormData(event.currentTarget);
-    setVisualPreview({ folder_display_mode: String(form.get("folder_display_mode") ?? "individual"), cover_title_font: String(form.get("cover_title_font") ?? "sans-serif"), cover_title_color: String(form.get("cover_title_color") ?? "#FFFFFF"), cover_title_size: Number(form.get("cover_title_size") ?? 32), cover_title_position: String(form.get("cover_title_position") ?? "bottom-left") });
+    setVisualPreview({ folder_display_mode: visualPreview?.folder_display_mode ?? editor?.gallery.folder_display_mode ?? "individual", cover_title_font: String(form.get("cover_title_font") ?? "system-sans"), cover_title_color: String(form.get("cover_title_color") ?? "#FFFFFF"), cover_title_size: Number(form.get("cover_title_size") ?? 32), cover_title_position: String(form.get("cover_title_position") ?? "bottom-left") });
+  }
+
+  async function saveSales(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!sales) return;
+    if (hasDownwardJump(sales.tiers) && !window.confirm(
+      "Uma faixa reduz o valor total ao aumentar a quantidade. Deseja salvar mesmo assim?",
+    )) return;
+    const saved = await mutate(`/api/admin/parent-galleries/${sourceId}/sales`, "PUT", {
+      tiers: sales.tiers,
+      pix: sales.pix,
+      sales_message: sales.sales_message,
+      selection_duration_days: sales.selection_duration_days,
+      favorites_enabled: sales.favorites_enabled,
+      comments_enabled: sales.comments_enabled,
+    }) as SalesData | null;
+    if (saved) {
+      setSales(saved);
+      setMessage(saved.has_downward_jump ? "Configuração salva. Atenção: há um salto comercial entre faixas." : "Configuração de Vendas salva.");
+    }
+  }
+
+  function updateTier(index: number, patch: Partial<PriceTier>) {
+    setSales((current) => current ? { ...current, tiers: current.tiers.map((tier, tierIndex) => tierIndex === index ? { ...tier, ...patch } : tier) } : current);
+  }
+
+  function addTier() {
+    setSales((current) => current ? { ...current, tiers: appendContiguousTier(current.tiers) } : current);
+  }
+
+  async function saveFolderOrganization(event: ChangeEvent<HTMLSelectElement>) {
+    const mode = event.target.value;
+    const saved = await mutate(`/api/admin/parent-galleries/${sourceId}/settings`, "PATCH", { folder_display_mode: mode });
+    if (saved) setVisualPreview((current) => current ? { ...current, folder_display_mode: mode } : current);
+  }
+
+  async function uploadCover(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploadState({ phase: "uploading", current: 1, total: 1, filename: file.name });
+    try {
+      const registered = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/cover-photos`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ filename: file.name, display_name: file.name, idempotency_key: crypto.randomUUID() }),
+      });
+      await jsonRequest(`/api${registered.upload_url}`, { method: "PUT", headers: { "content-type": "image/jpeg" }, body: file });
+      setUploadState({ phase: "success", current: 1, total: 1, filename: file.name });
+      setMessage("Capa enviada para processamento. As opções serão atualizadas automaticamente.");
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setUploadState({ phase: "error", current: 0, total: 1, filename: file.name });
+      setMessage(error instanceof Error ? error.message : "Não foi possível enviar a capa.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  async function setCoverOption(option: CoverOption) {
+    const result = await mutate(`/api/admin/parent-galleries/${sourceId}/cover`, "PUT", { photo_id: option.id });
+    if (result) setMessage("Capa atualizada na prévia protegida.");
+  }
+
+  async function publishFolder(folderId: string) {
+    const result = await mutate(`/api/admin/photo-folders/${folderId}/publish`, "POST", {});
+    if (!result) return;
+    setMessage(`${result.published_count} foto(s) publicada(s); ${result.pending_count} em processamento e ${result.failed_count} com falha.`);
+    await inspectFolder(folderId);
   }
 
   async function createFolder(event: FormEvent<HTMLFormElement>) {
@@ -410,8 +503,40 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
         <section className="gallery-editor-panel">
           <p className="eyebrow">Etapa {currentIndex + 1}</p>
           <h2>Vendas</h2>
-          <SystemState title="Configuração ainda indisponível" detail={availability?.reason ?? "O backend ainda não habilitou esta capacidade."} />
-          <p className="gallery-scope-note">Esta tela não cria valores ou opções locais. Ela será ativada quando o contrato correspondente estiver implementado e aprovado.</p>
+          {!sales?.available ? <SystemState title="Configuração comercial indisponível" detail={sales?.reason ?? "O backend não habilitou esta capacidade."} /> : (
+            <form className="gallery-sales-editor" onSubmit={saveSales}>
+              <fieldset className="gallery-sales-section">
+                <legend>Faixas de preço</legend>
+                <p>Informe quantidades contíguas e o valor unitário em centavos. Pedidos existentes não são recalculados.</p>
+                <div className="gallery-price-tiers">
+                  {sales.tiers.map((tier, index) => (
+                    <div className="gallery-price-tier" key={`${tier.minimum_quantity}-${index}`}>
+                      <label>Quantidade inicial<input aria-label={`Quantidade inicial da faixa ${index + 1}`} type="number" min={1} value={tier.minimum_quantity} onChange={(event) => updateTier(index, { minimum_quantity: Number(event.target.value) })} /></label>
+                      <label>Quantidade final<input aria-label={`Quantidade final da faixa ${index + 1}`} type="number" min={tier.minimum_quantity} value={tier.maximum_quantity ?? ""} placeholder="Sem limite" onChange={(event) => updateTier(index, { maximum_quantity: event.target.value ? Number(event.target.value) : null })} /></label>
+                      <label>Valor por foto (centavos)<input aria-label={`Valor unitário da faixa ${index + 1}`} type="number" min={0} value={tier.unit_price_cents} onChange={(event) => updateTier(index, { unit_price_cents: Number(event.target.value) })} /></label>
+                      {sales.tiers.length > 1 ? <button type="button" className="link-button danger-action" onClick={() => setSales((current) => current ? { ...current, tiers: removeContiguousTier(current.tiers, index) } : current)}>Remover faixa</button> : null}
+                    </div>
+                  ))}
+                </div>
+                <MarkinaButton type="button" variant="secondary" onClick={addTier}>Adicionar faixa</MarkinaButton>
+                {hasDownwardJump(sales.tiers) ? <p className="notice" role="alert">A próxima faixa reduz o total ao aumentar a quantidade. Confirme essa decisão antes de salvar.</p> : null}
+              </fieldset>
+              <fieldset className="gallery-sales-section">
+                <legend>PIX manual</legend>
+                <label>PIX copia e cola<textarea name="pix_copy_paste" rows={3} value={sales.pix.copy_paste ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, copy_paste: event.target.value || null } } : current)} /></label>
+                <label>Payload do QR Code<textarea name="pix_qr_code_payload" rows={3} value={sales.pix.qr_code_payload ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, qr_code_payload: event.target.value || null } } : current)} /></label>
+                <label>Instruções de pagamento<textarea name="pix_instructions" rows={3} value={sales.pix.instructions ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, instructions: event.target.value || null } } : current)} /></label>
+              </fieldset>
+              <fieldset className="gallery-sales-section">
+                <legend>Jornada da cliente</legend>
+                <label>Mensagem comercial<textarea name="sales_message" rows={4} value={sales.sales_message} onChange={(event) => setSales((current) => current ? { ...current, sales_message: event.target.value } : current)} /></label>
+                <label>Prazo padrão de seleção (dias)<input name="selection_duration_days" type="number" min={1} max={3650} value={sales.selection_duration_days ?? 14} onChange={(event) => setSales((current) => current ? { ...current, selection_duration_days: Number(event.target.value) } : current)} required /></label>
+                <label className="gallery-toggle"><input name="favorites_enabled" type="checkbox" checked={sales.favorites_enabled} onChange={(event) => setSales((current) => current ? { ...current, favorites_enabled: event.target.checked } : current)} /> Permitir favoritos</label>
+                <label className="gallery-toggle"><input name="comments_enabled" type="checkbox" checked={sales.comments_enabled} onChange={(event) => setSales((current) => current ? { ...current, comments_enabled: event.target.checked } : current)} /> Permitir comentários</label>
+              </fieldset>
+              <MarkinaButton>Salvar Vendas</MarkinaButton>
+            </form>
+          )}
         </section>
       ) : null}
 
@@ -429,21 +554,19 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
               <div className="gallery-customization-panels">
                 <fieldset className="gallery-customization-panel">
                   <legend>Capa e título</legend>
-                  <p>Define como o nome da galeria aparece sobre a capa protegida.</p>
-                  <label>Tipografia do título<select name="cover_title_font" defaultValue={editor.gallery.cover_title_font}><option value="sans-serif">Sans-serif</option><option value="serif">Serifada</option><option value="monospace">Monoespaçada</option><option value="DejaVuSans">DejaVu Sans</option><option value="DejaVuSerif">DejaVu Serif</option></select></label>
+                  <p>Envie um JPEG dedicado ou escolha uma foto pronta da própria Galeria pública.</p>
+                  <input ref={coverUploadInput} type="file" accept="image/jpeg" hidden onChange={uploadCover} />
+                  <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>Enviar imagem de capa</MarkinaButton>
+                  {details?.cover_options?.length ? <div className="gallery-cover-options" role="group" aria-label="Opções de capa">{details.cover_options.map((option) => <button type="button" key={option.id} disabled={option.status !== "ready"} aria-pressed={details.settings?.cover_photo_id === option.id} onClick={() => setCoverOption(option)}>{option.preview_url ? <img src={`/api${option.preview_url}`} alt="" /> : <span>Processando</span>}<strong>{option.name}</strong><small>{option.source === "cover_assets" ? "Capa dedicada" : "Foto da galeria"}</small></button>)}</div> : <p className="gallery-scope-note">Nenhuma imagem enviada ainda.</p>}
+                  <label>Tipografia do título<select name="cover_title_font" defaultValue={details?.settings?.cover_title_font ?? editor.gallery.cover_title_font}>{details?.font_options?.map((option) => <option key={option.token} value={option.token}>{option.label} · {option.category === "handwritten" ? "Manuscrita" : option.category === "editorial" ? "Editorial" : "Sem serifa"}</option>)}</select></label>
                   <label>Cor do título<input name="cover_title_color" type="color" defaultValue={editor.gallery.cover_title_color} /></label>
                   <label>Tamanho do título<input name="cover_title_size" type="number" min={12} max={96} defaultValue={editor.gallery.cover_title_size} /></label>
                   <label>Posição do título<select name="cover_title_position" defaultValue={editor.gallery.cover_title_position}><option value="top-left">Superior esquerdo</option><option value="top-center">Superior centro</option><option value="top-right">Superior direito</option><option value="middle-left">Centro esquerdo</option><option value="middle-center">Centro</option><option value="middle-right">Centro direito</option><option value="bottom-left">Inferior esquerdo</option><option value="bottom-center">Inferior centro</option><option value="bottom-right">Inferior direito</option></select></label>
                 </fieldset>
-                <fieldset className="gallery-customization-panel">
-                  <legend>Organização</legend>
-                  <p>Escolha uma estrutura de leitura suportada para as pastas da galeria.</p>
-                  <label>Exibição das pastas<select name="folder_display_mode" defaultValue={editor.gallery.folder_display_mode}><option value="individual">Pastas lado a lado</option><option value="sequential">Sequência cronológica</option></select></label>
-                </fieldset>
               </div>
               <aside className="gallery-customization-preview" aria-live="polite">
                 <p className="eyebrow">Prévia protegida</p>
-                {editor.gallery.cover_preview_url ? <div className="gallery-customization-preview-image"><img src={`/api${editor.gallery.cover_preview_url}`} alt="Prévia protegida da capa da galeria" /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: visualPreview?.cover_title_font, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Prévia disponível após definir uma capa</strong><span>Na etapa Imagens, carregue e processe uma foto e escolha-a como capa.</span></div>}
+                {coverPreviewUrl ? <div className="gallery-customization-preview-image"><img src={`/api${coverPreviewUrl}`} alt="Prévia protegida da capa da galeria" /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: titleFontFamily, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Envie uma capa para visualizar o título</strong><span>O JPEG será protegido e continuará fora das pastas de conteúdo.</span></div>}
               </aside>
             </div>
             <MarkinaButton>Salvar detalhes</MarkinaButton>
@@ -454,10 +577,23 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
       {currentStep === "imagens" ? (
         <section className="gallery-editor-panel">
           <div className="section-heading"><div><p className="eyebrow">Etapa 4</p><h2>Imagens e pastas</h2></div><StatusBadge>{folders.length} pasta(s)</StatusBadge></div>
-          <p className="gallery-scope-note">Crie a pasta nesta galeria, carregue todos os JPEGs e libere a rodada somente quando estiver completa.</p>
+          <p className="gallery-scope-note">Crie pastas, revise os JPEGs e publique somente as fotos prontas. A publicação nunca escolhe clientes privados.</p>
+          <fieldset className="gallery-organization-panel">
+            <legend>Organização das pastas</legend>
+            <label>Exibição das pastas<select aria-label="Exibição das pastas" value={visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode} onChange={saveFolderOrganization}><option value="individual">Pastas lado a lado</option><option value="sequential">Sequência cronológica</option></select></label>
+            <div className={`gallery-organization-preview gallery-organization-preview--${visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode}`} aria-label={(visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode) === "sequential" ? "Prévia em sequência cronológica" : "Prévia com pastas lado a lado"}><span>1</span><span>2</span><span>3</span></div>
+            <p>{(visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode) === "sequential" ? "A galeria percorre todas as pastas em sequência cronológica." : "A cliente escolhe uma pasta por vez para navegar."}</p>
+          </fieldset>
           <form className="gallery-inline-form" onSubmit={createFolder}><label>Nome da nova pasta<input name="name" required placeholder="Ex.: Apresentação da manhã" /></label><MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton></form>
-          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={folder.id === openFolderId ? "is-open" : ""}><button type="button" onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Liberada para clientes" : "Em preparação"}</small></button>{folder.status === "preparing" ? <div className="gallery-folder-actions"><button type="button" className="link-button" onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button>{folder.photo_count === 0 ? <button type="button" className="link-button" onClick={() => { if (window.confirm("Excluir esta pasta vazia?")) mutate(`/api/admin/photo-folders/${folder.id}`, "DELETE"); }}>Excluir</button> : null}</div> : null}</article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
-          {selectedFolder ? <div className="gallery-folder-workspace"><div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Liberada" : "Em preparação"}</StatusBadge></div>{uploadState.phase !== "idle" ? <div className={`upload-status upload-status--${uploadState.phase}`} role="status"><strong>{uploadState.phase === "uploading" ? `Enviando foto ${uploadState.current} de ${uploadState.total}` : uploadState.phase === "success" ? "Upload concluído" : "Falha no upload"}</strong>{uploadState.filename ? <span>{uploadState.filename}</span> : null}{uploadState.phase === "uploading" ? <progress value={uploadState.current} max={uploadState.total} /> : null}</div> : null}{photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={!selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>Excluir selecionadas</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={!photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Processando</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.status === "completed" ? "Prévia pronta" : "Processando")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={!photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={!photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}{selectedFolder.status === "preparing" ? <><form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form><fieldset className="gallery-destinations"><legend>Liberar para galerias privadas</legend>{linkedClients.filter((person) => person.derived_gallery_id).map((person) => <label key={person.client_id}><input type="checkbox" checked={destinations.includes(person.derived_gallery_id!)} onChange={(event) => setDestinations((current) => event.target.checked ? [...current, person.derived_gallery_id!] : current.filter((id) => id !== person.derived_gallery_id))} />{person.name}</label>)}{!linkedClients.some((person) => person.derived_gallery_id) ? <p>Vincule uma cliente na etapa Clientes antes de liberar.</p> : null}<MarkinaButton type="button" disabled={!photos.length || !destinations.length} onClick={() => mutate(`/api/admin/photo-folders/${selectedFolder.id}/release`, "POST", { gallery_ids: destinations })}>Liberar pasta concluída</MarkinaButton></fieldset></> : null}</div> : null}
+          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Publicada" : "Em preparação"}</small><FolderPublicationSummary folder={folder} /></button>{folder.status === "preparing" ? <div className="gallery-folder-actions"><button type="button" className="link-button" onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button>{folder.photo_count === 0 ? <button type="button" className="link-button" onClick={() => { if (window.confirm("Excluir esta pasta vazia?")) mutate(`/api/admin/photo-folders/${folder.id}`, "DELETE"); }}>Excluir</button> : null}</div> : null}</article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
+          {selectedFolder ? (
+            <div className="gallery-folder-workspace">
+              <div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Publicada" : "Em preparação"}</StatusBadge></div>
+              {uploadState.phase !== "idle" ? <div className={`upload-status upload-status--${uploadState.phase}`} role="status"><strong>{uploadState.phase === "uploading" ? `Enviando foto ${uploadState.current} de ${uploadState.total}` : uploadState.phase === "success" ? "Upload concluído" : "Falha no upload"}</strong>{uploadState.filename ? <span>{uploadState.filename}</span> : null}{uploadState.phase === "uploading" ? <progress value={uploadState.current} max={uploadState.total} /> : null}</div> : null}
+              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={!selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>Excluir selecionadas</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={!photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Processando</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Publicada" : photo.publication_state === "ready_to_publish" ? "Pronta para publicar" : photo.publication_state === "failed" ? "Falha no processamento" : "Processando")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={!photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={!photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}
+              <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton><MarkinaButton type="button" disabled={!photos.some((photo) => photo.publication_state === "ready_to_publish" || (!photo.publication_state && photo.preview_url))} onClick={() => publishFolder(selectedFolder.id)}>{selectedFolder.status === "released" ? "Publicar novas fotos prontas" : "Publicar pasta na Galeria pública"}</MarkinaButton></form>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -472,27 +608,7 @@ export default function GalleryEditor({ sourceId, step }: { sourceId: string; st
               <p className="gallery-scope-note">Pessoas que já possuem cadastro ou galeria privada associada a este evento.</p>
               {linkedClients.length ? (
                 <div className="gallery-linked-clients" aria-label="Lista de clientes vinculadas">
-                  {linkedClients.map((person) => {
-                    const presentation = clientGalleryStatus[person.gallery_status];
-                    return (
-                      <article aria-label={`Cliente ${person.name}`} className={`gallery-linked-client gallery-linked-client--${person.gallery_status}`} key={person.client_id}>
-                        <header>
-                          <div>
-                            {person.derived_gallery_id ? <Link href={`/admin/galleries/${person.derived_gallery_id}`}>{person.name}</Link> : <strong>{person.name}</strong>}
-                            <small>{person.phone}</small>
-                          </div>
-                          <StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>
-                        </header>
-                        <dl className="gallery-client-counts">
-                          <div><dt>Disponíveis</dt><dd>{person.available_count}</dd></div>
-                          <div><dt>Selecionadas</dt><dd>{person.selected_count}</dd></div>
-                          <div><dt>Compradas</dt><dd>{person.purchased_count}</dd></div>
-                        </dl>
-                        {person.derived_gallery_id ? <Link className="gallery-client-open" href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <p className="gallery-client-pending">A galeria privada será criada quando houver fotos disponíveis ou uma primeira seleção.</p>}
-                        <div className="gallery-client-card-actions"><MarkinaButton type="button" variant="secondary" disabled={!availablePhotos.length} onClick={() => { setPrivateTarget(person); setAdminPhotoIds([]); }}>Disponibilizar fotos</MarkinaButton><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></div>
-                      </article>
-                    );
-                  })}
+                  {linkedClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} actions={<><MarkinaButton type="button" variant="secondary" disabled={!availablePhotos.length} onClick={() => { setPrivateTarget(person); setAdminPhotoIds([]); }}>Disponibilizar fotos</MarkinaButton><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></>} />)}
                 </div>
               ) : <SystemState title="Nenhuma cliente vinculada" detail="Use a busca ou o novo cadastro para criar o primeiro vínculo." />}
             </section>

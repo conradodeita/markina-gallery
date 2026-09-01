@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
+import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { MarkinaLink, StatusBadge, SystemState } from "../../ui-kit";
 
@@ -14,6 +15,8 @@ type ReviewPhoto = {
   selected: boolean;
   favorited: boolean;
   purchaseState: string;
+  width: number | null;
+  height: number | null;
 };
 type ReleasedFolder = { id: string; name: string; position: number; photo_count: number };
 type Comment = { id: string; photo_id: string; body: string };
@@ -40,6 +43,11 @@ type Review = {
     favorites_enabled: boolean;
     comments_enabled: boolean;
     cover_preview_url: string | null;
+    folder_display_mode: "individual" | "sequential";
+    cover_title_font: string;
+    cover_title_color: string;
+    cover_title_size: number;
+    cover_title_position: string;
   };
   photos: ReviewPhoto[];
 };
@@ -76,6 +84,8 @@ export default function GalleryPage() {
               selected: boolean;
               favorited: boolean;
               purchase_state: string;
+              width: number | null;
+              height: number | null;
             }) => ({
               id: photo.id,
               name: photo.name,
@@ -84,6 +94,8 @@ export default function GalleryPage() {
               selected: photo.selected,
               favorited: photo.favorited,
               purchaseState: photo.purchase_state,
+              width: photo.width,
+              height: photo.height,
             }),
           ),
         });
@@ -300,49 +312,11 @@ export default function GalleryPage() {
         ))}
       </nav>
       {!visiblePhotos.length && <p className="notice">Nenhuma foto nesta categoria.</p>}
-      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} coverUrl={review.gallery.cover_preview_url ? `/api${review.gallery.cover_preview_url}` : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} emptyDetail="Nenhuma foto desta categoria está disponível neste momento." renderPhotoDetails={(photo) => <>
-            <StatusBadge
-              tone={
-                photo.purchaseState === "já comprada"
-                  ? "success"
-                  : photo.purchaseState === "visualizada mas não comprada"
-                    ? "warning"
-                    : "neutral"
-              }
-            >
-              {photo.purchaseState}
-            </StatusBadge>
-            <small>
-              {photo.selected
-                ? "Selecionada"
-                : photo.favorited
-                  ? "Favorita"
-                  : "Disponível para revisão"}
-            </small>
-            <div className="gallery-presentation-actions">
-              <button
-                type="button"
-                className="secondary"
-                disabled={
-                  !review.gallery.selection_open ||
-                  photo.purchaseState === "já comprada"
-                }
-                onClick={() => interaction(photo, "selection")}
-              >
-                {photo.selected ? "Desfazer" : "Selecionar"}
-              </button>
-              {review.gallery.favorites_enabled && (
-                <button
-                  type="button"
-                  className="secondary"
-                  aria-pressed={photo.favorited}
-                  onClick={() => interaction(photo, "favorite")}
-                >
-                  {photo.favorited ? "★ Favorita" : "☆ Favoritar"}
-                </button>
-              )}
-            </div>
-          </>} />
+      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} coverUrl={review.gallery.cover_preview_url ? `/api${review.gallery.cover_preview_url}` : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} folderDisplayMode={review.gallery.folder_display_mode ?? "individual"} titleStyle={{ color: review.gallery.cover_title_color, fontFamily: galleryFontFamily(review.gallery.cover_title_font), fontSize: review.gallery.cover_title_size, position: review.gallery.cover_title_position }} emptyDetail="Nenhuma foto desta categoria está disponível neste momento." renderPhotoMarkers={(photo) => <>
+        <StatusBadge tone={photo.purchaseState === "já comprada" ? "success" : photo.purchaseState === "visualizada mas não comprada" ? "warning" : "neutral"}>{photo.purchaseState}</StatusBadge>
+        {photo.purchaseState === "já comprada" ? <span className="gallery-presentation-marker is-purchased">Comprada</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={photo.selected} disabled={!review.gallery.selection_open} onClick={() => interaction(photo, "selection")}>{photo.selected ? "✓ Selecionada" : "Selecionar"}</button>}
+        {review.gallery.favorites_enabled ? <button type="button" className="gallery-presentation-marker" aria-pressed={photo.favorited} onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}
+      </>} />
       <section className="selection-summary" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{selectedPhotos.length} foto{selectedPhotos.length === 1 ? "" : "s"}</strong></div>
         <p>{review.gallery.selection_open ? "Use Selecionar em cada prévia. Suas escolhas ficam salvas nesta galeria." : "O prazo de novas seleções terminou; suas escolhas continuam identificadas abaixo."}</p>

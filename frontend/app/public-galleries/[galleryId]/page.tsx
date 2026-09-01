@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { MarkinaButton, PageHeading, StatusBadge, SystemState } from "../../ui-kit";
+import { galleryFontFamily } from "../../gallery-fonts";
+import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
+import { SystemState } from "../../ui-kit";
 
-type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string };
-type PublicPhoto = { id: string; name: string; preview_url: string };
+type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
+type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; previewUrl: string };
 
 export default function PublicGalleryPage() {
   const { galleryId } = useParams<{ galleryId: string }>();
@@ -26,7 +28,16 @@ export default function PublicGalleryPage() {
     ]).then(async ([galleryResponse, photosResponse]) => {
       if (!galleryResponse.ok || !photosResponse.ok) throw new Error();
       setGallery(await galleryResponse.json());
-      setPhotos((await photosResponse.json()).photos ?? []);
+      const result = await photosResponse.json();
+      setPhotos((result.photos ?? []).map((photo: Omit<PublicPhoto, "previewUrl">) => ({
+        ...photo,
+        folder_id: photo.folder_id ?? "public-photos",
+        folder_name: photo.folder_name ?? "Fotos disponíveis",
+        folder_position: photo.folder_position ?? 0,
+        width: photo.width ?? null,
+        height: photo.height ?? null,
+        previewUrl: `/api${photo.preview_url}`,
+      })));
     }).catch(() => setFailed(true));
   }, [galleryId]);
 
@@ -54,15 +65,23 @@ export default function PublicGalleryPage() {
   if (failed) return <main className="admin-shell"><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><Link href="/library">Voltar à biblioteca</Link></main>;
   if (!gallery) return <SystemState tone="loading" title="Abrindo Galeria pública" detail="Confirmando seu acesso antes de carregar qualquer prévia." />;
 
+  const folders = [...photos.reduce((grouped, photo) => {
+    const folder = grouped.get(photo.folder_id) ?? { id: photo.folder_id, name: photo.folder_name, position: photo.folder_position, photos: [] as PublicPhoto[] };
+    folder.photos.push(photo);
+    grouped.set(photo.folder_id, folder);
+    return grouped;
+  }, new Map<string, { id: string; name: string; position: number; photos: PublicPhoto[] }>()).values()]
+    .sort((left, right) => left.position - right.position)
+    .map(({ id, name, photos: folderPhotos }) => ({ id, name, photos: folderPhotos })) as GalleryPresentationFolder<PublicPhoto>[];
+
   return (
     <main className="admin-shell public-gallery-shell">
       <Link href="/library">← Sua biblioteca</Link>
-      <PageHeading eyebrow="Galeria pública autorizada" title={gallery.name} detail={gallery.description || gallery.event_name || "Escolha suas fotos para criar ou ampliar sua galeria privada."} actions={<StatusBadge tone="success">Acesso confirmado</StatusBadge>} />
       {privateGalleryId ? <div className="public-selection-result" role="status"><span>{message}</span><Link href={`/gallery/${privateGalleryId}`}>Abrir minha galeria privada</Link></div> : message ? <p className="notice" role="alert">{message}</p> : null}
-      {photos.length ? <section className="public-photo-grid" aria-label="Fotos disponíveis nesta Galeria pública">{photos.map((photo) => {
+      <GalleryPresentation galleryName={gallery.name} eyebrow="Galeria pública autorizada" context={<p>{gallery.description || gallery.event_name || "Escolha suas fotos para criar ou ampliar sua galeria privada."}</p>} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} modeLabel={<><strong>Acesso confirmado</strong><span>Selecionar uma foto cria ou amplia somente a sua galeria privada.</span></>} emptyDetail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
-        return <article key={photo.id}><img src={`/api${photo.preview_url}`} alt={`Prévia protegida de ${photo.name}`} draggable={false} onContextMenu={(event) => event.preventDefault()} /><div><strong>{photo.name}</strong><MarkinaButton type="button" disabled={selected || Boolean(selectingId)} onClick={() => selectPhoto(photo)}>{selectingId === photo.id ? "Selecionando…" : selected ? "Selecionada" : "Selecionar foto"}</MarkinaButton></div></article>;
-      })}</section> : <SystemState title="Nenhuma foto liberada" detail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." />}
+        return <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={selected || Boolean(selectingId)} onClick={() => selectPhoto(photo)}>{selectingId === photo.id ? "Selecionando…" : selected ? "✓ Selecionada" : "Selecionar foto"}</button>;
+      }} />
     </main>
   );
 }

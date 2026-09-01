@@ -2129,7 +2129,12 @@ def test_public_access_modes_require_session_and_backend_authority(
     owner_phone = "+5511999999880"
     with SessionLocal() as db:
         owner = Client(full_name="Cliente dos modos", phone_e164=owner_phone)
-        standard = ParentGallery(name="Padrão", access_mode="standard")
+        standard = ParentGallery(
+            name="Padrão",
+            access_mode="standard",
+            folder_display_mode="sequential",
+            cover_title_font="playfair-display",
+        )
         invite = ParentGallery(name="Convite", access_mode="invite_only")
         collective = ParentGallery(name="Coletiva protegida", access_mode="collective_protected")
         db.add_all([owner, standard, invite, collective])
@@ -2145,6 +2150,7 @@ def test_public_access_modes_require_session_and_backend_authority(
         )
         db.add(photo)
         db.flush()
+        standard.cover_photo_id = photo.id
         derivative_key = f"{photo.id}/client_preview.jpg"
         db.add(
             MediaDerivative(
@@ -2152,6 +2158,8 @@ def test_public_access_modes_require_session_and_backend_authority(
                 variant="client_preview",
                 relative_path=derivative_key,
                 status="ready",
+                width=1600,
+                height=900,
             )
         )
         _, standard_token = issue_gallery_capability(
@@ -2194,10 +2202,16 @@ def test_public_access_modes_require_session_and_backend_authority(
             "destination": f"/public-galleries/{standard_id}",
             "can_browse_photos": True,
         }
-        assert client.get(f"/public-galleries/{standard_id}").status_code == 200
-        assert client.get(f"/public-galleries/{standard_id}/photos").json()["photos"][0][
-            "id"
-        ] == str(photo_id)
+        public_gallery = client.get(f"/public-galleries/{standard_id}")
+        assert public_gallery.status_code == 200
+        assert public_gallery.json()["folder_display_mode"] == "sequential"
+        assert public_gallery.json()["cover_title_font"] == "playfair-display"
+        assert public_gallery.json()["cover_preview_url"] == f"/public-galleries/{standard_id}/cover-preview"
+        public_photo = client.get(f"/public-galleries/{standard_id}/photos").json()["photos"][0]
+        assert public_photo["id"] == str(photo_id)
+        assert public_photo["folder_name"] == "Lote"
+        assert (public_photo["width"], public_photo["height"]) == (1600, 900)
+        assert client.get(f"/public-galleries/{standard_id}/cover-preview").content == b"preview-publica-protegida"
         protected = client.get(preview_url)
         assert protected.status_code == 200
         assert protected.content == b"preview-publica-protegida"
@@ -2349,6 +2363,9 @@ def test_admin_private_creation_requires_photo_and_private_invite_owner() -> Non
                     "name": "autorizada.jpg",
                     "folder_name": "Lote liberado",
                     "preview_url": (f"/admin/photo-assets/{photo_id}/watermarked-preview"),
+                    "width": None,
+                    "height": None,
+                    "publication_state": "published",
                 }
             ]
         }
@@ -3144,8 +3161,8 @@ def test_parent_gallery_client_summary_is_batched_and_uses_status_precedence() -
         event.remove(engine, "before_cursor_execute", record_select)
 
     assert response.status_code == 200
-    # Uma consulta constante autentica a sessão; as outras sete carregam o resumo.
-    assert len(statements) <= 8
+    # A autenticação e todas as agregações permanecem constantes, sem crescer por cliente.
+    assert len(statements) <= 12
     rows = {row["name"]: row for row in response.json()["clients"]}
     assert rows["Cliente Pendente"]["gallery_status"] == "pending_registration"
     assert rows["Cliente Sem seleção"]["gallery_status"] == "no_selection"

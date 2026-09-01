@@ -150,9 +150,7 @@ class AdminActionToken(Base):
     """Token de link: somente o hash é persistido em coluna consultável."""
 
     __tablename__ = "admin_action_token"
-    __table_args__ = (
-        CheckConstraint("purpose IN ('password_reset', 'verify_admin_email')"),
-    )
+    __table_args__ = (CheckConstraint("purpose IN ('password_reset', 'verify_admin_email')"),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
     purpose: Mapped[str] = mapped_column(String(32), index=True)
@@ -290,7 +288,7 @@ class ParentGallery(Base):
     watermark_size: Mapped[int] = mapped_column(Integer, default=24)
     watermark_direction: Mapped[str] = mapped_column(String(16), default="diagonal")
     folder_display_mode: Mapped[str] = mapped_column(String(16), default="individual")
-    cover_title_font: Mapped[str] = mapped_column(String(80), default="sans-serif")
+    cover_title_font: Mapped[str] = mapped_column(String(80), default="system-sans")
     cover_title_color: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     cover_title_size: Mapped[int] = mapped_column(Integer, default=32)
     cover_title_position: Mapped[str] = mapped_column(String(16), default="bottom-left")
@@ -349,12 +347,21 @@ class PhotoFolder(Base):
     __table_args__ = (
         UniqueConstraint("parent_gallery_id", "position"),
         UniqueConstraint("id", "parent_gallery_id", name="uq_photo_folder_id_parent"),
+        CheckConstraint("purpose IN ('content', 'cover_assets')", name="ck_photo_folder_purpose"),
+        Index(
+            "uq_photo_folder_cover_assets_parent",
+            "parent_gallery_id",
+            unique=True,
+            sqlite_where=text("purpose = 'cover_assets'"),
+            postgresql_where=text("purpose = 'cover_assets'"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(16), default="preparing", index=True)
+    purpose: Mapped[str] = mapped_column(String(24), default="content", server_default="content")
     position: Mapped[int] = mapped_column(Integer, default=0)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
