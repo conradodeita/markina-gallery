@@ -1,0 +1,32 @@
+/* Somente o subconjunto latino, eixo de peso e estilo normal usados pela interface. */
+@font-face {
+  font-family: "Montserrat Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/montserrat/files/montserrat-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Playfair Display Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url("@fontsource-variable/playfair-display/files/playfair-display-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Caveat Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 700;
+  src: url("@fontsource-variable/caveat/files/caveat-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Dancing Script Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 700;
+  src: url("@fontsource-variable/dancing-script/files/dancing-script-latin-wght-normal.woff2") format("woff2-variations");
+}

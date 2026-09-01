@@ -9,15 +9,15 @@ no fluxo de confirmação manual e nas notificações posteriores.
 
 ## Configuração por galeria
 
-1. Acesse **Galerias**, abra a galeria privada da cliente e selecione
-   **Preço e PIX manual**.
+1. Acesse **Galerias**, abra a Galeria pública e entre na etapa **Vendas**.
 2. Defina faixas contíguas a partir de uma foto. Os valores são centavos
    inteiros no servidor, embora o painel os apresente em reais.
 3. Revise o aviso quando uma nova faixa diminui o preço total ao aumentar a
    quantidade. Salve esse tipo de regra somente após confirmação consciente.
 4. Preencha somente as instruções que a cliente deve ver: copia-e-cola, payload
    de QR Code e uma orientação curta.
-5. Salve e confira um pedido sintético pendente em **Pedidos**.
+5. Salve e confira um pedido sintético pendente em **Pedidos** e no grupo da
+   cliente em **Pagamentos**.
 
 As instruções são congeladas no pedido. Alterar a configuração depois do
 checkout não altera pedidos já criados.

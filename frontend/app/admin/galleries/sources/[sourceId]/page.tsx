@@ -5,15 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { MarkinaButton, StatusBadge, SystemState } from "../../../../ui-kit";
+import { ClientGalleryCard, type ClientGalleryRow } from "../../client-gallery-card";
 
-type ClientRow = {
-  client_id: string;
-  name: string;
-  phone: string;
-  registration_status: string | null;
-  derived_gallery_id: string | null;
-};
-type Folder = { id: string; name: string; status: string; photo_count: number };
+type Folder = { id: string; name: string; status: string; photo_count: number; preview_url: string | null };
 type Summary = {
   name: string;
   event_name: string;
@@ -22,7 +16,7 @@ type Summary = {
   public_link_status: "active" | "unavailable";
   cover_preview_url: string | null;
   counts: { folders: number; photos: number; clients: number };
-  clients: ClientRow[];
+  clients: ClientGalleryRow[];
 };
 type InventorySection = Record<string, number | Record<string, number>>;
 type DeletionPreview = {
@@ -182,8 +176,8 @@ export default function SourceGalleryDetailPage() {
       <p className="intro">{summary.event_name || "Evento sem nome"}. O acesso às fotos segue o modo configurado e sempre exige autenticação da cliente.</p>
       <div className="action-grid"><Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/preview`}>Visualizar galeria</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/ajustes`}>Editar galeria</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/imagens`}>Abrir imagens</Link><MarkinaButton className="mk-button--danger" disabled={deletionBusy || Boolean(operation)} onClick={openDeletionConfirmation}>{deletionBusy ? "Preparando…" : "Excluir Galeria pública"}</MarkinaButton></div>
       <section className="admin-card"><div className="source-summary"><Link className="source-summary-cover" href={`/admin/galleries/sources/${sourceId}/preview`}>{summary.cover_preview_url ? <img src={`/api${summary.cover_preview_url}`} alt="Capa protegida da galeria" /> : "Sem capa definida"}</Link><div><h2>Resumo da galeria</h2><p>{summary.counts.folders} pastas · {summary.counts.photos} fotos · {summary.counts.clients} clientes vinculadas</p><p><strong>Link seguro:</strong> {summary.public_link_status === "active" ? "ativo" : "indisponível"}</p><Link href={`/admin/galleries/sources/${sourceId}/edit/clientes`}>Gerenciar links e clientes</Link></div></div></section>
-      <section className="admin-card"><h2>Pastas</h2>{folders.length ? <div className="dashboard-recent">{folders.map((folder) => <div key={folder.id}><div><strong>{folder.name}</strong><small>{folder.photo_count} foto(s)</small></div><StatusBadge tone={folder.status === "released" ? "success" : "warning"}>{folder.status === "released" ? "Liberada" : "Em preparação"}</StatusBadge></div>)}</div> : <SystemState title="Nenhuma pasta" detail="Abra a etapa Imagens para criar a primeira pasta desta galeria." />}</section>
-      <section className="admin-card"><h2>Clientes vinculadas</h2>{summary.clients.length ? <div className="dashboard-recent">{summary.clients.map((person) => <div key={person.client_id}><div><strong>{person.name}</strong><small>{person.phone}</small></div>{person.derived_gallery_id ? <Link href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <StatusBadge tone="warning">Cadastro pendente</StatusBadge>}</div>)}</div> : <SystemState title="Nenhuma cliente vinculada" detail="O vínculo pode nascer pelo login no link ou pela etapa Clientes." />}</section>
+      <section className="admin-card"><h2>Pastas</h2>{folders.length ? <div className="source-folder-cards">{folders.map((folder) => <Link aria-label={`Abrir pasta ${folder.name}`} className="source-folder-card" href={`/admin/galleries/sources/${sourceId}/edit/imagens?folder=${encodeURIComponent(folder.id)}`} key={folder.id}><span className="source-folder-card__preview">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : <b>Pasta sem miniatura</b>}</span><span><strong>{folder.name}</strong><small>{folder.photo_count} foto(s)</small></span><StatusBadge tone={folder.status === "released" ? "success" : "warning"}>{folder.status === "released" ? "Publicada" : "Em preparação"}</StatusBadge></Link>)}</div> : <SystemState title="Nenhuma pasta" detail="Abra a etapa Imagens para criar a primeira pasta desta galeria." />}</section>
+      <section className="admin-card"><h2>Clientes vinculadas</h2>{summary.clients.length ? <div className="gallery-linked-clients">{summary.clients.map((person) => <ClientGalleryCard key={person.client_id} person={person} />)}</div> : <SystemState title="Nenhuma cliente vinculada" detail="O vínculo pode nascer pelo login no link ou pela etapa Clientes." />}</section>
 
       {deletionPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="delete-gallery-title" aria-modal="true" className="mk-dialog lifecycle-dialog" role="dialog"><p className="eyebrow">Confirmação única</p><h2 id="delete-gallery-title">Excluir “{deletionPreview.target.name}”?</h2><p>A Galeria pública e o acesso compartilhável serão removidos. Esta limpeza não poderá ser restaurada depois que a etapa física começar.</p><div className="lifecycle-inventory"><section><h3>Será removido</h3><ul>{inventoryRows(deletionPreview.inventory.remove).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section><section><h3>Será preservado</h3><ul>{inventoryRows(deletionPreview.inventory.preserve).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section></div><p>Clientes, galerias privadas, fotos ainda referenciadas e histórico comercial permanecem preservados.</p><div className="mk-dialog__actions"><MarkinaButton variant="secondary" disabled={deletionBusy} onClick={() => setDeletionPreview(null)}>Cancelar</MarkinaButton><MarkinaButton className="mk-button--danger" disabled={deletionBusy} onClick={confirmDeletion}>{deletionBusy ? "Iniciando…" : `Excluir ${deletionPreview.target.name}`}</MarkinaButton></div></section></div> : null}
 

@@ -27,7 +27,7 @@ describe("Galeria pública da cliente", () => {
     ));
     expect(await screen.findByText("Sua galeria privada foi criada com esta seleção.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Abrir minha galeria privada" }).getAttribute("href")).toBe("/gallery/private-1");
-    expect((screen.getByRole("button", { name: "Selecionada" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Selecionada/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("não mostra grade coletiva ou não autorizada quando o backend nega", async () => {

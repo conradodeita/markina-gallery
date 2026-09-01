@@ -158,6 +158,7 @@ def derive_client_selection(
         or not photo.available
         or not folder
         or folder.status != "released"
+        or folder.purpose != "content"
     ):
         raise PrivateDerivationError("Foto indisponível para esta cliente.")
     gallery, gallery_created = (
@@ -256,13 +257,12 @@ def derive_admin_gallery(
                 PhotoFolder.id.in_(folder_ids),
                 PhotoFolder.parent_gallery_id == parent.id,
                 PhotoFolder.status == "released",
+                PhotoFolder.purpose == "content",
             )
         )
     )
     if released_folder_ids != folder_ids:
-        raise PrivateDerivationError(
-            "Fotos de pasta em preparação não podem ser distribuídas."
-        )
+        raise PrivateDerivationError("Fotos de pasta em preparação não podem ser distribuídas.")
 
     link_client_to_parent(
         db,
@@ -270,9 +270,7 @@ def derive_admin_gallery(
         client_id=client.id,
         status="active",
     )
-    gallery, gallery_created = ensure_private_gallery(
-        db, parent=parent, client=client, name=name
-    )
+    gallery, gallery_created = ensure_private_gallery(db, parent=parent, client=client, name=name)
     references_created = 0
     for photo in photos:
         references_created += int(
