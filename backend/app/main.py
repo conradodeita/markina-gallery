@@ -23,7 +23,28 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
 
+from app.admin_account import (
+    AdminAccountError,
+    active_admin_for_session,
+    challenge_target,
+    change_admin_password,
+    create_security_challenge,
+    issue_email_verification,
+    issue_password_reset_email,
+    mask_email,
+    normalize_admin_email,
+    queue_previous_email_notice,
+    reauthenticate_admin,
+    resend_security_challenge,
+    token_target,
+    verify_security_challenge,
+)
+from app.admin_security import (
+    consume_admin_action_token,
+    invalidate_admin_security_material,
+)
 from app.auth import (
+    AdminActionToken,
     AdminPasswordInput,
     AdminUser,
     AuditEvent,
@@ -37,6 +58,7 @@ from app.auth import (
     CommercialHistoryMedia,
     DerivedGallery,
     DerivedGalleryPhoto,
+    EmailDelivery,
     GalleryAccess,
     GalleryAccessCapability,
     GalleryLifecycleOperation,
@@ -77,6 +99,8 @@ from app.auth import (
     pii_fingerprint,
     resend_client_challenge,
     revoke_subject_sessions,
+    token_hash,
+    validate_admin_password,
 )
 from app.checkout import CheckoutError, create_pending_checkout
 from app.client_identity import (
@@ -91,6 +115,7 @@ from app.commercial_removal import (
     CommercialRemovalPreparationFailed,
     apply_commercial_removal_policy,
 )
+from app.email_delivery import EmailConfigurationError, email_channel_payload, public_app_origin
 from app.gallery_access import (
     consume_gallery_capability,
     issue_gallery_capability,
@@ -396,6 +421,37 @@ class ParentGallerySalesInput(GalleryPricingInput):
     comments_enabled: bool = False
 
 
+class AdminRecoveryRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class AdminSecurityCodeInput(BaseModel):
+    challenge_id: UUID
+    code: str = Field(pattern=r"^\d{6}$")
+
+
+class AdminPasswordResetInput(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+class AdminPasswordChallengeInput(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+
+
+class AdminPasswordChangeInput(AdminSecurityCodeInput):
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+class AdminEmailChallengeInput(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_email: str = Field(min_length=3, max_length=320)
+
+
+class AdminEmailConfirmationInput(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+
+
 def db_session():
     db = SessionLocal()
     try:
@@ -409,6 +465,18 @@ DatabaseSession = Annotated[Session, Depends(db_session)]
 
 def require_admin(request: Request) -> None:
     current_session(request, Role.ADMIN)
+
+
+def require_same_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    try:
+        expected = public_app_origin()
+    except EmailConfigurationError:
+        expected = str(request.base_url).rstrip("/")
+    if origin.rstrip("/") != expected.rstrip("/"):
+        raise HTTPException(status_code=403, detail="Origem da operação não autorizada.")
 
 
 def enforce_commercial_removal_or_409(db: Session, **scope) -> None:
@@ -1071,6 +1139,183 @@ def admin_totp(
     return {"destination": "/admin"}
 
 
+@app.post("/auth/admin/recovery/challenge", status_code=status.HTTP_202_ACCEPTED)
+def admin_recovery_challenge(
+    payload: AdminRecoveryRequest,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    try:
+        email = normalize_admin_email(payload.email)
+    except AdminAccountError:
+        email = payload.email.strip().casefold()
+    fingerprint = pii_fingerprint(email)
+    enforce_rate_limit(
+        db,
+        "admin_recovery",
+        fingerprint,
+        request.client.host if request.client else "unknown",
+    )
+    admin = db.scalar(
+        select(AdminUser).where(AdminUser.email == email, AdminUser.email_verified)
+    )
+    channel = email_channel_payload()
+    eligible = admin if channel["status"] in {"ready", "sandbox"} else None
+    try:
+        challenge, _code, _queued = create_security_challenge(
+            db,
+            purpose="password_recovery_otp",
+            subject_fingerprint=fingerprint,
+            admin=eligible,
+        )
+    except (WhatsAppConfigurationError, ValueError):
+        db.rollback()
+        challenge, _code, _queued = create_security_challenge(
+            db,
+            purpose="password_recovery_otp",
+            subject_fingerprint=fingerprint,
+            admin=None,
+        )
+    return {
+        "challenge_id": str(challenge.id),
+        "message": "Se a conta estiver apta, enviaremos as próximas instruções.",
+    }
+
+
+@app.post("/auth/admin/recovery/resend", status_code=status.HTTP_202_ACCEPTED)
+def admin_recovery_resend(
+    payload: ChallengeResendInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    enforce_rate_limit(
+        db,
+        "admin_recovery_resend",
+        token_hash(str(payload.challenge_id)),
+        request.client.host if request.client else "unknown",
+    )
+    try:
+        resend_security_challenge(
+            db, challenge_id=payload.challenge_id, purpose="password_recovery_otp"
+        )
+    except AdminAccountError:
+        raise neutral_error() from None
+    except (WhatsAppConfigurationError, ValueError):
+        db.rollback()
+    return {"message": "Se a conta estiver apta, um novo código será enviado."}
+
+
+@app.post("/auth/admin/recovery/verify", status_code=status.HTTP_202_ACCEPTED)
+def admin_recovery_verify(
+    payload: AdminSecurityCodeInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    enforce_rate_limit(
+        db,
+        "admin_recovery_verify",
+        token_hash(str(payload.challenge_id)),
+        request.client.host if request.client else "unknown",
+    )
+    try:
+        challenge = verify_security_challenge(
+            db,
+            challenge_id=payload.challenge_id,
+            purpose="password_recovery_otp",
+            code=payload.code,
+        )
+        issue_password_reset_email(db, challenge)
+    except (AdminAccountError, RuntimeError, ValueError):
+        raise neutral_error() from None
+    return {"message": "Se a conta estiver apta, o link foi enviado ao e-mail cadastrado."}
+
+
+@app.post("/auth/admin/recovery/reset")
+def admin_recovery_reset(
+    payload: AdminPasswordResetInput,
+    response: Response,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    item = db.scalar(
+        select(AdminActionToken).where(
+            AdminActionToken.token_hash == token_hash(payload.token),
+            AdminActionToken.purpose == "password_reset",
+        )
+    )
+    admin = db.get(AdminUser, item.admin_id) if item else None
+    if not item or item.used_at or expired(item.expires_at) or not admin:
+        raise HTTPException(status_code=400, detail="O link não está mais disponível.")
+    try:
+        validate_admin_password(
+            payload.new_password,
+            email=admin.email,
+            current_password_hash=admin.password_hash,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    consumed = consume_admin_action_token(
+        db, raw_token=payload.token, purpose="password_reset"
+    )
+    if not consumed:
+        raise HTTPException(status_code=400, detail="O link não está mais disponível.")
+    change_admin_password(
+        db, admin, payload.new_password, audit_event="admin_security.password_reset.completed"
+    )
+    db.commit()
+    response.delete_cookie(getenv("SESSION_COOKIE_NAME", "markina_session"), path="/")
+    return {"message": "Senha redefinida. Entre novamente com senha e autenticador."}
+
+
+@app.post("/auth/admin/email/confirm")
+def confirm_admin_email(
+    payload: AdminEmailConfirmationInput,
+    response: Response,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    item = db.scalar(
+        select(AdminActionToken).where(
+            AdminActionToken.token_hash == token_hash(payload.token),
+            AdminActionToken.purpose == "verify_admin_email",
+        )
+    )
+    admin = db.get(AdminUser, item.admin_id) if item else None
+    if not item or item.used_at or expired(item.expires_at) or not admin:
+        raise HTTPException(status_code=400, detail="O link não está mais disponível.")
+    try:
+        new_email = normalize_admin_email(token_target(item))
+    except AdminAccountError:
+        raise HTTPException(status_code=400, detail="O link não está mais disponível.") from None
+    conflict = db.scalar(
+        select(AdminUser).where(AdminUser.email == new_email, AdminUser.id != admin.id)
+    )
+    if conflict:
+        item.used_at = now()
+        item.encrypted_target = None
+        audit(db, "admin_security.email_change.conflict", item.target_fingerprint or "unknown")
+        db.commit()
+        raise HTTPException(status_code=409, detail="Não foi possível usar o e-mail informado.")
+    consumed = consume_admin_action_token(
+        db, raw_token=payload.token, purpose="verify_admin_email"
+    )
+    if not consumed:
+        raise HTTPException(status_code=400, detail="O link não está mais disponível.")
+    previous_email = admin.email
+    admin.email = new_email
+    admin.email_verified = True
+    queue_previous_email_notice(
+        db,
+        admin_id=admin.id,
+        previous_email=previous_email,
+        action_token_id=item.id,
+    )
+    invalidate_admin_security_material(db, admin.id)
+    revoke_subject_sessions(db, "admin", admin.id)
+    audit(db, "admin_security.email_change.completed", str(admin.id))
+    db.commit()
+    response.delete_cookie(getenv("SESSION_COOKIE_NAME", "markina_session"), path="/")
+    return {"message": "E-mail confirmado. Entre novamente com o novo endereço."}
+
+
 @app.get("/auth/destination")
 def destination(request: Request) -> dict[str, str]:
     session = current_session(request)
@@ -1113,6 +1358,171 @@ def revoke_all(request: Request, response: Response) -> Response:
 def admin_area(request: Request) -> dict[str, str]:
     require_admin(request)
     return {"status": "authorized"}
+
+
+@app.get("/admin/email/channel")
+def admin_email_channel(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    payload: dict[str, object] = email_channel_payload()
+    payload["deliveries"] = {
+        delivery_status: count
+        for delivery_status, count in db.execute(
+            select(EmailDelivery.status, func.count())
+            .group_by(EmailDelivery.status)
+            .order_by(EmailDelivery.status)
+        )
+    }
+    return payload
+
+
+@app.get("/admin/security/summary")
+def admin_security_summary(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    session = current_session(request, Role.ADMIN)
+    try:
+        admin = active_admin_for_session(db, session)
+    except AdminAccountError:
+        raise HTTPException(status_code=403, detail="Acesso negado.") from None
+    whatsapp = channel_settings(db)
+    return {
+        "email_masked": mask_email(admin.email),
+        "whatsapp_status": whatsapp.status,
+        "email_channel": email_channel_payload(),
+    }
+
+
+@app.post("/admin/security/password/challenge", status_code=status.HTTP_202_ACCEPTED)
+def admin_password_change_challenge(
+    payload: AdminPasswordChallengeInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    admin = active_admin_for_session(db, session)
+    enforce_rate_limit(
+        db,
+        "admin_change_password",
+        str(admin.id),
+        request.client.host if request.client else "unknown",
+    )
+    try:
+        reauthenticate_admin(admin, payload.current_password)
+    except AdminAccountError:
+        audit(db, "admin_security.change_password.reauthentication_failed", str(admin.id))
+        db.commit()
+        raise neutral_error() from None
+    challenge, _code, queued = create_security_challenge(
+        db,
+        purpose="change_password_otp",
+        subject_fingerprint=pii_fingerprint(str(admin.id)),
+        admin=admin,
+        session_id=session.id,
+    )
+    if not queued:
+        raise HTTPException(status_code=409, detail="Canal WhatsApp indisponível para confirmação.")
+    return {"challenge_id": str(challenge.id), "message": "Código de confirmação enviado."}
+
+
+@app.post("/admin/security/password/confirm")
+def admin_password_change_confirm(
+    payload: AdminPasswordChangeInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    admin = active_admin_for_session(db, session)
+    try:
+        verify_security_challenge(
+            db,
+            challenge_id=payload.challenge_id,
+            purpose="change_password_otp",
+            code=payload.code,
+            session_id=session.id,
+        )
+        change_admin_password(
+            db,
+            admin,
+            payload.new_password,
+            audit_event="admin_security.password_change.completed",
+        )
+    except AdminAccountError:
+        raise neutral_error() from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    db.commit()
+    response.delete_cookie(getenv("SESSION_COOKIE_NAME", "markina_session"), path="/")
+    return {"message": "Senha alterada. Entre novamente."}
+
+
+@app.post("/admin/security/email/challenge", status_code=status.HTTP_202_ACCEPTED)
+def admin_email_change_challenge(
+    payload: AdminEmailChallengeInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    admin = active_admin_for_session(db, session)
+    try:
+        new_email = normalize_admin_email(payload.new_email)
+        reauthenticate_admin(admin, payload.current_password)
+    except AdminAccountError:
+        audit(db, "admin_security.change_email.reauthentication_failed", str(admin.id))
+        db.commit()
+        raise neutral_error() from None
+    if new_email == admin.email or db.scalar(
+        select(AdminUser).where(AdminUser.email == new_email, AdminUser.id != admin.id)
+    ):
+        raise HTTPException(status_code=409, detail="Não foi possível usar o e-mail informado.")
+    enforce_rate_limit(
+        db,
+        "admin_change_email",
+        str(admin.id),
+        request.client.host if request.client else "unknown",
+    )
+    challenge, _code, queued = create_security_challenge(
+        db,
+        purpose="change_email_otp",
+        subject_fingerprint=pii_fingerprint(str(admin.id)),
+        admin=admin,
+        session_id=session.id,
+        target=new_email,
+    )
+    if not queued:
+        raise HTTPException(status_code=409, detail="Canal WhatsApp indisponível para confirmação.")
+    return {"challenge_id": str(challenge.id), "message": "Código de confirmação enviado."}
+
+
+@app.post("/admin/security/email/verify-otp", status_code=status.HTTP_202_ACCEPTED)
+def admin_email_change_verify_otp(
+    payload: AdminSecurityCodeInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    admin = active_admin_for_session(db, session)
+    try:
+        challenge = verify_security_challenge(
+            db,
+            challenge_id=payload.challenge_id,
+            purpose="change_email_otp",
+            code=payload.code,
+            session_id=session.id,
+        )
+        new_email = challenge_target(challenge)
+        if challenge.target_fingerprint != pii_fingerprint(new_email.strip().casefold()):
+            raise AdminAccountError("Alvo da alteração indisponível.")
+        issue_email_verification(db, admin, new_email)
+    except AdminAccountError:
+        raise neutral_error() from None
+    return {"message": "Enviamos a confirmação para o novo endereço."}
 
 
 def _branding_payload(

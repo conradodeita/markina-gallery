@@ -4,5 +4,8 @@ title = "Markina Gallery"
 useDefault = true
 
 [allowlist]
-description = "Chave idempotente sintética usada somente no teste de checkout"
-regexes = ['''^communication-order-key-0001$''']
+description = "Valores sintéticos fixos usados exclusivamente em testes automatizados"
+regexes = [
+  '''^communication-order-key-0001$''',
+  '''^(Atual-forte-2026|Nova-frase-forte-2027|Outra-frase-forte-2028)$''',
+]

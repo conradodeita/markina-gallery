@@ -1,0 +1,66 @@
+## 1. Persistência e primitivas de segurança
+
+- [x] 1.1 Criar migration aditiva e modelos SQLAlchemy para desafios administrativos, tokens de ação, outbox de e-mail e tentativas, com constraints, índices, UTC e downgrade revisável; verificar upgrade do zero e a partir do head vigente sem alterar credenciais existentes.
+- [x] 1.2 Implementar validação central de senha forte e adotá-la no seed, na redefinição e em Configurações; verificar limites, senha comum, coincidência com e-mail, reutilização da senha atual e hash Argon2id por testes unitários.
+- [x] 1.3 Implementar geração/hash de tokens, HMAC de identidades, cifra autenticada de payload e consumo/invalidação atômicos; verificar adulteração, chave ausente fora de desenvolvimento, expiração, uso único e concorrência por testes focados.
+- [x] 1.4 Implementar limpeza idempotente de desafios, tokens e payloads em estado terminal; verificar que dados recuperáveis são apagados e metadados mínimos de auditoria permanecem sem contato, OTP, token ou senha em claro.
+
+## 2. Transporte transacional de e-mail
+
+- [x] 2.1 Criar o contrato `EmailProvider` e os adaptadores fake de teste, sandbox sem efeito externo e SMTP com TLS/timeout/configuração somente de ambiente; verificar que sandbox não abre rede/não registra conteúdo e que configuração real incompleta falha fechada.
+- [x] 2.2 Implementar enfileiramento idempotente de e-mails com destinatário e conteúdo cifrados, origem HTTPS permitida e templates de recuperação, verificação e aviso; verificar duplicidade, origem inválida, ausência de token bruto e remoção do payload terminal.
+- [x] 2.3 Integrar o processamento da outbox ao worker com claim atômico, validade, backoff limitado, estados e tratamento de resultado ambíguo sem reenvio cego; verificar aceitação, falha transitória, falha terminal, timeout ambíguo e expiração antes do envio.
+- [x] 2.4 Expor diagnóstico administrativo sanitizado da prontidão do e-mail e incluir pendências do canal na superfície operacional existente; verificar autorização, estados sandbox/indisponível/pronto e ausência de host, usuário, senha, destinatário ou link nas respostas.
+
+## 3. Recuperação pública do administrador
+
+- [x] 3.1 Implementar solicitação neutra de recuperação com desafio real ou sintético, rate limit por HMAC/IP e OTP destinado exclusivamente ao canal WhatsApp administrativo `ready`; verificar equivalência pública entre e-mail existente, desconhecido e canais inelegíveis, sem criar sessão.
+- [x] 3.2 Implementar reenvio limitado e validação do OTP de recuperação por finalidade, invalidando desafios anteriores e enfileirando um único link no e-mail cadastrado; verificar OTP correto, incorreto, expirado, usado, excesso de tentativas e indisponibilidade dos canais.
+- [x] 3.3 Implementar consumo do token de redefinição e troca transacional da senha, com política forte, invalidação de tokens/desafios, revogação de todas as sessões e remoção de cookie aplicável; verificar sucesso, token inválido/expirado/reutilizado, nova senha inválida e consumo concorrente.
+- [x] 3.4 Cobrir o fluxo público com testes de não enumeração, auditoria sanitizada, limites de entrada e ausência de senha, OTP, token, e-mail ou telefone em logs/respostas/tabelas não cifradas.
+
+## 4. Segurança da conta em Configurações
+
+- [x] 4.1 Implementar leitura autenticada do resumo de segurança com e-mail mascarado e prontidão dos canais; verificar que cliente, visitante e sessão revogada recebem acesso negado e que o endereço completo não é exposto desnecessariamente.
+- [x] 4.2 Implementar desafio e conclusão da troca de senha vinculados à sessão, finalidade, senha atual e OTP WhatsApp; verificar reautenticação, não reutilização cruzada, revogação de todas as sessões e exigência de novo login com TOTP.
+- [x] 4.3 Implementar solicitação de troca de e-mail mantendo o endereço atual, token cifrado/hash-only enviado ao novo endereço e invalidação de pedidos anteriores; verificar endereço inválido/ocupado, OTP/senha incorretos, idempotência e preservação do login atual antes da confirmação.
+- [x] 4.4 Implementar confirmação atômica do novo e-mail, aviso ao endereço anterior e revogação de sessões/tokens; verificar sucesso, expiração, reutilização, conflito concorrente e manutenção do endereço anterior em toda falha.
+- [x] 4.5 Aplicar validação same-origin, rate limit e auditoria aos endpoints de Configurações; verificar requisição cross-site, sessão/challenge incompatíveis e ausência de dados sensíveis nos eventos.
+
+## 5. Experiência frontend
+
+- [x] 5.1 Ler integralmente a documentação local relevante do Next.js 16 e os `AGENTS.md` aplicáveis antes de editar o frontend; registrar no `tasks.md` as páginas consultadas.
+- [x] 5.2 Adicionar `Esqueci minha senha` somente ao contexto Fotógrafo e implementar as etapas e estados neutros de solicitação, OTP e confirmação de envio do e-mail; verificar navegação por teclado, leitores de tela, erro, expiração, reenvio e layout mobile/desktop em testes de componente.
+- [x] 5.3 Criar a página de redefinição que lê o token do fragmento, remove-o imediatamente da URL/histórico, não usa storage e só o envia no POST com a nova senha; verificar token ausente/inválido, política de senha, sucesso sem login automático e ausência de recurso de terceiro.
+- [x] 5.4 Criar a página de confirmação de novo e-mail com consumo explícito por POST e remoção do fragmento; verificar que visita/preview por GET não consome o token e que sucesso/falha encaminham ao login sem expor endereços.
+- [x] 5.5 Adicionar a seção acessível `Segurança da conta` em Configurações, com e-mail mascarado, formulários separados, confirmação por OTP e aviso de encerramento de sessão; verificar estados de canais indisponíveis, cancelamento, erros e sucesso em testes de componente.
+- [x] 5.6 Executar testes frontend focados, lint e typecheck após cada superfície e corrigir regressões causadas pela change antes da validação integrada.
+
+## 6. Documentação e validação local
+
+- [x] 6.1 Documentar contratos de API, tempos/limites, variáveis sem valores, origem HTTPS, chave de cifra, sandbox/SMTP, retenção, SPF/DKIM/DMARC, troubleshooting e rollback; verificar busca por segredos/valores reais e coerência com proposal, design e specs.
+- [x] 6.2 Executar testes backend focados e completos, Ruff, validação Alembic do zero/sobre o head e inspeção do schema; corrigir falhas da change e registrar comandos/resultados verificáveis neste arquivo.
+- [x] 6.3 Executar testes frontend completos, ESLint, TypeScript e build de produção; corrigir falhas da change e registrar comandos/resultados verificáveis neste arquivo.
+- [x] 6.4 Executar `git diff --check`, revisar o diff por escopo/segredos e validar `add-secure-admin-account-recovery` em modo OpenSpec estrito; reconciliar qualquer divergência antes de marcar a implementação local concluída.
+
+## 7. Homologação e aceite humano
+
+- [x] 7.1 Preparar inventário de deploy zero-impact com SHA, migration, serviços/volumes, portas públicas, subdomínio, variáveis externas, backup e rollback; verificar que nenhum recurso de terceiro será alterado e solicitar autorização explícita antes do deploy.
+- [ ] 7.2 Após autorização específica, publicar a change em homologação, confirmar SHA e Alembic head e testar `/healthz` e `/api/health`; registrar run/deployment e evidência sem segredos.
+- [ ] 7.3 Após configuração humana do SMTP e DNS próprios de homologação, comprovar SPF/DKIM/DMARC e executar com dados sintéticos recuperação completa, troca de senha, troca de e-mail, aviso ao endereço anterior e novo login com TOTP; registrar somente estados, IDs sanitizados e horários.
+- [ ] 7.4 Realizar revisão humana autenticada em desktop e smartphone das telas de entrada, redefinição, confirmação e Configurações; corrigir defeitos reportados e somente então sincronizar/arquivar a change conforme o fluxo OpenSpec.
+
+## Registro de execução
+
+- Task 1.1 (2026-08-31): migration aditiva `20260831_0032` e quatro modelos criados. Em SQLite temporário, `python -m alembic upgrade head`, `downgrade 20260831_0031` e novo `upgrade head` concluíram sem falha; `python -m ruff check app/auth.py migrations/versions/20260831_0032_admin_account_recovery.py` aprovou. Nenhuma coluna ou credencial de `admin_user` foi alterada.
+- Task 1.2 (2026-08-31): política única de 12–128 caracteres, bloqueio de valores comuns, coincidência com o e-mail e reutilização imediata aplicada ao seed e pronta para os fluxos novos. `python -m pytest -q tests/test_admin_security.py tests/test_auth.py::test_seed_admin_is_idempotent_and_requires_external_values` aprovou 6 testes; Ruff focal aprovou.
+- Tasks 1.3–1.4 (2026-08-31): tokens de 256 bits persistidos por hash, consumo condicional de uso único, invalidação do token anterior, envelope AES-GCM contextual e limpeza idempotente implementados. `python -m pytest -q tests/test_admin_security.py` aprovou 8 testes, incluindo adulteração, chave ausente em homologação, uso único e minimização terminal; Ruff focal aprovou.
+- Tasks 2.1–2.2 (2026-08-31): porta `EmailProvider`, sandbox sem rede, SMTP com TLS obrigatório e configuração segregada, links por fragmento/origem permitida e enfileiramento cifrado/idempotente implementados. `python -m pytest -q tests/test_admin_security.py` aprovou 10 testes; Ruff focal aprovou.
+- Tasks 2.3–4.5 (2026-08-31): worker, diagnóstico, recuperação pública, redefinição, resumo de segurança e trocas de senha/e-mail implementados. Os testes cobrem estados do worker, resposta neutra, desafios sintéticos, reenvio limitado, expiração, token hash-only/uso único, senha fraca sem consumo, revogação de sessão, vínculo desafio-sessão, same-origin, preservação do e-mail anterior e aviso posterior. `python -m pytest -q tests/test_admin_security.py` e `python -m pytest -q tests/test_auth.py tests/test_admin_security.py` concluíram sem falha; Ruff focal aprovou.
+- Task 5.1 (2026-08-31): lidos integralmente `frontend/AGENTS.md`, `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`, `05-server-and-client-components.md`, `node_modules/next/dist/docs/01-app/02-guides/authentication.md`, `data-security.md` e `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md` antes da primeira edição frontend.
+- Tasks 5.2–5.6 (2026-08-31): fluxo neutro no login, páginas públicas isoladas do layout autenticado, token removido do fragmento sem storage, confirmação de e-mail somente por POST e painel de segurança responsivo implementados. `npm test -- --run app/auth-entry.test.tsx 'app/(public)/admin/account-action.test.tsx' app/admin/settings/security-panel.test.tsx app/admin/settings/page.test.tsx` aprovou 23 testes; ESLint focal terminou sem erros e `npx tsc --noEmit` aprovou.
+- Task 6.1 (2026-08-31): `.env.example`, Compose, `backend/README.md` e `docs/OPERACAO-RECUPERACAO-CONTA-ADMIN.md` documentam contratos, limites, variáveis sem valores reais, TLS, sandbox/SMTP, retenção, SPF/DKIM/DMARC, diagnóstico e rollback. `docker compose --env-file .env.example -p markina-gallery -f docker/docker-compose.yml config --quiet` aprovou.
+- Task 6.2 (2026-08-31): `python -m pytest -q` aprovou 188 testes e ignorou 1; a execução focal final `python -m pytest -q tests/test_admin_security.py` aprovou 20 testes. `python -m ruff check app tests migrations/versions/20260831_0032_admin_account_recovery.py` aprovou. Alembic subiu do zero e de `20260831_0031` para `20260831_0032 (head)`; a inspeção SQLite confirmou as quatro tabelas, colunas e índices da change.
+- Task 6.3 (2026-08-31): `npm test` aprovou 88 testes em 20 arquivos após repetir isoladamente um timeout preexistente sob carga concorrente; `npm run lint` terminou sem erros (17 avisos preexistentes de imagem/navegação), `npx tsc --noEmit` e `npm run build` aprovaram. O build gerou `/admin/reset-password` e `/admin/verify-email` como rotas públicas estáticas.
+- Task 6.4 (2026-08-31): `git diff --cached --check` aprovou; os 30 arquivos staged pertencem exclusivamente à change e a busca por formatos conhecidos de chave privada/token/credencial preenchida não encontrou valor. `npx -y @fission-ai/openspec@latest validate add-secure-admin-account-recovery --type change --strict --no-interactive` aprovou. O teste de política Python do deploy aprovou; o shell test fica coberto pelo job Linux do CI porque este host Windows não possui Bash/WSL.
+- Task 7.1 (2026-08-31): inventário registrado em `deployment-inventory.md` com candidato `8ee1f95e1be178d21c05d4797ed22f27b2ac5e10`, base publicada `2419ac8d046be8051366690edfa80e609f00b752`, run `33446777797`, migration, escopo Compose, porta/subdomínio, volumes, variáveis externas, backup e rollback. O inventário foi apresentado e a autorização explícita anterior do proprietário cobre a publicação desta change.
