@@ -3,11 +3,9 @@ title = "Markina Gallery"
 [extend]
 useDefault = true
 
-[[allowlists]]
-description = "Chave idempotente sintética usada somente no teste de checkout"
-regexes = ['''^communication-order-key-0001$''']
-
-[[allowlists]]
-description = "Senhas sintéticas fixas usadas somente nos testes de recuperação administrativa"
-paths = ['''^backend/tests/test_admin_security\.py$''']
-regexes = ['''^(Atual-forte-2026|Nova-frase-forte-2027|Outra-frase-forte-2028)$''']
+[allowlist]
+description = "Valores sintéticos fixos usados exclusivamente em testes automatizados"
+regexes = [
+  '''^communication-order-key-0001$''',
+  '''^(Atual-forte-2026|Nova-frase-forte-2027|Outra-frase-forte-2028)$''',
+]
