@@ -10,6 +10,18 @@ const nextConfig = {
       },
     ];
   },
+  async headers() {
+    return [
+      {
+        source: "/admin/reset-password",
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
+      {
+        source: "/admin/verify-email",
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -15,6 +15,7 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError
 from fastapi import HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import (
@@ -115,6 +116,102 @@ class AdminUser(Base):
     password_hash: Mapped[str] = mapped_column(String(512))
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     totp_secret: Mapped[str] = mapped_column(String(128))
+
+
+class AdminSecurityChallenge(Base):
+    """Desafio curto e finalístico para recuperação e ações sensíveis."""
+
+    __tablename__ = "admin_security_challenge"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp')"
+        ),
+        CheckConstraint("attempts >= 0"),
+        CheckConstraint("resend_count >= 0"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    purpose: Mapped[str] = mapped_column(String(40), index=True)
+    admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=True, index=True
+    )
+    session_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    subject_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    target_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    encrypted_target: Mapped[str | None] = mapped_column(Text, nullable=True)
+    secret_hash: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    resend_count: Mapped[int] = mapped_column(Integer, default=0)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AdminActionToken(Base):
+    """Token de link: somente o hash é persistido em coluna consultável."""
+
+    __tablename__ = "admin_action_token"
+    __table_args__ = (
+        CheckConstraint("purpose IN ('password_reset', 'verify_admin_email')"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
+    purpose: Mapped[str] = mapped_column(String(32), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    target_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    encrypted_target: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class EmailDelivery(Base):
+    """Outbox de e-mail; destinatário e corpo permanecem no envelope cifrado."""
+
+    __tablename__ = "email_delivery"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        UniqueConstraint("external_message_id"),
+        CheckConstraint("kind IN ('password_recovery', 'email_verification', 'security_notice')"),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'accepted', 'failed', 'unknown', 'expired')"
+        ),
+        CheckConstraint("attempts >= 0"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    source_type: Mapped[str] = mapped_column(String(48), index=True)
+    source_id: Mapped[str] = mapped_column(String(128), index=True)
+    recipient_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True)
+    encrypted_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True, unique=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class EmailDeliveryAttempt(Base):
+    __tablename__ = "email_delivery_attempt"
+    __table_args__ = (
+        CheckConstraint(
+            "result IN ('accepted', 'transient_failure', 'permanent_failure', 'unknown')"
+        ),
+        CheckConstraint("attempt_number >= 1"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    delivery_id: Mapped[UUID] = mapped_column(ForeignKey("email_delivery.id"), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    result: Mapped[str] = mapped_column(String(24))
+    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class Client(Base):
@@ -901,6 +998,41 @@ def normalize_e164(phone: str) -> str:
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+COMMON_ADMIN_PASSWORDS = {
+    "123456789012",
+    "administrador",
+    "markinagallery",
+    "password1234",
+    "senha123456",
+    "senha12345678",
+}
+
+
+def validate_admin_password(
+    password: str,
+    *,
+    email: str,
+    current_password_hash: str | None = None,
+) -> None:
+    """Aplica a mesma política antes de qualquer hash administrativo."""
+
+    if not 12 <= len(password) <= 128:
+        raise ValueError("A senha deve ter entre 12 e 128 caracteres.")
+    normalized = password.strip().casefold()
+    if normalized in COMMON_ADMIN_PASSWORDS:
+        raise ValueError("Escolha uma senha menos comum.")
+    email_local = email.strip().casefold().partition("@")[0]
+    compact_password = re.sub(r"\s+", "", normalized)
+    if len(email_local) >= 4 and email_local in compact_password:
+        raise ValueError("A senha não pode conter o e-mail da conta.")
+    if current_password_hash:
+        try:
+            if password_hasher.verify(current_password_hash, password):
+                raise ValueError("A nova senha deve ser diferente da senha atual.")
+        except VerificationError:
+            pass
 
 
 def pii_fingerprint(value: str) -> str:

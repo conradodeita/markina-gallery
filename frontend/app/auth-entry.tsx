@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 
 type Context = "client" | "admin";
-type Step = "details" | "code";
+type Step = "details" | "code" | "recovery-email" | "recovery-code" | "recovery-sent";
 const genericError =
   "Não foi possível concluir a autenticação. Confira os dados e tente novamente.";
 const brazilPhoneError =
@@ -46,6 +46,7 @@ export function AuthEntry({
   const [step, setStep] = useState<Step>("details");
   const [challengeId, setChallengeId] = useState("");
   const [clientPhone, setClientPhone] = useState("");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [branding, setBranding] = useState(defaultBranding);
@@ -201,12 +202,75 @@ export function AuthEntry({
       setLoading(false);
     }
   }
+  async function requestRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const email = String(new FormData(event.currentTarget).get("recoveryEmail") ?? "");
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/auth/admin/recovery/challenge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error();
+      setRecoveryEmail(email);
+      setChallengeId(result.challenge_id);
+      setMessage(result.message);
+      setStep("recovery-code");
+    } catch {
+      setMessage("Não foi possível iniciar a recuperação agora. Tente novamente mais tarde.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function verifyRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const code = new FormData(event.currentTarget).get("code");
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/auth/admin/recovery/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_id: challengeId, code }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error();
+      setMessage(result.message);
+      setStep("recovery-sent");
+    } catch {
+      setMessage("O código expirou ou não pôde ser validado. Solicite outro e tente novamente.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function resendRecovery() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/auth/admin/recovery/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_id: challengeId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error();
+      setMessage(result.message);
+    } catch {
+      setMessage("Não foi possível reenviar o código agora. Tente novamente mais tarde.");
+    } finally {
+      setLoading(false);
+    }
+  }
   function choose(next: Context) {
     setContext(next);
     setStep("details");
     setMessage("");
     setChallengeId("");
     setClientPhone("");
+    setRecoveryEmail("");
   }
   return (
     <main className="auth-shell">
@@ -300,8 +364,17 @@ export function AuthEntry({
                   ? "Receber código"
                   : "Continuar"}
             </button>
+            {context === "admin" ? (
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => { setStep("recovery-email"); setMessage(""); }}
+              >
+                Esqueci minha senha
+              </button>
+            ) : null}
           </form>
-        ) : (
+        ) : step === "code" ? (
           <form onSubmit={verifyCode} className="auth-form">
             <label>
               {context === "client"
@@ -338,6 +411,41 @@ export function AuthEntry({
               Voltar
             </button>
           </form>
+        ) : step === "recovery-email" ? (
+          <form onSubmit={requestRecovery} className="auth-form" aria-labelledby="recovery-title">
+            <div>
+              <h2 id="recovery-title">Recuperar acesso</h2>
+              <p className="auth-helper">Informe o e-mail administrativo. Se a conta estiver apta, o código de confirmação será enviado ao WhatsApp do fotógrafo.</p>
+            </div>
+            <label>
+              E-mail administrativo
+              <input name="recoveryEmail" type="email" autoComplete="email" defaultValue={recoveryEmail} required autoFocus />
+            </label>
+            <button className="primary" disabled={loading}>{loading ? "Aguarde…" : "Receber código"}</button>
+            <button type="button" className="secondary" onClick={() => { setStep("details"); setMessage(""); }}>Voltar ao login</button>
+          </form>
+        ) : step === "recovery-code" ? (
+          <form onSubmit={verifyRecovery} className="auth-form" aria-labelledby="recovery-code-title">
+            <div>
+              <h2 id="recovery-code-title">Confirme pelo WhatsApp</h2>
+              <p className="auth-helper">Digite o código de seis dígitos. Por segurança, a resposta não confirma se o e-mail está cadastrado.</p>
+            </div>
+            <label>
+              Código de recuperação
+              <input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus />
+            </label>
+            <button className="primary" disabled={loading}>{loading ? "Validando…" : "Validar código"}</button>
+            <button type="button" className="link-button" disabled={loading} onClick={resendRecovery}>Reenviar código</button>
+            <button type="button" className="secondary" onClick={() => { setStep("recovery-email"); setMessage(""); }}>Corrigir e-mail</button>
+          </form>
+        ) : (
+          <section className="auth-form" aria-labelledby="recovery-sent-title">
+            <div>
+              <h2 id="recovery-sent-title">Confira seu e-mail</h2>
+              <p className="auth-helper">Se a conta estiver apta, enviamos um link de uso único para criar uma nova senha. O link expira e não realiza login automático.</p>
+            </div>
+            <button type="button" className="secondary" onClick={() => choose("admin")}>Voltar ao login</button>
+          </section>
         )}
         {message && (
           <p className="form-message" role="status">

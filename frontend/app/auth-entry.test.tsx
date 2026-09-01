@@ -263,4 +263,35 @@ describe("entrada com identidade configurável", () => {
       ),
     ).toBeTruthy();
   });
+
+  it("oferece recuperação apenas ao fotógrafo e conclui o fluxo neutro", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/branding")) return Promise.resolve(new Response(null, { status: 500 }));
+      if (url.endsWith("/recovery/challenge")) {
+        return Promise.resolve(new Response(JSON.stringify({ challenge_id: "recovery-1", message: "Se a conta estiver apta, enviaremos as próximas instruções." }), { status: 202 }));
+      }
+      if (url.endsWith("/recovery/verify")) {
+        return Promise.resolve(new Response(JSON.stringify({ message: "Se a conta estiver apta, o link foi enviado ao e-mail cadastrado." }), { status: 202 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ message: "Novo código solicitado." }), { status: 202 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry />);
+
+    expect(screen.queryByRole("button", { name: "Esqueci minha senha" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Fotógrafo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Esqueci minha senha" }));
+    fireEvent.change(screen.getByLabelText("E-mail administrativo"), { target: { value: "admin@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+
+    await screen.findByLabelText("Código de recuperação");
+    fireEvent.click(screen.getByRole("button", { name: "Reenviar código" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/admin/recovery/resend", expect.objectContaining({ method: "POST" })));
+    fireEvent.change(screen.getByLabelText("Código de recuperação"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Validar código" }));
+
+    expect(await screen.findByRole("heading", { name: "Confira seu e-mail" })).toBeTruthy();
+    expect(screen.getByText(/não realiza login automático/i)).toBeTruthy();
+  });
 });

@@ -8,9 +8,16 @@ from uuid import UUID
 from sqlalchemy import case, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.admin_security import (
+    AdminSecurityConfigurationError,
+    cleanup_admin_security_material,
+    decrypt_sensitive_payload,
+)
 from app.auth import (
     Client,
     DerivedGallery,
+    EmailDelivery,
+    EmailDeliveryAttempt,
     MediaJob,
     PaymentCommunication,
     PaymentMessageTemplate,
@@ -23,6 +30,12 @@ from app.auth import (
     cleanup_expired_client_otp_pii,
     expired,
     now,
+)
+from app.email_delivery import (
+    EmailConfigurationError,
+    EmailDeliveryError,
+    EmailProvider,
+    email_provider_from_environment,
 )
 from app.gallery_cleanup import (
     prepare_lifecycle_history,
@@ -368,6 +381,140 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
         return True
 
 
+def process_next_email_delivery(*, provider: EmailProvider | None = None) -> bool:
+    """Reserva uma entrega de e-mail e nunca repete resultado ambíguo."""
+
+    with SessionLocal() as db:
+        instant = now()
+        stale_before = instant - timedelta(
+            seconds=max(30, int(os.getenv("EMAIL_PROCESSING_TIMEOUT_SECONDS", "120")))
+        )
+        recovered_stale = False
+        for stale in db.scalars(
+            select(EmailDelivery).where(
+                EmailDelivery.status == "processing",
+                EmailDelivery.updated_at < stale_before,
+            )
+        ):
+            stale.status = "unknown"
+            stale.encrypted_payload = None
+            stale.last_error = "Processamento interrompido; reconciliação manual necessária."
+            stale.updated_at = instant
+            recovered_stale = True
+        db.commit()
+        max_attempts = max(1, min(int(os.getenv("EMAIL_MAX_ATTEMPTS", "3")), 10))
+        filters = [
+            EmailDelivery.status == "queued",
+            EmailDelivery.attempts < max_attempts,
+            or_(EmailDelivery.next_attempt_at.is_(None), EmailDelivery.next_attempt_at <= instant),
+        ]
+        delivery = db.scalar(
+            select(EmailDelivery)
+            .where(*filters)
+            .order_by(EmailDelivery.expires_at, EmailDelivery.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if not delivery:
+            return recovered_stale
+        delivery_id = delivery.id
+        claimed = db.execute(
+            update(EmailDelivery)
+            .where(EmailDelivery.id == delivery_id, *filters)
+            .values(
+                status="processing",
+                attempts=EmailDelivery.attempts + 1,
+                next_attempt_at=None,
+                updated_at=instant,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:
+            db.rollback()
+            return recovered_stale
+        db.commit()
+        db.expire_all()
+        delivery = db.get(EmailDelivery, delivery_id)
+        if not delivery:
+            return recovered_stale
+        if expired(delivery.expires_at):
+            delivery.status = "expired"
+            delivery.encrypted_payload = None
+            delivery.last_error = "Entrega expirada antes da aceitação."
+            delivery.updated_at = instant
+            db.commit()
+            return True
+        try:
+            if not delivery.encrypted_payload:
+                raise EmailConfigurationError("Payload de e-mail indisponível.")
+            payload = decrypt_sensitive_payload(
+                delivery.encrypted_payload,
+                context=f"email-delivery:{delivery.id}:{delivery.idempotency_key}",
+            )
+            active_provider = provider or email_provider_from_environment()
+            result = active_provider.send(
+                recipient=str(payload["recipient"]),
+                subject=str(payload["subject"]),
+                text_body=str(payload["text_body"]),
+                idempotency_key=delivery.idempotency_key,
+            )
+            delivery.status = "accepted"
+            delivery.external_message_id = result.external_message_id
+            delivery.accepted_at = now()
+            delivery.encrypted_payload = None
+            delivery.last_error = None
+            delivery.updated_at = now()
+            db.add(
+                EmailDeliveryAttempt(
+                    delivery_id=delivery.id,
+                    attempt_number=delivery.attempts,
+                    result="accepted",
+                    external_message_id=result.external_message_id,
+                )
+            )
+        except (
+            AdminSecurityConfigurationError,
+            EmailConfigurationError,
+            EmailDeliveryError,
+            KeyError,
+        ) as exc:
+            ambiguous = isinstance(exc, EmailDeliveryError) and exc.ambiguous
+            transient = isinstance(exc, EmailDeliveryError) and exc.transient and not ambiguous
+            if ambiguous:
+                delivery.status = "unknown"
+                attempt_result = "unknown"
+            elif transient and delivery.attempts < max_attempts:
+                delivery.status = "queued"
+                delay = max(1, int(os.getenv("EMAIL_RETRY_BASE_SECONDS", "2")))
+                delivery.next_attempt_at = now() + timedelta(
+                    seconds=min(delay * (2 ** (delivery.attempts - 1)), 300)
+                )
+                attempt_result = "transient_failure"
+            else:
+                delivery.status = "failed"
+                attempt_result = "permanent_failure"
+            if delivery.status in {"unknown", "failed"}:
+                delivery.encrypted_payload = None
+            delivery.last_error = (
+                "Resultado do envio requer reconciliação manual."
+                if ambiguous
+                else "Falha transitória de e-mail."
+                if transient
+                else "Configuração ou entrega de e-mail indisponível."
+            )
+            delivery.updated_at = now()
+            db.add(
+                EmailDeliveryAttempt(
+                    delivery_id=delivery.id,
+                    attempt_number=delivery.attempts,
+                    result=attempt_result,
+                    error_category=delivery.last_error,
+                )
+            )
+        db.commit()
+        return True
+
+
 def materialize_next_payment_notification() -> bool:
     with SessionLocal() as db:
         item = db.scalar(
@@ -435,9 +582,11 @@ def main() -> None:
             process_next_gallery_lifecycle_operation()
             or process_next_media_job()
             or process_next_whatsapp_delivery()
+            or process_next_email_delivery()
             or materialize_next_payment_notification()
             or reconcile_next_unknown_delivery()
             or process_otp_privacy_cleanup()
+            or process_admin_security_cleanup()
         ):
             time.sleep(2)
 
@@ -456,6 +605,20 @@ def process_otp_privacy_cleanup() -> bool:
     _last_otp_privacy_cleanup = instant
     with SessionLocal() as db:
         return cleanup_expired_client_otp_pii(db) > 0
+
+
+_last_admin_security_cleanup = 0.0
+
+
+def process_admin_security_cleanup() -> bool:
+    global _last_admin_security_cleanup
+    instant = time.monotonic()
+    interval = max(5, int(os.getenv("ADMIN_SECURITY_CLEANUP_INTERVAL_SECONDS", "60")))
+    if instant - _last_admin_security_cleanup < interval:
+        return False
+    _last_admin_security_cleanup = instant
+    with SessionLocal() as db:
+        return cleanup_admin_security_material(db) > 0
 
 
 if __name__ == "__main__":

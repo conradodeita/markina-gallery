@@ -7,7 +7,7 @@ import os
 import pyotp
 from sqlalchemy import select
 
-from app.auth import AdminUser, SessionLocal, password_hasher
+from app.auth import AdminUser, SessionLocal, password_hasher, validate_admin_password
 
 
 def required_setting(name: str) -> str:
@@ -22,8 +22,10 @@ def seed_admin() -> None:
     email = required_setting("ADMIN_SEED_EMAIL").lower()
     password = required_setting("ADMIN_SEED_PASSWORD")
     totp_secret = required_setting("ADMIN_SEED_TOTP_SECRET").replace(" ", "").upper()
-    if len(password) < 12:
-        raise RuntimeError("ADMIN_SEED_PASSWORD deve ter ao menos 12 caracteres.")
+    try:
+        validate_admin_password(password, email=email)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     if not pyotp.TOTP(totp_secret).now():
         raise RuntimeError("ADMIN_SEED_TOTP_SECRET não é uma chave TOTP válida.")
     with SessionLocal() as db:
