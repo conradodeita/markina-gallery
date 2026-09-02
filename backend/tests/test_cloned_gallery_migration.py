@@ -684,16 +684,40 @@ def test_pix_source_migration_converges_safe_values_and_flags_divergence(tmp_pat
     with engine.connect() as connection:
         migrated = connection.execute(
             text(
-                "SELECT copy_paste, qr_code_payload, review_required "
+                "SELECT copy_paste, qr_code_payload, review_required, input_type "
                 "FROM pix_checkout_settings ORDER BY copy_paste"
             )
         ).mappings().all()
 
     by_copy = {row["copy_paste"]: row for row in migrated}
     assert by_copy["qr-only"]["qr_code_payload"] is None
+    assert by_copy["qr-only"]["input_type"] == "br_code"
     assert by_copy["same"]["qr_code_payload"] is None
+    assert by_copy["same"]["input_type"] == "br_code"
     assert by_copy["copy"]["qr_code_payload"] == "different"
+    assert by_copy["copy"]["input_type"] == "br_code"
     assert bool(by_copy["copy"]["review_required"]) is True
+
+
+def test_pix_simple_key_columns_migration_is_reversible(tmp_path: Path) -> None:
+    database = tmp_path / "pix-simple-key-columns.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260901_0040")
+    engine = create_engine(database_url)
+
+    alembic(database_url, "upgrade", "20260902_0041")
+    with engine.connect() as connection:
+        columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(pix_checkout_settings)"))
+        }
+    assert {"input_type", "pix_key", "receiver_name", "receiver_city"} <= columns
+
+    alembic(database_url, "downgrade", "20260901_0040")
+    with engine.connect() as connection:
+        columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(pix_checkout_settings)"))
+        }
+    assert {"input_type", "pix_key", "receiver_name", "receiver_city"}.isdisjoint(columns)
 
 
 def test_private_photo_origins_backfill_existing_justification(tmp_path: Path) -> None:

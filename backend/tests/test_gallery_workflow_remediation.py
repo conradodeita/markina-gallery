@@ -212,6 +212,44 @@ def test_publish_promotes_only_ready_unavailable_photos_without_private_links(
         assert list(db.scalars(select(DerivedGalleryPhoto))) == []
 
 
+def test_publish_ready_parent_batch_reports_pending_and_publishes_all_ready(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento em lote")
+        db.add(parent)
+        db.flush()
+        first = PhotoFolder(parent_gallery_id=parent.id, name="Primeira", position=0)
+        second = PhotoFolder(parent_gallery_id=parent.id, name="Segunda", position=1)
+        db.add_all([first, second])
+        db.flush()
+        ready_first = ready_photo(db, parent=parent, folder=first, filename="a.jpg")
+        ready_second = ready_photo(db, parent=parent, folder=second, filename="b.jpg")
+        pending = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=second.id,
+            filename="c.jpg",
+            storage_key=f"tests/{uuid4()}.jpg",
+            available=False,
+        )
+        db.add(pending)
+        db.commit()
+        parent_id = parent.id
+
+    published = client.post(f"/admin/parent-galleries/{parent_id}/publish-ready")
+    assert published.status_code == 200
+    assert published.json()["published_count"] == 2
+    assert published.json()["pending_count"] == 1
+    assert published.json()["failed_count"] == 0
+    assert published.json()["available_count"] == 2
+    assert len(published.json()["folders"]) == 2
+    with SessionLocal() as db:
+        assert db.get(PhotoAsset, ready_first.id).available is True
+        assert db.get(PhotoAsset, ready_second.id).available is True
+        assert db.get(PhotoAsset, pending.id).available is False
+
+
 def test_legacy_release_rejects_private_destinations_without_side_effects(
     client: TestClient,
 ) -> None:

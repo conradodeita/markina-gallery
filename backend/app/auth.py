@@ -868,6 +868,11 @@ class PriceRule(Base):
 
 class PixCheckoutSettings(Base):
     __tablename__ = "pix_checkout_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "input_type IS NULL OR input_type IN ('br_code', 'cpf', 'phone', 'email')"
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(
@@ -875,6 +880,10 @@ class PixCheckoutSettings(Base):
     )
     copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
     qr_code_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    pix_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    receiver_name: Mapped[str | None] = mapped_column(String(25), nullable=True)
+    receiver_city: Mapped[str | None] = mapped_column(String(15), nullable=True)
     review_required: Mapped[bool] = mapped_column(Boolean, default=False)
     instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

@@ -47,7 +47,7 @@
 
 - [x] 6.1 Ler a documentação local da versão instalada do Next.js para App Router, mutations, navegação e fontes antes de editar o frontend, e registrar no artefato a versão e os arquivos consultados.
 - [x] 6.2 Criar tela administrativa de tabelas globais progressivas com código, nome, faixas, validação em BRL, edição versionada e desativação, e verificar fluxos desktop/mobile e testes de formulário.
-- [x] 6.3 Refazer a etapa 02 para alternar entre preço fixo e dropdown `código — nome`, simular parcelas/economia e configurar somente PIX copia-e-cola, e verificar recarga, erro de backend, `legacy_volume` e QR.
+- [x] 6.3 Refazer a etapa 02 para alternar entre preço fixo e dropdown `código — nome`, simular parcelas/economia e configurar PIX com fonte operacional validada, e verificar recarga, erro de backend, `legacy_volume` e QR.
 - [x] 6.4 Unificar `Salvar e avançar` nas etapas editáveis e proteger troca direta/retorno com estado sujo, e verificar testes de sucesso, falha, clique repetido e descarte confirmado.
 - [x] 6.5 Completar a etapa 05 com links públicos/privados estáveis, copiar, regenerar, criação administrativa de privada e membros com bloqueio/desbloqueio/desvinculação, e verificar estados vazios, carregamento, erro e conflito.
 - [x] 6.6 Atualizar resumo da Galeria pública e detalhe da privada com miniaturas, pastas navegáveis, upload/remoção autorizados e cards individuais de selecionadas, compradas, pagamento e prazo, e verificar que agregados pertencem à cliente correta.
@@ -81,4 +81,8 @@
   - [x] 8.7.7 Manter clientes vinculadas visíveis em `Cadastro existente`, indicar o vínculo e permitir editar nome e trocar telefone com OTP sem criar nova identidade; verificar preservação de vínculos/histórico, unicidade e estados de erro.
   - [x] 8.7.8 Implementar inventário e exclusão protegida de cadastro sem dependências, recusando identidades com vínculo ou histórico e verificando auditoria, concorrência e mensagens administrativas.
   - [x] 8.7.9 Inventariar e limpar galerias e contatos sintéticos de homologação em operação guardada pelo ambiente, sem tocar configurações/recursos de terceiros, e verificar contagens zeradas, migrations e healthchecks.
+  - [x] 8.7.10 Aceitar na etapa Vendas BR Code completo ou chave PIX simples por CPF, telefone brasileiro ou e-mail; para chave simples, persistir dados públicos mínimos do recebedor, gerar BR Code/QR local determinístico e verificar validação, migration aditiva, recarga e snapshot do pedido.
+  - [x] 8.7.11 Corrigir a desvinculação assíncrona de cliente cadastrado administrativamente sem privada nem pedido no PostgreSQL, preservar identidade/histórico, manter retentativa idempotente e verificar o SQL de bloqueio e o ciclo completo.
+  - [x] 8.7.12 Fazer `Salvar e avançar` na etapa Imagens publicar todas as fotos processadas antes de navegar, bloquear com contagens diante de processamento/falha e renomear `Disponibilizar fotos` para explicitar a montagem do acervo privado; verificar API real e componente.
+  - [x] 8.7.13 Distinguir `Aguardando primeiro acesso` de cadastro inexistente, deixar explícito que vínculo administrativo pré-autoriza sem dispensar OTP e verificar estados ativo/pendente no resumo e na etapa Clientes.
 - [ ] 8.8 Após aprovação humana, sincronizar as specs principais, reconciliar checkboxes supersedidos das changes relacionadas e arquivar somente as changes efetivamente completas; verificar `openspec status` e validação estrita final.

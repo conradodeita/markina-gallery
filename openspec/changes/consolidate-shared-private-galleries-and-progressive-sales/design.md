@@ -78,13 +78,17 @@ Faixa unitária legada será convertida para `fixed`. Duas ou mais faixas serão
 
 Alternativa rejeitada: converter automaticamente faixas antigas em parcelas. Isso mudaria totais comerciais sem consentimento e poderia divergir de valores já apresentados.
 
-### 7. PIX com uma fonte de verdade
+### 7. PIX com uma fonte operacional de verdade
 
-`PixCheckoutSettings.copy_paste` será a fonte autoritativa. O QR será gerado a partir desse valor no backend ou por componente local determinístico, sem buscar serviço externo. `qr_code_payload` legado será aceito na janela de compatibilidade: se somente ele existir, será copiado para `copy_paste`; se ambos existirem e divergirem, a galeria será marcada para revisão, sem sobrescrever qualquer valor. O pedido preservará o copia-e-cola, instruções e representação necessária no snapshot.
+`PixCheckoutSettings.copy_paste` continuará sendo a fonte autoritativa consumida pelo checkout e pelo QR. O editor aceitará diretamente um BR Code válido ou uma chave simples dos tipos explicitamente suportados: CPF, telefone brasileiro ou e-mail. Uma chave simples será normalizada e, junto do nome e da cidade públicos do recebedor, convertida localmente em BR Code estático conforme o formato EMV; esses dados estruturados serão persistidos para permitir edição e regeneração determinística. O sistema SHALL NOT gerar QR contendo apenas texto cru nem inventar nome/cidade do recebedor.
+
+`qr_code_payload` legado será aceito na janela de compatibilidade: se somente ele existir, será copiado para `copy_paste`; se ambos existirem e divergirem, a galeria será marcada para revisão, sem sobrescrever qualquer valor. O pedido preservará o BR Code, instruções e representação necessária no snapshot, mas não exporá campos administrativos adicionais. Chave aleatória permanece fora deste incremento porque não foi solicitada na revisão humana.
 
 ### 8. Editor transacional por etapa e fontes locais
 
 Cada etapa terá uma função explícita de validação e persistência. `Salvar e avançar` aguardará a mutation e somente navegará após sucesso. Stepper, retorno e troca direta verificarão estado sujo; salvarão pelo mesmo caminho ou pedirão confirmação de descarte. Não haverá salvamentos concorrentes implícitos.
+
+Na etapa Imagens, `Salvar e avançar` também publicará todas as fotos cuja prévia protegida já esteja pronta. A etapa permanecerá aberta se ainda houver processamento ou falha, apresentando as contagens retornadas pelo backend. Publicar disponibiliza fotos na Galeria pública; montar uma privada continuará sendo uma ação distinta e explícita na etapa Clientes.
 
 A lista de tipografias será um registro estático tipado de fontes locais licenciadas, com categoria e fallback. A API aceitará apenas IDs desse registro. Arquivos de fonte serão carregados via mecanismo local do Next.js, sem dependência de CDN.
 

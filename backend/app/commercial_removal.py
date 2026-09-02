@@ -28,15 +28,14 @@ class CommercialRemovalReport:
     confirmed_orders: int = 0
 
 
-def apply_commercial_removal_policy(
-    db: Session,
+def commercial_removal_orders_query(
     *,
     parent_gallery_id: UUID,
     client_id: UUID | None = None,
     derived_gallery_id: UUID | None = None,
     photo_asset_id: UUID | None = None,
-) -> CommercialRemovalReport:
-    """Bloqueia revisão, cancela pendências e prepara compras confirmadas."""
+):
+    """Monta o bloqueio sem ``DISTINCT``, incompatível com FOR UPDATE no PostgreSQL."""
 
     query = select(SaleOrder).where(
         SaleOrder.parent_gallery_id_snapshot == parent_gallery_id
@@ -48,10 +47,30 @@ def apply_commercial_removal_policy(
             SaleOrder.derived_gallery_id_snapshot == derived_gallery_id
         )
     if photo_asset_id:
-        query = query.join(
-            SaleOrderItem, SaleOrderItem.sale_order_id == SaleOrder.id
-        ).where(SaleOrderItem.photo_asset_id_snapshot == photo_asset_id)
-    orders = list(db.scalars(query.distinct().with_for_update()))
+        affected_order_ids = select(SaleOrderItem.sale_order_id).where(
+            SaleOrderItem.photo_asset_id_snapshot == photo_asset_id
+        )
+        query = query.where(SaleOrder.id.in_(affected_order_ids))
+    return query.with_for_update()
+
+
+def apply_commercial_removal_policy(
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+    client_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    photo_asset_id: UUID | None = None,
+) -> CommercialRemovalReport:
+    """Bloqueia revisão, cancela pendências e prepara compras confirmadas."""
+
+    query = commercial_removal_orders_query(
+        parent_gallery_id=parent_gallery_id,
+        client_id=client_id,
+        derived_gallery_id=derived_gallery_id,
+        photo_asset_id=photo_asset_id,
+    )
+    orders = list(db.scalars(query))
     order_ids = [order.id for order in orders]
     pending_review_order_ids = (
         set(

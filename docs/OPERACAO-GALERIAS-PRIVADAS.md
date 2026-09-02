@@ -8,7 +8,7 @@ acesso**:
 
 1. cadastre ou vincule a cliente por nome e WhatsApp; o servidor normaliza o
    número para o formato internacional e evita duplicação por telefone;
-2. escolha **Disponibilizar fotos** e marque somente o conteúdo destinado a
+2. escolha **Montar galeria privada** e marque somente o conteúdo destinado a
    essa cliente;
 3. confirme a operação para criar ou reutilizar a privada derivada, sem copiar
    a mídia e sem transformar disponibilidade em seleção ou compra;
