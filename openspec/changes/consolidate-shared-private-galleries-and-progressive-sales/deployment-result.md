@@ -59,3 +59,18 @@ Homologação está em paridade funcional com `develop` e pronta para a revisão
 autenticada desktop/mobile. Permanecem abertas a task 8.7 até aceite explícito e
 a task 8.8 para sincronização/arquivamento posterior. Nenhum dado real de
 criança ou biometria foi usado.
+
+## Incremento da primeira revisão humana
+
+- Data: `2026-09-02`.
+- Pull request: `#29`.
+- SHA funcional: `ff945f9fe4f3eb673b8107739124c2dcdcf9f4f9`.
+- SHA integrado e publicado: `c240b10f8667bf60d7912cb83d74dd6d56f41ae5`.
+- GitHub Actions: run `33631181609`, estado final `success`.
+- Deployment do Environment `homolog`: `6222606118`, estado final `success`.
+- Os gates `backend`, `frontend`, `openspec`, `gitleaks` e `deploy-homolog` foram aprovados. O backend concluiu em `3m25s`; o frontend, incluindo testes e build, em `53s`.
+- O servidor criou backup lógico exclusivo da Markina, alterou o checkout de `f2ba6dc23d5d896daa95c654a2f2539a9cd89664` para `c240b10f8667bf60d7912cb83d74dd6d56f41ae5` e confirmou `20260901_0040 (head) -> 20260901_0040 (head)`, sem migration nova.
+- Como o incremento altera apenas o frontend, somente `web` e `nginx` precisaram ser recriados; `api`, `worker`, PostgreSQL, Redis e Evolution permaneceram em execução.
+- `GET /healthz`: HTTP `200`, corpo `ok`, em `2026-09-02T12:45:40Z`.
+- `GET /api/health`: HTTP `200`, corpo `{"status":"ok","service":"api"}`, em `2026-09-02T12:45:41Z`.
+- `develop` e homologação estão em paridade no SHA `c240b10f8667bf60d7912cb83d74dd6d56f41ae5`. A task 8.7 permanece aberta exclusivamente para o reteste humano autenticado das correções; a change não será sincronizada nem arquivada sem esse aceite.
