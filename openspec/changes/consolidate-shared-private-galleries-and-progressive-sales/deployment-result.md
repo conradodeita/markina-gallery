@@ -74,3 +74,18 @@ criança ou biometria foi usado.
 - `GET /healthz`: HTTP `200`, corpo `ok`, em `2026-09-02T12:45:40Z`.
 - `GET /api/health`: HTTP `200`, corpo `{"status":"ok","service":"api"}`, em `2026-09-02T12:45:41Z`.
 - `develop` e homologação estão em paridade no SHA `c240b10f8667bf60d7912cb83d74dd6d56f41ae5`. A task 8.7 permanece aberta exclusivamente para o reteste humano autenticado das correções; a change não será sincronizada nem arquivada sem esse aceite.
+
+## Incremento da segunda revisão humana
+
+- Data: `2026-09-02`.
+- Pull request: `#37`.
+- SHA funcional: `5f6ca203c42c29616b225cf620d469e43654a822`.
+- SHA integrado e publicado: `f68a5ce205e3619045e3261b377c981778ab42c8`.
+- GitHub Actions: run `33688843960`, estado final `success`.
+- Deployment do Environment `homolog`: `6232831214`, estado final `success`.
+- Os gates `backend`, `frontend`, `openspec`, `gitleaks` e `deploy-homolog` foram aprovados. Localmente, o backend concluiu `248 passed, 1 skipped` e o frontend `127 passed`, além de lint, TypeScript e build.
+- O servidor criou backup lógico exclusivo da Markina, alterou o checkout de `2eab180af1965449e4d97f2462ef78e17d92f5cb` para `f68a5ce205e3619045e3261b377c981778ab42c8` e avançou Alembic de `20260901_0040 (head)` para `20260902_0041 (head)`.
+- Foram recriados somente `api`, `web`, `worker` e `nginx`; PostgreSQL, Redis e Evolution permaneceram saudáveis, sem `down`, prune, limpeza ou alteração de recursos externos.
+- `GET /healthz`: HTTP `200`, corpo `ok`, em `2026-09-02T22:13:15Z`.
+- `GET /api/health`: HTTP `200`, corpo `{"status":"ok","service":"api"}`, em `2026-09-02T22:13:16Z`.
+- `develop` e homologação estão em paridade funcional no SHA `f68a5ce205e3619045e3261b377c981778ab42c8`. A task 8.7 permanece aberta para o reteste humano autenticado de PIX simples, desvinculação retomada, publicação ao avançar e primeiro OTP; a change não será sincronizada nem arquivada antes do aceite.
