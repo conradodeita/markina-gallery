@@ -6,11 +6,12 @@ remota, migration ou publicação foi executada durante sua preparação.
 
 ## Artefato e gate de integração
 
-- Base anterior ao artefato: `4738a217bd984f41b528d5575611fc83d626d504`.
-- Branch de origem: `feature/remediate-gallery-workflow-and-payment-experience`.
-- SHA funcional testado: `90f790d8c987e616da5110ede637c582ccc29931`.
+- Base anterior ao artefato: `2737de197fd3e2b914ec319f6015b4351ce6040e`.
+- Branch de origem: `codex/consolidate-shared-private-galleries`.
+- SHA funcional testado: `c0e1aedeeaa1bc867c8a29d47b461bfb5b1bc2c0`.
+- SHA do hardening de deploy: `9d7a54c6f98a0ac6972441e95513e41ae4d52398`.
 - O SHA efetivamente implantado SHALL ser o commit de integração em `develop`
-  que contenha `90f790d8c987e616da5110ede637c582ccc29931` como ancestral.
+  que contenha `9d7a54c6f98a0ac6972441e95513e41ae4d52398` como ancestral.
 - Resultados locais: backend `235 passed, 1 skipped`; matriz sintética com
   `8 passed`; frontend `117 passed`; Ruff, TypeScript, lint sem erros, build,
   Compose e OpenSpec estrito aprovados.
@@ -62,6 +63,9 @@ remota, migration ou publicação foi executada durante sua preparação.
 - Nova variável obrigatória: `GALLERY_CAPABILITY_SIGNING_KEY`, segredo aleatório
   exclusivo com no mínimo 32 bytes, diferente de
   `AUTH_PII_FINGERPRINT_SALT`.
+- O script autorizado gera esse valor no próprio servidor quando ausente,
+  grava-o atomicamente com permissão `0600`, valida comprimento e separação e
+  nunca imprime o segredo.
 - O valor SHALL ser configurado somente no mecanismo seguro já usado pelo
   servidor/Environment e exposto ao Compose por `docker/.env.homolog`, sem ser
   impresso, lido em relatório ou persistido no Git.
