@@ -8,6 +8,7 @@ remota, migration ou publicação foi executada durante sua preparação.
 
 - Base local e remota no início: `8b13c9bd87fe8cb264ec66f7f66aafea52c0ffd2` em `develop`; último SHA funcional publicado antes deste incremento: `2eab180af1965449e4d97f2462ef78e17d92f5cb`.
 - Branch: `codex/fix-homolog-gallery-review-round-two`.
+- SHA funcional testado: `5f6ca203c42c29616b225cf620d469e43654a822`.
 - Escopo: aceitar chave PIX por CPF/telefone/e-mail, corrigir o bloqueio PostgreSQL da desvinculação, publicar fotos prontas ao avançar de Imagens, esclarecer a montagem administrativa da privada e distinguir primeiro OTP pendente.
 - Schema esperado após deploy: `20260902_0041 (head)`. A migration adiciona colunas anuláveis e uma restrição de domínio em `pix_checkout_settings`, com backfill classificatório; não remove nem reescreve pedidos, clientes, galerias, mídias ou configurações PIX existentes.
 - Resultados locais: backend `248 passed, 1 skipped`, frontend `127 passed`, Ruff/ESLint/TypeScript/build, migration reversível, Compose, políticas de deploy e OpenSpec estrito aprovados.
