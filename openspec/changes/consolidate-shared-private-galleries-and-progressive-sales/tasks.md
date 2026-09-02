@@ -70,6 +70,6 @@
 - [x] 8.3 Executar teste de integração do ciclo completo com dados sintéticos: link, OTP, vínculo, privada multiusuário, isolamento, seleção, cotação progressiva, pedido, pagamento e histórico após lifecycle.
 - [x] 8.4 Revisar o diff integral contra proposal, design e deltas, confirmar ausência de segredos/fontes remotas/biometria e validar esta change com `npx --yes @fission-ai/openspec validate consolidate-shared-private-galleries-and-progressive-sales --strict`.
 - [x] 8.5 Preparar inventário de homologação com SHA, migrations, containers/portas/subdomínio, secrets requeridos e plano zero-impact; verificar que nenhuma ação toca recursos de terceiros e solicitar autorização explícita antes de migration/deploy.
-- [ ] 8.6 Após autorização específica, aplicar migration e deploy em homologação sem prune/down, confirmar SHA implantado, head Alembic, `/healthz`, `/api/health` e smoke tests do ciclo sintético.
+- [x] 8.6 Após autorização específica, aplicar migration e deploy em homologação sem prune/down, confirmar SHA implantado, head Alembic, `/healthz`, `/api/health` e smoke tests do ciclo sintético.
 - [ ] 8.7 Submeter a experiência desktop/mobile à revisão humana em homologação, registrar bugs e evidências e manter esta task aberta até aprovação explícita.
 - [ ] 8.8 Após aprovação humana, sincronizar as specs principais, reconciliar checkboxes supersedidos das changes relacionadas e arquivar somente as changes efetivamente completas; verificar `openspec status` e validação estrita final.

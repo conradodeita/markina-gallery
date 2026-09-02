@@ -251,3 +251,10 @@ Push-Location backend; .\.venv\Scripts\python.exe -m alembic heads; Pop-Location
 - Antes do push autorizado, a automação foi reconciliada com o novo requisito de startup: `deploy-homolog.sh` agora gera `GALLERY_CAPABILITY_SIGNING_KEY` no próprio servidor quando ausente, preserva o arquivo seguro em `0600`, recusa duplicidade, valor curto ou reutilização de `AUTH_PII_FINGERPRINT_SALT` e não imprime o material secreto.
 - Comandos: Git Bash `scripts/test_deploy_homolog.sh`, `python scripts/test_deploy_homolog_policy.py` e `git diff --check`.
 - Resultados pré-deploy: teste shell e política estrutural aprovados; somente avisos informativos LF/CRLF. Hardening versionado em `9d7a54c6f98a0ac6972441e95513e41ae4d52398`.
+
+### Task 8.6 — deploy e paridade de homologação
+
+- O PR `#27` integrou o artefato em `develop` como `f2ba6dc23d5d896daa95c654a2f2539a9cd89664`. O run `33624664090` concluiu backend, frontend, OpenSpec, gitleaks e `deploy-homolog` com sucesso; o deployment do Environment `homolog` é `6221341108`.
+- O script gerou `GALLERY_CAPABILITY_SIGNING_KEY` somente no servidor sem imprimir o valor, registrou inventário restrito à Markina, criou backup lógico e avançou Alembic de `20260831_0033 (head)` para `20260901_0040 (head)`. Apenas `api`, `web`, `worker` e `nginx` foram recriados; não houve `down`, prune ou alteração de recursos de terceiros.
+- Às `2026-09-02T11:32:25Z` e `11:32:26Z`, `https://markina-homolog.duckdns.org/healthz` respondeu `200`/`ok` e `/api/health` respondeu `200`/`{"status":"ok","service":"api"}`. A entrada retornou `200`; as APIs administrativas novas recusaram sessão ausente com `403`, sem vazar dados.
+- Smoke sintético do mesmo SHA: backend `235 passed, 1 skipped`, frontend `117 passed`, build com 18 rotas, OpenSpec e gitleaks verdes; a matriz dirigida de link, OTP, vínculo, isolamento, cotação, pedido, pagamento e lifecycle havia aprovado `8/8`. A sessão de navegador disponível não possuía autenticação administrativa válida, portanto nenhuma credencial foi inferida nem dado persistente criado; o ciclo visual autenticado permanece corretamente na revisão humana 8.7.
