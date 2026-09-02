@@ -17,6 +17,7 @@ type Photo = { id: string; name: string; preview_url: string | null; status: str
 type AvailablePhoto = { id: string; name: string; folder_name: string; preview_url: string | null; width?: number | null; height?: number | null };
 type ClientRow = ClientGalleryRow;
 type ClientOption = { id: string; name: string; phone: string };
+type ClientDeletionInventory = { client_id: string; blockers: Record<string, number>; blocking: Record<string, number>; can_delete: boolean; removable: { client: number; phone_records: number } };
 type PricingMode = "fixed" | "progressive" | "legacy_volume";
 type PricingPreset = { id: string; code: string; name: string; label: string; version: number; active: boolean; tiers: PriceTier[] };
 type PricingQuote = { quantity: number; parcels: Array<PriceTier & { quantity: number; subtotal_cents: number }>; base_total_cents: number; savings_cents: number; total_cents: number };
@@ -27,6 +28,23 @@ type PrivateAccessState = { loading: boolean; error: string | null; link: Galler
 type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
 type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing"; preview_url: string | null; width: number | null; height: number | null };
 type DetailsData = { available: boolean; capabilities: string[]; font_options: FontOption[]; cover_options: CoverOption[]; settings: { cover_photo_id: string | null; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string } };
+const clientBlockerLabels: Record<string, string> = {
+  gallery_accesses: "acessos",
+  public_gallery_registrations: "vínculos públicos",
+  private_galleries_owned: "galerias privadas",
+  private_gallery_memberships: "vínculos privados",
+  gallery_capabilities: "convites e links",
+  selections: "seleções",
+  favorites: "favoritos",
+  views: "visualizações",
+  comments: "comentários",
+  orders: "pedidos",
+  payment_communications: "comunicações de pagamento",
+  membership_notifications: "notificações",
+  sessions: "sessões",
+  otp_challenges: "validações OTP",
+  whatsapp_deliveries: "mensagens WhatsApp",
+};
 type VisualPreview = { folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
 type UnlinkPreview = { operation_type: "unlink_client"; target: { parent_gallery_id: string; parent_gallery_name: string; client_id: string; client_name: string }; inventory: { remove: Record<string, number>; preserve: Record<string, number | Record<string, number>> }; consequences: { gallery_relationship_removed: boolean; private_gallery_removed: boolean; client_preserved: boolean; commercial_history_preserved: boolean; other_gallery_relationships_preserved: boolean; restoration_available_after_start: boolean } };
 type LifecycleOperation = { operation_id: string; status: string; status_url: string; last_error: string | null; progress: { label: string; percent: number; failed_step: string | null }; actions: { can_cancel: boolean; can_retry: boolean; should_poll: boolean; poll_after_ms: number | null } };
@@ -54,7 +72,8 @@ async function jsonRequest(path: string, init?: RequestInit) {
   const response = await fetch(path, { credentials: "same-origin", ...init });
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.detail ?? "Não foi possível concluir a operação.");
+    const detail = payload?.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.message ?? "Não foi possível concluir a operação.");
   }
   return response.status === 204 ? null : response.json();
 }
@@ -72,6 +91,14 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [linkedClients, setLinkedClients] = useState<ClientRow[]>([]);
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [clientQuery, setClientQuery] = useState("");
+  const [clientEditTarget, setClientEditTarget] = useState<ClientOption | null>(null);
+  const [clientEditName, setClientEditName] = useState("");
+  const [clientEditPhone, setClientEditPhone] = useState("");
+  const [clientEditChallengeId, setClientEditChallengeId] = useState("");
+  const [clientEditOtp, setClientEditOtp] = useState("");
+  const [clientEditBusy, setClientEditBusy] = useState(false);
+  const [clientEditError, setClientEditError] = useState("");
+  const [clientDeletionInventory, setClientDeletionInventory] = useState<ClientDeletionInventory | null>(null);
   const [sales, setSales] = useState<SalesData | null>(null);
   const [salesError, setSalesError] = useState("");
   const [pricingPresets, setPricingPresets] = useState<PricingPreset[]>([]);
@@ -625,6 +652,100 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     });
   }
 
+  function openClientEditor(option: ClientOption) {
+    setClientEditTarget(option);
+    setClientEditName(option.name);
+    setClientEditPhone(option.phone);
+    setClientEditChallengeId("");
+    setClientEditOtp("");
+    setClientEditError("");
+    setClientDeletionInventory(null);
+  }
+
+  function closeClientEditor() {
+    if (clientEditBusy) return;
+    setClientEditTarget(null);
+    setClientDeletionInventory(null);
+    setClientEditError("");
+  }
+
+  async function saveClient(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!clientEditTarget || clientEditBusy) return;
+    setClientEditBusy(true);
+    setClientEditError("");
+    try {
+      const phoneChanged = clientEditPhone.trim() !== clientEditTarget.phone;
+      if (phoneChanged && !clientEditChallengeId) {
+        const challenge = await jsonRequest("/api/auth/client/challenge", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ full_name: clientEditName, phone: clientEditPhone }),
+        }) as { challenge_id: string };
+        setClientEditChallengeId(challenge.challenge_id);
+        setMessage("Código enviado ao novo WhatsApp. Informe-o para concluir a troca.");
+        return;
+      }
+      if (phoneChanged) {
+        await jsonRequest(`/api/admin/clients/${clientEditTarget.id}/phone`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            phone_e164: clientEditPhone,
+            challenge_id: clientEditChallengeId,
+            code: clientEditOtp,
+          }),
+        });
+      }
+      if (clientEditName.trim() !== clientEditTarget.name) {
+        await jsonRequest(`/api/admin/clients/${clientEditTarget.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ full_name: clientEditName }),
+        });
+      }
+      setMessage("Cadastro da cliente atualizado sem alterar seus vínculos ou histórico.");
+      setClientEditTarget(null);
+      setClientDeletionInventory(null);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setClientEditError(error instanceof Error ? error.message : "Não foi possível atualizar a cliente.");
+    } finally {
+      setClientEditBusy(false);
+    }
+  }
+
+  async function inspectClientDeletion() {
+    if (!clientEditTarget || clientEditBusy) return;
+    setClientEditBusy(true);
+    setClientEditError("");
+    try {
+      const inventory = await jsonRequest(`/api/admin/clients/${clientEditTarget.id}/deletion-inventory`) as ClientDeletionInventory;
+      setClientDeletionInventory(inventory);
+    } catch (error) {
+      setClientEditError(error instanceof Error ? error.message : "Não foi possível verificar a exclusão.");
+    } finally {
+      setClientEditBusy(false);
+    }
+  }
+
+  async function confirmClientDeletion() {
+    if (!clientEditTarget || !clientDeletionInventory?.can_delete || clientEditBusy) return;
+    setClientEditBusy(true);
+    setClientEditError("");
+    try {
+      await jsonRequest(`/api/admin/clients/${clientEditTarget.id}`, { method: "DELETE" });
+      setMessage("Cadastro sem histórico excluído.");
+      setClientEditTarget(null);
+      setClientDeletionInventory(null);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setClientEditError(error instanceof Error ? error.message : "Não foi possível excluir a cliente.");
+    } finally {
+      setClientEditBusy(false);
+    }
+  }
+
   async function openUnlinkConfirmation(person: ClientRow) {
     setUnlinkBusy(true);
     setUnlinkTarget({ clientId: person.client_id, name: person.name });
@@ -858,7 +979,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <p className="eyebrow">Cadastro existente</p>
               <h3 id="existing-client-title">Vincular cliente</h3>
               <label className="gallery-client-search">Buscar por nome ou WhatsApp<input value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Ex.: Ana ou 11999999999" /></label>
-              {clientOptions.filter((option) => !linkedClients.some((linked) => linked.client_id === option.id)).length ? <div className="client-option-list">{clientOptions.filter((option) => !linkedClients.some((linked) => linked.client_id === option.id)).map((option) => <button type="button" key={option.id} onClick={() => bindClient(option.id, option.name)}><span><strong>{option.name}</strong><small>{option.phone}</small></span><span className="client-option-action">Vincular</span></button>)}</div> : <SystemState title="Nenhum cadastro encontrado" detail="Revise a busca ou use o bloco Novo cadastro." />}
+              {clientOptions.length ? <div className="client-option-list">{clientOptions.map((option) => {
+                const linked = linkedClients.some((person) => person.client_id === option.id);
+                return <div className="client-option-row" key={option.id}><span><strong>{option.name}</strong><small>{option.phone}</small></span><div className="client-option-actions">{linked ? <StatusBadge tone="success">Já vinculada</StatusBadge> : <button type="button" className="client-option-action" aria-label={`Vincular ${option.name}`} onClick={() => bindClient(option.id, option.name)}>Vincular</button>}<button type="button" className="client-option-edit" aria-label={`Editar cadastro de ${option.name}`} onClick={() => openClientEditor(option)}>Editar</button></div></div>;
+              })}</div> : <SystemState title="Nenhum cadastro encontrado" detail="Revise a busca ou use o bloco Novo cadastro." />}
             </section>
             <section className="gallery-client-card" aria-labelledby="new-client-title">
               <p className="eyebrow">Novo cadastro</p>
@@ -886,6 +1010,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       ) : null}
 
       {expandedPhoto ? <div className="photo-preview-dialog" role="presentation" onMouseDown={() => setExpandedPhoto(null)}><div ref={previewDialog} role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhoto(null); }} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="photo-preview-close" onClick={() => setExpandedPhoto(null)}>Fechar</button><img src={`/api${expandedPhoto.preview_url}`} alt={`Prévia com marca d’água ampliada de ${expandedPhoto.name}`} /><p>{expandedPhoto.name}</p></div></div> : null}
+      {clientEditTarget ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="edit-client-title" aria-modal="true" className="mk-dialog client-edit-dialog" role="dialog"><p className="eyebrow">Cadastro da cliente</p><h2 id="edit-client-title">Editar {clientEditTarget.name}</h2><p>Atualize a mesma identidade para preservar galerias e histórico. A troca de WhatsApp exige o código enviado ao novo número.</p><form className="gallery-settings-form" onSubmit={saveClient}><label>Nome completo<input value={clientEditName} required minLength={3} onChange={(event) => setClientEditName(event.target.value)} /></label><label>Número do WhatsApp<input value={clientEditPhone} required placeholder="+55 11 99999-9999" onChange={(event) => { setClientEditPhone(event.target.value); setClientEditChallengeId(""); setClientEditOtp(""); }} /></label>{clientEditChallengeId ? <label>Código enviado ao novo WhatsApp<input value={clientEditOtp} inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} required onChange={(event) => setClientEditOtp(event.target.value.replace(/\D/g, "").slice(0, 6))} /></label> : null}{clientEditError ? <p className="form-message form-message--error" role="alert">{clientEditError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={clientEditBusy} onClick={closeClientEditor}>Cancelar</MarkinaButton><MarkinaButton disabled={clientEditBusy}>{clientEditBusy ? "Salvando…" : clientEditPhone.trim() !== clientEditTarget.phone && !clientEditChallengeId ? "Enviar código" : "Salvar cadastro"}</MarkinaButton></div></form><div className="client-delete-zone"><strong>Excluir cadastro criado por engano</strong><p>Troca de telefone deve ser feita acima. A exclusão só é permitida sem vínculos ou histórico.</p>{!clientDeletionInventory ? <MarkinaButton type="button" variant="quiet" disabled={clientEditBusy} onClick={inspectClientDeletion}>Verificar exclusão</MarkinaButton> : clientDeletionInventory.can_delete ? <><p>Este cadastro não possui dependências protegidas.</p><MarkinaButton type="button" className="mk-button--danger" disabled={clientEditBusy} onClick={confirmClientDeletion}>Excluir cadastro definitivamente</MarkinaButton></> : <div className="client-delete-blocked" role="status"><strong>Exclusão bloqueada</strong><ul>{Object.entries(clientDeletionInventory.blocking).map(([key, quantity]) => <li key={key}>{quantity} {clientBlockerLabels[key] ?? key}</li>)}</ul><p>Use a edição do telefone ou desvincule a cliente da galeria.</p></div>}</div></section></div> : null}
       {unlinkPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="unlink-client-title" aria-modal="true" className="mk-dialog" role="dialog"><p className="eyebrow">Desvinculação da Galeria pública</p><h2 id="unlink-client-title">Desvincular {unlinkPreview.target.client_name}?</h2><p>O acesso desta cliente será encerrado nesta Galeria pública e na privada associada. O cadastro, as outras galerias e todo histórico comercial serão preservados; o acervo privado compartilhado permanece para os demais membros.</p><div className="unlink-summary"><span><strong>{unlinkPreview.inventory.remove.memberships ?? 0}</strong> vínculo privado</span><span><strong>{unlinkPreview.inventory.remove.selections ?? 0}</strong> selecionadas removíveis</span><span><strong>{typeof unlinkPreview.inventory.preserve.orders === "number" ? unlinkPreview.inventory.preserve.orders : 0}</strong> pedidos preservados</span><span><strong>{typeof unlinkPreview.inventory.preserve.available_references === "number" ? unlinkPreview.inventory.preserve.available_references : 0}</strong> fotos preservadas</span></div><p>Um pagamento informado e ainda em análise impede a desvinculação até a decisão administrativa.</p>{unlinkError ? <p className="form-message form-message--error" role="alert">{unlinkError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={unlinkBusy} onClick={() => { setUnlinkPreview(null); setUnlinkTarget(null); setUnlinkError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={unlinkBusy} onClick={confirmUnlink}>{unlinkBusy ? "Iniciando…" : "Confirmar desvinculação"}</MarkinaButton></div></section></div> : null}
       {privateTarget ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="private-gallery-title" aria-modal="true" className="mk-dialog administrative-private-dialog" role="dialog"><p className="eyebrow">Criação administrativa</p><h2 id="private-gallery-title">Fotos para {privateTarget.name}</h2>{availablePhotos.length ? <><p>Escolha ao menos uma foto publicada. Elas ficarão disponíveis na galeria privada, mas nenhuma será marcada como selecionada pela cliente.</p><form onSubmit={createAdministrativePrivateGallery}><fieldset><legend>Fotos disponíveis</legend><div className="administrative-photo-options">{availablePhotos.map((photo) => <label key={photo.id}><input type="checkbox" checked={adminPhotoIds.includes(photo.id)} onChange={(event) => setAdminPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /><span><strong>{photo.name}</strong><small>{photo.folder_name}</small></span></label>)}</div></fieldset>{privateActionError ? <p className="form-message form-message--error" role="alert">{privateActionError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={privateActionBusy} onClick={() => { setPrivateTarget(null); setAdminPhotoIds([]); setPrivateActionError(""); }}>Cancelar</MarkinaButton><MarkinaButton disabled={!adminPhotoIds.length || privateActionBusy}>{privateActionBusy ? "Disponibilizando…" : "Criar ou atualizar galeria privada"}</MarkinaButton></div></form></> : <><SystemState title="Nenhuma foto publicada" detail="As fotos precisam terminar o processamento e ser publicadas na etapa Imagens antes de entrarem em uma galeria privada." /><div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" onClick={() => { setPrivateTarget(null); setPrivateActionError(""); }}>Fechar</MarkinaButton><Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/imagens`}>Ir para Imagens</Link></div></>}</section></div> : null}
       {message ? <p className="notice" role="status">{message}</p> : null}

@@ -92,3 +92,29 @@ O editor SHALL apresentar escolha entre preço fixo e tabela global progressiva,
 #### Scenario: Chave PIX simples no campo de código
 - **WHEN** o fotógrafo informa somente e-mail, CPF, telefone ou chave aleatória no campo de PIX copia-e-cola
 - **THEN** o editor explica que o campo exige o BR Code completo gerado pelo banco, preserva a entrada para correção e não persiste nem gera QR inválido
+
+### Requirement: Cadastro de clientes independente dos vínculos
+O sistema SHALL manter o cadastro de cada cliente visível na busca administrativa independentemente de estar vinculado à Galeria pública ou a uma privada. A interface SHALL indicar o estado do vínculo sem retirar a cliente da lista e SHALL permitir editar nome e trocar o telefone da mesma identidade mediante comprovação OTP do novo número.
+
+#### Scenario: Cliente já vinculada permanece na busca
+- **WHEN** uma cliente retornada pela busca já possui vínculo com a Galeria pública atual
+- **THEN** o card `Cadastro existente` continua exibindo nome e telefone, identifica `Já vinculada`, desabilita somente a ação redundante de vincular e mantém disponíveis as ações de edição aplicáveis
+
+#### Scenario: Correção de nome
+- **WHEN** o fotógrafo salva um novo nome válido para uma cliente
+- **THEN** o backend atualiza a mesma identidade, registra auditoria e a interface recarrega o nome sem alterar vínculos ou histórico
+
+#### Scenario: Troca de telefone
+- **WHEN** o fotógrafo informa um novo telefone brasileiro único e comprova o OTP recebido nesse número
+- **THEN** o backend troca o telefone ativo da mesma identidade, aposenta o número anterior e preserva galerias, pedidos e snapshots comerciais
+
+### Requirement: Exclusão protegida de cadastro de cliente
+O sistema SHALL disponibilizar exclusão administrativa de cadastro criado por engano somente quando o inventário autoritativo confirmar ausência de vínculos, sessões, desafios, interações, comunicações, pedidos, pagamentos, entregas, histórico ou outra dependência protegida. A troca de telefone SHALL usar edição da identidade e SHALL NOT exigir excluir e recadastrar a cliente.
+
+#### Scenario: Cadastro sem dependências
+- **WHEN** o fotógrafo consulta o inventário e confirma a exclusão de uma cliente sem qualquer dependência protegida
+- **THEN** o backend remove o cadastro e seus telefones não verificados de forma transacional, registra auditoria sem PII e a interface retira o item da busca
+
+#### Scenario: Cadastro com vínculo ou histórico
+- **WHEN** o fotógrafo tenta excluir uma cliente com qualquer vínculo, acesso, interação, comunicação ou histórico comercial
+- **THEN** o backend recusa a exclusão, informa as categorias bloqueadoras sem expor PII e orienta usar edição de telefone ou desvinculação conforme o objetivo

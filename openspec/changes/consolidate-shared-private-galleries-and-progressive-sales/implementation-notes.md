@@ -269,3 +269,20 @@ Push-Location backend; .\.venv\Scripts\python.exe -m alembic heads; Pop-Location
 - Os modos `standard`, `invite_only` e `collective_protected` continuam ativos no backend e não são obsoletos. A etapa 01 agora explica respectivamente link + OTP com navegação pública, convite individual e solicitação protegida sem grade coletiva/reconhecimento facial.
 - Validação dirigida: `npm test -- --run app/admin/galleries/gallery-editor.test.tsx app/admin/galleries/galleries.test.tsx app/admin/pricing/page.test.tsx` resultou em `48 passed`; `pytest tests/test_pix.py tests/test_gallery_lifecycle.py -q --tb=short` resultou em `51 passed`.
 - Validação integral frontend: `npm test -- --run` resultou em `24` arquivos e `123 passed`; `npx tsc --noEmit` e `npm run build` concluíram sem erros, com 18 páginas geradas. A task 8.7 principal permanece aberta até nova aprovação humana em homologação.
+
+### Tasks 8.7.7 e 8.7.8 — diretório, edição e exclusão protegida de clientes
+
+- A etapa 05 deixou de filtrar cadastros já vinculados: todas as correspondências continuam em `Cadastro existente`, com estado `Já vinculada`, ação redundante de vínculo ausente e edição disponível.
+- Nome é atualizado sobre o mesmo `Client.id`. A troca de telefone reutiliza o desafio OTP enviado ao novo WhatsApp, a unicidade E.164 e a aposentadoria do número anterior, preservando galerias e snapshots comerciais.
+- A exclusão direta possui inventário autoritativo e só aceita cadastros sem acesso, vínculo, sessão, OTP, comunicação, interação ou pedido. Troca de telefone não exige exclusão; conflito concorrente durante a remoção retorna `409` e não produz deleção parcial.
+- Comandos dirigidos: `pytest tests/test_derived_galleries.py -k 'client_deletion or edits_and_deletes_client or cannot_delete_client' -q` e `npm test -- --run app/admin/galleries/gallery-editor.test.tsx`.
+- Resultados: backend `3 passed, 54 deselected`; frontend `41 passed`, incluindo permanência do cadastro vinculado, edição de nome, OTP do novo telefone e bloqueio visual por pedido.
+- Validação integral: backend `241 passed, 1 skipped`; frontend `24` arquivos e `126 passed`; Ruff sem ocorrências; ESLint sem erros (22 avisos preexistentes), TypeScript sem erros e build Next.js `16.3.2` concluído com 18 rotas.
+
+### Task 8.7.9 — preparação da limpeza autorizada de homologação
+
+- Foi criada uma operação fora da API pública, guardada por `APP_ENV=homolog|homologation`, diretório `/opt/markina-gallery`, projeto Compose fixo, confirmação literal e Environment `homolog`. O inventário não serializa PII; a execução cria backup lógico, pausa somente API/worker da Markina, limpa banco/Redis/mídia exclusivos e preserva administrador, configurações e pareamento WhatsApp.
+- O acionamento destrutivo é efêmero e exige o trailer exato `Homolog-Cleanup: galleries-and-clients` no commit aprovado; pushes comuns executam somente inventário. Não há `down`, prune, glob amplo ou recurso de terceiro no fluxo.
+- A rotina foi validada em PostgreSQL 17 temporário e isolado com uma cliente e uma galeria sintéticas: contagens `1 → 0` para ambas e administrador preservado. O container temporário foi removido após a prova.
+- Comandos: `bash -n scripts/maintain-homolog-data.sh`, `scripts/test_deploy_homolog.sh`, `pytest tests/test_homolog_cleanup.py ...`, prova PostgreSQL e `openspec validate ... --strict`.
+- Estado: implementação local validada; inventário real, backup, limpeza e verificação remota permanecem pendentes até o deploy deste código em homologação.

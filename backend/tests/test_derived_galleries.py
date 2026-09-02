@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.auth import (
     AdminUser,
@@ -725,6 +726,85 @@ def test_admin_operational_catalog_creates_and_lists_only_authorized_data(client
     assert client.get(f"/admin/photo-assets/{photo_id}/media-status").json() == {
         "status": "not_imported"
     }
+
+
+def test_admin_edits_and_deletes_client_without_dependencies(client: TestClient):
+    authenticate_admin(client)
+    created = client.post(
+        "/admin/clients",
+        json={"full_name": "Nome incorreto", "phone_e164": "+5511988887766"},
+    )
+    client_id = created.json()["id"]
+
+    updated = client.patch(
+        f"/admin/clients/{client_id}", json={"full_name": "Nome corrigido"}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Nome corrigido"
+    inventory = client.get(f"/admin/clients/{client_id}/deletion-inventory")
+    assert inventory.status_code == 200
+    assert inventory.json()["can_delete"] is True
+    assert inventory.json()["removable"] == {"client": 1, "phone_records": 1}
+
+    deleted = client.delete(f"/admin/clients/{client_id}")
+    assert deleted.status_code == 204
+    assert client.get("/admin/clients").json()["clients"] == []
+    with SessionLocal() as db:
+        assert db.get(Client, UUID(client_id)) is None
+        events = list(
+            db.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.event.in_(
+                        {"client.name_changed", "client.deleted_without_history"}
+                    )
+                )
+            )
+        )
+        assert {event.event for event in events} == {
+            "client.name_changed",
+            "client.deleted_without_history",
+        }
+
+
+def test_admin_cannot_delete_client_with_gallery_or_commercial_history(client: TestClient):
+    authenticate_admin(client)
+    created = client.post(
+        "/admin/clients",
+        json={"full_name": "Cliente vinculada", "phone_e164": "+5511988887755"},
+    )
+    client_id = created.json()["id"]
+    parent_id = client.post(
+        "/admin/parent-galleries", json={"name": "Galeria protegida"}
+    ).json()["id"]
+    assert client.put(
+        f"/admin/parent-galleries/{parent_id}/clients/{client_id}"
+    ).status_code == 200
+
+    inventory = client.get(f"/admin/clients/{client_id}/deletion-inventory").json()
+    assert inventory["can_delete"] is False
+    assert inventory["blocking"]["public_gallery_registrations"] == 1
+    denied = client.delete(f"/admin/clients/{client_id}")
+    assert denied.status_code == 409
+    assert "Edite o telefone" in denied.json()["detail"]["message"]
+    assert client.get("/admin/clients").json()["clients"][0]["id"] == client_id
+
+
+def test_admin_client_deletion_reports_concurrent_dependency(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authenticate_admin(client)
+    client_id = client.post(
+        "/admin/clients",
+        json={"full_name": "Cliente concorrente", "phone_e164": "+5511988887744"},
+    ).json()["id"]
+
+    def fail_commit(_session: Session) -> None:
+        raise IntegrityError("DELETE client", {}, Exception("foreign key race"))
+
+    monkeypatch.setattr(Session, "commit", fail_commit)
+    denied = client.delete(f"/admin/clients/{client_id}")
+    assert denied.status_code == 409
+    assert "nova dependência" in denied.json()["detail"]
 
 
 def test_admin_validation_summary_is_authorized_and_has_no_client_phone(client: TestClient):

@@ -110,3 +110,11 @@ jobs:
           chmod 600 "$key_file" "$known_hosts_file"
           remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$GITHUB_SHA")"
           ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
+          maintenance_mode="inventory"
+          maintenance_confirmation=""
+          if git log -1 --pretty=%B | grep -Fxq 'Homolog-Cleanup: galleries-and-clients'; then
+            maintenance_mode="execute"
+            maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
+          fi
+          maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
+          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$maintenance_command" < scripts/maintain-homolog-data.sh

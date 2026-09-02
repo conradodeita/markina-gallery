@@ -171,4 +171,5 @@ set -e
 grep -Fq 'banco não foi restaurado' "$output"
 
 python3 "$SCRIPT_DIR/test_deploy_homolog_policy.py"
+python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
 echo "deploy-homolog shell: ok"

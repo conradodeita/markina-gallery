@@ -104,6 +104,12 @@ Respostas administrativas da privada incluirão acervo agregado, lista paginada 
 
 Esta change supersede somente os requisitos conflitantes de propriedade exclusiva, clonagem por segundo responsável, convite privado preso a um telefone e preço por volume aplicado ao total. Implementações úteis das changes `improve-gallery-and-client-data-lifecycle` e `remediate-gallery-workflow-and-payment-experience` serão reaproveitadas; seus checkboxes de revisão humana permanecem pendentes até a experiência substituta ser validada. O spike `spike-private-facial-discovery` continua independente e bloqueia qualquer habilitação facial.
 
+### 12. Cadastro de cliente independente e exclusão restrita
+
+A busca administrativa de clientes representa o diretório global, não uma lista de candidatas ainda não vinculadas. Portanto, a API continuará retornando todas as identidades correspondentes e o frontend mostrará o estado `Já vinculada`, desabilitando apenas a mutação redundante. Nome e telefone serão editados sobre o mesmo `Client.id`; a troca de telefone reutilizará a prova OTP já existente, a unicidade E.164 e a aposentadoria de `ClientPhone`, preservando snapshots comerciais.
+
+Excluir e recriar não será o fluxo para troca de telefone porque quebraria continuidade de identidade e poderia separar histórico. A exclusão direta será limitada a cadastros sem dependências protegidas, após inventário autoritativo. Qualquer vínculo, sessão/desafio, interação, mensagem, notificação, pedido, pagamento, entrega ou registro histórico bloqueará a operação. A limpeza integral de dados sintéticos de homologação será uma operação de manutenção separada, guardada por `APP_ENV=homolog`, com modo de inventário, confirmação explícita e escopo restrito aos recursos da Markina Gallery.
+
 ## Risks / Trade-offs
 
 - [Privadas legadas inconsistentes para o mesmo par origem/cliente] → a migration executa diagnóstico prévio, aborta diante de conflito e gera relatório sem mesclar histórico automaticamente.
