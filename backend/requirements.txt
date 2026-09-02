@@ -10,4 +10,5 @@ pyotp>=2.9
 pydantic-settings>=2.7
 alembic>=1.14
 Pillow>=10.0
+qrcode[pil]>=8.0
 cryptography>=44.0

@@ -43,6 +43,9 @@ from app.gallery_access import issue_gallery_capability
 from app.main import app
 from app.media import generate_derivatives
 
+VALID_PIX_A = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17"
+VALID_PIX_B = "0002015204000053039865802BR5908OUTRAFOT6009SAO PAULO6304FC65"
+
 
 @pytest.fixture(autouse=True)
 def clean_database():
@@ -95,6 +98,292 @@ def authenticate_client(client: TestClient, phone: str) -> None:
     assert client.post(
         "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
     ).status_code == 200
+
+
+def test_admin_manages_and_simulates_versioned_progressive_pricing_presets(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    payload = {
+        "code": "01",
+        "name": "Tabela escolar",
+        "tiers": [
+            {"minimum_quantity": 1, "maximum_quantity": 30, "unit_price_cents": 700},
+            {"minimum_quantity": 31, "maximum_quantity": None, "unit_price_cents": 600},
+        ],
+    }
+
+    created = client.post("/admin/pricing-presets", json=payload)
+    assert created.status_code == 201
+    preset_id = created.json()["id"]
+    assert created.json()["label"] == "01 — Tabela escolar"
+    assert created.json()["version"] == 1
+    assert client.post("/admin/pricing-presets", json=payload).status_code == 409
+
+    simulated = client.get(
+        f"/admin/pricing-presets/{preset_id}/quote", params={"quantity": 60}
+    )
+    assert simulated.status_code == 200
+    assert simulated.json()["total_cents"] == 39000
+    assert simulated.json()["savings_cents"] == 3000
+    assert [item["subtotal_cents"] for item in simulated.json()["parcels"]] == [
+        21000,
+        18000,
+    ]
+
+    payload["name"] = "Tabela escolar revisada"
+    payload["tiers"][1]["unit_price_cents"] = 550
+    updated = client.put(f"/admin/pricing-presets/{preset_id}", json=payload)
+    assert updated.status_code == 200
+    assert updated.json()["version"] == 2
+    assert updated.json()["label"] == "01 — Tabela escolar revisada"
+
+    invalid = client.put(
+        f"/admin/pricing-presets/{preset_id}",
+        json={
+            **payload,
+            "tiers": [
+                {
+                    "minimum_quantity": 1,
+                    "maximum_quantity": 30,
+                    "unit_price_cents": 600,
+                },
+                {
+                    "minimum_quantity": 31,
+                    "maximum_quantity": None,
+                    "unit_price_cents": 700,
+                },
+            ],
+        },
+    )
+    assert invalid.status_code == 422
+    assert client.get("/admin/pricing-presets").json()["presets"][0]["version"] == 2
+
+    deactivated = client.delete(f"/admin/pricing-presets/{preset_id}")
+    assert deactivated.status_code == 200
+    assert deactivated.json()["active"] is False
+    assert client.get("/admin/pricing-presets").json()["presets"] == []
+    listed = client.get(
+        "/admin/pricing-presets", params={"include_inactive": "true"}
+    )
+    assert listed.json()["presets"][0]["version"] == 2
+
+
+def test_public_gallery_materializes_pricing_preset_and_requires_legacy_conversion(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    preset = client.post(
+        "/admin/pricing-presets",
+        json={
+            "code": "02",
+            "name": "Tabela eventos",
+            "tiers": [
+                {
+                    "minimum_quantity": 1,
+                    "maximum_quantity": 30,
+                    "unit_price_cents": 700,
+                },
+                {
+                    "minimum_quantity": 31,
+                    "maximum_quantity": None,
+                    "unit_price_cents": 600,
+                },
+            ],
+        },
+    ).json()
+    parent_id = client.post(
+        "/admin/parent-galleries", json={"name": "Galeria com snapshot"}
+    ).json()["id"]
+
+    saved = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "progressive",
+            "progressive_pricing_preset_id": preset["id"],
+            "pix": {},
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["pricing_snapshot"]["preset_version"] == 1
+    assert saved.json()["tiers"][1]["unit_price_cents"] == 600
+
+    changed_payload = {
+        "code": "02",
+        "name": "Tabela eventos revisada",
+        "tiers": [
+            {"minimum_quantity": 1, "maximum_quantity": 30, "unit_price_cents": 700},
+            {"minimum_quantity": 31, "maximum_quantity": None, "unit_price_cents": 500},
+        ],
+    }
+    assert client.put(
+        f"/admin/pricing-presets/{preset['id']}", json=changed_payload
+    ).status_code == 200
+    unchanged = client.get(f"/admin/parent-galleries/{parent_id}/pricing").json()
+    assert unchanged["pricing_snapshot"]["preset_version"] == 1
+    assert unchanged["tiers"][1]["unit_price_cents"] == 600
+
+    with SessionLocal() as db:
+        gallery = db.get(ParentGallery, UUID(parent_id))
+        gallery.pricing_mode = "legacy_volume"
+        gallery.pricing_review_required = True
+        db.commit()
+    blocked = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={"pricing_mode": "fixed", "fixed_unit_price_cents": 800, "pix": {}},
+    )
+    assert blocked.status_code == 409
+    converted = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "fixed",
+            "fixed_unit_price_cents": 800,
+            "confirm_legacy_conversion": True,
+            "pix": {},
+        },
+    )
+    assert converted.status_code == 200
+    assert converted.json()["pricing_mode"] == "fixed"
+    assert converted.json()["pricing_review_required"] is False
+
+
+def test_gallery_pix_uses_copy_paste_as_single_source_and_generates_local_qr(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    parent_id = client.post(
+        "/admin/parent-galleries", json={"name": "Galeria PIX"}
+    ).json()["id"]
+    pix_code = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17"
+    other_code = "0002015204000053039865802BR5908OUTRAFOT6009SAO PAULO6304FC65"
+
+    malformed = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "fixed",
+            "fixed_unit_price_cents": 700,
+            "pix": {"copy_paste": "não-é-pix"},
+        },
+    )
+    assert malformed.status_code == 422
+    divergent = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "fixed",
+            "fixed_unit_price_cents": 700,
+            "pix": {"copy_paste": pix_code, "qr_code_payload": other_code},
+        },
+    )
+    assert divergent.status_code == 422
+
+    saved = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "fixed",
+            "fixed_unit_price_cents": 700,
+            "pix": {"copy_paste": pix_code, "instructions": "Aguarde a análise."},
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["pix"]["copy_paste"] == pix_code
+    assert saved.json()["pix"]["qr_code_payload"] is None
+    assert saved.json()["pix"]["review_required"] is False
+    assert saved.json()["pix"]["qr_png_data_url"].startswith("data:image/png;base64,")
+
+
+def test_cart_and_checkout_share_progressive_quote_and_freeze_all_terms(
+    client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Progressiva", phone_e164="+5511555554991")
+        db.add(owner)
+        db.commit()
+        owner_id = owner.id
+    gallery_id, first_photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        parent_id = gallery.parent_gallery_id
+        first_photo = db.get(PhotoAsset, first_photo_id)
+        second_photo = PhotoAsset(
+            parent_gallery_id=parent_id,
+            folder_id=first_photo.folder_id,
+            filename="IMG_0002.jpg",
+            storage_key="events/one/img-0002.jpg",
+        )
+        db.add(second_photo)
+        db.flush()
+        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery_id, photo_asset_id=second_photo.id))
+        db.add_all(
+            [
+                PhotoSelection(
+                    derived_gallery_id=gallery_id,
+                    photo_asset_id=first_photo_id,
+                    client_id=owner_id,
+                ),
+                PhotoSelection(
+                    derived_gallery_id=gallery_id,
+                    photo_asset_id=second_photo.id,
+                    client_id=owner_id,
+                ),
+            ]
+        )
+        db.commit()
+
+    authenticate_admin(client)
+    preset = client.post(
+        "/admin/pricing-presets",
+        json={
+            "code": "03",
+            "name": "Progressiva curta",
+            "tiers": [
+                {"minimum_quantity": 1, "maximum_quantity": 1, "unit_price_cents": 700},
+                {"minimum_quantity": 2, "maximum_quantity": None, "unit_price_cents": 600},
+            ],
+        },
+    ).json()
+    pix_code = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17"
+    configured = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "progressive",
+            "progressive_pricing_preset_id": preset["id"],
+            "pix": {"copy_paste": pix_code, "instructions": "Pagamento em análise."},
+        },
+    )
+    assert configured.status_code == 200
+
+    client.cookies.clear()
+    authenticate_client(client, "+5511555554991")
+    cart = client.get(f"/gallery/{gallery_id}/cart")
+    assert cart.status_code == 200
+    assert cart.json()["total_cents"] == 1300
+    assert cart.json()["savings_cents"] == 100
+    assert [parcel["subtotal_cents"] for parcel in cart.json()["parcels"]] == [700, 600]
+
+    first_checkout = client.post(
+        f"/gallery/{gallery_id}/checkout",
+        json={"idempotency_key": "progressive-checkout-0001"},
+    )
+    repeated_checkout = client.post(
+        f"/gallery/{gallery_id}/checkout",
+        json={"idempotency_key": "progressive-checkout-0001"},
+    )
+    assert first_checkout.status_code == repeated_checkout.status_code == 201
+    assert first_checkout.json() == repeated_checkout.json()
+    order_id = first_checkout.json()["id"]
+    frozen = client.get(f"/gallery/{gallery_id}/orders/{order_id}")
+    assert frozen.status_code == 200
+    assert frozen.json()["price_rule"]["preset_code"] == "03"
+    assert frozen.json()["price_rule"]["savings_cents"] == 100
+    assert frozen.json()["price_rule"]["total_cents"] == 1300
+    assert sorted(item["unit_price_cents"] for item in frozen.json()["items"]) == [600, 700]
+    assert frozen.json()["pix"]["copy_paste"] == pix_code
+    assert frozen.json()["pix"]["qr_png_data_url"].startswith("data:image/png;base64,")
+    assert all(
+        item["preview_url"]
+        == f"/gallery/{gallery_id}/photos/{item['photo_id']}/preview"
+        for item in frozen.json()["items"]
+    )
 
 
 def test_branding_public_defaults_and_admin_plain_text_update(client: TestClient) -> None:
@@ -1071,6 +1360,8 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
         "message": "",
         "selection_expires_at": None,
         "gallery_status": "active",
+        "membership_status": "active",
+        "browse_url": f"/gallery/{gallery_id}",
         "origin_removed": False,
         "origin": {
                 "id": str(parent_id),
@@ -1454,6 +1745,7 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
             "name": "Ana",
             "phone": "+5511999999901",
             "registration_status": "active",
+            "membership_status": None,
             "derived_gallery_id": None,
             "available_count": 0,
             "selected_count": 0,
@@ -2099,13 +2391,13 @@ def test_admin_pricing_requires_contiguous_tiers_and_returns_jump_warning(client
                 {"minimum_quantity": 1, "maximum_quantity": 10, "unit_price_cents": 700},
                 {"minimum_quantity": 11, "maximum_quantity": None, "unit_price_cents": 500},
             ],
-            "pix": {"copy_paste": "pix-controlado", "instructions": "Confirme depois do PIX."},
+            "pix": {"copy_paste": VALID_PIX_A, "instructions": "Confirme depois do PIX."},
         },
     )
     assert saved.status_code == 200
-    assert saved.json()["has_downward_jump"] is True
+    assert saved.json()["has_downward_jump"] is False
     inherited = client.get(f"/admin/derived-galleries/{gallery_id}/pricing")
-    assert inherited.json()["pix"]["copy_paste"] == "pix-controlado"
+    assert inherited.json()["pix"]["copy_paste"] == VALID_PIX_A
     assert inherited.json()["inherited_from_parent_gallery_id"] == str(parent_id)
     assert inherited.json()["editable"] is False
     assert client.put(
@@ -2154,7 +2446,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                     "unit_price_cents": 700,
                 }
             ],
-            "pix": {"copy_paste": "pix-a", "instructions": "Instrução A"},
+            "pix": {"copy_paste": VALID_PIX_A, "instructions": "Instrução A"},
             "sales_message": "Mensagem A",
             "selection_duration_days": 14,
             "favorites_enabled": True,
@@ -2210,7 +2502,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                     "unit_price_cents": 900,
                 }
             ],
-            "pix": {"copy_paste": "pix-b", "instructions": "Instrução B"},
+            "pix": {"copy_paste": VALID_PIX_B, "instructions": "Instrução B"},
             "sales_message": "Mensagem B",
             "selection_duration_days": 30,
             "favorites_enabled": False,
@@ -2248,7 +2540,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                     "unit_price_cents": 1_100,
                 }
             ],
-            "pix": {"copy_paste": "pix-c", "instructions": "Instrução C"},
+            "pix": {"copy_paste": VALID_PIX_A, "instructions": "Instrução C"},
             "sales_message": "Mensagem C",
             "selection_duration_days": 30,
             "favorites_enabled": False,
@@ -2262,7 +2554,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     assert frozen.status_code == 200
     assert frozen.json()["total_cents"] == 900
     assert frozen.json()["sales_message"] == "Mensagem B"
-    assert frozen.json()["pix"]["copy_paste"] == "pix-b"
+    assert frozen.json()["pix"]["copy_paste"] == VALID_PIX_B
     assert frozen.json()["pix"]["instructions"] == "Instrução B"
 
 

@@ -18,6 +18,7 @@ from app.auth import (
     DerivedGallery,
     EmailDelivery,
     EmailDeliveryAttempt,
+    GalleryMembershipNotificationOutbox,
     MediaJob,
     PaymentCommunication,
     PaymentMessageTemplate,
@@ -48,6 +49,9 @@ from app.gallery_lifecycle import (
     process_claimed_operation,
 )
 from app.media import generate_derivatives
+from app.membership_notifications import (
+    process_next_membership_notification as process_membership_outbox,
+)
 from app.messaging import (
     WhatsAppConfigurationError,
     WhatsAppDeliveryError,
@@ -545,6 +549,37 @@ def process_next_payment_notification() -> bool:
     return materialized or processed
 
 
+def process_next_gallery_membership_notification() -> bool:
+    """Entrega opcional ao fotógrafo sem acoplar a transação de associação."""
+
+    labels = {
+        "private_created": "Nova galeria privada criada",
+        "member_joined": "Novo cliente na galeria privada",
+        "member_blocked": "Cliente bloqueado na galeria privada",
+        "member_unblocked": "Cliente desbloqueado na galeria privada",
+        "member_unlinked": "Cliente desvinculado da galeria privada",
+    }
+    with SessionLocal() as db:
+        def send(notification: GalleryMembershipNotificationOutbox) -> None:
+            recipient = configured_photographer_phone()
+            if not recipient:
+                raise WhatsAppConfigurationError("Destino do fotógrafo não configurado.")
+            provider = whatsapp_provider_from_environment()
+            label = labels[notification.event_type]
+            client_suffix = (
+                f" Cliente: {notification.client_name_snapshot}."
+                if notification.client_name_snapshot
+                else ""
+            )
+            provider.send_transactional(
+                recipient,
+                f"{label}: {notification.derived_name_snapshot}."
+                f" Origem: {notification.parent_name_snapshot}.{client_suffix}",
+            )
+
+        return process_membership_outbox(db, send)
+
+
 def reconcile_next_unknown_delivery() -> bool:
     with SessionLocal() as db:
         delivery = db.scalar(
@@ -584,6 +619,7 @@ def main() -> None:
             or process_next_whatsapp_delivery()
             or process_next_email_delivery()
             or materialize_next_payment_notification()
+            or process_next_gallery_membership_notification()
             or reconcile_next_unknown_delivery()
             or process_otp_privacy_cleanup()
             or process_admin_security_cleanup()

@@ -272,6 +272,14 @@ class ParentGallery(Base):
             "selection_duration_days IS NULL OR selection_duration_days BETWEEN 1 AND 3650",
             name="ck_parent_gallery_selection_duration_days",
         ),
+        CheckConstraint(
+            "pricing_mode IN ('fixed', 'progressive', 'legacy_volume')",
+            name="ck_parent_gallery_pricing_mode",
+        ),
+        CheckConstraint(
+            "fixed_unit_price_cents IS NULL OR fixed_unit_price_cents >= 0",
+            name="ck_parent_gallery_fixed_unit_price",
+        ),
         Index(
             "ix_parent_gallery_lifecycle_created",
             "lifecycle_status",
@@ -300,6 +308,15 @@ class ParentGallery(Base):
     selection_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     favorites_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     comments_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    pricing_mode: Mapped[str] = mapped_column(String(24), default="fixed")
+    fixed_unit_price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progressive_pricing_preset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("progressive_pricing_preset.id", use_alter=True),
+        nullable=True,
+        index=True,
+    )
+    pricing_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    pricing_review_required: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     lifecycle_status: Mapped[str] = mapped_column(String(16), default="active")
     access_mode: Mapped[str] = mapped_column(String(24), default="invite_only")
@@ -369,10 +386,15 @@ class PhotoFolder(Base):
 
 
 class DerivedGallery(Base):
-    """Galeria privada pertencente a uma única cliente."""
+    """Galeria privada com proprietária legada durante a migração multiusuário."""
 
     __tablename__ = "derived_gallery"
     __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "parent_gallery_id",
+            name="uq_derived_gallery_id_parent",
+        ),
         Index(
             "ix_derived_gallery_parent_client",
             "parent_gallery_id",
@@ -394,6 +416,56 @@ class DerivedGallery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class DerivedGalleryMembership(Base):
+    """Associação autorizável de uma cliente ao acervo privado compartilhado."""
+
+    __tablename__ = "derived_gallery_membership"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["derived_gallery_id", "parent_gallery_id"],
+            ["derived_gallery.id", "derived_gallery.parent_gallery_id"],
+            name="fk_membership_gallery_parent",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "parent_gallery_id",
+            "client_id",
+            name="uq_membership_parent_client",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'blocked', 'unlinked')",
+            name="ck_derived_gallery_membership_status",
+        ),
+        Index(
+            "ix_membership_gallery_status",
+            "derived_gallery_id",
+            "status",
+        ),
+        Index(
+            "ix_membership_client_status",
+            "client_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id"), index=True
+    )
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    unlinked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actor_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
 class DerivedGalleryPhoto(Base):
     """Referência de uma foto da Galeria pública atribuída à galeria privada."""
 
@@ -402,8 +474,7 @@ class DerivedGalleryPhoto(Base):
         UniqueConstraint(
             "derived_gallery_id",
             "photo_asset_id",
-            "origin",
-            name="uq_derived_gallery_photo_origin",
+            name="uq_derived_gallery_photo_asset",
         ),
         CheckConstraint(
             "origin IN ('admin', 'client', 'facial')",
@@ -415,6 +486,31 @@ class DerivedGalleryPhoto(Base):
     derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
     photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
     origin: Mapped[str] = mapped_column(String(16), default="admin")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DerivedGalleryPhotoOrigin(Base):
+    """Justificativa independente que mantém uma foto no acervo privado comum."""
+
+    __tablename__ = "derived_gallery_photo_origin"
+    __table_args__ = (
+        UniqueConstraint(
+            "derived_gallery_photo_id",
+            "origin",
+            name="uq_derived_gallery_photo_origin_reason",
+        ),
+        CheckConstraint(
+            "origin IN ('admin', 'client', 'facial')",
+            name="ck_derived_gallery_photo_origin_reason",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_photo_id: Mapped[UUID] = mapped_column(
+        ForeignKey("derived_gallery_photo.id"),
+        index=True,
+    )
+    origin: Mapped[str] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -586,8 +682,17 @@ class GalleryAccessCapability(Base):
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_gallery_access_capability_token_hash"),
         CheckConstraint(
-            "scope IN ('public_gallery', 'parent_invite', 'private_invite')",
+            "scope IN ('public_gallery', 'parent_invite', 'private_invite', "
+            "'private_gallery_link', 'private_client_invite')",
             name="ck_gallery_access_capability_scope",
+        ),
+        CheckConstraint(
+            "token_mode IN ('legacy_random', 'signed_v1')",
+            name="ck_gallery_access_capability_token_mode",
+        ),
+        CheckConstraint(
+            "token_version >= 1",
+            name="ck_gallery_access_capability_token_version",
         ),
         CheckConstraint(
             "status IN ('active', 'consumed', 'revoked', 'rotated', 'expired')",
@@ -600,7 +705,10 @@ class GalleryAccessCapability(Base):
         CheckConstraint(
             "(scope = 'public_gallery' AND client_id IS NULL AND derived_gallery_id IS NULL) OR "
             "(scope = 'parent_invite' AND client_id IS NOT NULL AND derived_gallery_id IS NULL) OR "
-            "(scope = 'private_invite' AND client_id IS NOT NULL AND derived_gallery_id IS NOT NULL)",
+            "(scope IN ('private_invite', 'private_client_invite') "
+            "AND client_id IS NOT NULL AND derived_gallery_id IS NOT NULL) OR "
+            "(scope = 'private_gallery_link' AND client_id IS NULL "
+            "AND derived_gallery_id IS NOT NULL)",
             name="ck_gallery_access_capability_target",
         ),
         Index(
@@ -624,6 +732,13 @@ class GalleryAccessCapability(Base):
             sqlite_where=text("scope <> 'public_gallery' AND status = 'active'"),
             postgresql_where=text("scope <> 'public_gallery' AND status = 'active'"),
         ),
+        Index(
+            "uq_gallery_access_capability_active_private_link",
+            "derived_gallery_id",
+            unique=True,
+            sqlite_where=text("scope = 'private_gallery_link' AND status = 'active'"),
+            postgresql_where=text("scope = 'private_gallery_link' AND status = 'active'"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -638,6 +753,8 @@ class GalleryAccessCapability(Base):
     )
     scope: Mapped[str] = mapped_column(String(24), index=True)
     token_hash: Mapped[str] = mapped_column(String(64))
+    token_mode: Mapped[str] = mapped_column(String(24), default="legacy_random")
+    token_version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -758,6 +875,7 @@ class PixCheckoutSettings(Base):
     )
     copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
     qr_code_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False)
     instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -809,6 +927,113 @@ class PaymentNotificationOutbox(Base):
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class ProgressivePricingPreset(Base):
+    __tablename__ = "progressive_pricing_preset"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_progressive_pricing_preset_code"),
+        CheckConstraint("version >= 1", name="ck_progressive_pricing_preset_version"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    code: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class ProgressivePricingTier(Base):
+    __tablename__ = "progressive_pricing_tier"
+    __table_args__ = (
+        UniqueConstraint(
+            "preset_id",
+            "minimum_quantity",
+            name="uq_progressive_pricing_tier_minimum",
+        ),
+        CheckConstraint("minimum_quantity >= 1", name="ck_progressive_tier_minimum"),
+        CheckConstraint(
+            "maximum_quantity IS NULL OR maximum_quantity >= minimum_quantity",
+            name="ck_progressive_tier_maximum",
+        ),
+        CheckConstraint("unit_price_cents >= 0", name="ck_progressive_tier_price"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    preset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("progressive_pricing_preset.id", ondelete="CASCADE"), index=True
+    )
+    minimum_quantity: Mapped[int] = mapped_column(Integer)
+    maximum_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    unit_price_cents: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class GalleryMembershipNotificationOutbox(Base):
+    """Evento administrativo e outbox externa de galerias privadas/membros."""
+
+    __tablename__ = "gallery_membership_notification_outbox"
+    __table_args__ = (
+        UniqueConstraint("event_key"),
+        CheckConstraint(
+            "event_type IN ('private_created', 'member_joined', 'member_blocked', "
+            "'member_unblocked', 'member_unlinked')",
+            name="ck_gallery_membership_notification_type",
+        ),
+        CheckConstraint(
+            "admin_status IN ('unread', 'read')",
+            name="ck_gallery_membership_notification_admin_status",
+        ),
+        CheckConstraint(
+            "external_status IN ('skipped', 'queued', 'processing', 'sent', 'failed')",
+            name="ck_gallery_membership_notification_external_status",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_gallery_membership_notification_attempts",
+        ),
+        Index(
+            "ix_gallery_membership_notification_admin_created",
+            "admin_status",
+            "created_at",
+        ),
+        Index(
+            "ix_gallery_membership_notification_external_next",
+            "external_status",
+            "next_attempt_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    event_key: Mapped[str] = mapped_column(String(200))
+    event_type: Mapped[str] = mapped_column(String(32), index=True)
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    client_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("client.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    parent_name_snapshot: Mapped[str] = mapped_column(String(200))
+    derived_name_snapshot: Mapped[str] = mapped_column(String(200))
+    client_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    admin_status: Mapped[str] = mapped_column(String(16), default="unread", index=True)
+    external_status: Mapped[str] = mapped_column(String(16), default="skipped", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
 
 
 class WhatsAppChannelSettings(Base):
