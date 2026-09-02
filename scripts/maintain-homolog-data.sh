@@ -19,7 +19,9 @@ fail() {
 }
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+  # O script chega ao host por `bash -s`; nenhum subprocesso pode consumir
+  # o restante da própria rotina pela entrada padrão compartilhada.
+  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@" </dev/null
 }
 
 while [[ $# -gt 0 ]]; do
