@@ -245,3 +245,9 @@ Push-Location backend; .\.venv\Scripts\python.exe -m alembic heads; Pop-Location
 - `git diff --check` ficou limpo, salvo avisos informativos de conversão LF/CRLF; a busca por padrões de segredo não encontrou credencial. A produção não contém fonte remota nem rota/interface facial; a única URL WOFF2 externa é um valor malicioso proposital em teste negativo.
 - `docker compose --env-file .env.example -p markina-gallery -f docker/docker-compose.yml config --quiet` passou sem alterar ou iniciar recursos. A validação `npx --yes @fission-ai/openspec validate consolidate-shared-private-galleries-and-progressive-sales --strict` declarou a change válida.
 - O inventário `deployment-inventory.md` registra migrations `0034–0040`, topologia preservada, novo segredo dedicado, backup, smoke sintético, rollback conservador e os gates humanos. Nenhuma ação remota foi executada.
+
+### Task 8.6 — preparação operacional autorizada
+
+- Antes do push autorizado, a automação foi reconciliada com o novo requisito de startup: `deploy-homolog.sh` agora gera `GALLERY_CAPABILITY_SIGNING_KEY` no próprio servidor quando ausente, preserva o arquivo seguro em `0600`, recusa duplicidade, valor curto ou reutilização de `AUTH_PII_FINGERPRINT_SALT` e não imprime o material secreto.
+- Comandos: Git Bash `scripts/test_deploy_homolog.sh`, `python scripts/test_deploy_homolog_policy.py` e `git diff --check`.
+- Resultados pré-deploy: teste shell e política estrutural aprovados; somente avisos informativos LF/CRLF. Hardening versionado em `6fd2c64b91c50d6d474ab824414cc217fb70dc75`.
