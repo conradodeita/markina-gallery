@@ -43,7 +43,38 @@ dirty_output="$(mktemp)"
 migration_output="$(mktemp)"
 health_output="$(mktemp)"
 rollback_log="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log"' EXIT
+secrets_env="$(mktemp)"
+same_secret_env="$(mktemp)"
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env"' EXIT
+
+printf 'APP_ENV=homologation\nAUTH_PII_FINGERPRINT_SALT=\nGALLERY_CAPABILITY_SIGNING_KEY=\n' >"$secrets_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" SECRETS_ENV="$secrets_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_pii_fingerprint_salt "$SECRETS_ENV"
+    ensure_gallery_capability_signing_key "$SECRETS_ENV"
+    fingerprint="$(grep "^AUTH_PII_FINGERPRINT_SALT=" "$SECRETS_ENV")"
+    fingerprint="${fingerprint#*=}"
+    signing="$(grep "^GALLERY_CAPABILITY_SIGNING_KEY=" "$SECRETS_ENV")"
+    signing="${signing#*=}"
+    [[ "${#fingerprint}" -ge 32 ]]
+    [[ "${#signing}" -ge 32 ]]
+    [[ "$fingerprint" != "$signing" ]]
+    [[ "$(stat -c %a "$SECRETS_ENV")" == "600" ]]
+  ' >"$output" 2>&1
+grep -Fq 'GALLERY_CAPABILITY_SIGNING_KEY configurado com segredo aleatório exclusivo de homologação' "$output"
+
+same_secret="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+printf 'AUTH_PII_FINGERPRINT_SALT=%s\nGALLERY_CAPABILITY_SIGNING_KEY=%s\n' "$same_secret" "$same_secret" >"$same_secret_env"
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" SECRETS_ENV="$same_secret_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_gallery_capability_signing_key "$SECRETS_ENV"
+  ' >"$output" 2>&1; then
+  echo "chave de galeria igual ao fingerprint de PII não foi recusada" >&2
+  exit 1
+fi
+grep -Fq 'GALLERY_CAPABILITY_SIGNING_KEY deve ser diferente de AUTH_PII_FINGERPRINT_SALT' "$output"
 
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
@@ -86,7 +117,7 @@ fi
 grep -Fq 'serviço Markina não ficou saudável: api (unhealthy)' "$health_output"
 
 whatsapp_output="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$whatsapp_output"' EXIT
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$whatsapp_output"' EXIT
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"

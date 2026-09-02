@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { galleryFontFamily } from "../../gallery-fonts";
@@ -23,9 +23,21 @@ type Comment = { id: string; photo_id: string; body: string };
 type Cart = {
   quantity: number;
   total_cents?: number;
+  base_total_cents?: number;
+  savings_cents?: number;
   unit_price_cents?: number;
   tier?: { minimum_quantity: number; maximum_quantity: number | null };
+  parcels?: Array<{ minimum_quantity: number; maximum_quantity: number | null; quantity: number; unit_price_cents: number; subtotal_cents: number }>;
+  pricing_error?: string;
   items?: { id: string; name: string }[];
+};
+type PendingOrder = {
+  id: string;
+  total_cents: number;
+  price_rule?: { savings_cents?: number; parcels?: Cart["parcels"] };
+  sales_message?: string | null;
+  pix?: { copy_paste: string | null; qr_png_data_url: string | null; instructions: string | null; confirmation: string };
+  items?: Array<{ photo_id: string; name: string; unit_price_cents: number; preview_url: string }>;
 };
 type PaymentOrder = {
   order_id: string;
@@ -58,13 +70,18 @@ export default function GalleryPage() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [cart, setCart] = useState<Cart>({ quantity: 0 });
-  const [pendingOrder, setPendingOrder] = useState<{ id: string; total_cents: number } | null>(null);
+  const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
   const [paymentOrders, setPaymentOrders] = useState<PaymentOrder[]>([]);
   const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
   const [activePhotoId, setActivePhotoId] = useState("");
   const [message, setMessage] = useState("");
   const [closedGallery, setClosedGallery] = useState<{ publicGalleryUrl: string | null } | null>(null);
   const [filter, setFilter] = useState<"all" | "nova" | "visualizada mas não comprada" | "já comprada">("all");
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [paymentBusy, setPaymentBusy] = useState("");
+  const [pixCopied, setPixCopied] = useState(false);
+  const checkoutKey = useRef("");
+  const paymentKeys = useRef<Record<string, string>>({});
   function load() {
     Promise.all([
       fetch(`/api/gallery/${galleryId}/review`, { credentials: "same-origin" }),
@@ -155,6 +172,7 @@ export default function GalleryPage() {
         : "Não foi possível salvar esta alteração.",
     );
     if (response.ok) {
+      checkoutKey.current = "";
       if (response.headers.get("X-Markina-Gallery-Closed") === "true") {
         setClosedGallery({ publicGalleryUrl: response.headers.get("X-Markina-Public-Gallery-Url") });
         return;
@@ -164,36 +182,56 @@ export default function GalleryPage() {
     }
   }
   async function checkout() {
-    const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `checkout-${Date.now()}-${galleryId}`;
-    const response = await fetch(`/api/gallery/${galleryId}/checkout`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idempotency_key: idempotencyKey }),
-    });
-    if (!response.ok) {
+    if (checkoutBusy || !cart.quantity) return;
+    setCheckoutBusy(true);
+    checkoutKey.current ||= globalThis.crypto?.randomUUID?.() ?? `checkout-${Date.now()}-${galleryId}`;
+    try {
+      const response = await fetch(`/api/gallery/${galleryId}/checkout`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idempotency_key: checkoutKey.current }),
+      });
+      if (!response.ok) throw new Error();
+      const order = await response.json();
+      const detailResponse = await fetch(`/api/gallery/${galleryId}/orders/${order.id}`, { credentials: "same-origin" });
+      const detail = detailResponse.ok ? await detailResponse.json() : order;
+      setPendingOrder(detail);
+      setPixCopied(false);
+      setMessage("Confira as fotos e os dados do PIX antes de informar o pagamento.");
+      load();
+      loadCart();
+      loadPaymentOrders();
+    } catch {
       setMessage("Não foi possível finalizar o pedido. Revise sua seleção e tente novamente.");
-      return;
+    } finally {
+      setCheckoutBusy(false);
     }
-    const order = await response.json();
-    setPendingOrder({ id: order.id, total_cents: order.total_cents });
-    setMessage("Pedido criado. O pagamento será confirmado manualmente pelo fotógrafo.");
-    load();
-    loadCart();
-    loadPaymentOrders();
   }
   async function reportPayment(orderId: string) {
-    const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `payment-report-${Date.now()}-${orderId}`;
+    if (paymentBusy) return;
+    setPaymentBusy(orderId);
+    paymentKeys.current[orderId] ||= globalThis.crypto?.randomUUID?.() ?? `payment-report-${Date.now()}-${orderId}`;
     const response = await fetch(`/api/gallery/${galleryId}/orders/${orderId}/payment-communications`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+      body: JSON.stringify({ idempotency_key: paymentKeys.current[orderId] }),
     });
-    setMessage(response.ok ? "Pagamento comunicado. Aguarde a revisão do fotógrafo." : "Não foi possível comunicar o pagamento.");
+    setMessage(response.ok ? "O pagamento está em análise." : "Não foi possível comunicar o pagamento.");
     if (response.ok) {
       setPendingOrder(null);
       loadPaymentOrders();
+    }
+    setPaymentBusy("");
+  }
+  async function copyPix() {
+    if (!pendingOrder?.pix?.copy_paste) return;
+    try {
+      await navigator.clipboard.writeText(pendingOrder.pix.copy_paste);
+      setPixCopied(true);
+    } catch {
+      setMessage("Não foi possível copiar automaticamente. Selecione o código PIX abaixo.");
     }
   }
   async function removeFromCart(photoId: string) {
@@ -285,7 +323,6 @@ export default function GalleryPage() {
     {} as Record<string, number>,
   );
   const visiblePhotos = filter === "all" ? review.photos : review.photos.filter((photo) => photo.purchaseState === filter);
-  const selectedPhotos = review.photos.filter((photo) => photo.selected);
   const presentationFolders = releasedFolders.map((folder) => ({ id: folder.id, name: folder.name, photos: visiblePhotos.filter((photo) => photo.folderId === folder.id) })).filter((folder) => folder.photos.length);
   return (
     <main className="admin-shell">
@@ -317,21 +354,22 @@ export default function GalleryPage() {
         {photo.purchaseState === "já comprada" ? <span className="gallery-presentation-marker is-purchased">Comprada</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={photo.selected} disabled={!review.gallery.selection_open} onClick={() => interaction(photo, "selection")}>{photo.selected ? "✓ Selecionada" : "Selecionar"}</button>}
         {review.gallery.favorites_enabled ? <button type="button" className="gallery-presentation-marker" aria-pressed={photo.favorited} onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}
       </>} />
-      <section className="selection-summary" aria-live="polite" aria-label="Resumo da seleção">
-        <div><span>Sua seleção</span><strong>{selectedPhotos.length} foto{selectedPhotos.length === 1 ? "" : "s"}</strong></div>
-        <p>{review.gallery.selection_open ? "Use Selecionar em cada prévia. Suas escolhas ficam salvas nesta galeria." : "O prazo de novas seleções terminou; suas escolhas continuam identificadas abaixo."}</p>
-        {cart.total_cents !== undefined && <p>Faixa aplicada: R$ {(cart.unit_price_cents! / 100).toFixed(2).replace(".", ",")} por foto · total estimado R$ {(cart.total_cents / 100).toFixed(2).replace(".", ",")}.</p>}
-        {cart.items?.length ? <ul className="photo-list" aria-label="Fotos no carrinho">{cart.items.map((item) => <li key={item.id}>{item.name}<button type="button" className="link-button" onClick={() => removeFromCart(item.id)}>Remover do carrinho</button></li>)}</ul> : null}
-        <button type="button" className="primary" disabled={!review.gallery.selection_open || cart.quantity === 0} onClick={checkout}>Finalizar {cart.quantity} foto{cart.quantity === 1 ? "" : "s"} por PIX</button>
-      </section>
-      {pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id) && <section className="admin-card" aria-live="polite"><h2>Pedido pendente de confirmação</h2><p>Pedido criado no valor de R$ {(pendingOrder.total_cents / 100).toFixed(2).replace(".", ",")}.</p><p>Envie o PIX conforme as instruções do fotógrafo. A confirmação não é automática.</p><button className="primary" type="button" onClick={() => reportPayment(pendingOrder.id)}>Já fiz o PIX</button></section>}
+      {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
+        <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
+        <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
+        {cart.items?.length ? <details><summary>Revisar seleção</summary><ul className="photo-list" aria-label="Fotos no carrinho">{cart.items.map((item) => <li key={item.id}>{item.name}<button type="button" className="link-button" onClick={() => removeFromCart(item.id)}>Remover do carrinho</button></li>)}</ul></details> : null}
+        {cart.parcels?.length ? <details><summary>Ver cálculo por faixas</summary><ul>{cart.parcels.map((parcel) => <li key={`${parcel.minimum_quantity}-${parcel.maximum_quantity ?? "mais"}`}>{parcel.quantity} × {(parcel.unit_price_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} = {(parcel.subtotal_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</li>)}</ul></details> : null}
+        {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
+        <button type="button" className="primary" disabled={!review.gallery.selection_open || cart.total_cents === undefined || checkoutBusy} onClick={checkout}>{checkoutBusy ? "Preparando…" : "Prosseguir"}</button>
+      </aside> : null}
+      {pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id && order.communication) && <section className="admin-card client-checkout-review" aria-live="polite"><div className="section-heading"><div><p className="eyebrow">Conferência do pedido</p><h2>Revise suas fotos e faça o PIX</h2></div><StatusBadge tone="warning">Aguardando pagamento</StatusBadge></div>{pendingOrder.items?.length ? <div className="client-checkout-items">{pendingOrder.items.map((item) => <figure key={item.photo_id}><img src={`/api${item.preview_url}`} alt={`Miniatura protegida de ${item.name}`} draggable={false} /><figcaption><strong>{item.name}</strong><span>{(item.unit_price_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span></figcaption></figure>)}</div> : null}<div className="client-checkout-total"><span>{pendingOrder.items?.length ?? 0} foto(s)</span><strong>{(pendingOrder.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>{pendingOrder.price_rule?.savings_cents ? <span>Economia de {(pendingOrder.price_rule.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>{pendingOrder.sales_message ? <p>{pendingOrder.sales_message}</p> : null}{pendingOrder.pix?.qr_png_data_url ? <img className="client-checkout-qr" src={pendingOrder.pix.qr_png_data_url} alt="QR Code PIX do pedido" /> : null}{pendingOrder.pix?.copy_paste ? <label className="client-checkout-pix">PIX copia e cola<textarea readOnly value={pendingOrder.pix.copy_paste} /><button className="secondary" type="button" onClick={copyPix}>{pixCopied ? "Código copiado" : "Copiar código PIX"}</button></label> : <p className="notice">O fotógrafo ainda não configurou um código PIX para esta galeria.</p>}{pendingOrder.pix?.instructions ? <p>{pendingOrder.pix.instructions}</p> : null}<p>O pagamento estará sujeito a análise e você será informada após a conferência do fotógrafo.</p><button className="primary" type="button" disabled={paymentBusy === pendingOrder.id} onClick={() => reportPayment(pendingOrder.id)}>{paymentBusy === pendingOrder.id ? "Informando…" : "Informar pagamento"}</button></section>}
       {paymentOrders.length > 0 && <section className="admin-card" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {
         const status = order.communication?.status;
         return <article className="upload-status" key={order.order_id}>
           <strong>Pedido {order.order_id.slice(0, 8)} · R$ {(order.total_cents / 100).toFixed(2).replace(".", ",")}</strong>
           <span>{status === "confirmed" ? "Pagamento confirmado" : status === "refused" ? "Pagamento não localizado" : status === "pending_review" ? "Pagamento informado · aguardando revisão" : "Pagamento ainda não comunicado"}</span>
           {order.notification?.status === "failed" && <span>A resposta por WhatsApp falhou. O status acima continua válido.</span>}
-          {order.payment_status === "pending" && (!status || status === "refused") && <button className="primary" type="button" onClick={() => reportPayment(order.order_id)}>Já fiz o PIX</button>}
+          {order.payment_status === "pending" && (!status || status === "refused") && <button className="primary" type="button" disabled={paymentBusy === order.order_id} onClick={() => reportPayment(order.order_id)}>{paymentBusy === order.order_id ? "Informando…" : "Informar pagamento"}</button>}
         </article>;
       })}</section>}
       {review.gallery.comments_enabled && (

@@ -12,12 +12,11 @@ from app.auth import (
     PhotoFolder,
     PhotoSelection,
     PixCheckoutSettings,
-    PriceRule,
     SaleOrder,
     SaleOrderItem,
     audit,
 )
-from app.pricing import PriceTier, PricingRuleError, quote
+from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
 
 
 class CheckoutError(ValueError):
@@ -82,17 +81,10 @@ def create_pending_checkout(
     parent = db.get(ParentGallery, gallery.parent_gallery_id)
     if not parent:
         raise CheckoutError("A Galeria pública desta seleção não está disponível.")
-    rules = list(db.scalars(select(PriceRule).where(PriceRule.parent_gallery_id == parent.id)))
     try:
-        tier, total = quote(
-            len(photos),
-            [
-                PriceTier(rule.minimum_quantity, rule.maximum_quantity, rule.unit_price_cents)
-                for rule in rules
-            ],
-        )
-    except PricingRuleError as exc:
-        raise CheckoutError("As regras de preço desta galeria não estão prontas.") from exc
+        commercial_quote = quote_parent_gallery(db, gallery=parent, quantity=len(photos))
+    except GalleryPricingError as exc:
+        raise CheckoutError(str(exc)) from exc
     settings = db.scalar(
         select(PixCheckoutSettings).where(PixCheckoutSettings.parent_gallery_id == parent.id)
     )
@@ -100,29 +92,42 @@ def create_pending_checkout(
         derived_gallery_id=gallery.id,
         client_id=client.id,
         payment_status="pending",
-        total_cents=total,
+        total_cents=commercial_quote.quote.total_cents,
         client_name_snapshot=client.full_name,
         client_phone_snapshot=client.phone_e164,
         checkout_key=checkout_key,
         price_rule_snapshot={
-            "minimum_quantity": tier.minimum_quantity,
-            "maximum_quantity": tier.maximum_quantity,
-            "unit_price_cents": tier.unit_price_cents,
+            **commercial_quote.snapshot,
+            "terms": {
+                "payment_confirmation": "manual_by_photographer",
+                "selection_expires_at": (
+                    gallery.selection_expires_at.isoformat()
+                    if gallery.selection_expires_at
+                    else None
+                ),
+            },
         },
         sales_message_snapshot=parent.sales_message,
         pix_copy_paste_snapshot=settings.copy_paste if settings else None,
-        pix_qr_code_snapshot=settings.qr_code_payload if settings else None,
+        pix_qr_code_snapshot=None,
         pix_instructions_snapshot=settings.instructions if settings else None,
     )
     db.add(order)
     db.flush()
-    for photo in photos:
+    unit_prices = [
+        parcel.unit_price_cents
+        for parcel in commercial_quote.quote.parcels
+        for _ in range(parcel.quantity)
+    ]
+    for photo, unit_price_cents in zip(
+        sorted(photos, key=lambda item: str(item.id)), unit_prices, strict=True
+    ):
         db.add(
             SaleOrderItem(
                 sale_order_id=order.id,
                 photo_asset_id=photo.id,
                 filename_snapshot=photo.display_name or photo.filename,
-                unit_price_cents=tier.unit_price_cents,
+                unit_price_cents=unit_price_cents,
             )
         )
     db.execute(

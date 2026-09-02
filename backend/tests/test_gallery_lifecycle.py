@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pyotp
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
@@ -22,7 +23,9 @@ from app.auth import (
     ClientPhone,
     CommercialHistoryMedia,
     DerivedGallery,
+    DerivedGalleryMembership,
     DerivedGalleryPhoto,
+    DerivedGalleryPhotoOrigin,
     GalleryAccess,
     GalleryAccessCapability,
     GalleryLifecycleOperation,
@@ -83,10 +86,11 @@ from app.historical_media import (
     HistoricalMediaConflict,
     prepare_confirmed_historical_media,
 )
-from app.main import app
+from app.main import app, derived_gallery_for_client
 from app.private_derivation import (
     FacialDerivationUnavailable,
     derive_approved_facial_result,
+    ensure_private_photo_reference,
 )
 from app.worker import process_next_gallery_lifecycle_operation
 
@@ -106,6 +110,42 @@ def clean_database():
         connection.commit()
     Base.metadata.create_all(engine)
     yield
+
+
+def create_private_gallery_fixture(
+    db: Session,
+    *,
+    label: str,
+    phones: tuple[str, ...],
+    with_memberships: bool,
+) -> tuple[ParentGallery, DerivedGallery, list[Client]]:
+    """Constrói tanto o estado legado quanto uma privada compartilhada."""
+
+    clients = [
+        Client(full_name=f"{label} cliente {index}", phone_e164=phone)
+        for index, phone in enumerate(phones, start=1)
+    ]
+    parent = ParentGallery(name=f"{label} pública")
+    db.add_all([*clients, parent])
+    db.flush()
+    private = DerivedGallery(
+        parent_gallery_id=parent.id,
+        client_id=clients[0].id,
+        name=f"{label} privada",
+    )
+    db.add(private)
+    db.flush()
+    if with_memberships:
+        db.add_all(
+            DerivedGalleryMembership(
+                derived_gallery_id=private.id,
+                parent_gallery_id=parent.id,
+                client_id=client.id,
+            )
+            for client in clients
+        )
+        db.flush()
+    return parent, private, clients
 
 
 def test_lifecycle_operation_enforces_idempotency_and_valid_target() -> None:
@@ -265,6 +305,11 @@ def test_parent_gallery_deletion_endpoint_is_idempotent_and_returns_inventory() 
         db.flush()
         db.add_all(
             [
+                DerivedGalleryMembership(
+                    derived_gallery_id=private.id,
+                    parent_gallery_id=parent.id,
+                    client_id=owner.id,
+                ),
                 DerivedGalleryPhoto(
                     derived_gallery_id=private.id,
                     photo_asset_id=photo.id,
@@ -376,6 +421,7 @@ def test_parent_gallery_deletion_endpoint_is_idempotent_and_returns_inventory() 
             },
             "preserve": {
                 "clients": 1,
+                "memberships": 1,
                 "private_galleries": 1,
                 "photos_referenced_by_private": 1,
                 "folders_with_private_photos": 1,
@@ -722,11 +768,11 @@ def test_record_cleanup_removes_public_origin_and_preserves_private_graph() -> N
             PriceRule,
             PixCheckoutSettings,
             GalleryAccess,
-            GalleryAccessCapability,
             MediaDerivative,
             MediaJob,
         ):
             assert db.scalar(select(func.count()).select_from(model)) == 1
+        assert db.scalar(select(func.count()).select_from(GalleryAccessCapability)) == 0
         assert db.scalar(select(func.count()).select_from(ParentGalleryRegistration)) == 0
         assert db.scalar(select(func.count()).select_from(AuthChallenge)) == 0
         assert db.get(Client, owner_id) is not None
@@ -988,6 +1034,8 @@ def test_public_deletion_keeps_one_private_photo_copy_and_private_viewing(
                 "message": "",
                 "selection_expires_at": None,
                 "gallery_status": "origin_removed",
+                "membership_status": "active",
+                "browse_url": f"/gallery/{private_id}",
                 "origin_removed": True,
                 "origin": {
                     "id": str(parent_id),
@@ -1367,19 +1415,15 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         }
 
         with SessionLocal() as db:
-            db.add(
-                DerivedGalleryPhoto(
-                    derived_gallery_id=private_id,
-                    photo_asset_id=second_id,
-                    origin="admin",
-                )
+            ensure_private_photo_reference(
+                db, gallery_id=private_id, photo_id=second_id, origin="admin"
             )
             db.commit()
         additional = client.post(f"/public-galleries/{parent_id}/photos/{second_id}/selection")
         assert additional.status_code == 201
         assert additional.json()["private_gallery_id"] == str(private_id)
         assert additional.json()["gallery_created"] is False
-        assert additional.json()["reference_created"] is True
+        assert additional.json()["reference_created"] is False
         assert additional.json()["selection_created"] is True
 
     with SessionLocal() as db:
@@ -1407,7 +1451,13 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         )
         origins = set(
             db.scalars(
-                select(DerivedGalleryPhoto.origin).where(
+                select(DerivedGalleryPhotoOrigin.origin)
+                .join(
+                    DerivedGalleryPhoto,
+                    DerivedGalleryPhoto.id
+                    == DerivedGalleryPhotoOrigin.derived_gallery_photo_id,
+                )
+                .where(
                     DerivedGalleryPhoto.derived_gallery_id == private_id,
                     DerivedGalleryPhoto.photo_asset_id == second_id,
                 )
@@ -1448,12 +1498,8 @@ def test_client_derivation_reuses_gallery_created_by_admin_race_winner() -> None
         )
         db.add(admin_gallery)
         db.flush()
-        db.add(
-            DerivedGalleryPhoto(
-                derived_gallery_id=admin_gallery.id,
-                photo_asset_id=photo.id,
-                origin="admin",
-            )
+        ensure_private_photo_reference(
+            db, gallery_id=admin_gallery.id, photo_id=photo.id, origin="admin"
         )
         db.commit()
         parent_id, photo_id, admin_gallery_id = parent.id, photo.id, admin_gallery.id
@@ -1464,7 +1510,7 @@ def test_client_derivation_reuses_gallery_created_by_admin_race_winner() -> None
         assert response.status_code == 201
         assert response.json()["private_gallery_id"] == str(admin_gallery_id)
         assert response.json()["gallery_created"] is False
-        assert response.json()["reference_created"] is True
+        assert response.json()["reference_created"] is False
         assert response.json()["selection_created"] is True
 
     with SessionLocal() as db:
@@ -1478,7 +1524,13 @@ def test_client_derivation_reuses_gallery_created_by_admin_race_winner() -> None
         )
         assert set(
             db.scalars(
-                select(DerivedGalleryPhoto.origin).where(
+                select(DerivedGalleryPhotoOrigin.origin)
+                .join(
+                    DerivedGalleryPhoto,
+                    DerivedGalleryPhoto.id
+                    == DerivedGalleryPhotoOrigin.derived_gallery_photo_id,
+                )
+                .where(
                     DerivedGalleryPhoto.derived_gallery_id == admin_gallery_id,
                     DerivedGalleryPhoto.photo_asset_id == photo_id,
                 )
@@ -1616,17 +1668,15 @@ def test_unselect_closes_only_empty_client_private_and_preserves_admin_reference
             )
             db.add(photo)
             db.flush()
+            ensure_private_photo_reference(
+                db, gallery_id=gallery.id, photo_id=photo.id, origin="client"
+            )
             db.add_all(
                 [
                     ParentGalleryRegistration(
                         parent_gallery_id=parent.id,
                         client_id=owner.id,
                         status="active",
-                    ),
-                    DerivedGalleryPhoto(
-                        derived_gallery_id=gallery.id,
-                        photo_asset_id=photo.id,
-                        origin="client",
                     ),
                     PhotoSelection(
                         derived_gallery_id=gallery.id,
@@ -1638,12 +1688,8 @@ def test_unselect_closes_only_empty_client_private_and_preserves_admin_reference
             return gallery, photo
 
         admin_gallery, admin_photo = private_photo(admin_parent, "admin")
-        db.add(
-            DerivedGalleryPhoto(
-                derived_gallery_id=admin_gallery.id,
-                photo_asset_id=admin_photo.id,
-                origin="admin",
-            )
+        ensure_private_photo_reference(
+            db, gallery_id=admin_gallery.id, photo_id=admin_photo.id, origin="admin"
         )
         client_gallery, client_photo = private_photo(client_parent, "client")
         review_gallery, review_photo = private_photo(review_parent, "review")
@@ -1749,7 +1795,13 @@ def test_unselect_closes_only_empty_client_private_and_preserves_admin_reference
         assert db.get(DerivedGallery, ids["admin_gallery"]) is not None
         assert set(
             db.scalars(
-                select(DerivedGalleryPhoto.origin).where(
+                select(DerivedGalleryPhotoOrigin.origin)
+                .join(
+                    DerivedGalleryPhoto,
+                    DerivedGalleryPhoto.id
+                    == DerivedGalleryPhotoOrigin.derived_gallery_photo_id,
+                )
+                .where(
                     DerivedGalleryPhoto.derived_gallery_id == ids["admin_gallery"]
                 )
             )
@@ -1852,6 +1904,11 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
                     derived_gallery_id=target_gallery.id,
                     photo_asset_id=photo.id,
                     origin="admin",
+                ),
+                DerivedGalleryMembership(
+                    derived_gallery_id=target_gallery.id,
+                    parent_gallery_id=parent.id,
+                    client_id=owner.id,
                 ),
                 PhotoSelection(
                     derived_gallery_id=target_gallery.id,
@@ -1977,7 +2034,8 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
         }
         assert preview.json()["consequences"] == {
             "gallery_relationship_removed": True,
-            "private_gallery_removed": True,
+            "private_gallery_removed": False,
+            "private_gallery_preserved_for_other_members": True,
             "client_preserved": True,
             "commercial_history_preserved": True,
             "other_gallery_relationships_preserved": True,
@@ -2011,8 +2069,7 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
         assert payload["inventory"] == {
             "remove": {
                 "registrations": 1,
-                "private_galleries": 1,
-                "available_references": 1,
+                "memberships": 1,
                 "selections": 1,
                 "favorites": 1,
                 "comments": 1,
@@ -2021,6 +2078,9 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
             },
             "preserve": {
                 "clients": 1,
+                "private_galleries": 1,
+                "available_references": 1,
+                "shared_private_capabilities": 0,
                 "photos": 1,
                 "orders": 1,
                 "orders_by_status": {
@@ -2047,17 +2107,25 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
             )
         )
         assert registration.status == "unlinking"
-        assert db.get(DerivedGallery, ids["target_gallery"]).access_enabled is False
+        assert db.get(DerivedGallery, ids["target_gallery"]).access_enabled is True
 
     assert process_next_gallery_lifecycle_operation() is True
 
     with SessionLocal() as db:
         operation = db.get(GalleryLifecycleOperation, UUID(payload["operation_id"]))
         assert operation.status == "completed"
-        assert operation.manifest["removed_records"]["private_galleries"] == 1
+        assert operation.manifest["removed_records"]["private_galleries"] == 0
+        assert operation.manifest["removed_records"]["memberships_unlinked"] == 1
         assert operation.manifest["removed_records"]["registrations"] == 1
         assert db.get(Client, ids["owner"]) is not None
-        assert db.get(DerivedGallery, ids["target_gallery"]) is None
+        assert db.get(DerivedGallery, ids["target_gallery"]) is not None
+        membership = db.scalar(
+            select(DerivedGalleryMembership).where(
+                DerivedGalleryMembership.parent_gallery_id == ids["parent"],
+                DerivedGalleryMembership.client_id == ids["owner"],
+            )
+        )
+        assert membership.status == "unlinked"
         assert db.get(PhotoAsset, ids["photo"]) is not None
         assert db.get(DerivedGallery, ids["other_gallery"]) is not None
         assert db.get(PhotoAsset, ids["other_photo"]) is not None
@@ -2072,7 +2140,7 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
         )
         order = db.get(SaleOrder, ids["order"])
         assert order.payment_status == "confirmed"
-        assert order.derived_gallery_id is None
+        assert order.derived_gallery_id == ids["target_gallery"]
         assert db.get(SaleOrderItem, ids["item"]).photo_asset_id == ids["photo"]
         assert (
             db.scalar(
@@ -2443,7 +2511,7 @@ def test_admin_private_creation_requires_photo_and_private_invite_owner() -> Non
             db.scalar(
                 select(func.count())
                 .select_from(GalleryAccessCapability)
-                .where(GalleryAccessCapability.scope == "private_invite")
+                .where(GalleryAccessCapability.scope == "private_gallery_link")
             )
             == 1
         )
@@ -2475,33 +2543,33 @@ def test_admin_private_creation_requires_photo_and_private_invite_owner() -> Non
         )
 
     with TestClient(app) as third_party:
-        denied = verify_private_invite(third_party, other_phone)
-        assert denied.status_code == 403
-        assert denied.json() == {"detail": "Acesso não autorizado."}
-        assert third_party.get(f"/gallery/{gallery_id}").status_code == 403
+        joined = verify_private_invite(third_party, other_phone)
+        assert joined.status_code == 200
+        assert joined.json()["destination"] == f"/gallery/{gallery_id}"
+        assert third_party.get(f"/gallery/{gallery_id}").status_code == 200
 
     with TestClient(app) as owner_client:
         verified = verify_private_invite(owner_client, owner_phone)
         assert verified.status_code == 200
         assert verified.json()["destination"] == f"/gallery/{gallery_id}"
         assert owner_client.get(f"/gallery/{gallery_id}").status_code == 200
-        replay = owner_client.post(
-            "/auth/client/challenge",
-            json={
-                "full_name": "Nome não usado",
-                "phone": owner_phone,
-                "access_token": invite_token,
-            },
-        )
-        assert replay.status_code == 401
-        assert replay.json() == {"detail": "Não foi possível concluir a autenticação."}
     with SessionLocal() as db:
         assert db.get(Client, other_id) is not None
-        private_invite = db.scalar(
-            select(GalleryAccessCapability).where(GalleryAccessCapability.scope == "private_invite")
+        private_link = db.scalar(
+            select(GalleryAccessCapability).where(
+                GalleryAccessCapability.scope == "private_gallery_link"
+            )
         )
-        assert private_invite.status == "consumed"
-        assert private_invite.consumed_at is not None
+        assert private_link.status == "active"
+        assert private_link.consumed_at is None
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(DerivedGalleryMembership)
+                .where(DerivedGalleryMembership.derived_gallery_id == gallery_id)
+            )
+            == 2
+        )
 
 
 def authenticate_admin(client: TestClient) -> None:
@@ -2729,12 +2797,8 @@ def test_admin_availability_records_origin_without_creating_selection() -> None:
         )
         db.add(private)
         db.flush()
-        db.add(
-            DerivedGalleryPhoto(
-                derived_gallery_id=private.id,
-                photo_asset_id=photo.id,
-                origin="client",
-            )
+        ensure_private_photo_reference(
+            db, gallery_id=private.id, photo_id=photo.id, origin="client"
         )
         db.commit()
         parent_id, owner_id, photo_id, expected_gallery_id = (
@@ -2762,7 +2826,13 @@ def test_admin_availability_records_origin_without_creating_selection() -> None:
     with SessionLocal() as db:
         assert set(
             db.scalars(
-                select(DerivedGalleryPhoto.origin).where(
+                select(DerivedGalleryPhotoOrigin.origin)
+                .join(
+                    DerivedGalleryPhoto,
+                    DerivedGalleryPhoto.id
+                    == DerivedGalleryPhotoOrigin.derived_gallery_photo_id,
+                )
+                .where(
                     DerivedGalleryPhoto.derived_gallery_id == gallery_id,
                     DerivedGalleryPhoto.photo_asset_id == photo_id,
                 )
@@ -2931,8 +3001,9 @@ def test_admin_manages_opaque_public_links_and_individual_invites() -> None:
         status_response = client.get(f"/admin/parent-galleries/{parent_id}/public-link")
         assert status_response.status_code == 200
         assert status_response.json()["status"] == "active"
-        assert status_response.json()["secret_available"] is False
-        assert first_token not in status_response.text
+        assert status_response.json()["secret_available"] is True
+        assert status_response.json()["access_token"] == first_token
+        assert first_token in status_response.json()["link"]
 
         rotated = client.post(
             f"/admin/parent-galleries/{parent_id}/public-link/rotate",
@@ -4106,3 +4177,202 @@ def test_commercial_snapshot_migration_preserves_history_after_operational_delet
     assert access_mode == "invite_only"
     assert operational_links is None
     assert operational_photo is None
+
+
+def test_transition_characterization_preserves_commercial_snapshots_after_private_removal() -> None:
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente original", phone_e164="+5511999999701")
+        parent = ParentGallery(name="Origem original")
+        db.add_all((client, parent))
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Lote", status="released")
+        private = DerivedGallery(
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            name="Privada original",
+        )
+        db.add_all((folder, private))
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="IMG_0007.jpg",
+            storage_key="origem/IMG_0007.jpg",
+        )
+        db.add(photo)
+        db.flush()
+        order = SaleOrder(
+            derived_gallery_id=private.id,
+            client_id=client.id,
+            payment_status="confirmed",
+            total_cents=700,
+            confirmed_at=now(),
+            price_rule_snapshot={"unit_price_cents": 700},
+            pix_copy_paste_snapshot="pix-original",
+        )
+        db.add(order)
+        db.flush()
+        item = SaleOrderItem(
+            sale_order_id=order.id,
+            photo_asset_id=photo.id,
+            unit_price_cents=700,
+        )
+        db.add(item)
+        db.commit()
+        order_id = order.id
+
+        parent.name = "Origem alterada"
+        private.name = "Privada alterada"
+        client.full_name = "Cliente alterada"
+        db.commit()
+        order = db.get(SaleOrder, order_id)
+        order.derived_gallery_id = None
+        db.flush()
+        db.delete(private)
+        db.commit()
+
+        preserved = db.get(SaleOrder, order_id)
+        assert preserved is not None
+        assert preserved.derived_gallery_id is None
+        assert preserved.derived_gallery_name_snapshot == "Privada original"
+        assert preserved.parent_gallery_name_snapshot == "Origem original"
+        assert preserved.client_name_snapshot == "Cliente original"
+        assert preserved.price_rule_snapshot == {"unit_price_cents": 700}
+        assert preserved.pix_copy_paste_snapshot == "pix-original"
+
+
+def test_transition_characterization_legacy_private_invite_stores_only_hash() -> None:
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente convite", phone_e164="+5511999999702")
+        parent = ParentGallery(name="Origem convite")
+        db.add_all((client, parent))
+        db.flush()
+        private = DerivedGallery(
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            name="Privada convite",
+        )
+        db.add(private)
+        db.flush()
+        capability, token = issue_gallery_capability(
+            db,
+            parent_gallery_id=parent.id,
+            derived_gallery_id=private.id,
+            client_id=client.id,
+            scope="private_invite",
+        )
+        db.commit()
+
+        stored = db.get(GalleryAccessCapability, capability.id)
+        assert stored is not None
+        assert stored.token_hash == token_hash(token)
+        assert token not in stored.token_hash
+        assert resolve_gallery_capability(db, token).id == capability.id
+        assert resolve_gallery_capability(db, f"{token}-adulterado") is None
+
+
+def test_transition_characterization_owner_authorization_is_isolated_by_client() -> None:
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente titular", phone_e164="+5511999999703")
+        other = Client(full_name="Outra cliente", phone_e164="+5511999999704")
+        parent = ParentGallery(name="Origem isolada")
+        db.add_all((owner, other, parent))
+        db.flush()
+        private = DerivedGallery(
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+            name="Privada isolada",
+        )
+        db.add(private)
+        db.commit()
+
+        assert derived_gallery_for_client(db, private.id, owner.id).id == private.id
+        with pytest.raises(HTTPException) as exc_info:
+            derived_gallery_for_client(db, private.id, other.id)
+        assert getattr(exc_info.value, "status_code", None) == 403
+
+
+def test_membership_model_enforces_origin_client_uniqueness_and_gallery_origin() -> None:
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente membro", phone_e164="+5511999999705")
+        second_owner = Client(full_name="Segunda titular", phone_e164="+5511999999706")
+        other_owner = Client(full_name="Outra titular", phone_e164="+5511999999707")
+        first_parent = ParentGallery(name="Primeira origem")
+        other_parent = ParentGallery(name="Outra origem")
+        db.add_all((client, second_owner, other_owner, first_parent, other_parent))
+        db.flush()
+        first_private = DerivedGallery(
+            parent_gallery_id=first_parent.id,
+            client_id=client.id,
+            name="Primeira privada",
+        )
+        second_private = DerivedGallery(
+            parent_gallery_id=first_parent.id,
+            client_id=second_owner.id,
+            name="Segunda privada",
+        )
+        other_private = DerivedGallery(
+            parent_gallery_id=other_parent.id,
+            client_id=other_owner.id,
+            name="Privada de outra origem",
+        )
+        db.add_all((first_private, second_private, other_private))
+        db.flush()
+        db.add(
+            DerivedGalleryMembership(
+                derived_gallery_id=first_private.id,
+                parent_gallery_id=first_parent.id,
+                client_id=client.id,
+            )
+        )
+        db.commit()
+
+        db.add(
+            DerivedGalleryMembership(
+                derived_gallery_id=second_private.id,
+                parent_gallery_id=first_parent.id,
+                client_id=client.id,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+        db.add(
+            DerivedGalleryMembership(
+                derived_gallery_id=other_private.id,
+                parent_gallery_id=first_parent.id,
+                client_id=uuid4(),
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+
+
+def test_private_gallery_factory_supports_legacy_and_shared_states() -> None:
+    with SessionLocal() as db:
+        _, legacy, legacy_clients = create_private_gallery_fixture(
+            db,
+            label="Legado",
+            phones=("+5511999999710",),
+            with_memberships=False,
+        )
+        _, shared, shared_clients = create_private_gallery_fixture(
+            db,
+            label="Compartilhado",
+            phones=("+5511999999711", "+5511999999712"),
+            with_memberships=True,
+        )
+        db.commit()
+
+        assert legacy.client_id == legacy_clients[0].id
+        assert db.scalar(
+            select(func.count(DerivedGalleryMembership.id)).where(
+                DerivedGalleryMembership.derived_gallery_id == legacy.id
+            )
+        ) == 0
+        assert db.scalar(
+            select(func.count(DerivedGalleryMembership.id)).where(
+                DerivedGalleryMembership.derived_gallery_id == shared.id
+            )
+        ) == len(shared_clients) == 2

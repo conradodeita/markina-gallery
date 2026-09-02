@@ -44,7 +44,15 @@ from app.worker import process_next_whatsapp_delivery
 
 
 @pytest.fixture(autouse=True)
-def clean_database():
+def clean_database(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(
+        "GALLERY_CAPABILITY_SIGNING_KEY",
+        "whatsapp-tests-gallery-signing-key-0001",
+    )
+    monkeypatch.setenv(
+        "AUTH_PII_FINGERPRINT_SALT",
+        "whatsapp-tests-otp-fingerprint-secret-0001",
+    )
     with engine.connect() as connection:
         if engine.dialect.name == "sqlite":
             connection.exec_driver_sql("PRAGMA foreign_keys=OFF")

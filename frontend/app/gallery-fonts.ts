@@ -1,10 +1,12 @@
 const galleryFontFamilies: Record<string, string> = {
   "system-sans": "var(--font-system-sans)",
   montserrat: "var(--font-montserrat)",
+  "system-rounded": "var(--font-system-rounded)",
   "system-serif": "var(--font-system-serif)",
   "playfair-display": "var(--font-playfair-display)",
   "handwritten-caveat": "var(--font-caveat)",
   "handwritten-dancing-script": "var(--font-dancing-script)",
+  "handwritten-personal": "var(--font-handwritten-personal)",
 };
 
 const legacyGalleryFonts: Record<string, string> = {

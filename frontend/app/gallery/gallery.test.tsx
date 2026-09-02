@@ -21,7 +21,7 @@ describe("galeria privada da cliente", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
     expect(await screen.findByRole("heading", { name: "Festa escolar", level: 1 })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Resumo da seleção" }).textContent).toContain("0 fotos");
+    expect(screen.queryByRole("complementary", { name: "Resumo da seleção" })).toBeNull();
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getByText("já comprada")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "☆ Favoritar" }).length).toBe(2);
@@ -35,8 +35,7 @@ describe("galeria privada da cliente", () => {
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("draggable")).toBe("false");
     expect(screen.getByRole("img", { name: "Capa de Festa escolar" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/new-1/preview");
     const presentation = screen.getByRole("region", { name: "Apresentação de Festa escolar" });
-    const selectionSummary = screen.getByRole("region", { name: "Resumo da seleção" });
-    expect(Boolean(presentation.compareDocumentPosition(selectionSummary) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(presentation).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de IMG_001.jpg" }));
     expect(await screen.findByRole("dialog", { name: "Prévia ampliada de IMG_001.jpg" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
@@ -69,7 +68,7 @@ describe("galeria privada da cliente", () => {
     ), { status: 200 }))));
     render(<GalleryPage />);
     expect(await screen.findByRole("heading", { name: "Festa escolar" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Resumo da seleção" }).textContent).toContain("0 fotos");
+    expect(screen.queryByRole("complementary", { name: "Resumo da seleção" })).toBeNull();
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeTruthy();
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Selecionar" })).toBeTruthy();
@@ -117,10 +116,11 @@ describe("galeria privada da cliente", () => {
     expect(screen.getByText(/conta correta/i)).toBeTruthy();
   });
 
-  it("mostra o total do carrinho e cria pedido PIX pendente", async () => {
+  it("mostra cotação progressiva no rodapé e abre conferência com miniaturas e PIX", async () => {
     const fetchMock = vi.fn((path: string, options?: RequestInit) => {
-      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 1, unit_price_cents: 700, total_cents: 700 }), { status: 200 }));
-      if (path.endsWith("/checkout")) return Promise.resolve(new Response(JSON.stringify({ id: "order-1", total_cents: 700, payment_status: "pending" }), { status: 201 }));
+      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 2, total_cents: 1300, base_total_cents: 1400, savings_cents: 100, items: [{ id: "new-1", name: "IMG_001.jpg" }, { id: "person-2", name: "IMG_003.jpg" }], parcels: [{ minimum_quantity: 1, maximum_quantity: 1, quantity: 1, unit_price_cents: 700, subtotal_cents: 700 }, { minimum_quantity: 2, maximum_quantity: null, quantity: 1, unit_price_cents: 600, subtotal_cents: 600 }] }), { status: 200 }));
+      if (path.endsWith("/checkout")) return Promise.resolve(new Response(JSON.stringify({ id: "order-1", total_cents: 1300, payment_status: "pending" }), { status: 201 }));
+      if (path.endsWith("/orders/order-1")) return Promise.resolve(new Response(JSON.stringify({ id: "order-1", total_cents: 1300, price_rule: { savings_cents: 100 }, sales_message: "Use o nome da cliente", pix: { copy_paste: "PIX-CODE", qr_png_data_url: "data:image/png;base64,AAAA", instructions: "Pagamento em análise.", confirmation: "manual" }, items: [{ photo_id: "new-1", name: "IMG_001.jpg", unit_price_cents: 700, preview_url: "/gallery/gallery-1/photos/new-1/preview" }, { photo_id: "person-2", name: "IMG_003.jpg", unit_price_cents: 600, preview_url: "/gallery/gallery-1/photos/person-2/preview" }] }), { status: 200 }));
       if (path.endsWith("/folders")) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }), { status: 200 }));
       if (path.endsWith("/comments")) return Promise.resolve(new Response(JSON.stringify({ comments: [] }), { status: 200 }));
       void options;
@@ -128,11 +128,18 @@ describe("galeria privada da cliente", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
-    expect(await screen.findByText(/total estimado R\$ 7,00/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /finalizar 1 foto por pix/i }));
+    const footer = await screen.findByRole("complementary", { name: "Resumo da seleção" });
+    const footerText = footer.textContent?.replaceAll("\u00a0", " ") ?? "";
+    expect(footer.textContent).toContain("2 fotos");
+    expect(footerText).toContain("R$ 13,00");
+    expect(footerText).toContain("Você economiza R$ 1,00");
+    fireEvent.click(screen.getByRole("button", { name: "Prosseguir" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/gallery/gallery-1/checkout", expect.objectContaining({ method: "POST" })));
-    expect(await screen.findByText(/pedido pendente de confirmação/i)).toBeTruthy();
-    expect(screen.getByText(/confirmação não é automática/i)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: /revise suas fotos e faça o pix/i })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Miniatura protegida de IMG_001.jpg" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/new-1/preview");
+    expect(screen.getByRole("img", { name: "QR Code PIX do pedido" }).getAttribute("src")).toContain("data:image/png;base64,");
+    expect(screen.getByDisplayValue("PIX-CODE")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Informar pagamento" })).toBeTruthy();
   });
 
   it("remove uma foto diretamente do carrinho privado", async () => {
@@ -173,12 +180,12 @@ describe("galeria privada da cliente", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
     expect(await screen.findByText("Pagamento ainda não comunicado")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Já fiz o PIX" }));
+    fireEvent.click(screen.getByRole("button", { name: "Informar pagamento" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/gallery/gallery-1/orders/order-1/payment-communications",
       expect.objectContaining({ method: "POST" }),
     ));
     expect(await screen.findByText("Pagamento informado · aguardando revisão")).toBeTruthy();
-    expect(screen.getByText(/Aguarde a revisão do fotógrafo/i)).toBeTruthy();
+    expect(screen.getByText("O pagamento está em análise.")).toBeTruthy();
   });
 });

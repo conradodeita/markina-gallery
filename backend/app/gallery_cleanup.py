@@ -9,6 +9,7 @@ from app.auth import (
     AuditEvent,
     AuthChallenge,
     DerivedGallery,
+    DerivedGalleryMembership,
     DerivedGalleryPhoto,
     GalleryAccess,
     GalleryAccessCapability,
@@ -36,11 +37,20 @@ def prepare_lifecycle_history(db: Session, operation: GalleryLifecycleOperation)
 
     if operation.operation_type == "unlink_client":
         private_id = db.scalar(
-            select(DerivedGallery.id).where(
-                DerivedGallery.parent_gallery_id == operation.target_parent_gallery_id,
-                DerivedGallery.client_id == operation.target_client_id,
+            select(DerivedGalleryMembership.derived_gallery_id).where(
+                DerivedGalleryMembership.parent_gallery_id
+                == operation.target_parent_gallery_id,
+                DerivedGalleryMembership.client_id == operation.target_client_id,
             )
         )
+        if private_id is None:
+            private_id = db.scalar(
+                select(DerivedGallery.id).where(
+                    DerivedGallery.parent_gallery_id
+                    == operation.target_parent_gallery_id,
+                    DerivedGallery.client_id == operation.target_client_id,
+                )
+            )
         report = apply_commercial_removal_policy(
             db,
             parent_gallery_id=operation.target_parent_gallery_id,
@@ -187,7 +197,6 @@ def remove_operational_records(db: Session, operation: GalleryLifecycleOperation
         db,
         GalleryAccessCapability,
         GalleryAccessCapability.parent_gallery_id == parent_id,
-        GalleryAccessCapability.scope != "private_invite",
     )
     removed["registrations"] = _delete_count(
         db,
@@ -252,7 +261,13 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
     client_id = operation.target_client_id
     if not client_id:
         raise ValueError("Operação de desvinculação sem cliente alvo.")
-    private_ids = list(
+    membership = db.scalar(
+        select(DerivedGalleryMembership).where(
+            DerivedGalleryMembership.parent_gallery_id == parent_id,
+            DerivedGalleryMembership.client_id == client_id,
+        )
+    )
+    private_ids = [membership.derived_gallery_id] if membership else list(
         db.scalars(
             select(DerivedGallery.id).where(
                 DerivedGallery.parent_gallery_id == parent_id,
@@ -268,24 +283,26 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
         ("selections", PhotoSelection),
     ):
         removed[name] = (
-            _delete_count(db, model, model.derived_gallery_id.in_(private_ids))
+            _delete_count(
+                db,
+                model,
+                model.derived_gallery_id.in_(private_ids),
+                model.client_id == client_id,
+            )
             if private_ids
             else 0
         )
     # Preço e PIX pertencem à Galeria pública e não ao vínculo removido.
     removed["price_rules"] = 0
     removed["pix_settings"] = 0
-    removed["available_references"] = (
+    removed["available_references"] = 0
+    removed["legacy_access"] = (
         _delete_count(
             db,
-            DerivedGalleryPhoto,
-            DerivedGalleryPhoto.derived_gallery_id.in_(private_ids),
+            GalleryAccess,
+            GalleryAccess.gallery_id.in_(private_ids),
+            GalleryAccess.client_id == client_id,
         )
-        if private_ids
-        else 0
-    )
-    removed["legacy_access"] = (
-        _delete_count(db, GalleryAccess, GalleryAccess.gallery_id.in_(private_ids))
         if private_ids
         else 0
     )
@@ -294,6 +311,7 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
             db,
             GalleryAccessCapability,
             GalleryAccessCapability.derived_gallery_id.in_(private_ids),
+            GalleryAccessCapability.client_id == client_id,
         )
         if private_ids
         else 0
@@ -304,9 +322,12 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
         ParentGalleryRegistration.parent_gallery_id == parent_id,
         ParentGalleryRegistration.client_id == client_id,
     )
-    removed["private_galleries"] = (
-        _delete_count(db, DerivedGallery, DerivedGallery.id.in_(private_ids)) if private_ids else 0
-    )
+    removed["private_galleries"] = 0
+    removed["memberships_unlinked"] = 0
+    if membership and membership.status != "unlinked":
+        membership.status = "unlinked"
+        membership.unlinked_at = operation.updated_at
+        removed["memberships_unlinked"] = 1
     manifest = dict(operation.manifest or {})
     manifest["removed_records"] = removed
     operation.manifest = manifest

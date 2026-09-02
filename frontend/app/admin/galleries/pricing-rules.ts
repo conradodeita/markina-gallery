@@ -4,6 +4,23 @@ export type PriceTier = {
   unit_price_cents: number;
 };
 
+export function formatBrazilianCurrency(cents: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(cents / 100);
+}
+
+export function parseBrazilianCurrency(value: string) {
+  const normalized = value.trim();
+  if (!/^(?:R\$\s*)?(?:0|[1-9]\d{0,2}(?:\.\d{3})*),\d{2}$/.test(normalized)) {
+    return null;
+  }
+  const numeric = normalized.replace(/^R\$\s*/, "").replaceAll(".", "").replace(",", ".");
+  const cents = Math.round(Number(numeric) * 100);
+  return Number.isSafeInteger(cents) && cents >= 0 ? cents : null;
+}
+
 export function hasDownwardJump(tiers: PriceTier[]) {
   return tiers.some((tier, index) => {
     const next = tiers[index + 1];

@@ -381,12 +381,21 @@ def test_cover_font_uses_controlled_tokens_and_safe_legacy_fallback(client: Test
     details = client.get(f"/admin/parent-galleries/{parent_id}/details")
     assert details.status_code == 200
     assert details.json()["settings"]["cover_title_font"] == "system-sans"
-    assert len(details.json()["font_options"]) >= 6
+    assert len(details.json()["font_options"]) >= 8
+    assert sum(
+        option["category"] == "handwritten"
+        for option in details.json()["font_options"]
+    ) >= 3
     accepted = client.patch(
         f"/admin/parent-galleries/{parent_id}/settings",
         json={"cover_title_font": "handwritten-caveat"},
     )
     assert accepted.status_code == 200
+    third_handwritten = client.patch(
+        f"/admin/parent-galleries/{parent_id}/settings",
+        json={"cover_title_font": "handwritten-personal"},
+    )
+    assert third_handwritten.status_code == 200
     rejected = client.patch(
         f"/admin/parent-galleries/{parent_id}/settings",
         json={"cover_title_font": "url(https://example.test/font.woff2)"},

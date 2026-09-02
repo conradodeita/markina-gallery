@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     DerivedGallery,
+    DerivedGalleryMembership,
     DerivedGalleryPhoto,
+    DerivedGalleryPhotoOrigin,
     GalleryAccess,
     GalleryAccessCapability,
     PhotoComment,
@@ -53,16 +55,39 @@ def remove_client_selection_and_close_if_empty(
         photo_asset_id=photo_id,
     )
     db.delete(selection)
-    client_reference = db.scalar(
+    reference = db.scalar(
         select(DerivedGalleryPhoto).where(
             DerivedGalleryPhoto.derived_gallery_id == gallery.id,
             DerivedGalleryPhoto.photo_asset_id == photo_id,
-            DerivedGalleryPhoto.origin == "client",
         )
     )
-    if client_reference:
-        db.delete(client_reference)
+    client_origin = (
+        db.scalar(
+            select(DerivedGalleryPhotoOrigin).where(
+                DerivedGalleryPhotoOrigin.derived_gallery_photo_id == reference.id,
+                DerivedGalleryPhotoOrigin.origin == "client",
+            )
+        )
+        if reference
+        else None
+    )
+    legacy_client_reference = bool(
+        reference and not client_origin and reference.origin == "client"
+    )
+    if client_origin:
+        db.delete(client_origin)
     db.flush()
+    if reference:
+        origins_left = db.scalar(
+            select(func.count())
+            .select_from(DerivedGalleryPhotoOrigin)
+            .where(
+                DerivedGalleryPhotoOrigin.derived_gallery_photo_id == reference.id
+            )
+        )
+        if not origins_left:
+            db.delete(reference)
+            db.flush()
 
     references_left = db.scalar(
         select(func.count()).select_from(DerivedGalleryPhoto).where(
@@ -71,7 +96,7 @@ def remove_client_selection_and_close_if_empty(
     )
     if references_left:
         return PrivateSelectionRemovalResult(
-            True, client_reference is not None, False
+            True, client_origin is not None or legacy_client_reference, False
         )
 
     for model in (PhotoComment, PhotoFavorite, PhotoView, PhotoSelection):
@@ -82,6 +107,13 @@ def remove_client_selection_and_close_if_empty(
             GalleryAccessCapability.derived_gallery_id == gallery.id
         )
     )
+    db.execute(
+        delete(DerivedGalleryMembership).where(
+            DerivedGalleryMembership.derived_gallery_id == gallery.id
+        )
+    )
     db.delete(gallery)
     db.flush()
-    return PrivateSelectionRemovalResult(True, client_reference is not None, True)
+    return PrivateSelectionRemovalResult(
+        True, client_origin is not None or legacy_client_reference, True
+    )
