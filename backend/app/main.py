@@ -50,6 +50,7 @@ from app.auth import (
     AdminUser,
     AuditEvent,
     AuthChallenge,
+    AuthSession,
     BrandingSettings,
     ChallengeResendInput,
     ChallengeVerification,
@@ -322,6 +323,10 @@ class ParentGalleryCoverUploadInput(BaseModel):
 class ClientInput(BaseModel):
     full_name: str = Field(min_length=3, max_length=200)
     phone_e164: str = Field(min_length=8, max_length=32)
+
+
+class ClientNameInput(BaseModel):
+    full_name: str = Field(min_length=3, max_length=200)
 
 
 class PhotoAssetInput(BaseModel):
@@ -1971,6 +1976,140 @@ def create_client(
         db.rollback()
         raise HTTPException(status_code=409, detail="Já existe cliente com este WhatsApp.") from exc
     return {"id": str(client.id)}
+
+
+def client_deletion_inventory(db: Session, client: Client) -> dict[str, object]:
+    """Conta referências que impedem apagar uma identidade de cliente."""
+
+    direct_models = {
+        "gallery_accesses": GalleryAccess,
+        "public_gallery_registrations": ParentGalleryRegistration,
+        "private_galleries_owned": DerivedGallery,
+        "private_gallery_memberships": DerivedGalleryMembership,
+        "gallery_capabilities": GalleryAccessCapability,
+        "selections": PhotoSelection,
+        "favorites": PhotoFavorite,
+        "views": PhotoView,
+        "comments": PhotoComment,
+        "orders": SaleOrder,
+        "payment_communications": PaymentCommunication,
+        "membership_notifications": GalleryMembershipNotificationOutbox,
+    }
+    blockers = {
+        name: int(
+            db.scalar(select(func.count()).select_from(model).where(model.client_id == client.id))
+            or 0
+        )
+        for name, model in direct_models.items()
+    }
+    blockers["sessions"] = int(
+        db.scalar(
+            select(func.count())
+            .select_from(AuthSession)
+            .where(AuthSession.role == Role.CLIENT.value, AuthSession.subject_id == client.id)
+        )
+        or 0
+    )
+    phones = list(
+        db.scalars(select(ClientPhone.phone_e164).where(ClientPhone.client_id == client.id))
+    )
+    fingerprints = [pii_fingerprint(phone) for phone in phones]
+    blockers["otp_challenges"] = int(
+        db.scalar(
+            select(func.count()).select_from(AuthChallenge).where(
+                AuthChallenge.kind == "client_otp",
+                (AuthChallenge.subject.in_(phones) if phones else False)
+                | (AuthChallenge.subject_fingerprint.in_(fingerprints) if fingerprints else False),
+            )
+        )
+        or 0
+    )
+    blockers["whatsapp_deliveries"] = int(
+        db.scalar(
+            select(func.count()).select_from(WhatsAppDelivery).where(
+                (WhatsAppDelivery.recipient_phone.in_(phones) if phones else False)
+                | (
+                    WhatsAppDelivery.recipient_fingerprint.in_(fingerprints)
+                    if fingerprints
+                    else False
+                ),
+            )
+        )
+        or 0
+    )
+    blocking = {name: quantity for name, quantity in blockers.items() if quantity}
+    return {
+        "client_id": str(client.id),
+        "blockers": blockers,
+        "blocking": blocking,
+        "can_delete": not blocking,
+        "removable": {"client": 1, "phone_records": len(phones)},
+    }
+
+
+@app.patch("/admin/clients/{client_id}")
+def update_client_name(
+    client_id: UUID,
+    payload: ClientNameInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_admin(request)
+    client = db.get(Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrada.")
+    client.full_name = " ".join(payload.full_name.split())
+    audit(db, "client.name_changed", str(client.id))
+    db.commit()
+    return {"id": str(client.id), "name": client.full_name, "phone": client.phone_e164}
+
+
+@app.get("/admin/clients/{client_id}/deletion-inventory")
+def get_client_deletion_inventory(
+    client_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    client = db.get(Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrada.")
+    return client_deletion_inventory(db, client)
+
+
+@app.delete("/admin/clients/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_client(
+    client_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> Response:
+    require_admin(request)
+    client = db.scalar(select(Client).where(Client.id == client_id).with_for_update())
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrada.")
+    inventory = client_deletion_inventory(db, client)
+    if not inventory["can_delete"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Este cadastro possui vínculos ou histórico protegido. "
+                    "Edite o telefone ou desvincule a cliente em vez de excluí-la."
+                ),
+                "blocking": inventory["blocking"],
+            },
+        )
+    try:
+        db.execute(delete(ClientPhone).where(ClientPhone.client_id == client.id))
+        db.delete(client)
+        audit(db, "client.deleted_without_history", str(client_id))
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "O cadastro recebeu uma nova dependência durante a exclusão. "
+                "Atualize o inventário e tente novamente."
+            ),
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/admin/parent-galleries")

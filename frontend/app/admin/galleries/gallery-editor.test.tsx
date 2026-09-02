@@ -125,7 +125,7 @@ describe("editor administrativo de galeria", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Galeria indisponível");
   });
 
-  it("não oferece novo vínculo para cliente já associada à galeria", async () => {
+  it("mantém cliente vinculada no cadastro existente sem oferecer vínculo duplicado", async () => {
     const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 3, gallery_status: "no_selection", commercial_status: "paid" };
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
@@ -133,8 +133,10 @@ describe("editor administrativo de galeria", () => {
       return response({ clients: [{ id: "client-1", name: "Ana Cliente", phone: "+5511999999999" }] });
     }));
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    expect(await screen.findByText("Ana Cliente")).toBeTruthy();
+    expect((await screen.findAllByText("Ana Cliente")).length).toBeGreaterThan(1);
     expect(screen.queryByRole("button", { name: /Vincular/ })).toBeNull();
+    expect(screen.getByText("Já vinculada")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Editar cadastro de Ana Cliente" })).toBeTruthy();
     const card = screen.getByRole("article", { name: "Cliente Ana Cliente" });
     expect(within(card).getByText("Sem seleção")).toBeTruthy();
     expect(within(card).getByText("Disponíveis")).toBeTruthy();
@@ -145,6 +147,76 @@ describe("editor administrativo de galeria", () => {
     const galleryLink = within(card).getByRole("link", { name: "Ana Cliente" });
     galleryLink.focus();
     expect(document.activeElement).toBe(galleryLink);
+  });
+
+  it("edita o nome da mesma cliente e recarrega a lista", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
+      if (path === "/api/admin/clients/client-2" && init?.method === "PATCH") {
+        return response({ id: "client-2", name: "Beatriz Corrigida", phone: "+5511888888888" });
+      }
+      if (path.startsWith("/api/admin/clients")) return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
+      return response({ photos: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar cadastro de Beatriz Cliente" }));
+    const dialog = screen.getByRole("dialog", { name: "Editar Beatriz Cliente" });
+    fireEvent.change(within(dialog).getByLabelText("Nome completo"), { target: { value: "Beatriz Corrigida" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Salvar cadastro" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/clients/client-2",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ full_name: "Beatriz Corrigida" }) }),
+    ));
+    expect(await screen.findByText("Cadastro da cliente atualizado sem alterar seus vínculos ou histórico.")).toBeTruthy();
+  });
+
+  it("comprova por OTP o novo WhatsApp antes de trocar o telefone", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
+      if (path === "/api/auth/client/challenge" && init?.method === "POST") return response({ challenge_id: "challenge-phone", message: "Código enviado." }, 202);
+      if (path === "/api/admin/clients/client-2/phone" && init?.method === "POST") return response({ id: "client-2" });
+      if (path.startsWith("/api/admin/clients")) return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
+      return response({ photos: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar cadastro de Beatriz Cliente" }));
+    const dialog = screen.getByRole("dialog", { name: "Editar Beatriz Cliente" });
+    fireEvent.change(within(dialog).getByLabelText("Número do WhatsApp"), { target: { value: "+55 11 97777-6666" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Enviar código" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/client/challenge",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ full_name: "Beatriz Cliente", phone: "+55 11 97777-6666" }) }),
+    ));
+    fireEvent.change(await within(dialog).findByLabelText("Código enviado ao novo WhatsApp"), { target: { value: "123456" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Salvar cadastro" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/clients/client-2/phone",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ phone_e164: "+55 11 97777-6666", challenge_id: "challenge-phone", code: "123456" }) }),
+    ));
+  });
+
+  it("bloqueia exclusão de cliente com histórico e orienta a edição", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
+      if (path.endsWith("/clients/client-2/deletion-inventory")) return response({ client_id: "client-2", blockers: { orders: 1 }, blocking: { orders: 1 }, can_delete: false, removable: { client: 1, phone_records: 1 } });
+      if (path.startsWith("/api/admin/clients")) return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
+      return response({ photos: [] });
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar cadastro de Beatriz Cliente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
+    expect(await screen.findByText("Exclusão bloqueada")).toBeTruthy();
+    expect(screen.getByText("1 pedidos")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Excluir cadastro definitivamente" })).toBeNull();
   });
 
   it("apresenta estados por texto, contraste semântico e cartões responsivos", async () => {
@@ -290,7 +362,7 @@ describe("editor administrativo de galeria", () => {
     expect(await screen.findByRole("region", { name: "Clientes vinculadas" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Vincular cliente" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Cadastrar e vincular" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Beatriz Cliente.*Vincular/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Vincular Beatriz Cliente" })).toBeTruthy();
     expect(screen.getByText("Nenhuma galeria privada criada")).toBeTruthy();
   });
 
