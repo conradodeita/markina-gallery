@@ -46,11 +46,19 @@ O backend SHALL calcular cada unidade pelo valor da parcela em que sua posição
 - **THEN** o pedido congela modo, código e nome da tabela, faixas, parcelas, economia e total sem depender da configuração posterior
 
 ### Requirement: Entrada e exibição em moeda brasileira
-O painel SHALL aceitar e exibir valores no formato de moeda brasileira, normalizando-os para centavos inteiros antes da persistência. Entradas ambíguas, negativas ou com precisão superior a centavos SHALL ser rejeitadas.
+O painel SHALL aceitar e exibir valores no formato de moeda brasileira, aplicar máscara monetária durante a digitação e normalizá-los para centavos inteiros antes da persistência. A digitação somente numérica SHALL deslocar os dois últimos algarismos para os centavos e inserir automaticamente vírgula decimal e pontos de milhar. Entradas ambíguas, negativas ou com precisão superior a centavos SHALL ser rejeitadas.
 
 #### Scenario: Valor válido
 - **WHEN** o fotógrafo informa `R$ 7,00`
 - **THEN** a interface envia 700 centavos e volta a apresentar `R$ 7,00` após recarregar
+
+#### Scenario: Digitação monetária assistida
+- **WHEN** o fotógrafo digita `700` em um campo monetário vazio
+- **THEN** a interface apresenta `R$ 7,00` imediatamente e mantém 700 centavos como valor normalizado
+
+#### Scenario: Separadores brasileiros automáticos
+- **WHEN** a sequência digitada alcança um valor de milhar
+- **THEN** a interface insere o ponto de milhar e preserva a vírgula com duas casas decimais sem exigir que o fotógrafo digite os separadores
 
 #### Scenario: Valor malformado
 - **WHEN** o campo recebe texto que não representa valor monetário brasileiro válido

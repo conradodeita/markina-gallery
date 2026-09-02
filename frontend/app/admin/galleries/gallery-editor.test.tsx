@@ -9,6 +9,8 @@ import NewGalleryPage from "./new/page";
 import GalleryEditor from "./sources/[sourceId]/edit/gallery-editor";
 import SourceGalleryDetailPage from "./sources/[sourceId]/page";
 
+const validPix = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17";
+
 afterEach(() => {
   vi.restoreAllMocks();
   push.mockReset();
@@ -77,6 +79,11 @@ describe("editor administrativo de galeria", () => {
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"access_mode":"standard"') }),
     ));
     expect(screen.getByRole("option", { name: /Coletivo protegido/ })).toBeTruthy();
+    const accessHints = screen.getByRole("region", { name: "Como funcionam os modos de acesso" });
+    expect(within(accessHints).getByText("Padrão")).toBeTruthy();
+    expect(within(accessHints).getByText("Somente convite individual")).toBeTruthy();
+    expect(within(accessHints).getByText("Coletivo protegido")).toBeTruthy();
+    expect(within(accessHints).getByText(/não ativa reconhecimento facial/i)).toBeTruthy();
     expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/vendas");
   });
 
@@ -194,7 +201,8 @@ describe("editor administrativo de galeria", () => {
       "/api/admin/parent-galleries/source-1/clients/client-1",
       expect.objectContaining({ method: "DELETE", headers: { "Idempotency-Key": expect.any(String) } }),
     ));
-    expect(await screen.findByText(/Cadastro e histórico foram preservados/)).toBeTruthy();
+    const unlinkProgress = await screen.findByRole("region", { name: "Desvinculação de Ana Cliente" });
+    await waitFor(() => expect(within(unlinkProgress).getByText(/Cadastro e histórico foram preservados/)).toBeTruthy());
   });
 
   it("expõe bloqueio financeiro e falha do backend sem remover o cartão", async () => {
@@ -209,9 +217,10 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
     fireEvent.click(await screen.findByRole("button", { name: "Desvincular cliente" }));
-    expect(await screen.findByText(/Pedidos pendentes serão avaliados/)).toBeTruthy();
+    expect(await screen.findByText(/pagamento informado e ainda em análise impede a desvinculação/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Confirmar desvinculação" }));
-    expect(await screen.findByText("Pagamento comunicado aguarda revisão administrativa.")).toBeTruthy();
+    const dialog = await screen.findByRole("dialog", { name: "Desvincular Cliente Pendente?" });
+    expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Pagamento comunicado aguarda revisão administrativa.");
     expect(screen.getByRole("article", { name: "Cliente Cliente Pendente" })).toBeTruthy();
   });
 
@@ -236,6 +245,39 @@ describe("editor administrativo de galeria", () => {
       expect.objectContaining({ method: "POST", body: JSON.stringify({ parent_gallery_id: "source-1", client_id: "client-1", name: "Festa escolar · Cliente Administrativa", photo_ids: ["photo-1"] }) }),
     ));
     expect(await screen.findByText(/sem seleção automática/)).toBeTruthy();
+  });
+
+  it("explica por que Disponibilizar fotos não pode avançar sem publicação", async () => {
+    const linkedClient = { client_id: "client-1", name: "Cliente Sem Fotos", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/available-photos")) return response({ photos: [] });
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
+      return response({ clients: [] });
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disponibilizar fotos" }));
+    const dialog = await screen.findByRole("dialog", { name: "Fotos para Cliente Sem Fotos" });
+    expect(within(dialog).getByText("Nenhuma foto publicada")).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "Ir para Imagens" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens");
+  });
+
+  it("mantém no modal o erro ao disponibilizar fotos", async () => {
+    const linkedClient = { client_id: "client-1", name: "Cliente Bloqueada", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/available-photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", folder_name: "Publicadas", preview_url: "/preview" }] });
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
+      if (path === "/api/admin/derived-galleries" && init?.method === "POST") return response({ detail: "A cliente já possui uma galeria privada nesta Galeria pública." }, 409);
+      return response({ clients: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disponibilizar fotos" }));
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Criar ou atualizar galeria privada" }));
+    const dialog = await screen.findByRole("dialog", { name: "Fotos para Cliente Bloqueada" });
+    expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "A cliente já possui uma galeria privada nesta Galeria pública.");
   });
 
   it("separa vinculados, busca e novo cadastro em blocos responsivos", async () => {
@@ -370,9 +412,11 @@ describe("editor administrativo de galeria", () => {
 
     await screen.findByRole("heading", { name: "Vendas" });
     expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("value", expect.stringMatching(/7,00/));
+    fireEvent.change(screen.getByLabelText("Valor unitário da foto"), { target: { value: "700000" } });
+    expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("value", expect.stringMatching(/7\.000,00/));
     expect(screen.queryByLabelText("Payload do QR Code")).toBeNull();
     expect(screen.getByAltText("QR Code PIX gerado a partir do código copia e cola")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("PIX copia e cola"), { target: { value: "pix-controlado" } });
+    fireEvent.change(screen.getByLabelText("PIX copia e cola"), { target: { value: validPix } });
     fireEvent.change(screen.getByLabelText("Mensagem comercial"), { target: { value: "Mensagem atualizada" } });
     fireEvent.change(screen.getByLabelText("Prazo padrão de seleção (dias)"), { target: { value: "21" } });
     fireEvent.click(screen.getByLabelText("Permitir comentários"));
@@ -382,18 +426,31 @@ describe("editor administrativo de galeria", () => {
       "/api/admin/parent-galleries/source-1/sales",
       expect.objectContaining({
         method: "PUT",
-        body: expect.stringContaining('"copy_paste":"pix-controlado"'),
+        body: expect.stringContaining(`"copy_paste":"${validPix}"`),
       }),
     ));
     const saveCall = fetchMock.mock.calls.find(([path, init]) => path.endsWith("/sales") && init?.method === "PUT");
     expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({
       pricing_mode: "fixed",
-      fixed_unit_price_cents: 700,
+      fixed_unit_price_cents: 700000,
       sales_message: "Mensagem atualizada",
       selection_duration_days: 21,
       comments_enabled: true,
     });
-    expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toEqual({ copy_paste: "pix-controlado", instructions: null });
+    expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toEqual({ copy_paste: validPix, instructions: null });
+  });
+
+  it("distingue chave PIX simples de código copia-e-cola antes de salvar", async () => {
+    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="vendas" />);
+    expect(await screen.findByText(/Uma chave isolada.*não é um código copia-e-cola/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("PIX copia e cola"), { target: { value: "fotografo@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Este campo exige o código PIX copia e cola completo gerado pelo banco, não apenas a chave PIX.");
+    expect(fetchMock.mock.calls.some((call) => (call as [string, RequestInit?])[1]?.method === "PUT")).toBe(false);
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("preserva os dados editados e mostra o erro retornado ao falhar Vendas", async () => {
@@ -718,6 +775,22 @@ describe("editor administrativo de galeria", () => {
     ));
     expect(await screen.findByRole("heading", { name: "Concluída" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Voltar para galerias" })).toBeTruthy();
+  });
+
+  it("mostra dentro da confirmação quando o backend impede excluir a Galeria pública", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.endsWith("/summary")) return response({ name: "Evento protegido", event_name: "Festa", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: null, counts: { folders: 0, photos: 0, clients: 0 }, clients: [] });
+      if (path.endsWith("/deletion-inventory")) return response({ operation_type: "delete_parent_gallery", target: { id: "source-1", name: "Evento protegido" }, inventory: { remove: {}, preserve: { orders: 1 } }, consequences: { private_galleries_preserved: true, private_referenced_photos_preserved: true, clients_preserved: true, commercial_history_preserved: true, restoration_available_after_start: false } });
+      if (path === "/api/admin/parent-galleries/source-1" && init?.method === "DELETE") return response({ detail: "Pagamento comunicado aguarda revisão administrativa." }, 409);
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SourceGalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir Galeria pública" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir Evento protegido" }));
+    const dialog = await screen.findByRole("dialog", { name: "Excluir “Evento protegido”?" });
+    expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Pagamento comunicado aguarda revisão administrativa.");
   });
 
   it("permite cancelar antes da remoção física e expõe retomada após falha", async () => {
