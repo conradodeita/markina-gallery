@@ -38,13 +38,14 @@ verify_clean_checkout() {
 }
 
 ensure_pii_fingerprint_salt() {
+  local env_file="${1:-$ENV_FILE}"
   local key="AUTH_PII_FINGERPRINT_SALT" line value occurrences salt temp_file replaced=0
-  occurrences="$(grep -c "^${key}=" "$ENV_FILE" || true)"
+  occurrences="$(grep -c "^${key}=" "$env_file" || true)"
   [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
-  chmod 600 "$ENV_FILE"
+  chmod 600 "$env_file"
 
   if [[ "$occurrences" -eq 1 ]]; then
-    line="$(grep "^${key}=" "$ENV_FILE")"
+    line="$(grep "^${key}=" "$env_file")"
     value="${line#*=}"
     if [[ -n "$value" ]]; then
       [[ "${#value}" -ge 32 ]] || fail "$key deve possuir ao menos 32 caracteres"
@@ -55,7 +56,7 @@ ensure_pii_fingerprint_salt() {
   command -v openssl >/dev/null 2>&1 || fail "openssl é obrigatório para gerar $key"
   salt="$(openssl rand -hex 32)"
   [[ "${#salt}" -eq 64 ]] || fail "não foi possível gerar $key com entropia suficiente"
-  temp_file="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
+  temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
   chmod 600 "$temp_file"
 
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -65,12 +66,62 @@ ensure_pii_fingerprint_salt() {
     else
       printf '%s\n' "$line" >> "$temp_file"
     fi
-  done < "$ENV_FILE"
+  done < "$env_file"
   if [[ "$replaced" -eq 0 ]]; then
     printf '%s=%s\n' "$key" "$salt" >> "$temp_file"
   fi
-  mv "$temp_file" "$ENV_FILE"
+  mv "$temp_file" "$env_file"
   unset salt value line
+  echo "$key configurado com segredo aleatório exclusivo de homologação"
+}
+
+ensure_gallery_capability_signing_key() {
+  local env_file="${1:-$ENV_FILE}"
+  local key="GALLERY_CAPABILITY_SIGNING_KEY"
+  local fingerprint_key="AUTH_PII_FINGERPRINT_SALT"
+  local line value occurrences signing_key temp_file replaced=0 fingerprint_value fingerprint_occurrences
+
+  occurrences="$(grep -c "^${key}=" "$env_file" || true)"
+  fingerprint_occurrences="$(grep -c "^${fingerprint_key}=" "$env_file" || true)"
+  [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  [[ "$fingerprint_occurrences" -eq 1 ]] || fail "$fingerprint_key deve estar configurado antes de $key"
+  chmod 600 "$env_file"
+
+  line="$(grep "^${fingerprint_key}=" "$env_file")"
+  fingerprint_value="${line#*=}"
+  [[ "${#fingerprint_value}" -ge 32 ]] || fail "$fingerprint_key deve possuir ao menos 32 caracteres"
+
+  if [[ "$occurrences" -eq 1 ]]; then
+    line="$(grep "^${key}=" "$env_file")"
+    value="${line#*=}"
+    if [[ -n "$value" ]]; then
+      [[ "${#value}" -ge 32 ]] || fail "$key deve possuir ao menos 32 caracteres"
+      [[ "$value" != "$fingerprint_value" ]] || fail "$key deve ser diferente de $fingerprint_key"
+      unset value fingerprint_value line
+      return 0
+    fi
+  fi
+
+  command -v openssl >/dev/null 2>&1 || fail "openssl é obrigatório para gerar $key"
+  signing_key="$(openssl rand -hex 32)"
+  [[ "${#signing_key}" -eq 64 ]] || fail "não foi possível gerar $key com entropia suficiente"
+  [[ "$signing_key" != "$fingerprint_value" ]] || fail "não foi possível gerar $key distinto de $fingerprint_key"
+  temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s=%s\n' "$key" "$signing_key" >> "$temp_file"
+      replaced=1
+    else
+      printf '%s\n' "$line" >> "$temp_file"
+    fi
+  done < "$env_file"
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$signing_key" >> "$temp_file"
+  fi
+  mv "$temp_file" "$env_file"
+  unset signing_key value fingerprint_value line
   echo "$key configurado com segredo aleatório exclusivo de homologação"
 }
 
@@ -117,6 +168,7 @@ verify_target() {
 
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
   ensure_pii_fingerprint_salt
+  ensure_gallery_capability_signing_key
   compose config --quiet
   record_predeploy_inventory
 }
