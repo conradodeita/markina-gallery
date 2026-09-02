@@ -17,6 +17,7 @@ from app.auth import (
     Base,
     BrandingSettings,
     Client,
+    ClientPhone,
     DerivedGallery,
     DerivedGalleryPhoto,
     MediaDerivative,
@@ -290,6 +291,51 @@ def test_gallery_pix_uses_copy_paste_as_single_source_and_generates_local_qr(
     assert saved.json()["pix"]["qr_code_payload"] is None
     assert saved.json()["pix"]["review_required"] is False
     assert saved.json()["pix"]["qr_png_data_url"].startswith("data:image/png;base64,")
+
+    simple = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "fixed",
+            "fixed_unit_price_cents": 700,
+            "pix": {
+                "copy_paste": "529.982.247-25",
+                "receiver_name": "João Fotografia",
+                "receiver_city": "São Paulo",
+                "instructions": "Aguarde a análise.",
+            },
+        },
+    )
+    assert simple.status_code == 200
+    assert simple.json()["pix"] == {
+        "copy_paste": "52998224725",
+        "input_type": "cpf",
+        "receiver_name": "JOAO FOTOGRAFIA",
+        "receiver_city": "SAO PAULO",
+        "qr_code_payload": None,
+        "qr_png_data_url": simple.json()["pix"]["qr_png_data_url"],
+        "review_required": False,
+        "instructions": "Aguarde a análise.",
+    }
+    assert simple.json()["pix"]["qr_png_data_url"].startswith("data:image/png;base64,")
+    with SessionLocal() as db:
+        stored_pix = db.scalar(
+            select(PixCheckoutSettings).where(
+                PixCheckoutSettings.parent_gallery_id == UUID(parent_id)
+            )
+        )
+        assert stored_pix.copy_paste.startswith("000201")
+        assert stored_pix.pix_key == "52998224725"
+
+    missing_receiver = client.put(
+        f"/admin/parent-galleries/{parent_id}/pricing",
+        json={
+            "pricing_mode": "fixed",
+            "fixed_unit_price_cents": 700,
+            "pix": {"copy_paste": "fotografo@example.com"},
+        },
+    )
+    assert missing_receiver.status_code == 422
+    assert "nome do recebedor" in missing_receiver.json()["detail"]
 
 
 def test_cart_and_checkout_share_progressive_quote_and_freeze_all_terms(
@@ -726,6 +772,38 @@ def test_admin_operational_catalog_creates_and_lists_only_authorized_data(client
     assert client.get(f"/admin/photo-assets/{photo_id}/media-status").json() == {
         "status": "not_imported"
     }
+
+
+def test_admin_link_pre_authorizes_but_marks_first_otp_as_pending(client: TestClient) -> None:
+    authenticate_admin(client)
+    created = client.post(
+        "/admin/clients",
+        json={"full_name": "Cliente Primeiro Acesso", "phone_e164": "+5511987654321"},
+    )
+    parent = client.post("/admin/parent-galleries", json={"name": "Evento autorizado"})
+    client_id, parent_id = created.json()["id"], parent.json()["id"]
+
+    linked = client.put(f"/admin/parent-galleries/{parent_id}/clients/{client_id}")
+    assert linked.status_code == 200
+    assert linked.json()["status"] == "active"
+    before_otp = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"][0]
+    assert before_otp["registration_status"] == "active"
+    assert before_otp["phone_verified"] is False
+    assert before_otp["gallery_status"] == "pending_registration"
+
+    with SessionLocal() as db:
+        phone = db.scalar(
+            select(ClientPhone).where(
+                ClientPhone.client_id == UUID(client_id),
+                ClientPhone.active,
+            )
+        )
+        phone.verified_at = now()
+        db.commit()
+
+    after_otp = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"][0]
+    assert after_otp["phone_verified"] is True
+    assert after_otp["gallery_status"] == "no_selection"
 
 
 def test_admin_edits_and_deletes_client_without_dependencies(client: TestClient):
@@ -1824,13 +1902,14 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
             "client_id": str(ana_id),
             "name": "Ana",
             "phone": "+5511999999901",
+            "phone_verified": False,
             "registration_status": "active",
             "membership_status": None,
             "derived_gallery_id": None,
             "available_count": 0,
             "selected_count": 0,
             "purchased_count": 0,
-            "gallery_status": "no_selection",
+            "gallery_status": "pending_registration",
             "commercial_status": "no_order",
         }
     ]
@@ -1870,6 +1949,10 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
         ).status_code == 200
 
     with SessionLocal() as db:
+        for phone in db.scalars(
+            select(ClientPhone).where(ClientPhone.client_id.in_(client_ids.values()))
+        ):
+            phone.verified_at = now()
         galleries = {
             label: DerivedGallery(
                 parent_gallery_id=parent_id,

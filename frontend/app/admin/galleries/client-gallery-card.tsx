@@ -7,6 +7,7 @@ export type ClientGalleryRow = {
   client_id: string;
   name: string;
   phone: string;
+  phone_verified?: boolean;
   registration_status: string | null;
   membership_status?: "active" | "blocked" | "unlinked" | null;
   derived_gallery_id: string | null;
@@ -18,7 +19,7 @@ export type ClientGalleryRow = {
 };
 
 const galleryStatus = {
-  pending_registration: { label: "Cadastro pendente", tone: "warning" },
+  pending_registration: { label: "Aguardando primeiro acesso", tone: "warning" },
   no_selection: { label: "Sem seleção", tone: "warning" },
   blocked: { label: "Galeria bloqueada", tone: "dark" },
   expired: { label: "Galeria expirada", tone: "warning" },
@@ -53,6 +54,7 @@ export function ClientGalleryCard({ person, actions }: { person: ClientGalleryRo
       <div><dt>Selecionadas</dt><dd>{person.selected_count}</dd></div>
       <div><dt>Compradas</dt><dd>{person.purchased_count}</dd></div>
     </dl>
+    {person.gallery_status === "pending_registration" ? <p className="gallery-client-pending">O vínculo já existe. No primeiro acesso pelo link, a cliente ainda precisa validar este WhatsApp com o código OTP.</p> : null}
     {person.derived_gallery_id ? <Link className="gallery-client-open" href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <p className="gallery-client-pending">A galeria privada será criada quando houver fotos disponíveis ou uma primeira seleção.</p>}
     {actions ? <div className="gallery-client-card-actions">{actions}</div> : null}
   </article>;

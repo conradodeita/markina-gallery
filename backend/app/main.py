@@ -160,7 +160,12 @@ from app.messaging import (
 )
 from app.parent_registration import link_client_to_parent
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
-from app.pix import PixCodeError, normalize_pix_copy_paste, pix_qr_data_url
+from app.pix import (
+    PixCodeError,
+    normalize_pix_configuration,
+    normalize_pix_copy_paste,
+    pix_qr_data_url,
+)
 from app.pricing import (
     PriceTier,
     PricingRuleError,
@@ -493,6 +498,8 @@ class ProgressivePricingPresetInput(BaseModel):
 class PixCheckoutSettingsInput(BaseModel):
     copy_paste: str | None = Field(default=None, max_length=4_000)
     qr_code_payload: str | None = Field(default=None, max_length=8_000)
+    receiver_name: str | None = Field(default=None, max_length=80)
+    receiver_city: str | None = Field(default=None, max_length=80)
     instructions: str | None = Field(default=None, max_length=500)
 
 
@@ -3087,7 +3094,9 @@ def register_folder_photo_asset(
     return {"id": str(asset.id)}
 
 
-def _publish_photo_folder(db: Session, folder: PhotoFolder) -> dict[str, object]:
+def _publish_photo_folder(
+    db: Session, folder: PhotoFolder, *, commit: bool = True
+) -> dict[str, object]:
     if folder.purpose != "content" or folder.status not in {"preparing", "released"}:
         raise HTTPException(status_code=409, detail="A pasta não pode ser publicada.")
     photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.folder_id == folder.id)))
@@ -3124,7 +3133,10 @@ def _publish_photo_folder(db: Session, folder: PhotoFolder) -> dict[str, object]
         else set()
     )
     audit(db, "photo_folder.published", f"{folder.id}:{len(ready_ids)}")
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return {
         "id": str(folder.id),
         "status": folder.status,
@@ -3149,6 +3161,36 @@ def publish_photo_folder(
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
     require_parent_gallery_mutable(db, folder.parent_gallery_id)
     return _publish_photo_folder(db, folder)
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/publish-ready")
+def publish_parent_gallery_ready_photos(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    """Publica a rodada pronta de todas as pastas antes de avançar no editor."""
+
+    require_admin(request)
+    require_parent_gallery_mutable(db, parent_gallery_id)
+    folders = list(
+        db.scalars(
+            select(PhotoFolder)
+            .where(
+                PhotoFolder.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.purpose == "content",
+            )
+            .order_by(PhotoFolder.position, PhotoFolder.id)
+        )
+    )
+    results = [_publish_photo_folder(db, folder, commit=False) for folder in folders]
+    totals = {
+        key: sum(int(result[key]) for result in results)
+        for key in ("published_count", "pending_count", "failed_count", "available_count")
+    }
+    audit(db, "parent_gallery.ready_photos_published", str(parent_gallery_id))
+    db.commit()
+    return {**totals, "folders": results}
 
 
 @app.post("/admin/photo-folders/{folder_id}/release")
@@ -3840,6 +3882,15 @@ def parent_gallery_clients(
     clients_by_id = {
         item.id: item for item in db.scalars(select(Client).where(Client.id.in_(client_ids)))
     }
+    phone_verification_by_client = {
+        client_id: verified_at is not None
+        for client_id, verified_at in db.execute(
+            select(ClientPhone.client_id, ClientPhone.verified_at).where(
+                ClientPhone.client_id.in_(client_ids),
+                ClientPhone.active,
+            )
+        )
+    }
     registrations_by_client = {item.client_id: item for item in registrations}
     galleries_by_client = {
         client_id: galleries_by_id[membership.derived_gallery_id]
@@ -3923,7 +3974,8 @@ def parent_gallery_clients(
         membership = memberships_by_client.get(client_id)
         registration = registrations_by_client.get(client_id)
         selected_count = int(selected_by_client.get(client_id, 0))
-        if registration and registration.status != "active":
+        phone_verified = phone_verification_by_client.get(client_id, True)
+        if registration and (registration.status != "active" or not phone_verified):
             gallery_status = "pending_registration"
         elif membership and membership.status in {"blocked", "unlinked"} or gallery and not gallery.access_enabled:
             gallery_status = "blocked"
@@ -3951,6 +4003,7 @@ def parent_gallery_clients(
                 "client_id": str(client_id),
                 "name": client.full_name if client else "Cliente",
                 "phone": client.phone_e164 if client else "",
+                "phone_verified": phone_verified,
                 "registration_status": registration.status if registration else None,
                 "membership_status": membership.status if membership else None,
                 "derived_gallery_id": str(gallery.id) if gallery else None,
@@ -4649,7 +4702,14 @@ def pricing_payload(db: Session, parent_gallery_id: UUID) -> dict[str, object]:
             for rule in rules
         ],
         "pix": {
-            "copy_paste": settings.copy_paste if settings else None,
+            "copy_paste": (
+                settings.pix_key
+                if settings and settings.input_type in {"cpf", "phone", "email"}
+                else settings.copy_paste if settings else None
+            ),
+            "input_type": settings.input_type if settings else None,
+            "receiver_name": settings.receiver_name if settings else None,
+            "receiver_city": settings.receiver_city if settings else None,
             "qr_code_payload": None,
             "qr_png_data_url": qr_data_url,
             "review_required": settings.review_required if settings else False,
@@ -4790,10 +4850,15 @@ def save_parent_pricing(
         settings = PixCheckoutSettings(parent_gallery_id=parent_gallery_id)
         db.add(settings)
     try:
-        copy_paste = normalize_pix_copy_paste(payload.pix.copy_paste)
+        pix_configuration = normalize_pix_configuration(
+            payload.pix.copy_paste,
+            receiver_name=payload.pix.receiver_name,
+            receiver_city=payload.pix.receiver_city,
+        )
         legacy_qr_payload = normalize_pix_copy_paste(payload.pix.qr_code_payload)
     except PixCodeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    copy_paste = pix_configuration.copy_paste if pix_configuration else None
     if copy_paste and legacy_qr_payload and copy_paste != legacy_qr_payload:
         raise HTTPException(
             status_code=422,
@@ -4801,6 +4866,18 @@ def save_parent_pricing(
         )
     settings.copy_paste = copy_paste or legacy_qr_payload
     settings.qr_code_payload = None
+    settings.input_type = (
+        pix_configuration.input_type
+        if pix_configuration
+        else "br_code" if legacy_qr_payload else None
+    )
+    settings.pix_key = (
+        pix_configuration.input_value
+        if pix_configuration and pix_configuration.input_type != "br_code"
+        else None
+    )
+    settings.receiver_name = pix_configuration.receiver_name if pix_configuration else None
+    settings.receiver_city = pix_configuration.receiver_city if pix_configuration else None
     settings.review_required = False
     settings.instructions = payload.pix.instructions.strip() if payload.pix.instructions else None
     return tiers

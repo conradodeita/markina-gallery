@@ -12,7 +12,8 @@ todas as galerias privadas.
 Configure na própria Galeria pública:
 
 - faixas contíguas de preço e o salto comercial confirmado pelo fotógrafo;
-- instruções de PIX manual e mensagem apresentada à cliente;
+- PIX por copia-e-cola completo ou chave simples (CPF, telefone ou e-mail),
+  com nome/cidade do recebedor quando necessários, e mensagem à cliente;
 - prazo de seleção e permissões de favoritos e comentários.
 
 Os valores são enviados ao servidor em centavos inteiros. Alterações futuras
@@ -41,14 +42,15 @@ exibir as coleções em sequência. Depois:
 1. crie ou abra uma pasta de conteúdo;
 2. envie JPEGs e acompanhe processamento, falhas e itens prontos;
 3. revise o lote;
-4. use **Publicar fotos prontas** para disponibilizar somente derivados
-   concluídos na Galeria pública.
+4. use **Salvar e avançar** para publicar todos os derivados concluídos na
+   Galeria pública e só então abrir Clientes.
 
 A primeira publicação muda a pasta para publicada. É permitido enviar novas
 fotos à mesma pasta: o conteúdo anterior continua visível, enquanto os novos
 arquivos ficam indisponíveis até uma nova publicação explícita. Repetir a
-publicação é idempotente. Arquivos em processamento ou com falha não são
-expostos e nenhuma referência de galeria privada é criada em massa.
+publicação é idempotente. Se algum arquivo ainda estiver processando ou tiver
+falhado, o editor permanece nessa etapa e mostra as contagens. Nenhuma
+referência de galeria privada é criada em massa.
 
 O endpoint legado de liberação aceita somente o payload sem destinos. Uma
 tentativa de enviar `gallery_ids` é recusada sem mutação parcial. Para atribuir
@@ -57,7 +59,7 @@ fotos a uma cliente específica, use a etapa 05.
 ## Etapa 05 — Clientes e acesso
 
 Os cards separam o estado da galeria do estado comercial e mostram disponíveis,
-selecionadas e compradas. **Disponibilizar fotos** cria ou reutiliza somente a
+selecionadas e compradas. **Montar galeria privada** cria ou reutiliza somente a
 privada da cliente escolhida e não marca as fotos como selecionadas ou
 compradas. **Desvincular cliente** executa a operação assíncrona orientada pelo
 backend; acompanhe o progresso e não repita a ação quando estiver bloqueada por

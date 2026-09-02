@@ -11,6 +11,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, func, inspect, select, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -58,6 +59,7 @@ from app.commercial_history import (
 from app.commercial_removal import (
     CommercialRemovalBlocked,
     apply_commercial_removal_policy,
+    commercial_removal_orders_query,
 )
 from app.commercial_retention import (
     CommercialPiiMinimizationNotAuthorized,
@@ -2187,6 +2189,19 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
             is None
         )
         assert db.get(Client, ids["link_only"]) is not None
+
+
+def test_commercial_removal_lock_is_valid_postgresql_without_distinct() -> None:
+    statement = commercial_removal_orders_query(
+        parent_gallery_id=uuid4(),
+        client_id=uuid4(),
+        photo_asset_id=uuid4(),
+    )
+    compiled = str(statement.compile(dialect=postgresql.dialect())).upper()
+
+    assert "FOR UPDATE" in compiled
+    assert "DISTINCT" not in compiled
+    assert "SALE_ORDER_ITEM" in compiled
 
 
 def test_public_access_modes_require_session_and_backend_authority(

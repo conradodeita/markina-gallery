@@ -515,6 +515,8 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .gallery-pricing-quote dl div { display:flex; justify-content:space-between; gap:12px; }
 .gallery-pricing-quote dd { margin:0; font-weight:800; }
 .gallery-pix-qr { width:min(220px,100%); height:auto; padding:8px; border:1px solid #d9ddd8; border-radius:12px; background:#fff; }
+.gallery-pix-receiver-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+@media (max-width:700px) { .gallery-pix-receiver-fields { grid-template-columns:1fr; } }
 .gallery-price-tiers { display:grid; gap:10px; }
 .gallery-price-tier { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) auto; gap:10px; align-items:end; padding:14px; border:1px solid #dfe3de; border-radius:12px; background:#fff; }
 .gallery-price-tier .danger-action { min-height:44px; }

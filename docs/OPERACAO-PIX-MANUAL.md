@@ -14,9 +14,13 @@ no fluxo de confirmação manual e nas notificações posteriores.
    inteiros no servidor, embora o painel os apresente em reais.
 3. Revise o aviso quando uma nova faixa diminui o preço total ao aumentar a
    quantidade. Salve esse tipo de regra somente após confirmação consciente.
-4. Preencha somente as instruções que a cliente deve ver: copia-e-cola, payload
-   de QR Code e uma orientação curta.
-5. Salve e confira um pedido sintético pendente em **Pedidos** e no grupo da
+4. Informe uma das entradas aceitas: código PIX copia-e-cola completo, CPF
+   válido, telefone brasileiro com DDD ou e-mail. Para chave simples, informe
+   também o nome e a cidade públicos do recebedor.
+5. Para chave simples, o servidor normaliza a chave e gera localmente um BR
+   Code estático válido; não é necessário preencher payload técnico. Confira o
+   QR exibido antes de avançar.
+6. Salve e confira um pedido sintético pendente em **Pedidos** e no grupo da
    cliente em **Pagamentos**.
 
 As instruções são congeladas no pedido. Alterar a configuração depois do
@@ -30,6 +34,8 @@ checkout não altera pedidos já criados.
 - As instruções PIX são exibidas somente à cliente proprietária de um pedido
   pendente e ao administrador autorizado. Elas não são uma credencial de
   infraestrutura.
+- Nome e cidade do recebedor são campos públicos exigidos pelo padrão BR Code;
+  o sistema não inventa esses dados nem gera QR a partir de texto cru.
 - Homologação usa somente dados sintéticos. Não testar com dados de crianças
   ou informações bancárias reais.
 

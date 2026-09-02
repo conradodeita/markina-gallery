@@ -57,11 +57,17 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("oferece retorno e avanço dentro do contexto da mesma galeria", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [], clients: [] })));
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : path.endsWith("/publish-ready") && init?.method === "POST" ? response({ published_count: 0, pending_count: 0, failed_count: 0, available_count: 0, folders: [] }) : response({ folders: [], clients: [] }));
+    vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     await screen.findByRole("heading", { name: "Imagens e pastas" });
     expect(screen.getByRole("link", { name: "← Voltar" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/detalhes");
-    expect(screen.getByRole("link", { name: "Avançar →" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/clientes");
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/source-1/publish-ready",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/clientes"));
   });
 
   it("salva o modo de acesso explicitamente sem inferência do frontend", async () => {
@@ -221,7 +227,7 @@ describe("editor administrativo de galeria", () => {
 
   it("apresenta estados por texto, contraste semântico e cartões responsivos", async () => {
     const statuses = [
-      ["pending_registration", "Cadastro pendente", "warning"],
+      ["pending_registration", "Aguardando primeiro acesso", "warning"],
       ["no_selection", "Sem seleção", "warning"],
       ["blocked", "Galeria bloqueada", "dark"],
       ["expired", "Galeria expirada", "warning"],
@@ -307,8 +313,8 @@ describe("editor administrativo de galeria", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Disponibilizar fotos" }));
-    expect(await screen.findByRole("dialog", { name: "Fotos para Cliente Administrativa" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Montar galeria privada" }));
+    expect(await screen.findByRole("dialog", { name: "Galeria privada de Cliente Administrativa" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "Criar ou atualizar galeria privada" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "Criar ou atualizar galeria privada" }));
@@ -319,7 +325,7 @@ describe("editor administrativo de galeria", () => {
     expect(await screen.findByText(/sem seleção automática/)).toBeTruthy();
   });
 
-  it("explica por que Disponibilizar fotos não pode avançar sem publicação", async () => {
+  it("explica por que a galeria privada não pode ser montada sem publicação", async () => {
     const linkedClient = { client_id: "client-1", name: "Cliente Sem Fotos", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
@@ -328,8 +334,8 @@ describe("editor administrativo de galeria", () => {
       return response({ clients: [] });
     }));
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Disponibilizar fotos" }));
-    const dialog = await screen.findByRole("dialog", { name: "Fotos para Cliente Sem Fotos" });
+    fireEvent.click(await screen.findByRole("button", { name: "Montar galeria privada" }));
+    const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Sem Fotos" });
     expect(within(dialog).getByText("Nenhuma foto publicada")).toBeTruthy();
     expect(within(dialog).getByRole("link", { name: "Ir para Imagens" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens");
   });
@@ -345,10 +351,10 @@ describe("editor administrativo de galeria", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Disponibilizar fotos" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Montar galeria privada" }));
     fireEvent.click(await screen.findByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "Criar ou atualizar galeria privada" }));
-    const dialog = await screen.findByRole("dialog", { name: "Fotos para Cliente Bloqueada" });
+    const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Bloqueada" });
     expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "A cliente já possui uma galeria privada nesta Galeria pública.");
   });
 
@@ -487,8 +493,8 @@ describe("editor administrativo de galeria", () => {
     fireEvent.change(screen.getByLabelText("Valor unitário da foto"), { target: { value: "700000" } });
     expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("value", expect.stringMatching(/7\.000,00/));
     expect(screen.queryByLabelText("Payload do QR Code")).toBeNull();
-    expect(screen.getByAltText("QR Code PIX gerado a partir do código copia e cola")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("PIX copia e cola"), { target: { value: validPix } });
+    expect(screen.getByAltText("QR Code PIX gerado a partir da configuração salva")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Chave PIX ou copia e cola"), { target: { value: validPix } });
     fireEvent.change(screen.getByLabelText("Mensagem comercial"), { target: { value: "Mensagem atualizada" } });
     fireEvent.change(screen.getByLabelText("Prazo padrão de seleção (dias)"), { target: { value: "21" } });
     fireEvent.click(screen.getByLabelText("Permitir comentários"));
@@ -509,20 +515,29 @@ describe("editor administrativo de galeria", () => {
       selection_duration_days: 21,
       comments_enabled: true,
     });
-    expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toEqual({ copy_paste: validPix, instructions: null });
+    expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toEqual({ copy_paste: validPix, receiver_name: null, receiver_city: null, instructions: null });
   });
 
-  it("distingue chave PIX simples de código copia-e-cola antes de salvar", async () => {
+  it("aceita chave PIX simples com os dados necessários para gerar o QR", async () => {
     const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
-    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : init?.method === "PUT" ? response({ ...sales, pix: { ...sales.pix, copy_paste: "fotografo@example.com", input_type: "email", receiver_name: "MARKINA", receiver_city: "SAO PAULO" } }) : response(sales));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
-    expect(await screen.findByText(/Uma chave isolada.*não é um código copia-e-cola/i)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("PIX copia e cola"), { target: { value: "fotografo@example.com" } });
+    expect(await screen.findByText(/Aceita CPF, telefone brasileiro, e-mail/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Chave PIX ou copia e cola"), { target: { value: "fotografo@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Este campo exige o código PIX copia e cola completo gerado pelo banco, não apenas a chave PIX.");
-    expect(fetchMock.mock.calls.some((call) => (call as [string, RequestInit?])[1]?.method === "PUT")).toBe(false);
-    expect(push).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Para gerar o QR a partir de uma chave, informe o nome e a cidade do recebedor.");
+    fireEvent.change(screen.getByLabelText("Nome do recebedor"), { target: { value: "Markina" } });
+    fireEvent.change(screen.getByLabelText("Cidade do recebedor"), { target: { value: "São Paulo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/source-1/sales",
+      expect.objectContaining({
+        method: "PUT",
+        body: expect.stringContaining('"receiver_name":"Markina","receiver_city":"São Paulo"'),
+      }),
+    ));
+    expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/detalhes");
   });
 
   it("preserva os dados editados e mostra o erro retornado ao falhar Vendas", async () => {
@@ -783,6 +798,22 @@ describe("editor administrativo de galeria", () => {
     ));
     expect(await screen.findByText(/1 foto\(s\) publicada\(s\)/)).toBeTruthy();
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/clients"))).toBe(false);
+  });
+
+  it("publica a rodada pronta ao salvar Imagens e não avança com processamento ou falha", async () => {
+    const folder = { id: "folder-1", name: "Rodada", status: "preparing", position: 0, photo_count: 3, preview_url: null, released_at: null, publication_counts: { published: 0, ready_to_publish: 1, processing: 1, failed: 1 } };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/folders")) return response({ folders: [folder] });
+      if (path.endsWith("/publish-ready") && init?.method === "POST") return response({ published_count: 1, pending_count: 1, failed_count: 1, available_count: 1, folders: [] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salvar e avançar →" }));
+    expect(await screen.findByText(/Ainda há 1 em processamento e 1 com falha/)).toBeTruthy();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("abre somente uma pasta válida recebida pelo resumo", async () => {

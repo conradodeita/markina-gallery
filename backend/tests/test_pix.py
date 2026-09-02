@@ -1,4 +1,9 @@
-from app.pix import PixCodeError, normalize_pix_copy_paste, pix_qr_data_url
+from app.pix import (
+    PixCodeError,
+    normalize_pix_configuration,
+    normalize_pix_copy_paste,
+    pix_qr_data_url,
+)
 
 
 def _crc16(payload: str) -> str:
@@ -41,3 +46,42 @@ def test_pix_rejects_empty_structure_and_invalid_crc() -> None:
             pass
         else:
             raise AssertionError("Código PIX malformado foi aceito")
+
+
+def test_simple_pix_keys_generate_valid_static_br_code() -> None:
+    cases = (
+        ("529.982.247-25", "cpf", "52998224725"),
+        ("(11) 99999-1234", "phone", "+5511999991234"),
+        ("FOTOGRAFO@EXAMPLE.COM", "email", "fotografo@example.com"),
+    )
+    for raw_value, expected_type, expected_value in cases:
+        configured = normalize_pix_configuration(
+            raw_value,
+            receiver_name="João Fotografia",
+            receiver_city="São Paulo",
+        )
+        assert configured is not None
+        assert configured.input_type == expected_type
+        assert configured.input_value == expected_value
+        assert configured.receiver_name == "JOAO FOTOGRAFIA"
+        assert configured.receiver_city == "SAO PAULO"
+        assert normalize_pix_copy_paste(configured.copy_paste) == configured.copy_paste
+        assert pix_qr_data_url(configured.copy_paste).startswith("data:image/png;base64,")
+
+
+def test_simple_pix_key_requires_valid_key_and_receiver_metadata() -> None:
+    invalid = (
+        ("123.456.789-00", "MARKINA", "SAO PAULO"),
+        ("fotografo@example.com", "", "SAO PAULO"),
+        ("11988887777", "MARKINA", ""),
+        ("fotografo@example.com", "NOME DO RECEBEDOR QUE ULTRAPASSA VINTE E CINCO", "SAO PAULO"),
+        ("fotografo@example.com", "MARKINA", "CIDADE QUE ULTRAPASSA QUINZE"),
+        ("550e8400-e29b-41d4-a716-446655440000", "MARKINA", "SAO PAULO"),
+    )
+    for value, name, city in invalid:
+        try:
+            normalize_pix_configuration(value, receiver_name=name, receiver_city=city)
+        except PixCodeError:
+            pass
+        else:
+            raise AssertionError("Configuração PIX simples inválida foi aceita")

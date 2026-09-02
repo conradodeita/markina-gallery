@@ -4,6 +4,17 @@ Inventário preparado em 2026-09-02 para a change
 `consolidate-shared-private-galleries-and-progressive-sales`. Nenhuma ação
 remota, migration ou publicação foi executada durante sua preparação.
 
+## Incremento da segunda revisão humana — 2026-09-02
+
+- Base local e remota no início: `8b13c9bd87fe8cb264ec66f7f66aafea52c0ffd2` em `develop`; último SHA funcional publicado antes deste incremento: `2eab180af1965449e4d97f2462ef78e17d92f5cb`.
+- Branch: `codex/fix-homolog-gallery-review-round-two`.
+- Escopo: aceitar chave PIX por CPF/telefone/e-mail, corrigir o bloqueio PostgreSQL da desvinculação, publicar fotos prontas ao avançar de Imagens, esclarecer a montagem administrativa da privada e distinguir primeiro OTP pendente.
+- Schema esperado após deploy: `20260902_0041 (head)`. A migration adiciona colunas anuláveis e uma restrição de domínio em `pix_checkout_settings`, com backfill classificatório; não remove nem reescreve pedidos, clientes, galerias, mídias ou configurações PIX existentes.
+- Resultados locais: backend `248 passed, 1 skipped`, frontend `127 passed`, Ruff/ESLint/TypeScript/build, migration reversível, Compose, políticas de deploy e OpenSpec estrito aprovados.
+- Autorização humana: o proprietário autorizou push e deploy após as changes e testes. A publicação SHALL ocorrer somente pelo PR/CI existentes e pelo Environment `homolog` para o SHA de integração em `develop`.
+- Impacto zero: alvo `https://markina-homolog.duckdns.org`, única entrada `127.0.0.1:8080`; o pipeline cria backup lógico, executa a migration aditiva e pode recriar somente `api`, `web`, `worker` e `nginx` do projeto `markina-gallery`. Não há `down`, prune, limpeza, secret, dependência, volume, serviço, porta, rede, DNS, certificado, firewall ou recurso de terceiro novo.
+- Verificação pós-deploy: confirmar SHA publicado, head Alembic `20260902_0041`, containers saudáveis e respostas externas `200` em `/healthz` e `/api/health` antes de declarar paridade.
+
 ## Incremento da revisão humana — 2026-09-02
 
 - Base já publicada: `5f3eaa7bfc71c31ad2f46476d52c7fa9d7ec43f7` em `develop`.
@@ -43,13 +54,13 @@ remota, migration ou publicação foi executada durante sua preparação.
 
 ## Schema, migrations e dados
 
-- Head esperado: `20260901_0040`.
-- Cadeia aditiva nova: `20260901_0034` a `20260901_0040`, linear sobre
+- Head esperado: `20260902_0041`.
+- Cadeia aditiva nova: `20260901_0034` a `20260902_0041`, linear sobre
   `20260831_0033`.
 - As revisions adicionam associação multiusuário e backfill, capacidades
   reconstruíveis, notificações de membros, presets progressivos/snapshots,
-  fonte PIX copia-e-cola, unicidade de referências compartilhadas e origens
-  por foto privada.
+  fonte PIX validada e entrada estruturada, unicidade de referências compartilhadas
+  e origens por foto privada.
 - O pré-diagnóstico aborta conflito de mais de uma privada para o mesmo par
   origem/cliente. Não há mescla silenciosa, exclusão de cliente, pedido,
   pagamento, histórico ou mídia original.
@@ -96,7 +107,7 @@ remota, migration ou publicação foi executada durante sua preparação.
    o dump lógico e executar `alembic upgrade head`.
 5. Recriar apenas `api`, `web`, `worker` e `nginx`; preservar banco, Redis,
    Evolution, redes e volumes.
-6. Confirmar o SHA publicado, `20260901_0040 (head)`, saúde dos containers e
+6. Confirmar o SHA publicado, `20260902_0041 (head)`, saúde dos containers e
    respostas `200` em `/healthz` e `/api/health`, internas e externas.
 7. Executar smoke com telefone, JPEG, cliente, pedido e comunicação totalmente
    sintéticos; não usar biometria, criança ou dado pessoal real.
@@ -107,7 +118,7 @@ remota, migration ou publicação foi executada durante sua preparação.
   e recriar os serviços Markina.
 - Depois do início da migration, não haverá downgrade/restauração automática.
   Banco, dump, containers e volumes ficam preservados para diagnóstico.
-- Qualquer restauração, downgrade abaixo de `0040`, remoção de associação ou
+- Qualquer restauração, downgrade abaixo de `0041`, remoção de associação ou
   reconciliação de mídia exige novo inventário e nova autorização humana.
 
 ## Gates humanos restantes
