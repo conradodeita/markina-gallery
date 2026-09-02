@@ -18,10 +18,12 @@
   --mk-shadow-md: 0 14px 38px rgb(20 24 19 / 9%);
   --font-system-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-montserrat: "Montserrat Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-system-rounded: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", ui-sans-serif, system-ui, sans-serif;
   --font-system-serif: Georgia, "Times New Roman", ui-serif, serif;
   --font-playfair-display: "Playfair Display Variable", Georgia, ui-serif, serif;
   --font-caveat: "Caveat Variable", "Segoe Print", cursive;
   --font-dancing-script: "Dancing Script Variable", "Segoe Print", cursive;
+  --font-handwritten-personal: "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
   --mk-space-1: 0.25rem;
   --mk-space-2: 0.5rem;
   --mk-space-3: 0.75rem;

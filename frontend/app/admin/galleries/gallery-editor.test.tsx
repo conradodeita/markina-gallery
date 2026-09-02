@@ -71,12 +71,45 @@ describe("editor administrativo de galeria", () => {
     render(<GalleryEditor sourceId="source-1" step="ajustes" />);
     const accessMode = await screen.findByRole("combobox", { name: /Modo de acesso/ });
     fireEvent.change(accessMode, { target: { value: "standard" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar ajustes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/source-1/settings",
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"access_mode":"standard"') }),
     ));
     expect(screen.getByRole("option", { name: /Coletivo protegido/ })).toBeTruthy();
+    expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/vendas");
+  });
+
+  it("protege troca direta e retorno quando há alterações não salvas", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({})));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<GalleryEditor sourceId="source-1" step="ajustes" />);
+
+    fireEvent.change(await screen.findByLabelText("Título da galeria"), { target: { value: "Título alterado" } });
+    expect(fireEvent.click(screen.getByRole("link", { name: /Detalhes/ }))).toBe(false);
+    expect(confirm).toHaveBeenCalledWith("Descartar as alterações ainda não salvas desta etapa?");
+    confirm.mockReturnValue(true);
+    expect(fireEvent.click(screen.getByRole("link", { name: "← Galerias" }))).toBe(true);
+  });
+
+  it("ignora clique repetido enquanto Salvar e avançar está pendente", async () => {
+    let finishSave!: (value: Response) => void;
+    const pendingSave = new Promise<Response>((resolve) => { finishSave = resolve; });
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (init?.method === "PATCH") return pendingSave;
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="ajustes" />);
+
+    const save = await screen.findByRole("button", { name: "Salvar e avançar →" });
+    fireEvent.click(save);
+    const pendingButton = screen.getByRole("button", { name: "Salvando…" });
+    fireEvent.click(pendingButton);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
+    finishSave(new Response(JSON.stringify({ id: "source-1" }), { status: 200 }));
+    await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
   });
 
   it("informa indisponibilidade quando o contrato do editor falha", async () => {
@@ -216,6 +249,91 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("region", { name: "Vincular cliente" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Cadastrar e vincular" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Beatriz Cliente.*Vincular/ })).toBeTruthy();
+    expect(screen.getByText("Nenhuma galeria privada criada")).toBeTruthy();
+  });
+
+  it("mostra, copia e regenera links estáveis e gerencia membros da privada", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 2, selected_count: 1, purchased_count: 0, gallery_status: "active" };
+    const member = { membership_id: "membership-1", client_id: "client-1", client_name: "Ana Cliente", phone_e164: "+5511999999999", status: "active", selected_count: 1, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" };
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboardWrite } });
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
+      if (path.endsWith("/available-photos")) return response({ photos: [] });
+      if (path === "/api/admin/clients") return response({ clients: [] });
+      if (path.endsWith("/public-link/rotate") && init?.method === "POST") return response({ status: "active", capability_id: "public-2", expires_at: null, secret_available: true, link: "https://example.test/a/public-new" });
+      if (path.endsWith("/public-link")) return response({ status: "active", capability_id: "public-1", expires_at: null, secret_available: true, link: "https://example.test/a/public" });
+      if (path.endsWith("/derived-galleries/derived-1/link")) return response({ status: "active", capability_id: "private-1", expires_at: null, secret_available: true, link: "https://example.test/a/private" });
+      if (path.endsWith("/members/client-1/block") && init?.method === "POST") return response({ ...member, status: "blocked" });
+      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [member] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+
+    const publicInput = await screen.findByLabelText("Link da Galeria pública") as HTMLInputElement;
+    expect(publicInput.value).toBe("https://example.test/a/public");
+    expect(await screen.findByLabelText("Link privado de Ana Cliente")).toHaveProperty("value", "https://example.test/a/private");
+    expect(screen.getByText("Ana Cliente", { selector: ".private-member-row strong" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("https://example.test/a/public"));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerar link" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/source-1/public-link/rotate",
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    ));
+    expect((screen.getByLabelText("Link da Galeria pública") as HTMLInputElement).value).toBe("https://example.test/a/public-new");
+    fireEvent.click(screen.getByRole("button", { name: "Bloquear" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/derived-galleries/derived-1/members/client-1/block",
+      expect.objectContaining({ method: "POST" }),
+    ));
+  });
+
+  it("preserva a etapa e mostra conflito ao adicionar cliente já vinculada a outra privada", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    const member = { membership_id: "membership-1", client_id: "client-1", client_name: "Ana Cliente", phone_e164: "+5511999999999", status: "active", selected_count: 0, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
+      if (path.endsWith("/available-photos")) return response({ photos: [] });
+      if (path === "/api/admin/clients") return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
+      if (path.endsWith("/public-link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
+      if (path.endsWith("/derived-galleries/derived-1/link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
+      if (path.endsWith("/derived-galleries/derived-1/members") && init?.method === "POST") return response({ detail: "A cliente já pertence a outra galeria privada desta origem." }, 409);
+      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [member] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+
+    fireEvent.change(await screen.findByLabelText("Adicionar cliente à galeria de Ana Cliente"), { target: { value: "client-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar membro" }));
+    expect(await screen.findByText("A cliente já pertence a outra galeria privada desta origem.")).toBeTruthy();
+    expect(screen.getByRole("article", { name: "Galeria privada Ana Cliente" })).toBeTruthy();
+  });
+
+  it("expõe carregamento e erro isolado da galeria privada", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    let finishPrivateLink!: (value: Response) => void;
+    const pendingPrivateLink = new Promise<Response>((resolve) => { finishPrivateLink = resolve; });
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
+      if (path.endsWith("/available-photos")) return response({ photos: [] });
+      if (path === "/api/admin/clients") return response({ clients: [] });
+      if (path.endsWith("/public-link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
+      if (path.endsWith("/derived-galleries/derived-1/link")) return pendingPrivateLink;
+      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [] });
+      return response({});
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+
+    expect(await screen.findByText("Carregando acesso")).toBeTruthy();
+    finishPrivateLink(new Response(JSON.stringify({ detail: "Falha ao consultar link privado." }), { status: 500, headers: { "content-type": "application/json" } }));
+    expect(await screen.findByText("Acesso indisponível")).toBeTruthy();
+    expect(screen.getByText("Falha ao consultar link privado.")).toBeTruthy();
   });
 
   it("mostra capacidade comercial indisponível sem inventar configuração", async () => {
@@ -230,8 +348,13 @@ describe("editor administrativo de galeria", () => {
     const sales = {
       available: true,
       capabilities: ["pricing_tiers", "pix", "sales_message", "interactions", "selection_deadline"],
+      pricing_mode: "fixed",
+      fixed_unit_price_cents: 700,
+      progressive_pricing_preset_id: null,
+      pricing_snapshot: { mode: "fixed", unit_price_cents: 700 },
+      pricing_review_required: false,
       tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }],
-      pix: { copy_paste: null, qr_code_payload: null, instructions: null },
+      pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: "data:image/png;base64,cXI=", review_required: false, instructions: null },
       sales_message: "Escolha suas fotos",
       selection_duration_days: 14,
       favorites_enabled: true,
@@ -246,11 +369,14 @@ describe("editor administrativo de galeria", () => {
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
 
     await screen.findByRole("heading", { name: "Vendas" });
+    expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("value", expect.stringMatching(/7,00/));
+    expect(screen.queryByLabelText("Payload do QR Code")).toBeNull();
+    expect(screen.getByAltText("QR Code PIX gerado a partir do código copia e cola")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("PIX copia e cola"), { target: { value: "pix-controlado" } });
     fireEvent.change(screen.getByLabelText("Mensagem comercial"), { target: { value: "Mensagem atualizada" } });
     fireEvent.change(screen.getByLabelText("Prazo padrão de seleção (dias)"), { target: { value: "21" } });
     fireEvent.click(screen.getByLabelText("Permitir comentários"));
-    fireEvent.click(screen.getByRole("button", { name: "Salvar Vendas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/source-1/sales",
@@ -261,36 +387,66 @@ describe("editor administrativo de galeria", () => {
     ));
     const saveCall = fetchMock.mock.calls.find(([path, init]) => path.endsWith("/sales") && init?.method === "PUT");
     expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({
+      pricing_mode: "fixed",
+      fixed_unit_price_cents: 700,
       sales_message: "Mensagem atualizada",
       selection_duration_days: 21,
       comments_enabled: true,
     });
+    expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toEqual({ copy_paste: "pix-controlado", instructions: null });
   });
 
   it("preserva os dados editados e mostra o erro retornado ao falhar Vendas", async () => {
-    const sales = { available: true, capabilities: [], tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, instructions: null }, sales_message: "Original", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "Original", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : init?.method === "PUT" ? response({ detail: "As faixas devem ser contíguas." }, 422) : response(sales)));
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
     const message = await screen.findByLabelText("Mensagem comercial") as HTMLTextAreaElement;
     fireEvent.change(message, { target: { value: "Não perder" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar Vendas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
     expect(await screen.findByText("As faixas devem ser contíguas.")).toBeTruthy();
     expect(message.value).toBe("Não perder");
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it("exige confirmação antes de persistir um salto comercial", async () => {
-    const sales = { available: true, capabilities: [], tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+  it("exige escolha e confirmação explícitas para converter preço legado", async () => {
+    const sales = { available: true, capabilities: [], pricing_mode: "legacy_volume", fixed_unit_price_cents: null, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "legacy_volume" }, pricing_review_required: true, tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      void init;
-      return path.endsWith("/editor") ? response(editor) : response(sales);
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/pricing-presets")) return response({ presets: [] });
+      if (init?.method === "PUT") return response({ ...sales, ...JSON.parse(String(init.body)), pricing_review_required: false });
+      return response(sales);
     });
     vi.stubGlobal("fetch", fetchMock);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/reduz o total/i);
-    fireEvent.click(screen.getByRole("button", { name: "Salvar Vendas" }));
-    expect(confirm).toHaveBeenCalledOnce();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/precisa de revisão/i);
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    expect(await screen.findByText(/Escolha preço fixo ou uma tabela progressiva/)).toBeTruthy();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+    fireEvent.click(screen.getByLabelText("Preço fixo por foto"));
+    fireEvent.change(screen.getByLabelText("Valor unitário da foto"), { target: { value: "R$ 7,00" } });
+    fireEvent.click(screen.getByLabelText(/Confirmo a substituição/));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true));
+    const saveCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({ pricing_mode: "fixed", fixed_unit_price_cents: 700, confirm_legacy_conversion: true });
+  });
+
+  it("seleciona tabela global e simula parcelas e economia no backend", async () => {
+    const sales = { available: true, capabilities: [], pricing_mode: "progressive", fixed_unit_price_cents: null, progressive_pricing_preset_id: "preset-1", pricing_snapshot: { mode: "progressive" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: 30, unit_price_cents: 700 }, { minimum_quantity: 31, maximum_quantity: null, unit_price_cents: 600 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/pricing-presets")) return response({ presets: [{ id: "preset-1", code: "01", name: "Escolar", label: "01 — Escolar", version: 1, active: true, tiers: sales.tiers }] });
+      if (path.includes("/pricing-presets/preset-1/quote")) return response({ quantity: 60, parcels: [{ minimum_quantity: 1, maximum_quantity: 30, quantity: 30, unit_price_cents: 700, subtotal_cents: 21000 }, { minimum_quantity: 31, maximum_quantity: null, quantity: 30, unit_price_cents: 600, subtotal_cents: 18000 }], base_total_cents: 42000, savings_cents: 3000, total_cents: 39000 });
+      return response(sales);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="vendas" />);
+
+    expect(await screen.findByRole("option", { name: "01 — Escolar" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Simular valor" }));
+    expect(await screen.findByText(/60 fotos.*R\$\s*390,00/)).toBeTruthy();
+    expect(screen.getByText(/Economia de R\$\s*30,00/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/pricing-presets/preset-1/quote?quantity=60", expect.anything());
   });
 
   it("cria a galeria antes de navegar para o editor", async () => {
@@ -359,7 +515,7 @@ describe("editor administrativo de galeria", () => {
     expect(screen.queryByLabelText("Tipografia da marca-d’água")).toBeNull();
     expect(screen.getByText(/marca-d’água continua global/i)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Tamanho do título"), { target: { value: "40" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar detalhes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/source-1/settings",
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"cover_title_size":40') }),

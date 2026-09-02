@@ -1,5 +1,6 @@
 """Verifica preservação de dados ao atualizar uma base anterior à mudança."""
 
+import json
 import os
 import sys
 from datetime import UTC, datetime
@@ -377,6 +378,366 @@ def test_gallery_folder_ownership_on_postgresql_preserves_constraints_and_rollba
         assert connection.execute(
             text("SELECT COUNT(*) FROM photo_asset WHERE folder_id IS NOT NULL")
         ).scalar_one() == 2
+
+
+def test_shared_private_membership_migration_backfills_legacy_owners(tmp_path: Path):
+    database = tmp_path / "shared-private-memberships.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260831_0033")
+    engine = create_engine(database_url)
+    timestamp = datetime.now(UTC)
+    first_client, second_client, parent_id, first_private, second_private = (
+        uuid4() for _ in range(5)
+    )
+    with engine.begin() as connection:
+        for client_id, name, phone in (
+            (first_client, "Primeira cliente", "+5511999999601"),
+            (second_client, "Segunda cliente", "+5511999999602"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO client (id, full_name, phone_e164) "
+                    "VALUES (:id, :name, :phone)"
+                ),
+                {"id": client_id.hex, "name": name, "phone": phone},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO parent_gallery (id, name, active, created_at) "
+                "VALUES (:id, 'Origem legada', 1, :created_at)"
+            ),
+            {"id": parent_id.hex, "created_at": timestamp},
+        )
+        for gallery_id, client_id, name in (
+            (first_private, first_client, "Primeira privada"),
+            (second_private, second_client, "Segunda privada"),
+        ):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO derived_gallery
+                        (id, parent_gallery_id, client_id, name, access_enabled,
+                         favorites_enabled, comments_enabled, created_at)
+                    VALUES
+                        (:id, :parent, :client, :name, 1, 0, 0, :created_at)
+                    """
+                ),
+                {
+                    "id": gallery_id.hex,
+                    "parent": parent_id.hex,
+                    "client": client_id.hex,
+                    "name": name,
+                    "created_at": timestamp,
+                },
+            )
+
+    alembic(database_url, "upgrade", "head")
+    inspector = inspect(engine)
+    with engine.connect() as connection:
+        memberships = connection.execute(
+            text(
+                """
+                SELECT derived_gallery_id, parent_gallery_id, client_id, status
+                FROM derived_gallery_membership
+                ORDER BY client_id
+                """
+            )
+        ).all()
+    assert set(memberships) == {
+        (first_private.hex, parent_id.hex, first_client.hex, "active"),
+        (second_private.hex, parent_id.hex, second_client.hex, "active"),
+    }
+    assert any(
+        constraint["name"] == "uq_membership_parent_client"
+        for constraint in inspector.get_unique_constraints("derived_gallery_membership")
+    )
+    assert any(
+        constraint["name"] == "uq_derived_gallery_id_parent"
+        for constraint in inspector.get_unique_constraints("derived_gallery")
+    )
+
+    alembic(database_url, "downgrade", "20260831_0033")
+    inspector = inspect(engine)
+    assert "derived_gallery_membership" not in inspector.get_table_names()
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM derived_gallery")).scalar_one() == 2
+
+
+def test_shared_private_membership_migration_aborts_on_owner_conflict(tmp_path: Path):
+    database = tmp_path / "shared-private-conflict.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260831_0033")
+    engine = create_engine(database_url)
+    timestamp = datetime.now(UTC)
+    client_id, parent_id, first_private, second_private = (uuid4() for _ in range(4))
+    with engine.begin() as connection:
+        connection.execute(text("DROP INDEX ix_derived_gallery_parent_client"))
+        connection.execute(
+            text(
+                "INSERT INTO client (id, full_name, phone_e164) "
+                "VALUES (:id, 'Cliente conflitante', '+5511999999603')"
+            ),
+            {"id": client_id.hex},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO parent_gallery (id, name, active, created_at) "
+                "VALUES (:id, 'Origem conflitante', 1, :created_at)"
+            ),
+            {"id": parent_id.hex, "created_at": timestamp},
+        )
+        for gallery_id in (first_private, second_private):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO derived_gallery
+                        (id, parent_gallery_id, client_id, name, access_enabled,
+                         favorites_enabled, comments_enabled, created_at)
+                    VALUES
+                        (:id, :parent, :client, 'Privada conflitante', 1, 0, 0, :created_at)
+                    """
+                ),
+                {
+                    "id": gallery_id.hex,
+                    "parent": parent_id.hex,
+                    "client": client_id.hex,
+                    "created_at": timestamp,
+                },
+            )
+
+    backend = Path(__file__).resolve().parents[1]
+    environment = {**os.environ, "DATABASE_URL": database_url}
+    result = run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=backend,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "upgrade foi interrompido sem mesclar dados" in f"{result.stdout}\n{result.stderr}"
+    inspector = inspect(engine)
+    assert "derived_gallery_membership" not in inspector.get_table_names()
+
+
+def test_progressive_pricing_migration_preserves_legacy_semantics_and_orders(
+    tmp_path: Path,
+):
+    database = tmp_path / "progressive-pricing.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260901_0036")
+    engine = create_engine(database_url)
+    timestamp = datetime.now(UTC)
+    client_id, single_parent, multi_parent, empty_parent, private_id, order_id = (
+        uuid4() for _ in range(6)
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO client (id, full_name, phone_e164) "
+                "VALUES (:id, 'Cliente preço', '+5511999999604')"
+            ),
+            {"id": client_id.hex},
+        )
+        for parent_id, name in (
+            (single_parent, "Preço único"),
+            (multi_parent, "Preço volume"),
+            (empty_parent, "Sem preço"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO parent_gallery (id, name, active, created_at) "
+                    "VALUES (:id, :name, 1, :created_at)"
+                ),
+                {"id": parent_id.hex, "name": name, "created_at": timestamp},
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO derived_gallery
+                    (id, parent_gallery_id, client_id, name, access_enabled,
+                     favorites_enabled, comments_enabled, created_at)
+                VALUES (:id, :parent, :client, 'Privada preço', 1, 0, 0, :created_at)
+                """
+            ),
+            {
+                "id": private_id.hex,
+                "parent": single_parent.hex,
+                "client": client_id.hex,
+                "created_at": timestamp,
+            },
+        )
+        rules = (
+            (single_parent, 1, None, 700),
+            (multi_parent, 1, 30, 700),
+            (multi_parent, 31, None, 600),
+        )
+        for parent_id, minimum, maximum, unit_price in rules:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO price_rule
+                        (id, parent_gallery_id, minimum_quantity, maximum_quantity,
+                         unit_price_cents, created_at, updated_at)
+                    VALUES
+                        (:id, :parent, :minimum, :maximum, :unit_price,
+                         :created_at, :updated_at)
+                    """
+                ),
+                {
+                    "id": uuid4().hex,
+                    "parent": parent_id.hex,
+                    "minimum": minimum,
+                    "maximum": maximum,
+                    "unit_price": unit_price,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+            )
+        original_snapshot = {"mode": "legacy_volume", "unit_price_cents": 700}
+        connection.execute(
+            text(
+                """
+                INSERT INTO sale_order
+                    (id, derived_gallery_id, client_id, derived_gallery_id_snapshot,
+                     derived_gallery_name_snapshot, parent_gallery_id_snapshot,
+                     parent_gallery_name_snapshot, payment_status, total_cents,
+                     price_rule_snapshot, created_at)
+                VALUES
+                    (:id, :private_id, :client_id, :private_id, 'Privada preço',
+                     :parent_id, 'Preço único', 'confirmed', 700, :snapshot, :created_at)
+                """
+            ),
+            {
+                "id": order_id.hex,
+                "private_id": private_id.hex,
+                "client_id": client_id.hex,
+                "parent_id": single_parent.hex,
+                "snapshot": json.dumps(original_snapshot),
+                "created_at": timestamp,
+            },
+        )
+
+    alembic(database_url, "upgrade", "head")
+    with engine.connect() as connection:
+        single = connection.execute(
+            text(
+                "SELECT pricing_mode, fixed_unit_price_cents, pricing_review_required "
+                "FROM parent_gallery WHERE id = :id"
+            ),
+            {"id": single_parent.hex},
+        ).one()
+        multi = connection.execute(
+            text(
+                "SELECT pricing_mode, fixed_unit_price_cents, pricing_review_required, "
+                "pricing_snapshot FROM parent_gallery WHERE id = :id"
+            ),
+            {"id": multi_parent.hex},
+        ).one()
+        empty = connection.execute(
+            text(
+                "SELECT pricing_mode, fixed_unit_price_cents, pricing_review_required "
+                "FROM parent_gallery WHERE id = :id"
+            ),
+            {"id": empty_parent.hex},
+        ).one()
+        preserved_snapshot = connection.execute(
+            text("SELECT price_rule_snapshot FROM sale_order WHERE id = :id"),
+            {"id": order_id.hex},
+        ).scalar_one()
+    assert single == ("fixed", 700, 0)
+    assert multi[:3] == ("legacy_volume", None, 1)
+    assert json.loads(multi.pricing_snapshot)["tiers"][1]["unit_price_cents"] == 600
+    assert empty == ("fixed", None, 1)
+    assert json.loads(preserved_snapshot) == original_snapshot
+
+
+def test_pix_source_migration_converges_safe_values_and_flags_divergence(tmp_path) -> None:
+    database = tmp_path / "pix-source.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260901_0037")
+    engine = create_engine(database_url)
+    rows = [
+        (str(uuid4()), str(uuid4()), None, "qr-only"),
+        (str(uuid4()), str(uuid4()), "same", "same"),
+        (str(uuid4()), str(uuid4()), "copy", "different"),
+    ]
+    with engine.begin() as connection:
+        for row_id, parent_id, copy_paste, qr_payload in rows:
+            connection.execute(
+                text(
+                    "INSERT INTO pix_checkout_settings "
+                    "(id, parent_gallery_id, copy_paste, qr_code_payload, instructions, updated_at) "
+                    "VALUES (:id, :parent_id, :copy_paste, :qr_payload, NULL, :updated_at)"
+                ),
+                {
+                    "id": row_id,
+                    "parent_id": parent_id,
+                    "copy_paste": copy_paste,
+                    "qr_payload": qr_payload,
+                    "updated_at": datetime.now(UTC),
+                },
+            )
+
+    alembic(database_url, "upgrade", "head")
+    with engine.connect() as connection:
+        migrated = connection.execute(
+            text(
+                "SELECT copy_paste, qr_code_payload, review_required "
+                "FROM pix_checkout_settings ORDER BY copy_paste"
+            )
+        ).mappings().all()
+
+    by_copy = {row["copy_paste"]: row for row in migrated}
+    assert by_copy["qr-only"]["qr_code_payload"] is None
+    assert by_copy["same"]["qr_code_payload"] is None
+    assert by_copy["copy"]["qr_code_payload"] == "different"
+    assert bool(by_copy["copy"]["review_required"]) is True
+
+
+def test_private_photo_origins_backfill_existing_justification(tmp_path: Path) -> None:
+    database = tmp_path / "private-photo-origins.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260901_0039")
+    engine = create_engine(database_url)
+    client_id, parent_id, gallery_id, folder_id, photo_id, reference_id = (
+        uuid4() for _ in range(6)
+    )
+    timestamp = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO client (id, full_name, phone_e164) VALUES (:id, :name, :phone)"),
+            {"id": client_id.hex, "name": "Cliente origem", "phone": "+5511999999499"},
+        )
+        connection.execute(
+            text("INSERT INTO parent_gallery (id, name, active, created_at) VALUES (:id, :name, 1, :created_at)"),
+            {"id": parent_id.hex, "name": "Origem", "created_at": timestamp},
+        )
+        connection.execute(
+            text("INSERT INTO photo_folder (id, parent_gallery_id, name, status, position, purpose, created_at, updated_at) VALUES (:id, :parent_id, :name, 'released', 0, 'content', :created_at, :created_at)"),
+            {"id": folder_id.hex, "parent_id": parent_id.hex, "name": "Lote", "created_at": timestamp},
+        )
+        connection.execute(
+            text("INSERT INTO photo_asset (id, parent_gallery_id, folder_id, filename, storage_key, available, created_at) VALUES (:id, :parent_id, :folder_id, :filename, :storage_key, 1, :created_at)"),
+            {"id": photo_id.hex, "parent_id": parent_id.hex, "folder_id": folder_id.hex, "filename": "foto.jpg", "storage_key": "origem/foto.jpg", "created_at": timestamp},
+        )
+        connection.execute(
+            text("INSERT INTO derived_gallery (id, parent_gallery_id, client_id, name, access_enabled, favorites_enabled, comments_enabled, created_at) VALUES (:id, :parent_id, :client_id, :name, 1, 0, 0, :created_at)"),
+            {"id": gallery_id.hex, "parent_id": parent_id.hex, "client_id": client_id.hex, "name": "Privada", "created_at": timestamp},
+        )
+        connection.execute(
+            text("INSERT INTO derived_gallery_photo (id, derived_gallery_id, photo_asset_id, origin, created_at) VALUES (:id, :gallery_id, :photo_id, 'client', :created_at)"),
+            {"id": reference_id.hex, "gallery_id": gallery_id.hex, "photo_id": photo_id.hex, "created_at": timestamp},
+        )
+
+    alembic(database_url, "upgrade", "head")
+    with engine.connect() as connection:
+        origin = connection.execute(
+            text("SELECT origin FROM derived_gallery_photo_origin WHERE derived_gallery_photo_id = :reference_id"),
+            {"reference_id": reference_id.hex},
+        ).scalar_one()
+    assert origin == "client"
 
 
 def test_parent_gallery_cover_migration_is_reversible(tmp_path: Path):

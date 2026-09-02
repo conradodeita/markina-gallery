@@ -8,6 +8,7 @@ export type ClientGalleryRow = {
   name: string;
   phone: string;
   registration_status: string | null;
+  membership_status?: "active" | "blocked" | "unlinked" | null;
   derived_gallery_id: string | null;
   available_count: number;
   selected_count: number;

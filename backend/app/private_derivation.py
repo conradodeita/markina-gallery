@@ -1,7 +1,6 @@
 """Derivação privada transacional a partir de uma Galeria pública."""
 
 from dataclasses import dataclass
-from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -12,6 +11,7 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryPhoto,
+    DerivedGalleryPhotoOrigin,
     ParentGallery,
     ParentGalleryRegistration,
     PhotoAsset,
@@ -20,9 +20,9 @@ from app.auth import (
     SaleOrder,
     SaleOrderItem,
     expired,
-    now,
 )
 from app.parent_registration import link_client_to_parent
+from app.private_membership import ensure_private_membership
 
 
 class PrivateDerivationError(RuntimeError):
@@ -56,50 +56,6 @@ class AdminPrivateDerivationResult:
     references_created: int
 
 
-def ensure_private_gallery(
-    db: Session,
-    *,
-    parent: ParentGallery,
-    client: Client,
-    name: str | None = None,
-) -> tuple[DerivedGallery, bool]:
-    gallery = db.scalar(
-        select(DerivedGallery)
-        .where(
-            DerivedGallery.parent_gallery_id == parent.id,
-            DerivedGallery.client_id == client.id,
-        )
-        .with_for_update()
-    )
-    if gallery:
-        return gallery, False
-    try:
-        with db.begin_nested():
-            gallery = DerivedGallery(
-                parent_gallery_id=parent.id,
-                client_id=client.id,
-                name=(name or f"{parent.name} — {client.full_name}")[:200],
-                selection_expires_at=(
-                    now() + timedelta(days=parent.selection_duration_days)
-                    if parent.selection_duration_days
-                    else None
-                ),
-            )
-            db.add(gallery)
-            db.flush()
-        return gallery, True
-    except IntegrityError:
-        gallery = db.scalar(
-            select(DerivedGallery).where(
-                DerivedGallery.parent_gallery_id == parent.id,
-                DerivedGallery.client_id == client.id,
-            )
-        )
-        if not gallery:
-            raise
-        return gallery, False
-
-
 def _insert_once(db: Session, record, lookup) -> bool:
     if db.scalar(lookup):
         return False
@@ -112,6 +68,45 @@ def _insert_once(db: Session, record, lookup) -> bool:
         if not db.scalar(lookup):
             raise
         return False
+
+
+def ensure_private_photo_reference(
+    db: Session,
+    *,
+    gallery_id: UUID,
+    photo_id: UUID,
+    origin: str,
+) -> bool:
+    """Mantém uma referência única e registra cada justificativa que a sustenta."""
+
+    reference_lookup = select(DerivedGalleryPhoto.id).where(
+        DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+        DerivedGalleryPhoto.photo_asset_id == photo_id,
+    )
+    reference_created = _insert_once(
+        db,
+        DerivedGalleryPhoto(
+            derived_gallery_id=gallery_id,
+            photo_asset_id=photo_id,
+            origin=origin,
+        ),
+        reference_lookup,
+    )
+    reference_id = db.scalar(reference_lookup)
+    if not reference_id:
+        raise PrivateDerivationError("Não foi possível registrar a foto na galeria privada.")
+    _insert_once(
+        db,
+        DerivedGalleryPhotoOrigin(
+            derived_gallery_photo_id=reference_id,
+            origin=origin,
+        ),
+        select(DerivedGalleryPhotoOrigin.id).where(
+            DerivedGalleryPhotoOrigin.derived_gallery_photo_id == reference_id,
+            DerivedGalleryPhotoOrigin.origin == origin,
+        ),
+    )
+    return reference_created
 
 
 def derive_client_selection(
@@ -134,12 +129,15 @@ def derive_client_selection(
     )
     photo = db.get(PhotoAsset, photo_id)
     folder = db.get(PhotoFolder, photo.folder_id) if photo else None
-    existing_gallery = db.scalar(
-        select(DerivedGallery).where(
-            DerivedGallery.parent_gallery_id == parent_gallery_id,
-            DerivedGallery.client_id == client_id,
+    if not registration:
+        existing_gallery = db.scalar(
+            select(DerivedGallery).where(
+                DerivedGallery.parent_gallery_id == parent_gallery_id,
+                DerivedGallery.client_id == client_id,
+            )
         )
-    )
+    else:
+        existing_gallery = None
     if not registration and existing_gallery:
         registration = link_client_to_parent(
             db,
@@ -161,11 +159,16 @@ def derive_client_selection(
         or folder.purpose != "content"
     ):
         raise PrivateDerivationError("Foto indisponível para esta cliente.")
-    gallery, gallery_created = (
-        (existing_gallery, False)
-        if existing_gallery
-        else ensure_private_gallery(db, parent=parent, client=client)
+    resolution = ensure_private_membership(
+        db,
+        parent=parent,
+        client=client,
+        gallery=existing_gallery,
     )
+    gallery = resolution.gallery
+    gallery_created = resolution.gallery_created
+    if resolution.membership.status != "active":
+        raise PrivateDerivationError("O acesso desta cliente à galeria privada está bloqueado.")
     if not gallery.access_enabled:
         raise PrivateDerivationError("A galeria privada está bloqueada.")
     if gallery.selection_expires_at and expired(gallery.selection_expires_at):
@@ -183,19 +186,11 @@ def derive_client_selection(
     if already_confirmed:
         raise PrivateDerivationError("Foto indisponível para seleção.")
 
-    reference_lookup = select(DerivedGalleryPhoto.id).where(
-        DerivedGalleryPhoto.derived_gallery_id == gallery.id,
-        DerivedGalleryPhoto.photo_asset_id == photo.id,
-        DerivedGalleryPhoto.origin == "client",
-    )
-    reference_created = _insert_once(
+    reference_created = ensure_private_photo_reference(
         db,
-        DerivedGalleryPhoto(
-            derived_gallery_id=gallery.id,
-            photo_asset_id=photo.id,
-            origin="client",
-        ),
-        reference_lookup,
+        gallery_id=gallery.id,
+        photo_id=photo.id,
+        origin="client",
     )
     selection_lookup = select(PhotoSelection.id).where(
         PhotoSelection.derived_gallery_id == gallery.id,
@@ -270,24 +265,24 @@ def derive_admin_gallery(
         client_id=client.id,
         status="active",
     )
-    gallery, gallery_created = ensure_private_gallery(db, parent=parent, client=client, name=name)
+    resolution = ensure_private_membership(
+        db,
+        parent=parent,
+        client=client,
+        name=name,
+    )
+    if resolution.membership.status != "active":
+        raise PrivateDerivationError("O acesso desta cliente à galeria privada está bloqueado.")
+    gallery = resolution.gallery
+    gallery_created = resolution.gallery_created
     references_created = 0
     for photo in photos:
-        references_created += int(
-            _insert_once(
-                db,
-                DerivedGalleryPhoto(
-                    derived_gallery_id=gallery.id,
-                    photo_asset_id=photo.id,
-                    origin="admin",
-                ),
-                select(DerivedGalleryPhoto.id).where(
-                    DerivedGalleryPhoto.derived_gallery_id == gallery.id,
-                    DerivedGalleryPhoto.photo_asset_id == photo.id,
-                    DerivedGalleryPhoto.origin == "admin",
-                ),
-            )
-        )
+        references_created += int(ensure_private_photo_reference(
+            db,
+            gallery_id=gallery.id,
+            photo_id=photo.id,
+            origin="admin",
+        ))
     return AdminPrivateDerivationResult(
         gallery=gallery,
         gallery_created=gallery_created,

@@ -14,6 +14,12 @@ TITLE_FONT_OPTIONS: tuple[dict[str, str], ...] = (
         "css_family": "var(--font-montserrat)",
     },
     {
+        "token": "system-rounded",
+        "label": "Arredondada",
+        "category": "sans",
+        "css_family": "var(--font-system-rounded)",
+    },
+    {
         "token": "system-serif",
         "label": "Clássica",
         "category": "editorial",
@@ -36,6 +42,12 @@ TITLE_FONT_OPTIONS: tuple[dict[str, str], ...] = (
         "label": "Dancing Script",
         "category": "handwritten",
         "css_family": "var(--font-dancing-script)",
+    },
+    {
+        "token": "handwritten-personal",
+        "label": "Assinatura",
+        "category": "handwritten",
+        "css_family": "var(--font-handwritten-personal)",
     },
 )
 

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.auth import (
     CommercialHistoryMedia,
     DerivedGallery,
+    DerivedGalleryMembership,
     DerivedGalleryPhoto,
     GalleryAccessCapability,
     GalleryLifecycleOperation,
@@ -114,6 +115,22 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
             .group_by(SaleOrder.payment_status)
         )
     }
+    membership_count = count(
+        DerivedGalleryMembership,
+        DerivedGalleryMembership.parent_gallery_id == parent_gallery_id,
+    )
+    client_count = db.scalar(
+        select(func.count()).select_from(
+            select(DerivedGalleryMembership.client_id)
+            .where(DerivedGalleryMembership.parent_gallery_id == parent_gallery_id)
+            .union(
+                select(DerivedGallery.client_id).where(
+                    DerivedGallery.parent_gallery_id == parent_gallery_id
+                )
+            )
+            .subquery()
+        )
+    ) or 0
     return {
         "remove": {
             "folders": count(
@@ -137,16 +154,11 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
             "access_capabilities": count(
                 GalleryAccessCapability,
                 GalleryAccessCapability.parent_gallery_id == parent_gallery_id,
-                GalleryAccessCapability.scope != "private_invite",
             ),
         },
         "preserve": {
-            "clients": db.scalar(
-                select(func.count(func.distinct(DerivedGallery.client_id))).where(
-                    DerivedGallery.parent_gallery_id == parent_gallery_id
-                )
-            )
-            or 0,
+            "clients": client_count,
+            "memberships": membership_count,
             "private_galleries": count(
                 DerivedGallery,
                 DerivedGallery.parent_gallery_id == parent_gallery_id,
@@ -210,9 +222,16 @@ def client_unlink_inventory(
 ) -> dict:
     """Conta somente o vínculo operacional escolhido e o histórico preservado."""
 
+    membership_private_ids = select(DerivedGalleryMembership.derived_gallery_id).where(
+        DerivedGalleryMembership.parent_gallery_id == parent_gallery_id,
+        DerivedGalleryMembership.client_id == client_id,
+    )
     private_ids = select(DerivedGallery.id).where(
         DerivedGallery.parent_gallery_id == parent_gallery_id,
-        DerivedGallery.client_id == client_id,
+        (
+            DerivedGallery.id.in_(membership_private_ids)
+            | (DerivedGallery.client_id == client_id)
+        ),
     )
 
     def count(model, *criteria) -> int:
@@ -240,32 +259,52 @@ def client_unlink_inventory(
                 ParentGalleryRegistration.parent_gallery_id == parent_gallery_id,
                 ParentGalleryRegistration.client_id == client_id,
             ),
+            "memberships": count(
+                DerivedGalleryMembership,
+                DerivedGalleryMembership.parent_gallery_id == parent_gallery_id,
+                DerivedGalleryMembership.client_id == client_id,
+            ),
+            "selections": count(
+                PhotoSelection,
+                PhotoSelection.derived_gallery_id.in_(private_ids),
+                PhotoSelection.client_id == client_id,
+            ),
+            "favorites": count(
+                PhotoFavorite,
+                PhotoFavorite.derived_gallery_id.in_(private_ids),
+                PhotoFavorite.client_id == client_id,
+            ),
+            "comments": count(
+                PhotoComment,
+                PhotoComment.derived_gallery_id.in_(private_ids),
+                PhotoComment.client_id == client_id,
+            ),
+            "views": count(
+                PhotoView,
+                PhotoView.derived_gallery_id.in_(private_ids),
+                PhotoView.client_id == client_id,
+            ),
+            "private_capabilities": count(
+                GalleryAccessCapability,
+                GalleryAccessCapability.derived_gallery_id.in_(private_ids),
+                GalleryAccessCapability.client_id == client_id,
+            ),
+        },
+        "preserve": {
+            "clients": 1,
             "private_galleries": count(
                 DerivedGallery,
-                DerivedGallery.parent_gallery_id == parent_gallery_id,
-                DerivedGallery.client_id == client_id,
+                DerivedGallery.id.in_(private_ids),
             ),
             "available_references": count(
                 DerivedGalleryPhoto,
                 DerivedGalleryPhoto.derived_gallery_id.in_(private_ids),
             ),
-            "selections": count(
-                PhotoSelection, PhotoSelection.derived_gallery_id.in_(private_ids)
-            ),
-            "favorites": count(
-                PhotoFavorite, PhotoFavorite.derived_gallery_id.in_(private_ids)
-            ),
-            "comments": count(
-                PhotoComment, PhotoComment.derived_gallery_id.in_(private_ids)
-            ),
-            "views": count(PhotoView, PhotoView.derived_gallery_id.in_(private_ids)),
-            "private_capabilities": count(
+            "shared_private_capabilities": count(
                 GalleryAccessCapability,
                 GalleryAccessCapability.derived_gallery_id.in_(private_ids),
+                GalleryAccessCapability.client_id.is_(None),
             ),
-        },
-        "preserve": {
-            "clients": 1,
             "photos": count(
                 PhotoAsset, PhotoAsset.parent_gallery_id == parent_gallery_id
             ),
