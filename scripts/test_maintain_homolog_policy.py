@@ -17,6 +17,7 @@ def main() -> None:
     require('PROJECT_NAME="markina-gallery"', "projeto Compose fixo", SCRIPT)
     require('PROJECT_ROOT="/opt/markina-gallery"', "checkout remoto fixo", SCRIPT)
     require("DELETE_HOMOLOG_GALLERIES_AND_CLIENTS", "confirmação literal", SCRIPT)
+    require("-e APP_ENV=homolog api", "ambiente explícito do container efêmero", SCRIPT)
     require("pg_dump -Fc", "backup lógico", SCRIPT)
     require("compose stop api worker", "pausa restrita", SCRIPT)
     require("redis-cli FLUSHDB", "fila exclusiva limpa", SCRIPT)

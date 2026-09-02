@@ -38,7 +38,8 @@ echo "topologia: projeto=$PROJECT_NAME entrada=127.0.0.1:8080 subdomínio=markin
 compose ps
 
 if [[ "$MODE" == "inventory" ]]; then
-  compose run --rm --no-deps api python -m app.homolog_cleanup --mode inventory
+  compose run --rm --no-deps -e APP_ENV=homolog api \
+    python -m app.homolog_cleanup --mode inventory
   exit 0
 fi
 
@@ -54,7 +55,7 @@ restore_services() {
 }
 trap restore_services EXIT
 compose stop api worker
-compose run --rm --no-deps api python -m app.homolog_cleanup \
+compose run --rm --no-deps -e APP_ENV=homolog api python -m app.homolog_cleanup \
   --mode execute --confirmation "$CONFIRMATION"
 compose exec -T redis redis-cli FLUSHDB >/dev/null
 restore_services
@@ -69,5 +70,6 @@ for service in api worker; do
   done
   [[ "$status" == "healthy" ]] || fail "serviço Markina não ficou saudável: $service ($status)"
 done
-compose run --rm --no-deps api python -m app.homolog_cleanup --mode inventory
+compose run --rm --no-deps -e APP_ENV=homolog api \
+  python -m app.homolog_cleanup --mode inventory
 echo "limpeza de dados sintéticos da Markina concluída"
