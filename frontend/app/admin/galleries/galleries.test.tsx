@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const push = vi.fn();
 
 vi.mock("next/link", () => ({
   default: ({
@@ -12,13 +14,16 @@ vi.mock("next/link", () => ({
 }));
 vi.mock("next/navigation", () => ({
   useParams: () => ({ galleryId: "private-1" }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push }),
 }));
 
 import GalleriesPage from "./page";
 import GalleryDetailPage from "./[galleryId]/page";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  push.mockReset();
+});
 
 describe("telas administrativas de galerias", () => {
   it("exibe carregamento e o estado vazio de Galerias públicas", async () => {
@@ -150,5 +155,47 @@ describe("telas administrativas de galerias", () => {
       "/api/admin/derived-galleries/private-1/photos",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ photo_ids: ["photo-2"] }) }),
     ));
+  });
+
+  it("confirma e exclui uma galeria privada preservando o histórico", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const body = path.endsWith("/photos") || path.endsWith("/available-photos")
+        ? { photos: [] }
+        : path.endsWith("/members")
+          ? { members: [] }
+          : { id: "private-1", parent_gallery_id: "public-1", name: "Família Silva", custom_message: "", favorites_enabled: false, comments_enabled: false, selection_expires_at: null, cover_preview_url: null, frozen: false, blocked: false };
+      if (path === "/api/admin/derived-galleries/private-1" && init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir galeria privada" }));
+    const dialog = await screen.findByRole("dialog", { name: "Excluir “Família Silva”?" });
+    expect(dialog.textContent).toContain("histórico comercial serão preservados");
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar exclusão" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/derived-galleries/private-1",
+      expect.objectContaining({ method: "DELETE" }),
+    ));
+    expect(push).toHaveBeenCalledWith("/admin/galleries");
+  });
+
+  it("mantém a falha de exclusão visível dentro da confirmação da privada", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const body = path.endsWith("/photos") || path.endsWith("/available-photos")
+        ? { photos: [] }
+        : path.endsWith("/members")
+          ? { members: [] }
+          : { id: "private-1", parent_gallery_id: "public-1", name: "Família Protegida", custom_message: "", favorites_enabled: false, comments_enabled: false, selection_expires_at: null, cover_preview_url: null, frozen: false, blocked: false };
+      if (path === "/api/admin/derived-galleries/private-1" && init?.method === "DELETE") return Promise.resolve(new Response(JSON.stringify({ detail: "Pagamento comunicado aguarda revisão administrativa." }), { status: 409, headers: { "content-type": "application/json" } }));
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir galeria privada" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar exclusão" }));
+    const dialog = await screen.findByRole("dialog", { name: "Excluir “Família Protegida”?" });
+    expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Pagamento comunicado aguarda revisão administrativa.");
+    expect(push).not.toHaveBeenCalled();
   });
 });

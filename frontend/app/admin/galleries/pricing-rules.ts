@@ -11,6 +11,12 @@ export function formatBrazilianCurrency(cents: number) {
   }).format(cents / 100);
 }
 
+export function maskBrazilianCurrencyInput(value: string) {
+  const digits = value.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 15);
+  const cents = Number(digits || "0");
+  return formatBrazilianCurrency(cents);
+}
+
 export function parseBrazilianCurrency(value: string) {
   const normalized = value.trim();
   if (!/^(?:R\$\s*)?(?:0|[1-9]\d{0,2}(?:\.\d{3})*),\d{2}$/.test(normalized)) {

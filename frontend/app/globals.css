@@ -298,6 +298,13 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .unlink-progress > div:last-child { justify-content:flex-start; }
 .unlink-progress progress { width:100%; accent-color:#222; }
 .unlink-progress p { margin:0; color:#444; }
+.unlink-progress--error { border-color:#d38c85; background:#fff4f2; }
+.form-message--error { color:#8c2f28; font-weight:700; }
+.access-mode-hints { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.access-mode-hints article { padding:12px; border:1px solid #d9ded8; border-radius:12px; background:#f6f8f4; }
+.access-mode-hints strong { color:#26362a; }
+.access-mode-hints p { margin:5px 0 0; color:#566058; font-size:.86rem; line-height:1.45; }
+@media (max-width:700px) { .access-mode-hints { grid-template-columns:1fr; } }
 .administrative-private-dialog { width:min(100%,650px); }
 .administrative-private-dialog form,.administrative-private-dialog fieldset { display:grid; gap:14px; }
 .administrative-private-dialog fieldset { max-height:48vh; overflow:auto; padding:14px; border:1px solid #ddd; border-radius:12px; }

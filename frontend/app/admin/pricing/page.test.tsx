@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { formatBrazilianCurrency, parseBrazilianCurrency } from "../galleries/pricing-rules";
+import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurrency } from "../galleries/pricing-rules";
 import PricingPresetsPage from "./page";
 
 afterEach(() => vi.restoreAllMocks());
@@ -20,6 +20,8 @@ describe("tabelas globais de preço progressivo", () => {
     expect(parseBrazilianCurrency("1.234,56")).toBe(123456);
     expect(parseBrazilianCurrency("7.00")).toBeNull();
     expect(parseBrazilianCurrency("R$ -1,00")).toBeNull();
+    expect(maskBrazilianCurrencyInput("700")).toMatch(/R\$\s*7,00/);
+    expect(maskBrazilianCurrencyInput("700000")).toMatch(/R\$\s*7\.000,00/);
   });
 
   it("lista versões e faixas cadastradas", async () => {
@@ -69,12 +71,13 @@ describe("tabelas globais de preço progressivo", () => {
     await screen.findByText("Nenhuma tabela cadastrada");
     fireEvent.change(screen.getByLabelText("Código"), { target: { value: "01" } });
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Escolar" } });
-    fireEvent.change(screen.getByLabelText("Valor unitário"), { target: { value: "R$ 7,00" } });
+    fireEvent.change(screen.getByLabelText("Valor unitário"), { target: { value: "700" } });
+    expect(screen.getByLabelText("Valor unitário")).toHaveProperty("value", expect.stringMatching(/R\$\s*7,00/));
     fireEvent.click(screen.getByRole("button", { name: "Adicionar faixa" }));
     const upperLimit = screen.getByLabelText("Até");
     fireEvent.change(upperLimit, { target: { value: "30" } });
     const priceInputs = screen.getAllByLabelText("Valor unitário");
-    fireEvent.change(priceInputs[1], { target: { value: "R$ 6,00" } });
+    fireEvent.change(priceInputs[1], { target: { value: "600" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar tabela" }));
 
     await screen.findByText("Tabela criada.");

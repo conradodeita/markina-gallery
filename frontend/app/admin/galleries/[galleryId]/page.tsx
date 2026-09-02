@@ -42,6 +42,8 @@ export default function GalleryDetailPage() {
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,15 +89,15 @@ export default function GalleryDetailPage() {
   }
 
   async function removeGallery() {
-    if (!window.confirm("Excluir esta galeria privada? Clientes e histórico comercial serão preservados.")) return;
+    if (busy) return;
     setBusy(true);
+    setDeleteError("");
     try {
       await requestJson(`/api/admin/derived-galleries/${galleryId}`, { method: "DELETE" });
       router.push("/admin/galleries");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível excluir a galeria privada.");
-      setBusy(false);
-    }
+      setDeleteError(error instanceof Error ? error.message : "Não foi possível excluir a galeria privada.");
+    } finally { setBusy(false); }
   }
 
   async function saveName(event: FormEvent<HTMLFormElement>) {
@@ -143,7 +145,7 @@ export default function GalleryDetailPage() {
   return <main className="admin-shell private-gallery-detail">
     <Link href="/admin/galleries">← Galerias</Link>
     <div className="gallery-editor-heading"><div><p className="eyebrow">Galeria privada · acervo compartilhado</p><h1>{detail.name}</h1><p className="intro">Todos os membros veem as mesmas fotos disponíveis; seleções, pedidos e pagamentos continuam individuais.</p></div><StatusBadge tone={detail.blocked ? "dark" : detail.frozen ? "warning" : "success"}>{detail.blocked ? "Acesso bloqueado" : detail.frozen ? "Prazo expirado" : "Ativa"}</StatusBadge></div>
-    <div className="action-grid"><MarkinaButton variant="secondary" disabled={busy} onClick={toggle}>{detail.blocked ? "Liberar acesso geral" : "Bloquear acesso geral"}</MarkinaButton><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${detail.parent_gallery_id}/edit/vendas`}>Preço, PIX e regras herdadas</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/${galleryId}/orders`}>Pedidos</Link><MarkinaButton className="mk-button--danger" disabled={busy} onClick={removeGallery}>Excluir galeria privada</MarkinaButton></div>
+    <div className="action-grid"><MarkinaButton variant="secondary" disabled={busy} onClick={toggle}>{detail.blocked ? "Liberar acesso geral" : "Bloquear acesso geral"}</MarkinaButton><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${detail.parent_gallery_id}/edit/vendas`}>Preço, PIX e regras herdadas</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/${galleryId}/orders`}>Pedidos</Link><MarkinaButton className="mk-button--danger" disabled={busy} onClick={() => { setDeleteConfirmOpen(true); setDeleteError(""); }}>Excluir galeria privada</MarkinaButton></div>
 
     <section className="admin-card private-gallery-members"><div className="section-heading"><div><h2>Clientes desta galeria</h2><p className="gallery-scope-note">Os números abaixo nunca são somados entre membros.</p></div><StatusBadge>{members.length} cliente(s)</StatusBadge></div>{members.length ? <div className="private-member-cards">{members.map((member) => <article key={member.membership_id}><header><div><strong>{member.client_name}</strong><small>{member.phone_e164 ?? "Telefone indisponível"}</small></div><StatusBadge tone={member.status === "active" ? "success" : member.status === "blocked" ? "dark" : "neutral"}>{member.status === "active" ? "Ativa" : member.status === "blocked" ? "Bloqueada" : "Desvinculada"}</StatusBadge></header><dl><div><dt>Selecionadas</dt><dd>{member.selected_count}</dd></div><div><dt>Compradas</dt><dd>{member.purchased_count}</dd></div><div><dt>Pedidos</dt><dd>{member.order_count}</dd></div><div><dt>Total confirmado</dt><dd>{formatBrazilianCurrency(member.confirmed_total_cents)}</dd></div></dl><Link className="mk-button mk-button--secondary" href={`/admin/galleries/${galleryId}/selection?client=${member.client_id}`}>Abrir seleção individual</Link></article>)}</div> : <SystemState title="Nenhuma cliente vinculada" detail="Adicione membros pela etapa Clientes da Galeria pública." />}</section>
 
@@ -152,6 +154,7 @@ export default function GalleryDetailPage() {
     <section className="admin-card"><div className="section-heading"><div><h2>Adicionar fotos da Galeria pública</h2><p className="gallery-scope-note">A ação cria apenas referências no acervo comum e não marca fotos como selecionadas.</p></div></div>{addablePhotos.length ? <form className="private-photo-add" onSubmit={addPhotos}><div>{addablePhotos.map((photo) => <label key={photo.id}><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} />{photo.preview_url ? <img src={`/api${photo.preview_url}`} alt="" /> : <span>Sem prévia</span>}<strong>{photo.name}</strong><small>{photo.folder_name}</small></label>)}</div><MarkinaButton disabled={busy || !selectedPhotoIds.length}>{busy ? "Adicionando…" : "Adicionar ao acervo privado"}</MarkinaButton></form> : <SystemState title="Todas as fotos já estão disponíveis" detail="Carregue e publique novos JPEGs na Galeria pública para ampliar este acervo." />}</section>
 
     <section className="admin-card"><h2>Ajustes da galeria privada</h2><form className="auth-form" onSubmit={saveName}><label>Nome<input name="name" defaultValue={detail.name} required /></label><MarkinaButton disabled={busy}>Salvar nome</MarkinaButton></form><p>Mensagem, prazo, favoritos, comentários, preço e PIX são herdados da Galeria pública.</p>{detail.custom_message ? <p><strong>Mensagem vigente:</strong> {detail.custom_message}</p> : null}</section>
+    {deleteConfirmOpen ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="delete-private-gallery-title" aria-modal="true" className="mk-dialog" role="dialog"><p className="eyebrow">Exclusão da galeria privada</p><h2 id="delete-private-gallery-title">Excluir “{detail.name}”?</h2><p>O acesso operacional, o link e as referências removíveis serão encerrados. Clientes, pedidos, pagamentos, entregas e histórico comercial serão preservados.</p><p>Se existir pagamento informado em análise, conclua primeiro a decisão administrativa indicada pelo backend.</p>{deleteError ? <p className="form-message form-message--error" role="alert">{deleteError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => { setDeleteConfirmOpen(false); setDeleteError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={busy} onClick={removeGallery}>{busy ? "Excluindo…" : "Confirmar exclusão"}</MarkinaButton></div></section></div> : null}
     {message ? <p className="form-message" role="status">{message}</p> : null}
   </main>;
 }

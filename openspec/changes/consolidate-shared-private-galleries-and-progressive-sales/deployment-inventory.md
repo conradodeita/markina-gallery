@@ -4,6 +4,18 @@ Inventário preparado em 2026-09-02 para a change
 `consolidate-shared-private-galleries-and-progressive-sales`. Nenhuma ação
 remota, migration ou publicação foi executada durante sua preparação.
 
+## Incremento da revisão humana — 2026-09-02
+
+- Base já publicada: `5f3eaa7bfc71c31ad2f46476d52c7fa9d7ec43f7` em `develop`.
+- Branch do incremento: `codex/fix-gallery-client-actions`.
+- SHA funcional testado: `ff945f9fe4f3eb673b8107739124c2dcdcf9f4f9`.
+- Escopo: máscara BRL; orientação dos modos de acesso e PIX; feedback contextual de desvinculação, disponibilização de fotos e exclusão pública/privada.
+- Schema permanece no head `20260901_0040`; este incremento não contém migration, dependência, secret, volume, serviço ou mudança de topologia.
+- Resultados locais: frontend `123 passed`, backend dirigido `51 passed`, lint sem erros, TypeScript, build e OpenSpec estrito aprovados.
+- Autorização humana: o proprietário autorizou previamente o push para paridade de homologação após este trabalho. O deploy SHALL ocorrer somente pelo PR e CI existentes, para o commit de integração em `develop` que contenha `ff945f9fe4f3eb673b8107739124c2dcdcf9f4f9` como ancestral.
+- Impacto zero: o alvo continua `https://markina-homolog.duckdns.org`, única entrada `127.0.0.1:8080`; o pipeline pode recriar apenas `api`, `web`, `worker` e `nginx` do projeto `markina-gallery`, sem `down`, prune, migration nova ou alteração de banco, Redis, Evolution, rede, volume, DNS, certificado, firewall ou recurso de terceiro.
+- Verificação pós-deploy: confirmar SHA publicado, head Alembic `20260901_0040`, containers saudáveis e respostas externas `200` em `/healthz` e `/api/health` antes de declarar paridade.
+
 ## Artefato e gate de integração
 
 - Base anterior ao artefato: `2737de197fd3e2b914ec319f6015b4351ce6040e`.

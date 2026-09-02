@@ -72,4 +72,10 @@
 - [x] 8.5 Preparar inventário de homologação com SHA, migrations, containers/portas/subdomínio, secrets requeridos e plano zero-impact; verificar que nenhuma ação toca recursos de terceiros e solicitar autorização explícita antes de migration/deploy.
 - [x] 8.6 Após autorização específica, aplicar migration e deploy em homologação sem prune/down, confirmar SHA implantado, head Alembic, `/healthz`, `/api/health` e smoke tests do ciclo sintético.
 - [ ] 8.7 Submeter a experiência desktop/mobile à revisão humana em homologação, registrar bugs e evidências e manter esta task aberta até aprovação explícita.
+  - [x] 8.7.1 Aplicar máscara BRL durante a digitação em todos os campos monetários da configuração comercial e verificar entrada numérica, separadores, edição, recarga e persistência em centavos.
+  - [x] 8.7.2 Corrigir o feedback da desvinculação de cliente na etapa 05 para manter progresso, conclusão, bloqueio comercial e retentativa visíveis no contexto acionado, e verificar o fluxo contra o endpoint real e testes de componente.
+  - [x] 8.7.3 Tornar `Disponibilizar fotos` acionável e explicativo quando não houver fotos publicadas, preservar o gate de publicação e verificar criação/atualização da privada com fotos elegíveis.
+  - [x] 8.7.4 Corrigir o feedback de exclusão de Galeria pública e privada para manter confirmação, erro, bloqueio e progresso visíveis junto à ação, e verificar sucesso e falha dos dois fluxos.
+  - [x] 8.7.5 Verificar a rejeição reportada no campo PIX, distinguir chave simples de código copia-e-cola EMV e não persistir nem gerar QR inválido; registrar a decisão de produto necessária caso a entrada por chave simples exija novos dados do recebedor.
+  - [x] 8.7.6 Explicar na etapa 01 os três modos de acesso conforme a autorização efetiva do backend, confirmar que não estão obsoletos e verificar texto, seleção e persistência sem prometer grade ou reconhecimento facial indevidos.
 - [ ] 8.8 Após aprovação humana, sincronizar as specs principais, reconciliar checkboxes supersedidos das changes relacionadas e arquivar somente as changes efetivamente completas; verificar `openspec status` e validação estrita final.

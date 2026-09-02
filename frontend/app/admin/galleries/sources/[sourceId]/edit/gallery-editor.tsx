@@ -6,7 +6,7 @@ import { type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, 
 
 import { MarkinaButton, StatusBadge, SystemState } from "../../../../../ui-kit";
 import { ClientGalleryCard, type ClientGalleryRow } from "../../../client-gallery-card";
-import { formatBrazilianCurrency, parseBrazilianCurrency, type PriceTier } from "../../../pricing-rules";
+import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurrency, type PriceTier } from "../../../pricing-rules";
 
 type StepId = "ajustes" | "vendas" | "detalhes" | "imagens" | "clientes";
 type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | "unavailable"; available: boolean };
@@ -73,6 +73,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [clientQuery, setClientQuery] = useState("");
   const [sales, setSales] = useState<SalesData | null>(null);
+  const [salesError, setSalesError] = useState("");
   const [pricingPresets, setPricingPresets] = useState<PricingPreset[]>([]);
   const [fixedPriceInput, setFixedPriceInput] = useState("R$ 0,00");
   const [quoteQuantity, setQuoteQuantity] = useState(60);
@@ -94,8 +95,12 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [unlinkPreview, setUnlinkPreview] = useState<UnlinkPreview | null>(null);
   const [unlinkOperation, setUnlinkOperation] = useState<LifecycleOperation | null>(null);
   const [unlinkBusy, setUnlinkBusy] = useState(false);
+  const [unlinkTarget, setUnlinkTarget] = useState<{ clientId: string; name: string } | null>(null);
+  const [unlinkError, setUnlinkError] = useState("");
   const [privateTarget, setPrivateTarget] = useState<ClientRow | null>(null);
   const [adminPhotoIds, setAdminPhotoIds] = useState<string[]>([]);
+  const [privateActionBusy, setPrivateActionBusy] = useState(false);
+  const [privateActionError, setPrivateActionError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const previewDialog = useRef<HTMLDivElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -130,7 +135,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         setUnlinkOperation(nextOperation);
         if (nextOperation.status === "completed") setRefresh((value) => value + 1);
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : "Não foi possível atualizar a desvinculação.");
+        setUnlinkError(error instanceof Error ? error.message : "Não foi possível atualizar a desvinculação.");
       }
     }, unlinkOperation.actions.poll_after_ms ?? 1000);
     return () => window.clearTimeout(timer);
@@ -192,6 +197,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         if (currentStep === "vendas") {
           const [salesData, presetData] = sectionData as [SalesData, { presets: PricingPreset[] }];
           setSales(salesData);
+          setSalesError("");
           setPricingPresets(presetData.presets ?? []);
           setFixedPriceInput(formatBrazilianCurrency(salesData.fixed_unit_price_cents ?? salesData.tiers?.[0]?.unit_price_cents ?? 0));
           setConfirmLegacyConversion(false);
@@ -356,41 +362,55 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   async function saveSales(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!sales || savingStep) return;
+    setSalesError("");
     if (sales.pricing_mode === "legacy_volume") {
-      setMessage("Escolha preço fixo ou uma tabela progressiva para converter a configuração legada.");
+      setSalesError("Escolha preço fixo ou uma tabela progressiva para converter a configuração legada.");
       return;
     }
     const fixedUnitPriceCents = sales.pricing_mode === "fixed"
       ? parseBrazilianCurrency(fixedPriceInput)
       : null;
     if (sales.pricing_mode === "fixed" && fixedUnitPriceCents === null) {
-      setMessage("Informe o valor unitário como moeda brasileira, por exemplo R$ 7,00.");
+      setSalesError("Informe o valor unitário como moeda brasileira, por exemplo R$ 7,00.");
       return;
     }
     if (sales.pricing_mode === "progressive" && !sales.progressive_pricing_preset_id) {
-      setMessage("Escolha uma tabela global de preço progressivo.");
+      setSalesError("Escolha uma tabela global de preço progressivo.");
+      return;
+    }
+    const pixCopyPaste = sales.pix.copy_paste?.trim() || null;
+    if (pixCopyPaste && !pixCopyPaste.startsWith("000201")) {
+      setSalesError("Este campo exige o código PIX copia e cola completo gerado pelo banco, não apenas a chave PIX.");
       return;
     }
     setSavingStep(true);
-    const saved = await mutate(`/api/admin/parent-galleries/${sourceId}/sales`, "PUT", {
-      pricing_mode: sales.pricing_mode,
-      fixed_unit_price_cents: fixedUnitPriceCents,
-      progressive_pricing_preset_id: sales.pricing_mode === "progressive" ? sales.progressive_pricing_preset_id : null,
-      confirm_legacy_conversion: confirmLegacyConversion,
-      pix: { copy_paste: sales.pix.copy_paste, instructions: sales.pix.instructions },
-      sales_message: sales.sales_message,
-      selection_duration_days: sales.selection_duration_days,
-      favorites_enabled: sales.favorites_enabled,
-      comments_enabled: sales.comments_enabled,
-    }) as SalesData | null;
-    if (saved) {
+    try {
+      const saved = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/sales`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          pricing_mode: sales.pricing_mode,
+          fixed_unit_price_cents: fixedUnitPriceCents,
+          progressive_pricing_preset_id: sales.pricing_mode === "progressive" ? sales.progressive_pricing_preset_id : null,
+          confirm_legacy_conversion: confirmLegacyConversion,
+          pix: { copy_paste: pixCopyPaste, instructions: sales.pix.instructions },
+          sales_message: sales.sales_message,
+          selection_duration_days: sales.selection_duration_days,
+          favorites_enabled: sales.favorites_enabled,
+          comments_enabled: sales.comments_enabled,
+        }),
+      }) as SalesData;
       setSales(saved);
       setFixedPriceInput(formatBrazilianCurrency(saved.fixed_unit_price_cents ?? saved.tiers?.[0]?.unit_price_cents ?? 0));
       setConfirmLegacyConversion(false);
       setMessage("Configuração de Vendas salva.");
+      setRefresh((value) => value + 1);
       advanceAfterSave();
+    } catch (error) {
+      setSalesError(error instanceof Error ? error.message : "Não foi possível salvar a configuração de Vendas.");
+    } finally {
+      setSavingStep(false);
     }
-    setSavingStep(false);
   }
 
   async function simulatePricing() {
@@ -607,13 +627,15 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
 
   async function openUnlinkConfirmation(person: ClientRow) {
     setUnlinkBusy(true);
-    setMessage("");
+    setUnlinkTarget({ clientId: person.client_id, name: person.name });
+    setUnlinkOperation(null);
+    setUnlinkError("");
     try {
       const preview = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/clients/${person.client_id}/unlink-inventory`) as UnlinkPreview;
       unlinkIdempotencyKey.current = crypto.randomUUID();
       setUnlinkPreview(preview);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível preparar a desvinculação.");
+      setUnlinkError(error instanceof Error ? error.message : "Não foi possível preparar a desvinculação.");
     } finally {
       setUnlinkBusy(false);
     }
@@ -622,6 +644,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   async function confirmUnlink() {
     if (!unlinkPreview || unlinkBusy) return;
     setUnlinkBusy(true);
+    setUnlinkError("");
     try {
       const operation = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/clients/${unlinkPreview.target.client_id}`, {
         method: "DELETE",
@@ -630,7 +653,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       setUnlinkOperation(operation);
       setUnlinkPreview(null);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível iniciar a desvinculação.");
+      setUnlinkError(error instanceof Error ? error.message : "Não foi possível iniciar a desvinculação.");
     } finally {
       setUnlinkBusy(false);
     }
@@ -639,12 +662,13 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   async function unlinkOperationAction(action: "cancel" | "retry") {
     if (!unlinkOperation || unlinkBusy) return;
     setUnlinkBusy(true);
+    setUnlinkError("");
     try {
       const operation = await jsonRequest(`/api/admin/gallery-lifecycle-operations/${unlinkOperation.operation_id}/${action}`, { method: "POST" }) as LifecycleOperation;
       setUnlinkOperation(operation);
       if (operation.status === "cancelled") setRefresh((value) => value + 1);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar a desvinculação.");
+      setUnlinkError(error instanceof Error ? error.message : "Não foi possível atualizar a desvinculação.");
     } finally {
       setUnlinkBusy(false);
     }
@@ -652,17 +676,29 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
 
   async function createAdministrativePrivateGallery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!privateTarget || !adminPhotoIds.length) return;
-    const result = await mutate("/api/admin/derived-galleries", "POST", {
-      parent_gallery_id: sourceId,
-      client_id: privateTarget.client_id,
-      name: `${editor?.gallery.name ?? "Galeria"} · ${privateTarget.name}`,
-      photo_ids: adminPhotoIds,
-    });
-    if (!result) return;
-    setMessage(`Galeria privada de ${privateTarget.name} salva com ${adminPhotoIds.length} foto(s) disponível(is), sem seleção automática.`);
-    setPrivateTarget(null);
-    setAdminPhotoIds([]);
+    if (!privateTarget || !adminPhotoIds.length || privateActionBusy) return;
+    setPrivateActionBusy(true);
+    setPrivateActionError("");
+    try {
+      await jsonRequest("/api/admin/derived-galleries", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          parent_gallery_id: sourceId,
+          client_id: privateTarget.client_id,
+          name: `${editor?.gallery.name ?? "Galeria"} · ${privateTarget.name}`,
+          photo_ids: adminPhotoIds,
+        }),
+      });
+      setMessage(`Galeria privada de ${privateTarget.name} salva com ${adminPhotoIds.length} foto(s) disponível(is), sem seleção automática.`);
+      setPrivateTarget(null);
+      setAdminPhotoIds([]);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setPrivateActionError(error instanceof Error ? error.message : "Não foi possível disponibilizar as fotos.");
+    } finally {
+      setPrivateActionBusy(false);
+    }
   }
 
   if (failed) return <SystemState tone="error" title="Galeria indisponível" detail="Não foi possível carregar o editor. Atualize a página ou entre novamente." />;
@@ -694,6 +730,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           <label>Evento<input name="event_name" defaultValue={editor.gallery.event_name} /></label>
           <label>Descrição administrativa<textarea name="description" defaultValue={editor.gallery.description} rows={4} /><small className="field-hint">Uso interno do fotógrafo para registrar contexto, observações e pendências desta galeria.</small></label>
           <label>Modo de acesso<select name="access_mode" defaultValue={editor.gallery.access_mode}><option value="standard">Padrão — link + OTP libera a navegação</option><option value="invite_only">Somente convite individual</option><option value="collective_protected">Coletivo protegido — sem grade pública</option></select><small className="field-hint">A autorização é aplicada pelo backend; nenhuma opção libera prévias antes do login.</small></label>
+          <div className="access-mode-hints" role="region" aria-label="Como funcionam os modos de acesso"><article><strong>Padrão</strong><p>Quem recebe o link fixo e conclui o OTP entra na Galeria pública e pode iniciar sua seleção.</p></article><article><strong>Somente convite individual</strong><p>O link público não cadastra novas pessoas. Apenas clientes já vinculadas pelo fotógrafo ou por convite individual autorizado acessam a galeria.</p></article><article><strong>Coletivo protegido</strong><p>O link e o OTP registram uma solicitação pendente, mas nunca mostram a grade coletiva. Este modo não ativa reconhecimento facial.</p></article></div>
           <label className="gallery-toggle"><input name="active" type="checkbox" defaultChecked={editor.gallery.active} /> Galeria ativa</label>
         </form>
       ) : null}
@@ -703,7 +740,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           <p className="eyebrow">Etapa {currentIndex + 1}</p>
           <h2>Vendas</h2>
           {!sales?.available ? <SystemState title="Configuração comercial indisponível" detail={sales?.reason ?? "O backend não habilitou esta capacidade."} /> : (
-            <form id="gallery-sales-step" className="gallery-sales-editor" onSubmit={saveSales} onChange={() => setDirty(true)}>
+            <form id="gallery-sales-step" className="gallery-sales-editor" onSubmit={saveSales} onChange={() => { setDirty(true); setSalesError(""); }}>
+              {salesError ? <p className="form-message form-message--error" role="alert">{salesError}</p> : null}
               <fieldset className="gallery-sales-section">
                 <legend>Preço das fotos</legend>
                 <p>Escolha um valor fixo para qualquer quantidade ou aplique uma tabela progressiva cadastrada globalmente. Pedidos existentes não são recalculados.</p>
@@ -712,7 +750,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                   <label><input type="radio" name="pricing_mode" value="fixed" checked={sales.pricing_mode === "fixed"} onChange={() => { setSales((current) => current ? { ...current, pricing_mode: "fixed", progressive_pricing_preset_id: null } : current); setPricingQuote(null); }} /> Preço fixo por foto</label>
                   <label><input type="radio" name="pricing_mode" value="progressive" checked={sales.pricing_mode === "progressive"} onChange={() => setSales((current) => current ? { ...current, pricing_mode: "progressive", fixed_unit_price_cents: null } : current)} /> Preço progressivo por faixas</label>
                 </div>
-                {sales.pricing_mode === "fixed" ? <label>Valor unitário da foto<input name="fixed_unit_price" inputMode="decimal" value={fixedPriceInput} onChange={(event) => setFixedPriceInput(event.target.value)} placeholder="R$ 7,00" required /></label> : null}
+                {sales.pricing_mode === "fixed" ? <label>Valor unitário da foto<input name="fixed_unit_price" inputMode="numeric" value={fixedPriceInput} onChange={(event) => setFixedPriceInput(maskBrazilianCurrencyInput(event.target.value))} placeholder="R$ 7,00" required /></label> : null}
                 {sales.pricing_mode === "progressive" ? <div className="gallery-progressive-pricing">
                   <label>Tabela global<select name="progressive_pricing_preset_id" value={sales.progressive_pricing_preset_id ?? ""} onChange={(event) => { setSales((current) => current ? { ...current, progressive_pricing_preset_id: event.target.value || null } : current); setPricingQuote(null); }} required><option value="">Selecione código — nome</option>{pricingPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
                   {!pricingPresets.length ? <p className="field-hint">Nenhuma tabela ativa. <Link href="/admin/pricing">Cadastre uma tabela global</Link> antes de salvar.</p> : null}
@@ -727,7 +765,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <fieldset className="gallery-sales-section">
                 <legend>PIX manual</legend>
                 <label>PIX copia e cola<textarea name="pix_copy_paste" rows={3} value={sales.pix.copy_paste ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, copy_paste: event.target.value || null } } : current)} /></label>
-                <p className="field-hint">O QR Code é gerado pelo servidor a partir do código copia-e-cola validado.</p>
+                <p className="field-hint">Cole o código completo gerado na opção “PIX copia e cola” do seu banco (normalmente começa com 000201). Uma chave isolada — e-mail, CPF, telefone ou chave aleatória — não é um código copia-e-cola e não gera um QR válido neste campo.</p>
                 {sales.pix.review_required ? <p className="notice" role="alert">O PIX anterior diverge do código usado no QR. Corrija o copia-e-cola e salve novamente.</p> : null}
                 {sales.pix.qr_png_data_url ? <img className="gallery-pix-qr" src={sales.pix.qr_png_data_url} alt="QR Code PIX gerado a partir do código copia e cola" /> : null}
                 <label>Instruções de pagamento<textarea name="pix_instructions" rows={3} value={sales.pix.instructions ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, instructions: event.target.value || null } } : current)} /></label>
@@ -809,9 +847,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <p className="eyebrow">Acesso atual</p>
               <h3 id="linked-clients-title">Clientes vinculadas</h3>
               <p className="gallery-scope-note">Pessoas que já possuem cadastro ou galeria privada associada a este evento.</p>
+              {unlinkTarget && (unlinkOperation || (unlinkError && !unlinkPreview)) ? <section className={`unlink-progress${unlinkError || unlinkOperation?.status === "failed" ? " unlink-progress--error" : ""}`} aria-label={`Desvinculação de ${unlinkTarget.name}`} aria-live="polite"><div><strong>{unlinkOperation?.progress.label ?? "Não foi possível desvincular"}</strong>{unlinkOperation ? <span>{unlinkOperation.progress.percent}%</span> : null}</div>{unlinkOperation ? <progress value={unlinkOperation.progress.percent} max={100} /> : null}<p>{unlinkError || unlinkOperation?.last_error || (unlinkOperation?.status === "completed" ? "Cliente desvinculada. Cadastro e histórico foram preservados." : unlinkOperation?.status === "cancelled" ? "Desvinculação cancelada antes da remoção física." : "A desvinculação continua em segundo plano.")}</p><div>{unlinkOperation?.actions.can_cancel ? <MarkinaButton type="button" variant="secondary" disabled={unlinkBusy} onClick={() => unlinkOperationAction("cancel")}>Cancelar desvinculação</MarkinaButton> : null}{unlinkOperation?.actions.can_retry ? <MarkinaButton type="button" disabled={unlinkBusy} onClick={() => unlinkOperationAction("retry")}>Retomar desvinculação</MarkinaButton> : null}{!unlinkOperation?.actions.should_poll ? <MarkinaButton type="button" variant="secondary" onClick={() => { setUnlinkOperation(null); setUnlinkTarget(null); setUnlinkError(""); }}>Fechar</MarkinaButton> : null}</div></section> : null}
               {linkedClients.length ? (
                 <div className="gallery-linked-clients" aria-label="Lista de clientes vinculadas">
-                  {linkedClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} actions={<><MarkinaButton type="button" variant="secondary" disabled={!availablePhotos.length} onClick={() => { setPrivateTarget(person); setAdminPhotoIds([]); }}>Disponibilizar fotos</MarkinaButton><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></>} />)}
+                  {linkedClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} actions={<><MarkinaButton type="button" variant="secondary" onClick={() => { setPrivateTarget(person); setAdminPhotoIds([]); setPrivateActionError(""); }}>Disponibilizar fotos</MarkinaButton><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></>} />)}
                 </div>
               ) : <SystemState title="Nenhuma cliente vinculada" detail="Use a busca ou o novo cadastro para criar o primeiro vínculo." />}
             </section>
@@ -847,9 +886,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       ) : null}
 
       {expandedPhoto ? <div className="photo-preview-dialog" role="presentation" onMouseDown={() => setExpandedPhoto(null)}><div ref={previewDialog} role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhoto(null); }} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="photo-preview-close" onClick={() => setExpandedPhoto(null)}>Fechar</button><img src={`/api${expandedPhoto.preview_url}`} alt={`Prévia com marca d’água ampliada de ${expandedPhoto.name}`} /><p>{expandedPhoto.name}</p></div></div> : null}
-      {unlinkPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="unlink-client-title" aria-modal="true" className="mk-dialog" role="dialog"><p className="eyebrow">Desvinculação da Galeria pública</p><h2 id="unlink-client-title">Desvincular {unlinkPreview.target.client_name}?</h2><p>O acesso e a galeria privada desta relação serão removidos. O cadastro da cliente, suas outras galerias e todo histórico comercial serão preservados.</p><div className="unlink-summary"><span><strong>{unlinkPreview.inventory.remove.private_galleries ?? 0}</strong> galeria privada</span><span><strong>{unlinkPreview.inventory.remove.available_references ?? 0}</strong> fotos disponíveis</span><span><strong>{unlinkPreview.inventory.remove.selections ?? 0}</strong> selecionadas</span><span><strong>{typeof unlinkPreview.inventory.preserve.orders === "number" ? unlinkPreview.inventory.preserve.orders : 0}</strong> pedidos preservados</span></div><p>Pedidos pendentes serão avaliados pelo backend; uma comunicação financeira em revisão bloqueia a remoção até a decisão administrativa.</p><div className="mk-dialog__actions"><MarkinaButton variant="secondary" disabled={unlinkBusy} onClick={() => setUnlinkPreview(null)}>Cancelar</MarkinaButton><MarkinaButton className="mk-button--danger" disabled={unlinkBusy} onClick={confirmUnlink}>{unlinkBusy ? "Iniciando…" : "Confirmar desvinculação"}</MarkinaButton></div></section></div> : null}
-      {privateTarget ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="private-gallery-title" aria-modal="true" className="mk-dialog administrative-private-dialog" role="dialog"><p className="eyebrow">Criação administrativa</p><h2 id="private-gallery-title">Fotos para {privateTarget.name}</h2><p>Escolha ao menos uma foto já liberada. Elas ficarão disponíveis na galeria privada, mas nenhuma será marcada como selecionada pela cliente.</p><form onSubmit={createAdministrativePrivateGallery}><fieldset><legend>Fotos disponíveis</legend><div className="administrative-photo-options">{availablePhotos.map((photo) => <label key={photo.id}><input type="checkbox" checked={adminPhotoIds.includes(photo.id)} onChange={(event) => setAdminPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /><span><strong>{photo.name}</strong><small>{photo.folder_name}</small></span></label>)}</div></fieldset><div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" onClick={() => { setPrivateTarget(null); setAdminPhotoIds([]); }}>Cancelar</MarkinaButton><MarkinaButton disabled={!adminPhotoIds.length}>Criar ou atualizar galeria privada</MarkinaButton></div></form></section></div> : null}
-      {unlinkOperation ? <section className="unlink-progress" aria-live="polite"><div><strong>{unlinkOperation.progress.label}</strong><span>{unlinkOperation.progress.percent}%</span></div><progress value={unlinkOperation.progress.percent} max={100} /><p>{unlinkOperation.last_error ?? (unlinkOperation.status === "completed" ? "Cliente desvinculada. Cadastro e histórico foram preservados." : unlinkOperation.status === "cancelled" ? "Desvinculação cancelada antes da remoção física." : "A desvinculação continua em segundo plano.")}</p><div>{unlinkOperation.actions.can_cancel ? <MarkinaButton variant="secondary" disabled={unlinkBusy} onClick={() => unlinkOperationAction("cancel")}>Cancelar desvinculação</MarkinaButton> : null}{unlinkOperation.actions.can_retry ? <MarkinaButton disabled={unlinkBusy} onClick={() => unlinkOperationAction("retry")}>Retomar desvinculação</MarkinaButton> : null}{["completed", "cancelled"].includes(unlinkOperation.status) ? <MarkinaButton variant="secondary" onClick={() => setUnlinkOperation(null)}>Fechar</MarkinaButton> : null}</div></section> : null}
+      {unlinkPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="unlink-client-title" aria-modal="true" className="mk-dialog" role="dialog"><p className="eyebrow">Desvinculação da Galeria pública</p><h2 id="unlink-client-title">Desvincular {unlinkPreview.target.client_name}?</h2><p>O acesso desta cliente será encerrado nesta Galeria pública e na privada associada. O cadastro, as outras galerias e todo histórico comercial serão preservados; o acervo privado compartilhado permanece para os demais membros.</p><div className="unlink-summary"><span><strong>{unlinkPreview.inventory.remove.memberships ?? 0}</strong> vínculo privado</span><span><strong>{unlinkPreview.inventory.remove.selections ?? 0}</strong> selecionadas removíveis</span><span><strong>{typeof unlinkPreview.inventory.preserve.orders === "number" ? unlinkPreview.inventory.preserve.orders : 0}</strong> pedidos preservados</span><span><strong>{typeof unlinkPreview.inventory.preserve.available_references === "number" ? unlinkPreview.inventory.preserve.available_references : 0}</strong> fotos preservadas</span></div><p>Um pagamento informado e ainda em análise impede a desvinculação até a decisão administrativa.</p>{unlinkError ? <p className="form-message form-message--error" role="alert">{unlinkError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={unlinkBusy} onClick={() => { setUnlinkPreview(null); setUnlinkTarget(null); setUnlinkError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={unlinkBusy} onClick={confirmUnlink}>{unlinkBusy ? "Iniciando…" : "Confirmar desvinculação"}</MarkinaButton></div></section></div> : null}
+      {privateTarget ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="private-gallery-title" aria-modal="true" className="mk-dialog administrative-private-dialog" role="dialog"><p className="eyebrow">Criação administrativa</p><h2 id="private-gallery-title">Fotos para {privateTarget.name}</h2>{availablePhotos.length ? <><p>Escolha ao menos uma foto publicada. Elas ficarão disponíveis na galeria privada, mas nenhuma será marcada como selecionada pela cliente.</p><form onSubmit={createAdministrativePrivateGallery}><fieldset><legend>Fotos disponíveis</legend><div className="administrative-photo-options">{availablePhotos.map((photo) => <label key={photo.id}><input type="checkbox" checked={adminPhotoIds.includes(photo.id)} onChange={(event) => setAdminPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /><span><strong>{photo.name}</strong><small>{photo.folder_name}</small></span></label>)}</div></fieldset>{privateActionError ? <p className="form-message form-message--error" role="alert">{privateActionError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={privateActionBusy} onClick={() => { setPrivateTarget(null); setAdminPhotoIds([]); setPrivateActionError(""); }}>Cancelar</MarkinaButton><MarkinaButton disabled={!adminPhotoIds.length || privateActionBusy}>{privateActionBusy ? "Disponibilizando…" : "Criar ou atualizar galeria privada"}</MarkinaButton></div></form></> : <><SystemState title="Nenhuma foto publicada" detail="As fotos precisam terminar o processamento e ser publicadas na etapa Imagens antes de entrarem em uma galeria privada." /><div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" onClick={() => { setPrivateTarget(null); setPrivateActionError(""); }}>Fechar</MarkinaButton><Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/imagens`}>Ir para Imagens</Link></div></>}</section></div> : null}
       {message ? <p className="notice" role="status">{message}</p> : null}
       <footer className="gallery-editor-footer">
         {previous ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/${previous}`} onClick={confirmDiscard}>← Voltar</Link> : <span />}

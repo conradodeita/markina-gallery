@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { MarkinaButton, PageHeading, StatusBadge, SurfaceCard, SystemState } from "../../ui-kit";
 import {
   formatBrazilianCurrency,
+  maskBrazilianCurrencyInput,
   parseBrazilianCurrency,
   type PriceTier,
 } from "../galleries/pricing-rules";
@@ -72,6 +73,14 @@ export default function PricingPresetsPage() {
         },
       ];
     });
+  }
+
+  function updateTierPrice(index: number, value: string) {
+    const formatted = maskBrazilianCurrencyInput(value);
+    const cents = parseBrazilianCurrency(formatted) ?? 0;
+    setTiers((current) => current.map((tier, tierIndex) => (
+      tierIndex === index ? { ...tier, unit_price_cents: cents } : tier
+    )));
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -145,7 +154,7 @@ export default function PricingPresetsPage() {
               {tiers.map((tier, index) => (
                 <div className="pricing-tier-row" key={`${editing?.id ?? "new"}-${index}`}>
                   <span>{tier.minimum_quantity}–{tier.maximum_quantity ?? "∞"} fotos</span>
-                  <label>Valor unitário<input defaultValue={formatBrazilianCurrency(tier.unit_price_cents)} name={`price_${index}`} inputMode="decimal" required /></label>
+                  <label>Valor unitário<input value={formatBrazilianCurrency(tier.unit_price_cents)} name={`price_${index}`} inputMode="numeric" onChange={(event) => updateTierPrice(index, event.target.value)} required /></label>
                   {index < tiers.length - 1 ? <label>Até<input min={tier.minimum_quantity} type="number" value={tier.maximum_quantity ?? tier.minimum_quantity} onChange={(event) => setTiers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, maximum_quantity: Number(event.target.value) } : itemIndex === index + 1 ? { ...item, minimum_quantity: Number(event.target.value) + 1 } : item))} /></label> : <small>Última faixa sem limite</small>}
                 </div>
               ))}
