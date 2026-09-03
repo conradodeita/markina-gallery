@@ -104,3 +104,20 @@ criança ou biometria foi usado.
 - `GET /healthz`: HTTP `200`, corpo `ok`, em `2026-09-03T11:14:47Z`.
 - `GET /api/health`: HTTP `200`, corpo `{"status":"ok","service":"api"}`, em `2026-09-03T11:14:47Z`.
 - `develop` e homologação estão em paridade funcional no SHA `d37301e0d38de8e41a720cacf3f19c5ba5fc9499`. A task 8.7 permanece aberta para o reteste humano autenticado da disponibilidade automática, identidade reutilizada, link permanente e seleção pública persistente; a change não será sincronizada nem arquivada antes do aceite.
+
+## Fix PostgreSQL da preparação de histórico na desvinculação
+
+- Data: `2026-09-03`; autorização explícita após apresentação do inventário.
+- Pull request: `#41`; CI do PR `33776049423`, resultado `success`.
+- SHA funcional: `9825bc924eaae7678b0116331f2f9f138f860a2a`.
+- SHA integrado e publicado: `5f2236ec80256ce53d5d8f1e5e5aed36c313b8b8`.
+- GitHub Actions: run `33776335838`, resultado final `success`; job de deploy `100719691676`.
+- Deployment do Environment `homolog`: `6247762689`, resultado `success` em `2026-09-03T16:07:41Z`.
+- Backend `253 passed, 1 skipped`; frontend `128 passed`, lint/build aprovados; OpenSpec e gitleaks aprovados antes da aprovação do Environment. A regressão havia sido reproduzida e corrigida em PostgreSQL 17 isolado, preservando histórico e filtros de origem/cliente/foto.
+- Backup lógico exclusivo criado antes da atualização. Alembic confirmou `20260903_0042 (head) -> 20260903_0042 (head)`, sem migration nova.
+- Somente `api`, `worker` e `nginx` foram recriados; `web`, PostgreSQL, Redis e Evolution permaneceram saudáveis. Porta mantida em `127.0.0.1:8080`; sem `down`, prune, limpeza de dados, novo segredo, mudança de configuração ou recurso de terceiro.
+- `GET /healthz`: HTTP `200`, corpo `ok`, em `2026-09-03T16:08:58Z`.
+- `GET /api/health`: HTTP `200`, corpo `{"status":"ok","service":"api"}`, em `2026-09-03T16:08:58Z`.
+- `GET /api/admin/parent-galleries` sem sessão: HTTP `403`, corpo `{"detail":"Acesso negado."}`, no mesmo instante, sem exposição de dados administrativos.
+- `develop` e homologação tinham o mesmo SHA no encerramento das verificações. Este registro posterior é exclusivamente documental, não altera código/configuração/migration e não requer novo deploy para preservar paridade funcional.
+- A task 8.7.19 está concluída. Homologação está pronta para reteste humano da desvinculação, inclusive pela ação `Retomar a desvinculação` quando existir operação falha. Nenhum vínculo real foi removido ou retomado automaticamente. Tasks 8.7 e 8.8 permanecem abertas até o aceite humano e posterior reconciliação/arquivo.
