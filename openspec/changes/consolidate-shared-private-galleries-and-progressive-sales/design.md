@@ -120,6 +120,12 @@ A busca administrativa de clientes representa o diretório global, não uma list
 
 Excluir e recriar não será o fluxo para troca de telefone porque quebraria continuidade de identidade e poderia separar histórico. A exclusão direta será limitada a cadastros sem dependências protegidas, após inventário autoritativo. Qualquer vínculo, sessão/desafio, interação, mensagem, notificação, pedido, pagamento, entrega ou registro histórico bloqueará a operação. A limpeza integral de dados sintéticos de homologação será uma operação de manutenção separada, guardada por `APP_ENV=homolog`, com modo de inventário, confirmação explícita e escopo restrito aos recursos da Markina Gallery.
 
+### 13. Projeção operacional após desvinculação e diálogos compactos
+
+A associação `DerivedGalleryMembership` preservada como `unlinked` é um tombstone histórico e de unicidade, não um vínculo operacional. A listagem atual da Galeria pública incluirá cadastros públicos ainda existentes, associações `active|blocked` e, durante a compatibilidade, proprietárias legadas somente quando não houver associação explícita para o mesmo par origem/cliente. Assim, uma associação explícita `unlinked` impede que `DerivedGallery.client_id` ressuscite o vínculo encerrado; `blocked` continua visível e reversível. Pedidos e seleções históricas podem permanecer em consultas comerciais sem tornar a cliente vinculada novamente.
+
+Os diálogos compartilhados limitarão sua altura à viewport e oferecerão rolagem vertical própria ou no backdrop. Essa regra preserva confirmação e consequências completas, mantendo as ações alcançáveis em janelas desktop baixas e dispositivos móveis sem alterar a semântica das operações.
+
 ## Risks / Trade-offs
 
 - [Privadas legadas inconsistentes para o mesmo par origem/cliente] → a migration executa diagnóstico prévio, aborta diante de conflito e gera relatório sem mesclar histórico automaticamente.
