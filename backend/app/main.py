@@ -3870,11 +3870,21 @@ def parent_gallery_clients(
             )
         )
     )
-    memberships_by_client = {item.client_id: item for item in memberships}
+    all_memberships_by_client = {item.client_id: item for item in memberships}
+    memberships_by_client = {
+        item.client_id: item
+        for item in memberships
+        if item.status in {"active", "blocked"}
+    }
     galleries_by_id = {item.id: item for item in galleries}
+    legacy_gallery_client_ids = {
+        item.client_id
+        for item in galleries
+        if item.client_id not in all_memberships_by_client
+    }
     client_ids = (
         {item.client_id for item in registrations}
-        | {item.client_id for item in galleries}
+        | legacy_gallery_client_ids
         | set(memberships_by_client)
     )
     if not client_ids:
@@ -3898,7 +3908,8 @@ def parent_gallery_clients(
         if membership.derived_gallery_id in galleries_by_id
     }
     for gallery in galleries:
-        galleries_by_client.setdefault(gallery.client_id, gallery)
+        if gallery.client_id not in all_memberships_by_client:
+            galleries_by_client.setdefault(gallery.client_id, gallery)
     available_by_gallery = dict(
         db.execute(
             select(
@@ -3918,9 +3929,10 @@ def parent_gallery_clients(
         for client_id, membership in memberships_by_client.items()
     }
     for gallery in galleries:
-        available_by_client.setdefault(
-            gallery.client_id, int(available_by_gallery.get(gallery.id, 0))
-        )
+        if gallery.client_id not in all_memberships_by_client:
+            available_by_client.setdefault(
+                gallery.client_id, int(available_by_gallery.get(gallery.id, 0))
+            )
     selected_by_client = dict(
         db.execute(
             select(
@@ -3977,7 +3989,9 @@ def parent_gallery_clients(
         phone_verified = phone_verification_by_client.get(client_id, True)
         if registration and (registration.status != "active" or not phone_verified):
             gallery_status = "pending_registration"
-        elif membership and membership.status in {"blocked", "unlinked"} or gallery and not gallery.access_enabled:
+        elif (membership and membership.status == "blocked") or (
+            gallery and not gallery.access_enabled
+        ):
             gallery_status = "blocked"
         elif gallery and gallery.selection_expires_at and expired(gallery.selection_expires_at):
             gallery_status = "expired"

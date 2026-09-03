@@ -2313,6 +2313,13 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
 
     with TestClient(app) as client:
         authenticate_admin(client)
+        current_clients = client.get(
+            f"/admin/parent-galleries/{ids['parent']}/clients"
+        )
+        assert current_clients.status_code == 200
+        assert [
+            item["client_id"] for item in current_clients.json()["clients"]
+        ] == [str(ids["link_only"])]
         link_only_url = f"/admin/parent-galleries/{ids['parent']}/clients/{ids['link_only']}"
         no_purchase = client.delete(
             link_only_url,
@@ -2331,6 +2338,13 @@ def test_unlink_client_is_idempotent_scoped_and_preserves_history(
             is None
         )
         assert db.get(Client, ids["link_only"]) is not None
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        current_clients = client.get(
+            f"/admin/parent-galleries/{ids['parent']}/clients"
+        )
+        assert current_clients.status_code == 200
+        assert current_clients.json()["clients"] == []
 
 
 def test_commercial_removal_lock_is_valid_postgresql_without_distinct() -> None:

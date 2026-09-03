@@ -66,4 +66,4 @@ O proprietário autenticou o navegador; todas as mutações abaixo usaram a inte
 
 ## Limite de escopo após os testes
 
-A autorização corrente cobre limpeza e simulação. Foi solicitada autorização específica para corrigir a listagem de vínculos históricos e a acessibilidade do modal, executar testes e publicar o fix, preservando os fixtures para reteste. Nenhuma alteração funcional foi realizada nesta inspeção. A revisão humana geral permanece aberta; limpeza não era solução para esses bugs.
+O proprietário autorizou em 2026-09-03 corrigir a listagem de vínculos históricos e a acessibilidade do modal, executar testes e publicar o fix em homologação, preservando os fixtures para reteste. O deploy não deverá repetir a limpeza nem usar seu trailer operacional. A revisão humana geral permanece aberta; limpeza não era solução para esses bugs.

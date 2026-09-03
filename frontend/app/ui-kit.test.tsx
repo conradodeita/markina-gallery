@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -18,6 +21,16 @@ describe("componentes visuais Markina", () => {
     render(<ConfirmDialog open title="Liberar lote" detail="Esta ação não inclui novas fotos depois." confirmLabel="Liberar" onCancel={onCancel} onConfirm={vi.fn()} />);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("mantém ações do diálogo alcançáveis em viewport de baixa altura", () => {
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    const backdropRule = css.match(/\.mk-dialog-backdrop\s*\{([^}]*)\}/)?.[1] ?? "";
+    const dialogRule = css.match(/\.mk-dialog\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(backdropRule).toContain("overflow-y:auto");
+    expect(dialogRule).toMatch(/max-height:calc\(100dvh\s*-\s*48px\)/);
+    expect(dialogRule).toContain("overflow-y:auto");
   });
 
   it("mantém hierarquia e dados operacionais no kit compartilhado", () => {

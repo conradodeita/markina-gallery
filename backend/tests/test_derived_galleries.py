@@ -19,6 +19,7 @@ from app.auth import (
     Client,
     ClientPhone,
     DerivedGallery,
+    DerivedGalleryMembership,
     DerivedGalleryPhoto,
     MediaDerivative,
     MediaJob,
@@ -1967,6 +1968,15 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
         }
         db.add_all(galleries.values())
         db.flush()
+        db.add(
+            DerivedGalleryMembership(
+                derived_gallery_id=galleries["Cancelado"].id,
+                parent_gallery_id=parent_id,
+                client_id=client_ids["Cancelado"],
+                status="blocked",
+                blocked_at=now(),
+            )
+        )
 
         def order(label: str, payment_status: str) -> SaleOrder:
             return SaleOrder(
@@ -2020,6 +2030,8 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
     assert clients_by_name["Expirado"]["commercial_status"] == "overdue"
     assert clients_by_name["Expirado"]["gallery_status"] == "expired"
     assert clients_by_name["Cancelado"]["commercial_status"] == "cancelled"
+    assert clients_by_name["Cancelado"]["membership_status"] == "blocked"
+    assert clients_by_name["Cancelado"]["gallery_status"] == "blocked"
     assert clients_by_name["Sem pedido"]["commercial_status"] == "no_order"
     assert clients_by_name["Pago sem galeria"]["commercial_status"] == "paid"
     assert clients_by_name["Pago sem galeria"]["derived_gallery_id"] is None

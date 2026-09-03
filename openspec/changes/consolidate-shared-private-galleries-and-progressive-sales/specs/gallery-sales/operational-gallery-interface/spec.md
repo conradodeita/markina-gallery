@@ -43,6 +43,22 @@ O sistema SHALL fornecer ao fotógrafo interface para criar e operar Galerias p�
 - **WHEN** o fotógrafo desvincula uma cliente cadastrada administrativamente que possui somente o vínculo ativo com a Galeria pública
 - **THEN** o worker conclui a operação sem depender de pedido ou Galeria privada, remove somente o vínculo e preserva a identidade da cliente
 
+#### Scenario: Desvinculação concluída fora da lista operacional
+- **WHEN** a desvinculação termina e a associação privada é preservada como tombstone `unlinked`
+- **THEN** a cliente deixa imediatamente a lista de vínculos atuais da Galeria pública, permanece no cadastro global e continua visível apenas nos contextos históricos aplicáveis
+
+#### Scenario: Compatibilidade sem ressuscitar vínculo encerrado
+- **WHEN** uma privada ainda possui a proprietária legada e existe uma associação explícita `unlinked` para a mesma cliente e origem
+- **THEN** a projeção administrativa MUST considerar a associação explícita como autoridade e SHALL NOT reconstruir um vínculo atual pela proprietária legada
+
+#### Scenario: Cliente bloqueada permanece vinculada
+- **WHEN** a associação explícita de uma cliente está `blocked`
+- **THEN** a cliente permanece na lista operacional com estado bloqueado, distinguindo bloqueio reversível de desvinculação concluída
+
+#### Scenario: Confirmação em janela de baixa altura
+- **WHEN** uma confirmação administrativa é aberta em viewport cuja altura não comporta todo o conteúdo
+- **THEN** título, consequências e ações permanecem alcançáveis por rolagem no diálogo, sem depender de aumentar a janela
+
 ### Requirement: Exclusão segura de galeria privada
 O sistema SHALL permitir exclusão operacional da privada independentemente de vínculos e fotos removíveis, mediante inventário e política comercial. A operação SHALL preservar clientes, pedidos, pagamentos, entregas, snapshots e mídia histórica; itens com pagamento em análise SHALL bloquear somente a parte afetada até decisão.
 
