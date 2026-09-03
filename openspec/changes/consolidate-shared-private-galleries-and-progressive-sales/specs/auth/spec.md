@@ -11,6 +11,10 @@ O sistema SHALL autenticar cliente mediante nome completo, telefone normalizado 
 - **WHEN** o cliente informa o OTP correto dentro do prazo
 - **THEN** o sistema invalida o desafio, cria ou renova sessão com papel `client` e encaminha o cliente conforme suas galerias autorizadas
 
+#### Scenario: Telefone já cadastrado pelo fotógrafo
+- **WHEN** uma cliente informa o mesmo telefone E.164 de um cadastro administrativo e valida o OTP
+- **THEN** o sistema reutiliza o mesmo `Client.id`, materializa a verificação nesse cadastro e SHALL NOT criar outra identidade nem sobrescrever silenciosamente seu nome
+
 #### Scenario: Nova origem com sessão existente
 - **WHEN** uma cliente autenticada abre link de Galeria pública ou privada à qual ainda não está vinculada
 - **THEN** o backend exige OTP contextual, reutiliza a identidade canônica após validação e cria somente os vínculos permitidos pelo link

@@ -15,6 +15,10 @@ O sistema SHALL entregar prévias somente após autenticação e autorização d
 - **WHEN** o fotógrafo autenticado abre foto para conferência
 - **THEN** o sistema entrega prévia administrativa limitada sem download do original
 
+#### Scenario: Publicação automática segura
+- **WHEN** o worker termina a geração do derivado protegido `client_preview` de uma foto de conteúdo
+- **THEN** o sistema marca a foto disponível e libera sua pasta de modo idempotente, sem disponibilizar o arquivo original nem foto cujo derivado ainda não esteja pronto
+
 #### Scenario: Membro bloqueado
 - **WHEN** uma cliente bloqueada solicita prévia operacional da privada
 - **THEN** o sistema nega sem apagar nem impedir seu histórico comercial autorizado

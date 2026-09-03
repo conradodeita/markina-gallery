@@ -61,9 +61,9 @@ function folderPublicationClass(folder: Folder) {
 function FolderPublicationSummary({ folder }: { folder: Folder }) {
   const counts = folder.publication_counts ?? { published: folder.status === "released" ? folder.photo_count : 0, ready_to_publish: 0, processing: 0, failed: 0 };
   return <span className="folder-publication-summary" aria-label={`Publicação de ${folder.name}`}>
-    <small className="is-published">{counts.published} publicadas</small>
-    <small className="is-ready">{counts.ready_to_publish} prontas</small>
-    <small className="is-processing">{counts.processing} processando</small>
+    <small className="is-published">{counts.published} disponíveis</small>
+    <small className="is-ready">{counts.ready_to_publish} aguardando liberação automática</small>
+    <small className="is-processing">{counts.processing} preparando prévia</small>
     <small className="has-failures">{counts.failed} falhas</small>
   </span>;
 }
@@ -155,6 +155,12 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   }, [currentStep, details]);
 
   useEffect(() => {
+    if (currentStep !== "imagens" || !folders.some((folder) => folder.publication_counts?.processing)) return;
+    const timer = window.setTimeout(() => setRefresh((value) => value + 1), 1500);
+    return () => window.clearTimeout(timer);
+  }, [currentStep, folders]);
+
+  useEffect(() => {
     if (!unlinkOperation?.actions.should_poll) return;
     const timer = window.setTimeout(async () => {
       try {
@@ -234,7 +240,9 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         if (currentStep === "imagens") {
           const folderData = sectionData as { folders: Folder[] };
           setFolders(folderData.folders ?? []);
-          const requested = initialFolderId && folderData.folders?.some((folder) => folder.id === initialFolderId) ? initialFolderId : "";
+          const requested = initialFolderId && folderData.folders?.some((folder) => folder.id === initialFolderId)
+            ? initialFolderId
+            : openFolderId && folderData.folders?.some((folder) => folder.id === openFolderId) ? openFolderId : "";
           if (requested) queueMicrotask(() => inspectFolder(requested));
         }
         if (currentStep === "clientes") {
@@ -248,7 +256,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       .catch(() => { if (active) setFailed(true); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [clientQuery, currentStep, initialFolderId, refresh, sourceId]);
+  }, [clientQuery, currentStep, initialFolderId, openFolderId, refresh, sourceId]);
 
   const currentIndex = stepOrder.indexOf(currentStep);
   const previous = currentIndex > 0 ? stepOrder[currentIndex - 1] : null;
@@ -470,20 +478,17 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     }
   }
 
-  async function changePublicLink(action: "create" | "rotate") {
+  async function createPublicLink() {
     if (accessBusy) return;
-    setAccessBusy(`public-${action}`);
+    setAccessBusy("public-create");
     try {
-      const path = action === "rotate"
-        ? `/api/admin/parent-galleries/${sourceId}/public-link/rotate`
-        : `/api/admin/parent-galleries/${sourceId}/public-link`;
-      const result = await jsonRequest(path, {
+      const result = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/public-link`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       }) as GalleryLink;
       setPublicLink(result);
-      setMessage(action === "rotate" ? "Link público regenerado; o endereço anterior foi revogado." : "Link público criado.");
+      setMessage("Link permanente da Galeria pública criado.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o link público.");
     } finally {
@@ -491,18 +496,17 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     }
   }
 
-  async function changePrivateLink(galleryId: string, action: "create" | "rotate") {
+  async function createPrivateLink(galleryId: string) {
     if (accessBusy) return;
-    setAccessBusy(`${galleryId}-${action}`);
+    setAccessBusy(`${galleryId}-create`);
     try {
-      const suffix = action === "rotate" ? "/rotate" : "";
-      const result = await jsonRequest(`/api/admin/derived-galleries/${galleryId}/link${suffix}`, {
+      const result = await jsonRequest(`/api/admin/derived-galleries/${galleryId}/link`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       }) as GalleryLink;
       setPrivateAccess((current) => ({ ...current, [galleryId]: { ...current[galleryId], link: result } }));
-      setMessage(action === "rotate" ? "Link privado regenerado; o endereço anterior foi revogado." : "Link privado criado.");
+      setMessage("Link permanente da galeria privada criado.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o link privado.");
     } finally {
@@ -581,29 +585,16 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     if (result) setMessage("Capa atualizada na prévia protegida.");
   }
 
-  async function publishFolder(folderId: string) {
-    const result = await mutate(`/api/admin/photo-folders/${folderId}/publish`, "POST", {});
-    if (!result) return;
-    setMessage(`${result.published_count} foto(s) publicada(s); ${result.pending_count} em processamento e ${result.failed_count} com falha.`);
-    await inspectFolder(folderId);
-  }
-
-  async function publishReadyAndAdvance() {
+  async function saveImagesAndAdvance() {
     if (savingStep) return;
     setSavingStep(true);
     try {
-      const result = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/publish-ready`, {
-        method: "POST",
-      }) as { published_count: number; pending_count: number; failed_count: number; available_count: number };
-      if (result.pending_count || result.failed_count) {
-        setMessage(`${result.published_count} foto(s) pronta(s) publicada(s). Ainda há ${result.pending_count} em processamento e ${result.failed_count} com falha; revise a etapa antes de avançar.`);
-        setRefresh((value) => value + 1);
-        return;
-      }
-      setMessage(`${result.available_count} foto(s) publicadas na Galeria pública.`);
+      const processing = folders.reduce((total, folder) => total + (folder.publication_counts?.processing ?? 0), 0);
+      const failed = folders.reduce((total, folder) => total + (folder.publication_counts?.failed ?? 0), 0);
+      setMessage(processing || failed
+        ? `Organização salva. ${processing} foto(s) ainda preparando prévia e ${failed} com falha; as concluídas aparecem automaticamente.`
+        : "Organização salva. As fotos processadas já estão disponíveis automaticamente.");
       advanceAfterSave();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível publicar as fotos prontas.");
     } finally {
       setSavingStep(false);
     }
@@ -650,7 +641,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       }
     }
     setUploadState({ phase: "success", current: files.length, total: files.length });
-    setMessage(`${files.length} foto(s) enviada(s) para processamento.`);
+    setMessage(`${files.length} foto(s) enviada(s). As prévias serão preparadas e disponibilizadas automaticamente.`);
     setRefresh((value) => value + 1);
     await inspectFolder(folderId);
     formElement.reset();
@@ -970,7 +961,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       {currentStep === "imagens" ? (
         <section className="gallery-editor-panel">
           <div className="section-heading"><div><p className="eyebrow">Etapa 4</p><h2>Imagens e pastas</h2></div><StatusBadge>{folders.length} pasta(s)</StatusBadge></div>
-          <p className="gallery-scope-note">Crie pastas, revise os JPEGs e publique somente as fotos prontas. A publicação nunca escolhe clientes privados.</p>
+          <p className="gallery-scope-note">Crie pastas e revise os JPEGs. Cada foto fica disponível automaticamente assim que sua prévia protegida termina de processar.</p>
           <fieldset className="gallery-organization-panel">
             <legend>Organização das pastas</legend>
             <label>Exibição das pastas<select aria-label="Exibição das pastas" value={visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode} onChange={saveFolderOrganization}><option value="individual">Pastas lado a lado</option><option value="sequential">Sequência cronológica</option></select></label>
@@ -978,13 +969,13 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <p>{(visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode) === "sequential" ? "A galeria percorre todas as pastas em sequência cronológica." : "A cliente escolhe uma pasta por vez para navegar."}</p>
           </fieldset>
           <form className="gallery-inline-form" onSubmit={createFolder}><label>Nome da nova pasta<input name="name" required placeholder="Ex.: Apresentação da manhã" /></label><MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton></form>
-          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Publicada" : "Em preparação"}</small><FolderPublicationSummary folder={folder} /></button>{folder.status === "preparing" ? <div className="gallery-folder-actions"><button type="button" className="link-button" onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button>{folder.photo_count === 0 ? <button type="button" className="link-button" onClick={() => { if (window.confirm("Excluir esta pasta vazia?")) mutate(`/api/admin/photo-folders/${folder.id}`, "DELETE"); }}>Excluir</button> : null}</div> : null}</article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
+          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Disponível" : "Preparando prévias"}</small><FolderPublicationSummary folder={folder} /></button>{folder.status === "preparing" ? <div className="gallery-folder-actions"><button type="button" className="link-button" onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button>{folder.photo_count === 0 ? <button type="button" className="link-button" onClick={() => { if (window.confirm("Excluir esta pasta vazia?")) mutate(`/api/admin/photo-folders/${folder.id}`, "DELETE"); }}>Excluir</button> : null}</div> : null}</article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
           {selectedFolder ? (
             <div className="gallery-folder-workspace">
-              <div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Publicada" : "Em preparação"}</StatusBadge></div>
+              <div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Disponível" : "Preparando prévias"}</StatusBadge></div>
               {uploadState.phase !== "idle" ? <div className={`upload-status upload-status--${uploadState.phase}`} role="status"><strong>{uploadState.phase === "uploading" ? `Enviando foto ${uploadState.current} de ${uploadState.total}` : uploadState.phase === "success" ? "Upload concluído" : "Falha no upload"}</strong>{uploadState.filename ? <span>{uploadState.filename}</span> : null}{uploadState.phase === "uploading" ? <progress value={uploadState.current} max={uploadState.total} /> : null}</div> : null}
-              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={!selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>Excluir selecionadas</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={!photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Processando</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Publicada" : photo.publication_state === "ready_to_publish" ? "Pronta para publicar" : photo.publication_state === "failed" ? "Falha no processamento" : "Processando")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={!photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={!photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}
-              <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton><MarkinaButton type="button" disabled={!photos.some((photo) => photo.publication_state === "ready_to_publish" || (!photo.publication_state && photo.preview_url))} onClick={() => publishFolder(selectedFolder.id)}>{selectedFolder.status === "released" ? "Publicar novas fotos prontas" : "Publicar pasta na Galeria pública"}</MarkinaButton></form>
+              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={!selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>Excluir selecionadas</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={!photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={!photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={!photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}
+              <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
             </div>
           ) : null}
         </section>
@@ -993,7 +984,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       {currentStep === "clientes" ? (
         <section className="gallery-editor-panel">
           <div className="section-heading"><div><p className="eyebrow">Etapa 5</p><h2>Clientes e acesso</h2></div><StatusBadge>{linkedClients.length} vínculo(s)</StatusBadge></div>
-          <div className="unlisted-link"><span>Link fixo da Galeria pública</span><strong>{publicLink?.status === "active" ? "Ativo" : publicLink?.status === "legacy_unrecoverable" ? "Link antigo precisa ser regenerado" : "Ainda não disponível"}</strong>{publicLink?.link ? <input aria-label="Link da Galeria pública" readOnly value={publicLink.link} onFocus={(event) => event.currentTarget.select()} /> : null}<small>A cliente ainda precisará concluir o login contextual por nome, telefone e código. Regenerar revoga imediatamente o endereço anterior.</small><div className="gallery-access-actions">{publicLink?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(publicLink.link, "Link público")}>Copiar link</MarkinaButton> : null}<MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={() => changePublicLink(publicLink?.status === "active" ? "rotate" : "create")}>{publicLink?.status === "active" ? "Regenerar link" : "Criar link"}</MarkinaButton></div></div>
+          <div className="unlisted-link"><span>Link permanente da Galeria pública</span><strong>{publicLink?.status === "active" ? "Ativo" : publicLink?.status === "legacy_unrecoverable" ? "Link legado indisponível" : "Ainda não disponível"}</strong>{publicLink?.link ? <input aria-label="Link da Galeria pública" readOnly value={publicLink.link} onFocus={(event) => event.currentTarget.select()} /> : null}<small>Este endereço permanece o mesmo enquanto a galeria existir. No primeiro acesso sem sessão válida, a cliente comprova o telefone por código.</small><div className="gallery-access-actions">{publicLink?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(publicLink.link, "Link público")}>Copiar link</MarkinaButton> : publicLink?.status === "legacy_unrecoverable" ? <span>Solicite reparação administrativa somente em caso de incidente.</span> : <MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={createPublicLink}>Criar link permanente</MarkinaButton>}</div></div>
           <div className="gallery-client-grid">
             <section className="gallery-client-card" aria-labelledby="linked-clients-title">
               <p className="eyebrow">Acesso atual</p>
@@ -1030,7 +1021,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               return <article className="private-access-card" key={galleryId} aria-label={`Galeria privada ${galleryOwner?.name ?? galleryId}`}>
                 <header><div><strong>{galleryOwner?.name ? `Galeria de ${galleryOwner.name}` : "Galeria privada"}</strong><small>ID {galleryId}</small></div><StatusBadge tone={access.link?.status === "active" ? "success" : "warning"}>{access.link?.status === "active" ? "Link ativo" : "Sem link atual"}</StatusBadge></header>
                 {access.loading ? <SystemState tone="loading" title="Carregando acesso" detail="Consultando link e membros." /> : access.error ? <SystemState tone="error" title="Acesso indisponível" detail={access.error} /> : <>
-                  <div className="private-link-row">{access.link?.link ? <input aria-label={`Link privado de ${galleryOwner?.name ?? galleryId}`} readOnly value={access.link.link} onFocus={(event) => event.currentTarget.select()} /> : <span>{access.link?.status === "legacy_unrecoverable" ? "O link antigo não pode ser reconstruído." : "Crie o link compartilhável desta galeria."}</span>}<div className="gallery-access-actions">{access.link?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(access.link?.link ?? null, "Link privado")}>Copiar</MarkinaButton> : null}<MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={() => changePrivateLink(galleryId, access.link?.status === "active" ? "rotate" : access.link?.status === "legacy_unrecoverable" ? "rotate" : "create")}>{access.link?.status === "active" ? "Regenerar" : "Criar link"}</MarkinaButton></div></div>
+                  <div className="private-link-row">{access.link?.link ? <input aria-label={`Link privado de ${galleryOwner?.name ?? galleryId}`} readOnly value={access.link.link} onFocus={(event) => event.currentTarget.select()} /> : <span>{access.link?.status === "legacy_unrecoverable" ? "O link legado não pode ser reconstruído; a reparação fica reservada a incidente." : "Crie o link permanente desta galeria."}</span>}<div className="gallery-access-actions">{access.link?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(access.link?.link ?? null, "Link privado")}>Copiar</MarkinaButton> : access.link?.status !== "legacy_unrecoverable" ? <MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={() => createPrivateLink(galleryId)}>Criar link permanente</MarkinaButton> : null}</div></div>
                   <div className="private-member-list">{access.members.length ? access.members.map((member) => <div className={`private-member-row private-member-row--${member.status}`} key={member.membership_id}><div><strong>{member.client_name}</strong><small>{member.phone_e164 ?? "Telefone indisponível"}</small></div><StatusBadge tone={member.status === "active" ? "success" : member.status === "blocked" ? "dark" : "neutral"}>{member.status === "active" ? "Ativa" : member.status === "blocked" ? "Bloqueada" : "Desvinculada"}</StatusBadge><dl><div><dt>Selecionadas</dt><dd>{member.selected_count}</dd></div><div><dt>Compradas</dt><dd>{member.purchased_count}</dd></div><div><dt>Pedidos</dt><dd>{member.order_count}</dd></div></dl><div className="gallery-access-actions">{member.status === "active" ? <MarkinaButton type="button" variant="secondary" disabled={Boolean(accessBusy)} onClick={() => changePrivateMember(galleryId, member, "block")}>Bloquear</MarkinaButton> : member.status === "blocked" ? <MarkinaButton type="button" variant="secondary" disabled={Boolean(accessBusy)} onClick={() => changePrivateMember(galleryId, member, "unblock")}>Desbloquear</MarkinaButton> : null}{member.status !== "unlinked" ? <MarkinaButton type="button" variant="quiet" disabled={Boolean(accessBusy)} onClick={() => changePrivateMember(galleryId, member, "unlink")}>Desvincular</MarkinaButton> : null}</div></div>) : <SystemState title="Nenhum membro" detail="Adicione uma cliente cadastrada abaixo." />}</div>
                   <div className="private-member-add"><label>Adicionar cliente a esta privada<select aria-label={`Adicionar cliente à galeria de ${galleryOwner?.name ?? galleryId}`} value={memberCandidateByGallery[galleryId] ?? ""} onChange={(event) => setMemberCandidateByGallery((current) => ({ ...current, [galleryId]: event.target.value }))}><option value="">Selecione uma cliente</option>{availableCandidates.map((client) => <option key={client.id} value={client.id}>{client.name} · {client.phone}</option>)}</select></label><MarkinaButton type="button" disabled={!memberCandidateByGallery[galleryId] || Boolean(accessBusy)} onClick={() => addPrivateMember(galleryId)}>Adicionar membro</MarkinaButton></div>
                 </>}
@@ -1047,7 +1038,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       {message ? <p className="notice" role="status">{message}</p> : null}
       <footer className="gallery-editor-footer">
         {previous ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/${previous}`} onClick={confirmDiscard}>← Voltar</Link> : <span />}
-        {next && activeEditableForm ? <MarkinaButton type="submit" form={activeEditableForm} disabled={savingStep}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : currentStep === "imagens" ? <MarkinaButton type="button" disabled={savingStep} onClick={publishReadyAndAdvance}>{savingStep ? "Publicando…" : "Salvar e avançar →"}</MarkinaButton> : next ? <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/${next}`}>Avançar →</Link> : <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}`}>Concluir</Link>}
+      {next && activeEditableForm ? <MarkinaButton type="submit" form={activeEditableForm} disabled={savingStep}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : currentStep === "imagens" ? <MarkinaButton type="button" disabled={savingStep} onClick={saveImagesAndAdvance}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : next ? <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/${next}`}>Avançar →</Link> : <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}`}>Concluir</Link>}
       </footer>
     </main>
   );

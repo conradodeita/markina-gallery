@@ -720,6 +720,81 @@ def test_pix_simple_key_columns_migration_is_reversible(tmp_path: Path) -> None:
     assert {"input_type", "pix_key", "receiver_name", "receiver_city"}.isdisjoint(columns)
 
 
+def test_auto_publish_migration_reconciles_only_ready_protected_content(tmp_path: Path) -> None:
+    database = tmp_path / "auto-publish-protected-content.sqlite"
+    database_url = f"sqlite:///{database.as_posix()}"
+    alembic(database_url, "upgrade", "20260902_0041")
+    engine = create_engine(database_url)
+    parent_id, content_folder_id, cover_folder_id = (uuid4() for _ in range(3))
+    ready_id, pending_id, cover_id = (uuid4() for _ in range(3))
+    ready_derivative_id, cover_derivative_id = (uuid4() for _ in range(2))
+    timestamp = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO parent_gallery (id, name, active, created_at) VALUES (:id, 'Evento', 1, :created_at)"),
+            {"id": parent_id.hex, "created_at": timestamp},
+        )
+        for folder_id, purpose in (
+            (content_folder_id, "content"),
+            (cover_folder_id, "cover_assets"),
+        ):
+            connection.execute(
+                text("INSERT INTO photo_folder (id, parent_gallery_id, name, status, purpose, position, created_at, updated_at) VALUES (:id, :parent_id, :name, 'preparing', :purpose, :position, :created_at, :created_at)"),
+                {
+                    "id": folder_id.hex,
+                    "parent_id": parent_id.hex,
+                    "name": purpose,
+                    "purpose": purpose,
+                    "position": 0 if purpose == "content" else -1,
+                    "created_at": timestamp,
+                },
+            )
+        for photo_id, folder_id, filename in (
+            (ready_id, content_folder_id, "ready.jpg"),
+            (pending_id, content_folder_id, "pending.jpg"),
+            (cover_id, cover_folder_id, "cover.jpg"),
+        ):
+            connection.execute(
+                text("INSERT INTO photo_asset (id, parent_gallery_id, folder_id, filename, storage_key, available, created_at) VALUES (:id, :parent_id, :folder_id, :filename, :storage_key, 0, :created_at)"),
+                {
+                    "id": photo_id.hex,
+                    "parent_id": parent_id.hex,
+                    "folder_id": folder_id.hex,
+                    "filename": filename,
+                    "storage_key": f"migration/{filename}",
+                    "created_at": timestamp,
+                },
+            )
+        for derivative_id, photo_id, path in (
+            (ready_derivative_id, ready_id, "ready/client_preview.jpg"),
+            (cover_derivative_id, cover_id, "cover/client_preview.jpg"),
+        ):
+            connection.execute(
+                text("INSERT INTO media_derivative (id, photo_asset_id, variant, relative_path, status, created_at, updated_at) VALUES (:id, :photo_id, 'client_preview', :path, 'ready', :created_at, :created_at)"),
+                {
+                    "id": derivative_id.hex,
+                    "photo_id": photo_id.hex,
+                    "path": path,
+                    "created_at": timestamp,
+                },
+            )
+
+    alembic(database_url, "upgrade", "head")
+    with engine.connect() as connection:
+        availability = dict(
+            connection.execute(
+                text("SELECT filename, available FROM photo_asset ORDER BY filename")
+            ).all()
+        )
+        folder_states = dict(
+            connection.execute(
+                text("SELECT purpose, status FROM photo_folder ORDER BY purpose")
+            ).all()
+        )
+    assert availability == {"cover.jpg": 0, "pending.jpg": 0, "ready.jpg": 1}
+    assert folder_states == {"content": "released", "cover_assets": "preparing"}
+
+
 def test_private_photo_origins_backfill_existing_justification(tmp_path: Path) -> None:
     database = tmp_path / "private-photo-origins.sqlite"
     database_url = f"sqlite:///{database.as_posix()}"
