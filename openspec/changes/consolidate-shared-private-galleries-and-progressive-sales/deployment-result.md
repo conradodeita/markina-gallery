@@ -121,3 +121,16 @@ criança ou biometria foi usado.
 - `GET /api/admin/parent-galleries` sem sessão: HTTP `403`, corpo `{"detail":"Acesso negado."}`, no mesmo instante, sem exposição de dados administrativos.
 - `develop` e homologação tinham o mesmo SHA no encerramento das verificações. Este registro posterior é exclusivamente documental, não altera código/configuração/migration e não requer novo deploy para preservar paridade funcional.
 - A task 8.7.19 está concluída. Homologação está pronta para reteste humano da desvinculação, inclusive pela ação `Retomar a desvinculação` quando existir operação falha. Nenhum vínculo real foi removido ou retomado automaticamente. Tasks 8.7 e 8.8 permanecem abertas até o aceite humano e posterior reconciliação/arquivo.
+
+## Fix da projeção pós-desvinculação e diálogo compacto
+
+- Data: `2026-09-03`; correção, testes e deploy autorizados explicitamente após o smoke sintético.
+- Pull request: `#45`; CI do PR `33809448437`, resultado `success`.
+- SHA funcional: `9da4b01`; SHA integrado e publicado: `7f66f43a5d30d39da64bd3bd7953f8a8a7da35db`.
+- GitHub Actions: run `33809686874`, resultado final `success`; job de deploy `100829045897`.
+- Deployment do Environment `homolog`: `6253547872`, resultado `success` em `2026-09-03T21:49:52Z`.
+- Localmente, backend `253 passed, 1 skipped`, frontend `129 passed`, Ruff, ESLint sem erros, TypeScript, build e OpenSpec estrito foram aprovados. Os gates remotos backend, frontend, OpenSpec e gitleaks também ficaram verdes antes do deploy.
+- O servidor criou backup lógico exclusivo da Markina e confirmou Alembic `20260903_0042 (head) -> 20260903_0042 (head)`, sem migration nova. Somente `api`, `web`, `worker` e `nginx` foram recriados; PostgreSQL, Redis e Evolution permaneceram saudáveis. A entrada continuou restrita a `127.0.0.1:8080` e ao subdomínio `markina-homolog.duckdns.org`.
+- O inventário pós-deploy preservou os fixtures sintéticos: `2` clientes, `1` pública, `1` privada, `2` fotos, `1` membership histórica, zero vínculos públicos, zero pedidos e zero comunicações. Não houve limpeza nem alteração de segredo.
+- `GET /healthz`: HTTP `200`, corpo `ok`; `GET /api/health`: HTTP `200`, corpo `{"status":"ok","service":"api"}`, após o deploy.
+- Na UI autenticada, a etapa Clientes e o resumo da pública sintética passaram a mostrar zero clientes vinculadas, enquanto as duas identidades permaneceram no cadastro global. Em `624 × 484`, a confirmação real apresentou rolagem interna e ações visíveis; foi cancelada sem excluir dados. As tasks 8.7.21–8.7.24 estão concluídas. A task 8.7 permanece aberta somente para a validação humana geral, e a task 8.8 continua condicionada a esse aceite.

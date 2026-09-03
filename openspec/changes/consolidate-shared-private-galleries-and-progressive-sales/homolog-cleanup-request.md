@@ -64,6 +64,13 @@ O proprietário autenticou o navegador; todas as mutações abaixo usaram a inte
 - **Segundo achado visual:** em viewport compacto `624 × 484`, o modal de confirmação excede a altura e corta as ações, sem rolagem interna (`.mk-dialog` não limita altura/overflow). Em `1280 × 900`, a confirmação ficou acessível e iniciou a operação normalmente. A primeira tentativa não acionada não mede latência do backend. A criação da pasta também precisou de envio pelo teclado após um clique sem efeito; esse ponto não teve causa isolada e não deve ser tratado como bug de backend comprovado.
 - Não houve OTP, pagamento ou mensagem externa para os números sintéticos. Permanecem somente os novos fixtures de teste, além dos dados preservados pela manutenção. A task de validação não será marcada como sucesso integral enquanto os achados reproduzidos não forem reconciliados.
 
+### Reteste após a correção
+
+- O fix foi integrado e publicado no SHA `7f66f43a5d30d39da64bd3bd7953f8a8a7da35db`, run `33809686874`, deployment `6253547872`, sem trailer nem execução de limpeza. O inventário pós-deploy preservou `2` clientes, `1` Galeria pública, `1` privada, `2` fotos e `1` membership histórica; os vínculos públicos ficaram em zero.
+- Na etapa Clientes da mesma pública sintética, a interface passou a mostrar `0 vínculo(s)` e `Nenhuma cliente vinculada`. As duas identidades continuaram em `Cadastro existente`, cada uma com ação `Vincular`, comprovando que cadastro global e tombstone/histórico foram preservados sem vínculo operacional. O resumo confirmou `0 clientes vinculadas`.
+- Em viewport real `624 × 484`, a confirmação de exclusão da mesma pública ficou contida na janela, apresentou rolagem interna e permitiu alcançar visualmente `Cancelar` e `Excluir`. A ação `Cancelar` foi usada; nenhuma galeria ou fixture foi removida.
+- As tasks `8.7.21`, `8.7.23` e `8.7.24` estão concluídas. A revisão humana geral `8.7` continua aberta e os dados sintéticos permanecem disponíveis para conferência do proprietário.
+
 ## Limite de escopo após os testes
 
 O proprietário autorizou em 2026-09-03 corrigir a listagem de vínculos históricos e a acessibilidade do modal, executar testes e publicar o fix em homologação, preservando os fixtures para reteste. O deploy não deverá repetir a limpeza nem usar seu trailer operacional. A revisão humana geral permanece aberta; limpeza não era solução para esses bugs.
