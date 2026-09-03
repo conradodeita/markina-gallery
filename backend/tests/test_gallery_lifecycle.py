@@ -54,6 +54,7 @@ from app.auth import (
 from app.commercial_history import (
     CommercialHistoryGap,
     backfill_commercial_snapshots,
+    commercial_history_orders_query,
     materialize_commercial_history,
 )
 from app.commercial_removal import (
@@ -2343,6 +2344,20 @@ def test_commercial_removal_lock_is_valid_postgresql_without_distinct() -> None:
     assert "FOR UPDATE" in compiled
     assert "DISTINCT" not in compiled
     assert "SALE_ORDER_ITEM" in compiled
+
+
+def test_commercial_history_lock_is_valid_postgresql_with_json_snapshot() -> None:
+    statement = commercial_history_orders_query(
+        parent_gallery_id=uuid4(),
+        client_id=uuid4(),
+        photo_asset_id=uuid4(),
+    )
+    compiled = str(statement.compile(dialect=postgresql.dialect())).upper()
+
+    assert "FOR UPDATE" in compiled
+    assert "DISTINCT" not in compiled
+    assert "SALE_ORDER_ITEM" in compiled
+    assert "PRICE_RULE_SNAPSHOT" in compiled
 
 
 def test_public_access_modes_require_session_and_backend_authority(

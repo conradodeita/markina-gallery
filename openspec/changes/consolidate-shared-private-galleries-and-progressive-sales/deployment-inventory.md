@@ -4,6 +4,19 @@ Inventário preparado em 2026-09-02 para a change
 `consolidate-shared-private-galleries-and-progressive-sales`. Nenhuma ação
 remota, migration ou publicação foi executada durante sua preparação.
 
+## Fix da preparação de histórico PostgreSQL — 2026-09-03
+
+- Base local e remota conferida: `f87a19852c0cc13727b041a431bb0652494b6b99` em `develop`. O último deployment registrado de homologação é `6242613460`, SHA `d37301e0d38de8e41a720cacf3f19c5ba5fc9499`, run `33748208935`; entre esse SHA e a base há somente documentação do rollout anterior.
+- Branch: `codex/fix-postgres-client-unlink-history`. SHA funcional testado: `9825bc924eaae7678b0116331f2f9f138f860a2a`; publicação autorizada pelo proprietário após apresentação deste inventário em 2026-09-03.
+- Escopo: corrigir a consulta de materialização de histórico com compras confirmadas, removendo `DISTINCT` incompatível com JSON/bloqueio PostgreSQL e usando subconsulta no recorte por foto. Preservar clientes, pedidos, pagamentos, histórico, isolamento entre origens e os bloqueios legítimos por pagamento em análise.
+- Não há migration nova: schema permanece em `20260903_0042 (head)`. Nenhum secret, dependência, configuração, serviço, volume, rede ou porta é adicionado ou alterado.
+- Validação: reprodução antes/depois em PostgreSQL 17 descartável, `1 passed` no ciclo completo de desvinculação, `1 passed` na política comercial e 15 verificações de isolamento por origem/cliente/foto; regressão dirigida `3 passed`. Suíte backend integral `253 passed, 1 skipped`; Ruff, head Alembic, revisão de diff e OpenSpec estrito (`26 passed`) aprovados. Sem alteração frontend, não foi necessário repetir sua suíte/build.
+- Autorização humana: o proprietário respondeu `Autorizado` à solicitação explícita de push, integração e deploy deste fix em 2026-09-03. A autorização abrange somente este inventário, pelo PR/CI existente e aprovação do Environment `homolog`, sem limpeza ou retentativa de desvinculações reais.
+- Impacto restrito: alvo `https://markina-homolog.duckdns.org`, entrada existente `127.0.0.1:8080`. Pelo pipeline atual, backup lógico precede Alembic (sem nova revisão) e a atualização reconstrói os serviços de aplicação `api`, `web`, `worker` e recria `nginx` do projeto `markina-gallery`. O passo idempotente existente também garante `evolution-db`, `evolution-redis` e `evolution-api` da própria Markina ativos quando o perfil WhatsApp está habilitado, sem mudança prevista de configuração/imagem neste incremento. Não haverá `down`, prune, limpeza de dados, trailer de manutenção destrutiva ou alteração de recursos de terceiros, proxy compartilhado, DNS, certificado ou firewall. A atualização pode causar breve indisponibilidade somente na Markina; não se promete ausência de interrupção do próprio aplicativo.
+- Não retomar nem criar desvinculações em dados reais automaticamente. Após publicação, o administrador poderá usar `Retomar a desvinculação` na operação falha. Pedidos confirmados deverão continuar consultáveis; pagamento em análise continuará exigindo decisão administrativa.
+- Verificação pós-deploy: CI completo verde, SHA do Environment e run bem-sucedidos, Alembic `20260903_0042`, containers saudáveis e respostas externas `200` em `/healthz` e `/api/health`. O reteste visual autenticado permanece na revisão humana 8.7.
+- Rollback: por não existir migration nova, voltar ao SHA anterior saudável pelo mesmo procedimento restrito, após inventário/autorização se necessário; não restaurar banco, excluir snapshots ou executar downgrade como parte deste fix.
+
 ## Incremento da terceira revisão humana — 2026-09-03
 
 - Base local e remota: `ed32b8a37632b3770e0cfbe288898d58c38f811a` em `develop`; último SHA funcional publicado: `f68a5ce205e3619045e3261b377c981778ab42c8`. A diferença entre ambos antes deste incremento é exclusivamente documental.
