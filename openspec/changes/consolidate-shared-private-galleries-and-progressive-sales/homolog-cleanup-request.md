@@ -40,3 +40,30 @@ Alvo exclusivo: projeto `markina-gallery`, diretório `/opt/markina-gallery`, en
 - A limpeza será sinalizada em integração separada, somente após esse inventário. A evidência original da operação falha permanece no backup pré-limpeza; não será exposto conteúdo pessoal nem segredo nos logs/documentos.
 - Tasks de acompanhamento: `8.7.20` (limpeza) e `8.7.21` (simulação autorizada). A revisão humana geral e o arquivamento continuam pendentes.
 - A navegação administrativa no único navegador disponível retornou acesso indisponível por sessão ausente. O login foi aberto para autenticação humana, sem leitura de cookies/senhas ou criação de sessão artificial; isso não bloqueia a limpeza via Environment.
+
+## Resultado da limpeza — task 8.7.20
+
+- PR `#43`, CI `33779855064` verde; integração `95f15224eca6d544f29a5ebcf16d5b86559b6a61` com trailer exato de limpeza. CI integrado `33780211487`, job `100732523892`, deployment `6248444675`: sucesso.
+- Backup lógico pré-limpeza confirmado no log em `2026-09-03T16:45:41Z`, em diretório exclusivo de backups da Markina. O dump preserva o estado anterior do banco para restauração controlada e investigação; não recupera os arquivos JPEG excluídos.
+- Inventários às `16:45:53Z` e `16:46:02Z`: zero em todas as 14 contagens operacionais e zero arquivos/bytes em source, derivatives e history. Removidos os 2 clientes, 2 galerias, 8 fotos e respectivas dependências de teste inventariadas; auditoria e dados de segurança administrativos não são raízes dessa exclusão.
+- API/worker pausados e reiniciados somente no projeto `markina-gallery`; head permaneceu `20260903_0042`. Não houve mudança de segredo, rede, porta ou recurso de terceiros; Evolution não foi reiniciado nem teve seus dados limpos.
+- O proprietário autenticou a sessão pelo navegador. Após a limpeza, a sessão administrativa continuou válida; a página Configurações exibiu os textos e proteção personalizados e o canal Evolution como `Canal pronto`, com número conectado correspondente ao esperado e zero pendências. Nenhuma senha, OTP ou cookie foi lido/exportado.
+- A simulação sintética autorizada começa somente depois dessas contagens zeradas. Os dados criados para esse teste não representam remanescentes da limpeza.
+- Saúde externa às `2026-09-03T16:47:21Z–16:47:22Z`: `/healthz` = `200 / ok`; `/api/health` = `200 / {"status":"ok","service":"api"}`. A resposta pública de branding teve o mesmo SHA-256 antes e depois da limpeza (comparação local, sem publicar dados ou segredo).
+
+## Simulação real em homologação — task 8.7.21
+
+O proprietário autenticou o navegador; todas as mutações abaixo usaram a interface publicada, sem criar sessão artificial ou chamar worker manualmente.
+
+- Pública sintética: `164ba8b2-3a4e-4309-930b-284d69a85e70`, título `TESTE SINTÉTICO · Desvinculação 03-09`, modo `invite_only` mantido.
+- Pasta: `316072d1-4709-43d4-aac9-7762224f0944`, com dois JPEGs geométricos sem pessoas/EXIF, um horizontal e um vertical. Upload e processamento concluídos; duas fotos disponíveis automaticamente, zero falhas, sem publicação manual.
+- Cliente A, sem privada: cadastro e vínculo pela etapa 05; desvinculação confirmada; worker concluiu e a UI removeu a cliente da lista vinculada, mantendo-a no cadastro existente. Conclusão observada em até 10,9 s (limite inclui intervalo entre ferramentas, não medição exata do worker).
+- Cliente B, com privada administrativa `5478640a-ae82-4f3b-848c-0b3df17a3d4f`: duas fotos disponíveis e zero seleções/pedidos. Após confirmar, a operação mostrou `Concluída / 100%` em 2.692 ms, sem recarga nem retentativa. A página da privada confirma o membro como `Desvinculada` e preserva as duas fotos.
+- **Falha reproduzida com dados novos:** apesar da conclusão, a etapa 05 e o resumo da pública continuam incluindo B em `Clientes vinculadas`, mostrando `Galeria bloqueada`; `Cadastro existente` apresenta `Já vinculada`. Portanto, sucesso da operação não significa que a experiência de desvinculação esteja correta. Uma atualização intermediária de sucesso foi corrigida após conferir o estado final.
+- **Causa identificada no código:** `parent_gallery_clients` une cadastros públicos, todas as memberships (inclusive `unlinked`) e `DerivedGallery.client_id` legado. Esse conjunto reinclui a cliente desvinculada; o status `unlinked` é convertido em `blocked`. `_remove_client_link_records` efetivamente apaga o registro público e mantém a membership histórica como `unlinked`, conforme a política de preservação. Não se deve apagar esse histórico para corrigir a listagem.
+- **Segundo achado visual:** em viewport compacto `624 × 484`, o modal de confirmação excede a altura e corta as ações, sem rolagem interna (`.mk-dialog` não limita altura/overflow). Em `1280 × 900`, a confirmação ficou acessível e iniciou a operação normalmente. A primeira tentativa não acionada não mede latência do backend. A criação da pasta também precisou de envio pelo teclado após um clique sem efeito; esse ponto não teve causa isolada e não deve ser tratado como bug de backend comprovado.
+- Não houve OTP, pagamento ou mensagem externa para os números sintéticos. Permanecem somente os novos fixtures de teste, além dos dados preservados pela manutenção. A task de validação não será marcada como sucesso integral enquanto os achados reproduzidos não forem reconciliados.
+
+## Limite de escopo após os testes
+
+A autorização corrente cobre limpeza e simulação. Foi solicitada autorização específica para corrigir a listagem de vínculos históricos e a acessibilidade do modal, executar testes e publicar o fix, preservando os fixtures para reteste. Nenhuma alteração funcional foi realizada nesta inspeção. A revisão humana geral permanece aberta; limpeza não era solução para esses bugs.
