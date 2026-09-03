@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import BrandingSettings, MediaDerivative, MediaJob, PhotoAsset, now
+from app.auth import BrandingSettings, MediaDerivative, MediaJob, PhotoAsset, PhotoFolder, now
 
 VARIANTS = {
     "thumbnail": (480, False),
@@ -150,6 +150,12 @@ def generate_derivatives(
         job.status = "completed"
         job.last_error = None
         job.updated_at = now()
+        folder = db.get(PhotoFolder, photo.folder_id)
+        if folder and folder.purpose == "content":
+            photo.available = True
+            if folder.status == "preparing":
+                folder.status = "released"
+                folder.released_at = now()
         db.commit()
         return derivatives
     except Exception:

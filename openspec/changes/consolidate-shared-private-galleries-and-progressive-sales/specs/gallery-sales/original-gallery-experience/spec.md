@@ -19,6 +19,10 @@ O sistema SHALL fornecer interface coesa, responsiva e acessível para fotógraf
 - **WHEN** a cliente favorita ou seleciona uma foto
 - **THEN** a apresentação mostra marcador sobreposto e texto acessível somente na sessão dela
 
+#### Scenario: Seleção retomada e removida na Galeria pública
+- **WHEN** a cliente retorna à Galeria pública ou aciona uma foto já selecionada
+- **THEN** a aplicação restaura o estado persistido, apresenta `Desmarcar` e atualiza o mesmo carrinho individual no backend
+
 #### Scenario: Prévia administrativa equivalente
 - **WHEN** o fotógrafo abre a mesma galeria
 - **THEN** a composição mantém a linguagem visual da cliente sem executar favorito, seleção ou compra
@@ -31,6 +35,10 @@ Após a primeira seleção, o portal SHALL apresentar rodapé flutuante com quan
 #### Scenario: Seleção de pessoas diferentes
 - **WHEN** a cliente seleciona fotos de duas pessoas na mesma privada
 - **THEN** o rodapé soma todas as fotos daquela cliente e aplica uma única cotação progressiva
+
+#### Scenario: Rodapé da Galeria pública
+- **WHEN** a cliente possui ao menos uma seleção originada na Galeria pública
+- **THEN** a Galeria pública mostra quantidade, total autoritativo, economia e `Prosseguir`, e restaura esses dados em uma visita posterior
 
 #### Scenario: Informar pagamento
 - **WHEN** a cliente confere o pedido e aciona `Informar pagamento`

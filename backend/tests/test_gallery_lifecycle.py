@@ -1367,9 +1367,21 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
     owner_phone = "+5511999999870"
     with SessionLocal() as db:
         owner = Client(full_name="Cliente da primeira seleção", phone_e164=owner_phone)
-        parent = ParentGallery(name="Galeria pública selecionável")
+        parent = ParentGallery(
+            name="Galeria pública selecionável",
+            pricing_mode="fixed",
+            fixed_unit_price_cents=700,
+        )
         db.add_all([owner, parent])
         db.flush()
+        db.add(
+            PriceRule(
+                parent_gallery_id=parent.id,
+                minimum_quantity=1,
+                maximum_quantity=None,
+                unit_price_cents=700,
+            )
+        )
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Lote liberado", status="released")
         db.add(folder)
         db.flush()
@@ -1408,13 +1420,24 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         private_id = UUID(first_response.json()["private_gallery_id"])
         repeated = client.post(f"/public-galleries/{parent_id}/photos/{first_id}/selection")
         assert repeated.status_code == 201
-        assert repeated.json() == {
+        assert {
+            key: repeated.json()[key]
+            for key in (
+                "status",
+                "private_gallery_id",
+                "gallery_created",
+                "reference_created",
+                "selection_created",
+            )
+        } == {
             "status": "selected",
             "private_gallery_id": str(private_id),
             "gallery_created": False,
             "reference_created": False,
             "selection_created": False,
         }
+        assert repeated.json()["cart"]["quantity"] == 1
+        assert repeated.json()["cart"]["total_cents"] == 700
 
         with SessionLocal() as db:
             ensure_private_photo_reference(
@@ -1427,6 +1450,26 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         assert additional.json()["gallery_created"] is False
         assert additional.json()["reference_created"] is False
         assert additional.json()["selection_created"] is True
+        public_state = client.get(f"/public-galleries/{parent_id}/photos").json()
+        assert public_state["private_gallery_id"] == str(private_id)
+        assert {photo["id"]: photo["selected"] for photo in public_state["photos"]} == {
+            str(first_id): True,
+            str(second_id): True,
+        }
+        assert public_state["cart"]["quantity"] == 2
+        assert public_state["cart"]["total_cents"] == 1400
+
+        removed = client.delete(
+            f"/public-galleries/{parent_id}/photos/{second_id}/selection"
+        )
+        assert removed.status_code == 200
+        assert removed.json()["gallery_closed"] is False
+        assert removed.json()["cart"]["quantity"] == 1
+        restored = client.get(f"/public-galleries/{parent_id}/photos").json()
+        assert {photo["id"]: photo["selected"] for photo in restored["photos"]} == {
+            str(first_id): True,
+            str(second_id): False,
+        }
 
     with SessionLocal() as db:
         assert (
@@ -1449,7 +1492,7 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
                     PhotoSelection.client_id == owner_id,
                 )
             )
-            == 2
+            == 1
         )
         origins = set(
             db.scalars(
@@ -1465,7 +1508,105 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
                 )
             )
         )
-        assert origins == {"admin", "client"}
+        assert origins == {"admin"}
+
+
+def test_public_selection_state_is_isolated_and_shared_reference_survives_unselect() -> None:
+    first_phone = "+5511999999868"
+    second_phone = "+5511999999869"
+    with SessionLocal() as db:
+        first = Client(full_name="Primeira cliente", phone_e164=first_phone)
+        second = Client(full_name="Segunda cliente", phone_e164=second_phone)
+        parent = ParentGallery(name="Galeria compartilhada", pricing_mode="fixed")
+        db.add_all([first, second, parent])
+        db.flush()
+        db.add(
+            PriceRule(
+                parent_gallery_id=parent.id,
+                minimum_quantity=1,
+                maximum_quantity=None,
+                unit_price_cents=900,
+            )
+        )
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Lote", status="released")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="compartilhada.jpg",
+            storage_key="selection/shared.jpg",
+        )
+        gallery = DerivedGallery(
+            parent_gallery_id=parent.id,
+            client_id=first.id,
+            name="Privada familiar",
+        )
+        db.add_all([photo, gallery])
+        db.flush()
+        db.add_all(
+            [
+                ParentGalleryRegistration(
+                    parent_gallery_id=parent.id, client_id=person.id, status="active"
+                )
+                for person in (first, second)
+            ]
+            + [
+                DerivedGalleryMembership(
+                    derived_gallery_id=gallery.id,
+                    parent_gallery_id=parent.id,
+                    client_id=person.id,
+                    status="active",
+                )
+                for person in (first, second)
+            ]
+        )
+        ensure_private_photo_reference(
+            db, gallery_id=gallery.id, photo_id=photo.id, origin="client"
+        )
+        db.add_all(
+            [
+                PhotoSelection(
+                    derived_gallery_id=gallery.id,
+                    photo_asset_id=photo.id,
+                    client_id=person.id,
+                )
+                for person in (first, second)
+            ]
+        )
+        db.commit()
+        parent_id, gallery_id, photo_id, first_id = parent.id, gallery.id, photo.id, first.id
+
+    with TestClient(app) as client:
+        authenticate_client(client, first_phone)
+        first_state = client.get(f"/public-galleries/{parent_id}/photos").json()
+        assert first_state["photos"][0]["selected"] is True
+        assert first_state["cart"]["quantity"] == 1
+        assert client.delete(
+            f"/public-galleries/{parent_id}/photos/{photo_id}/selection"
+        ).status_code == 200
+
+        client.cookies.clear()
+        authenticate_client(client, second_phone)
+        second_state = client.get(f"/public-galleries/{parent_id}/photos").json()
+        assert second_state["private_gallery_id"] == str(gallery_id)
+        assert second_state["photos"][0]["selected"] is True
+        assert second_state["cart"]["quantity"] == 1
+        assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["selected"] is True
+
+    with SessionLocal() as db:
+        assert db.scalar(
+            select(DerivedGalleryPhoto).where(
+                DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+                DerivedGalleryPhoto.photo_asset_id == photo_id,
+            )
+        ) is not None
+        assert db.scalar(
+            select(PhotoSelection).where(
+                PhotoSelection.derived_gallery_id == gallery_id,
+                PhotoSelection.photo_asset_id == photo_id,
+            )
+        ).client_id != first_id
 
 
 def test_client_derivation_reuses_gallery_created_by_admin_race_winner() -> None:

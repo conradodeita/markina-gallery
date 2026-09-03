@@ -84,6 +84,58 @@ def test_client_otp_redirects_to_single_gallery(client):
     assert client.get("/admin").status_code == 403
 
 
+def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(client):
+    phone = "+5511987654321"
+    with SessionLocal() as db:
+        person = Client(full_name="Nome cadastrado pelo fotógrafo", phone_e164=phone)
+        parent = ParentGallery(name="Evento compartilhado", access_mode="standard")
+        db.add_all([person, parent])
+        db.flush()
+        db.add(ClientPhone(client_id=person.id, phone_e164=phone, active=True))
+        db.add(
+            ParentGalleryRegistration(
+                parent_gallery_id=parent.id,
+                client_id=person.id,
+                status="active",
+            )
+        )
+        _capability, access_token = issue_gallery_capability(
+            db,
+            parent_gallery_id=parent.id,
+            scope="public_gallery",
+            reconstructible=True,
+        )
+        db.commit()
+        client_id, parent_id = person.id, parent.id
+
+    challenge = client.post(
+        "/auth/client/challenge",
+        json={
+            "full_name": "Nome diferente informado no login",
+            "phone": "+55 (11) 98765-4321",
+            "access_token": access_token,
+            "return_to": f"/public-galleries/{parent_id}",
+        },
+    )
+    assert challenge.status_code == 202
+    otp_for(challenge.json()["challenge_id"])
+    verified = client.post(
+        "/auth/client/verify",
+        json={"challenge_id": challenge.json()["challenge_id"], "code": "123456"},
+    )
+    assert verified.status_code == 200
+
+    with SessionLocal() as db:
+        clients = list(db.scalars(select(Client).where(Client.phone_e164 == phone)))
+        phones = list(db.scalars(select(ClientPhone).where(ClientPhone.phone_e164 == phone)))
+        assert len(clients) == 1
+        assert clients[0].id == client_id
+        assert clients[0].full_name == "Nome cadastrado pelo fotógrafo"
+        assert len(phones) == 1
+        assert phones[0].client_id == client_id
+        assert phones[0].verified_at is not None
+
+
 def test_client_multiple_galleries_and_used_or_expired_otp(client):
     with SessionLocal() as db:
         person = Client(full_name="Responsável", phone_e164="+5511888888888")

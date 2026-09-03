@@ -20,8 +20,12 @@ O sistema SHALL fornecer ao fotógrafo interface para criar e operar Galerias p�
 - **THEN** o backend rejeita a duplicação e oferece acesso ao vínculo existente sem transferir histórico automaticamente
 
 #### Scenario: Pasta em preparação
-- **WHEN** o fotógrafo abre pasta ainda não publicada
-- **THEN** ele vê JPEGs, processamento e ações administrativas sem expor esse conteúdo à cliente
+- **WHEN** o fotógrafo abre pasta com JPEGs cujo derivado protegido ainda está em processamento
+- **THEN** ele vê o estado transitório e ações de recuperação, sem expor original ou conteúdo incompleto à cliente
+
+#### Scenario: Prévia protegida concluída
+- **WHEN** o worker conclui com sucesso o derivado protegido de uma foto de conteúdo
+- **THEN** o sistema disponibiliza automaticamente a foto e sua pasta para administrador e clientes autorizadas, sem exigir ação manual de publicação
 
 #### Scenario: Proteção do acervo
 - **WHEN** uma cliente acessa a interface
@@ -63,9 +67,9 @@ As etapas editáveis SHALL salvar e validar seus dados antes de avançar. A inte
 - **WHEN** o fotógrafo altera Vendas ou Detalhes e aciona `Salvar e avançar`
 - **THEN** a aplicação aguarda a persistência, mostra erro sem navegar em caso de falha ou abre a etapa seguinte em caso de sucesso
 
-#### Scenario: Publicar fotos prontas ao avançar de Imagens
-- **WHEN** o fotógrafo aciona `Salvar e avançar` na etapa Imagens após o processamento das prévias
-- **THEN** a aplicação publica todas as fotos prontas da Galeria pública antes de abrir Clientes e permanece na etapa com contagens claras se houver foto ainda processando ou com falha
+#### Scenario: Avançar com processamento assíncrono
+- **WHEN** o fotógrafo aciona `Salvar e avançar` na etapa Imagens
+- **THEN** a aplicação persiste a organização, abre a etapa seguinte e informa separadamente fotos ainda preparando prévia ou com falha, enquanto cada foto concluída é disponibilizada automaticamente
 
 #### Scenario: Troca direta de etapa
 - **WHEN** existem alterações não salvas e o fotógrafo aciona outra etapa
@@ -75,16 +79,16 @@ As etapas editáveis SHALL salvar e validar seus dados antes de avançar. A inte
 - **WHEN** o fotógrafo configura o modo de acesso na etapa Ajustes
 - **THEN** a interface explica a consequência prática de `Padrão`, `Somente convite individual` e `Coletivo protegido`, deixando explícito que todas as prévias exigem autenticação e que o modo coletivo não habilita reconhecimento facial
 
-### Requirement: Links administráveis e estáveis
-O sistema SHALL apresentar na etapa Clientes o link compartilhável vigente da Galeria pública e de cada privada, com copiar, revogar e regenerar. O endereço SHALL permanecer estável durante uso normal; regenerar SHALL invalidar o anterior e exigir confirmação sobre o impacto.
+### Requirement: Links permanentes na operação da galeria
+O sistema SHALL apresentar na etapa Clientes o link compartilhável vigente da Galeria pública e de cada privada, com ação de copiar. O endereço SHALL permanecer o mesmo durante todo o ciclo operacional da galeria. Revogação ou rotação SHALL ficar restrita a procedimento excepcional de incidente auditado e SHALL NOT aparecer como ação cotidiana do editor.
 
 #### Scenario: Galeria recém-criada
 - **WHEN** o backend cria a Galeria pública
 - **THEN** a etapa Clientes consegue apresentar e copiar seu link sem descartar o segredo durante o redirecionamento do assistente
 
-#### Scenario: Link privado regenerado
-- **WHEN** o fotógrafo confirma regeneração por incidente
-- **THEN** o endereço anterior deixa de criar vínculos, membros atuais permanecem e o novo link passa a ser copiável
+#### Scenario: Reabertura da etapa Clientes
+- **WHEN** o fotógrafo retorna à etapa Clientes depois de compartilhar o endereço
+- **THEN** a aplicação reconstrói e exibe exatamente o mesmo link, sem oferecer regeneração que invalide acessos anteriores
 
 ### Requirement: Configuração comercial integrada
 O editor SHALL apresentar escolha entre preço fixo e tabela global progressiva, campos de moeda brasileira, prévia de cálculo e PIX por BR Code completo ou chave simples suportada com QR gerado. O botão de avanço SHALL persistir toda a configuração sem criar ou alterar pedido existente.

@@ -74,7 +74,14 @@ def remove_client_selection_and_close_if_empty(
     legacy_client_reference = bool(
         reference and not client_origin and reference.origin == "client"
     )
-    if client_origin:
+    other_client_selections = db.scalar(
+        select(func.count()).select_from(PhotoSelection).where(
+            PhotoSelection.derived_gallery_id == gallery.id,
+            PhotoSelection.photo_asset_id == photo_id,
+            PhotoSelection.client_id != client_id,
+        )
+    )
+    if client_origin and not other_client_selections:
         db.delete(client_origin)
     db.flush()
     if reference:
@@ -85,7 +92,7 @@ def remove_client_selection_and_close_if_empty(
                 DerivedGalleryPhotoOrigin.derived_gallery_photo_id == reference.id
             )
         )
-        if not origins_left:
+        if not origins_left and not other_client_selections:
             db.delete(reference)
             db.flush()
 
@@ -96,7 +103,10 @@ def remove_client_selection_and_close_if_empty(
     )
     if references_left:
         return PrivateSelectionRemovalResult(
-            True, client_origin is not None or legacy_client_reference, False
+            True,
+            bool(client_origin is not None or legacy_client_reference)
+            and not other_client_selections,
+            False,
         )
 
     for model in (PhotoComment, PhotoFavorite, PhotoView, PhotoSelection):
@@ -115,5 +125,8 @@ def remove_client_selection_and_close_if_empty(
     db.delete(gallery)
     db.flush()
     return PrivateSelectionRemovalResult(
-        True, client_origin is not None or legacy_client_reference, True
+        True,
+        bool(client_origin is not None or legacy_client_reference)
+        and not other_client_selections,
+        True,
     )

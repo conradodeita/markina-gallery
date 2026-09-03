@@ -126,8 +126,45 @@ def test_worker_processes_only_markina_media_job(tmp_path, monkeypatch):
         job = db.get(MediaJob, job_id)
         assert job.status == "completed"
         assert job.attempts == 1
+        photo = db.get(PhotoAsset, photo_id)
+        folder = db.get(PhotoFolder, photo.folder_id)
+        assert photo.available is True
+        assert folder.status == "released"
+        assert folder.released_at is not None
     assert (derivatives_root / str(photo_id) / "thumbnail.jpg").is_file()
     assert not process_next_media_job()
+
+
+def test_failed_processing_does_not_publish_original(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento com falha")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada protegida")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="ausente.jpg",
+            storage_key="event/ausente.jpg",
+            available=False,
+        )
+        db.add(photo)
+        db.flush()
+        job = enqueue_derivatives(db, photo)
+        db.commit()
+        photo_id, folder_id, job_id = photo.id, folder.id, job.id
+
+    with pytest.raises(FileNotFoundError):
+        process_next_media_job()
+
+    with SessionLocal() as db:
+        assert db.get(MediaJob, job_id).status == "failed"
+        assert db.get(PhotoAsset, photo_id).available is False
+        assert db.get(PhotoFolder, folder_id).status == "preparing"
 
 
 def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, monkeypatch):

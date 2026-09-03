@@ -6786,6 +6786,83 @@ def select_photo_from_public_gallery(
         "gallery_created": result.gallery_created,
         "reference_created": result.reference_created,
         "selection_created": result.selection_created,
+        "cart": _client_cart_payload(db, result.gallery, session.subject_id),
+    }
+
+
+def _operational_gallery_for_public_client(
+    db: Session, *, parent_gallery_id: UUID, client_id: UUID
+) -> DerivedGallery | None:
+    membership = membership_for_client(
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=client_id,
+    )
+    if membership and membership.status == "active":
+        gallery = db.get(DerivedGallery, membership.derived_gallery_id)
+        return gallery if gallery and gallery.access_enabled else None
+    return next(
+        (
+            gallery
+            for gallery in operational_galleries_for_client(db, client_id=client_id)
+            if gallery.parent_gallery_id == parent_gallery_id
+        ),
+        None,
+    )
+
+
+@app.delete("/public-galleries/{parent_gallery_id}/photos/{photo_id}/selection")
+def unselect_photo_from_public_gallery(
+    parent_gallery_id: UUID,
+    photo_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    try:
+        require_public_gallery_browsing(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+        )
+    except PublicGalleryAccessDenied as exc:
+        raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    gallery = _operational_gallery_for_public_client(
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=session.subject_id,
+    )
+    if not gallery:
+        return {
+            "status": "unselected",
+            "private_gallery_id": None,
+            "gallery_closed": False,
+            "cart": {"quantity": 0, "items": []},
+        }
+    try:
+        result = remove_client_selection_and_close_if_empty(
+            db,
+            gallery=gallery,
+            client_id=session.subject_id,
+            photo_id=photo_id,
+        )
+    except CommercialRemovalBlocked as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except CommercialRemovalPreparationFailed as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result.selection_removed:
+        audit(db, "photo_selection.removed_from_public_gallery", str(gallery.id))
+    private_gallery_id = None if result.gallery_closed else gallery.id
+    db.commit()
+    return {
+        "status": "unselected",
+        "private_gallery_id": str(private_gallery_id) if private_gallery_id else None,
+        "gallery_closed": result.gallery_closed,
+        "cart": (
+            _client_cart_payload(db, gallery, session.subject_id)
+            if private_gallery_id
+            else {"quantity": 0, "items": []}
+        ),
     }
 
 
@@ -6876,6 +6953,23 @@ def public_gallery_photos(
         )
     except PublicGalleryAccessDenied as exc:
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    gallery = _operational_gallery_for_public_client(
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=session.subject_id,
+    )
+    selections = (
+        set(
+            db.scalars(
+                select(PhotoSelection.photo_asset_id).where(
+                    PhotoSelection.derived_gallery_id == gallery.id,
+                    PhotoSelection.client_id == session.subject_id,
+                )
+            )
+        )
+        if gallery
+        else set()
+    )
     photos = list(
         db.scalars(
             select(PhotoAsset)
@@ -6923,9 +7017,16 @@ def public_gallery_photos(
                 "preview_url": (f"/public-galleries/{parent_gallery_id}/photos/{photo.id}/preview"),
                 "width": derivatives[photo.id].width if photo.id in derivatives else None,
                 "height": derivatives[photo.id].height if photo.id in derivatives else None,
+                "selected": photo.id in selections,
             }
             for photo in photos
-        ]
+        ],
+        "private_gallery_id": str(gallery.id) if gallery else None,
+        "cart": (
+            _client_cart_payload(db, gallery, session.subject_id)
+            if gallery
+            else {"quantity": 0, "items": []}
+        ),
     }
 
 
@@ -7049,20 +7150,14 @@ def unselect_photo(
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers=headers)
 
 
-@app.get("/gallery/{gallery_id}/cart")
-def client_cart(
-    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+def _client_cart_payload(
+    db: Session, gallery: DerivedGallery, client_id: UUID
 ) -> dict[str, object]:
-    """Carrinho privado calculado no servidor para a cliente autorizada."""
-    session = current_session(request, Role.CLIENT)
-    gallery = derived_gallery_for_client(
-        db, gallery_id, session.subject_id, allow_deleted_origin=True
-    )
     selections = list(
         db.scalars(
             select(PhotoSelection).where(
                 PhotoSelection.derived_gallery_id == gallery.id,
-                PhotoSelection.client_id == session.subject_id,
+                PhotoSelection.client_id == client_id,
             )
         )
     )
@@ -7111,6 +7206,18 @@ def client_cart(
         }
     )
     return result
+
+
+@app.get("/gallery/{gallery_id}/cart")
+def client_cart(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    """Carrinho privado calculado no servidor para a cliente autorizada."""
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(
+        db, gallery_id, session.subject_id, allow_deleted_origin=True
+    )
+    return _client_cart_payload(db, gallery, session.subject_id)
 
 
 @app.post("/gallery/{gallery_id}/checkout", status_code=status.HTTP_201_CREATED)

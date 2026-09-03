@@ -17,7 +17,7 @@ describe("prévia administrativa da galeria", () => {
     }));
     render(<AdminGalleryPreviewPage />);
     expect(await screen.findByText("Modo fotógrafo")).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Apresentação de Festa escolar" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Apresentação de Festa escolar" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Festa escolar", level: 1 })).toBeTruthy();
     expect(screen.getByRole("complementary", { name: "Contexto da visualização" }).textContent).toContain("Prévia administrativa");
     expect(screen.getByRole("img", { name: "Prévia protegida de FOTO_001.jpg" }).getAttribute("src")).toBe("/api/admin/photo-assets/photo-1/watermarked-preview");

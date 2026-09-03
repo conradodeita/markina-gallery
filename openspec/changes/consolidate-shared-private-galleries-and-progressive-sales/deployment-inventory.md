@@ -4,6 +4,17 @@ Inventário preparado em 2026-09-02 para a change
 `consolidate-shared-private-galleries-and-progressive-sales`. Nenhuma ação
 remota, migration ou publicação foi executada durante sua preparação.
 
+## Incremento da terceira revisão humana — 2026-09-03
+
+- Base local e remota: `ed32b8a37632b3770e0cfbe288898d58c38f811a` em `develop`; último SHA funcional publicado: `f68a5ce205e3619045e3261b377c981778ab42c8`. A diferença entre ambos antes deste incremento é exclusivamente documental.
+- Branch: `codex/fix-client-gallery-persistence`; SHA funcional testado: `d9c6f0bea8e380e083e5443f2e6a18d2c34ae623`.
+- Escopo: disponibilização automática após geração da prévia protegida, reconciliação de fotos já processadas, reutilização da identidade administrativa por telefone E.164, links permanentes na interface e seleção pública persistente com desmarcação e cotação.
+- Schema esperado após deploy: `20260903_0042 (head)`. A migration somente marca disponíveis fotos de conteúdo com `client_preview` pronta e libera suas pastas; não publica capa, não expõe original e não remove nem reescreve cliente, vínculo, galeria, pedido, pagamento ou arquivo. O downgrade é vazio por segurança, pois a disponibilidade anterior não é distinguível depois do backfill.
+- Resultados locais: backend `252 passed, 1 skipped`; frontend `128 passed`; Ruff/ESLint/TypeScript/build, head Alembic, `git diff --check` e OpenSpec estrito aprovados.
+- Autorização humana: ainda é necessária autorização específica para publicar este inventário e aprovar o Environment `homolog`; nenhuma ação remota será executada com base em autorizações consumidas por incrementos anteriores.
+- Impacto zero: alvo `https://markina-homolog.duckdns.org`, única entrada `127.0.0.1:8080`; o pipeline existente cria backup lógico, executa a migration de dados e pode recriar somente `api`, `web`, `worker` e `nginx` do projeto `markina-gallery`. Não há `down`, prune, limpeza, novo secret, dependência, volume, serviço, porta, rede, DNS, certificado, firewall ou recurso de terceiro.
+- Verificação pós-deploy: confirmar SHA publicado, head Alembic `20260903_0042`, containers saudáveis, respostas externas `200` em `/healthz` e `/api/health` e smoke sintético de upload/processamento, reutilização de identidade, estabilidade de link e restauração de seleção antes de declarar paridade.
+
 ## Incremento da segunda revisão humana — 2026-09-02
 
 - Base local e remota no início: `8b13c9bd87fe8cb264ec66f7f66aafea52c0ffd2` em `develop`; último SHA funcional publicado antes deste incremento: `2eab180af1965449e4d97f2462ef78e17d92f5cb`.

@@ -9,7 +9,7 @@ O preço atual vive em `PriceRule` por Galeria pública e `pricing.quote` aplica
 **Goals:**
 
 - Introduzir associação multiusuário à privada sem reescrever as tabelas individuais de seleção, favorito, visualização, comentário e pedido.
-- Tornar links públicos e privados estáveis, reconstruíveis, revogáveis, rotacionáveis e auditáveis sem armazenar o segredo em texto puro.
+- Tornar links públicos e privados permanentes durante o ciclo normal da galeria, reconstruíveis e auditáveis sem armazenar o segredo em texto puro, reservando revogação/rotação para incidente operacional.
 - Garantir unicidade concorrente de uma privada por `Galeria pública + cliente`, inclusive por caminhos de link, seleção e ação administrativa.
 - Introduzir modelos globais e snapshots comerciais progressivos por parcelas, mantendo histórico e sem reinterpretar faixas legadas.
 - Executar uma transição aditiva que permita validar dados antes de retirar dependências do proprietário legado.
@@ -56,11 +56,11 @@ A origem da referência (`admin`, `client`, `facial`) continuará registrando ju
 
 O link reutilizável usará um identificador público aleatório da capacidade e uma assinatura HMAC versionada sobre escopo, alvo e versão de rotação. O banco armazenará metadados, versão e hash/fingerprint para auditoria, nunca a assinatura em texto puro. Assim, o backend consegue reconstruir o mesmo endereço enquanto a versão estiver ativa; rotação incrementa a versão e invalida assinaturas antigas. Uma chave dedicada de servidor será fornecida por secret de ambiente, separada do segredo de OTP.
 
-O `public_gallery` continuará reutilizável. `private_invite` será dividido semanticamente em `private_gallery_link` reutilizável sem `client_id` e `private_client_invite` individual compatível quando necessário. Tokens legados continuarão válidos até consumo, expiração, revogação ou rotação, mas não serão exibidos novamente se o segredo original já tiver sido descartado; a interface oferecerá regeneração confirmada nesses casos.
+O `public_gallery` continuará reutilizável. `private_invite` será dividido semanticamente em `private_gallery_link` reutilizável sem `client_id` e `private_client_invite` individual compatível quando necessário. A interface operacional mostrará somente o endereço permanente e a ação de copiar; não oferecerá regeneração ou revogação rotineira. Tokens legados continuarão válidos até consumo, expiração ou incidente. Quando o segredo legado não puder ser reconstruído, a reparação excepcional deverá ser executada de forma administrativa e auditada, com aviso explícito de que o endereço anterior deixará de funcionar.
 
 Alternativa rejeitada: guardar o token completo criptografado ou em texto puro. A assinatura determinística versionada reduz material secreto persistido e permite reconstrução; criptografia acrescentaria rotação de ciphertext e risco operacional sem benefício para este caso.
 
-Todo novo vínculo de origem exigirá OTP contextual, mesmo com sessão de cliente ativa. Retomar vínculo já existente não exigirá novo OTP. O desafio carregará a capacidade e a origem; a confirmação reutilizará a identidade única por telefone E.164 e consumirá o desafio de forma idempotente.
+Todo novo vínculo de origem sem sessão comprovada exigirá OTP contextual. Uma sessão válida poderá retomar vínculo já existente sem novo OTP; entrar em outra origem seguirá exigindo prova contextual conforme a política de segurança vigente. O desafio carregará a capacidade e a origem; a confirmação resolverá primeiro `ClientPhone` e depois o telefone canônico E.164, reutilizará o mesmo `Client.id` criado pelo fotógrafo e nunca criará uma segunda identidade para o mesmo número. O nome informado no login não substituirá silenciosamente o cadastro administrativo.
 
 ### 5. Notificação transacional por outbox
 
@@ -88,9 +88,15 @@ Alternativa rejeitada: converter automaticamente faixas antigas em parcelas. Iss
 
 Cada etapa terá uma função explícita de validação e persistência. `Salvar e avançar` aguardará a mutation e somente navegará após sucesso. Stepper, retorno e troca direta verificarão estado sujo; salvarão pelo mesmo caminho ou pedirão confirmação de descarte. Não haverá salvamentos concorrentes implícitos.
 
-Na etapa Imagens, `Salvar e avançar` também publicará todas as fotos cuja prévia protegida já esteja pronta. A etapa permanecerá aberta se ainda houver processamento ou falha, apresentando as contagens retornadas pelo backend. Publicar disponibiliza fotos na Galeria pública; montar uma privada continuará sendo uma ação distinta e explícita na etapa Clientes.
+O upload continuará enfileirando a geração de miniatura e prévias protegidas; a mídia original nunca será servida. Assim que o worker concluir o derivado `client_preview`, ele marcará a foto como disponível e liberará sua pasta de conteúdo de forma idempotente. `Processamento` será apenas um estado técnico transitório exibido como preparação da prévia. A etapa Imagens não exigirá botão de publicação: `Salvar e avançar` apenas persistirá a organização e avisará sobre itens ainda em preparo ou com falha, sem impedir que as fotos já prontas apareçam para administrador e clientes autorizadas.
 
 A lista de tipografias será um registro estático tipado de fontes locais licenciadas, com categoria e fallback. A API aceitará apenas IDs desse registro. Arquivos de fonte serão carregados via mecanismo local do Next.js, sem dependência de CDN.
+
+### 8.1. Seleção pública persistente e cotação autoritativa
+
+A listagem pública autorizada retornará, para a identidade autenticada, o estado de seleção de cada foto, a privada derivada resolvida para aquela origem e a cotação atual calculada pelo mesmo serviço do carrinho privado. Selecionar ou desmarcar gravará/removerá `PhotoSelection` no backend; a interface recarregará o estado autoritativo após cada mutation e em toda nova visita. O botão alternará explicitamente entre `Selecionar` e `Desmarcar`, e o resumo flutuante mostrará quantidade, total, economia e `Prosseguir` para a privada correspondente.
+
+A administração continuará lendo as mesmas `PhotoSelection` persistidas em suas agregações, portanto não dependerá de checkout para conhecer a seleção em andamento. A resposta de cliente não serializará seleções de outros membros. Se a última seleção encerrar uma privada criada somente por aquela jornada, a resposta orientará a cliente de volta à Galeria pública sem apagar histórico comercial.
 
 ### 9. Lifecycle e histórico
 

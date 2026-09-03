@@ -56,18 +56,15 @@ describe("editor administrativo de galeria", () => {
     expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/photo-folders", expect.anything());
   });
 
-  it("oferece retorno e avanço dentro do contexto da mesma galeria", async () => {
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : path.endsWith("/publish-ready") && init?.method === "POST" ? response({ published_count: 0, pending_count: 0, failed_count: 0, available_count: 0, folders: [] }) : response({ folders: [], clients: [] }));
+  it("oferece retorno e avanço sem exigir publicação manual", async () => {
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response({ folders: [], clients: [] }));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     await screen.findByRole("heading", { name: "Imagens e pastas" });
     expect(screen.getByRole("link", { name: "← Voltar" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/detalhes");
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/source-1/publish-ready",
-      expect.objectContaining({ method: "POST" }),
-    ));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/clientes"));
+    expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/publish-ready"))).toBe(false);
   });
 
   it("salva o modo de acesso explicitamente sem inferência do frontend", async () => {
@@ -372,7 +369,7 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByText("Nenhuma galeria privada criada")).toBeTruthy();
   });
 
-  it("mostra, copia e regenera links estáveis e gerencia membros da privada", async () => {
+  it("mostra e copia links permanentes sem oferecer regeneração e gerencia membros", async () => {
     const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 2, selected_count: 1, purchased_count: 0, gallery_status: "active" };
     const member = { membership_id: "membership-1", client_id: "client-1", client_name: "Ana Cliente", phone_e164: "+5511999999999", status: "active", selected_count: 1, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" };
     const clipboardWrite = vi.fn().mockResolvedValue(undefined);
@@ -382,7 +379,6 @@ describe("editor administrativo de galeria", () => {
       if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
       if (path.endsWith("/available-photos")) return response({ photos: [] });
       if (path === "/api/admin/clients") return response({ clients: [] });
-      if (path.endsWith("/public-link/rotate") && init?.method === "POST") return response({ status: "active", capability_id: "public-2", expires_at: null, secret_available: true, link: "https://example.test/a/public-new" });
       if (path.endsWith("/public-link")) return response({ status: "active", capability_id: "public-1", expires_at: null, secret_available: true, link: "https://example.test/a/public" });
       if (path.endsWith("/derived-galleries/derived-1/link")) return response({ status: "active", capability_id: "private-1", expires_at: null, secret_available: true, link: "https://example.test/a/private" });
       if (path.endsWith("/members/client-1/block") && init?.method === "POST") return response({ ...member, status: "blocked" });
@@ -398,12 +394,8 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByText("Ana Cliente", { selector: ".private-member-row strong" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("https://example.test/a/public"));
-    fireEvent.click(screen.getByRole("button", { name: "Regenerar link" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/source-1/public-link/rotate",
-      expect.objectContaining({ method: "POST", body: "{}" }),
-    ));
-    expect((screen.getByLabelText("Link da Galeria pública") as HTMLInputElement).value).toBe("https://example.test/a/public-new");
+    expect(screen.queryByRole("button", { name: /Regenerar/ })).toBeNull();
+    expect(screen.getByText(/permanece o mesmo enquanto a galeria existir/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Bloquear" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/derived-galleries/derived-1/members/client-1/block",
@@ -784,36 +776,31 @@ describe("editor administrativo de galeria", () => {
 
     const folderCard = (await screen.findByText("Rodada incremental")).closest("article") as HTMLElement;
     expect(folderCard.className).toContain("has-failures");
-    expect(within(folderCard).getByText("1 publicadas")).toBeTruthy();
-    expect(within(folderCard).getByText("1 prontas")).toBeTruthy();
-    expect(within(folderCard).getByText("1 processando")).toBeTruthy();
+    expect(within(folderCard).getByText("1 disponíveis")).toBeTruthy();
+    expect(within(folderCard).getByText("1 aguardando liberação automática")).toBeTruthy();
+    expect(within(folderCard).getByText("1 preparando prévia")).toBeTruthy();
     expect(within(folderCard).getByText("1 falhas")).toBeTruthy();
     fireEvent.click(within(folderCard).getByRole("button"));
-    expect(await screen.findByText("Pronta para publicar")).toBeTruthy();
+    expect(await screen.findByText("Aguardando liberação automática")).toBeTruthy();
     expect(screen.getByText("Falha sanitizada")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Publicar novas fotos prontas" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/photo-folders/folder-1/publish",
-      expect.objectContaining({ method: "POST", body: "{}" }),
-    ));
-    expect(await screen.findByText(/1 foto\(s\) publicada\(s\)/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Publicar/ })).toBeNull();
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/clients"))).toBe(false);
   });
 
-  it("publica a rodada pronta ao salvar Imagens e não avança com processamento ou falha", async () => {
+  it("avança enquanto o worker conclui fotos pendentes e informa o estado transitório", async () => {
     const folder = { id: "folder-1", name: "Rodada", status: "preparing", position: 0, photo_count: 3, preview_url: null, released_at: null, publication_counts: { published: 0, ready_to_publish: 1, processing: 1, failed: 1 } };
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    const fetchMock = vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/folders")) return response({ folders: [folder] });
-      if (path.endsWith("/publish-ready") && init?.method === "POST") return response({ published_count: 1, pending_count: 1, failed_count: 1, available_count: 1, folders: [] });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Salvar e avançar →" }));
-    expect(await screen.findByText(/Ainda há 1 em processamento e 1 com falha/)).toBeTruthy();
-    expect(push).not.toHaveBeenCalled();
+    expect(await screen.findByText(/1 foto\(s\) ainda preparando prévia e 1 com falha/)).toBeTruthy();
+    expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/clientes");
+    expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/publish-ready"))).toBe(false);
   });
 
   it("abre somente uma pasta válida recebida pelo resumo", async () => {
