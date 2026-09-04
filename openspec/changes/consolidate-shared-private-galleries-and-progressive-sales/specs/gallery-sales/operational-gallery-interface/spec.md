@@ -66,6 +66,10 @@ O sistema SHALL permitir exclusão operacional da privada independentemente de v
 - **WHEN** o fotógrafo confirma exclusão de privada sem impedimento comercial
 - **THEN** o sistema revoga link e acessos, remove referências operacionais elegíveis e preserva identidades e outras galerias
 
+#### Scenario: Privada cuja origem já foi removida
+- **WHEN** uma privada preservada permanece após a exclusão de sua Galeria pública de origem
+- **THEN** o fotógrafo consegue abrir, inspecionar e excluir explicitamente a privada sem depender de a origem voltar ao estado ativo
+
 #### Scenario: Exclusão confirmada, bloqueada ou em processamento
 - **WHEN** o fotógrafo aciona a exclusão de uma Galeria pública ou privada
 - **THEN** a interface mantém confirmação, erro e progresso junto à ação, explica qualquer impedimento comercial retornado pelo backend e apresenta o próximo estado sem aparentar inércia
