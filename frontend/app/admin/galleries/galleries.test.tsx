@@ -157,6 +157,24 @@ describe("telas administrativas de galerias", () => {
     ));
   });
 
+  it("abre a privada preservada sem consultar fotos de uma origem removida", async () => {
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/photos")) return Promise.resolve(new Response(JSON.stringify({ photos: [] }), { status: 200 }));
+      if (path.endsWith("/members")) return Promise.resolve(new Response(JSON.stringify({ members: [] }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ id: "private-1", parent_gallery_id: "public-removed", name: "Privada preservada", custom_message: "", favorites_enabled: false, comments_enabled: false, selection_expires_at: null, cover_preview_url: null, origin_active: false, frozen: false, blocked: false }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+
+    expect(await screen.findByRole("heading", { name: "Privada preservada" })).toBeTruthy();
+    expect(screen.getByText("Galeria pública de origem removida")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Excluir galeria privada" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Carregar novos JPEGs na pública" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/public-removed/available-photos",
+    );
+  });
+
   it("confirma e exclui uma galeria privada preservando o histórico", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       const body = path.endsWith("/photos") || path.endsWith("/available-photos")

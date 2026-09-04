@@ -5876,7 +5876,14 @@ def delete_derived_gallery(
     gallery = db.get(DerivedGallery, gallery_id)
     if not gallery:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
-    require_parent_gallery_mutable(db, gallery.parent_gallery_id)
+    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    if not parent:
+        raise HTTPException(status_code=404, detail="Galeria pública de origem não encontrada.")
+    if parent.lifecycle_status == "deleting":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A Galeria pública está em exclusão. Aguarde a conclusão antes de excluir a privada.",
+        )
     member_client_ids = set(
         db.scalars(
             select(DerivedGalleryMembership.client_id).where(
@@ -6061,6 +6068,7 @@ def derived_gallery_detail(
         "client": client_data,
         "responsible": client_data,
         "configuration_inherited": True,
+        "origin_active": parent.lifecycle_status == "active",
         **status_data,
     }
 

@@ -1067,6 +1067,15 @@ def test_public_deletion_keeps_one_private_photo_copy_and_private_viewing(
         authenticate_admin(admin)
         listed = admin.get("/admin/parent-galleries").json()["parent_galleries"]
         assert all(item["id"] != str(parent_id) for item in listed)
+        detail = admin.get(f"/admin/derived-galleries/{private_id}")
+        assert detail.status_code == 200
+        assert detail.json()["origin_active"] is False
+        assert admin.delete(f"/admin/derived-galleries/{private_id}").status_code == 204
+
+    with SessionLocal() as db:
+        assert db.get(DerivedGallery, private_id) is None
+        assert db.get(ParentGallery, parent_id) is not None
+        assert db.get(PhotoAsset, retained_id) is not None
 
 
 def test_client_library_separates_public_private_and_origin_states() -> None:
