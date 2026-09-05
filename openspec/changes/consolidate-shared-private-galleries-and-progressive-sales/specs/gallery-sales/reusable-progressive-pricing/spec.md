@@ -16,7 +16,7 @@ O sistema SHALL permitir configurar cada Galeria pública com `preço fixo` ou `
 - **THEN** o sistema copia código, nome e faixas vigentes para a Galeria pública sem manter dependência mutável para o cálculo futuro
 
 ### Requirement: Cadastro global identificado de tabelas progressivas
-O sistema SHALL permitir ao fotógrafo criar, editar, listar e desativar tabelas globais com código visível único, nome e faixas contíguas iniciadas em um. Somente a última faixa SHALL poder ficar sem limite superior, e valores unitários subsequentes SHALL NOT superar o valor da faixa anterior.
+O sistema SHALL permitir ao fotógrafo criar, editar, listar, desativar e reativar tabelas globais com código visível único, nome e faixas contíguas iniciadas em um. Somente a última faixa SHALL poder ficar sem limite superior, e valores unitários subsequentes SHALL NOT superar o valor da faixa anterior.
 
 #### Scenario: Dropdown de tabelas
 - **WHEN** a etapa Vendas consulta os modelos ativos
@@ -29,6 +29,10 @@ O sistema SHALL permitir ao fotógrafo criar, editar, listar e desativar tabelas
 #### Scenario: Modelo global alterado
 - **WHEN** uma tabela já usada é editada ou desativada
 - **THEN** galerias e pedidos existentes preservam seus snapshots e somente uma nova escolha utiliza a versão atualizada
+
+#### Scenario: Tabela desativada é reativada
+- **WHEN** o fotógrafo reativa uma tabela global desativada
+- **THEN** ela volta a aparecer no dropdown de novas configurações comerciais sem alterar versão, faixas ou snapshots já materializados em galerias e pedidos
 
 ### Requirement: Cálculo progressivo por parcelas
 O backend SHALL calcular cada unidade pelo valor da parcela em que sua posição se encontra e SHALL devolver detalhamento por faixa, quantidade, subtotal, total e economia. O frontend SHALL NOT recalcular autoridade comercial por conta própria.

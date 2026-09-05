@@ -123,13 +123,18 @@ export default function PricingPresetsPage() {
     setSaving(false);
   }
 
-  async function deactivate(preset: Preset) {
-    if (!window.confirm(`Desativar ${preset.label}? Galerias existentes manterão seus valores.`)) return;
-    const response = await fetch(`/api/admin/pricing-presets/${preset.id}`, {
-      method: "DELETE",
+  async function setActive(preset: Preset, active: boolean) {
+    if (!active && !window.confirm(`Desativar ${preset.label}? Galerias existentes manterão seus valores.`)) return;
+    const response = await fetch(`/api/admin/pricing-presets/${preset.id}${active ? "/activate" : ""}`, {
+      method: active ? "POST" : "DELETE",
       credentials: "same-origin",
     });
-    setMessage(response.ok ? "Tabela desativada sem alterar galerias existentes." : "Não foi possível desativar.");
+    const action = active ? "ativar" : "desativar";
+    setMessage(response.ok
+      ? active
+        ? "Tabela reativada e disponível para novas galerias."
+        : "Tabela desativada sem alterar galerias existentes."
+      : `Não foi possível ${action} a tabela.`);
     if (response.ok) await load();
   }
 
@@ -173,7 +178,7 @@ export default function PricingPresetsPage() {
             <SurfaceCard className="pricing-preset-card" key={preset.id}>
               <header><div><strong>{preset.label}</strong><small>Versão {preset.version}</small></div><StatusBadge tone={preset.active ? "success" : "neutral"}>{preset.active ? "Ativa" : "Desativada"}</StatusBadge></header>
               <dl>{preset.tiers.map((tier) => <div key={tier.minimum_quantity}><dt>{tier.minimum_quantity}–{tier.maximum_quantity ?? "∞"} fotos</dt><dd>{formatBrazilianCurrency(tier.unit_price_cents)} cada</dd></div>)}</dl>
-              <div className="pricing-form-actions"><MarkinaButton variant="secondary" onClick={() => startEdit(preset)}>Editar</MarkinaButton>{preset.active ? <MarkinaButton variant="quiet" onClick={() => deactivate(preset)}>Desativar</MarkinaButton> : null}</div>
+              <div className="pricing-form-actions"><MarkinaButton variant="secondary" onClick={() => startEdit(preset)}>Editar</MarkinaButton>{preset.active ? <MarkinaButton variant="quiet" onClick={() => setActive(preset, false)}>Desativar</MarkinaButton> : <MarkinaButton variant="secondary" onClick={() => setActive(preset, true)}>Ativar</MarkinaButton>}</div>
             </SurfaceCard>
           ))}
         </section>
