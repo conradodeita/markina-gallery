@@ -64,7 +64,7 @@ Regras de UX:
 
 - capa e informações sem fotografia identificável podem ocorrer sem login quando a galeria permitir;
 - nenhuma prévia fotográfica é entregue antes do login; o backend aplica os modos `standard`, `invite_only` e `collective_protected`;
-- a biblioteca apresenta separadamente Galerias públicas autorizadas, galerias privadas derivadas e histórico comercial;
+- a biblioteca apresenta uma única jornada por evento/Galeria pública, incorporando seleção e conteúdo privado autorizado sem expor a galeria privada automática como um segundo evento concorrente; link privado direto e origem indisponível mantêm acesso contextual à superfície privada, enquanto o histórico comercial permanece separado;
 - coração/check seleciona; ampliar é ação separada;
 - contador e total estimado ficam visíveis após autenticação;
 - carrinho mostra miniaturas, quantidade, faixa de preço alcançada e próxima faixa;

@@ -676,6 +676,45 @@ def protected_preview_response(path, filename: str) -> FileResponse:
     )
 
 
+def _client_journey_destination(db: Session, client_id: UUID) -> str:
+    """Resolve uma única origem sem expor a privada automática como destino concorrente."""
+
+    active_parent_ids = set(
+        db.scalars(
+            select(ParentGalleryRegistration.parent_gallery_id).where(
+                ParentGalleryRegistration.client_id == client_id,
+                ParentGalleryRegistration.status == "active",
+            )
+        )
+    )
+    private_by_parent = {
+        gallery.parent_gallery_id: gallery
+        for gallery in operational_galleries_for_client(db, client_id=client_id)
+    }
+    blocked_parent_ids = set(
+        db.scalars(
+            select(DerivedGalleryMembership.parent_gallery_id).where(
+                DerivedGalleryMembership.client_id == client_id,
+                DerivedGalleryMembership.status == "blocked",
+            )
+        )
+    )
+    origin_ids = active_parent_ids | set(private_by_parent) | blocked_parent_ids
+    if len(origin_ids) != 1:
+        return "/library"
+
+    parent_id = next(iter(origin_ids))
+    if parent_id not in blocked_parent_ids and parent_id in active_parent_ids:
+        parent = db.get(ParentGallery, parent_id)
+        if parent and parent.active and parent.lifecycle_status == "active":
+            return f"/public-galleries/{parent.id}"
+
+    private_gallery = private_by_parent.get(parent_id)
+    if private_gallery:
+        return f"/gallery/{private_gallery.id}"
+    return "/library"
+
+
 def statistics_data(
     db: Session,
     *,
@@ -1111,10 +1150,6 @@ def client_verify(
         minimize_client_challenge_pii(db, challenge)
         db.commit()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    gallery_ids = [
-        gallery.id
-        for gallery in operational_galleries_for_client(db, client_id=client.id)
-    ]
     if challenge.parent_gallery_id:
         parent_context = db.get(ParentGallery, challenge.parent_gallery_id)
         if capability and capability.scope in {
@@ -1261,27 +1296,12 @@ def client_verify(
                     "parent_gallery.registration_completed",
                     str(registration.id),
                 )
-            private_gallery_id = next(
-                (
-                    gallery.id
-                    for gallery in operational_galleries_for_client(
-                        db,
-                        client_id=client.id,
-                    )
-                    if gallery.parent_gallery_id == challenge.parent_gallery_id
-                ),
-                None,
-            )
-            destination = (
-                f"/gallery/{private_gallery_id}"
-                if private_gallery_id and access.state == "authorized"
-                else access.destination
-            )
+            destination = access.destination
             if capability and capability.scope == "parent_invite":
                 consume_gallery_capability(capability)
                 audit(db, "parent_gallery.invite_verified", str(capability.id))
     else:
-        destination = f"/gallery/{gallery_ids[0]}" if len(gallery_ids) == 1 else "/library"
+        destination = _client_journey_destination(db, client.id)
     minimize_client_challenge_pii(db, challenge)
     create_session(db, response, Role.CLIENT, client.id)
     audit(db, "client.redirected", str(client.id))
@@ -1518,13 +1538,8 @@ def destination(request: Request) -> dict[str, str]:
     if session.role == Role.ADMIN.value:
         return {"destination": "/admin"}
     with SessionLocal() as db:
-        galleries = operational_galleries_for_client(
-            db,
-            client_id=session.subject_id,
-        )
-    return {
-        "destination": f"/gallery/{galleries[0].id}" if len(galleries) == 1 else "/library"
-    }
+        client_destination = _client_journey_destination(db, session.subject_id)
+    return {"destination": client_destination}
 
 
 @app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -6250,10 +6265,12 @@ def client_library(
         registration.parent_gallery_id: registration for registration in registrations
     }
     public_rows: list[dict[str, object]] = []
+    parents_by_id: dict[UUID, ParentGallery] = {}
     for registration in registrations:
         parent = db.get(ParentGallery, registration.parent_gallery_id)
         if not parent or not parent.active or parent.lifecycle_status != "active":
             continue
+        parents_by_id[parent.id] = parent
         access_state = "active" if registration.status == "active" else "pending_review"
         public_rows.append(
             {
@@ -6297,8 +6314,11 @@ def client_library(
     )
     membership_rows.sort(key=lambda row: row[0].created_at, reverse=True)
     rows: list[dict[str, object]] = []
+    galleries_by_id: dict[str, DerivedGallery] = {}
     for gallery, membership_status in membership_rows:
         parent = db.get(ParentGallery, gallery.parent_gallery_id)
+        if parent:
+            parents_by_id[parent.id] = parent
         folders = list(
             db.scalars(
                 select(PhotoFolder)
@@ -6331,32 +6351,135 @@ def client_library(
             if gallery.selection_expires_at and expired(gallery.selection_expires_at)
             else "active"
         )
-        rows.append(
+        private_row = {
+            "id": str(gallery.id),
+            "name": gallery.name,
+            "message": (parent.sales_message or "") if parent else "",
+            "selection_expires_at": gallery.selection_expires_at.isoformat()
+            if gallery.selection_expires_at
+            else None,
+            "gallery_status": gallery_status,
+            "membership_status": membership_status,
+            "browse_url": f"/gallery/{gallery.id}"
+            if membership_status == "active" and gallery.access_enabled
+            else None,
+            "origin_removed": origin_removed,
+            "origin": {
+                "id": str(gallery.parent_gallery_id),
+                "name": parent.name if parent else "Galeria pública removida",
+                "available": origin_available,
+                "browse_url": f"/public-galleries/{gallery.parent_gallery_id}"
+                if origin_available
+                else None,
+            },
+            "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
+        }
+        rows.append(private_row)
+        galleries_by_id[str(gallery.id)] = gallery
+
+    gallery_ids = [gallery.id for gallery, _membership_status in membership_rows]
+    prepared_gallery_ids: set[UUID] = set()
+    if gallery_ids:
+        prepared_gallery_ids.update(
+            derived_gallery_id
+            for derived_gallery_id, origin in db.execute(
+                select(DerivedGalleryPhoto.derived_gallery_id, DerivedGalleryPhoto.origin).where(
+                    DerivedGalleryPhoto.derived_gallery_id.in_(gallery_ids),
+                    DerivedGalleryPhoto.origin.in_(("admin", "facial")),
+                )
+            )
+            if origin in ("admin", "facial")
+        )
+        prepared_gallery_ids.update(
+            derived_gallery_id
+            for derived_gallery_id, origin in db.execute(
+                select(
+                    DerivedGalleryPhoto.derived_gallery_id,
+                    DerivedGalleryPhotoOrigin.origin,
+                )
+                .join(
+                    DerivedGalleryPhotoOrigin,
+                    DerivedGalleryPhotoOrigin.derived_gallery_photo_id
+                    == DerivedGalleryPhoto.id,
+                )
+                .where(
+                    DerivedGalleryPhoto.derived_gallery_id.in_(gallery_ids),
+                    DerivedGalleryPhotoOrigin.origin.in_(("admin", "facial")),
+                )
+            )
+            if origin in ("admin", "facial")
+        )
+
+    public_by_parent = {str(row["id"]): row for row in public_rows}
+    private_by_parent = {str(row["origin"]["id"]): row for row in rows}
+    parent_order = list(public_by_parent)
+    parent_order.extend(
+        parent_id for parent_id in private_by_parent if parent_id not in public_by_parent
+    )
+    journeys: list[dict[str, object]] = []
+    for parent_id in parent_order:
+        public_row = public_by_parent.get(parent_id)
+        private_row = private_by_parent.get(parent_id)
+        private_gallery = (
+            galleries_by_id.get(str(private_row["id"])) if private_row else None
+        )
+        private_status = str(private_row["gallery_status"]) if private_row else None
+        membership_blocked = private_status == "blocked"
+        public_url = (
+            str(public_row["browse_url"])
+            if public_row and public_row.get("browse_url") and not membership_blocked
+            else None
+        )
+        private_url = (
+            str(private_row["browse_url"])
+            if private_row and private_row.get("browse_url")
+            else None
+        )
+        primary_surface = "public" if public_url else "private" if private_url else "unavailable"
+        primary_url = public_url or private_url
+        cart = (
+            _client_cart_payload(db, private_gallery, session.subject_id)
+            if private_gallery
+            else {"quantity": 0, "items": []}
+        )
+        has_prepared_photos = bool(
+            private_gallery and private_gallery.id in prepared_gallery_ids
+        )
+        parent = parents_by_id.get(UUID(parent_id))
+        journey_status = (
+            "blocked"
+            if membership_blocked
+            else str(public_row["gallery_status"])
+            if public_url and public_row
+            else private_status
+            or (str(public_row["gallery_status"]) if public_row else "unavailable")
+        )
+        journeys.append(
             {
-                "id": str(gallery.id),
-                "name": gallery.name,
-                "message": (parent.sales_message or "") if parent else "",
-                "selection_expires_at": gallery.selection_expires_at.isoformat()
-                if gallery.selection_expires_at
-                else None,
-                "gallery_status": gallery_status,
-                "membership_status": membership_status,
-                "browse_url": f"/gallery/{gallery.id}"
-                if membership_status == "active" and gallery.access_enabled
-                else None,
-                "origin_removed": origin_removed,
-                "origin": {
-                    "id": str(gallery.parent_gallery_id),
-                    "name": parent.name if parent else "Galeria pública removida",
-                    "available": origin_available,
-                    "browse_url": f"/public-galleries/{gallery.parent_gallery_id}"
-                    if origin_available
-                    else None,
+                "id": parent_id,
+                "name": (
+                    str(public_row["name"])
+                    if public_row
+                    else str(private_row["origin"]["name"])
+                ),
+                "event_name": parent.event_name if parent and parent.event_name else "",
+                "status": journey_status,
+                "primary_surface": primary_surface,
+                "browse_url": primary_url,
+                "public_gallery": public_row,
+                "private_gallery": private_row,
+                "selection": cart,
+                "has_prepared_photos": has_prepared_photos,
+                "actions": {
+                    "continue_url": public_url,
+                    "review_url": private_url if int(cart.get("quantity", 0)) > 0 else None,
+                    "prepared_url": private_url if has_prepared_photos else None,
+                    "fallback_url": private_url if not public_url else None,
                 },
-                "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
             }
         )
     return {
+        "journeys": journeys,
         "public_galleries": public_rows,
         "private_galleries": rows,
         "galleries": rows,

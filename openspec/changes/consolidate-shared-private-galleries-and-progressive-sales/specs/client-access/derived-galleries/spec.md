@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Persistência do histórico privado
-O sistema SHALL manter biblioteca visual para cada cliente autorizada, separando Galerias públicas, privadas compartilhadas das quais é membro e histórico individual. Bloqueio, expiração, desvinculação ou remoção operacional SHALL NOT apagar pedidos, entregas ou identificação histórica permitida.
+O sistema SHALL manter biblioteca visual para cada cliente autorizada, agrupando em uma única jornada cada Galeria pública e sua privada operacional correspondente, além do histórico individual. A privada SHALL continuar existindo para administração, conteúdo preparado, seleção, checkout e contingência, mas uma privada criada automaticamente pela seleção pública SHALL NOT aparecer como um segundo card concorrente. Bloqueio, expiração, desvinculação ou remoção operacional SHALL NOT apagar pedidos, entregas ou identificação histórica permitida.
 
 #### Scenario: Biblioteca vazia
 - **WHEN** a cliente autenticada não possui origem, associação privada ativa nem entrega histórica
@@ -15,6 +15,22 @@ O sistema SHALL manter biblioteca visual para cada cliente autorizada, separando
 - **WHEN** o fotógrafo libera uma nova pasta autorizada na Galeria pública de origem
 - **THEN** a privada ou biblioteca apresenta as novas fotos disponíveis conforme sua organização, sem alterar seleções e compras individuais anteriores
 
+#### Scenario: Primeira seleção não duplica a jornada
+- **WHEN** a cliente seleciona sua primeira foto em uma Galeria pública e o backend cria a privada operacional
+- **THEN** a biblioteca mantém um único card para aquela origem, restaura a seleção na Galeria pública e não apresenta a privada automática como outra galeria equivalente
+
+#### Scenario: Conteúdo preparado pelo fotógrafo
+- **WHEN** o fotógrafo adiciona fotos ao acervo privado de uma cliente cuja Galeria pública permanece disponível
+- **THEN** a biblioteca apresenta `Fotos preparadas para você` dentro da mesma jornada da origem, sem criar um segundo card de evento
+
+#### Scenario: Entrada direta pela privada
+- **WHEN** uma cliente abre um link privado válido e possui associação ativa
+- **THEN** o sistema abre a superfície privada autorizada sem exigir passagem prévia pela biblioteca e sem conceder acesso a outra privada
+
+#### Scenario: Origem indisponível com privada preservada
+- **WHEN** a Galeria pública fica removida ou indisponível e a cliente ainda possui acesso operacional à privada preservada
+- **THEN** a biblioteca mantém uma única jornada, usa a privada como superfície de contingência e explica que a origem pública não está disponível
+
 #### Scenario: Histórico após expiração ou bloqueio
 - **WHEN** a privada expira ou a cliente é bloqueada
 - **THEN** a cliente continua acessando pedidos e entregas históricas permitidas sem criar nova seleção
@@ -24,7 +40,7 @@ O sistema SHALL manter biblioteca visual para cada cliente autorizada, separando
 - **THEN** a cliente continua acessando seus pedidos, entregas e identificação de fotos compradas sem criar seleção fora das regras de reativação
 
 ### Requirement: Interface da cliente orientada pelo backend
-O sistema SHALL renderizar biblioteca, associação, permissões, prazo, fotos compartilhadas e estados individuais a partir de respostas autorizadas do backend. O frontend SHALL NOT inferir vínculo por link, telefone ou estado local e SHALL NOT expor lista de membros ou atividades de terceiros.
+O sistema SHALL renderizar jornadas agrupadas, associação, permissões, prazo, fotos compartilhadas e estados individuais a partir de respostas autorizadas do backend. O frontend SHALL NOT inferir agrupamento, vínculo, superfície principal ou contingência por link, telefone ou estado local e SHALL NOT expor lista de membros ou atividades de terceiros.
 
 #### Scenario: Permissão alterada
 - **WHEN** o fotógrafo bloqueia, desbloqueia ou desvincula uma cliente

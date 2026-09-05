@@ -25,6 +25,29 @@ type PrivateGallery = {
   origin: { id: string; name: string; available: boolean; browse_url: string | null };
   folders: Array<{ id: string; name: string }>;
 };
+type Journey = {
+  id: string;
+  name: string;
+  event_name: string;
+  status: "active" | "pending_review" | "blocked" | "expired" | "origin_removed" | "unavailable";
+  primary_surface: "public" | "private" | "unavailable";
+  browse_url: string | null;
+  public_gallery: PublicGallery | null;
+  private_gallery: PrivateGallery | null;
+  selection: {
+    quantity: number;
+    total_cents?: number;
+    savings_cents?: number;
+    pricing_error?: string;
+  };
+  has_prepared_photos: boolean;
+  actions: {
+    continue_url: string | null;
+    review_url: string | null;
+    prepared_url: string | null;
+    fallback_url: string | null;
+  };
+};
 type Order = {
   id: string;
   gallery_name: string;
@@ -42,9 +65,21 @@ const accessModeLabel = {
   collective_protected: "Acesso coletivo protegido",
 };
 
+const journeyStatus = {
+  active: { label: "Acesso ativo", tone: "success" as const },
+  pending_review: { label: "Aguardando liberação", tone: "warning" as const },
+  blocked: { label: "Acesso bloqueado", tone: "neutral" as const },
+  expired: { label: "Prazo expirado", tone: "warning" as const },
+  origin_removed: { label: "Origem indisponível", tone: "warning" as const },
+  unavailable: { label: "Indisponível", tone: "neutral" as const },
+};
+
+function money(cents: number) {
+  return (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 export default function LibraryPage() {
-  const [publicGalleries, setPublicGalleries] = useState<PublicGallery[] | null>(null);
-  const [privateGalleries, setPrivateGalleries] = useState<PrivateGallery[] | null>(null);
+  const [journeys, setJourneys] = useState<Journey[] | null>(null);
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [selected, setSelected] = useState<ProtectedPhoto[]>([]);
   const [failed, setFailed] = useState(false);
@@ -58,52 +93,62 @@ export default function LibraryPage() {
         if (!libraryResponse.ok || !purchasesResponse.ok) throw new Error();
         const library = await libraryResponse.json();
         const purchases = await purchasesResponse.json();
-        setPublicGalleries(library.public_galleries ?? []);
-        setPrivateGalleries(library.private_galleries ?? library.galleries ?? []);
+        setJourneys(library.journeys ?? []);
         setOrders(purchases.orders ?? []);
       })
       .catch(() => {
         setFailed(true);
-        setPublicGalleries([]);
-        setPrivateGalleries([]);
+        setJourneys([]);
         setOrders([]);
       });
   }, []);
 
-  if (!publicGalleries || !privateGalleries || !orders) return <SystemState tone="loading" title="Carregando sua biblioteca" detail="Consultando Galerias públicas, galerias privadas e compras." />;
+  if (!journeys || !orders) return <SystemState tone="loading" title="Carregando sua biblioteca" detail="Consultando suas galerias, seleções e compras." />;
   if (failed) return <main className="admin-shell"><h1>Biblioteca indisponível</h1><p className="intro">Não foi possível consultar suas galerias. Tente novamente.</p></main>;
 
   return (
     <main className="admin-shell library-shell">
-      <PageHeading eyebrow="Sua área privada" title="Suas galerias" detail="Continue escolhendo fotos nas Galerias públicas autorizadas, revise suas galerias privadas e consulte compras preservadas." />
+      <PageHeading eyebrow="Sua área privada" title="Suas galerias" detail="Cada evento aparece uma única vez. Continue escolhendo na Galeria pública, revise sua seleção e consulte compras preservadas." />
 
-      <section className="library-section" aria-labelledby="public-library-title">
-        <div className="section-heading"><div><p className="eyebrow">Para continuar escolhendo</p><h2 id="public-library-title">Galerias públicas abertas</h2></div><StatusBadge>{publicGalleries.length}</StatusBadge></div>
-        {publicGalleries.length ? <div className="library-card-grid">{publicGalleries.map((gallery) => {
-          const content = <><header><span>Galeria pública</span><StatusBadge tone={gallery.gallery_status === "active" ? "success" : "warning"}>{gallery.gallery_status === "active" ? "Acesso ativo" : "Aguardando liberação"}</StatusBadge></header><strong>{gallery.name}</strong><small>{gallery.event_name || "Evento sem nome"}</small><p>{accessModeLabel[gallery.access_mode]}</p>{gallery.browse_url ? <b>Ver fotos e escolher mais →</b> : <b>A grade de fotos ainda não está disponível</b>}</>;
-          return gallery.browse_url ? <Link className="library-card" href={gallery.browse_url} key={gallery.id}>{content}</Link> : <article className="library-card" key={gallery.id}>{content}</article>;
-        })}</div> : <EmptyState title="Nenhuma Galeria pública aberta" detail="Links e convites autorizados aparecerão aqui enquanto a origem estiver disponível." />}
-      </section>
-
-      <section className="library-section" aria-labelledby="private-library-title">
-        <div className="section-heading"><div><p className="eyebrow">Suas escolhas e fotos disponíveis</p><h2 id="private-library-title">Galerias privadas</h2></div><StatusBadge>{privateGalleries.length}</StatusBadge></div>
-        {privateGalleries.length ? <div className="library-card-grid">{privateGalleries.map((gallery) => (
-          <article className={`library-card private-library-card private-library-card--${gallery.gallery_status}`} key={gallery.id}>
-            <header><span>Galeria privada</span><StatusBadge tone={gallery.gallery_status === "active" ? "success" : "warning"}>{gallery.gallery_status === "active" ? "Ativa" : gallery.gallery_status === "expired" ? "Prazo expirado" : "Origem removida"}</StatusBadge></header>
-            <strong>{gallery.name}</strong>
-            <small>{gallery.message || "Revise as fotos disponíveis para você"}</small>
-            <div className="gallery-folder-badges">{gallery.folders.map((folder) => <StatusBadge key={folder.id} tone="success">{folder.name}</StatusBadge>)}{!gallery.folders.length ? <StatusBadge tone="warning">Aguardando fotos</StatusBadge> : null}</div>
-            {gallery.selection_expires_at ? <small>Seleção até {new Date(gallery.selection_expires_at).toLocaleDateString("pt-BR")}</small> : null}
-            <div className="library-card-actions"><Link href={`/gallery/${gallery.id}`}>Abrir galeria privada</Link>{gallery.origin.available && gallery.origin.browse_url ? <Link href={gallery.origin.browse_url}>Voltar à Galeria pública</Link> : <span>{gallery.origin_removed ? "A Galeria pública de origem foi removida; suas fotos privadas permanecem." : "O retorno à origem não está autorizado."}</span>}</div>
-          </article>
-        ))}</div> : <EmptyState title="Nenhuma galeria privada ativa" detail="Uma galeria privada aparece após sua primeira seleção ou quando o fotógrafo disponibiliza fotos para você." />}
+      <section className="library-section" aria-labelledby="journey-library-title">
+        <div className="section-heading"><div><p className="eyebrow">Uma jornada por evento</p><h2 id="journey-library-title">Galerias e seleções</h2></div><StatusBadge>{journeys.length}</StatusBadge></div>
+        {journeys.length ? <div className="library-card-grid">{journeys.map((journey) => {
+          const status = journeyStatus[journey.status] ?? journeyStatus.unavailable;
+          const contextualUrl = journey.actions.prepared_url ?? journey.actions.review_url;
+          const contextualLabel = journey.has_prepared_photos && journey.actions.review_url
+            ? "Revisar seleção e fotos preparadas"
+            : journey.has_prepared_photos
+              ? "Fotos preparadas para você"
+              : journey.actions.review_url
+                ? "Revisar seleção"
+                : null;
+          const showFallback = journey.actions.fallback_url && journey.actions.fallback_url !== contextualUrl;
+          return (
+            <article className={`library-card journey-card journey-card--${journey.status}`} key={journey.id}>
+              <header><span>{journey.primary_surface === "private" ? "Acesso preservado" : "Galeria pública"}</span><StatusBadge tone={status.tone}>{status.label}</StatusBadge></header>
+              <strong>{journey.name}</strong>
+              <small>{journey.event_name || "Evento sem nome"}</small>
+              {journey.public_gallery ? <p>{accessModeLabel[journey.public_gallery.access_mode]}</p> : null}
+              {journey.selection.quantity > 0 ? <div className="journey-selection-summary" aria-label="Resumo da seleção"><span><strong>{journey.selection.quantity}</strong> foto(s) selecionada(s)</span>{typeof journey.selection.total_cents === "number" ? <span><strong>{money(journey.selection.total_cents)}</strong> no total</span> : null}{typeof journey.selection.savings_cents === "number" && journey.selection.savings_cents > 0 ? <small>Economia de {money(journey.selection.savings_cents)}</small> : null}</div> : null}
+              {journey.private_gallery?.folders.length ? <div className="gallery-folder-badges">{journey.private_gallery.folders.map((folder) => <StatusBadge key={folder.id} tone="success">{folder.name}</StatusBadge>)}</div> : null}
+              {journey.private_gallery?.selection_expires_at ? <small>Seleção até {new Date(journey.private_gallery.selection_expires_at).toLocaleDateString("pt-BR")}</small> : null}
+              <div className="library-card-actions">
+                {journey.actions.continue_url ? <Link href={journey.actions.continue_url}>Ver fotos e continuar</Link> : null}
+                {contextualUrl && contextualLabel ? <Link href={contextualUrl}>{contextualLabel}</Link> : null}
+                {showFallback ? <Link href={journey.actions.fallback_url!}>{journey.status === "origin_removed" ? "Abrir fotos preservadas" : "Abrir fotos disponíveis"}</Link> : null}
+                {!journey.browse_url ? <span>{journey.status === "blocked" ? "O acesso operacional está bloqueado. Seu histórico continua preservado." : "A galeria ainda não está disponível para navegação."}</span> : null}
+                {journey.status === "origin_removed" ? <span>A Galeria pública de origem foi removida; suas fotos autorizadas permanecem.</span> : null}
+              </div>
+            </article>
+          );
+        })}</div> : <EmptyState title="Nenhuma galeria disponível" detail="Links e convites autorizados aparecerão aqui como uma única jornada por evento." />}
       </section>
 
       <SurfaceCard className="client-order-history library-history" >
         <div className="section-heading"><div><p className="eyebrow">Preservado independentemente</p><h2>Histórico de compras</h2></div><StatusBadge>{orders.length}</StatusBadge></div>
         {orders.length ? orders.map((order) => (
           <article className="library-order" key={order.id}>
-            <div><strong>{order.gallery_name}</strong><small>{order.parent_gallery_name} · {order.gallery_status_label}</small><span>{order.items.length} foto(s) · {(order.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>{order.confirmed_at ? <time dateTime={order.confirmed_at}>Confirmada em {new Date(order.confirmed_at).toLocaleDateString("pt-BR")}</time> : null}</div>
+            <div><strong>{order.gallery_name}</strong><small>{order.parent_gallery_name} · {order.gallery_status_label}</small><span>{order.items.length} foto(s) · {money(order.total_cents)}</span>{order.confirmed_at ? <time dateTime={order.confirmed_at}>Confirmada em {new Date(order.confirmed_at).toLocaleDateString("pt-BR")}</time> : null}</div>
             <button className="secondary" onClick={() => setSelected(order.items.filter((item) => item.preview_url).map((item) => ({ id: item.photo_id, name: item.name, previewUrl: item.preview_url! })))} disabled={!order.items.some((item) => item.preview_url)}>Ver prévias</button>
           </article>
         )) : <EmptyState title="Nenhuma compra confirmada" detail="Suas compras futuras ficarão disponíveis mesmo que uma galeria seja encerrada ou removida." />}

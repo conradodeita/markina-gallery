@@ -31,16 +31,16 @@ O backend SHALL determinar destino e autorizar cada rota usando papel, telefone 
 - **THEN** o sistema permite a entrada na área administrativa
 
 #### Scenario: Cliente acessa galeria única
-- **WHEN** uma sessão `client` possui uma única galeria autorizada
-- **THEN** o sistema redireciona o cliente diretamente para essa galeria
+- **WHEN** uma sessão `client` possui uma única origem autorizada
+- **THEN** o sistema redireciona para a Galeria pública enquanto disponível ou para a privada autorizada de contingência quando a origem não puder ser aberta
 
 #### Scenario: Cliente possui várias origens
 - **WHEN** uma sessão `client` possui galerias autorizadas de duas ou mais Galerias públicas
-- **THEN** o sistema redireciona para a biblioteca, mantendo cada origem e sua única privada correspondente separadas
+- **THEN** o sistema redireciona para a biblioteca, apresentando uma única jornada por origem com sua privada operacional correspondente embutida
 
 #### Scenario: Cliente possui várias galerias
 - **WHEN** uma sessão `client` possui duas ou mais galerias autorizadas
-- **THEN** o sistema redireciona para a biblioteca e mostra somente as Galerias públicas e privadas às quais aquela identidade está vinculada
+- **THEN** o sistema redireciona para a biblioteca e mostra somente jornadas e históricos autorizados àquela identidade, sem duplicar a privada automática como outro card
 
 #### Scenario: Link privado conflita com vínculo existente
 - **WHEN** o telefone já pertence a uma privada da mesma Galeria pública e conclui OTP por outro link privado dessa origem

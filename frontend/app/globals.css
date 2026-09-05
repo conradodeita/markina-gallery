@@ -96,16 +96,22 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .library-card header > span { color:#555; font-size:.75rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
 .library-card > strong { font-size:1.08rem; }
 .library-card > small,.library-card > p { margin:0; color:#555; line-height:1.45; }
-.private-library-card--expired { border-left:5px solid #b47b00; }
-.private-library-card--origin_removed { border-left:5px solid #555; background:#f5f5f5; }
-.private-library-card--active { border-left:5px solid #287a43; }
+.journey-card--active { border-left:5px solid #287a43; }
+.journey-card--pending_review,.journey-card--expired { border-left:5px solid #b47b00; }
+.journey-card--blocked { border-left:5px solid #171717; background:#f1f1f1; }
+.journey-card--origin_removed,.journey-card--unavailable { border-left:5px solid #666; background:#f5f5f5; }
+.journey-selection-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:12px; border-radius:12px; background:#f2f2f2; }
+.journey-selection-summary span,.journey-selection-summary small { color:#444; font-size:.82rem; }
+.journey-selection-summary span { display:grid; gap:2px; }
+.journey-selection-summary strong { color:#171717; font-size:.95rem; }
+.journey-selection-summary small { grid-column:1/-1; }
 .library-card-actions { display:grid; gap:8px; padding-top:8px; border-top:1px solid #e0e0e0; }
 .library-card-actions span { color:#555; font-size:.8rem; line-height:1.45; }
 .library-history { display:grid; gap:12px; }
 .library-order { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 0; border-top:1px solid #ddd; }
 .library-order > div { display:grid; gap:4px; }
 .library-order small,.library-order time { color:#555; font-size:.8rem; }
-@media (max-width:560px) { .library-card-grid { grid-template-columns:1fr; }.library-order { align-items:stretch; flex-direction:column; }.library-order button { width:100%; } }
+@media (max-width:560px) { .library-card-grid { grid-template-columns:1fr; }.journey-selection-summary { grid-template-columns:1fr; }.journey-selection-summary small { grid-column:auto; }.library-order { align-items:stretch; flex-direction:column; }.library-order button { width:100%; } }
 .public-gallery-shell { display:grid; gap:22px; max-width:1180px; }
 .public-photo-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; }
 .public-photo-grid article { display:grid; gap:12px; overflow:hidden; border:1px solid #d8d8d8; border-radius:15px; background:#fff; }

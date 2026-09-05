@@ -946,6 +946,16 @@ def test_library_routes_one_private_per_origin_and_preserves_blocked_history() -
         assert rows[str(blocked_id)]["gallery_status"] == "blocked"
         assert rows[str(blocked_id)]["browse_url"] is None
         assert rows[str(active_id)]["browse_url"] == f"/gallery/{active_id}"
+        journeys = {
+            row["private_gallery"]["id"]: row
+            for row in library.json()["journeys"]
+            if row["private_gallery"]
+        }
+        assert journeys[str(blocked_id)]["status"] == "blocked"
+        assert journeys[str(blocked_id)]["primary_surface"] == "unavailable"
+        assert journeys[str(blocked_id)]["browse_url"] is None
+        assert journeys[str(active_id)]["primary_surface"] == "private"
+        assert journeys[str(active_id)]["browse_url"] == f"/gallery/{active_id}"
         history = client.get("/library/purchases")
         assert history.status_code == 200
         assert history.json()["orders"][0]["total_cents"] == 1500
