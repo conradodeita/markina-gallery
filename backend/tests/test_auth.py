@@ -99,6 +99,13 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
                 status="active",
             )
         )
+        db.add(
+            DerivedGallery(
+                parent_gallery_id=parent.id,
+                client_id=person.id,
+                name="Seleção privada automática",
+            )
+        )
         _capability, access_token = issue_gallery_capability(
             db,
             parent_gallery_id=parent.id,
@@ -124,6 +131,10 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
         json={"challenge_id": challenge.json()["challenge_id"], "code": "123456"},
     )
     assert verified.status_code == 200
+    assert verified.json() == {"destination": f"/public-galleries/{parent_id}"}
+    assert client.get("/auth/destination").json() == {
+        "destination": f"/public-galleries/{parent_id}"
+    }
 
     with SessionLocal() as db:
         clients = list(db.scalars(select(Client).where(Client.phone_e164 == phone)))
@@ -134,6 +145,17 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
         assert len(phones) == 1
         assert phones[0].client_id == client_id
         assert phones[0].verified_at is not None
+
+    client.cookies.clear()
+    resumed = client.post(
+        "/auth/client/challenge",
+        json={"full_name": "Nome ignorado", "phone": phone},
+    )
+    otp_for(resumed.json()["challenge_id"])
+    assert client.post(
+        "/auth/client/verify",
+        json={"challenge_id": resumed.json()["challenge_id"], "code": "123456"},
+    ).json() == {"destination": f"/public-galleries/{parent_id}"}
 
 
 def test_client_multiple_galleries_and_used_or_expired_otp(client):

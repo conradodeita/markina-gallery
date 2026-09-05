@@ -11,43 +11,110 @@ function response(value: object, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(value), { status }));
 }
 
+const publicGallery = {
+  id: "public-1",
+  name: "Festa escolar",
+  event_name: "Formatura",
+  access_mode: "standard",
+  gallery_status: "active",
+  browse_url: "/public-galleries/public-1",
+};
+
+const privateGallery = {
+  id: "private-1",
+  name: "Fotos da família",
+  message: "Escolha com calma",
+  selection_expires_at: null,
+  gallery_status: "active",
+  origin_removed: false,
+  origin: { id: "public-1", name: "Festa escolar", available: true, browse_url: "/public-galleries/public-1" },
+  folders: [{ id: "folder-1", name: "Apresentação" }],
+};
+
 describe("biblioteca privada da cliente", () => {
-  it("separa Galerias públicas, privadas e histórico preservado", async () => {
+  it("agrupa origem, seleção e conteúdo preparado em uma única jornada", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [{ id: "order-1", gallery_name: "Fotos da família", parent_gallery_name: "Festa escolar", gallery_status_label: "Galeria removida", gallery_removed: true, confirmed_at: "2026-08-31T12:00:00Z", total_cents: 2500, items: [{ photo_id: "photo-1", name: "Foto 1", preview_url: "/library/history/items/item-1/preview", delivery_url: null, delivery_reference_available: true }] }] }) : response({
-      public_galleries: [{ id: "public-1", name: "Festa escolar", event_name: "Formatura", access_mode: "standard", gallery_status: "active", browse_url: "/public-galleries/public-1" }],
-      private_galleries: [{ id: "private-1", name: "Fotos da família", message: "Escolha com calma", selection_expires_at: null, gallery_status: "active", origin_removed: false, origin: { id: "public-1", name: "Festa escolar", available: true, browse_url: "/public-galleries/public-1" }, folders: [{ id: "folder-1", name: "Apresentação" }] }],
+      journeys: [{
+        id: "public-1",
+        name: "Festa escolar",
+        event_name: "Formatura",
+        status: "active",
+        primary_surface: "public",
+        browse_url: "/public-galleries/public-1",
+        public_gallery: publicGallery,
+        private_gallery: privateGallery,
+        selection: { quantity: 2, total_cents: 1400, savings_cents: 100 },
+        has_prepared_photos: true,
+        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", prepared_url: "/gallery/private-1", fallback_url: null },
+      }],
     })));
     render(<LibraryPage />);
-    const publicSection = await screen.findByRole("region", { name: "Galerias públicas abertas" });
-    expect(within(publicSection).getByRole("link", { name: /Festa escolar/ }).getAttribute("href")).toBe("/public-galleries/public-1");
-    const privateSection = screen.getByRole("region", { name: "Galerias privadas" });
-    expect(within(privateSection).getByText("Apresentação")).toBeTruthy();
-    expect(within(privateSection).getByRole("link", { name: "Voltar à Galeria pública" }).getAttribute("href")).toBe("/public-galleries/public-1");
+
+    const section = await screen.findByRole("region", { name: "Galerias e seleções" });
+    expect(within(section).getAllByRole("article")).toHaveLength(1);
+    expect(within(section).getByRole("link", { name: "Ver fotos e continuar" }).getAttribute("href")).toBe("/public-galleries/public-1");
+    expect(within(section).getByRole("link", { name: "Revisar seleção e fotos preparadas" }).getAttribute("href")).toBe("/gallery/private-1");
+    expect(within(section).getByLabelText("Resumo da seleção").textContent).toContain("2 foto(s) selecionada(s)");
+    expect(within(section).getByLabelText("Resumo da seleção").textContent).toContain("R$ 14,00");
+    expect(within(section).getByText("Apresentação")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Galerias privadas" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Histórico de compras" })).toBeTruthy();
     expect(screen.getByText("Galeria removida", { exact: false })).toBeTruthy();
   });
 
-  it("explica galeria expirada e origem removida sem perder as privadas", async () => {
+  it("mantém a pública como retorno cotidiano sem duplicar a privada automática", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({
-      public_galleries: [],
-      private_galleries: [
-        { id: "private-expired", name: "Seleção antiga", message: "", selection_expires_at: "2026-08-01T00:00:00Z", gallery_status: "expired", origin_removed: false, origin: { id: "public-1", name: "Festa", available: false, browse_url: null }, folders: [] },
-        { id: "private-removed", name: "Fotos preservadas", message: "", selection_expires_at: null, gallery_status: "origin_removed", origin_removed: true, origin: { id: "public-2", name: "Evento removido", available: false, browse_url: null }, folders: [{ id: "folder-1", name: "Lote preservado" }] },
-      ],
+      journeys: [{
+        id: "public-1",
+        name: "Festa escolar",
+        event_name: "Formatura",
+        status: "active",
+        primary_surface: "public",
+        browse_url: "/public-galleries/public-1",
+        public_gallery: publicGallery,
+        private_gallery: privateGallery,
+        selection: { quantity: 1, total_cents: 700, savings_cents: 0 },
+        has_prepared_photos: false,
+        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", prepared_url: null, fallback_url: null },
+      }],
     })));
     render(<LibraryPage />);
-    expect(await screen.findByText("Prazo expirado")).toBeTruthy();
-    expect(screen.getByText("Origem removida")).toBeTruthy();
+
+    const section = await screen.findByRole("region", { name: "Galerias e seleções" });
+    expect(within(section).getAllByRole("article")).toHaveLength(1);
+    expect(within(section).getByRole("link", { name: "Ver fotos e continuar" }).getAttribute("href")).toBe("/public-galleries/public-1");
+    expect(within(section).getByRole("link", { name: "Revisar seleção" }).getAttribute("href")).toBe("/gallery/private-1");
+    expect(screen.queryByText("Abrir galeria privada")).toBeNull();
+  });
+
+  it("usa a privada como contingência quando a origem não está disponível", async () => {
+    const preserved = { ...privateGallery, id: "private-removed", name: "Fotos preservadas", gallery_status: "origin_removed", origin_removed: true, origin: { id: "public-2", name: "Evento removido", available: false, browse_url: null } };
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({
+      journeys: [{
+        id: "public-2",
+        name: "Evento removido",
+        event_name: "",
+        status: "origin_removed",
+        primary_surface: "private",
+        browse_url: "/gallery/private-removed",
+        public_gallery: null,
+        private_gallery: preserved,
+        selection: { quantity: 0 },
+        has_prepared_photos: false,
+        actions: { continue_url: null, review_url: null, prepared_url: null, fallback_url: "/gallery/private-removed" },
+      }],
+    })));
+    render(<LibraryPage />);
+
+    expect(await screen.findByText("Origem indisponível")).toBeTruthy();
     expect(screen.getByText(/Galeria pública de origem foi removida/)).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "Abrir galeria privada" })).toHaveLength(2);
-    expect(screen.queryByRole("link", { name: "Voltar à Galeria pública" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Abrir fotos preservadas" }).getAttribute("href")).toBe("/gallery/private-removed");
   });
 
   it("mostra estado vazio após desvinculação sem inventar acesso", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({ public_galleries: [], private_galleries: [], galleries: [] })));
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({ journeys: [], public_galleries: [], private_galleries: [], galleries: [] })));
     render(<LibraryPage />);
-    expect(await screen.findByText("Nenhuma Galeria pública aberta")).toBeTruthy();
-    expect(screen.getByText("Nenhuma galeria privada ativa")).toBeTruthy();
+    expect(await screen.findByText("Nenhuma galeria disponível")).toBeTruthy();
     expect(screen.getByText("Nenhuma compra confirmada")).toBeTruthy();
   });
 

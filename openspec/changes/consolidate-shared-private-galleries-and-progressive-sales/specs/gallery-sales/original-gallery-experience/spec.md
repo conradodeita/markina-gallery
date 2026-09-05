@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Interface original por papel
-O sistema SHALL fornecer interface coesa, responsiva e acessível para fotógrafo e cliente. Membros da mesma privada SHALL compartilhar a composição e o acervo, mas marcadores, comentários, seleção, valores, pagamento e histórico SHALL ser renderizados somente para a identidade autenticada.
+O sistema SHALL fornecer interface coesa, responsiva e acessível para fotógrafo e cliente. Para a cliente, a Galeria pública SHALL representar a jornada principal enquanto disponível, incorporando seu estado privado sem exigir que ela compreenda a entidade operacional derivada. Membros da mesma privada SHALL compartilhar a composição e o acervo, mas marcadores, comentários, seleção, valores, pagamento e histórico SHALL ser renderizados somente para a identidade autenticada.
 
 #### Scenario: Fotógrafo inicia a operação
 - **WHEN** o fotógrafo abre área administrativa ou prévia
@@ -22,6 +22,14 @@ O sistema SHALL fornecer interface coesa, responsiva e acessível para fotógraf
 #### Scenario: Seleção retomada e removida na Galeria pública
 - **WHEN** a cliente retorna à Galeria pública ou aciona uma foto já selecionada
 - **THEN** a aplicação restaura o estado persistido, apresenta `Desmarcar` e atualiza o mesmo carrinho individual no backend
+
+#### Scenario: Retorno cotidiano pela jornada pública
+- **WHEN** a cliente volta à biblioteca depois de uma privada ter sido criada por sua primeira seleção
+- **THEN** ela vê somente o card da origem pública, abre essa Galeria pública com suas seleções restauradas e acessa a conferência por `Revisar seleção`, sem escolher entre duas galerias equivalentes
+
+#### Scenario: Privada como superfície contextual
+- **WHEN** a cliente precisa revisar seleção, abrir fotos preparadas pelo fotógrafo, entrar por link privado direto ou continuar após indisponibilidade da origem
+- **THEN** a interface pode abrir a superfície privada autorizada com rótulo contextual, sem apresentá-la como outro evento independente
 
 #### Scenario: Prévia administrativa equivalente
 - **WHEN** o fotógrafo abre a mesma galeria

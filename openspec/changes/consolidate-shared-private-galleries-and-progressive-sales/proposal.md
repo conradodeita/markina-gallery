@@ -18,6 +18,7 @@ A validação humana do editor e a revisão do domínio mostraram três desalinh
 - Completar na etapa Clientes o gerenciamento do link público e dos links privados, criação administrativa da privada, membros, notificações e bloqueios com estados orientados pelo backend.
 - Disponibilizar automaticamente cada foto assim que o worker concluir sua prévia protegida, mantendo `Processamento` apenas como estado técnico transitório e sem exigir uma segunda ação manual de publicação; montar uma privada continuará sendo operação distinta.
 - Restaurar na Galeria pública a seleção individual persistida, permitir `Desmarcar`, mostrar quantidade, cotação autoritativa e `Prosseguir` e refletir imediatamente as seleções nos agregados administrativos, inclusive antes do checkout.
+- Separar o conceito operacional de privada da navegação da cliente: a biblioteca SHALL agrupar uma única jornada por Galeria pública, restaurar nela a seleção persistida e tratar a privada criada automaticamente como workspace interno. Conteúdo privado preparado pelo fotógrafo permanecerá acessível dentro da mesma jornada; link privado direto e origem pública indisponível continuarão podendo abrir a superfície privada autorizada sem criar um segundo card concorrente.
 - Reforçar que o login por telefone normalizado reutiliza a mesma identidade criada pelo fotógrafo e não cria um segundo cadastro; o OTP continua sendo a prova de posse do telefone quando não houver sessão válida.
 - Preservar a independência entre ciclo operacional e histórico: públicas, privadas e vínculos podem ser congelados, bloqueados, desvinculados ou removidos conforme inventário, enquanto pedidos, pagamentos, entregas, snapshots e mídia histórica autorizada permanecem.
 - Preparar a associação de resultados futuros com origem `facial` à privada existente, sem criar endpoint, processar biometria ou liberar busca facial nesta change. O produto facial permanece bloqueado pelo spike `spike-private-facial-discovery`, por revisão de privacidade e pelo gate do roadmap.
@@ -34,7 +35,7 @@ A validação humana do editor e a revisão do domínio mostraram três desalinh
 
 - `auth`: exigir OTP para criar vínculo a uma nova Galeria pública ou privada, reutilizar identidade por telefone e impedir que bloqueio seja contornado por outro link da mesma origem.
 - `client-access/cloned-private-galleries`: substituir proprietária única por associação multiusuário com acervo comum, estados individuais e unicidade `Galeria pública + cliente`.
-- `client-access/derived-galleries`: apresentar privadas compartilhadas autorizadas e histórico individual, inclusive após bloqueio ou remoção operacional.
+- `client-access/derived-galleries`: agrupar a experiência da cliente por origem pública, mantendo privadas compartilhadas como contexto operacional, conteúdo preparado ou contingência autorizada, inclusive após bloqueio ou remoção operacional.
 - `gallery-sales/client-selection-operations`: calcular e operar seleção, carrinho, pedido e compra por membro dentro do acervo privado comum.
 - `gallery-sales/operational-gallery-interface`: salvar ao avançar, completar links e membros na etapa Clientes, bloquear cliente e usar os novos modelos comerciais.
 - `gallery-sales/original-gallery-experience`: apresentar rodapé de seleção, conferência PIX e estados financeiros individuais sem expor atividade de outros membros.
@@ -45,7 +46,7 @@ A validação humana do editor e a revisão do domínio mostraram três desalinh
 
 - Banco e migrations: nova associação de membros, unicidade por origem e cliente, capacidade reutilizável de entrada privada, modelos globais/snapshots de preço e adaptação conservadora de privadas existentes.
 - Backend FastAPI e worker: autorização multiusuário, bloqueio, notificações, resolução idempotente por telefone, preço progressivo, quote/economia, QR PIX e consultas agregadas sem N+1.
-- Frontend Next.js: etapas 01–05, navegação com persistência, links permanentes sem rotação cotidiana, membros e bloqueio, cadastro global de preços, seleção pública persistente, checkout/rodapé e fontes locais licenciadas.
+- Frontend Next.js: etapas 01–05, navegação com persistência, links permanentes sem rotação cotidiana, membros e bloqueio, cadastro global de preços, seleção pública persistente, jornada da cliente agrupada por origem, checkout/rodapé e fontes locais licenciadas.
 - Compatibilidade: pedidos e histórico existentes permanecem imutáveis; privadas legadas recebem seu cliente atual como primeiro membro; links e contratos antigos exigirão janela de compatibilidade e migração explícita.
 - Privacidade: cada cliente vê somente seu estado comercial; links continuam opacos e auditáveis; nenhuma biometria ou dado real de criança será processado por esta change.
 - Operação: nenhuma migration destrutiva, deploy ou habilitação facial é autorizada pela proposta; homologação exigirá inventário zero-impact, dados sintéticos, migrations no head e nova revisão humana desktop/mobile.

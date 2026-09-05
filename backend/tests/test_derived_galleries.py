@@ -736,6 +736,7 @@ def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
         "/auth/client/verify", json={"challenge_id": str(challenge_id), "code": "123456"}
     ).status_code == 200
     assert client.get("/library").json() == {
+        "journeys": [],
         "public_galleries": [],
         "private_galleries": [],
         "galleries": [],
@@ -1546,6 +1547,20 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
     assert library["public_galleries"][0]["browse_url"] == f"/public-galleries/{parent_id}"
     assert library["private_galleries"] == expected_private
     assert library["galleries"] == expected_private
+    assert len(library["journeys"]) == 1
+    journey = library["journeys"][0]
+    assert journey["id"] == str(parent_id)
+    assert journey["primary_surface"] == "public"
+    assert journey["browse_url"] == f"/public-galleries/{parent_id}"
+    assert journey["private_gallery"]["id"] == str(gallery_id)
+    assert journey["selection"]["quantity"] == 0
+    assert journey["has_prepared_photos"] is True
+    assert journey["actions"] == {
+        "continue_url": f"/public-galleries/{parent_id}",
+        "review_url": None,
+        "prepared_url": f"/gallery/{gallery_id}",
+        "fallback_url": None,
+    }
 
 
 def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: TestClient) -> None:

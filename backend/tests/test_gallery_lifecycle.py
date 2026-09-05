@@ -1050,6 +1050,26 @@ def test_public_deletion_keeps_one_private_photo_copy_and_private_viewing(
             }
         ]
         assert library.json()["private_galleries"] == library.json()["galleries"]
+        assert library.json()["journeys"] == [
+            {
+                "id": str(parent_id),
+                "name": "Origem removível",
+                "event_name": "",
+                "status": "origin_removed",
+                "primary_surface": "private",
+                "browse_url": f"/gallery/{private_id}",
+                "public_gallery": None,
+                "private_gallery": library.json()["galleries"][0],
+                "selection": {"quantity": 0, "items": []},
+                "has_prepared_photos": False,
+                "actions": {
+                    "continue_url": None,
+                    "review_url": None,
+                    "prepared_url": None,
+                    "fallback_url": f"/gallery/{private_id}",
+                },
+            }
+        ]
         photos = client.get(f"/gallery/{private_id}/photos")
         assert [item["id"] for item in photos.json()["photos"]] == [str(retained_id)]
         review = client.get(f"/gallery/{private_id}/review")
@@ -1181,6 +1201,21 @@ def test_client_library_separates_public_private_and_origin_states() -> None:
         "browse_url": None,
     }
     assert response.json()["galleries"] == response.json()["private_galleries"]
+    journeys = {row["name"]: row for row in response.json()["journeys"]}
+    assert set(journeys) == {
+        "Origem ativa",
+        "Origem da seleção expirada",
+        "Origem coletiva",
+        "Origem removida",
+    }
+    assert journeys["Origem ativa"]["primary_surface"] == "public"
+    assert journeys["Origem ativa"]["private_gallery"]["name"] == "Privada ativa"
+    assert journeys["Origem da seleção expirada"]["primary_surface"] == "public"
+    assert journeys["Origem da seleção expirada"]["private_gallery"]["gallery_status"] == "expired"
+    assert journeys["Origem coletiva"]["primary_surface"] == "unavailable"
+    assert journeys["Origem coletiva"]["private_gallery"] is None
+    assert journeys["Origem removida"]["primary_surface"] == "private"
+    assert journeys["Origem removida"]["actions"]["fallback_url"] == journeys["Origem removida"]["browse_url"]
 
 
 def test_commercial_removal_policy_blocks_review_cancels_pending_and_prepares_history(
@@ -1448,6 +1483,19 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         }
         assert repeated.json()["cart"]["quantity"] == 1
         assert repeated.json()["cart"]["total_cents"] == 700
+        library = client.get("/library").json()
+        assert len(library["journeys"]) == 1
+        journey = library["journeys"][0]
+        assert journey["primary_surface"] == "public"
+        assert journey["selection"]["quantity"] == 1
+        assert journey["selection"]["total_cents"] == 700
+        assert journey["has_prepared_photos"] is False
+        assert journey["actions"] == {
+            "continue_url": f"/public-galleries/{parent_id}",
+            "review_url": f"/gallery/{private_id}",
+            "prepared_url": None,
+            "fallback_url": None,
+        }
 
         with SessionLocal() as db:
             ensure_private_photo_reference(
@@ -1468,6 +1516,9 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         }
         assert public_state["cart"]["quantity"] == 2
         assert public_state["cart"]["total_cents"] == 1400
+        prepared_journey = client.get("/library").json()["journeys"][0]
+        assert prepared_journey["has_prepared_photos"] is True
+        assert prepared_journey["actions"]["prepared_url"] == f"/gallery/{private_id}"
 
         removed = client.delete(
             f"/public-galleries/{parent_id}/photos/{second_id}/selection"

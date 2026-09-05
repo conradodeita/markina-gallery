@@ -71,7 +71,7 @@ export default function PublicGalleryPage() {
       setCart(payload.cart ?? { quantity: selected ? Math.max(0, cart.quantity - 1) : cart.quantity + 1, items: [] });
       setMessage(selected
         ? "A foto foi removida da sua seleção."
-        : payload.gallery_created ? "Sua galeria privada foi criada com esta seleção." : "A foto foi adicionada à sua galeria privada.");
+        : payload.gallery_created ? "Sua seleção foi iniciada e ficará salva nesta galeria." : "A foto foi adicionada à sua seleção.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível selecionar esta foto.");
     } finally {
@@ -94,8 +94,8 @@ export default function PublicGalleryPage() {
   return (
     <main className="admin-shell public-gallery-shell">
       <Link href="/library">← Sua biblioteca</Link>
-      {privateGalleryId ? <div className="public-selection-result" role="status"><span>{message}</span><Link href={`/gallery/${privateGalleryId}`}>Abrir minha galeria privada</Link></div> : message ? <p className="notice" role="alert">{message}</p> : null}
-      <GalleryPresentation galleryName={gallery.name} eyebrow="Galeria pública autorizada" context={<p>{gallery.description || gallery.event_name || "Escolha suas fotos para criar ou ampliar sua galeria privada."}</p>} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} modeLabel={<><strong>Acesso confirmado</strong><span>Selecionar uma foto cria ou amplia somente a sua galeria privada.</span></>} emptyDetail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." renderPhotoMarkers={(photo) => {
+      {privateGalleryId && message ? <div className="public-selection-result" role="status"><span>{message}</span><Link href={`/gallery/${privateGalleryId}`}>Revisar seleção</Link></div> : message ? <p className="notice" role="alert">{message}</p> : null}
+      <GalleryPresentation galleryName={gallery.name} eyebrow="Galeria pública autorizada" context={<p>{gallery.description || gallery.event_name || "Escolha suas fotos e retome sua seleção nesta mesma galeria quando quiser."}</p>} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} modeLabel={<><strong>Acesso confirmado</strong><span>Suas escolhas ficam salvas nesta galeria e permanecem disponíveis quando você voltar.</span></>} emptyDetail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         return <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>;
       }} />
@@ -103,7 +103,7 @@ export default function PublicGalleryPage() {
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
         {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
-        {privateGalleryId ? <Link className="primary" href={`/gallery/${privateGalleryId}`}>Prosseguir</Link> : null}
+        {privateGalleryId ? <Link className="primary" href={`/gallery/${privateGalleryId}`}>Revisar seleção</Link> : null}
       </aside> : null}
     </main>
   );

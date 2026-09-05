@@ -126,6 +126,16 @@ A associação `DerivedGalleryMembership` preservada como `unlinked` é um tombs
 
 Os diálogos compartilhados limitarão sua altura à viewport e oferecerão rolagem vertical própria ou no backdrop. Essa regra preserva confirmação e consequências completas, mantendo as ações alcançáveis em janelas desktop baixas e dispositivos móveis sem alterar a semântica das operações.
 
+### 14. Jornada da cliente agrupada pela Galeria pública
+
+A biblioteca da cliente deixará de projetar Galeria pública e privada derivada como cards equivalentes. O backend montará uma coleção `journeys` com no máximo uma entrada por `parent_gallery_id`, reunindo a origem autorizada, a única associação privada daquela cliente, o estado da seleção e as ações permitidas. Enquanto a origem estiver ativa e o vínculo público estiver autorizado, ela será a entrada principal: reabrir a jornada levará à Galeria pública, que já restaura seleção, carrinho, cotação e a privada operacional resolvida.
+
+A privada continuará existindo sem alteração estrutural para administração, acervo compartilhado, membros, seleção individual, checkout, pedidos e auditoria. Uma privada criada pela primeira seleção não será apresentada como segunda galeria na biblioteca. Fotos com justificativa `admin` ou futura `facial` aprovada poderão ser apresentadas como `Fotos preparadas para você` dentro da mesma jornada, e `Revisar seleção` poderá abrir a superfície privada necessária à conferência, sem promovê-la a outro evento concorrente.
+
+Um link privado direto continuará encaminhando à privada autorizada. Quando a Galeria pública estiver removida ou indisponível, mas a associação privada ainda permitir acesso operacional, a mesma jornada usará a privada como superfície de contingência e explicará a indisponibilidade da origem. Bloqueio ou desvinculação não será contornado por essa projeção; histórico confirmado continuará separado e autorizado por pedido.
+
+O contrato legado de `/library` com `public_galleries` e `private_galleries` será mantido temporariamente para compatibilidade, mas o frontend migrará para `journeys` e SHALL NOT agrupar ou inferir autorização localmente. Não será criada coluna de modo de apresentação: origem, vínculo, associação, justificativas de foto e capacidades existentes já determinam as superfícies autorizadas. Essa escolha evita migration e impede divergência entre um rótulo persistido e o estado real da jornada.
+
 ## Risks / Trade-offs
 
 - [Privadas legadas inconsistentes para o mesmo par origem/cliente] → a migration executa diagnóstico prévio, aborta diante de conflito e gera relatório sem mesclar histórico automaticamente.
@@ -138,6 +148,7 @@ Os diálogos compartilhados limitarão sua altura à viewport e oferecerão rola
 - [Notificação externa indisponível] → outbox e painel confirmam o evento; falha de WhatsApp não reverte associação e pode ser retomada.
 - [Fonte adicional degrada performance] → subconjunto local, preload apenas das famílias usadas e medição de build/Lighthouse em mobile.
 - [Escopo facial avançar por acidente] → manter porta não exposta, teste de indisponibilidade e dependência explícita do spike e de change futura.
+- [Agrupamento ocultar conteúdo privado necessário] → o backend inclui na jornada ações explícitas para conteúdo preparado, conferência e contingência, preservando link privado direto e cobrindo origem ativa, removida, bloqueio e privada administrativa em testes.
 
 ## Migration Plan
 
