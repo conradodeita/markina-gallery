@@ -171,6 +171,17 @@ def test_admin_manages_and_simulates_versioned_progressive_pricing_presets(
     )
     assert listed.json()["presets"][0]["version"] == 2
 
+    reactivated = client.post(f"/admin/pricing-presets/{preset_id}/activate")
+    assert reactivated.status_code == 200
+    assert reactivated.json()["active"] is True
+    assert reactivated.json()["version"] == 2
+    assert reactivated.json()["tiers"] == listed.json()["presets"][0]["tiers"]
+    assert client.get("/admin/pricing-presets").json()["presets"][0]["id"] == preset_id
+
+    idempotent = client.post(f"/admin/pricing-presets/{preset_id}/activate")
+    assert idempotent.status_code == 200
+    assert idempotent.json()["version"] == 2
+
 
 def test_public_gallery_materializes_pricing_preset_and_requires_legacy_conversion(
     client: TestClient,

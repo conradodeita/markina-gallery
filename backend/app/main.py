@@ -4624,6 +4624,23 @@ def deactivate_progressive_pricing_preset(
     return _pricing_preset_payload(db, preset)
 
 
+@app.post("/admin/pricing-presets/{preset_id}/activate")
+def activate_progressive_pricing_preset(
+    preset_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    preset = _pricing_preset_or_404(db, preset_id)
+    if not preset.active:
+        preset.active = True
+        preset.updated_at = now()
+        audit(db, "pricing.preset_activated", str(preset.id))
+        db.commit()
+        db.refresh(preset)
+    return _pricing_preset_payload(db, preset)
+
+
 @app.get("/admin/pricing-presets/{preset_id}/quote")
 def simulate_progressive_pricing_preset(
     preset_id: UUID,

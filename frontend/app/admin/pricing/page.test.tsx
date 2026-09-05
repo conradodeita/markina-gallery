@@ -92,4 +92,36 @@ describe("tabelas globais de preço progressivo", () => {
       ],
     });
   });
+
+  it("reativa uma tabela desativada e a disponibiliza novamente", async () => {
+    const inactivePreset = {
+      id: "preset-1",
+      code: "01",
+      name: "Escolar",
+      label: "01 — Escolar",
+      version: 2,
+      active: false,
+      tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }],
+    };
+    const activePreset = { ...inactivePreset, active: true };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ presets: [inactivePreset] }))
+      .mockResolvedValueOnce(jsonResponse(activePreset))
+      .mockResolvedValueOnce(jsonResponse({ presets: [activePreset] }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PricingPresetsPage />);
+
+    await screen.findByText("Desativada");
+    fireEvent.click(screen.getByRole("button", { name: "Ativar" }));
+
+    expect(await screen.findByText("Tabela reativada e disponível para novas galerias.")).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/admin/pricing-presets/preset-1/activate",
+      { method: "POST", credentials: "same-origin" },
+    );
+    expect(await screen.findByText("Ativa")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Desativar" })).toBeTruthy();
+  });
 });
