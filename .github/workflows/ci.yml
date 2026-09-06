@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Instalar dependências
-        run: pip install -r backend/requirements.txt
+        run: pip install -r backend/requirements.txt -r backend/face-requirements.txt
       - name: Lint (ruff)
         run: ruff check backend/app backend/tests
       - name: Testes (pytest)

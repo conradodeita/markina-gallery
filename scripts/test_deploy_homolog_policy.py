@@ -76,6 +76,11 @@ def main() -> int:
     forbid(r'echo\s+.*\$signing_key', "impressão do segredo de assinatura", SCRIPT)
 
     require('branches: [develop]', "gatilho restrito a develop", WORKFLOW)
+    require(
+        'pip install -r backend/requirements.txt -r backend/face-requirements.txt',
+        "dependências do runtime facial nos testes backend",
+        WORKFLOW,
+    )
     require('deploy-homolog:', "job de deploy", WORKFLOW)
     require('needs: [backend, frontend, openspec, gitleaks]', "dependência integral da CI", WORKFLOW)
     require('environment: homolog', "Environment protegido", WORKFLOW)
