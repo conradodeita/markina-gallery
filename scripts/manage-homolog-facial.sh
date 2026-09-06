@@ -131,7 +131,7 @@ print(json.dumps({
 }
 
 write_synthetic_configuration() {
-  local timestamp temp_file result
+  local timestamp temp_file result target_environment
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   ENV_BACKUP="$STATE_DIR/facial-env-preactivate-${timestamp}.backup"
   cp --preserve=mode "$ENV_FILE" "$ENV_BACKUP"
@@ -139,7 +139,15 @@ write_synthetic_configuration() {
   temp_file="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
   chmod 600 "$temp_file"
 
-  if ! result="$(FACIAL_TARGET_ENV=homolog python3 - "$ENV_FILE" "$temp_file" <<'PY'
+  target_environment="$(grep '^APP_ENV=' "$ENV_FILE" | tail -n 1)"
+  target_environment="${target_environment#*=}"
+  [[ "$target_environment" == "homolog" || "$target_environment" == "staging" ]] || {
+    rm -f "$temp_file"
+    fail "APP_ENV não identifica o ambiente de homologação esperado"
+    return 1
+  }
+
+  if ! result="$(FACIAL_TARGET_ENV="$target_environment" python3 - "$ENV_FILE" "$temp_file" <<'PY'
 import base64
 import json
 import os
@@ -227,7 +235,13 @@ wait_for_service() {
     [[ "$status" == "healthy" ]] && break
     sleep 2
   done
-  [[ "$status" == "healthy" ]] || fail "serviço Markina não ficou saudável: $service ($status)"
+  if [[ "$status" != "healthy" ]]; then
+    if [[ "$service" == "face-worker" ]]; then
+      compose_facial logs --no-color --tail 80 face-worker >&2 || true
+    fi
+    fail "serviço Markina não ficou saudável: $service ($status)"
+    return 1
+  fi
 }
 
 verify_activation() {
@@ -239,8 +253,8 @@ from app.facial.config import facial_settings_from_environment
 
 settings = facial_settings_from_environment(verify_runtime_assets=False)
 assert settings.enabled
-assert settings.environment == "homolog"
-assert settings.credential_environment == "homolog"
+assert settings.environment in {"homolog", "staging"}
+assert settings.credential_environment == settings.environment
 assert not settings.minor_search_enabled
 assert settings.worker_concurrency == 1
 print("configuração facial fail-closed validada na API")
