@@ -1,4 +1,4 @@
-"""Outbox idempotente de notificações administrativas de galerias privadas."""
+"""Outbox idempotente de notificações administrativas de galerias e acessos."""
 
 import os
 from collections.abc import Callable
@@ -26,7 +26,7 @@ def enqueue_membership_notification(
     event_key: str,
     event_type: str,
     parent: ParentGallery,
-    gallery: DerivedGallery,
+    gallery: DerivedGallery | None,
     client: Client | None = None,
 ) -> tuple[GalleryMembershipNotificationOutbox, bool]:
     existing = db.scalar(
@@ -36,7 +36,7 @@ def enqueue_membership_notification(
     )
     if existing:
         return existing, False
-    external_enabled = (
+    external_enabled = event_type != "client_logged_in" and (
         os.getenv("GALLERY_NOTIFICATION_EXTERNAL_ENABLED", "false").strip().lower()
         == "true"
     )
@@ -46,10 +46,10 @@ def enqueue_membership_notification(
                 event_key=event_key,
                 event_type=event_type,
                 parent_gallery_id=parent.id,
-                derived_gallery_id=gallery.id,
+                derived_gallery_id=gallery.id if gallery else None,
                 client_id=client.id if client else None,
                 parent_name_snapshot=parent.name,
-                derived_name_snapshot=gallery.name,
+                derived_name_snapshot=gallery.name if gallery else parent.name,
                 client_name_snapshot=client.full_name if client else None,
                 external_status="queued" if external_enabled else "skipped",
             )

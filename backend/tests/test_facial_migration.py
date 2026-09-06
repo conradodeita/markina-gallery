@@ -170,3 +170,59 @@ def test_layered_visual_protection_migration_preserves_existing_branding(
             text("SELECT watermark_text FROM branding_settings WHERE id = :id"),
             {"id": branding_id.hex},
         ).scalar_one() == "MARCA EXISTENTE"
+
+
+def test_client_gallery_login_notification_migration_is_additive(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{(tmp_path / 'client-login-notification.sqlite').as_posix()}"
+    alembic(database_url, "upgrade", "20260906_0044")
+    engine = create_engine(database_url)
+    parent_id, notification_id = uuid4(), uuid4()
+    timestamp = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO parent_gallery (id, name, active, created_at) "
+                "VALUES (:id, 'Evento preservado', 1, :created_at)"
+            ),
+            {"id": parent_id.hex, "created_at": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO gallery_membership_notification_outbox "
+                "(id, event_key, event_type, parent_gallery_id, parent_name_snapshot, "
+                "derived_name_snapshot, admin_status, external_status, attempts, "
+                "created_at, updated_at) VALUES (:id, 'login:synthetic', "
+                "'private_created', :parent_id, 'Evento preservado', 'Privada', "
+                "'unread', 'skipped', 0, :created_at, :created_at)"
+            ),
+            {
+                "id": notification_id.hex,
+                "parent_id": parent_id.hex,
+                "created_at": timestamp,
+            },
+        )
+
+    alembic(database_url, "upgrade", "head")
+    with engine.begin() as connection:
+        assert connection.execute(
+            text(
+                "SELECT event_type FROM gallery_membership_notification_outbox "
+                "WHERE id = :id"
+            ),
+            {"id": notification_id.hex},
+        ).scalar_one() == "private_created"
+        connection.execute(
+            text(
+                "INSERT INTO gallery_membership_notification_outbox "
+                "(id, event_key, event_type, parent_gallery_id, parent_name_snapshot, "
+                "derived_name_snapshot, admin_status, external_status, attempts, "
+                "created_at, updated_at) VALUES (:id, 'client_logged_in:synthetic', "
+                "'client_logged_in', :parent_id, 'Evento preservado', "
+                "'Evento preservado', 'unread', 'skipped', 0, :created_at, :created_at)"
+            ),
+            {
+                "id": uuid4().hex,
+                "parent_id": parent_id.hex,
+                "created_at": timestamp,
+            },
+        )

@@ -392,6 +392,17 @@ def test_private_link_otp_reuses_identity_membership_and_existing_origin_binding
                     ParentGalleryRegistration.client_id == canonical.id,
                 )
             ).status == "active"
+            login_notification = db.scalar(
+                select(GalleryMembershipNotificationOutbox).where(
+                    GalleryMembershipNotificationOutbox.event_type
+                    == "client_logged_in"
+                )
+            )
+            assert login_notification is not None
+            assert login_notification.parent_gallery_id == parent_id
+            assert login_notification.derived_gallery_id == first_id
+            assert login_notification.client_id == canonical.id
+            assert login_notification.external_status == "skipped"
             canonical_id = canonical.id
 
         status_code, payload = _verify_client_link(
@@ -416,6 +427,16 @@ def test_private_link_otp_reuses_identity_membership_and_existing_origin_binding
                     DerivedGalleryMembership.client_id == canonical_id,
                 )
             ) is None
+            assert len(
+                list(
+                    db.scalars(
+                        select(GalleryMembershipNotificationOutbox).where(
+                            GalleryMembershipNotificationOutbox.event_type
+                            == "client_logged_in"
+                        )
+                    )
+                )
+            ) == 2
 
 
 def test_blocked_member_cannot_reenter_through_private_link(

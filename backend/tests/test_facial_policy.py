@@ -15,6 +15,7 @@ from app.facial.policy import (
     FacialPolicyError,
     activate_policy,
     activation_inventory,
+    ensure_automatic_policy,
     prepare_policy,
     revoke_policy,
     suspend_policy,
@@ -116,6 +117,35 @@ def test_policy_prepares_but_activation_fails_closed_until_global_gate(
     db.commit()
     assert activated.status == "active" and activated.index_generation == 1
     assert activation_inventory(activated, _settings(tmp_path, enabled=True)) == []
+
+
+def test_automatic_policy_is_created_once_without_admin_actor(tmp_path: Path) -> None:
+    db, parent, _admin = _fixture()
+    settings = _settings(tmp_path, enabled=True)
+
+    first, first_changed = ensure_automatic_policy(
+        db,
+        parent_gallery_id=parent.id,
+        settings=settings,
+    )
+    second, second_changed = ensure_automatic_policy(
+        db,
+        parent_gallery_id=parent.id,
+        settings=settings,
+    )
+    db.commit()
+
+    assert first.id == second.id
+    assert first.status == "active"
+    assert first.actor_admin_id is None
+    assert first.index_generation == 1
+    assert first_changed is True
+    assert second_changed is False
+    assert db.scalar(
+        select(func.count())
+        .select_from(AuditEvent)
+        .where(AuditEvent.event == "facial.policy_activated_automatically")
+    ) == 1
 
 
 def test_suspend_and_active_version_change_enqueue_idempotent_purge() -> None:

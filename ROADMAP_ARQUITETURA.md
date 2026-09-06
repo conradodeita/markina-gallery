@@ -105,17 +105,17 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 ## Fase 7 — Busca facial protegida (piloto antes de produção)
 
 - Importar apenas fotos aprovadas no culling.
-- Indexar rostos e qualidade técnica explicável em fila depois que cada prévia estiver pronta; a disponibilidade da foto e a seleção manual não aguardam nem dependem do processamento facial.
+- Quando o subsistema estiver operacionalmente habilitado, garantir automaticamente a política técnica interna e indexar rostos e qualidade explicável em fila depois que as prévias limpa e protegida estiverem prontas; o fotógrafo não prepara nem ativa política por galeria, e a disponibilidade da foto e a seleção manual não aguardam o processamento facial.
 - Executar indexação somente por evento persistido de foto/derivado novo, mudança versionada, backfill ou retentativa. Não manter varredura recorrente da galeria; worker ocioso aguarda a fila sem consumo ativo de CPU e pode descarregar modelos da memória.
 - Limitar toda busca a uma única Galeria pública já autorizada por link opaco, telefone/OTP e vínculo persistido. `Pública` é denominação de produto para acervo de interesse de várias pessoas, não acesso anônimo nem autorização por posse do URL.
-- Fluxo: responsável já autorizado aceita termo específico, envia uma referência temporária com um rosto e acompanha um job durável. Fechar ou atualizar a tela não cancela a busca; progresso real e conclusão ficam disponíveis para retomada e notificação transacional neutra.
+- Fluxo: responsável já autorizado aceita em checkbox o consentimento específico para uso temporário da referência, envia uma foto com um rosto e acompanha um job durável. Fechar ou atualizar a tela não cancela a busca; progresso real e conclusão ficam disponíveis para retomada e notificação transacional neutra.
 - Comparar somente com embeddings do snapshot daquela galeria. Resultados apenas reordenam fotos que a cliente já pode visualizar e aparecem na mesma Galeria pública, sem criar permissão, seleção ou galeria privada.
 - Ranqueamento técnico avalia o rosto que correspondeu à referência, não o maior rosto ou a foto inteira. Nitidez local, corte, tamanho/proeminência e pose separam `Melhores resultados encontrados` de `Outros resultados encontrados`; nenhuma foto é excluída ou ocultada automaticamente e nenhum atributo pessoal ou estético é inferido.
 - A primeira seleção consciente, manual ou a partir do resultado, cria ou reutiliza a única galeria privada operacional de `Galeria pública + cliente`; a busca isolada não cria entidade comercial.
 - Nenhuma grade anônima de fotos escolares e nenhuma busca entre eventos. Revisão do fotógrafo permanece obrigatória se um desenho futuro pretender liberar conteúdo antes invisível ou ampliar o escopo autorizado.
 - Feedback “não é esta pessoa” remove resultado e cria tarefa silenciosa para o fotógrafo; não treinar o modelo automaticamente sem revisão humana.
 - Incluir foto/excluir foto da indexação em massa antes da liberação do evento.
-- Registrar consentimento versionado, busca, revogação, exclusão e operação administrativa.
+- Registrar consentimento versionado da cliente, busca, revogação, exclusão e operação administrativa; cada login OTP em contexto de galeria também gera notificação idempotente de acesso ao fotógrafo sem transportar o OTP.
 - Apagar foto de referência e embedding temporário conforme retenção configurada; oferecer exclusão de dados biométricos.
 - Validar desempenho, licença comercial, compatibilidade ARM, precisão facial e qualidade técnica com um piloto sintético/anônimo de 500–1.000 JPEGs antes de ativar em clientes reais; OFIQ ou qualquer modelo adicional exige validação separada de código, pesos e dependências.
 

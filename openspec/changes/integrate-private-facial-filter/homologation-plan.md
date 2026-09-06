@@ -7,8 +7,8 @@
 - Única porta publicada pelo projeto: Nginx `${MARKINA_GALLERY_PORT:-8080}:80`.
 - Serviços atuais preservados: `nginx`, `web`, `api`, `worker`, `migrate`, `db`, `redis`; Evolution permanece em profile próprio.
 - Novo serviço: `face-worker`, profile `facial`, sem porta, até 1 CPU e 768 MiB, volume de derivados somente leitura e volume exclusivo de referências.
-- Nova migration: revision `0043`, somente aditiva, sem política/backfill/ativação implícitos.
-- Estado inicial obrigatório: `FACIAL_PROCESSING_ENABLED=false`, profile facial não iniciado e nenhuma galeria ativa.
+- Migrations faciais: revisions `0043` e `0045`, aditivas; `0045` apenas amplia notificações administrativas. Nenhuma migration liga a flag ou processa fotos.
+- Estado inicial obrigatório em uma instalação nova: `FACIAL_PROCESSING_ENABLED=false` e profile facial não iniciado.
 
 Nenhum container, rede, volume, proxy, firewall, DNS, certificado ou secret de terceiro será alterado. Este inventário não autoriza execução.
 
@@ -19,13 +19,13 @@ Nenhum container, rede, volume, proxy, firewall, DNS, certificado ou secret de t
 3. executar build e migration autorizados com flag desligada;
 4. validar `/healthz` e `/api/health`, login do fotógrafo, login OTP e seleção manual antes de tocar no filtro;
 5. confirmar migration no head e ausência do `face-worker`/portas novas no profile padrão;
-6. com autorização de ativação separada, iniciar profile `facial` e verificar healthcheck/uso ocioso sem política ativa;
-7. criar uma Galeria pública exclusivamente sintética, com 500–1.000 JPEGs de adultos ficcionais, e ativar somente essa política;
+6. com autorização operacional separada, habilitar a configuração sintética e iniciar o profile `facial`, verificando healthcheck/uso ocioso;
+7. criar uma Galeria pública exclusivamente sintética, com 500–1.000 JPEGs de adultos ficcionais, e confirmar que a política interna e o backfill nascem automaticamente uma única vez;
 8. observar prévias simultâneas, fila, prontas/total, CPU, RSS, disco, backpressure, carga/descarga do modelo e ausência de impacto no worker de mídia;
 9. executar consentimento, `ready|no_face|multiple_faces|low_quality|no_candidates|failed`, fechamento/retomada, seleção, cotação, cancelamento, expiração e revogação;
 10. confirmar via prova de limpeza que referências, candidatas, outbox pendente e embeddings foram eliminados, enquanto fotos, privada, seleções e histórico permaneceram;
 11. revisar UI móvel/desktop e acessibilidade com imagens sintéticas adultas;
-12. desligar política/profile e registrar resultados, métricas e rollback.
+12. desligar a flag/profile por operação controlada e registrar resultados, métricas e rollback.
 
 Falha de healthcheck, isolamento, retenção, backpressure, regressão de mídia/seleção manual ou recurso acima do limite interrompe apenas o piloto facial e aciona rollback. Nenhum dado real ou infantil poderá ser introduzido.
 

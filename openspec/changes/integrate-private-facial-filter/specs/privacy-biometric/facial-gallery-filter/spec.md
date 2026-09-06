@@ -4,14 +4,19 @@ Definir o tratamento biométrico mínimo, isolado e reversível necessário para
 
 ## ADDED Requirements
 
-### Requirement: Ativação em duas camadas e prontidão jurídica
+### Requirement: Gate global e política interna automática
 
-O processamento facial SHALL permanecer desligado por padrão globalmente e por Galeria pública. O sistema MUST recusar ativação ou indexação enquanto não existirem versão de aviso aprovada, referência documentada da hipótese legal, política de retenção e configuração aplicável a menores. Desligar globalmente SHALL interromper novas indexações e consultas sem retirar seleção manual, pedidos ou histórico.
+O processamento facial SHALL permanecer desligado por padrão no ambiente. Quando o operador habilitar o subsistema com versão de aviso, referência da hipótese legal, retenção, modelos, criptografia e configuração aplicável a menores válidos, o sistema SHALL criar ou reconciliar automaticamente uma política técnica interna para cada Galeria pública ativa e SHALL NOT exigir declaração, preparação ou ativação manual do fotógrafo. Desligar globalmente SHALL interromper novas indexações e consultas sem retirar seleção manual, pedidos ou histórico.
 
-#### Scenario: Galeria sem prontidão
+#### Scenario: Ambiente sem prontidão
 
-- **WHEN** o fotógrafo tenta ativar busca facial sem todos os controles obrigatórios vigentes
-- **THEN** o sistema mantém a galeria desativada e informa quais controles faltam sem iniciar tratamento biométrico
+- **WHEN** a configuração operacional não possui todos os controles obrigatórios vigentes
+- **THEN** o sistema mantém a indexação indisponível, informa o estado no painel sem pedir uma ação jurídica ao fotógrafo e não inicia tratamento biométrico
+
+#### Scenario: Galeria elegível em ambiente habilitado
+
+- **WHEN** uma Galeria pública ativa possui prévias elegíveis e o subsistema global está válido e habilitado
+- **THEN** o sistema garante automaticamente a política interna versionada e agenda somente a indexação que estiver ausente ou divergente
 
 #### Scenario: Kill switch global
 
@@ -22,10 +27,10 @@ O processamento facial SHALL permanecer desligado por padrão globalmente e por 
 
 O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegida da foto estiver pronta, em fila facial independente e de baixa prioridade. A indexação SHALL nascer de foto ou derivado novo, mudança explícita de versão, backfill ou retentativa, e SHALL NOT manter varredura recorrente da galeria. O estado facial SHALL ser `disabled`, `pending`, `ready`, `partial`, `failed` ou `purged`; falha facial SHALL NOT impedir publicação, visualização ou seleção manual da foto.
 
-#### Scenario: Prévia pronta em galeria ativa
+#### Scenario: Prévia pronta em ambiente habilitado
 
-- **WHEN** uma foto elegível conclui sua prévia e a política facial da galeria está ativa
-- **THEN** o sistema enfileira indexação idempotente com galeria, foto, modelo e versão sem bloquear a disponibilidade da prévia
+- **WHEN** uma foto elegível conclui as prévias interna limpa e protegida em uma Galeria pública ativa com o subsistema global habilitado
+- **THEN** o sistema garante a política interna e enfileira indexação idempotente com galeria, foto, modelo e versão sem ação do fotógrafo e sem bloquear a disponibilidade da prévia
 
 #### Scenario: Falha facial isolada
 
@@ -65,9 +70,9 @@ Cada embedding do acervo SHALL pertencer a uma única Galeria pública, foto e v
 - **WHEN** a versão ou o hash do modelo configurado muda
 - **THEN** o sistema não mistura vetores incompatíveis, marca o índice anterior inválido e reindexa somente após os gates vigentes
 
-### Requirement: Consentimento destacado e referência com um rosto
+### Requirement: Consentimento da cliente e referência com um rosto
 
-A cliente autenticada e autorizada SHALL aceitar consentimento específico e versionado antes de enviar a referência. O sistema SHALL aceitar somente formato, tamanho e resolução permitidos com exatamente um rosto utilizável, e SHALL retornar estados distintos para nenhum rosto, múltiplos rostos, baixa qualidade, índice incompleto, nenhum candidato, cancelamento e falha técnica.
+A cliente autenticada e autorizada SHALL aceitar um checkbox de consentimento específico e versionado para o uso temporário da foto de referência na procura por possíveis correspondências naquela Galeria pública antes de enviá-la. Esse consentimento SHALL pertencer à cliente e à referência, SHALL NOT ser substituído por declaração do fotógrafo e SHALL NOT ampliar acesso. O sistema SHALL aceitar somente formato, tamanho e resolução permitidos com exatamente um rosto utilizável, e SHALL retornar estados distintos para nenhum rosto, múltiplos rostos, baixa qualidade, índice incompleto, nenhum candidato, cancelamento e falha técnica.
 
 #### Scenario: Referência válida
 
@@ -114,7 +119,7 @@ A busca SHALL retornar somente possíveis fotos já visíveis à cliente na Gale
 #### Scenario: Candidatas encontradas
 
 - **WHEN** a consulta encontra fotos acima do limiar conservador vigente
-- **THEN** o sistema retorna referências ordenadas e deduplicadas da mesma galeria sem persistir identidade inferida ou operação comercial
+- **THEN** o sistema retorna referências ordenadas e deduplicadas somente para aquela cliente e naquela visualização autenticada da mesma Galeria pública, sem persistir identidade inferida ou operação comercial
 
 #### Scenario: Primeira escolha de uma candidata
 

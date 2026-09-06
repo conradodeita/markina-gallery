@@ -88,6 +88,8 @@ describe("Galeria pública da cliente", () => {
     render(<PublicGalleryPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    expect(screen.getByText(/Autorizo o uso temporário desta foto exclusivamente/)).toBeTruthy();
+    expect(screen.getByText(/foto de referência é eliminada automaticamente/)).toBeTruthy();
     const file = new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Foto JPEG com uma pessoa"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("checkbox"));

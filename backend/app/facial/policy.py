@@ -1,4 +1,4 @@
-"""Lifecycle administrativo e inventário fail-closed da política facial."""
+"""Política técnica facial automática e lifecycle operacional compatível."""
 
 from __future__ import annotations
 
@@ -35,6 +35,76 @@ def read_policy(db: Session, parent_gallery_id: UUID) -> GalleryFacialPolicy | N
             GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
         )
     )
+
+
+def ensure_automatic_policy(
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+    settings: FacialSettings,
+) -> tuple[GalleryFacialPolicy, bool]:
+    """Garante a política interna sem exigir ação do fotógrafo.
+
+    O segundo item indica se uma galeria ausente, inativa ou divergente precisa de
+    backfill. Uma política já ativa e compatível não é alterada.
+    """
+
+    if not settings.enabled:
+        raise FacialPolicyError("O processamento facial está desligado no ambiente.")
+    parent = db.get(ParentGallery, parent_gallery_id)
+    if (
+        not parent
+        or not parent.active
+        or parent.lifecycle_status != "active"
+    ):
+        raise FacialPolicyError("Galeria pública indisponível para indexação facial.")
+    draft = _draft_from_settings(settings)
+    _validate_draft(draft)
+    policy = read_policy(db, parent_gallery_id)
+    previous_signature = _signature(policy)
+    was_active = bool(policy and policy.status == "active")
+    changed = not was_active or previous_signature != tuple(draft.__dict__.values())
+    if not changed:
+        assert policy is not None
+        return policy, False
+
+    instant = now()
+    if policy is None:
+        policy = GalleryFacialPolicy(
+            parent_gallery_id=parent_gallery_id,
+            status="active",
+            actor_admin_id=None,
+            activated_at=instant,
+            index_generation=1,
+            **draft.__dict__,
+        )
+        db.add(policy)
+    else:
+        if was_active and previous_signature != tuple(draft.__dict__.values()):
+            enqueue_gallery_purge(
+                db,
+                parent_gallery_id=parent_gallery_id,
+                reason=f"automatic-policy-version-change:{instant.isoformat()}",
+            )
+        for field_name, value in draft.__dict__.items():
+            setattr(policy, field_name, value)
+        policy.status = "active"
+        policy.actor_admin_id = None
+        policy.activated_at = instant
+        policy.suspended_at = None
+        policy.index_generation = max(1, policy.index_generation + 1)
+        policy.updated_at = instant
+    db.add(
+        AuditEvent(
+            event="facial.policy_activated_automatically",
+            subject=(
+                f"gallery_id:{parent_gallery_id};generation:{policy.index_generation};"
+                f"reason:{'created' if previous_signature is None else 'reconciled'}"
+            ),
+        )
+    )
+    db.flush()
+    return policy, True
 
 
 def prepare_policy(
@@ -247,6 +317,19 @@ def _validate_draft(draft: FacialPolicyDraft) -> None:
         raise FacialPolicyError("A política facial preparada está incompleta.")
     if not 0 <= draft.similarity_threshold_milli <= 1000:
         raise FacialPolicyError("Limiar facial inválido.")
+
+
+def _draft_from_settings(settings: FacialSettings) -> FacialPolicyDraft:
+    return FacialPolicyDraft(
+        legal_notice_version=settings.legal_notice_version,
+        legal_basis_reference=settings.legal_basis_reference,
+        retention_policy_version=settings.retention_policy_version,
+        minor_policy_version=settings.minor_policy_version,
+        model_version=settings.model_version,
+        quality_version=settings.quality_version,
+        calibration_version=settings.calibration_version,
+        similarity_threshold_milli=settings.similarity_threshold_milli,
+    )
 
 
 def _signature(policy: GalleryFacialPolicy | None) -> tuple[object, ...] | None:

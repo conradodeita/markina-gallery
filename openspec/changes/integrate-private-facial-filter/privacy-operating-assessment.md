@@ -38,7 +38,7 @@ Mensagens externas serão neutras: “busca concluída”, “nenhuma possibilid
 
 ## Direitos e revogação
 
-O canal do controlador deverá permitir confirmação de tratamento, acesso às informações, correção cadastral, oposição/revogação quando aplicável, explicação do filtro, eliminação da referência/candidatas e contestação. A cliente pode cancelar a consulta e rejeitar candidata na UI. O administrador pode suspender ou revogar a finalidade e obter prova técnica de limpeza. Nenhuma decisão exclusivamente automatizada produz compra ou bloqueio.
+O canal do controlador deverá permitir confirmação de tratamento, acesso às informações, correção cadastral, oposição/revogação quando aplicável, explicação do filtro, eliminação da referência/candidatas e contestação. A cliente pode cancelar a consulta e rejeitar candidata na UI. O operador autorizado pode desligar/revogar a finalidade e obter prova técnica de limpeza; o painel do fotógrafo mostra progresso e retentativa, sem declaração ou ativação jurídica por galeria. Nenhuma decisão exclusivamente automatizada produz compra ou bloqueio.
 
 ## Crianças e representação legal
 

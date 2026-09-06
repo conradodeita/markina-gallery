@@ -22,3 +22,17 @@ O filtro facial, suas referências, consentimentos, resultados, feedbacks e esta
 
 - **WHEN** duas clientes vinculadas pesquisam ou selecionam a mesma foto
 - **THEN** cada uma possui resultado, consentimento, seleção, valor e histórico independentes, embora a foto referencie a mesma mídia autorizada
+
+### Requirement: Acesso autenticado informado ao fotógrafo
+
+Ao concluir um OTP em contexto de galeria, o sistema SHALL reutilizar o cadastro único pelo telefone normalizado, vincular o acesso conforme o link e registrar uma notificação administrativa idempotente para o fotógrafo com cliente, Galeria pública e horário. A notificação SHALL NOT conter OTP, SHALL NOT duplicar o cadastro e SHALL NOT exigir aprovação do fotógrafo para concluir o acesso já autorizado.
+
+#### Scenario: Cliente preexistente conclui o login
+
+- **WHEN** uma cliente já cadastrada conclui o OTP de um link válido de galeria
+- **THEN** o sistema reutiliza o mesmo cadastro, conclui o vínculo e cria uma única notificação administrativa daquele acesso sem registrar novamente nome ou telefone
+
+#### Scenario: Repetição técnica da confirmação
+
+- **WHEN** o mesmo desafio consumido é reenviado ou uma transação é repetida
+- **THEN** a chave idempotente impede notificação duplicada e nenhum OTP aparece em payload, auditoria ou interface administrativa

@@ -1008,7 +1008,7 @@ class GalleryMembershipNotificationOutbox(Base):
         UniqueConstraint("event_key"),
         CheckConstraint(
             "event_type IN ('private_created', 'member_joined', 'member_blocked', "
-            "'member_unblocked', 'member_unlinked')",
+            "'member_unblocked', 'member_unlinked', 'client_logged_in')",
             name="ck_gallery_membership_notification_type",
         ),
         CheckConstraint(

@@ -44,25 +44,8 @@ export type FacialSearchResult = {
   candidates?: FacialCandidate[];
 };
 
-export type FacialPolicy = {
-  status: "disabled" | "pending" | "active" | "suspended";
-  ready_for_activation: boolean;
-  missing_requirements: string[];
-  legal_notice_version: string | null;
-  legal_basis_reference: string | null;
-  retention_policy_version: string | null;
-  minor_policy_version: string | null;
-  model_version: string | null;
-  quality_version: string | null;
-  calibration_version: string | null;
-  similarity_threshold_milli: number;
-  index_generation: number;
-  activated_at: string | null;
-  suspended_at: string | null;
-};
-
 export type FacialIndexStatus = {
-  state: "empty" | "pending" | "processing" | "ready" | "partial" | "failed";
+  state: "disabled" | "empty" | "pending" | "processing" | "ready" | "partial" | "failed";
   progress: { ready: number; total: number };
   queued: number;
   processing: number;
@@ -109,27 +92,8 @@ export const facialSearchApi = {
 };
 
 export const facialAdminApi = {
-  policy: (galleryId: string) =>
-    jsonRequest<FacialPolicy>(`/api/admin/parent-galleries/${galleryId}/facial-policy`),
   index: (galleryId: string) =>
     jsonRequest<FacialIndexStatus>(`/api/admin/parent-galleries/${galleryId}/facial-index`),
-  prepare: (galleryId: string, policy: FacialPolicy) =>
-    jsonRequest<FacialPolicy>(`/api/admin/parent-galleries/${galleryId}/facial-policy`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        legal_notice_version: policy.legal_notice_version,
-        legal_basis_reference: policy.legal_basis_reference,
-        retention_policy_version: policy.retention_policy_version,
-        minor_policy_version: policy.minor_policy_version,
-        model_version: policy.model_version,
-        quality_version: policy.quality_version,
-        calibration_version: policy.calibration_version,
-        similarity_threshold_milli: policy.similarity_threshold_milli,
-      }),
-    }),
-  action: (galleryId: string, action: "activate" | "suspend" | "revoke") =>
-    jsonRequest<FacialPolicy>(`/api/admin/parent-galleries/${galleryId}/facial-policy/${action}`, { method: "POST" }),
   retry: (galleryId: string, jobIds: string[]) =>
     jsonRequest<{ retried: number }>(`/api/admin/parent-galleries/${galleryId}/facial-index/retry`, {
       method: "POST",

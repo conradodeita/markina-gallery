@@ -1391,6 +1391,25 @@ def client_verify(
             if capability and capability.scope == "parent_invite":
                 consume_gallery_capability(capability)
                 audit(db, "parent_gallery.invite_verified", str(capability.id))
+        enqueue_membership_notification(
+            db,
+            event_key=f"client_logged_in:{challenge.id}",
+            event_type="client_logged_in",
+            parent=parent_context,
+            gallery=(
+                destination_gallery
+                if capability
+                and capability.scope
+                in {"private_invite", "private_client_invite", "private_gallery_link"}
+                else None
+            ),
+            client=client,
+        )
+        audit(
+            db,
+            "client.gallery_login_notified",
+            f"client_id:{client.id};gallery_id:{parent_context.id}",
+        )
     else:
         destination = _client_journey_destination(db, client.id)
     minimize_client_challenge_pii(db, challenge)
@@ -5979,6 +5998,7 @@ def admin_gallery_membership_notifications(
         "member_blocked",
         "member_unblocked",
         "member_unlinked",
+        "client_logged_in",
     ]
     | None = None,
     limit: int = Query(default=50, ge=1, le=200),
@@ -6017,7 +6037,9 @@ def admin_gallery_membership_notifications(
                 else None,
                 "client_id": str(item.client_id) if item.client_id else None,
                 "parent_name": item.parent_name_snapshot,
-                "derived_name": item.derived_name_snapshot,
+                "derived_name": item.derived_name_snapshot
+                if item.derived_gallery_id
+                else None,
                 "client_name": item.client_name_snapshot,
                 "created_at": item.created_at.isoformat(),
             }

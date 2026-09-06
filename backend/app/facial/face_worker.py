@@ -10,6 +10,7 @@ from redis import Redis
 from app.auth import SessionLocal
 from app.facial.config import FacialConfigurationError, facial_settings_from_environment
 from app.facial.crypto import FacialCipher
+from app.facial.indexing import reconcile_automatic_gallery_policies
 from app.facial.jobs import ClaimedFacialJob, FacialJobError, FacialJobRepository
 from app.facial.model_assets import verify_models
 from app.facial.notifications import process_next_search_notification
@@ -42,6 +43,13 @@ def main() -> None:
     derivatives_root = Path(
         os.getenv("MEDIA_DERIVATIVES_ROOT", "/var/lib/markina/derivatives")
     ).resolve()
+    with SessionLocal() as db:
+        reconcile_automatic_gallery_policies(
+            db,
+            derivatives_root=derivatives_root,
+            settings=settings,
+        )
+        db.commit()
 
     def provider_loader() -> OpenCvSFaceProvider:
         return OpenCvSFaceProvider(model_paths["yunet"], model_paths["sface"])

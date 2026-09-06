@@ -196,7 +196,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Não criar URL anônima de grade de fotos. Galeria pública é uma denominação de produto e exige link opaco, telefone/OTP e vínculo persistido antes de qualquer prévia identificável.
 - Quando a cliente já pode visualizar o acervo autorizado, a busca facial atua somente como filtro temporário na mesma galeria: não concede acesso, não cria seleção nem privada e não pesquisa outro evento.
 - Se um desenho futuro utilizar reconhecimento para revelar fotos que não faziam parte do conjunto já autorizado, o resultado deve ser privado, revisado pelo fotógrafo e coberto por nova especificação.
-- Indexação acontece por jobs duráveis após a prévia pronta, sem varredura contínua; a consulta pode continuar depois que a cliente fechar a tela e notificar conclusão por mensagem neutra.
+- Quando o subsistema facial estiver operacionalmente habilitado, a indexação acontece automaticamente por jobs duráveis após as prévias limpa e protegida ficarem prontas, sem declaração/ativação por galeria do fotógrafo e sem varredura contínua; a consulta pode continuar depois que a cliente fechar a tela e notificar conclusão por mensagem neutra.
 
 ### Seleção, preços e pagamento
 
@@ -260,11 +260,11 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - `PaymentProvider`: PIX manual no MVP; Infinity Pay posterior com criação de cobrança, webhook assinado e reconciliação.
 - `DriveStorageProvider`: upload resumível, checksum, retentativa exponencial, restauração e deleção controlada.
 - `EmailProvider`: SMTP transacional para verificação e recuperação de senha.
-- `FaceRecognitionProvider`: implementação somente depois de spike aprovado, sempre protegida por feature flag desligada por padrão e sem ativação automática em dados reais.
+- `FaceRecognitionProvider`: implementação somente depois de spike aprovado, sempre protegida por feature flag desligada por padrão. A habilitação de dados reais é uma decisão operacional externa e aprovada; uma vez habilitado o ambiente, galerias ativas são indexadas automaticamente, sem declaração manual do fotógrafo.
 
 ## 10. Privacidade e biometria
 
-- Fotos escolares e dados biométricos exigem minimização, transparência, consentimento específico de responsável e fluxo de exclusão. Não tratar isso como texto decorativo.
+- Fotos escolares e dados biométricos exigem minimização, transparência, consentimento específico do cliente/responsável para a referência enviada e fluxo de exclusão. O checkbox pertence à consulta da cliente, não à rotina de upload do fotógrafo; não tratar isso como texto decorativo.
 - Termo versionado, aceite auditável, finalidade explícita, expiração de referência facial e exclusão de embedding devem existir antes da feature ir a produção.
 - Feedback facial remove o resultado daquela consulta e pode criar revisão humana; nunca retreinar/aplicar associação automaticamente a partir de um único feedback.
 - Dados reais de crianças nunca entram em homologação.

@@ -92,6 +92,8 @@ Para evento coletivo, nunca mostrar grade anônima. Quando a cliente já estiver
 
 A busca facial deve mostrar progresso real, continuar em job durável se a cliente sair da tela e permitir retomada; conclusão pode gerar aviso transacional neutro. Se o reconhecimento for usado futuramente para liberar conteúdo antes oculto, revisão do fotógrafo e novo fluxo especificado voltam a ser obrigatórios.
 
+O checkbox de consentimento pertence à cliente e cobre apenas o uso temporário da foto de referência naquela busca. O painel do fotógrafo mostra indexação automática, progresso, falhas e retentativa; não deve pedir declaração nem expor ações de preparar/ativar/suspender política por galeria. Um login OTP concluído em contexto de galeria aparece como notificação administrativa, sem OTP e sem etapa de aprovação.
+
 ## 7. Área administrativa — princípio de operação rápida
 
 O painel deve ser mais funcional que decorativo. O fotógrafo deve localizar uma pendência e agir em poucos cliques.

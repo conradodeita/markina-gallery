@@ -36,3 +36,12 @@ A notificação SHALL usar chave idempotente por consulta e tipo de resultado. R
 
 - **WHEN** a mesma conclusão é processada mais de uma vez
 - **THEN** no máximo uma notificação é enviada para aquela consulta
+
+### Requirement: Acesso de cliente visível ao fotógrafo
+
+Cada login OTP concluído em contexto de galeria SHALL criar uma notificação administrativa idempotente para o fotógrafo, contendo somente cliente, Galeria pública e horário. Essa notificação SHALL NOT incluir OTP, referência facial, embedding ou inferência e SHALL NOT bloquear o redirecionamento da cliente.
+
+#### Scenario: Cliente entra pela Galeria pública
+
+- **WHEN** a cliente conclui o OTP de um link válido e é redirecionada para a Galeria pública
+- **THEN** o fotógrafo recebe uma única notificação de acesso na interface administrativa, sem necessidade de aprovar o login

@@ -18,10 +18,10 @@ Originais, prévias internas limpas, prévias protegidas, referências temporár
 - **WHEN** a cliente carrega ou atualiza o bloco de possíveis fotos
 - **THEN** a resposta contém apenas referências autorizadas, ordem e estado de expiração, sem artefato biométrico
 
-#### Scenario: Foto é indexada e classificada
+#### Scenario: Foto é indexada e classificada automaticamente
 
-- **WHEN** a prévia interna limpa e a prévia protegida da foto estão prontas sob uma política facial ativa
-- **THEN** o worker calcula embeddings e qualidade exclusivamente a partir da variante limpa, enquanto toda rota e marcação da cliente continuam apontando somente para a variante protegida
+- **WHEN** a prévia interna limpa e a prévia protegida da foto estão prontas em ambiente facial habilitado
+- **THEN** o sistema garante a política interna sem ação do fotógrafo e o worker calcula embeddings e qualidade exclusivamente a partir da variante limpa, enquanto toda rota e marcação da cliente continuam apontando somente para a variante protegida
 
 ### Requirement: Aviso de tentativa de cópia na apresentação da cliente
 

@@ -15,6 +15,7 @@ from app.auth import (
     Client,
     ClientPhone,
     DerivedGallery,
+    GalleryMembershipNotificationOutbox,
     ParentGallery,
     ParentGalleryRegistration,
     SessionLocal,
@@ -139,12 +140,27 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
     with SessionLocal() as db:
         clients = list(db.scalars(select(Client).where(Client.phone_e164 == phone)))
         phones = list(db.scalars(select(ClientPhone).where(ClientPhone.phone_e164 == phone)))
+        notifications = list(
+            db.scalars(
+                select(GalleryMembershipNotificationOutbox).where(
+                    GalleryMembershipNotificationOutbox.event_type
+                    == "client_logged_in"
+                )
+            )
+        )
         assert len(clients) == 1
         assert clients[0].id == client_id
         assert clients[0].full_name == "Nome cadastrado pelo fotógrafo"
         assert len(phones) == 1
         assert phones[0].client_id == client_id
         assert phones[0].verified_at is not None
+        assert len(notifications) == 1
+        assert notifications[0].event_key == f"client_logged_in:{challenge.json()['challenge_id']}"
+        assert notifications[0].parent_gallery_id == parent_id
+        assert notifications[0].derived_gallery_id is None
+        assert notifications[0].client_id == client_id
+        assert notifications[0].external_status == "skipped"
+        assert "123456" not in notifications[0].parent_name_snapshot
 
     client.cookies.clear()
     resumed = client.post(
@@ -156,6 +172,17 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
         "/auth/client/verify",
         json={"challenge_id": resumed.json()["challenge_id"], "code": "123456"},
     ).json() == {"destination": f"/public-galleries/{parent_id}"}
+    with SessionLocal() as db:
+        assert len(
+            list(
+                db.scalars(
+                    select(GalleryMembershipNotificationOutbox).where(
+                        GalleryMembershipNotificationOutbox.event_type
+                        == "client_logged_in"
+                    )
+                )
+            )
+        ) == 1
 
 
 def test_client_multiple_galleries_and_used_or_expired_otp(client):
@@ -317,6 +344,20 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
         )
         assert len(registrations) == 1
         assert registrations[0].status == "active"
+        login_notifications = list(
+            db.scalars(
+                select(GalleryMembershipNotificationOutbox).where(
+                    GalleryMembershipNotificationOutbox.event_type
+                    == "client_logged_in"
+                )
+            )
+        )
+        assert len(login_notifications) == 2
+        assert {item.event_key for item in login_notifications} == {
+            f"client_logged_in:{challenge}",
+            f"client_logged_in:{second}",
+        }
+        assert all(item.external_status == "skipped" for item in login_notifications)
 
 
 def test_disabled_gallery_link_cannot_create_client_after_otp(client):

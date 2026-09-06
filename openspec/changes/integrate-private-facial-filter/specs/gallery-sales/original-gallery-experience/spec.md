@@ -2,7 +2,7 @@
 
 ### Requirement: Filtro facial na única jornada visual
 
-O sistema SHALL apresentar a busca facial opcional dentro da Galeria pública já autorizada. Durante e depois da consulta, a cliente SHALL permanecer na mesma superfície; resultados tecnicamente melhores aparecem primeiro, outros resultados correspondentes aparecem em seguida e todas as fotos continuam disponíveis conforme a autorização e a organização vigentes.
+O sistema SHALL apresentar a busca facial opcional dentro da Galeria pública já autorizada. Durante e depois da consulta, a cliente SHALL permanecer na mesma superfície; resultados tecnicamente melhores aparecem primeiro, outros resultados correspondentes aparecem em seguida e todas as fotos continuam disponíveis conforme a autorização e a organização vigentes. Os blocos de resultado SHALL existir somente no estado privado da cliente autenticada e SHALL NOT alterar a ordem vista por outros membros.
 
 #### Scenario: Resultado disponível
 

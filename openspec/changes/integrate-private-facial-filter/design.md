@@ -34,17 +34,17 @@ A implementação usará o resolvedor transacional e o contrato `journeys` da ch
 
 Alternativa rejeitada: gravar fotos encontradas como origem `facial` na privada. Isso compartilharia inferências entre membros, criaria a privada antes da intenção de compra e confundiria filtro com acervo autorizado.
 
-### 2. Ativação global, política por galeria e gates fail-closed
+### 2. Gate operacional global e política interna automática
 
-`FACIAL_PROCESSING_ENABLED=false` será o kill switch de ambiente. Cada Galeria pública terá uma `GalleryFacialPolicy` em estado `disabled|pending|active|suspended`, com versão do aviso, referência da hipótese legal, política infantil, limiar, modelo e datas/atores. Somente `active` com todos os campos coerentes permite novos jobs.
+`FACIAL_PROCESSING_ENABLED=false` será o kill switch de ambiente. Quando o operador habilitar o subsistema com todas as versões, chaves e modelos válidos, o backend criará ou reconciliará automaticamente uma `GalleryFacialPolicy` interna para cada Galeria pública ativa, com versão do aviso, referência da hipótese legal, política infantil, limiar e modelo. Somente uma política interna `active` e coerente permite novos jobs.
 
-O painel poderá preparar uma política, mas ativação real continuará bloqueada se a configuração de ambiente não declarar versões jurídicas aprovadas. A primeira entrega manterá a flag desligada; testes ativam somente configuração sintética explícita.
+O fotógrafo não declara autorização, não prepara política e não ativa o filtro por galeria na interface. O painel é informativo: progresso, falhas sanitizadas e retentativa. A autorização operacional para dados reais continua externa ao fluxo da galeria e bloqueada se a configuração de ambiente não declarar versões jurídicas aprovadas; testes e homologação usam somente configuração sintética adulta explícita.
 
-Alternativa rejeitada: um checkbox simples na galeria. Ele não demonstra base, versão, retenção, revogação ou tratamento de menores.
+Alternativa rejeitada: um checkbox ou declaração do fotógrafo por galeria. Isso transfere ao usuário uma decisão operacional que deve ser validada pelo ambiente e cria uma etapa sem valor na rotina de upload.
 
 ### 3. Face worker separado, orientado a eventos e sem porta
 
-Um serviço `face-worker`, opcional e sem porta, consumirá de forma bloqueante uma fila Redis própria com prioridade inferior à geração de prévias. Ele terá imagem/dependências específicas, limites configuráveis e somente os mounts necessários. API e worker de mídia não carregarão OpenCV ou pesos. Não existirá laço que revisite continuamente uma galeria: jobs nascem somente de eventos persistidos ou de reconciliação administrativa explícita.
+Um serviço `face-worker`, opcional e sem porta, consumirá de forma bloqueante uma fila Redis própria com prioridade inferior à geração de prévias. Ele terá imagem/dependências específicas, limites configuráveis e somente os mounts necessários. API e worker de mídia não carregarão OpenCV ou pesos. Não existirá laço que revisite continuamente uma galeria: jobs nascem somente de eventos persistidos ou de uma reconciliação idempotente executada uma vez no startup para políticas ausentes ou versões divergentes.
 
 O processo poderá manter os modelos carregados durante um lote, mas deverá descarregá-los depois de um período ocioso configurável e limitar jobs por processo. Quando a fila estiver vazia, permanecerá sem consumo ativo de CPU. Reinício do container não perde trabalho porque fila, lease e progresso pertencem ao banco/Redis, não à memória do navegador ou do worker.
 
@@ -78,9 +78,9 @@ Alternativa rejeitada: vetor em claro no PostgreSQL ou Redis. Isolamento lógico
 
 ### 6. Pipeline de indexação incremental e idempotente
 
-Quando `admin_preview` conclui, um hook pequeno verifica a política e grava job facial na mesma transação, com chave `(photo_id, preview_fingerprint, model_version, quality_version)`. Essa variante interna é redimensionada diretamente do original, não recebe marca d'água e não é servida à cliente. O face worker valida novamente política e foto antes de processar, detecta zero ou mais rostos, cria embeddings e métricas técnicas de cada rosto e substitui atomicamente apenas a versão daquela foto. A `client_preview` protegida continua sendo a única variante usada para apresentação e autorização visual da cliente. Falha grava estado retomável e não altera `processing_status` da mídia.
+Quando `admin_preview` e `client_preview` concluem, um hook pequeno garante a política técnica interna automática e grava job facial na mesma transação, com chave `(photo_id, preview_fingerprint, model_version, quality_version)`. Essa variante interna é redimensionada diretamente do original, não recebe marca d'água e não é servida à cliente. O face worker valida novamente política e foto antes de processar, detecta zero ou mais rostos, cria embeddings e métricas técnicas de cada rosto e substitui atomicamente apenas a versão daquela foto. A `client_preview` protegida continua sendo a única variante usada para apresentação e autorização visual da cliente. Falha grava estado retomável e não altera `processing_status` da mídia.
 
-Ativar uma galeria agenda um único backfill paginado das prévias internas limpas prontas, exigindo também que a prévia protegida da cliente esteja pronta antes de expor qualquer candidata. Foto nova ou derivado alterado agenda somente seu próprio job; troca de versão agenda reindexação explícita. Desativar, excluir ou retirar foto agenda purge prioritário. Uma limpeza reconciliadora procura temporários vencidos e índices sem origem válida, sem recalcular fotos saudáveis.
+No startup, o face worker reconcilia uma única vez galerias ativas sem política ou com versão divergente e agenda backfill paginado apenas para as prévias internas limpas ainda não compatíveis, exigindo também que a prévia protegida esteja pronta antes de expor qualquer candidata. Foto nova ou derivado limpo alterado agenda somente seu próprio job; troca de versão agenda reindexação explícita. Desligar globalmente interrompe novos jobs; excluir ou retirar foto agenda purge prioritário. Uma limpeza reconciliadora procura temporários vencidos e índices sem origem válida, sem recalcular fotos saudáveis.
 
 Alternativa rejeitada: varrer pasta em background sem jobs duráveis ou manter scan recorrente por galeria. Isso perde auditoria, idempotência e capacidade de retomar depois de falha, além de consumir recursos sem alteração de conteúdo.
 
@@ -88,7 +88,6 @@ Alternativa rejeitada: varrer pasta em background sem jobs duráveis ou manter s
 
 Endpoints propostos:
 
-- `GET/PUT /api/admin/galleries/{gallery_id}/facial-policy`;
 - `GET /api/admin/galleries/{gallery_id}/facial-index` para contagens e progresso real;
 - `POST /api/admin/galleries/{gallery_id}/facial-index/retry`;
 - `GET /api/client/galleries/{gallery_id}/facial-search` para disponibilidade/aviso;
@@ -109,7 +108,7 @@ A resposta inclui rank e IDs, não score. O texto sempre fala em possibilidades.
 
 ### 9. UX na mesma Galeria pública e progresso retomável
 
-O frontend mostrará `Procurar por reconhecimento facial` como ação opcional, modal de consentimento destacado, upload mobile-first, progresso cancelável e mensagens orientativas. O fotógrafo verá `prontas/total`, fila, processamento e falhas. A cliente verá etapas e contagens reais do snapshot; não haverá percentual inventado quando uma etapa não expuser unidade mensurável.
+O frontend mostrará `Procurar por reconhecimento facial` como ação opcional, modal de consentimento destacado, upload mobile-first, progresso cancelável e mensagens orientativas. O fotógrafo verá indexação automática com `prontas/total`, fila, processamento, falhas e retentativa, sem botões de preparar, ativar, suspender ou revogar política. A cliente verá etapas e contagens reais do snapshot; não haverá percentual inventado quando uma etapa não expuser unidade mensurável.
 
 Resultados aparecem acima das pastas em `Melhores resultados encontrados` e `Outros resultados encontrados`, seguidos pelo acervo integral. Os três blocos reutilizam o mesmo card/favorito/seleção; uma foto repetida visualmente referencia o mesmo estado, e selecionar ou desmarcar atualiza o resumo e a cotação existentes.
 
@@ -119,9 +118,9 @@ A apresentação da cliente mantém a marca d'água como mecanismo de desestímu
 
 A configuração global de proteção visual preserva texto repetido e adiciona transparência, sombra, alinhamento principal em nove posições e linhas diagonais cruzadas opcionais. Esses campos pertencem a `BrandingSettings`, recebem defaults compatíveis e são aplicados somente durante a geração de `client_preview`. Salvar a proteção reenfileira a geração de derivados, porém a idempotência facial usa o fingerprint de `admin_preview`; portanto uma mudança puramente visual não cria reindexação biométrica desnecessária.
 
-### 10. Menores e separação entre consentimentos
+### 10. Consentimento da referência e tratamento de menores
 
-Indexação do acervo e consulta por referência têm recibos e fundamentos separados. Para referência declarada de criança, `minor_processing_mode` exige representação legal comprovada por mecanismo não biométrico definido e habilitado; até lá o backend recusa. O sistema não estima idade pela face.
+A indexação técnica do acervo é governada pela configuração operacional do ambiente e não pede declaração do fotógrafo dentro da galeria. O checkbox da cliente cobre somente o uso temporário da foto de referência para procurar possíveis correspondências naquela Galeria pública autenticada; o recibo é versionado, isolado por cliente e eliminado junto dos dados temporários conforme a retenção. Para referência declarada de criança, `minor_processing_mode` exige representação legal comprovada por mecanismo não biométrico definido e habilitado; até lá o backend recusa. O sistema não estima idade pela face.
 
 Homologação usa somente adultos sintéticos. Testes de fluxo infantil usam flags e fixtures sem imagem humana. RIPD e textos aprovados são artefatos operacionais obrigatórios antes de qualquer piloto com dado real.
 
@@ -147,9 +146,13 @@ Alternativa rejeitada: avaliar a foto inteira, o maior rosto ou o centro como su
 
 `INSTRUCOES_EXECUTOR_CLAUDE_CODE.md`, `DIRETRIZES_FRONTEND_MARKINA_GALLERY.md` e `ROADMAP_ARQUITETURA.md` serão reconciliados junto da implementação: “pública” significa compartilhável por link opaco, OTP e vínculo, não anônima. A proibição de grade aberta e pesquisa entre eventos permanece. Quando o filtro apenas reordena fotos já autorizadas, a escolha da cliente é a revisão humana; se uma mudança futura usar o resultado para liberar conteúdo antes oculto, revisão do fotógrafo e nova change voltam a ser obrigatórias.
 
+### 15. Notificação de acesso autenticado
+
+Cada verificação OTP concluída em contexto de galeria reutiliza o cadastro único pelo telefone normalizado, registra o acesso e cria uma notificação administrativa idempotente por desafio consumido, com cliente, Galeria pública e horário. O payload nunca contém OTP. A notificação não exige aprovação do fotógrafo nem altera a autorização já concedida pelo link e pelo login.
+
 ## Risks / Trade-offs
 
-- [Base legal inadequada para pessoas incidentais] → flag global e política por galeria fail-closed; RIPD e revisão jurídica antes de dado real.
+- [Base legal inadequada para pessoas incidentais] → flag global e política interna automática fail-closed; RIPD e revisão jurídica antes de dado real.
 - [Falso positivo apresentado como identidade] → limiar conservador, linguagem de possibilidade, sem score, seleção consciente e feedback sem treinamento.
 - [Vazamento entre eventos ou membros] → FKs compostas, AAD por escopo, autorização repetida e testes negativos com IDs trocados.
 - [Referência permanece após crash] → armazenamento cifrado, deadline no banco e cleaner independente com retentativa/auditoria.
@@ -160,18 +163,18 @@ Alternativa rejeitada: avaliar a foto inteira, o maior rosto ou o centro como su
 - [Métrica de qualidade favorece outro rosto ou uma estética arbitrária] → avaliar somente o rosto correspondente, usar fatores técnicos explicáveis e manter todos os resultados/autoria da escolha.
 - [Worker ocioso retém memória ou reprocessa a galeria] → espera bloqueante, fingerprint/versionamento, descarregamento ocioso e ausência de scan recorrente.
 - [Cliente fecha a tela e perde o resultado] → job e snapshot duráveis, consulta retomável e outbox idempotente de conclusão.
-- [Ativações antigas sobrevivem à nova política] → versão jurídica faz parte do gate e mudança suspende consultas até reaceite/reindexação quando necessário.
+- [Índices antigos sobrevivem à nova configuração] → versões jurídicas e técnicas fazem parte da assinatura interna; mudança invalida e agenda reindexação controlada.
 - [Dois clientes compartilham inferência] → request/candidate sempre possui `client_id`; somente `PhotoSelection` consciente segue para o modelo comercial individual.
 
 ## Migration Plan
 
 1. Reconciliar roadmap e confirmar que a change de jornada consolidada está aplicada no código alvo.
-2. Adicionar migration somente aditiva e testes de upgrade/head, sem habilitar política existente.
+2. Adicionar migration somente aditiva e testes de upgrade/head, sem ligar o kill switch do ambiente.
 3. Introduzir criptografia, repositórios, jobs e face worker com modelos verificados; manter `FACIAL_PROCESSING_ENABLED=false`.
 4. Implementar APIs e frontend com indisponibilidade explícita quando a flag estiver desligada.
 5. Executar testes unitários, integração, contratos, concorrência, retenção, segurança e corpus sintético local; validar que busca não cria entidade comercial.
 6. Preparar inventário e runbook de homologação, incluindo CPU/memória/disco, modelos, secrets e rollback; nenhuma imagem real infantil.
 7. Em deploy futuramente autorizado, aplicar backup/migration, publicar com flag desligada e validar healthchecks/smoke sintético.
-8. Ativar somente uma galeria sintética após RIPD, textos e configuração jurídica aprovados; observar fila e limpeza antes de ampliar.
+8. Habilitar somente o piloto sintético adulto por operação autorizada; deixar o reconciliador automático criar políticas internas e observar fila e limpeza antes de ampliar.
 
 Rollback: desligar o kill switch, cancelar novas operações, executar purge idempotente e retornar aplicação/face worker à versão saudável. As tabelas aditivas permanecem para auditoria e limpeza; nenhuma down migration destrutiva será executada.

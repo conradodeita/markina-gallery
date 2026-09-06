@@ -140,20 +140,6 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
         client_id=client.id,
         status="active",
     )
-    policy = GalleryFacialPolicy(
-        id=uuid4(),
-        parent_gallery_id=gallery.id,
-        status="active",
-        legal_notice_version=settings.legal_notice_version,
-        legal_basis_reference=settings.legal_basis_reference,
-        retention_policy_version=settings.retention_policy_version,
-        minor_policy_version=settings.minor_policy_version,
-        model_version=settings.model_version,
-        quality_version=settings.quality_version,
-        calibration_version=settings.calibration_version,
-        index_generation=1,
-        actor_admin_id=admin.id,
-    )
     db.add_all(
         (
             admin,
@@ -161,7 +147,6 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
             folder,
             client,
             registration,
-            policy,
             PriceRule(
                 parent_gallery_id=gallery.id,
                 minimum_quantity=1,
@@ -186,6 +171,7 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
         db.add(photo)
         photos.append(photo)
     db.commit()
+    assert db.scalar(select(func.count()).select_from(GalleryFacialPolicy)) == 0
 
     # O upload gera a prévia e agenda o índice, mas continua válido mesmo se a
     # camada facial falhar separadamente.
@@ -193,6 +179,14 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
         derivatives = generate_derivatives(db, photo)
         assert any(item.variant == "client_preview" and item.status == "ready" for item in derivatives)
     assert all(photo.available for photo in photos)
+    policy = db.scalar(
+        select(GalleryFacialPolicy).where(
+            GalleryFacialPolicy.parent_gallery_id == gallery.id
+        )
+    )
+    assert policy is not None
+    assert policy.status == "active"
+    assert policy.actor_admin_id is None
 
     for _photo in photos:
         claim = repository.claim_next(db, lease_seconds=60)

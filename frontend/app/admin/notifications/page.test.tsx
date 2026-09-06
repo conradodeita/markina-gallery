@@ -55,4 +55,25 @@ describe("notificações administrativas", () => {
       { credentials: "same-origin" },
     ));
   });
+
+  it("identifica o acesso OTP sem expor telefone ou código", async () => {
+    const loginNotification = {
+      ...notification,
+      id: "login-1",
+      event_type: "client_logged_in",
+      derived_gallery_id: null,
+      derived_name: null,
+      otp: "123456",
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ notifications: [loginNotification] }), { status: 200 }),
+    );
+
+    render(<NotificationsPage />);
+
+    expect(await screen.findByText("Cliente acessou a galeria")).toBeTruthy();
+    expect(screen.getByText("O login por OTP foi concluído e o acesso autorizado.")).toBeTruthy();
+    expect(screen.queryByText("123456")).toBeNull();
+    expect(screen.queryByText("+5511999999999")).toBeNull();
+  });
 });
