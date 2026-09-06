@@ -16,6 +16,8 @@ from app.facial.model_assets import (
     verify_models,
 )
 
+BACKEND_ROOT = Path(__file__).parents[1]
+
 
 class _Response(io.BytesIO):
     def __enter__(self):
@@ -110,6 +112,17 @@ def test_manifest_accepts_only_pinned_opencv_lfs_media_url(tmp_path: Path) -> No
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(FacialModelConfigurationError, match="Origem"):
         load_manifest(manifest, architecture="arm64")
+
+
+def test_api_image_contains_manifest_but_not_model_weights() -> None:
+    dockerfile = (BACKEND_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY facial-assets ./facial-assets" in dockerfile
+    tracked_assets = [
+        path.name for path in (BACKEND_ROOT / "facial-assets").iterdir() if path.is_file()
+    ]
+    assert "model-manifest.json" in tracked_assets
+    assert "THIRD_PARTY_NOTICES.md" in tracked_assets
+    assert not any(name.endswith(".onnx") for name in tracked_assets)
 
 
 def test_verify_fails_closed_for_tampered_bytes_or_manifest(tmp_path: Path) -> None:
