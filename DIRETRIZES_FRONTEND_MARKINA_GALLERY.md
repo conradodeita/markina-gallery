@@ -9,7 +9,7 @@ O protótipo visual aprovado está em [`docs/frontend-reference/stitch-export/`]
 A Markina Gallery é uma plataforma operacional de fotografia com duas superfícies:
 
 1. **Área administrativa do fotógrafo**: CRM, eventos, galerias, fotos, clientes, seleções, pedidos, pagamentos, entregas, mensagens, armazenamento e pendências.
-2. **Área do cliente/responsável**: acesso à galeria autorizada, busca/resultado privado quando aplicável, seleção, carrinho, checkout, pedido e entregas.
+2. **Área do cliente/responsável**: acesso à galeria autorizada, filtro facial temporário quando aplicável, seleção privada, carrinho, checkout, pedido e entregas.
 
 Ela possui características de um CMS apenas no sentido de administrar conteúdo estruturado — galerias, pastas, fotos, capas, textos e configurações comerciais. **Não é um CMS completo de website.**
 
@@ -88,7 +88,9 @@ Implementar progressivamente:
 - detalhe do pedido;
 - minhas entregas.
 
-Para evento coletivo, não mostrar grade pública do acervo. O fluxo de busca facial, quando habilitado após o spike, leva a uma sessão de resultado privada, com consentimento e revisão/ativação conforme as specs de privacidade.
+Para evento coletivo, nunca mostrar grade anônima. Quando a cliente já estiver autenticada e vinculada à Galeria pública não listada, o filtro facial pode destacar `Melhores resultados encontrados` e `Outros resultados encontrados` acima do mesmo acervo autorizado, sem criar nova rota, card, permissão ou seleção automática.
+
+A busca facial deve mostrar progresso real, continuar em job durável se a cliente sair da tela e permitir retomada; conclusão pode gerar aviso transacional neutro. Se o reconhecimento for usado futuramente para liberar conteúdo antes oculto, revisão do fotógrafo e novo fluxo especificado voltam a ser obrigatórios.
 
 ## 7. Área administrativa — princípio de operação rápida
 

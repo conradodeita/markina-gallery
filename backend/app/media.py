@@ -156,6 +156,19 @@ def generate_derivatives(
             if folder.status == "preparing":
                 folder.status = "released"
                 folder.released_at = now()
+        client_preview = next(
+            derivative
+            for derivative in derivatives
+            if derivative.variant == "client_preview"
+        )
+        from app.facial.indexing import enqueue_photo_index_if_eligible
+
+        enqueue_photo_index_if_eligible(
+            db,
+            photo,
+            client_preview,
+            derivative_path=safe_derivative_path(client_preview),
+        )
         db.commit()
         return derivatives
     except Exception:

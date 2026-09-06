@@ -1,0 +1,161 @@
+"""Progresso real e retentativa seletiva do índice facial."""
+
+from datetime import timedelta
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from app.auth import (
+    Base,
+    FacialJob,
+    GalleryFacialPolicy,
+    MediaDerivative,
+    ParentGallery,
+    PhotoAsset,
+    PhotoFolder,
+    now,
+)
+from app.facial.status import (
+    FacialStatusError,
+    gallery_index_status,
+    retry_failed_index_jobs,
+)
+
+
+def _fixture():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    parent = ParentGallery(id=uuid4(), name="Evento")
+    folder = PhotoFolder(
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        name="Fotos",
+        status="released",
+        purpose="content",
+    )
+    policy = GalleryFacialPolicy(
+        parent_gallery_id=parent.id,
+        status="active",
+        legal_notice_version="notice-v1",
+        legal_basis_reference="synthetic-only",
+        retention_policy_version="retention-v1",
+        minor_policy_version="minor-disabled-v1",
+        model_version="model-v1",
+        quality_version="quality-v1",
+        calibration_version="calibration-v1",
+    )
+    db.add_all((parent, folder, policy))
+    photos = []
+    for index in range(6):
+        photo = PhotoAsset(
+            id=uuid4(),
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename=f"foto-{index}.jpg",
+            storage_key=f"{parent.id}/foto-{index}.jpg",
+            available=True,
+        )
+        db.add_all(
+            (
+                photo,
+                MediaDerivative(
+                    photo_asset_id=photo.id,
+                    variant="client_preview",
+                    status="ready",
+                    relative_path=f"{photo.id}/client_preview.jpg",
+                ),
+            )
+        )
+        photos.append(photo)
+    db.flush()
+    instant = now()
+    jobs = []
+    for index, state in enumerate(("completed", "queued", "processing", "failed", "failed")):
+        job = FacialJob(
+            kind="index",
+            status=state,
+            idempotency_key=f"status-{index}",
+            parent_gallery_id=parent.id,
+            photo_asset_id=photos[index].id,
+            model_version="model-v1",
+            quality_version="quality-v1",
+            preview_fingerprint=f"{index}" * 64,
+            attempts=2 if state == "failed" else 1,
+            last_error_category="provider_unavailable" if state == "failed" else None,
+            available_at=instant,
+            created_at=instant + timedelta(seconds=index),
+            updated_at=instant + timedelta(seconds=index),
+        )
+        db.add(job)
+        jobs.append(job)
+    db.commit()
+    return db, parent, photos, jobs
+
+
+def test_status_reports_real_latest_counts_and_paginated_sanitized_failures() -> None:
+    db, parent, _photos, _jobs = _fixture()
+
+    first = gallery_index_status(
+        db, parent_gallery_id=parent.id, page=1, page_size=1
+    )
+    second = gallery_index_status(
+        db, parent_gallery_id=parent.id, page=2, page_size=1
+    )
+
+    assert first.state == "partial"
+    assert (first.ready, first.total, first.unindexed) == (1, 6, 1)
+    assert (first.queued, first.processing, first.failed) == (1, 1, 2)
+    assert first.failure_total == 2
+    assert len(first.failures) == len(second.failures) == 1
+    assert first.failures[0]["job_id"] != second.failures[0]["job_id"]
+    assert set(first.failures[0]) == {
+        "job_id",
+        "photo_id",
+        "attempts",
+        "error_category",
+    }
+
+
+def test_retry_is_scoped_and_idempotent() -> None:
+    db, parent, _photos, jobs = _fixture()
+    failed_id = jobs[3].id
+
+    assert retry_failed_index_jobs(
+        db, parent_gallery_id=parent.id, job_ids={failed_id}
+    ) == 1
+    db.commit()
+    assert jobs[3].status == "queued"
+    assert jobs[3].attempts == 0 and jobs[3].last_error_category is None
+    assert retry_failed_index_jobs(
+        db, parent_gallery_id=parent.id, job_ids={failed_id}
+    ) == 0
+    with pytest.raises(FacialStatusError, match="não encontrado"):
+        retry_failed_index_jobs(
+            db, parent_gallery_id=uuid4(), job_ids={jobs[4].id}
+        )
+
+
+def test_stale_completed_version_does_not_count_as_ready() -> None:
+    db, parent, photos, _jobs = _fixture()
+    db.add(
+        FacialJob(
+            kind="index",
+            status="completed",
+            idempotency_key="stale-completed",
+            parent_gallery_id=parent.id,
+            photo_asset_id=photos[5].id,
+            model_version="old-model",
+            quality_version="quality-v1",
+            preview_fingerprint="f" * 64,
+            available_at=now(),
+        )
+    )
+    db.commit()
+
+    report = gallery_index_status(db, parent_gallery_id=parent.id)
+
+    assert report.ready == 1
+    assert report.unindexed == 1

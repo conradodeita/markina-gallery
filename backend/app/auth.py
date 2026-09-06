@@ -27,6 +27,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -341,6 +342,7 @@ class PhotoAsset(Base):
 
     __tablename__ = "photo_asset"
     __table_args__ = (
+        UniqueConstraint("id", "parent_gallery_id", name="uq_photo_asset_id_parent"),
         ForeignKeyConstraint(
             ["folder_id", "parent_gallery_id"],
             ["photo_folder.id", "photo_folder.parent_gallery_id"],
@@ -1174,6 +1176,352 @@ class MediaJob(Base):
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class GalleryFacialPolicy(Base):
+    """Gate versionado de processamento facial por Galeria pública."""
+
+    __tablename__ = "gallery_facial_policy"
+    __table_args__ = (
+        UniqueConstraint("parent_gallery_id", name="uq_gallery_facial_policy_parent"),
+        CheckConstraint(
+            "status IN ('disabled', 'pending', 'active', 'suspended')",
+            name="ck_gallery_facial_policy_status",
+        ),
+        CheckConstraint(
+            "similarity_threshold_milli BETWEEN 0 AND 1000",
+            name="ck_gallery_facial_policy_threshold",
+        ),
+        CheckConstraint("index_generation >= 0", name="ck_gallery_facial_policy_generation"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="disabled", index=True)
+    legal_notice_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    legal_basis_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    retention_policy_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    minor_policy_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    model_version: Mapped[str] = mapped_column(String(120))
+    quality_version: Mapped[str] = mapped_column(String(120))
+    calibration_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    similarity_threshold_milli: Mapped[int] = mapped_column(Integer, default=750)
+    index_generation: Mapped[int] = mapped_column(Integer, default=0)
+    actor_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=True, index=True
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class PhotoFaceEmbedding(Base):
+    """Envelope cifrado de uma face indexada e sua qualidade técnica."""
+
+    __tablename__ = "photo_face_embedding"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["photo_asset_id", "parent_gallery_id"],
+            ["photo_asset.id", "photo_asset.parent_gallery_id"],
+            name="fk_face_embedding_photo_parent",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "photo_asset_id",
+            "face_ordinal",
+            "model_version",
+            "quality_version",
+            "preview_fingerprint",
+            name="uq_face_embedding_versioned_photo_face",
+        ),
+        CheckConstraint("face_ordinal >= 0", name="ck_face_embedding_ordinal"),
+        CheckConstraint(
+            "quality_band IN ('best', 'other')", name="ck_face_embedding_quality_band"
+        ),
+        Index(
+            "ix_face_embedding_gallery_model",
+            "parent_gallery_id",
+            "model_version",
+            "quality_version",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=False, index=True
+    )
+    photo_asset_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    face_ordinal: Mapped[int] = mapped_column(Integer)
+    model_version: Mapped[str] = mapped_column(String(120))
+    quality_version: Mapped[str] = mapped_column(String(120))
+    preview_fingerprint: Mapped[str] = mapped_column(String(64))
+    quality_band: Mapped[str] = mapped_column(String(16), default="other")
+    payload_ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    payload_nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    key_id: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class FacialSearchRequest(Base):
+    """Consulta durável; a referência fica em armazenamento temporário cifrado."""
+
+    __tablename__ = "facial_search_request"
+    __table_args__ = (
+        UniqueConstraint(
+            "id", "parent_gallery_id", "client_id", name="uq_facial_search_scope"
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'waiting_index', 'validating_reference', 'searching', "
+            "'ranking', 'ready', 'no_face', 'multiple_faces', 'low_quality', "
+            "'index_incomplete', 'no_candidates', 'cancelled', 'expired', 'failed')",
+            name="ck_facial_search_status",
+        ),
+        CheckConstraint(
+            "subject_declaration IN ('adult', 'minor')",
+            name="ck_facial_search_subject_declaration",
+        ),
+        CheckConstraint(
+            "snapshot_total >= 0 AND snapshot_ready >= 0 AND snapshot_ready <= snapshot_total",
+            name="ck_facial_search_snapshot_progress",
+        ),
+        CheckConstraint(
+            "compare_total >= 0 AND compare_done >= 0 AND compare_done <= compare_total",
+            name="ck_facial_search_compare_progress",
+        ),
+        Index("ix_facial_search_client_gallery_expiry", "client_id", "parent_gallery_id", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=False, index=True
+    )
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), nullable=False, index=True)
+    policy_id: Mapped[UUID] = mapped_column(
+        ForeignKey("gallery_facial_policy.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    consent_version: Mapped[str] = mapped_column(String(80))
+    legal_notice_version: Mapped[str] = mapped_column(String(80))
+    subject_declaration: Mapped[str] = mapped_column(String(16))
+    representation_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    model_version: Mapped[str] = mapped_column(String(120))
+    quality_version: Mapped[str] = mapped_column(String(120))
+    index_generation: Mapped[int] = mapped_column(Integer)
+    snapshot_total: Mapped[int] = mapped_column(Integer, default=0)
+    snapshot_ready: Mapped[int] = mapped_column(Integer, default=0)
+    compare_total: Mapped[int] = mapped_column(Integer, default=0)
+    compare_done: Mapped[int] = mapped_column(Integer, default=0)
+    reference_locator_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    reference_locator_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    reference_key_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    reference_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class FacialSearchSnapshotItem(Base):
+    """Foto/fingerprint congelados no início da consulta, sem inferência."""
+
+    __tablename__ = "facial_search_snapshot_item"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["search_request_id", "parent_gallery_id", "client_id"],
+            [
+                "facial_search_request.id",
+                "facial_search_request.parent_gallery_id",
+                "facial_search_request.client_id",
+            ],
+            name="fk_facial_snapshot_search_scope",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["photo_asset_id", "parent_gallery_id"],
+            ["photo_asset.id", "photo_asset.parent_gallery_id"],
+            name="fk_facial_snapshot_photo_parent",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "search_request_id", "photo_asset_id", name="uq_facial_snapshot_photo"
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'ready', 'excluded')",
+            name="ck_facial_snapshot_status",
+        ),
+        Index("ix_facial_snapshot_request_status", "search_request_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    search_request_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    client_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    preview_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class FacialSearchCandidate(Base):
+    """Foto autorizada e ordenada, sem persistir similaridade ou identidade."""
+
+    __tablename__ = "facial_search_candidate"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["search_request_id", "parent_gallery_id", "client_id"],
+            [
+                "facial_search_request.id",
+                "facial_search_request.parent_gallery_id",
+                "facial_search_request.client_id",
+            ],
+            name="fk_facial_candidate_search_scope",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["photo_asset_id", "parent_gallery_id"],
+            ["photo_asset.id", "photo_asset.parent_gallery_id"],
+            name="fk_facial_candidate_photo_parent",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("search_request_id", "photo_asset_id", name="uq_facial_candidate_photo"),
+        CheckConstraint("rank >= 1", name="ck_facial_candidate_rank"),
+        CheckConstraint(
+            "quality_band IN ('best', 'other')", name="ck_facial_candidate_quality_band"
+        ),
+        Index("ix_facial_candidate_request_rank", "search_request_id", "rank"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    search_request_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    client_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    photo_asset_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    rank: Mapped[int] = mapped_column(Integer)
+    quality_band: Mapped[str] = mapped_column(String(16))
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class FacialJob(Base):
+    """Job facial com lease, prioridade e idempotência persistentes."""
+
+    __tablename__ = "facial_job"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_facial_job_idempotency"),
+        CheckConstraint(
+            "kind IN ('index', 'purge', 'search', 'cleanup')", name="ck_facial_job_kind"
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed', 'cancelled')",
+            name="ck_facial_job_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_facial_job_attempts"),
+        CheckConstraint("priority >= 0", name="ck_facial_job_priority"),
+        CheckConstraint(
+            "progress_total >= 0 AND progress_done >= 0 AND progress_done <= progress_total",
+            name="ck_facial_job_progress",
+        ),
+        Index("ix_facial_job_pending", "status", "priority", "available_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(240), unique=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=False, index=True
+    )
+    photo_asset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("photo_asset.id"), nullable=True, index=True
+    )
+    search_request_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("facial_search_request.id"), nullable=True, index=True
+    )
+    model_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    quality_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    preview_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    progress_total: Mapped[int] = mapped_column(Integer, default=0)
+    progress_done: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class FacialSearchNotificationOutbox(Base):
+    """Mensagem transacional cifrada, neutra e idempotente por consulta."""
+
+    __tablename__ = "facial_search_notification_outbox"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["search_request_id", "parent_gallery_id", "client_id"],
+            [
+                "facial_search_request.id",
+                "facial_search_request.parent_gallery_id",
+                "facial_search_request.client_id",
+            ],
+            name="fk_facial_notification_search_scope",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("idempotency_key", name="uq_facial_notification_idempotency"),
+        CheckConstraint(
+            "result_kind IN ('ready', 'no_candidates', 'failed')",
+            name="ck_facial_notification_result_kind",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'sent', 'failed', 'cancelled')",
+            name="ck_facial_notification_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_facial_notification_attempts"),
+        Index("ix_facial_notification_pending", "status", "available_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    search_request_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    client_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    result_kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(240), unique=True)
+    payload_ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    payload_nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    key_id: Mapped[str] = mapped_column(String(80))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
 
 
 class AuthChallenge(Base):

@@ -123,6 +123,36 @@ from app.commercial_removal import (
     apply_commercial_removal_policy,
 )
 from app.email_delivery import EmailConfigurationError, email_channel_payload, public_app_origin
+from app.facial.config import FacialConfigurationError, facial_settings_from_environment
+from app.facial.indexing import enqueue_gallery_backfill_page
+from app.facial.policy import (
+    FacialPolicyDraft,
+    FacialPolicyError,
+    activate_policy,
+    policy_payload,
+    prepare_policy,
+    read_policy,
+    revoke_policy,
+    suspend_policy,
+)
+from app.facial.purge import facial_cleanup_proof
+from app.facial.reference_store import FacialReferenceError
+from app.facial.search import (
+    FacialSearchError,
+    authorize_search_candidate_selection,
+    cancel_search_request,
+    create_search_request,
+    read_search_result,
+    reject_search_candidate,
+    search_availability,
+    search_request_payload,
+    search_result_payload,
+)
+from app.facial.status import (
+    FacialStatusError,
+    gallery_index_status,
+    retry_failed_index_jobs,
+)
 from app.gallery_access import (
     consume_gallery_capability,
     issue_gallery_capability,
@@ -146,7 +176,12 @@ from app.gallery_visuals import (
     validate_title_font,
 )
 from app.historical_media import historical_media_path
-from app.media import enqueue_derivatives, safe_derivative_path, safe_source_path
+from app.media import (
+    derivatives_root,
+    enqueue_derivatives,
+    safe_derivative_path,
+    safe_source_path,
+)
 from app.membership_notifications import (
     enqueue_membership_notification,
     mark_membership_notification_read,
@@ -273,6 +308,29 @@ def validate_branding_asset(asset: str, content_type: str | None, body: bytes) -
             status_code=415, detail="O tipo informado não corresponde à imagem enviada."
         )
     return suffix, media_type
+
+
+async def read_bounded_body(
+    request: Request, *, max_bytes: int, error_detail: str
+) -> bytes:
+    """Lê upload em streaming sem alocar silenciosamente além do limite."""
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status_code=413, detail=error_detail) from exc
+        if declared < 0 or declared > max_bytes:
+            raise HTTPException(status_code=413, detail=error_detail)
+    payload = bytearray()
+    async for chunk in request.stream():
+        if len(payload) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail=error_detail)
+        payload.extend(chunk)
+    if not payload:
+        raise HTTPException(status_code=413, detail=error_detail)
+    return bytes(payload)
 
 
 class ParentGalleryInput(BaseModel):
@@ -519,6 +577,25 @@ class ParentGallerySalesInput(GalleryPricingInput):
     selection_duration_days: int | None = Field(default=None, ge=1, le=3_650)
     favorites_enabled: bool = False
     comments_enabled: bool = False
+
+
+class FacialPolicyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    legal_notice_version: str = Field(min_length=1, max_length=80)
+    legal_basis_reference: str = Field(min_length=1, max_length=200)
+    retention_policy_version: str = Field(min_length=1, max_length=80)
+    minor_policy_version: str = Field(min_length=1, max_length=80)
+    model_version: str = Field(min_length=1, max_length=120)
+    quality_version: str = Field(min_length=1, max_length=120)
+    calibration_version: str = Field(min_length=1, max_length=120)
+    similarity_threshold_milli: int = Field(ge=0, le=1000)
+
+
+class FacialIndexRetryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
 class AdminRecoveryRequest(BaseModel):
@@ -2693,6 +2770,204 @@ def register_parent_gallery_cover_photo(
     }
 
 
+@app.get("/admin/parent-galleries/{parent_gallery_id}/facial-policy")
+def admin_parent_gallery_facial_policy(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    _parent_gallery_or_404(db, parent_gallery_id)
+    try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+    except FacialConfigurationError as exc:
+        raise HTTPException(
+            status_code=503, detail="Configuração facial inválida."
+        ) from exc
+    return policy_payload(read_policy(db, parent_gallery_id), settings)
+
+
+@app.put("/admin/parent-galleries/{parent_gallery_id}/facial-policy")
+def prepare_parent_gallery_facial_policy(
+    parent_gallery_id: UUID,
+    payload: FacialPolicyInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    try:
+        policy = prepare_policy(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            actor_admin_id=session.subject_id,
+            draft=FacialPolicyDraft(**payload.model_dump()),
+        )
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        db.commit()
+    except FacialPolicyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FacialConfigurationError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=503, detail="Configuração facial inválida."
+        ) from exc
+    return policy_payload(policy, settings)
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/facial-policy/activate")
+def activate_parent_gallery_facial_policy(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        policy = activate_policy(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            actor_admin_id=session.subject_id,
+            settings=settings,
+        )
+        cursor = None
+        while True:
+            page = enqueue_gallery_backfill_page(
+                db,
+                parent_gallery_id=parent_gallery_id,
+                derivatives_root=derivatives_root(),
+                cursor=cursor,
+                settings=settings,
+            )
+            if page.completed:
+                break
+            cursor = page.next_cursor
+        db.commit()
+    except (FacialPolicyError, FacialConfigurationError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return policy_payload(policy, settings)
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/facial-policy/suspend")
+def suspend_parent_gallery_facial_policy(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    try:
+        policy = suspend_policy(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            actor_admin_id=session.subject_id,
+        )
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        db.commit()
+    except FacialPolicyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return policy_payload(policy, settings)
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/facial-policy/revoke")
+def revoke_parent_gallery_facial_policy(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    try:
+        policy = revoke_policy(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            actor_admin_id=session.subject_id,
+        )
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        db.commit()
+    except FacialPolicyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return policy_payload(policy, settings)
+
+
+@app.get("/admin/parent-galleries/{parent_gallery_id}/facial-cleanup-proof")
+def admin_parent_gallery_facial_cleanup_proof(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, int | bool]:
+    require_admin(request)
+    _parent_gallery_or_404(db, parent_gallery_id)
+    return facial_cleanup_proof(db, parent_gallery_id=parent_gallery_id)
+
+
+@app.get("/admin/parent-galleries/{parent_gallery_id}/facial-index")
+def admin_parent_gallery_facial_index(
+    parent_gallery_id: UUID,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    _parent_gallery_or_404(db, parent_gallery_id)
+    try:
+        report = gallery_index_status(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            page=page,
+            page_size=page_size,
+        )
+    except FacialStatusError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "state": report.state,
+        "progress": {"ready": report.ready, "total": report.total},
+        "queued": report.queued,
+        "processing": report.processing,
+        "failed": report.failed,
+        "unindexed": report.unindexed,
+        "failures": list(report.failures),
+        "pagination": {
+            "page": report.page,
+            "page_size": report.page_size,
+            "total": report.failure_total,
+        },
+    }
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/facial-index/retry")
+def retry_parent_gallery_facial_index(
+    parent_gallery_id: UUID,
+    payload: FacialIndexRetryInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, int]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    try:
+        changed = retry_failed_index_jobs(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            job_ids=set(payload.job_ids),
+        )
+    except FacialStatusError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(
+        db,
+        "facial.index_retry_requested",
+        f"gallery_id:{parent_gallery_id};actor_id:{session.subject_id};count:{changed}",
+    )
+    db.commit()
+    return {"retried": changed}
+
+
 @app.get("/admin/parent-galleries/{parent_gallery_id}/photos")
 def admin_parent_gallery_photos(
     parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
@@ -3036,6 +3311,13 @@ def delete_folder_photo_asset(
     db.execute(delete(DerivedGalleryPhoto).where(DerivedGalleryPhoto.photo_asset_id == photo.id))
     db.execute(delete(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id))
     db.execute(delete(MediaJob).where(MediaJob.photo_asset_id == photo.id))
+    from app.facial.purge import purge_photo_records
+
+    purge_photo_records(
+        db,
+        parent_gallery_id=photo.parent_gallery_id,
+        photo_asset_id=photo.id,
+    )
     db.delete(photo)
     audit(db, "photo_asset.deleted", str(photo_id))
     db.commit()
@@ -7097,6 +7379,217 @@ def public_gallery_for_client(
             else None
         ),
         "photos_url": f"/public-galleries/{parent.id}/photos",
+    }
+
+
+@app.get("/public-galleries/{parent_gallery_id}/facial-search")
+def public_gallery_facial_search_availability(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    try:
+        require_public_gallery_browsing(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+        )
+    except PublicGalleryAccessDenied as exc:
+        raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+    except FacialConfigurationError:
+        return {
+            "state": "unavailable",
+            "manual_selection_available": True,
+            "minor_search_available": False,
+        }
+    return search_availability(
+        db, parent_gallery_id=parent_gallery_id, settings=settings
+    )
+
+
+@app.post(
+    "/public-galleries/{parent_gallery_id}/facial-searches",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_public_gallery_facial_search(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.CLIENT)
+    try:
+        require_public_gallery_browsing(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+        )
+    except PublicGalleryAccessDenied as exc:
+        raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    if not (request.headers.get("content-type") or "").lower().startswith(
+        "image/jpeg"
+    ):
+        raise HTTPException(status_code=415, detail="Envie uma imagem JPEG.")
+    consent_version = request.headers.get("x-facial-consent-version", "").strip()
+    subject_declaration = request.headers.get(
+        "x-facial-subject-declaration", ""
+    ).strip()
+    representation_reference = request.headers.get(
+        "x-facial-representation-reference"
+    )
+    try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        payload = await read_bounded_body(
+            request,
+            max_bytes=settings.max_reference_bytes,
+            error_detail="A imagem de referência excede o limite permitido.",
+        )
+        item = create_search_request(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+            consent_version=consent_version,
+            subject_declaration=subject_declaration,
+            representation_reference=representation_reference,
+            payload=payload,
+            settings=settings,
+        )
+        db.commit()
+    except (FacialConfigurationError, FacialSearchError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FacialReferenceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return search_request_payload(item)
+
+
+@app.get(
+    "/public-galleries/{parent_gallery_id}/facial-searches/{search_request_id}"
+)
+def public_gallery_facial_search_result(
+    parent_gallery_id: UUID,
+    search_request_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    try:
+        item, candidates = read_search_result(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+            request_id=search_request_id,
+        )
+    except FacialSearchError as exc:
+        raise HTTPException(status_code=404, detail="Consulta facial indisponível.") from exc
+    return search_result_payload(item, candidates)
+
+
+@app.delete(
+    "/public-galleries/{parent_gallery_id}/facial-searches/{search_request_id}"
+)
+def cancel_public_gallery_facial_search(
+    parent_gallery_id: UUID,
+    search_request_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.CLIENT)
+    try:
+        item = cancel_search_request(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+            request_id=search_request_id,
+            settings=facial_settings_from_environment(verify_runtime_assets=False),
+        )
+        db.commit()
+    except (FacialConfigurationError, FacialReferenceError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Consulta facial indisponível.") from exc
+    except FacialSearchError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Consulta facial indisponível.") from exc
+    return search_request_payload(item)
+
+
+@app.delete(
+    "/public-galleries/{parent_gallery_id}/facial-searches/{search_request_id}"
+    "/candidates/{photo_id}"
+)
+def reject_public_gallery_facial_candidate(
+    parent_gallery_id: UUID,
+    search_request_id: UUID,
+    photo_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, bool]:
+    require_same_origin(request)
+    session = current_session(request, Role.CLIENT)
+    try:
+        reject_search_candidate(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+            request_id=search_request_id,
+            photo_id=photo_id,
+        )
+        db.commit()
+    except FacialSearchError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Resultado facial indisponível.") from exc
+    return {"rejected": True}
+
+
+@app.post(
+    "/public-galleries/{parent_gallery_id}/facial-searches/{search_request_id}"
+    "/candidates/{photo_id}/selection",
+    status_code=status.HTTP_201_CREATED,
+)
+def select_public_gallery_facial_candidate(
+    parent_gallery_id: UUID,
+    search_request_id: UUID,
+    photo_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.CLIENT)
+    try:
+        authorize_search_candidate_selection(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+            request_id=search_request_id,
+            photo_id=photo_id,
+        )
+        result = derive_client_selection(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+            photo_id=photo_id,
+        )
+    except FacialSearchError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Resultado facial indisponível.") from exc
+    except PrivateDerivationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result.selection_created:
+        audit(db, "photo_selection.created_from_facial_filter", str(result.gallery.id))
+    db.commit()
+    return {
+        "status": "selected",
+        "private_gallery_id": str(result.gallery.id),
+        "gallery_created": result.gallery_created,
+        "reference_created": result.reference_created,
+        "selection_created": result.selection_created,
+        "cart": _client_cart_payload(db, result.gallery, session.subject_id),
     }
 
 

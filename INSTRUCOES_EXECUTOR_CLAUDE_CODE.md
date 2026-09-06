@@ -7,7 +7,7 @@ Implemente a **Markina Gallery**, plataforma self-hosted de gestão, prova, vend
 - poucos passos e navegação mobile-first para responsáveis;
 - administração operacional rápida para um fotógrafo;
 - galerias privadas importadas do DigiKam;
-- eventos coletivos cujo acervo é privado ao fotógrafo e cujos resultados faciais são liberados individualmente;
+- galerias públicas não listadas cujo acervo só é exibido após autenticação e vínculo, com busca facial limitada a reordenar o conjunto já autorizado;
 - segurança, privacidade e operação resiliente.
 
 Não substituir o culling, a edição nem a entrega final do fotógrafo. O sistema recebe apenas JPEGs exportados após o culling. RAWs e edição de imagem final estão fora de escopo.
@@ -193,9 +193,10 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 
 ### Eventos coletivos
 
-- Acervo completo é somente administrativo.
-- Não criar URL pública de grade de fotos.
-- Futuramente, busca facial gera resultado privado; responsável valida telefone, aceita termo, fica pendente, fotógrafo revisa e só então ativa convite individual.
+- Não criar URL anônima de grade de fotos. Galeria pública é uma denominação de produto e exige link opaco, telefone/OTP e vínculo persistido antes de qualquer prévia identificável.
+- Quando a cliente já pode visualizar o acervo autorizado, a busca facial atua somente como filtro temporário na mesma galeria: não concede acesso, não cria seleção nem privada e não pesquisa outro evento.
+- Se um desenho futuro utilizar reconhecimento para revelar fotos que não faziam parte do conjunto já autorizado, o resultado deve ser privado, revisado pelo fotógrafo e coberto por nova especificação.
+- Indexação acontece por jobs duráveis após a prévia pronta, sem varredura contínua; a consulta pode continuar depois que a cliente fechar a tela e notificar conclusão por mensagem neutra.
 
 ### Seleção, preços e pagamento
 
@@ -259,13 +260,13 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - `PaymentProvider`: PIX manual no MVP; Infinity Pay posterior com criação de cobrança, webhook assinado e reconciliação.
 - `DriveStorageProvider`: upload resumível, checksum, retentativa exponencial, restauração e deleção controlada.
 - `EmailProvider`: SMTP transacional para verificação e recuperação de senha.
-- `FaceRecognitionProvider`: interface vazia/feature flag até concluir piloto; não ativar automaticamente.
+- `FaceRecognitionProvider`: implementação somente depois de spike aprovado, sempre protegida por feature flag desligada por padrão e sem ativação automática em dados reais.
 
 ## 10. Privacidade e biometria
 
 - Fotos escolares e dados biométricos exigem minimização, transparência, consentimento específico de responsável e fluxo de exclusão. Não tratar isso como texto decorativo.
 - Termo versionado, aceite auditável, finalidade explícita, expiração de referência facial e exclusão de embedding devem existir antes da feature ir a produção.
-- Feedback facial cria revisão humana; nunca retreinar/aplicar associação automaticamente a partir de um único feedback.
+- Feedback facial remove o resultado daquela consulta e pode criar revisão humana; nunca retreinar/aplicar associação automaticamente a partir de um único feedback.
 - Dados reais de crianças nunca entram em homologação.
 
 ## 11. Ordem de implementação

@@ -35,6 +35,8 @@ type GalleryPresentationProps<TPhoto extends GalleryPresentationPhoto> = {
   emptyDetail?: string;
   renderPhotoDetails?: (photo: TPhoto) => ReactNode;
   renderPhotoMarkers?: (photo: TPhoto) => ReactNode;
+  featuredGroups?: Array<{ id: string; title: string; detail: string; photos: TPhoto[] }>;
+  renderFeaturedPhotoMarkers?: (photo: TPhoto) => ReactNode;
 };
 
 type PhotoStyle = CSSProperties & {
@@ -63,6 +65,8 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   emptyDetail = "Quando houver prévias protegidas disponíveis, elas aparecerão aqui.",
   renderPhotoDetails,
   renderPhotoMarkers,
+  featuredGroups = [],
+  renderFeaturedPhotoMarkers,
 }: GalleryPresentationProps<TPhoto>) {
   const availableFolders = folders.filter((folder) => folder.photos.length > 0);
   const [activeFolderId, setActiveFolderId] = useState(availableFolders[0]?.id ?? "");
@@ -105,6 +109,11 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
     fontFamily: titleStyle?.fontFamily,
     fontSize: titleStyle?.fontSize ? `${titleStyle.fontSize}px` : undefined,
   };
+  const renderPhoto = (photo: TPhoto, markers = renderPhotoMarkers) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
+    <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => setExpandedPhotoId(photo.id)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
+    {markers ? <div className="gallery-presentation-photo-markers">{markers(photo)}</div> : null}
+    <div className="gallery-presentation-photo-details"><strong>{photo.name}</strong>{renderPhotoDetails?.(photo)}</div>
+  </article>;
 
   return (
     <section className="gallery-presentation" aria-label={`Apresentação de ${galleryName}`}>
@@ -127,6 +136,8 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
         </div>
       </div>
 
+      {featuredGroups.some((group) => group.photos.length) ? <section className="gallery-featured-results" aria-labelledby="gallery-featured-title"><header><p className="eyebrow">Filtro da sua busca</p><h2 id="gallery-featured-title">Possibilidades encontradas</h2><p>Confira os resultados e selecione apenas as fotos que desejar. O acervo completo continua abaixo.</p></header>{featuredGroups.filter((group) => group.photos.length).map((group) => <section key={group.id} aria-labelledby={`featured-${group.id}`}><div className="gallery-presentation-collection-heading"><div><h3 id={`featured-${group.id}`}>{group.title}</h3><p>{group.detail}</p></div><span>{group.photos.length} foto{group.photos.length === 1 ? "" : "s"}</span></div><div className="gallery-presentation-grid">{group.photos.map((photo) => renderPhoto(photo, renderFeaturedPhotoMarkers ?? renderPhotoMarkers))}</div></section>)}</section> : null}
+
       {folderDisplayMode === "individual" && availableFolders.length > 1 ? (
         <section className="gallery-presentation-folder-section" aria-labelledby="gallery-folders-title">
           <div><p className="eyebrow">Navegação</p><h2 id="gallery-folders-title">Coleções</h2></div>
@@ -140,11 +151,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
         <section className="gallery-presentation-collection" aria-labelledby={`folder-${folder.id}`} key={folder.id}>
           <div className="gallery-presentation-collection-heading"><div><p className="eyebrow">Fotos protegidas</p><h2 id={`folder-${folder.id}`}>{folder.name}</h2></div><span>{folder.photos.length} foto{folder.photos.length === 1 ? "" : "s"}</span></div>
           <div className="gallery-presentation-grid">
-            {folder.photos.map((photo) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
-              <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => setExpandedPhotoId(photo.id)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
-              {renderPhotoMarkers ? <div className="gallery-presentation-photo-markers">{renderPhotoMarkers(photo)}</div> : null}
-              <div className="gallery-presentation-photo-details"><strong>{photo.name}</strong>{renderPhotoDetails?.(photo)}</div>
-            </article>)}
+            {folder.photos.map((photo) => renderPhoto(photo))}
           </div>
         </section>
       )) : <section className="gallery-presentation-empty" role="status"><h2>Nenhuma foto pronta para mostrar</h2><p>{emptyDetail}</p></section>}

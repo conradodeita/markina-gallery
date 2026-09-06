@@ -2585,13 +2585,12 @@ def test_public_access_modes_require_session_and_backend_authority(
         assert db.scalar(select(func.count()).select_from(DerivedGallery)) == 0
 
 
-def test_facial_derivation_port_stays_disabled_and_has_no_http_surface() -> None:
+def test_legacy_facial_derivation_port_stays_disabled_and_unexposed() -> None:
     with pytest.raises(FacialDerivationUnavailable, match="não está habilitada"):
         derive_approved_facial_result()
     documented_paths = app.openapi()["paths"]
-    assert not any(
-        "facial" in path.casefold() or "biometr" in path.casefold() for path in documented_paths
-    )
+    assert "/public-galleries/{parent_gallery_id}/facial-results" not in documented_paths
+    assert "/public-galleries/{parent_gallery_id}/facial-searches" in documented_paths
     with TestClient(app) as client:
         assert client.post(f"/public-galleries/{uuid4()}/facial-results").status_code == 404
 

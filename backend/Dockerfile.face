@@ -1,0 +1,26 @@
+# Runtime facial isolado; nenhum modelo é armazenado no repositório.
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    FACE_MODEL_ROOT=/opt/markina-face-models \
+    FACE_MODEL_MANIFEST=/app/facial-assets/model-manifest.json
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl procps \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt face-requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r face-requirements.txt
+
+COPY app ./app
+COPY facial-assets ./facial-assets
+COPY migrations ./migrations
+COPY alembic.ini ./
+
+RUN python -m app.facial.model_assets prepare \
+    --manifest "$FACE_MODEL_MANIFEST" \
+    --model-root "$FACE_MODEL_ROOT"
+
+CMD ["python", "-m", "app.facial.face_worker"]

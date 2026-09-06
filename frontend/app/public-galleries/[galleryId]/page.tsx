@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { facialSearchApi, type FacialSearchResult } from "../../facial-search-client";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { SystemState } from "../../ui-kit";
+import { FacialSearchPanel } from "../facial-search-panel";
 
 type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
 type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; previewUrl: string };
@@ -28,6 +30,7 @@ export default function PublicGalleryPage() {
   const [selectingId, setSelectingId] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [message, setMessage] = useState("");
+  const [facialResult, setFacialResult] = useState<FacialSearchResult | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -52,13 +55,16 @@ export default function PublicGalleryPage() {
     }).catch(() => setFailed(true));
   }, [galleryId]);
 
-  async function toggleSelection(photo: PublicPhoto) {
+  async function toggleSelection(photo: PublicPhoto, fromFacial = false) {
     if (selectingId) return;
     const selected = selectedIds.includes(photo.id);
     setSelectingId(photo.id);
     setMessage("");
     try {
-      const response = await fetch(`/api/public-galleries/${galleryId}/photos/${photo.id}/selection`, {
+      const path = fromFacial && facialResult && !selected
+        ? `/api/public-galleries/${galleryId}/facial-searches/${facialResult.id}/candidates/${photo.id}/selection`
+        : `/api/public-galleries/${galleryId}/photos/${photo.id}/selection`;
+      const response = await fetch(path, {
         method: selected ? "DELETE" : "POST",
         credentials: "same-origin",
       });
@@ -90,14 +96,37 @@ export default function PublicGalleryPage() {
   }, new Map<string, { id: string; name: string; position: number; photos: PublicPhoto[] }>()).values()]
     .sort((left, right) => left.position - right.position)
     .map(({ id, name, photos: folderPhotos }) => ({ id, name, photos: folderPhotos })) as GalleryPresentationFolder<PublicPhoto>[];
+  const candidateByPhoto = new Map((facialResult?.candidates ?? []).map((candidate) => [candidate.photo_id, candidate]));
+  const candidatePhotos = photos
+    .filter((photo) => candidateByPhoto.has(photo.id))
+    .sort((left, right) => (candidateByPhoto.get(left.id)?.rank ?? 0) - (candidateByPhoto.get(right.id)?.rank ?? 0));
+  const featuredGroups = [
+    { id: "best", title: "Melhores resultados encontrados", detail: "Fotos tecnicamente mais nítidas e bem enquadradas aparecem primeiro.", photos: candidatePhotos.filter((photo) => candidateByPhoto.get(photo.id)?.quality_band === "best") },
+    { id: "other", title: "Outros resultados encontrados", detail: "Outras possibilidades continuam disponíveis para sua decisão.", photos: candidatePhotos.filter((photo) => candidateByPhoto.get(photo.id)?.quality_band === "other") },
+  ];
+
+  async function rejectCandidate(photo: PublicPhoto) {
+    if (!facialResult) return;
+    try {
+      await facialSearchApi.reject(galleryId, facialResult.id, photo.id);
+      setFacialResult({ ...facialResult, candidates: (facialResult.candidates ?? []).filter((candidate) => candidate.photo_id !== photo.id) });
+      setMessage("Esta possibilidade foi removida somente da sua busca.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível remover este resultado.");
+    }
+  }
 
   return (
     <main className="admin-shell public-gallery-shell">
       <Link href="/library">← Sua biblioteca</Link>
+      <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} />
       {privateGalleryId && message ? <div className="public-selection-result" role="status"><span>{message}</span><Link href={`/gallery/${privateGalleryId}`}>Revisar seleção</Link></div> : message ? <p className="notice" role="alert">{message}</p> : null}
-      <GalleryPresentation galleryName={gallery.name} eyebrow="Galeria pública autorizada" context={<p>{gallery.description || gallery.event_name || "Escolha suas fotos e retome sua seleção nesta mesma galeria quando quiser."}</p>} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} modeLabel={<><strong>Acesso confirmado</strong><span>Suas escolhas ficam salvas nesta galeria e permanecem disponíveis quando você voltar.</span></>} emptyDetail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." renderPhotoMarkers={(photo) => {
+      <GalleryPresentation galleryName={gallery.name} eyebrow="Galeria pública autorizada" context={<p>{gallery.description || gallery.event_name || "Escolha suas fotos e retome sua seleção nesta mesma galeria quando quiser."}</p>} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} modeLabel={<><strong>Acesso confirmado</strong><span>Suas escolhas ficam salvas nesta galeria e permanecem disponíveis quando você voltar.</span></>} emptyDetail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         return <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>;
+      }} renderFeaturedPhotoMarkers={(photo) => {
+        const selected = selectedIds.includes(photo.id);
+        return <><button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button><button type="button" className="gallery-presentation-marker gallery-presentation-marker--reject" onClick={() => { void rejectCandidate(photo); }}>Não é esta pessoa</button></>;
       }} />
       {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>

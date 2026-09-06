@@ -11,6 +11,37 @@
 #   3) curl http://localhost:8080/healthz
 name: markina-gallery
 
+x-facial-environment: &facial-environment
+  FACIAL_PROCESSING_ENABLED: ${FACIAL_PROCESSING_ENABLED:-false}
+  FACIAL_CREDENTIAL_ENV: ${FACIAL_CREDENTIAL_ENV:-development}
+  FACIAL_MODEL_MANIFEST_PATH: ${FACIAL_MODEL_MANIFEST_PATH:-/app/facial-assets/model-manifest.json}
+  FACIAL_MODEL_ROOT: ${FACIAL_MODEL_ROOT:-/opt/markina-face-models}
+  FACIAL_REFERENCE_ROOT: ${FACIAL_REFERENCE_ROOT:-/var/lib/markina/facial-references}
+  FACIAL_REDIS_URL: ${FACIAL_REDIS_URL:-redis://redis:6379/0}
+  FACIAL_MODEL_VERSION: ${FACIAL_MODEL_VERSION:-yunet-2023mar+sface-2021dec}
+  FACIAL_QUALITY_VERSION: ${FACIAL_QUALITY_VERSION:-opencv-technical-v1}
+  FACIAL_CALIBRATION_VERSION: ${FACIAL_CALIBRATION_VERSION:-}
+  FACIAL_LEGAL_NOTICE_VERSION: ${FACIAL_LEGAL_NOTICE_VERSION:-}
+  FACIAL_CONSENT_VERSION: ${FACIAL_CONSENT_VERSION:-}
+  FACIAL_LEGAL_BASIS_REFERENCE: ${FACIAL_LEGAL_BASIS_REFERENCE:-}
+  FACIAL_RETENTION_POLICY_VERSION: ${FACIAL_RETENTION_POLICY_VERSION:-}
+  FACIAL_MINOR_POLICY_VERSION: ${FACIAL_MINOR_POLICY_VERSION:-}
+  FACIAL_MINOR_SEARCH_ENABLED: ${FACIAL_MINOR_SEARCH_ENABLED:-false}
+  FACIAL_SIMILARITY_THRESHOLD_MILLI: ${FACIAL_SIMILARITY_THRESHOLD_MILLI:-750}
+  FACIAL_AEAD_ACTIVE_KEY_ID: ${FACIAL_AEAD_ACTIVE_KEY_ID:-}
+  FACIAL_AEAD_KEYS_JSON: ${FACIAL_AEAD_KEYS_JSON:-}
+  FACIAL_REFERENCE_RETENTION_SECONDS: ${FACIAL_REFERENCE_RETENTION_SECONDS:-900}
+  FACIAL_CANDIDATE_RETENTION_SECONDS: ${FACIAL_CANDIDATE_RETENTION_SECONDS:-86400}
+  FACIAL_QUEUE_NAME: ${FACIAL_QUEUE_NAME:-markina:facial:jobs}
+  FACIAL_WORKER_CONCURRENCY: ${FACIAL_WORKER_CONCURRENCY:-1}
+  FACIAL_MAX_JOBS_PER_PROCESS: ${FACIAL_MAX_JOBS_PER_PROCESS:-100}
+  FACIAL_MODEL_IDLE_SECONDS: ${FACIAL_MODEL_IDLE_SECONDS:-300}
+  FACIAL_JOB_LEASE_SECONDS: ${FACIAL_JOB_LEASE_SECONDS:-120}
+  FACIAL_QUEUE_BLOCK_SECONDS: ${FACIAL_QUEUE_BLOCK_SECONDS:-10}
+  FACIAL_MAX_REFERENCE_BYTES: ${FACIAL_MAX_REFERENCE_BYTES:-10485760}
+  FACIAL_MAX_REFERENCE_PIXELS: ${FACIAL_MAX_REFERENCE_PIXELS:-25000000}
+  MARKINA_PUBLIC_URL: ${MARKINA_PUBLIC_URL:-http://localhost:3000}
+
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -51,6 +82,7 @@ services:
     expose:
       - "8000"
     environment:
+      <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-markina_session}
@@ -92,6 +124,7 @@ services:
       - media-source:/var/lib/markina/source
       - media-derivatives:/var/lib/markina/derivatives
       - media-history:/var/lib/markina/history
+      - facial-references:/var/lib/markina/facial-references
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -312,12 +345,51 @@ services:
     networks:
       - internal
 
+  face-worker:
+    profiles: ["facial"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.face
+    command: ["python", "-m", "app.facial.face_worker"]
+    restart: unless-stopped
+    environment:
+      <<: *facial-environment
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
+      WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+    volumes:
+      - media-derivatives:/var/lib/markina/derivatives:ro
+      - facial-references:/var/lib/markina/facial-references
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.facial.face_worker' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: ${FACIAL_WORKER_MEMORY_LIMIT:-768m}
+    cpus: ${FACIAL_WORKER_CPU_LIMIT:-1.0}
+    networks:
+      - internal
+
 volumes:
   pgdata:
   redisdata:
   media-source:
   media-derivatives:
   media-history:
+  facial-references:
   evolution-instances:
   evolution-pgdata:
   evolution-redisdata:

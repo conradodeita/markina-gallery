@@ -170,6 +170,9 @@ def remove_operational_records(db: Session, operation: GalleryLifecycleOperation
     if operation.operation_type != "delete_parent_gallery":
         raise ValueError("Tipo de operação de ciclo de vida inválido.")
     parent_id = operation.target_parent_gallery_id
+    from app.facial.purge import purge_gallery_records
+
+    facial_purge = purge_gallery_records(db, parent_gallery_id=parent_id)
     private_ids = list(
         db.scalars(select(DerivedGallery.id).where(DerivedGallery.parent_gallery_id == parent_id))
     )
@@ -193,6 +196,9 @@ def remove_operational_records(db: Session, operation: GalleryLifecycleOperation
         )
     )
     removed: dict[str, int] = {}
+    removed["facial_embeddings"] = facial_purge.embeddings
+    removed["facial_candidates"] = facial_purge.candidates
+    removed["facial_requests_cancelled"] = facial_purge.requests_cancelled
     removed["access_capabilities"] = _delete_count(
         db,
         GalleryAccessCapability,
