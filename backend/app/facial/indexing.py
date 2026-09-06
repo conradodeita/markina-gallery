@@ -10,7 +10,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.auth import (
     FacialJob,
@@ -26,6 +26,8 @@ from app.facial.config import (
 from app.facial.jobs import FacialJobError, FacialJobRepository
 
 logger = logging.getLogger(__name__)
+FACIAL_ANALYSIS_VARIANT = "admin_preview"
+CLIENT_PRESENTATION_VARIANT = "client_preview"
 
 
 @dataclass(frozen=True)
@@ -84,9 +86,18 @@ def enqueue_photo_index_if_eligible(
         active = settings or facial_settings_from_environment(
             verify_runtime_assets=False
         )
-        if not active.enabled or derivative.variant != "client_preview":
+        if not active.enabled or derivative.variant != FACIAL_ANALYSIS_VARIANT:
             return None
         if derivative.status != "ready" or not photo.available:
+            return None
+        protected_preview_ready = db.scalar(
+            select(MediaDerivative.id).where(
+                MediaDerivative.photo_asset_id == photo.id,
+                MediaDerivative.variant == CLIENT_PRESENTATION_VARIANT,
+                MediaDerivative.status == "ready",
+            )
+        )
+        if protected_preview_ready is None:
             return None
         policy = db.scalar(
             select(GalleryFacialPolicy).where(
@@ -135,13 +146,20 @@ def enqueue_gallery_backfill_page(
 
     if not 1 <= limit <= 500:
         raise FacialJobError("Página de backfill facial inválida.")
+    protected_preview = aliased(MediaDerivative)
     query = (
         select(PhotoAsset, MediaDerivative)
         .join(
             MediaDerivative,
             (MediaDerivative.photo_asset_id == PhotoAsset.id)
-            & (MediaDerivative.variant == "client_preview")
+            & (MediaDerivative.variant == FACIAL_ANALYSIS_VARIANT)
             & (MediaDerivative.status == "ready"),
+        )
+        .join(
+            protected_preview,
+            (protected_preview.photo_asset_id == PhotoAsset.id)
+            & (protected_preview.variant == CLIENT_PRESENTATION_VARIANT)
+            & (protected_preview.status == "ready"),
         )
         .where(
             PhotoAsset.parent_gallery_id == parent_gallery_id,

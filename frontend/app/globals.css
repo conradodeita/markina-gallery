@@ -360,6 +360,15 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .protection-settings-group label { display:grid; gap:7px; min-width:0; color:#272727; font-size:.9rem; font-weight:750; }
 .protection-settings-group input:not([type="color"]),.protection-settings-group select { width:100%; min-height:44px; padding:10px 11px; border:1px solid #c8c8c8; border-radius:9px; background:#fff; color:#171717; font:inherit; }
 .protection-settings-appearance { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.protection-toggle { align-content:center; grid-template-columns:auto 1fr; min-height:44px; padding:10px 12px; border:1px solid #c8c8c8; border-radius:9px; background:#fff; }
+.protection-toggle input { width:18px; height:18px; accent-color:#20241f; }
+.watermark-position-control { display:grid; grid-template-columns:repeat(3,32px); gap:5px; justify-content:center; align-content:center; margin:0; padding:10px; border:1px solid #c8c8c8; border-radius:9px; background:#fff; }
+.watermark-position-control legend { grid-column:1/-1; padding:0 5px; font-size:.8rem; font-weight:750; }
+.watermark-position-control label { position:relative; display:grid; width:32px; height:32px; place-items:center; cursor:pointer; }
+.watermark-position-control input { position:absolute; width:1px; height:1px; opacity:0; }
+.watermark-position-control span { width:100%; height:100%; border:1px solid #c7c7c7; border-radius:4px; background:#f1f1f1; }
+.watermark-position-control input:checked + span { border-color:#171717; background:#333; box-shadow:inset 0 0 0 8px #fff; }
+.watermark-position-control input:focus-visible + span { outline:3px solid #5b8def; outline-offset:2px; }
 .protection-color-control { display:flex; align-items:center; gap:9px; min-height:44px; padding:5px 8px; border:1px solid #c8c8c8; border-radius:9px; background:#fff; }
 .protection-color-control input { width:42px; height:30px; padding:0; border:0; background:transparent; cursor:pointer; }
 .protection-color-control code { overflow:hidden; color:#4d4d4d; font-size:.8rem; text-overflow:ellipsis; }
@@ -373,9 +382,20 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .protection-preview-surface.is-light { background:#f7f7f7; }
 .protection-preview-surface small { position:absolute; left:10px; bottom:8px; padding:4px 6px; border-radius:6px; background:#000a; color:#fff; font-size:.7rem; }
 .protection-preview-surface.is-light small { background:#fff; color:#333; }
-.protection-preview-mark { display:block; width:max-content; max-width:90%; opacity:.78; text-align:center; text-shadow:0 1px 5px #0008; white-space:nowrap; }
-.protection-preview-mark.watermark-preview--vertical { transform:rotate(-90deg); }
-.protection-preview-mark.watermark-preview--diagonal { transform:rotate(-26deg); }
+.protection-preview-security-lines { position:absolute; inset:-35%; background-image:repeating-linear-gradient(45deg,transparent 0 44px,currentColor 45px 47px,transparent 48px 92px),repeating-linear-gradient(-45deg,transparent 0 44px,currentColor 45px 47px,transparent 48px 92px); color:#fff; pointer-events:none; }
+.protection-preview-surface.is-light .protection-preview-security-lines { color:#222; }
+.protection-preview-mark { --mark-x:0; --mark-y:0; --mark-angle:0deg; position:absolute; z-index:2; display:block; width:max-content; max-width:90%; text-align:center; transform:translate(var(--mark-x),var(--mark-y)) rotate(var(--mark-angle)); white-space:nowrap; }
+.protection-preview-mark.watermark-preview--vertical { --mark-angle:-90deg; }
+.protection-preview-mark.watermark-preview--diagonal { --mark-angle:-26deg; }
+.protection-preview-mark.is-top-left { top:18px; left:18px; }
+.protection-preview-mark.is-top-center { --mark-x:-50%; top:18px; left:50%; }
+.protection-preview-mark.is-top-right { top:18px; right:18px; }
+.protection-preview-mark.is-middle-left { --mark-y:-50%; top:50%; left:18px; }
+.protection-preview-mark.is-middle-center { --mark-x:-50%; --mark-y:-50%; top:50%; left:50%; }
+.protection-preview-mark.is-middle-right { --mark-y:-50%; top:50%; right:18px; }
+.protection-preview-mark.is-bottom-left { bottom:18px; left:18px; }
+.protection-preview-mark.is-bottom-center { --mark-x:-50%; bottom:18px; left:50%; }
+.protection-preview-mark.is-bottom-right { right:18px; bottom:18px; }
 .protection-settings-note { padding-top:12px; border-top:1px solid #d1d1d1; }
 @media (max-width:880px) {
   .protection-settings-form { grid-template-columns:1fr; }

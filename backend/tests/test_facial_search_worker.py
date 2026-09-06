@@ -178,7 +178,7 @@ def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
         storage_key=f"{parent.id}/{uuid4()}.jpg",
         available=True,
     )
-    derivative = MediaDerivative(
+    protected_derivative = MediaDerivative(
         photo_asset_id=photo.id,
         variant="client_preview",
         status="ready",
@@ -186,10 +186,21 @@ def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
         width=640,
         height=480,
     )
+    derivative = MediaDerivative(
+        photo_asset_id=photo.id,
+        variant="admin_preview",
+        status="ready",
+        relative_path=f"{photo.id}/admin_preview.jpg",
+        width=640,
+        height=480,
+    )
+    protected_path = root / protected_derivative.relative_path
+    protected_path.parent.mkdir(parents=True, exist_ok=True)
+    protected_path.write_bytes(b"protected-synthetic-preview")
     path = root / derivative.relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"synthetic-preview")
-    db.add_all((photo, derivative))
+    db.add_all((photo, protected_derivative, derivative))
     db.commit()
     return photo
 

@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.auth import FacialJob, GalleryFacialPolicy, MediaDerivative, PhotoAsset, now
+from app.facial.indexing import CLIENT_PRESENTATION_VARIANT, FACIAL_ANALYSIS_VARIANT
 
 
 class FacialStatusError(RuntimeError):
@@ -44,14 +45,21 @@ def gallery_index_status(
             GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
         )
     )
+    protected_preview = aliased(MediaDerivative)
     photo_ids = list(
         db.scalars(
             select(PhotoAsset.id)
             .join(
                 MediaDerivative,
                 (MediaDerivative.photo_asset_id == PhotoAsset.id)
-                & (MediaDerivative.variant == "client_preview")
+                & (MediaDerivative.variant == FACIAL_ANALYSIS_VARIANT)
                 & (MediaDerivative.status == "ready"),
+            )
+            .join(
+                protected_preview,
+                (protected_preview.photo_asset_id == PhotoAsset.id)
+                & (protected_preview.variant == CLIENT_PRESENTATION_VARIANT)
+                & (protected_preview.status == "ready"),
             )
             .where(
                 PhotoAsset.parent_gallery_id == parent_gallery_id,

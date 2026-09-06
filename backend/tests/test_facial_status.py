@@ -67,6 +67,12 @@ def _fixture():
                     status="ready",
                     relative_path=f"{photo.id}/client_preview.jpg",
                 ),
+                MediaDerivative(
+                    photo_asset_id=photo.id,
+                    variant="admin_preview",
+                    status="ready",
+                    relative_path=f"{photo.id}/admin_preview.jpg",
+                ),
             )
         )
         photos.append(photo)

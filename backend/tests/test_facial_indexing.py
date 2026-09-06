@@ -79,11 +79,17 @@ def _eligible_photo(db: Session, tmp_path: Path, *, status: str = "active"):
         storage_key="event/foto.jpg",
         available=True,
     )
-    derivative = MediaDerivative(
+    protected_derivative = MediaDerivative(
         photo_asset_id=photo_id,
         variant="client_preview",
         status="ready",
         relative_path=f"{photo_id}/client_preview.jpg",
+    )
+    derivative = MediaDerivative(
+        photo_asset_id=photo_id,
+        variant="admin_preview",
+        status="ready",
+        relative_path=f"{photo_id}/admin_preview.jpg",
     )
     policy = GalleryFacialPolicy(
         parent_gallery_id=parent_id,
@@ -99,7 +105,7 @@ def _eligible_photo(db: Session, tmp_path: Path, *, status: str = "active"):
     from app.auth import ParentGallery
 
     db.add(ParentGallery(id=parent_id, name="Evento sintético"))
-    db.add_all((folder, photo, derivative, policy))
+    db.add_all((folder, photo, protected_derivative, derivative, policy))
     db.commit()
     path = tmp_path / derivative.relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,13 +163,19 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
             storage_key=f"event/foto-{index}.jpg",
             available=True,
         )
-        derivative = MediaDerivative(
+        protected_derivative = MediaDerivative(
             photo_asset_id=photo.id,
             variant="client_preview",
             status="ready",
             relative_path=f"{photo.id}/client_preview.jpg",
         )
-        db.add_all((photo, derivative))
+        derivative = MediaDerivative(
+            photo_asset_id=photo.id,
+            variant="admin_preview",
+            status="ready",
+            relative_path=f"{photo.id}/admin_preview.jpg",
+        )
+        db.add_all((photo, protected_derivative, derivative))
         path = tmp_path / derivative.relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"preview-{index}".encode())
@@ -245,3 +257,53 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
     assert folder.status == "released"
     assert media_job.status == "completed"
     assert db.scalar(select(func.count()).select_from(FacialJob)) == 0
+
+
+def test_media_dispatches_clean_admin_preview_to_facial_index(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = _session()
+    from app.auth import MediaJob, ParentGallery
+
+    parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
+    folder = PhotoFolder(
+        id=folder_id,
+        parent_gallery_id=parent_id,
+        name="Upload",
+        status="preparing",
+        purpose="content",
+    )
+    photo = PhotoAsset(
+        id=photo_id,
+        parent_gallery_id=parent_id,
+        folder_id=folder_id,
+        filename="foto.jpg",
+        storage_key="event/foto.jpg",
+        available=False,
+    )
+    media_job = MediaJob(photo_asset_id=photo_id, status="queued", attempts=0)
+    db.add_all((ParentGallery(id=parent_id, name="Evento"), folder, photo, media_job))
+    db.commit()
+    source_root = tmp_path / "source"
+    derivatives_root = tmp_path / "derivatives"
+    source_path = source_root / photo.storage_key
+    source_path.parent.mkdir(parents=True)
+    Image.new("RGB", (320, 240), (80, 90, 100)).save(source_path, format="JPEG")
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
+    observed: dict[str, object] = {}
+
+    def capture(_db, _photo, derivative, *, derivative_path):
+        observed["variant"] = derivative.variant
+        observed["path"] = derivative_path
+
+    monkeypatch.setattr(
+        "app.facial.indexing.enqueue_photo_index_if_eligible", capture
+    )
+
+    generate_derivatives(db, photo, media_job)
+
+    admin_path = derivatives_root / str(photo_id) / "admin_preview.jpg"
+    protected_path = derivatives_root / str(photo_id) / "client_preview.jpg"
+    assert observed == {"variant": "admin_preview", "path": admin_path.resolve()}
+    assert admin_path.read_bytes() != protected_path.read_bytes()

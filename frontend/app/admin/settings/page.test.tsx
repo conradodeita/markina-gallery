@@ -15,6 +15,10 @@ const branding = {
   watermark_color: "#FFFFFF",
   watermark_size: 24,
   watermark_direction: "diagonal",
+  watermark_opacity: 42,
+  watermark_position: "middle-center",
+  watermark_shadow: true,
+  watermark_security_lines: false,
 };
 
 afterEach(() => vi.restoreAllMocks());
@@ -46,17 +50,26 @@ describe("configurações administrativas de marca", () => {
   });
 
   it("salva a proteção visual global no endpoint administrativo", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(branding), { status: 200 })));
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      void path;
+      void options;
+      return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
+    });
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminSettingsPage />);
     fireEvent.change(await screen.findByLabelText("Texto da marca-d’água"), { target: { value: "MARCA GLOBAL" } });
     expect((await screen.findAllByText("MARCA GLOBAL")).length).toBe(2);
     expect(screen.getByRole("group", { name: "Conteúdo" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Aparência" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Transparência/), { target: { value: "60" } });
+    fireEvent.click(screen.getByLabelText("Usar linhas transversais de segurança"));
+    fireEvent.click(screen.getByLabelText("Inferior centro"));
     expect(screen.getByRole("complementary", { name: "Como a identificação se comporta" }).textContent).toContain("não simulam uma fotografia");
     expect(screen.getByText(/não promete bloquear capturas de tela/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/branding/protection", expect.objectContaining({ method: "PATCH" })));
+    const request = fetchMock.mock.calls.find(([path, options]) => path === "/api/admin/branding/protection" && options?.method === "PATCH")?.[1];
+    expect(JSON.parse(String(request?.body))).toEqual(expect.objectContaining({ watermark_opacity: 60, watermark_position: "bottom-center", watermark_shadow: true, watermark_security_lines: true }));
     expect(await screen.findByText(/Proteção visual global salva/)).toBeTruthy();
   });
 

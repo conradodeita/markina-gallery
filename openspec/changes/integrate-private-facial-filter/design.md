@@ -78,9 +78,9 @@ Alternativa rejeitada: vetor em claro no PostgreSQL ou Redis. Isolamento lógico
 
 ### 6. Pipeline de indexação incremental e idempotente
 
-Quando `client_preview` conclui, um hook pequeno verifica a política e grava job facial na mesma transação, com chave `(photo_id, preview_fingerprint, model_version, quality_version)`. O face worker valida novamente política e foto antes de processar, detecta zero ou mais rostos, cria embeddings e métricas técnicas de cada rosto e substitui atomicamente apenas a versão daquela foto. Falha grava estado retomável e não altera `processing_status` da mídia.
+Quando `admin_preview` conclui, um hook pequeno verifica a política e grava job facial na mesma transação, com chave `(photo_id, preview_fingerprint, model_version, quality_version)`. Essa variante interna é redimensionada diretamente do original, não recebe marca d'água e não é servida à cliente. O face worker valida novamente política e foto antes de processar, detecta zero ou mais rostos, cria embeddings e métricas técnicas de cada rosto e substitui atomicamente apenas a versão daquela foto. A `client_preview` protegida continua sendo a única variante usada para apresentação e autorização visual da cliente. Falha grava estado retomável e não altera `processing_status` da mídia.
 
-Ativar uma galeria agenda um único backfill paginado das prévias prontas. Foto nova ou derivado alterado agenda somente seu próprio job; troca de versão agenda reindexação explícita. Desativar, excluir ou retirar foto agenda purge prioritário. Uma limpeza reconciliadora procura temporários vencidos e índices sem origem válida, sem recalcular fotos saudáveis.
+Ativar uma galeria agenda um único backfill paginado das prévias internas limpas prontas, exigindo também que a prévia protegida da cliente esteja pronta antes de expor qualquer candidata. Foto nova ou derivado alterado agenda somente seu próprio job; troca de versão agenda reindexação explícita. Desativar, excluir ou retirar foto agenda purge prioritário. Uma limpeza reconciliadora procura temporários vencidos e índices sem origem válida, sem recalcular fotos saudáveis.
 
 Alternativa rejeitada: varrer pasta em background sem jobs duráveis ou manter scan recorrente por galeria. Isso perde auditoria, idempotência e capacidade de retomar depois de falha, além de consumir recursos sem alteração de conteúdo.
 
@@ -114,6 +114,10 @@ O frontend mostrará `Procurar por reconhecimento facial` como ação opcional, 
 Resultados aparecem acima das pastas em `Melhores resultados encontrados` e `Outros resultados encontrados`, seguidos pelo acervo integral. Os três blocos reutilizam o mesmo card/favorito/seleção; uma foto repetida visualmente referencia o mesmo estado, e selecionar ou desmarcar atualiza o resumo e a cotação existentes.
 
 A UI não mantém referência em local storage, não renderiza score e não cria rota/card de “galeria facial”. Ela mantém apenas o `request_id` opaco necessário para retomar a consulta autorizada; perder esse identificador não concede nem revoga acesso. Depois da limpeza, mostra evidência de que a referência foi apagada. A alternativa manual permanece visível em todos os estados.
+
+A apresentação da cliente mantém a marca d'água como mecanismo de desestímulo à cópia e intercepta menu de contexto, cópia e arraste, além do evento de captura quando disponibilizado pelo navegador. Nessas tentativas, abre um diálogo acessível com referência informativa à Lei nº 9.610/98, artigo 79, pedido de não copiar/compartilhar e confirmação explícita. O texto não afirma que JavaScript impede screenshots, ferramentas externas ou acesso técnico à resposta: a proteção material continua sendo a prévia degradada e marcada. A prévia administrativa limpa usada pela análise facial não é incorporada ao HTML da cliente nem autorizada por rotas públicas.
+
+A configuração global de proteção visual preserva texto repetido e adiciona transparência, sombra, alinhamento principal em nove posições e linhas diagonais cruzadas opcionais. Esses campos pertencem a `BrandingSettings`, recebem defaults compatíveis e são aplicados somente durante a geração de `client_preview`. Salvar a proteção reenfileira a geração de derivados, porém a idempotência facial usa o fingerprint de `admin_preview`; portanto uma mudança puramente visual não cria reindexação biométrica desnecessária.
 
 ### 10. Menores e separação entre consentimentos
 

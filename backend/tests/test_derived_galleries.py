@@ -526,9 +526,17 @@ def test_global_visual_protection_requeues_existing_derivatives(client: TestClie
         "watermark_color": "#112233",
         "watermark_size": 30,
         "watermark_direction": "horizontal",
+        "watermark_opacity": 60,
+        "watermark_position": "bottom-center",
+        "watermark_shadow": False,
+        "watermark_security_lines": True,
     })
     assert response.status_code == 200
     assert response.json()["watermark_text"] == "FOTÓGRAFA • PRÉVIA"
+    assert response.json()["watermark_opacity"] == 60
+    assert response.json()["watermark_position"] == "bottom-center"
+    assert response.json()["watermark_shadow"] is False
+    assert response.json()["watermark_security_lines"] is True
     with SessionLocal() as db:
         settings = db.scalar(select(BrandingSettings).limit(1))
         job = db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == photo_id))

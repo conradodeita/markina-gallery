@@ -123,3 +123,50 @@ def test_facial_foundation_migration_upgrades_a_clean_database(tmp_path: Path) -
     inspector = inspect(create_engine(database_url))
     assert "facial_search_request" in inspector.get_table_names()
     assert "facial_job" in inspector.get_table_names()
+
+
+def test_layered_visual_protection_migration_preserves_existing_branding(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{(tmp_path / 'layered-protection.sqlite').as_posix()}"
+    alembic(database_url, "upgrade", "20260905_0043")
+    engine = create_engine(database_url)
+    branding_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO branding_settings "
+                "(id, login_title, login_intro, login_helper, watermark_text, "
+                "watermark_font, watermark_color, watermark_size, watermark_direction, updated_at) "
+                "VALUES (:id, 'Título', 'Introdução', 'Ajuda', 'MARCA EXISTENTE', "
+                "'sans-serif', '#FFFFFF', 24, 'diagonal', :updated_at)"
+            ),
+            {"id": branding_id.hex, "updated_at": datetime.now(UTC)},
+        )
+
+    alembic(database_url, "upgrade", "head")
+    columns = {column["name"] for column in inspect(engine).get_columns("branding_settings")}
+    assert {
+        "watermark_opacity",
+        "watermark_position",
+        "watermark_shadow",
+        "watermark_security_lines",
+    } <= columns
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT watermark_text, watermark_opacity, watermark_position, "
+                "watermark_shadow, watermark_security_lines FROM branding_settings WHERE id = :id"
+            ),
+            {"id": branding_id.hex},
+        ).one()
+    assert tuple(row) == ("MARCA EXISTENTE", 42, "middle-center", 1, 0)
+
+    alembic(database_url, "downgrade", "20260905_0043")
+    columns = {column["name"] for column in inspect(engine).get_columns("branding_settings")}
+    assert "watermark_opacity" not in columns
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT watermark_text FROM branding_settings WHERE id = :id"),
+            {"id": branding_id.hex},
+        ).scalar_one() == "MARCA EXISTENTE"

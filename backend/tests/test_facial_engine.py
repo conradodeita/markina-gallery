@@ -109,7 +109,7 @@ def _gallery(db: Session, root: Path, *, photos: int):
             storage_key=f"{parent.id}/foto-{index}.jpg",
             available=True,
         )
-        derivative = MediaDerivative(
+        protected_derivative = MediaDerivative(
             photo_asset_id=photo.id,
             variant="client_preview",
             status="ready",
@@ -117,10 +117,18 @@ def _gallery(db: Session, root: Path, *, photos: int):
             width=640,
             height=480,
         )
+        derivative = MediaDerivative(
+            photo_asset_id=photo.id,
+            variant="admin_preview",
+            status="ready",
+            relative_path=f"{photo.id}/admin_preview.jpg",
+            width=640,
+            height=480,
+        )
         path = root / derivative.relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"preview-{parent.id}-{index}".encode())
-        db.add_all((photo, derivative))
+        db.add_all((photo, protected_derivative, derivative))
         created.append(photo)
     db.commit()
     return parent, created

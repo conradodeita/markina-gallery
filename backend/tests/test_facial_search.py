@@ -92,11 +92,17 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
         storage_key=f"{parent.id}/foto.jpg",
         available=True,
     )
-    derivative = MediaDerivative(
+    protected_derivative = MediaDerivative(
         photo_asset_id=photo.id,
         variant="client_preview",
         status="ready",
         relative_path=f"{photo.id}/client_preview.jpg",
+    )
+    derivative = MediaDerivative(
+        photo_asset_id=photo.id,
+        variant="admin_preview",
+        status="ready",
+        relative_path=f"{photo.id}/admin_preview.jpg",
     )
     policy = GalleryFacialPolicy(
         id=uuid4(),
@@ -111,7 +117,7 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
         calibration_version="calibration-v1",
         index_generation=1,
     )
-    db.add_all((parent, client, folder, photo, derivative, policy))
+    db.add_all((parent, client, folder, photo, protected_derivative, derivative, policy))
     if index_ready:
         db.add(
             FacialJob(

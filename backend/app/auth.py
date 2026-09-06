@@ -90,6 +90,18 @@ class BrandingSettings(Base):
     """Configuração única e segura da marca e dos textos de entrada."""
 
     __tablename__ = "branding_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "watermark_opacity BETWEEN 10 AND 100",
+            name="ck_branding_watermark_opacity",
+        ),
+        CheckConstraint(
+            "watermark_position IN ('top-left', 'top-center', 'top-right', "
+            "'middle-left', 'middle-center', 'middle-right', "
+            "'bottom-left', 'bottom-center', 'bottom-right')",
+            name="ck_branding_watermark_position",
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     login_title: Mapped[str] = mapped_column(String(120), default="Sua galeria, do seu jeito.")
     login_intro: Mapped[str] = mapped_column(
@@ -107,6 +119,10 @@ class BrandingSettings(Base):
     watermark_color: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     watermark_size: Mapped[int] = mapped_column(Integer, default=24)
     watermark_direction: Mapped[str] = mapped_column(String(16), default="diagonal")
+    watermark_opacity: Mapped[int] = mapped_column(Integer, default=42)
+    watermark_position: Mapped[str] = mapped_column(String(24), default="middle-center")
+    watermark_shadow: Mapped[bool] = mapped_column(Boolean, default=True)
+    watermark_security_lines: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 

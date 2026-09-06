@@ -63,4 +63,33 @@ describe("apresentação editorial compartilhada", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
     expect(screen.getByText(/menu de contexto/)).toBeTruthy();
   });
+
+  it("abre aviso autoral acessível somente quando habilitado para a cliente", () => {
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} showCopyrightProtectionDialog />);
+    const preview = screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" });
+
+    fireEvent.contextMenu(preview);
+    const warning = screen.getByRole("dialog", { name: "Conteúdo protegido por direitos autorais" });
+    expect(warning.textContent).toContain("Lei nº 9.610/98");
+    expect(warning.textContent).toContain("artigo 79");
+    expect(warning.textContent).toContain("não copie ou compartilhe");
+    expect(document.activeElement).toBe(warning);
+    fireEvent.keyDown(warning, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeNull();
+
+    fireEvent.click(preview);
+    expect(screen.getByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" })).toBeTruthy();
+    fireEvent.contextMenu(screen.getByRole("img", { name: "Prévia protegida ampliada de Horizontal.jpg" }));
+    expect(screen.queryByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Entendi" }));
+
+    expect(fireEvent.keyDown(window, { key: "s", ctrlKey: true })).toBe(false);
+    expect(screen.getByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Entendi" }));
+
+    rerender(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} modeLabel={<strong>Modo fotógrafo</strong>} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    expect(screen.queryByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeNull();
+  });
 });

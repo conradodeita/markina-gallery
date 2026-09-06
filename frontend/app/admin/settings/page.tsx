@@ -17,6 +17,10 @@ type Branding = {
   watermark_color: string;
   watermark_size: number;
   watermark_direction: string;
+  watermark_opacity: number;
+  watermark_position: string;
+  watermark_shadow: boolean;
+  watermark_security_lines: boolean;
 };
 
 type Asset = "logo" | "app-icon" | "favicon";
@@ -34,7 +38,17 @@ const fallback: Branding = {
   watermark_color: "#FFFFFF",
   watermark_size: 24,
   watermark_direction: "diagonal",
+  watermark_opacity: 42,
+  watermark_position: "middle-center",
+  watermark_shadow: true,
+  watermark_security_lines: false,
 };
+
+const watermarkPositions = [
+  ["top-left", "Superior esquerda"], ["top-center", "Superior centro"], ["top-right", "Superior direita"],
+  ["middle-left", "Centro esquerda"], ["middle-center", "Centro"], ["middle-right", "Centro direita"],
+  ["bottom-left", "Inferior esquerda"], ["bottom-center", "Inferior centro"], ["bottom-right", "Inferior direita"],
+] as const;
 
 const assetDetails: Record<Asset, { label: string; accept: string; help: string; url: keyof Branding }> = {
   logo: { label: "Logo principal", accept: "image/png,image/jpeg,image/webp", help: "PNG, JPEG ou WebP; até 2 MB.", url: "logo_url" },
@@ -100,6 +114,10 @@ export default function AdminSettingsPage() {
       watermark_color: String(data.get("watermark_color") ?? "#FFFFFF"),
       watermark_size: Number(data.get("watermark_size") ?? 24),
       watermark_direction: String(data.get("watermark_direction") ?? "diagonal"),
+      watermark_opacity: Number(data.get("watermark_opacity") ?? 42),
+      watermark_position: String(data.get("watermark_position") ?? "middle-center"),
+      watermark_shadow: data.has("watermark_shadow"),
+      watermark_security_lines: data.has("watermark_security_lines"),
     }));
   }
 
@@ -136,6 +154,10 @@ export default function AdminSettingsPage() {
         watermark_color: data.get("watermark_color"),
         watermark_size: Number(data.get("watermark_size")),
         watermark_direction: data.get("watermark_direction"),
+        watermark_opacity: Number(data.get("watermark_opacity")),
+        watermark_position: data.get("watermark_position"),
+        watermark_shadow: data.has("watermark_shadow"),
+        watermark_security_lines: data.has("watermark_security_lines"),
       }),
     });
     setMessage(response.ok ? "Proteção visual global salva. As prévias serão atualizadas com segurança." : "Não foi possível salvar a proteção visual.");
@@ -222,6 +244,13 @@ export default function AdminSettingsPage() {
               <label>Cor da marca-d’água<span className="protection-color-control"><input name="watermark_color" type="color" defaultValue={settings.watermark_color} /><code>{protectionPreview.watermark_color.toUpperCase()}</code></span></label>
               <label>Tamanho da marca-d’água<input name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /></label>
               <label>Direção<select name="watermark_direction" defaultValue={settings.watermark_direction}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="diagonal">Diagonal</option></select></label>
+              <label>Transparência — {protectionPreview.watermark_opacity}%<input name="watermark_opacity" type="range" min={10} max={100} step={1} defaultValue={settings.watermark_opacity} /></label>
+              <label className="protection-toggle"><input name="watermark_shadow" type="checkbox" defaultChecked={settings.watermark_shadow} /> Aplicar sombra ao texto</label>
+              <label className="protection-toggle"><input name="watermark_security_lines" type="checkbox" defaultChecked={settings.watermark_security_lines} /> Usar linhas transversais de segurança</label>
+              <fieldset className="watermark-position-control">
+                <legend>Posição principal do padrão</legend>
+                {watermarkPositions.map(([value, label]) => <label key={value} title={label}><input aria-label={label} type="radio" name="watermark_position" value={value} defaultChecked={settings.watermark_position === value} /><span aria-hidden="true" /></label>)}
+              </fieldset>
             </fieldset>
             <button className="primary protection-settings-save">Salvar proteção global</button>
           </div>
@@ -232,7 +261,7 @@ export default function AdminSettingsPage() {
               <p>Superfícies neutras para avaliar leitura. Elas não simulam uma fotografia.</p>
             </div>
             <div className="protection-preview-surfaces">
-              {(["dark", "light"] as const).map((surface) => <div className={`protection-preview-surface is-${surface}`} key={surface}><span className={`protection-preview-mark watermark-preview--${protectionPreview.watermark_direction}`} style={{ color: protectionPreview.watermark_color, fontFamily: protectionPreview.watermark_font, fontSize: `${Math.min(protectionPreview.watermark_size, 32)}px` }}>{protectionPreview.watermark_text || "MARKINA • PRÉVIA"}</span><small>{surface === "dark" ? "Fundo escuro" : "Fundo claro"}</small></div>)}
+              {(["dark", "light"] as const).map((surface) => <div className={`protection-preview-surface is-${surface}`} key={surface}>{protectionPreview.watermark_security_lines ? <span className="protection-preview-security-lines" aria-hidden="true" style={{ opacity: protectionPreview.watermark_opacity / 200 }} /> : null}<span className={`protection-preview-mark watermark-preview--${protectionPreview.watermark_direction} is-${protectionPreview.watermark_position}`} style={{ color: protectionPreview.watermark_color, fontFamily: protectionPreview.watermark_font, fontSize: `${Math.min(protectionPreview.watermark_size, 32)}px`, opacity: protectionPreview.watermark_opacity / 100, textShadow: protectionPreview.watermark_shadow ? "0 2px 5px #000" : "none" }}>{protectionPreview.watermark_text || "MARKINA • PRÉVIA"}</span><small>{surface === "dark" ? "Fundo escuro" : "Fundo claro"}</small></div>)}
             </div>
             <p className="protection-settings-note">A marca será repetida sobre cada prévia protegida depois do salvamento e do processamento seguro.</p>
           </aside>

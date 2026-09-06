@@ -94,6 +94,82 @@ def test_watermark_direction_does_not_rotate_photo():
     assert rendered.mode == "RGB"
 
 
+def test_watermark_applies_configurable_opacity_shadow_position_and_security_lines():
+    source = Image.new("RGB", (640, 420), color=(40, 60, 80))
+    plain = watermark(
+        source,
+        BrandingSettings(
+            watermark_text="PROTEGIDA",
+            watermark_opacity=35,
+            watermark_position="top-left",
+            watermark_shadow=False,
+            watermark_security_lines=False,
+        ),
+    )
+    layered = watermark(
+        source,
+        BrandingSettings(
+            watermark_text="PROTEGIDA",
+            watermark_opacity=80,
+            watermark_position="bottom-right",
+            watermark_shadow=True,
+            watermark_security_lines=True,
+        ),
+    )
+
+    assert plain.size == layered.size == source.size
+    assert plain.tobytes() != layered.tobytes()
+
+
+def test_protection_reprocessing_does_not_rewrite_clean_analysis_preview(
+    tmp_path, monkeypatch
+):
+    source_root = tmp_path / "source"
+    derivatives_root = tmp_path / "derivatives"
+    source = source_root / "event" / "protected-only.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (800, 600), color=(20, 40, 60)).save(source, format="JPEG")
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
+    with SessionLocal() as db:
+        settings = BrandingSettings(watermark_text="PRIMEIRA MARCA")
+        parent = ParentGallery(name="Evento")
+        db.add_all((settings, parent))
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="protected-only.jpg",
+            storage_key="event/protected-only.jpg",
+        )
+        db.add(photo)
+        db.commit()
+        generate_derivatives(db, photo)
+        photo_id = photo.id
+        admin_path = derivatives_root / str(photo_id) / "admin_preview.jpg"
+        client_path = derivatives_root / str(photo_id) / "client_preview.jpg"
+        clean_before = admin_path.read_bytes()
+        protected_before = client_path.read_bytes()
+        settings.watermark_text = "SEGUNDA MARCA"
+        enqueue_derivatives(db, photo)
+        client_derivative = db.scalar(
+            select(MediaDerivative).where(
+                MediaDerivative.photo_asset_id == photo.id,
+                MediaDerivative.variant == "client_preview",
+            )
+        )
+        assert client_derivative is not None
+        client_derivative.status = "queued"
+        db.commit()
+
+    assert process_next_media_job()
+    assert admin_path.read_bytes() == clean_before
+    assert client_path.read_bytes() != protected_before
+
+
 def test_worker_processes_only_markina_media_job(tmp_path, monkeypatch):
     source_root = tmp_path / "source"
     derivatives_root = tmp_path / "derivatives"

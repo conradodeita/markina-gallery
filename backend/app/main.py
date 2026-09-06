@@ -439,6 +439,20 @@ class VisualProtectionSettingsInput(BaseModel):
     watermark_color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
     watermark_size: int = Field(ge=10, le=96)
     watermark_direction: Literal["horizontal", "vertical", "diagonal"]
+    watermark_opacity: int = Field(default=42, ge=10, le=100)
+    watermark_position: Literal[
+        "top-left",
+        "top-center",
+        "top-right",
+        "middle-left",
+        "middle-center",
+        "middle-right",
+        "bottom-left",
+        "bottom-center",
+        "bottom-right",
+    ] = "middle-center"
+    watermark_shadow: bool = True
+    watermark_security_lines: bool = False
 
     @field_validator("watermark_text")
     @classmethod
@@ -1812,8 +1826,8 @@ def admin_email_change_verify_otp(
 
 def _branding_payload(
     settings: BrandingSettings, *, include_protection: bool = False
-) -> dict[str, str | int | None]:
-    payload: dict[str, str | int | None] = {
+) -> dict[str, str | int | bool | None]:
+    payload: dict[str, str | int | bool | None] = {
         "login_title": settings.login_title,
         "login_intro": settings.login_intro,
         "login_helper": settings.login_helper,
@@ -1829,6 +1843,10 @@ def _branding_payload(
                 "watermark_color": settings.watermark_color,
                 "watermark_size": settings.watermark_size,
                 "watermark_direction": settings.watermark_direction,
+                "watermark_opacity": settings.watermark_opacity,
+                "watermark_position": settings.watermark_position,
+                "watermark_shadow": settings.watermark_shadow,
+                "watermark_security_lines": settings.watermark_security_lines,
             }
         )
     return payload
@@ -1847,7 +1865,7 @@ def public_branding(db: Session = Depends(db_session)) -> dict[str, str | None]:
 @app.get("/admin/branding")
 def admin_branding(
     request: Request, db: Session = Depends(db_session)
-) -> dict[str, str | int | None]:
+) -> dict[str, str | int | bool | None]:
     require_admin(request)
     settings = db.scalar(select(BrandingSettings).limit(1))
     if not settings:
@@ -1860,7 +1878,7 @@ def admin_branding(
 @app.patch("/admin/branding")
 def update_admin_branding(
     payload: BrandingSettingsInput, request: Request, db: Session = Depends(db_session)
-) -> dict[str, str | int | None]:
+) -> dict[str, str | int | bool | None]:
     require_admin(request)
     settings = db.scalar(select(BrandingSettings).limit(1))
     if not settings:
@@ -1877,7 +1895,7 @@ def update_admin_branding(
 @app.patch("/admin/branding/protection")
 def update_visual_protection(
     payload: VisualProtectionSettingsInput, request: Request, db: Session = Depends(db_session)
-) -> dict[str, str | int | None]:
+) -> dict[str, str | int | bool | None]:
     """Persiste uma única proteção visual e reprocessa derivados sem servir originais."""
     require_admin(request)
     settings = db.scalar(select(BrandingSettings).limit(1).with_for_update())

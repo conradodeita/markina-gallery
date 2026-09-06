@@ -4,7 +4,7 @@ O spike `spike-private-facial-discovery` aprovou YuNet + SFace como baseline no 
 
 ## What Changes
 
-- Adicionar indexação facial assíncrona, versionada e isolada por Galeria pública depois que cada prévia fotográfica estiver pronta, sem bloquear a publicação da foto.
+- Adicionar indexação facial assíncrona, versionada e isolada por Galeria pública depois que cada prévia interna limpa estiver pronta, sem marca d'água e sem bloquear a publicação da foto.
 - Executar a indexação somente por eventos duráveis de foto nova, derivado alterado, versão trocada, backfill ou retentativa, sem varredura contínua da galeria; o worker deve permanecer ocioso sem consumir CPU quando a fila estiver vazia.
 - Calcular, junto de cada face indexada, indicadores técnicos objetivos de nitidez local, corte nas bordas, tamanho/proeminência e pose para ranquear o rosto correspondente à consulta sem ocultar ou excluir fotos.
 - Manter a indexação desligada por padrão e exigir habilitação administrativa por galeria, declaração de base legal/transparência e controles reforçados quando houver menores.
@@ -17,6 +17,7 @@ O spike `spike-private-facial-discovery` aprovou YuNet + SFace como baseline no 
 - Notificar pela interface os estados de qualidade, falha, índice incompleto e ausência de candidatos; enfileirar mensagem transacional idempotente e neutra quando a busca terminar, inclusive se a cliente não estiver mais na tela, sem expor biometria.
 - Reconciliar o mandato, as diretrizes de frontend e a Fase 7 do roadmap: não existe grade anônima ou descoberta entre eventos; uma cliente com link, OTP e vínculo já pode ver a Galeria pública autorizada, e o filtro apenas reordena esse mesmo conjunto. Revisão do fotógrafo continua obrigatória se qualquer desenho futuro ampliar acesso.
 - Preparar operação e observabilidade no ARM com fila de baixa prioridade, feature flag desligada por padrão, limites de concorrência e rollback sem apagar histórico comercial.
+- Preservar a marca d'água exclusivamente nas prévias entregues ao cliente e apresentar aviso acessível de direitos autorais quando a cliente tentar copiar, arrastar, abrir o menu de contexto ou acionar captura suportada pelo navegador.
 
 ## Capabilities
 

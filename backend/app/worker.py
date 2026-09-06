@@ -19,6 +19,7 @@ from app.auth import (
     EmailDelivery,
     EmailDeliveryAttempt,
     GalleryMembershipNotificationOutbox,
+    MediaDerivative,
     MediaJob,
     PaymentCommunication,
     PaymentMessageTemplate,
@@ -219,7 +220,27 @@ def process_next_media_job() -> bool:
             job.updated_at = now()
             db.commit()
             return True
-        generate_derivatives(db, photo, job)
+        derivatives = {
+            item.variant: item
+            for item in db.scalars(
+                select(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id)
+            )
+        }
+        protected_only = bool(
+            photo.available
+            and derivatives.get("client_preview")
+            and derivatives["client_preview"].status == "queued"
+            and derivatives.get("thumbnail")
+            and derivatives["thumbnail"].status == "ready"
+            and derivatives.get("admin_preview")
+            and derivatives["admin_preview"].status == "ready"
+        )
+        generate_derivatives(
+            db,
+            photo,
+            job,
+            variants={"client_preview"} if protected_only else None,
+        )
         return True
 
 

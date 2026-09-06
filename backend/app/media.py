@@ -59,6 +59,13 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
         rgb = (255, 255, 255)
     angle = {"horizontal": 0, "vertical": 90, "diagonal": 35}.get(direction, 35)
     size = max(10, min(96, (settings.watermark_size if settings else None) or 24))
+    opacity = max(
+        10, min(100, (settings.watermark_opacity if settings else None) or 42)
+    )
+    alpha = round(255 * opacity / 100)
+    position = (settings.watermark_position if settings else None) or "middle-center"
+    shadow = settings.watermark_shadow if settings else True
+    security_lines = settings.watermark_security_lines if settings else False
     font_name = (settings.watermark_font if settings else None) or "sans-serif"
     font_file = {
         "sans-serif": "DejaVuSans.ttf",
@@ -74,15 +81,59 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
     probe = Image.new("RGBA", (1, 1))
     probe_draw = ImageDraw.Draw(probe)
     left, top, right, bottom = probe_draw.textbbox((0, 0), text, font=font, stroke_width=1)
-    layer_size = (max(1, right - left + 8), max(1, bottom - top + 8))
-    for y in range(20, marked.height, 180):
-        for x in range(12, marked.width, 280):
-            layer = Image.new("RGBA", layer_size, (0, 0, 0, 0))
-            layer_draw = ImageDraw.Draw(layer)
-            layer_draw.text((4 - left, 4 - top), text, font=font, fill=(*rgb, 105), stroke_width=1, stroke_fill=(0, 0, 0, 80))
-            if angle:
-                layer = layer.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
-            marked.alpha_composite(layer, (x, y))
+    if security_lines:
+        grid = Image.new("RGBA", marked.size, (0, 0, 0, 0))
+        grid_draw = ImageDraw.Draw(grid)
+        spacing = max(90, size * 5)
+        line_alpha = max(24, round(alpha * 0.42))
+        line_width = max(1, size // 18)
+        for offset in range(-marked.height, marked.width + marked.height, spacing):
+            grid_draw.line(
+                (offset, 0, offset + marked.height, marked.height),
+                fill=(*rgb, line_alpha),
+                width=line_width,
+            )
+            grid_draw.line(
+                (offset, marked.height, offset + marked.height, 0),
+                fill=(*rgb, line_alpha),
+                width=line_width,
+            )
+        marked.alpha_composite(grid)
+
+    layer_size = (max(1, right - left + 12), max(1, bottom - top + 12))
+    layer = Image.new("RGBA", layer_size, (0, 0, 0, 0))
+    layer_draw = ImageDraw.Draw(layer)
+    if shadow:
+        layer_draw.text(
+            (7 - left, 7 - top),
+            text,
+            font=font,
+            fill=(0, 0, 0, min(190, alpha)),
+        )
+    layer_draw.text((5 - left, 5 - top), text, font=font, fill=(*rgb, alpha))
+    if angle:
+        layer = layer.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+
+    horizontal, vertical = position.split("-", maxsplit=1)
+    anchor_x = {
+        "left": 12,
+        "center": (marked.width - layer.width) // 2,
+        "right": marked.width - layer.width - 12,
+    }.get(vertical, (marked.width - layer.width) // 2)
+    anchor_y = {
+        "top": 20,
+        "middle": (marked.height - layer.height) // 2,
+        "bottom": marked.height - layer.height - 20,
+    }.get(horizontal, (marked.height - layer.height) // 2)
+    gap_x, gap_y = max(220, layer.width + 70), max(150, layer.height + 70)
+    horizontal_steps = marked.width // gap_x + 3
+    vertical_steps = marked.height // gap_y + 3
+    for row in range(-vertical_steps, vertical_steps + 1):
+        y = anchor_y + row * gap_y
+        for column in range(-horizontal_steps, horizontal_steps + 1):
+            x = anchor_x + column * gap_x
+            if x < marked.width and x + layer.width > 0 and y < marked.height and y + layer.height > 0:
+                marked.alpha_composite(layer, (x, y))
     return marked.convert("RGB")
 
 
@@ -102,7 +153,11 @@ def enqueue_derivatives(db: Session, photo: PhotoAsset) -> MediaJob:
 
 
 def generate_derivatives(
-    db: Session, photo: PhotoAsset, job: MediaJob | None = None
+    db: Session,
+    photo: PhotoAsset,
+    job: MediaJob | None = None,
+    *,
+    variants: set[str] | None = None,
 ) -> list[MediaDerivative]:
     """Gera variantes JPEG sem EXIF; segura para reexecução da mesma foto."""
     job = job or enqueue_derivatives(db, photo)
@@ -123,7 +178,12 @@ def generate_derivatives(
         with Image.open(source) as opened:
             original = ImageOps.exif_transpose(opened).convert("RGB")
             derivatives: list[MediaDerivative] = []
+            selected_variants = set(VARIANTS) if variants is None else variants
+            if not selected_variants or not selected_variants.issubset(VARIANTS):
+                raise ValueError("Variantes de mídia inválidas.")
             for variant, (max_width, protected) in VARIANTS.items():
+                if variant not in selected_variants:
+                    continue
                 rendered = original.copy()
                 rendered.thumbnail((max_width, max_width * 2), Image.Resampling.LANCZOS)
                 if protected:
@@ -156,19 +216,23 @@ def generate_derivatives(
             if folder.status == "preparing":
                 folder.status = "released"
                 folder.released_at = now()
-        client_preview = next(
-            derivative
-            for derivative in derivatives
-            if derivative.variant == "client_preview"
+        facial_analysis_preview = next(
+            (
+                derivative
+                for derivative in derivatives
+                if derivative.variant == "admin_preview"
+            ),
+            None,
         )
-        from app.facial.indexing import enqueue_photo_index_if_eligible
+        if facial_analysis_preview:
+            from app.facial.indexing import enqueue_photo_index_if_eligible
 
-        enqueue_photo_index_if_eligible(
-            db,
-            photo,
-            client_preview,
-            derivative_path=safe_derivative_path(client_preview),
-        )
+            enqueue_photo_index_if_eligible(
+                db,
+                photo,
+                facial_analysis_preview,
+                derivative_path=safe_derivative_path(facial_analysis_preview),
+            )
         db.commit()
         return derivatives
     except Exception:

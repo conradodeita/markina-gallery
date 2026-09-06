@@ -17,9 +17,10 @@ CONFIRMATION=""
 EXPECTED_SHA=""
 ENV_BACKUP=""
 ACTIVATION_STARTED=0
+PAUSE_STARTED=0
 
 usage() {
-  echo "Uso: manage-homolog-facial.sh --mode inventory|activate-synthetic [--confirmation <token>] [--sha <sha-completo>]" >&2
+  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-synthetic|activate-synthetic [--confirmation <token>] [--sha <sha-completo>]" >&2
 }
 
 fail() {
@@ -57,13 +58,44 @@ parse_arguments() {
     esac
   done
 
-  [[ "$MODE" == "inventory" || "$MODE" == "activate-synthetic" ]] || {
+  [[ "$MODE" == "inventory" || "$MODE" == "pause-synthetic" || "$MODE" == "activate-synthetic" ]] || {
     usage
     fail "modo não permitido"
   }
   if [[ -n "$EXPECTED_SHA" ]]; then
     [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "o SHA deve ter 40 caracteres hexadecimais minúsculos"
   fi
+}
+
+set_facial_enabled() {
+  local enabled="$1" temp_file
+  [[ "$enabled" == "true" || "$enabled" == "false" ]] || fail "valor facial inválido"
+  temp_file="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+  FACIAL_ENABLED_VALUE="$enabled" python3 - "$ENV_FILE" "$temp_file" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+key = "FACIAL_PROCESSING_ENABLED"
+lines = source.read_text(encoding="utf-8").splitlines()
+output = []
+seen = False
+for line in lines:
+    if line.startswith(f"{key}="):
+        if not seen:
+            output.append(f"{key}={os.environ['FACIAL_ENABLED_VALUE']}")
+            seen = True
+        continue
+    output.append(line)
+if not seen:
+    output.append(f"{key}={os.environ['FACIAL_ENABLED_VALUE']}")
+target.write_text("\n".join(output) + "\n", encoding="utf-8")
+PY
+  mv "$temp_file" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
 }
 
 verify_target() {
@@ -280,6 +312,49 @@ rollback_activation() {
   exit "$exit_code"
 }
 
+rollback_pause() {
+  local exit_code="$1"
+  trap - ERR
+  if [[ "$PAUSE_STARTED" -eq 1 && -n "$ENV_BACKUP" && -f "$ENV_BACKUP" ]]; then
+    echo "falha ao pausar; restaurando somente o piloto facial da Markina" >&2
+    cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"
+    compose_facial up -d --no-deps face-worker >/dev/null 2>&1 || true
+    compose up -d --no-deps --force-recreate api >/dev/null 2>&1 || true
+  fi
+  exit "$exit_code"
+}
+
+pause_synthetic() {
+  local timestamp enabled face_container
+  [[ "$CONFIRMATION" == "PAUSE_SYNTHETIC_FACIAL_FOR_DEPLOY" ]] || fail "confirmação explícita da pausa sintética ausente"
+  enabled="$(grep '^FACIAL_PROCESSING_ENABLED=' "$ENV_FILE" | tail -n 1)"
+  enabled="${enabled#*=}"
+  [[ "${enabled,,}" == "true" ]] || fail "piloto facial sintético não está ativo"
+  face_container="$(facial_container_id)"
+  [[ -n "$face_container" ]] || fail "face-worker ativo não foi encontrado"
+
+  record_inventory
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  ENV_BACKUP="$STATE_DIR/facial-env-preupgrade-${timestamp}.backup"
+  cp --preserve=mode "$ENV_FILE" "$ENV_BACKUP"
+  chmod 600 "$ENV_BACKUP"
+  PAUSE_STARTED=1
+  set_facial_enabled false
+  compose_facial stop face-worker
+  compose up -d --no-deps --force-recreate api
+  wait_for_service api
+  compose exec -T api python -c '
+import os
+import sys
+sys.exit(0 if os.getenv("FACIAL_PROCESSING_ENABLED", "false").lower() == "false" else 1)
+' || fail "API não confirmou a pausa facial"
+  [[ -z "$(facial_container_id)" ]] || fail "face-worker permaneceu ativo após pausa"
+  curl --fail --silent --show-error --retry 5 --retry-delay 2 http://127.0.0.1:8080/healthz >/dev/null
+  curl --fail --silent --show-error --retry 5 --retry-delay 2 http://127.0.0.1:8080/api/health >/dev/null
+  printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "paused-synthetic-for-deploy" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
+  echo "piloto facial sintético pausado com backup restrito para upgrade"
+}
+
 activate_synthetic() {
   [[ "$CONFIRMATION" == "ENABLE_SYNTHETIC_ADULT_FACIAL_HOMOLOG" ]] || fail "confirmação explícita da ativação sintética ausente"
   [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]] || fail "o host de homologação não é ARM64"
@@ -301,6 +376,10 @@ main() {
   case "$MODE" in
     inventory)
       record_inventory
+      ;;
+    pause-synthetic)
+      trap 'rollback_pause $?' ERR
+      pause_synthetic
       ;;
     activate-synthetic)
       trap 'rollback_activation $?' ERR

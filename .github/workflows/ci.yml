@@ -108,6 +108,10 @@ jobs:
           printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
           printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
           chmod 600 "$key_file" "$known_hosts_file"
+          if git log -1 --pretty=%B | grep -Fxq 'Homolog-Facial: upgrade-synthetic'; then
+            pause_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode pause-synthetic --confirmation %q' "$GITHUB_REPOSITORY" 'PAUSE_SYNTHETIC_FACIAL_FOR_DEPLOY')"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$pause_command" < scripts/manage-homolog-facial.sh
+          fi
           remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$GITHUB_SHA")"
           ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
           maintenance_mode="inventory"
@@ -123,7 +127,8 @@ jobs:
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/develop' &&
-      contains(github.event.head_commit.message, 'Homolog-Facial: activate-synthetic-adults')
+      (contains(github.event.head_commit.message, 'Homolog-Facial: activate-synthetic-adults') ||
+      contains(github.event.head_commit.message, 'Homolog-Facial: upgrade-synthetic'))
     needs: [deploy-homolog]
     runs-on: ubuntu-latest
     environment: homolog

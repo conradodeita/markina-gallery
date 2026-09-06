@@ -18,7 +18,11 @@ from app.auth import (
 )
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope, FacialScope
-from app.facial.indexing import preview_fingerprint
+from app.facial.indexing import (
+    CLIENT_PRESENTATION_VARIANT,
+    FACIAL_ANALYSIS_VARIANT,
+    preview_fingerprint,
+)
 from app.facial.provider import (
     EXPECTED_EMBEDDING_DIMENSIONS,
     OpenCvSFaceProvider,
@@ -63,12 +67,21 @@ def replace_photo_index(
     derivative = db.scalar(
         select(MediaDerivative).where(
             MediaDerivative.photo_asset_id == photo.id,
-            MediaDerivative.variant == "client_preview",
+            MediaDerivative.variant == FACIAL_ANALYSIS_VARIANT,
             MediaDerivative.status == "ready",
         )
     )
     if not derivative or not derivative.relative_path:
         raise FacialEngineError("Prévia facial não está pronta.")
+    protected_preview_ready = db.scalar(
+        select(MediaDerivative.id).where(
+            MediaDerivative.photo_asset_id == photo.id,
+            MediaDerivative.variant == CLIENT_PRESENTATION_VARIANT,
+            MediaDerivative.status == "ready",
+        )
+    )
+    if protected_preview_ready is None:
+        raise FacialEngineError("Prévia protegida não está pronta.")
     root = derivatives_root.resolve()
     path = (root / derivative.relative_path).resolve()
     try:
