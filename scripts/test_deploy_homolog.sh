@@ -87,6 +87,20 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
 fi
 grep -Fq 'checkout remoto possui alterações locais' "$dirty_output"
 
+facial_env="$(mktemp)"
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$facial_env"' EXIT
+printf 'FACIAL_PROCESSING_ENABLED=true\n' >"$facial_env"
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    docker() { :; }
+    verify_facial_predeploy_safe_default "$FACIAL_ENV"
+  ' >"$output" 2>&1; then
+  echo "deploy aceitou piloto facial ativo no preflight" >&2
+  exit 1
+fi
+grep -Fq 'piloto facial deve ser desativado antes de um novo deploy' "$output"
+
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
@@ -172,4 +186,5 @@ grep -Fq 'banco não foi restaurado' "$output"
 
 python3 "$SCRIPT_DIR/test_deploy_homolog_policy.py"
 python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
+python3 "$SCRIPT_DIR/test_manage_homolog_facial_policy.py"
 echo "deploy-homolog shell: ok"

@@ -28,3 +28,11 @@ Nenhum container, rede, volume, proxy, firewall, DNS, certificado ou secret de t
 12. desligar política/profile e registrar resultados, métricas e rollback.
 
 Falha de healthcheck, isolamento, retenção, backpressure, regressão de mídia/seleção manual ou recurso acima do limite interrompe apenas o piloto facial e aciona rollback. Nenhum dado real ou infantil poderá ser introduzido.
+
+## Ativação sintética auditável
+
+O script `scripts/manage-homolog-facial.sh` oferece inventário e ativação somente no checkout fixo `/opt/markina-gallery`, exige SHA integral, repositório esperado, host ARM64 e o token explícito `ENABLE_SYNTHETIC_ADULT_FACIAL_HOMOLOG`. O job `activate-synthetic-facial-homolog` somente executa depois do deploy verde quando o commit autorizado contém o trailer `Homolog-Facial: activate-synthetic-adults`.
+
+Antes da mutação, o script registra SHA, arquitetura, CPUs, memória, disco, migration, containers, portas e presença dos gates sem revelar valores secretos. A ativação faz backup restrito de `docker/.env.homolog`, gera ou preserva a chave AEAD no próprio host, fixa versões identificadas como exclusivas da homologação sintética, mantém menores desabilitados, constrói o runtime ARM e recria somente `api` e `face-worker`. O worker continua sem porta, concorrência 1, limite de 1 CPU e 768 MiB. Falha de configuração, build, healthcheck ou porta restaura o arquivo anterior, interrompe somente o worker facial e recria somente a API.
+
+Enquanto o piloto estiver ativo, o deploy comum SHALL falhar no preflight antes de alterar código ou banco. A política da galeria deve ser revogada e a prova de limpeza confirmada antes de desligar o profile e liberar um novo deploy.

@@ -37,6 +37,24 @@ verify_clean_checkout() {
   [[ -z "$(git status --porcelain)" ]] || fail "checkout remoto possui alterações locais; reconciliação humana necessária"
 }
 
+verify_facial_predeploy_safe_default() {
+  local env_file="${1:-$ENV_FILE}" occurrences value face_container
+  occurrences="$(grep -c '^FACIAL_PROCESSING_ENABLED=' "$env_file" || true)"
+  [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para FACIAL_PROCESSING_ENABLED"
+  value="false"
+  if [[ "$occurrences" -eq 1 ]]; then
+    value="$(grep '^FACIAL_PROCESSING_ENABLED=' "$env_file")"
+    value="${value#*=}"
+  fi
+  [[ "${value,,}" == "false" ]] || fail "piloto facial deve ser desativado antes de um novo deploy"
+  face_container="$(
+    docker ps --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=face-worker"
+  )"
+  [[ -z "$face_container" ]] || fail "face-worker deve ser desativado antes de um novo deploy"
+}
+
 ensure_pii_fingerprint_salt() {
   local env_file="${1:-$ENV_FILE}"
   local key="AUTH_PII_FINGERPRINT_SALT" line value occurrences salt temp_file replaced=0
@@ -167,6 +185,7 @@ verify_target() {
   [[ "$origin_url" =~ github\.com[:/]${EXPECTED_REPOSITORY//\//\/}(\.git)?$ ]] || fail "origin não aponta para o repositório GitHub esperado"
 
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
+  verify_facial_predeploy_safe_default
   ensure_pii_fingerprint_salt
   ensure_gallery_capability_signing_key
   compose config --quiet

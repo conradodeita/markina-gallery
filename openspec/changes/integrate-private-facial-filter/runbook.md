@@ -42,3 +42,9 @@ Rollback: desligar o kill switch, suspender políticas, priorizar purge, confirm
 - Notificação ambígua: não reenviar automaticamente; a UI autorizada continua sendo a fonte do resultado.
 
 Logs e métricas podem conter somente IDs internos, estados, versões, contagens, latência, fila e categorias sanitizadas. Imagem, vetor, score, landmarks, caixa facial, nome inferido e telefone são proibidos.
+
+## Piloto sintético em homologação
+
+A ativação operacional usa `scripts/manage-homolog-facial.sh` e nunca edição manual improvisada. O modo `inventory` é somente leitura. O modo `activate-synthetic` exige SHA integral publicado, host ARM64, confirmação `ENABLE_SYNTHETIC_ADULT_FACIAL_HOMOLOG` e inventário imediatamente anterior. Ele gera a chave AEAD no host, marca as versões como `homolog-synthetic-*`, mantém `FACIAL_MINOR_SEARCH_ENABLED=false`, limita concorrência/CPU/memória e valida API, worker, migration e ausência de porta nova.
+
+O deploy comum recusa flag ou worker facial ativos antes de qualquer troca de SHA. Para encerrar o piloto, primeiro revogue as políticas pelo painel, aguarde purge e confirme a prova de limpeza; só então desative a flag/profile por operação auditada. Em emergência, interromper a capacidade de processamento tem prioridade, mas resíduos cifrados ainda exigem limpeza posterior registrada.

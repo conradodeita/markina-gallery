@@ -66,6 +66,17 @@ def main() -> int:
     require('start_whatsapp_infrastructure_if_active', "gate do provedor real antes dos workers", SCRIPT)
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
     require('verify_facial_safe_default', "verificação do kill switch facial após deploy", SCRIPT)
+    require('verify_facial_predeploy_safe_default', "preflight facial antes de qualquer deploy", SCRIPT)
+    require(
+        'piloto facial deve ser desativado antes de um novo deploy',
+        "bloqueio precoce com piloto facial ativo",
+        SCRIPT,
+    )
+    require(
+        'face-worker deve ser desativado antes de um novo deploy',
+        "bloqueio precoce com worker facial ativo",
+        SCRIPT,
+    )
     require(
         'FACIAL_PROCESSING_ENABLED deve permanecer false neste deploy',
         "falha fechada quando a flag facial está ativa",
