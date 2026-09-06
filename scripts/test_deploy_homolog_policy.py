@@ -65,6 +65,22 @@ def main() -> int:
     require('compose config --services | grep -Fxq evolution-api', "ativação do perfil WhatsApp sem ler segredos", SCRIPT)
     require('start_whatsapp_infrastructure_if_active', "gate do provedor real antes dos workers", SCRIPT)
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
+    require('verify_facial_safe_default', "verificação do kill switch facial após deploy", SCRIPT)
+    require(
+        'FACIAL_PROCESSING_ENABLED deve permanecer false neste deploy',
+        "falha fechada quando a flag facial está ativa",
+        SCRIPT,
+    )
+    require(
+        'label=com.docker.compose.service=face-worker',
+        "inventário do worker facial restrito ao projeto",
+        SCRIPT,
+    )
+    require(
+        'facial safe default confirmado: flag=false profile=inativo',
+        "evidência operacional do estado facial seguro",
+        SCRIPT,
+    )
     require('rollback automático de código não é seguro após mudança de schema', "bloqueio de rollback de banco", SCRIPT)
     require('MARKINA_EXPECTED_REPOSITORY', "validação de origem Git", SCRIPT)
     forbid(r'\bgit\s+reset\b', "git reset", SCRIPT)

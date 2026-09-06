@@ -256,6 +256,25 @@ wait_for_health() {
   fi
 }
 
+verify_facial_safe_default() {
+  compose exec -T api python -c '
+import os
+import sys
+
+enabled = os.getenv("FACIAL_PROCESSING_ENABLED", "false").strip().lower()
+sys.exit(0 if enabled == "false" else 1)
+' || fail "FACIAL_PROCESSING_ENABLED deve permanecer false neste deploy"
+
+  local face_container
+  face_container="$(
+    docker ps --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=face-worker"
+  )"
+  [[ -z "$face_container" ]] || fail "face-worker iniciou fora do profile autorizado"
+  echo "facial safe default confirmado: flag=false profile=inativo"
+}
+
 whatsapp_real_is_active() {
   compose config --services | grep -Fxq evolution-api
 }
@@ -319,6 +338,7 @@ main() {
   compose up -d --build --no-deps api web worker
   compose up -d --force-recreate --no-deps nginx
   wait_for_health
+  verify_facial_safe_default
   record_revision "last-healthy" "$DEPLOY_SHA"
   echo "deploy-homolog concluído para $DEPLOY_SHA"
 }
