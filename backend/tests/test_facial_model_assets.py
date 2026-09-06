@@ -93,6 +93,25 @@ def test_manifest_fails_closed_for_license_architecture_and_unpinned_url(
         load_manifest(manifest, architecture="amd64")
 
 
+def test_manifest_accepts_only_pinned_opencv_lfs_media_url(tmp_path: Path) -> None:
+    manifest, _ = _manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    revision = "b" * 40
+    payload["models"]["yunet"]["url"] = (
+        "https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+        f"{revision}/models/face_detection_yunet/yunet.onnx"
+    )
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    assert load_manifest(manifest, architecture="arm64")["models"]["yunet"][
+        "url"
+    ].startswith("https://media.githubusercontent.com/media/opencv/opencv_zoo/")
+
+    payload["models"]["yunet"]["url"] += "?download=1"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(FacialModelConfigurationError, match="Origem"):
+        load_manifest(manifest, architecture="arm64")
+
+
 def test_verify_fails_closed_for_tampered_bytes_or_manifest(tmp_path: Path) -> None:
     manifest, payloads = _manifest(tmp_path)
 

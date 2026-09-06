@@ -21,7 +21,8 @@ ALLOWED_LICENSES = frozenset({"MIT", "Apache-2.0"})
 SUPPORTED_ARCHITECTURES = frozenset({"amd64", "arm64"})
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PINNED_OPENCV_URL = re.compile(
-    r"^https://raw\.githubusercontent\.com/opencv/opencv_zoo/"
+    r"^https://(?:raw\.githubusercontent\.com/opencv/opencv_zoo|"
+    r"media\.githubusercontent\.com/media/opencv/opencv_zoo)/"
     r"[0-9a-f]{40}/models/[^?#]+\.onnx$"
 )
 
