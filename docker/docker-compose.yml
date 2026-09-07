@@ -301,6 +301,7 @@ services:
     build: ../backend
     command: ["python", "-m", "app.worker"]
     environment:
+      <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       AUTH_PII_FINGERPRINT_SALT: ${AUTH_PII_FINGERPRINT_SALT:-}

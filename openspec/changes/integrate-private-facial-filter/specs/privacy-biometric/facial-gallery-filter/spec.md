@@ -32,6 +32,11 @@ O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegi
 - **WHEN** uma foto elegível conclui as prévias interna limpa e protegida em uma Galeria pública ativa com o subsistema global habilitado
 - **THEN** o sistema garante a política interna e enfileira indexação idempotente com galeria, foto, modelo e versão sem ação do fotógrafo e sem bloquear a disponibilidade da prévia
 
+#### Scenario: Evento de indexação perdido por gate divergente
+
+- **WHEN** uma execução privada ativa comprova que fotos de seu lote ficaram prontas sem job facial porque um processo persistente reteve configuração anterior
+- **THEN** o operador pode executar backfill único, escopado à janela e ao lote autorizados, reutilizando a idempotência normal e preservando fotos, prévias e medição em andamento
+
 #### Scenario: Falha facial isolada
 
 - **WHEN** detector, modelo ou armazenamento falha durante a indexação

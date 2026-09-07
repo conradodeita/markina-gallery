@@ -73,7 +73,7 @@ jobs:
         run: /tmp/gitleaks git -v
 
   deploy-homolog:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && !contains(github.event.head_commit.message, 'Homolog-Facial: reconcile-private') }}"
     needs: [backend, frontend, openspec, gitleaks]
     runs-on: ubuntu-latest
     environment: homolog
@@ -122,3 +122,60 @@ jobs:
           fi
           maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
           ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$maintenance_command" < scripts/maintain-homolog-data.sh
+
+  reconcile-facial-homolog:
+    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && contains(github.event.head_commit.message, 'Homolog-Facial: reconcile-private') }}"
+    needs: [backend, frontend, openspec, gitleaks]
+    runs-on: ubuntu-latest
+    environment: homolog
+    permissions:
+      contents: read
+    env:
+      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
+      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
+      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
+      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
+      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validar reconciliação do lote ativo
+        run: |
+          bash scripts/test_manage_homolog_facial.sh
+          python scripts/test_manage_homolog_facial_policy.py
+      - name: Enfileirar somente fotos autorizadas já prontas
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Secret obrigatório ausente: $required" >&2; exit 1; }
+          done
+          commit_message="$(git log -1 --pretty=%B)"
+          grep -Fxq 'Homolog-Facial: reconcile-private' <<<"$commit_message" || { echo "trailer exato de reconciliação ausente" >&2; exit 1; }
+          read_trailer() {
+            local key="$1"
+            local -a values
+            mapfile -t values < <(git interpret-trailers --parse <<<"$commit_message" | sed -n "s/^${key}: //p")
+            [[ "${#values[@]}" -eq 1 ]] || { echo "trailer $key deve aparecer exatamente uma vez" >&2; exit 1; }
+            printf '%s' "${values[0]}"
+          }
+          deployed_sha="$(read_trailer Facial-Deployed-SHA)"
+          batch_id="$(read_trailer Facial-Batch)"
+          authorization_ref="$(read_trailer Facial-Authorization)"
+          expected_count="$(read_trailer Facial-Expected-Count)"
+          contains_minors="$(read_trailer Facial-Contains-Minors)"
+          [[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "SHA publicado inválido" >&2; exit 1; }
+          [[ "$batch_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] || { echo "batch_id inválido" >&2; exit 1; }
+          [[ "$authorization_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] || { echo "authorization_ref inválido" >&2; exit 1; }
+          [[ "$expected_count" =~ ^[0-9]+$ ]] && (( expected_count >= 500 && expected_count <= 1000 )) || { echo "expected_count inválido" >&2; exit 1; }
+          [[ "$contains_minors" == "true" || "$contains_minors" == "false" ]] || { echo "contains_minors inválido" >&2; exit 1; }
+
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode reconcile-private --sha %q --batch-id %q --authorization-ref %q --expected-count %q --contains-minors %q --confirmation %q' "$GITHUB_REPOSITORY" "$deployed_sha" "$batch_id" "$authorization_ref" "$expected_count" "$contains_minors" 'RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG')"
+          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/manage-homolog-facial.sh

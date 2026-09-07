@@ -7,7 +7,7 @@ on:
         description: Operação autorizada
         required: true
         type: choice
-        options: [inventory, activate-private, monitor, close-private]
+        options: [inventory, activate-private, reconcile-private, monitor, close-private]
       sha:
         description: SHA completo já publicado em homologação
         required: true
@@ -106,6 +106,7 @@ jobs:
               (( RETENTION_HOURS >= 1 && RETENTION_HOURS <= 72 )) || { echo "retention_hours inválido" >&2; exit 1; }
               (( WINDOW_MINUTES >= 30 && WINDOW_MINUTES <= 240 )) || { echo "window_minutes inválido" >&2; exit 1; }
               ;;
+            reconcile-private) expected_confirmation="RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;
             monitor) expected_confirmation="BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;
             close-private) expected_confirmation="CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;
             inventory) expected_confirmation="INVENTORY_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;

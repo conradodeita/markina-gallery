@@ -10,6 +10,7 @@ WORKFLOW = (ROOT / ".github" / "workflows" / "facial-homolog.yml").read_text(
     encoding="utf-8"
 )
 CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+COMPOSE = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
 
 
 def require(text: str, description: str, source: str) -> None:
@@ -33,9 +34,11 @@ def main() -> int:
         ("activate-private", "ativação privada"),
         ("pause-legacy-for-private-upgrade", "transição legada"),
         ("close-private", "fechamento privado"),
+        ("reconcile-private", "reconciliação privada"),
         ("ENABLE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de ativação"),
         ("PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE", "token de transição legada"),
         ("CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de fechamento"),
+        ("RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de reconciliação"),
         ("FACIAL_HOMOLOG_BATCH_ID", "vínculo ao lote"),
         ("FACIAL_HOMOLOG_ORIGIN_REF", "origem documentada"),
         ("FACIAL_HOMOLOG_AUTHORIZATION_REF", "autorização documentada"),
@@ -48,6 +51,11 @@ def main() -> int:
         ('chmod 600 "$ENV_FILE"', "permissão restrita"),
         ("compose_facial up -d --build --no-deps face-worker", "subida isolada"),
         ("compose_facial stop face-worker", "parada isolada"),
+        ("wait_for_media_worker_idle", "proteção do job de mídia em andamento"),
+        ("compose up -d --no-deps --force-recreate api worker", "recarga dos processos persistentes"),
+        ("PhotoAsset.created_at >= started_at", "escopo temporal do lote"),
+        ("len(photo_ids) != expected_count", "contagem exata antes do backfill"),
+        ("enqueue_photo_index_if_eligible", "backfill pela idempotência normal"),
         ("purge_gallery_records", "purga síncrona"),
         ("photo_face_embedding", "prova agregada de embeddings"),
         ("facial_search_candidate", "prova agregada de candidatos"),
@@ -84,6 +92,7 @@ def main() -> int:
         ("expected_count", "quantidade esperada"),
         ("contains_minors", "declaração de menores"),
         ("ENABLE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação da ativação"),
+        ("RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação da reconciliação"),
         ("BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação do benchmark"),
         ("CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação do fechamento"),
         ("StrictHostKeyChecking=yes", "host SSH verificado"),
@@ -105,6 +114,23 @@ def main() -> int:
         "PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE",
         "confirmação da transição legada no CI",
         CI,
+    )
+    for text, description in (
+        ("reconcile-facial-homolog", "job corretivo isolado"),
+        ("!contains(github.event.head_commit.message, 'Homolog-Facial: reconcile-private')", "deploy comum excluído da reconciliação"),
+        ("grep -Fxq 'Homolog-Facial: reconcile-private'", "trailer exato da reconciliação"),
+        ("Facial-Deployed-SHA", "vínculo corretivo ao SHA publicado"),
+        ("Facial-Batch", "vínculo corretivo ao lote"),
+        ("Facial-Authorization", "vínculo corretivo à autorização"),
+        ("Facial-Expected-Count", "vínculo corretivo à quantidade"),
+        ("Facial-Contains-Minors", "vínculo corretivo à declaração de menores"),
+        ("RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token corretivo"),
+    ):
+        require(text, description, CI)
+    require(
+        "worker:\n    build: ../backend\n    command: [\"python\", \"-m\", \"app.worker\"]\n    environment:\n      <<: *facial-environment",
+        "worker de mídia recebe o mesmo gate facial",
+        COMPOSE,
     )
     forbid(r"password\s*[:=]\s*[\"']?[^${\s]", "senha literal", WORKFLOW)
 

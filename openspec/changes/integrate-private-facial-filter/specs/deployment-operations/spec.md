@@ -18,6 +18,11 @@ O processamento SHALL usar fila bloqueante de baixa prioridade, concorrência e 
 - **WHEN** prévias e indexações concorrem por recursos
 - **THEN** a geração de prévias e as rotas interativas têm prioridade, e a fila facial desacelera sem tornar a galeria indisponível
 
+#### Scenario: Gate alterado com processos persistentes
+
+- **WHEN** uma operação autorizada habilita, pausa, restaura ou encerra o processamento facial
+- **THEN** API, worker de mídia e worker facial aplicável recebem o mesmo gate vigente, e a operação verifica a configuração efetiva sem publicar porta ou reiniciar serviço de terceiro
+
 #### Scenario: Fila vazia
 
 - **WHEN** não existem jobs faciais pendentes durante o prazo ocioso configurado
@@ -46,3 +51,8 @@ Deploy SHALL exigir inventário, backup, migration aditiva, modelos verificados 
 
 - **WHEN** o operador aciona o rollback facial
 - **THEN** consultas e indexações param, temporários são limpos, o produto retorna à seleção manual e nenhum serviço externo à Markina é alterado
+
+#### Scenario: Fotos prontas sem evento facial durante lote ativo
+
+- **WHEN** o inventário detecta que um lote privado ainda autorizado concluiu prévias enquanto o worker de mídia mantinha o gate antigo
+- **THEN** uma reconciliação explícita, vinculada ao mesmo SHA, lote, autorização, quantidade e declaração de menores, enfileira idempotentemente somente as fotos daquela janela sem apagar mídia, repetir upload, ampliar prazo ou interromper a geração de prévias

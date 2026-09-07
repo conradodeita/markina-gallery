@@ -152,6 +152,14 @@ Alternativa rejeitada: avaliar a foto inteira, o maior rosto ou o centro como su
 
 Cada verificação OTP concluída em contexto de galeria reutiliza o cadastro único pelo telefone normalizado, registra o acesso e cria uma notificação administrativa idempotente por desafio consumido, com cliente, Galeria pública e horário. O payload nunca contém OTP. A notificação não exige aprovação do fotógrafo nem altera a autorização já concedida pelo link e pelo login.
 
+### 16. Propagação do gate e reconciliação do lote ativo
+
+API, worker de mídia e worker facial leem a configuração facial no início do processo. Toda ativação, pausa, fechamento ou rollback operacional deverá, portanto, recriar de forma explícita os processos persistentes afetados e verificar neles o mesmo valor do gate; alterar somente o arquivo de ambiente não é suficiente. O worker de mídia receberá o mesmo bloco de configuração facial da API para que a conclusão das prévias possa gerar o evento durável de indexação.
+
+Se uma janela privada autorizada já estiver ativa e fotos do lote tiverem concluído as prévias sem job facial por divergência de configuração, uma reconciliação corretiva explícita poderá enfileirar somente as fotos persistidas dentro da janela registrada no manifesto. O procedimento exigirá SHA publicado, lote, autorização, quantidade e declaração de menores exatamente iguais ao gate ativo, inventário imediatamente anterior, contagem exata do lote e ambas as prévias prontas. A operação será idempotente pela chave normal de índice, não recriará mídia, não alterará a retenção ou a janela, não reiniciará o worker de mídia durante carga e não tocará em recursos de terceiros.
+
+Alternativa rejeitada: fechar o lote e exigir novo upload. Isso apagaria os derivados faciais conforme o contrato de encerramento, perderia a medição já iniciada e imporia novo tratamento de dados sem necessidade técnica.
+
 ## Risks / Trade-offs
 
 - [Base legal inadequada para pessoas incidentais] → flag global e política interna automática fail-closed; RIPD e revisão jurídica antes de dado real.
@@ -167,6 +175,7 @@ Cada verificação OTP concluída em contexto de galeria reutiliza o cadastro ú
 - [Cliente fecha a tela e perde o resultado] → job e snapshot duráveis, consulta retomável e outbox idempotente de conclusão.
 - [Índices antigos sobrevivem à nova configuração] → versões jurídicas e técnicas fazem parte da assinatura interna; mudança invalida e agenda reindexação controlada.
 - [Dois clientes compartilham inferência] → request/candidate sempre possui `client_id`; somente `PhotoSelection` consciente segue para o modelo comercial individual.
+- [Processo mantém gate facial antigo após alteração do arquivo de ambiente] → bloco de ambiente compartilhado, recriação explícita de API/worker de mídia e verificação dentro de cada processo; lote já afetado usa reconciliação única, escopada e idempotente.
 
 ## Migration Plan
 

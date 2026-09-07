@@ -34,6 +34,9 @@ if (parse_arguments --mode activate-synthetic >/dev/null 2>&1); then
   exit 1
 fi
 parse_arguments --mode pause-legacy-for-private-upgrade
+MODE=""
+parse_arguments --mode reconcile-private
+[[ "$MODE" == "reconcile-private" ]]
 
 pause_result="$({
   CONFIRMATION="PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE"
@@ -54,6 +57,29 @@ if (
   pause_legacy_for_private_upgrade >/dev/null 2>&1
 ); then
   echo "transição legada aceitou gate privado ativo" >&2
+  exit 1
+fi
+
+if (
+  CONFIRMATION="RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
+  BATCH_ID="batch-2026-09-07"
+  AUTHORIZATION_REF="approval-register-42"
+  EXPECTED_COUNT="500"
+  CONTAINS_MINORS="true"
+  read_env_value() {
+    case "$1" in
+      FACIAL_PROCESSING_ENABLED|FACIAL_HOMOLOG_PRIVATE_MODE) printf 'true' ;;
+      FACIAL_HOMOLOG_BATCH_ID) printf 'outro-lote' ;;
+      FACIAL_HOMOLOG_AUTHORIZATION_REF) printf '%s' "$AUTHORIZATION_REF" ;;
+      FACIAL_HOMOLOG_EXPECTED_COUNT) printf '%s' "$EXPECTED_COUNT" ;;
+      FACIAL_HOMOLOG_CONTAINS_MINORS) printf '%s' "$CONTAINS_MINORS" ;;
+    esac
+  }
+  facial_container_id() { printf 'face-worker-id'; }
+  record_inventory() { echo "não deveria inventariar" >&2; return 1; }
+  reconcile_private >/dev/null 2>&1
+); then
+  echo "reconciliação aceitou batch-id divergente" >&2
   exit 1
 fi
 

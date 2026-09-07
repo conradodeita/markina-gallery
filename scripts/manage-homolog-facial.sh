@@ -15,6 +15,7 @@ readonly ACTIVATE_TOKEN="ENABLE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 readonly PAUSE_TOKEN="PAUSE_AUTHORIZED_PRIVATE_FACIAL_FOR_DEPLOY"
 readonly LEGACY_PAUSE_TOKEN="PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE"
 readonly CLOSE_TOKEN="CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
+readonly RECONCILE_TOKEN="RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 
 MODE=""
 CONFIRMATION=""
@@ -33,7 +34,7 @@ ACTIVATION_STARTED=0
 PAUSE_STARTED=0
 
 usage() {
-  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
+  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|reconcile-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
 }
 
 fail() {
@@ -66,7 +67,7 @@ parse_arguments() {
       *) usage; fail "argumento não permitido: $1"; return 1 ;;
     esac
   done
-  [[ "$MODE" == "inventory" || "$MODE" == "pause-legacy-for-private-upgrade" || "$MODE" == "pause-private" || "$MODE" == "activate-private" || "$MODE" == "close-private" ]] || {
+  [[ "$MODE" == "inventory" || "$MODE" == "pause-legacy-for-private-upgrade" || "$MODE" == "pause-private" || "$MODE" == "activate-private" || "$MODE" == "reconcile-private" || "$MODE" == "close-private" ]] || {
     usage
     fail "modo não permitido"
     return 1
@@ -300,6 +301,34 @@ wait_for_service() {
   [[ "$status" == "healthy" ]] || { compose_facial logs --no-color --tail 80 "$service" >&2 || true; fail "serviço não ficou saudável: $service ($status)"; }
 }
 
+wait_for_media_worker_idle() {
+  local processing="1" attempt
+  for attempt in $(seq 1 120); do
+    processing="$(compose exec -T api python -c '
+from sqlalchemy import func, select
+from app.auth import MediaJob, SessionLocal
+with SessionLocal() as db:
+    print(db.scalar(select(func.count(MediaJob.id)).where(MediaJob.status == "processing")) or 0)
+')"
+    [[ "$processing" == "0" ]] && return 0
+    sleep 2
+  done
+  fail "worker de mídia não ficou ocioso; nenhum processo foi recriado"
+}
+
+verify_persistent_gate() {
+  local expected="$1" service
+  for service in api worker; do
+    wait_for_service "$service"
+    FACIAL_EXPECTED_GATE="$expected" compose exec -T -e FACIAL_EXPECTED_GATE "$service" python -c '
+import os
+from app.facial.config import facial_settings_from_environment
+s = facial_settings_from_environment(verify_runtime_assets=False)
+assert s.enabled == (os.environ["FACIAL_EXPECTED_GATE"] == "true")
+print("gate facial validado no processo persistente")'
+  done
+}
+
 reload_reverse_proxy() {
   wait_for_service nginx
   compose exec -T nginx nginx -t
@@ -307,7 +336,7 @@ reload_reverse_proxy() {
 }
 
 verify_activation() {
-  wait_for_service api
+  verify_persistent_gate true
   wait_for_service face-worker
   FACIAL_EXPECTED_BATCH="$BATCH_ID" FACIAL_EXPECTED_MINORS="$CONTAINS_MINORS" compose exec -T \
     -e FACIAL_EXPECTED_BATCH -e FACIAL_EXPECTED_MINORS api python -c '
@@ -332,7 +361,7 @@ rollback_activation() {
   if [[ "$ACTIVATION_STARTED" -eq 1 && -f "$ENV_BACKUP" ]]; then
     cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"
     compose_facial stop face-worker >/dev/null 2>&1 || true
-    compose up -d --no-deps --force-recreate api >/dev/null 2>&1 || true
+    compose up -d --no-deps --force-recreate api worker >/dev/null 2>&1 || true
     reload_reverse_proxy >/dev/null 2>&1 || true
   fi
   exit "$exit_code"
@@ -344,7 +373,7 @@ rollback_pause() {
   if [[ "$PAUSE_STARTED" -eq 1 && -f "$ENV_BACKUP" ]]; then
     cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"
     compose_facial up -d --no-deps face-worker >/dev/null 2>&1 || true
-    compose up -d --no-deps --force-recreate api >/dev/null 2>&1 || true
+    compose up -d --no-deps --force-recreate api worker >/dev/null 2>&1 || true
     reload_reverse_proxy >/dev/null 2>&1 || true
   fi
   exit "$exit_code"
@@ -358,6 +387,7 @@ pause_active_worker() {
   ENV_BACKUP="$STATE_DIR/facial-env-preupgrade-${timestamp}.backup"
   cp --preserve=mode "$ENV_FILE" "$ENV_BACKUP"
   chmod 600 "$ENV_BACKUP"
+  wait_for_media_worker_idle
   temp_file="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
   PAUSE_STARTED=1
   python3 - "$ENV_FILE" "$temp_file" <<'PY'
@@ -371,8 +401,8 @@ PY
   mv "$temp_file" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   compose_facial stop face-worker
-  compose up -d --no-deps --force-recreate api
-  wait_for_service api
+  compose up -d --no-deps --force-recreate api worker
+  verify_persistent_gate false
   reload_reverse_proxy
   [[ -z "$(facial_container_id)" ]] || fail "face-worker permaneceu ativo após pausa"
   compose exec -T api python -c 'import os; assert os.getenv("FACIAL_PROCESSING_ENABLED", "false").lower() == "false"'
@@ -432,16 +462,156 @@ activate_private() {
   [[ -z "$(facial_container_id)" ]] || fail "face-worker já está ativo"
   [[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" != "true" ]] || fail "já existe lote privado ativo"
   record_inventory
+  wait_for_media_worker_idle
   write_environment activate
   ACTIVATION_STARTED=1
   WINDOW_EXPIRES_AT="$(read_env_value FACIAL_HOMOLOG_WINDOW_EXPIRES_AT)"
   write_manifest active
   compose_facial up -d --build --no-deps face-worker
-  compose up -d --no-deps --force-recreate api
+  compose up -d --no-deps --force-recreate api worker
   reload_reverse_proxy
   verify_activation
   record_inventory
   printf '%s activated-private batch=%s sha=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
+}
+
+reconcile_private() {
+  [[ "$CONFIRMATION" == "$RECONCILE_TOKEN" ]] || { fail "confirmação explícita da reconciliação privada ausente"; return 1; }
+  validate_reference "$BATCH_ID" "batch-id" || return 1
+  validate_reference "$AUTHORIZATION_REF" "authorization-ref" || return 1
+  [[ "$EXPECTED_COUNT" =~ ^[0-9]+$ ]] && (( EXPECTED_COUNT >= 500 && EXPECTED_COUNT <= 1000 )) || { fail "expected-count deve ficar entre 500 e 1000"; return 1; }
+  [[ "$CONTAINS_MINORS" == "true" || "$CONTAINS_MINORS" == "false" ]] || { fail "contains-minors deve ser true ou false"; return 1; }
+  [[ "$(read_env_value FACIAL_PROCESSING_ENABLED)" == "true" ]] || { fail "processamento facial não está ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" == "true" ]] || { fail "janela facial privada não está ativa"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_BATCH_ID)" == "$BATCH_ID" ]] || { fail "batch-id diverge do lote ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_AUTHORIZATION_REF)" == "$AUTHORIZATION_REF" ]] || { fail "authorization-ref diverge do lote ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_EXPECTED_COUNT)" == "$EXPECTED_COUNT" ]] || { fail "expected-count diverge do lote ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_CONTAINS_MINORS)" == "$CONTAINS_MINORS" ]] || { fail "contains-minors diverge do lote ativo"; return 1; }
+  [[ -n "$(facial_container_id)" ]] || { fail "face-worker privado ativo não foi encontrado"; return 1; }
+  record_inventory
+
+  local -a manifest_window
+  mapfile -t manifest_window < <(
+    FACIAL_STATE_DIR="$STATE_DIR" FACIAL_BATCH_ID="$BATCH_ID" \
+    FACIAL_AUTHORIZATION_REF="$AUTHORIZATION_REF" FACIAL_EXPECTED_COUNT="$EXPECTED_COUNT" \
+    FACIAL_CONTAINS_MINORS="$CONTAINS_MINORS" python3 - <<'PY'
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+path = Path(os.environ["FACIAL_STATE_DIR"]) / f"facial-batch-{os.environ['FACIAL_BATCH_ID']}.json"
+payload = json.loads(path.read_text(encoding="utf-8"))
+expected = {
+    "batch_id": os.environ["FACIAL_BATCH_ID"],
+    "authorization_ref": os.environ["FACIAL_AUTHORIZATION_REF"],
+    "expected_count": int(os.environ["FACIAL_EXPECTED_COUNT"]),
+    "contains_minors": os.environ["FACIAL_CONTAINS_MINORS"] == "true",
+    "status": "active",
+}
+if any(payload.get(key) != value for key, value in expected.items()):
+    raise SystemExit("manifesto do lote diverge da reconciliação autorizada")
+started_at = datetime.fromisoformat(payload["recorded_at"])
+expires_at = datetime.fromisoformat(payload["window_expires_at"])
+if started_at >= expires_at:
+    raise SystemExit("janela registrada no manifesto é inválida")
+print(started_at.isoformat())
+print(expires_at.isoformat())
+PY
+  )
+  [[ "${#manifest_window[@]}" -eq 2 ]] || fail "manifesto do lote não forneceu janela válida"
+
+  FACIAL_BATCH_STARTED_AT="${manifest_window[0]}" FACIAL_BATCH_EXPIRES_AT="${manifest_window[1]}" \
+  FACIAL_EXPECTED_COUNT="$EXPECTED_COUNT" FACIAL_RECONCILE_BATCH="$BATCH_ID" compose exec -T \
+    -e FACIAL_BATCH_STARTED_AT -e FACIAL_BATCH_EXPIRES_AT -e FACIAL_EXPECTED_COUNT \
+    -e FACIAL_RECONCILE_BATCH api python - <<'PY'
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
+
+from app.auth import FacialJob, MediaDerivative, ParentGallery, PhotoAsset, PhotoFolder, SessionLocal
+from app.facial.config import facial_settings_from_environment
+from app.facial.indexing import enqueue_photo_index_if_eligible
+
+started_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_STARTED_AT"])
+expires_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_EXPIRES_AT"])
+expected_count = int(os.environ["FACIAL_EXPECTED_COUNT"])
+derivatives_root = Path(os.getenv("MEDIA_DERIVATIVES_ROOT", "/var/lib/markina/derivatives")).resolve()
+analysis = aliased(MediaDerivative)
+protected = aliased(MediaDerivative)
+
+with SessionLocal() as db:
+    scope = (
+        PhotoAsset.created_at >= started_at,
+        PhotoAsset.created_at < expires_at,
+        PhotoFolder.purpose == "content",
+        ParentGallery.active.is_(True),
+        ParentGallery.lifecycle_status == "active",
+    )
+    photo_ids = list(db.scalars(
+        select(PhotoAsset.id)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .join(ParentGallery, ParentGallery.id == PhotoAsset.parent_gallery_id)
+        .where(*scope)
+        .order_by(PhotoAsset.id)
+    ))
+    if len(photo_ids) != expected_count:
+        raise SystemExit(f"lote persistido divergente: {len(photo_ids)}/{expected_count}")
+    ready_rows = list(db.execute(
+        select(PhotoAsset, analysis)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .join(ParentGallery, ParentGallery.id == PhotoAsset.parent_gallery_id)
+        .join(analysis, (analysis.photo_asset_id == PhotoAsset.id) & (analysis.variant == "admin_preview") & (analysis.status == "ready"))
+        .join(protected, (protected.photo_asset_id == PhotoAsset.id) & (protected.variant == "client_preview") & (protected.status == "ready"))
+        .where(*scope, PhotoAsset.available.is_(True))
+        .order_by(PhotoAsset.id)
+    ))
+    if len(ready_rows) != expected_count:
+        raise SystemExit(f"prévias ainda não concluídas: {len(ready_rows)}/{expected_count}")
+
+    settings = facial_settings_from_environment(verify_runtime_assets=False)
+    if not settings.enabled or not settings.private_homologation_active:
+        raise SystemExit("gate privado expirado ou inválido")
+    for photo, derivative in ready_rows:
+        if not derivative.relative_path:
+            raise SystemExit("prévia facial sem caminho interno")
+        derivative_path = (derivatives_root / derivative.relative_path).resolve()
+        try:
+            derivative_path.relative_to(derivatives_root)
+        except ValueError as error:
+            raise SystemExit("prévia facial fora do diretório autorizado") from error
+        item = enqueue_photo_index_if_eligible(
+            db,
+            photo,
+            derivative,
+            derivative_path=derivative_path,
+            settings=settings,
+        )
+        if item is None:
+            raise SystemExit("foto elegível não produziu job facial")
+    db.commit()
+    states = {
+        status: int(count)
+        for status, count in db.execute(
+        select(FacialJob.status, func.count(func.distinct(FacialJob.photo_asset_id)))
+        .where(FacialJob.kind == "index", FacialJob.photo_asset_id.in_(photo_ids))
+        .group_by(FacialJob.status)
+        )
+    }
+    covered = db.scalar(
+        select(func.count(func.distinct(FacialJob.photo_asset_id))).where(
+            FacialJob.kind == "index", FacialJob.photo_asset_id.in_(photo_ids)
+        )
+    ) or 0
+    if covered != expected_count:
+        raise SystemExit(f"cobertura de jobs divergente: {covered}/{expected_count}")
+    print(json.dumps({"batch_id": os.environ["FACIAL_RECONCILE_BATCH"], "photos": expected_count, "job_states": states}, sort_keys=True))
+PY
+  printf '%s reconciled-private batch=%s photos=%s sha=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$EXPECTED_COUNT" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
 }
 
 purge_and_prove() {
@@ -510,11 +680,12 @@ close_private() {
   CONTAINS_MINORS="$(read_env_value FACIAL_HOMOLOG_CONTAINS_MINORS)"
   WINDOW_EXPIRES_AT="$(read_env_value FACIAL_HOMOLOG_WINDOW_EXPIRES_AT)"
   record_inventory
+  wait_for_media_worker_idle
   compose_facial stop face-worker
   [[ -z "$(facial_container_id)" ]] || fail "face-worker permaneceu ativo"
   write_environment close
-  compose up -d --no-deps --force-recreate api
-  wait_for_service api
+  compose up -d --no-deps --force-recreate api worker
+  verify_persistent_gate false
   reload_reverse_proxy
   purge_and_prove
   write_manifest closed-and-purged
@@ -531,6 +702,7 @@ main() {
     pause-legacy-for-private-upgrade) trap 'rollback_pause $?' ERR; pause_legacy_for_private_upgrade ;;
     pause-private) trap 'rollback_pause $?' ERR; pause_private ;;
     activate-private) trap 'rollback_activation $?' ERR; activate_private ;;
+    reconcile-private) reconcile_private ;;
     close-private) close_private ;;
   esac
 }
