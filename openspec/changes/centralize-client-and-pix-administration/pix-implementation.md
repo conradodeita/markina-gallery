@@ -14,7 +14,7 @@ A solicitação atual prioriza mover PIX para Configurações. Executar as taref
 - A nova decisão substitui exclusivamente a escrita PIX por galeria prevista em `consolidate-shared-private-galleries-and-progressive-sales`. Preços continuam por galeria e snapshots antigos permanecem legíveis conforme `add-manual-pix-checkout`.
 - O backend recusará qualquer campo `pix` nas escritas por galeria (422 orientativo). Frontend atualizado omite o campo; sessões antigas precisam atualizar a página. Não há override nem fallback silencioso ao legado.
 - Migração aditiva conserva `pix_checkout_settings`. Dados divergentes/inválidos não elegem recebedor: revisão obrigatória. Nome/cidade do BR Code serão extraídos do próprio código para preservar equivalência canônica com chave simples.
-- Trabalho facial anterior está no commit local `1b4ce38`, preservado. Deploy conjunto segue condicionado ao inventário de dados permitido para o piloto facial em homologação; esta implementação não altera o ambiente remoto.
+- O trabalho facial anterior foi preservado e publicado junto do PIX global após inventário e limpeza autorizada de dados de teste; o estado remoto validado está registrado abaixo.
 
 ## Implementação e contratos
 
@@ -54,8 +54,10 @@ Rollback preferencial é da aplicação com schema aditivo preservado. Antes de 
 
 ## Limite de entrega e homologação
 
-Sem deploy, migration remota, push ou limpeza de dados nesta solicitação. O trabalho anterior de indexação facial automática (`1b4ce38`) permanece intacto. Publicá-lo em conjunto exige confirmar que o inventário da homologação contém somente dados sintéticos/adultos permitidos; `AGENTS.md` proíbe fotos reais de crianças nesse ambiente. Não presumir que autorização passada de deploy resolve esse inventário.
+O inventário zero-impact confirmou o projeto Compose `markina-gallery`, arquivo `docker/docker-compose.yml`, web interno 3000, API interna 8000 e somente o Nginx publicado em `127.0.0.1:8080` no subdomínio existente `markina-homolog.duckdns.org`; nenhuma porta, DNS, certificado, proxy ou recurso de terceiro foi criado ou alterado. Rollback preserva schema aditivo, configuração anterior e backups lógicos restritos da Markina.
 
-Pré-inventário de impacto: projeto Compose `markina-gallery`, arquivo `docker/docker-compose.yml`; web interno 3000, API interna 8000, Nginx na porta já existente (padrão local 8080), subdomínio já existente `markina-homolog.duckdns.org`. Nenhuma nova porta, DNS, certificado, proxy ou recurso de terceiros. A publicação depende de inventário remoto atualizado, SHA final, CI verde e autorização aplicável. Após publicar: migration 0046, `/healthz`, `/api/health`, PIX global com senha/OTP e checkout sintético; conferência humana desktop/mobile em homologação ainda pendente. Não declarar paridade agora.
+Após autorização explícita, o run `34073273777` publicou a implementação funcional e executou a limpeza autorizada de galerias/clientes de teste depois de backup lógico, preservando administrador, configurações e pareamento WhatsApp. O inventário posterior confirmou zero clientes, galerias, fotos, pedidos, vínculos, seleções e arquivos de mídia. Uma falha segura de ativação facial por resolução interna antiga do Nginx foi corrigida sem alcançar outros projetos.
+
+O run corretivo `34073819354` terminou verde e publicou o SHA funcional `07aa6dffdcbeb70e3a0f7eba91cc66dfaa150961` nos deployments `6300430858` e `6300438039`. O servidor confirmou migration `20260906_0046 (head)`, API/web/workers saudáveis, piloto facial sintético adulto ativo, menores desligados e somente `127.0.0.1:8080` publicado. Em 2026-09-07 UTC, `/healthz` respondeu `200 ok` e `/api/health` respondeu `200 {"status":"ok","service":"api"}`. O diretório permaneceu vazio após o deploy corretivo. A revisão autenticada do PIX global em desktop/mobile de homologação continua humana e impede concluir 7.6, mas não impede a paridade funcional do código publicado.
 
 Tarefas de diretório/lifecycle de clientes e teste de exclusão continuam fora do escopo PIX priorizado. Não sincronizar specs consolidadas nem arquivar a change sem revisão humana.
