@@ -128,7 +128,7 @@ export default function PixPanel() {
         <h3>{removing ? "Confirmar remoção do PIX" : "Confirmar configuração do PIX"}</h3>
         <p>Enviamos um código ao WhatsApp administrativo. Ele é válido por 10 minutos e confirma somente esta alteração.</p>
         {!removing && challenge.proposal ? <div><h4>Confira o PIX que será salvo</h4><GlobalPixSummary pix={challenge.proposal} /></div> : null}
-        <label>Código de confirmação<input ref={otpInput} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} required /></label>
+        <label>Código de confirmação<input ref={otpInput} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} required autoFocus /></label>
         <div className="action-grid"><MarkinaButton disabled={busy}>{busy ? "Confirmando…" : removing ? "Confirmar remoção" : "Confirmar PIX"}</MarkinaButton><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={cancel}>Cancelar</MarkinaButton><MarkinaButton type="button" variant="quiet" disabled={busy} onClick={() => { setChallenge(null); setCode(""); setError(""); }}>Solicitar novo código</MarkinaButton></div>
       </form> : <form className="gallery-settings-form" onSubmit={start}>
         <h3>{removing ? "Remover configuração PIX" : "Dados do pagamento"}</h3>
