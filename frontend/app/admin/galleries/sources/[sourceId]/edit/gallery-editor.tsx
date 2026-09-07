@@ -7,6 +7,7 @@ import { type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, 
 import { MarkinaButton, StatusBadge, SystemState } from "../../../../../ui-kit";
 import { ClientGalleryCard, type ClientGalleryRow } from "../../../client-gallery-card";
 import { FacialPolicyPanel } from "../../../facial-policy-panel";
+import { GlobalPixSummary, type GlobalPix } from "../../../../settings/pix-panel";
 import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurrency, type PriceTier } from "../../../pricing-rules";
 
 type StepId = "ajustes" | "vendas" | "detalhes" | "imagens" | "clientes";
@@ -22,7 +23,7 @@ type ClientDeletionInventory = { client_id: string; blockers: Record<string, num
 type PricingMode = "fixed" | "progressive" | "legacy_volume";
 type PricingPreset = { id: string; code: string; name: string; label: string; version: number; active: boolean; tiers: PriceTier[] };
 type PricingQuote = { quantity: number; parcels: Array<PriceTier & { quantity: number; subtotal_cents: number }>; base_total_cents: number; savings_cents: number; total_cents: number };
-type SalesData = { available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: { copy_paste: string | null; input_type: "br_code" | "cpf" | "phone" | "email" | null; receiver_name: string | null; receiver_city: string | null; qr_code_payload: null; qr_png_data_url: string | null; review_required: boolean; instructions: string | null }; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
+type SalesData = { available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
 type GalleryLink = { status: "active" | "unavailable" | "legacy_unrecoverable"; capability_id: string | null; expires_at: string | null; secret_available: boolean; link: string | null };
 type PrivateMember = { membership_id: string; client_id: string; client_name: string; phone_e164: string | null; status: "active" | "blocked" | "unlinked"; selected_count: number; purchased_count: number; order_count: number; confirmed_total_cents: number; payment_status: "none" | "pending" | "confirmed" };
 type PrivateAccessState = { loading: boolean; error: string | null; link: GalleryLink | null; members: PrivateMember[] };
@@ -414,12 +415,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       setSalesError("Escolha uma tabela global de preço progressivo.");
       return;
     }
-    const pixCopyPaste = sales.pix.copy_paste?.trim() || null;
-    const usesSimplePixKey = Boolean(pixCopyPaste && !pixCopyPaste.startsWith("000201"));
-    if (usesSimplePixKey && (!sales.pix.receiver_name?.trim() || !sales.pix.receiver_city?.trim())) {
-      setSalesError("Para gerar o QR a partir de uma chave, informe o nome e a cidade do recebedor.");
-      return;
-    }
     setSavingStep(true);
     try {
       const saved = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/sales`, {
@@ -430,12 +425,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           fixed_unit_price_cents: fixedUnitPriceCents,
           progressive_pricing_preset_id: sales.pricing_mode === "progressive" ? sales.progressive_pricing_preset_id : null,
           confirm_legacy_conversion: confirmLegacyConversion,
-          pix: {
-            copy_paste: pixCopyPaste,
-            receiver_name: usesSimplePixKey ? sales.pix.receiver_name : null,
-            receiver_city: usesSimplePixKey ? sales.pix.receiver_city : null,
-            instructions: sales.pix.instructions,
-          },
           sales_message: sales.sales_message,
           selection_duration_days: sales.selection_duration_days,
           favorites_enabled: sales.favorites_enabled,
@@ -903,16 +892,9 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                 {sales.pricing_review_required || sales.pricing_mode === "legacy_volume" ? <label className="gallery-toggle"><input type="checkbox" checked={confirmLegacyConversion} onChange={(event) => setConfirmLegacyConversion(event.target.checked)} /> Confirmo a substituição das faixas legadas para esta galeria</label> : null}
               </fieldset>
               <fieldset className="gallery-sales-section">
-                <legend>PIX manual</legend>
-                <label>Chave PIX ou copia e cola<textarea name="pix_copy_paste" rows={3} value={sales.pix.copy_paste ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, copy_paste: event.target.value || null } } : current)} /></label>
-                <p className="field-hint">Aceita CPF, telefone brasileiro, e-mail ou o código completo “PIX copia e cola” gerado pelo banco. Para uma chave simples, os dados abaixo são obrigatórios para montar um QR PIX válido.</p>
-                {sales.pix.copy_paste && !sales.pix.copy_paste.trim().startsWith("000201") ? <div className="gallery-pix-receiver-fields">
-                  <label>Nome do recebedor<input name="pix_receiver_name" maxLength={25} value={sales.pix.receiver_name ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, receiver_name: event.target.value || null } } : current)} placeholder="Ex.: MARIA FOTOGRAFIA" /></label>
-                  <label>Cidade do recebedor<input name="pix_receiver_city" maxLength={15} value={sales.pix.receiver_city ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, receiver_city: event.target.value || null } } : current)} placeholder="Ex.: SAO PAULO" /></label>
-                </div> : null}
-                {sales.pix.review_required ? <p className="notice" role="alert">O PIX anterior diverge do código usado no QR. Corrija o copia-e-cola e salve novamente.</p> : null}
-                {sales.pix.qr_png_data_url ? <img className="gallery-pix-qr" src={sales.pix.qr_png_data_url} alt="QR Code PIX gerado a partir da configuração salva" /> : null}
-                <label>Instruções de pagamento<textarea name="pix_instructions" rows={3} value={sales.pix.instructions ?? ""} onChange={(event) => setSales((current) => current ? { ...current, pix: { ...current.pix, instructions: event.target.value || null } } : current)} /></label>
+                <legend>PIX global</legend>
+                <GlobalPixSummary pix={sales.pix} />
+                <Link href="/admin/settings#pix">Configurar PIX em Configurações</Link>
               </fieldset>
               <fieldset className="gallery-sales-section">
                 <legend>Jornada da cliente</legend>

@@ -18,7 +18,7 @@ import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -47,6 +47,7 @@ from app.admin_security import (
 from app.auth import (
     AdminActionToken,
     AdminPasswordInput,
+    AdminSecurityChallenge,
     AdminUser,
     AuditEvent,
     AuthChallenge,
@@ -80,7 +81,6 @@ from app.auth import (
     PhotoFolder,
     PhotoSelection,
     PhotoView,
-    PixCheckoutSettings,
     PriceRule,
     ProgressivePricingPreset,
     ProgressivePricingTier,
@@ -175,6 +175,13 @@ from app.gallery_visuals import (
     normalize_title_font,
     validate_title_font,
 )
+from app.global_pix import (
+    apply_configuration,
+    canonical_proposal,
+    global_pix_settings,
+    pix_payload,
+    proposal_preview,
+)
 from app.historical_media import historical_media_path
 from app.media import (
     derivatives_root,
@@ -195,12 +202,7 @@ from app.messaging import (
 )
 from app.parent_registration import link_client_to_parent
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
-from app.pix import (
-    PixCodeError,
-    normalize_pix_configuration,
-    normalize_pix_copy_paste,
-    pix_qr_data_url,
-)
+from app.pix import PixCodeError, pix_qr_data_url
 from app.pricing import (
     PriceTier,
     PricingRuleError,
@@ -568,22 +570,44 @@ class ProgressivePricingPresetInput(BaseModel):
 
 
 class PixCheckoutSettingsInput(BaseModel):
-    copy_paste: str | None = Field(default=None, max_length=4_000)
-    qr_code_payload: str | None = Field(default=None, max_length=8_000)
-    receiver_name: str | None = Field(default=None, max_length=80)
-    receiver_city: str | None = Field(default=None, max_length=80)
-    instructions: str | None = Field(default=None, max_length=500)
+    model_config = ConfigDict(extra="forbid")
+
+    copy_paste: str | None = Field(default=None, max_length=4_000, repr=False)
+    qr_code_payload: str | None = Field(default=None, max_length=8_000, repr=False)
+    receiver_name: str | None = Field(default=None, max_length=80, repr=False)
+    receiver_city: str | None = Field(default=None, max_length=80, repr=False)
+    instructions: str | None = Field(default=None, max_length=500, repr=False)
+
+
+class GlobalPixChallengeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=128, repr=False)
+    configuration: PixCheckoutSettingsInput | None = Field(repr=False)
+
+
+class GlobalPixConfirmInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    challenge_id: UUID
+    code: str = Field(pattern=r"^\d{6}$", repr=False)
 
 
 class GalleryPricingInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_gallery_pix(cls, value):
+        if isinstance(value, dict) and "pix" in value:
+            raise ValueError("O PIX agora é global. Atualize a página e configure em Configurações.")
+        return value
 
     pricing_mode: Literal["fixed", "progressive"] | None = None
     fixed_unit_price_cents: int | None = Field(default=None, ge=0, le=10_000_000)
     progressive_pricing_preset_id: UUID | None = None
     confirm_legacy_conversion: bool = False
     tiers: list[PriceTierInput] = Field(default_factory=list, max_length=20)
-    pix: PixCheckoutSettingsInput = Field(default_factory=PixCheckoutSettingsInput)
 
 
 class ParentGallerySalesInput(GalleryPricingInput):
@@ -1710,6 +1734,84 @@ def admin_security_summary(
         "whatsapp_status": whatsapp.status,
         "email_channel": email_channel_payload(),
     }
+
+
+@app.get("/admin/settings/pix")
+def admin_global_pix(request: Request, db: Session = Depends(db_session)) -> dict:
+    session = current_session(request, Role.ADMIN)
+    active_admin_for_session(db, session)
+    return pix_payload(global_pix_settings(db), editable=True)
+
+
+@app.post("/admin/settings/pix/challenge", status_code=status.HTTP_202_ACCEPTED)
+def admin_global_pix_challenge(
+    payload: GlobalPixChallengeInput, request: Request, db: Session = Depends(db_session)
+) -> dict:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    admin = active_admin_for_session(db, session)
+    enforce_rate_limit(db, "admin_change_pix", str(admin.id),
+                       request.client.host if request.client else "unknown")
+    try:
+        reauthenticate_admin(admin, payload.current_password)
+    except AdminAccountError:
+        audit(db, "admin_security.change_pix.reauthentication_failed", str(admin.id))
+        db.commit()
+        raise neutral_error() from None
+    # Serializa a emissão e a confirmação para o mesmo fotógrafo.
+    db.scalar(select(AdminUser).where(AdminUser.id == admin.id).with_for_update())
+    settings = global_pix_settings(db)
+    try:
+        configuration = payload.configuration.model_dump() if payload.configuration else None
+        if configuration and configuration.get("qr_code_payload"):
+            raise PixCodeError("Use somente chave PIX ou copia e cola para gerar o QR.")
+        target = canonical_proposal(configuration, settings.version if settings else 0)
+    except PixCodeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    challenge, _code, queued = create_security_challenge(
+        db, purpose="change_pix_otp", subject_fingerprint=pii_fingerprint(str(admin.id)),
+        admin=admin, session_id=session.id, target=target,
+    )
+    if not queued:
+        challenge.used_at = now()
+        challenge.encrypted_target = None
+        db.commit()
+        raise HTTPException(status_code=409, detail="Canal WhatsApp indisponível para confirmação.")
+    return {"challenge_id": str(challenge.id), "expires_at": challenge.expires_at.isoformat(),
+            "proposal": proposal_preview(target),
+            "message": "Código de confirmação enviado ao WhatsApp administrativo."}
+
+
+@app.post("/admin/settings/pix/confirm")
+def admin_global_pix_confirm(
+    payload: GlobalPixConfirmInput, request: Request, db: Session = Depends(db_session)
+) -> dict:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    admin = active_admin_for_session(db, session)
+    db.scalar(select(AdminUser).where(AdminUser.id == admin.id).with_for_update())
+    stored = db.scalar(select(AdminSecurityChallenge).where(
+        AdminSecurityChallenge.id == payload.challenge_id,
+    ).with_for_update())
+    if not stored or stored.admin_id != admin.id:
+        raise neutral_error()
+    try:
+        challenge = verify_security_challenge(
+            db, challenge_id=payload.challenge_id, purpose="change_pix_otp",
+            code=payload.code, session_id=session.id,
+        )
+        target = challenge_target(challenge)
+        if challenge.target_fingerprint != pii_fingerprint(target.strip().casefold()):
+            raise AdminAccountError("Proposta indisponível.")
+        settings = apply_configuration(db, admin_id=admin.id, proposed=json.loads(target))
+    except AdminAccountError:
+        raise neutral_error() from None
+    except PixCodeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    challenge.encrypted_target = None
+    audit(db, "pix.global_updated", f"{admin.id}:{settings.id}:{settings.version}")
+    db.commit()
+    return pix_payload(settings, editable=True)
 
 
 @app.post("/admin/security/password/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -5036,18 +5138,6 @@ def pricing_payload(db: Session, parent_gallery_id: UUID) -> dict[str, object]:
             .order_by(PriceRule.minimum_quantity)
         )
     )
-    settings = db.scalar(
-        select(PixCheckoutSettings).where(
-            PixCheckoutSettings.parent_gallery_id == parent_gallery_id
-        )
-    )
-    qr_data_url: str | None = None
-    if settings and settings.copy_paste and not settings.review_required:
-        try:
-            qr_data_url = pix_qr_data_url(settings.copy_paste)
-        except PixCodeError:
-            # Configuração anterior inválida permanece visível para correção, sem gerar QR.
-            pass
     return {
         "pricing_mode": gallery.pricing_mode,
         "fixed_unit_price_cents": gallery.fixed_unit_price_cents,
@@ -5066,20 +5156,7 @@ def pricing_payload(db: Session, parent_gallery_id: UUID) -> dict[str, object]:
             }
             for rule in rules
         ],
-        "pix": {
-            "copy_paste": (
-                settings.pix_key
-                if settings and settings.input_type in {"cpf", "phone", "email"}
-                else settings.copy_paste if settings else None
-            ),
-            "input_type": settings.input_type if settings else None,
-            "receiver_name": settings.receiver_name if settings else None,
-            "receiver_city": settings.receiver_city if settings else None,
-            "qr_code_payload": None,
-            "qr_png_data_url": qr_data_url,
-            "review_required": settings.review_required if settings else False,
-            "instructions": settings.instructions if settings else None,
-        },
+        "pix": pix_payload(global_pix_settings(db)),
     }
 
 
@@ -5206,45 +5283,6 @@ def save_parent_pricing(
             for tier in tiers
         ]
     )
-    settings = db.scalar(
-        select(PixCheckoutSettings).where(
-            PixCheckoutSettings.parent_gallery_id == parent_gallery_id
-        )
-    )
-    if not settings:
-        settings = PixCheckoutSettings(parent_gallery_id=parent_gallery_id)
-        db.add(settings)
-    try:
-        pix_configuration = normalize_pix_configuration(
-            payload.pix.copy_paste,
-            receiver_name=payload.pix.receiver_name,
-            receiver_city=payload.pix.receiver_city,
-        )
-        legacy_qr_payload = normalize_pix_copy_paste(payload.pix.qr_code_payload)
-    except PixCodeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    copy_paste = pix_configuration.copy_paste if pix_configuration else None
-    if copy_paste and legacy_qr_payload and copy_paste != legacy_qr_payload:
-        raise HTTPException(
-            status_code=422,
-            detail="O QR informado diverge do PIX copia e cola; mantenha somente o copia e cola.",
-        )
-    settings.copy_paste = copy_paste or legacy_qr_payload
-    settings.qr_code_payload = None
-    settings.input_type = (
-        pix_configuration.input_type
-        if pix_configuration
-        else "br_code" if legacy_qr_payload else None
-    )
-    settings.pix_key = (
-        pix_configuration.input_value
-        if pix_configuration and pix_configuration.input_type != "br_code"
-        else None
-    )
-    settings.receiver_name = pix_configuration.receiver_name if pix_configuration else None
-    settings.receiver_city = pix_configuration.receiver_city if pix_configuration else None
-    settings.review_required = False
-    settings.instructions = payload.pix.instructions.strip() if payload.pix.instructions else None
     return tiers
 
 
@@ -5305,7 +5343,7 @@ def save_admin_gallery_pricing(
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
     raise HTTPException(
         status_code=409,
-        detail=("Preço e PIX são herdados da Galeria pública; altere a configuração da origem."),
+        detail=("Preços são herdados da Galeria pública. O PIX é global, em Configurações."),
     )
 
 

@@ -19,7 +19,8 @@ describe("configuração comercial da galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPricingPage />);
 
-    expect(await screen.findByRole("heading", { name: /Preço e PIX pertencem à Galeria pública/i })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: /Preços pertencem à Galeria pública; PIX é global/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Configurar PIX global/i }).getAttribute("href")).toBe("/admin/settings#pix");
     expect(screen.getByRole("link", { name: /Abrir etapa Vendas/i }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/vendas");
     expect(screen.queryByRole("button", { name: /salvar/i })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();

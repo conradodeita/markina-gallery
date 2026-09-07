@@ -11,12 +11,13 @@ from app.auth import (
     PhotoAsset,
     PhotoFolder,
     PhotoSelection,
-    PixCheckoutSettings,
     SaleOrder,
     SaleOrderItem,
     audit,
 )
 from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
+from app.global_pix import checkout_pix
+from app.pix import PixCodeError
 
 
 class CheckoutError(ValueError):
@@ -85,9 +86,10 @@ def create_pending_checkout(
         commercial_quote = quote_parent_gallery(db, gallery=parent, quantity=len(photos))
     except GalleryPricingError as exc:
         raise CheckoutError(str(exc)) from exc
-    settings = db.scalar(
-        select(PixCheckoutSettings).where(PixCheckoutSettings.parent_gallery_id == parent.id)
-    )
+    try:
+        settings = checkout_pix(db)
+    except PixCodeError as exc:
+        raise CheckoutError(str(exc)) from exc
     order = SaleOrder(
         derived_gallery_id=gallery.id,
         client_id=client.id,
@@ -108,9 +110,13 @@ def create_pending_checkout(
             },
         },
         sales_message_snapshot=parent.sales_message,
-        pix_copy_paste_snapshot=settings.copy_paste if settings else None,
+        pix_copy_paste_snapshot=settings.copy_paste,
         pix_qr_code_snapshot=None,
-        pix_instructions_snapshot=settings.instructions if settings else None,
+        pix_instructions_snapshot=settings.instructions,
+        pix_configuration_snapshot={
+            "configuration_id": str(settings.id), "version": settings.version,
+            "receiver_name": settings.receiver_name, "receiver_city": settings.receiver_city,
+        },
     )
     db.add(order)
     db.flush()

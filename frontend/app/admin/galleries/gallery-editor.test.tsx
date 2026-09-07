@@ -9,8 +9,6 @@ import NewGalleryPage from "./new/page";
 import GalleryEditor from "./sources/[sourceId]/edit/gallery-editor";
 import SourceGalleryDetailPage from "./sources/[sourceId]/page";
 
-const validPix = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17";
-
 afterEach(() => {
   vi.restoreAllMocks();
   push.mockReset();
@@ -466,7 +464,7 @@ describe("editor administrativo de galeria", () => {
       pricing_snapshot: { mode: "fixed", unit_price_cents: 700 },
       pricing_review_required: false,
       tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }],
-      pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: "data:image/png;base64,cXI=", review_required: false, instructions: null },
+      pix: { status: "active", version: 1, checkout_available: true, receiver_name: "MARKINA", receiver_city: "SAO PAULO", qr_png_data_url: "data:image/png;base64,cXI=", instructions: null },
       sales_message: "Escolha suas fotos",
       selection_duration_days: 14,
       favorites_enabled: true,
@@ -485,8 +483,8 @@ describe("editor administrativo de galeria", () => {
     fireEvent.change(screen.getByLabelText("Valor unitário da foto"), { target: { value: "700000" } });
     expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("value", expect.stringMatching(/7\.000,00/));
     expect(screen.queryByLabelText("Payload do QR Code")).toBeNull();
-    expect(screen.getByAltText("QR Code PIX gerado a partir da configuração salva")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Chave PIX ou copia e cola"), { target: { value: validPix } });
+    expect(screen.getByAltText("QR Code PIX global")).toBeTruthy();
+    expect(screen.queryByLabelText("Chave PIX ou copia e cola")).toBeNull();
     fireEvent.change(screen.getByLabelText("Mensagem comercial"), { target: { value: "Mensagem atualizada" } });
     fireEvent.change(screen.getByLabelText("Prazo padrão de seleção (dias)"), { target: { value: "21" } });
     fireEvent.click(screen.getByLabelText("Permitir comentários"));
@@ -496,7 +494,6 @@ describe("editor administrativo de galeria", () => {
       "/api/admin/parent-galleries/source-1/sales",
       expect.objectContaining({
         method: "PUT",
-        body: expect.stringContaining(`"copy_paste":"${validPix}"`),
       }),
     ));
     const saveCall = fetchMock.mock.calls.find(([path, init]) => path.endsWith("/sales") && init?.method === "PUT");
@@ -507,29 +504,19 @@ describe("editor administrativo de galeria", () => {
       selection_duration_days: 21,
       comments_enabled: true,
     });
-    expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toEqual({ copy_paste: validPix, receiver_name: null, receiver_city: null, instructions: null });
+    expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toBeUndefined();
   });
 
-  it("aceita chave PIX simples com os dados necessários para gerar o QR", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : init?.method === "PUT" ? response({ ...sales, pix: { ...sales.pix, copy_paste: "fotografo@example.com", input_type: "email", receiver_name: "MARKINA", receiver_city: "SAO PAULO" } }) : response(sales));
+  it("permite avançar sem PIX e direciona sua configuração para a página global", async () => {
+    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { status: "unconfigured", version: 0, checkout_available: false }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
-    expect(await screen.findByText(/Aceita CPF, telefone brasileiro, e-mail/i)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Chave PIX ou copia e cola"), { target: { value: "fotografo@example.com" } });
+    expect(await screen.findByText("PIX não configurado")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Configurar PIX em Configurações" })).toHaveProperty("href", expect.stringContaining("/admin/settings#pix"));
+    expect(screen.queryByLabelText("Chave PIX ou copia e cola")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Para gerar o QR a partir de uma chave, informe o nome e a cidade do recebedor.");
-    fireEvent.change(screen.getByLabelText("Nome do recebedor"), { target: { value: "Markina" } });
-    fireEvent.change(screen.getByLabelText("Cidade do recebedor"), { target: { value: "São Paulo" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/source-1/sales",
-      expect.objectContaining({
-        method: "PUT",
-        body: expect.stringContaining('"receiver_name":"Markina","receiver_city":"São Paulo"'),
-      }),
-    ));
-    expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/detalhes");
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/detalhes"));
   });
 
   it("preserva os dados editados e mostra o erro retornado ao falhar Vendas", async () => {

@@ -21,6 +21,7 @@ from app.auth import (
     DerivedGallery,
     DerivedGalleryMembership,
     DerivedGalleryPhoto,
+    GlobalPixSettings,
     MediaDerivative,
     MediaJob,
     ParentGallery,
@@ -31,7 +32,6 @@ from app.auth import (
     PhotoFolder,
     PhotoSelection,
     PhotoView,
-    PixCheckoutSettings,
     PriceRule,
     SaleOrder,
     SaleOrderItem,
@@ -43,6 +43,7 @@ from app.auth import (
 )
 from app.checkout import create_pending_checkout
 from app.gallery_access import issue_gallery_capability
+from app.global_pix import normalize_configuration
 from app.main import app
 from app.media import generate_derivatives
 
@@ -65,8 +66,28 @@ def clean_database():
 
 @pytest.fixture
 def client():
+    set_test_global_pix()
     with TestClient(app) as test_client:
         yield test_client
+
+
+def set_test_global_pix(copy_paste=VALID_PIX_A, instructions=None):
+    """Configuração sintética explícita para os fluxos comerciais desta suíte."""
+    with SessionLocal() as db:
+        admin = db.scalar(select(AdminUser).where(AdminUser.email == "foto@markina.test"))
+        if not admin:
+            admin = AdminUser(email="foto@markina.test", email_verified=True,
+                              password_hash=password_hasher.hash("senha-segura"),
+                              totp_secret=pyotp.random_base32())
+            db.add(admin)
+            db.flush()
+        settings = db.scalar(select(GlobalPixSettings))
+        if not settings:
+            settings = GlobalPixSettings(admin_user_id=admin.id, version=1)
+            db.add(settings)
+        for key, value in normalize_configuration({"copy_paste": copy_paste, "instructions": instructions}).items():
+            setattr(settings, key, value)
+        db.commit()
 
 
 def authenticate_admin(client: TestClient) -> None:
@@ -215,7 +236,6 @@ def test_public_gallery_materializes_pricing_preset_and_requires_legacy_conversi
         json={
             "pricing_mode": "progressive",
             "progressive_pricing_preset_id": preset["id"],
-            "pix": {},
         },
     )
     assert saved.status_code == 200
@@ -244,7 +264,7 @@ def test_public_gallery_materializes_pricing_preset_and_requires_legacy_conversi
         db.commit()
     blocked = client.put(
         f"/admin/parent-galleries/{parent_id}/pricing",
-        json={"pricing_mode": "fixed", "fixed_unit_price_cents": 800, "pix": {}},
+        json={"pricing_mode": "fixed", "fixed_unit_price_cents": 800},
     )
     assert blocked.status_code == 409
     converted = client.put(
@@ -253,7 +273,6 @@ def test_public_gallery_materializes_pricing_preset_and_requires_legacy_conversi
             "pricing_mode": "fixed",
             "fixed_unit_price_cents": 800,
             "confirm_legacy_conversion": True,
-            "pix": {},
         },
     )
     assert converted.status_code == 200
@@ -261,93 +280,19 @@ def test_public_gallery_materializes_pricing_preset_and_requires_legacy_conversi
     assert converted.json()["pricing_review_required"] is False
 
 
-def test_gallery_pix_uses_copy_paste_as_single_source_and_generates_local_qr(
-    client: TestClient,
-) -> None:
+def test_gallery_pricing_reads_global_pix_and_rejects_legacy_writes(client):
     authenticate_admin(client)
-    parent_id = client.post(
-        "/admin/parent-galleries", json={"name": "Galeria PIX"}
-    ).json()["id"]
-    pix_code = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17"
-    other_code = "0002015204000053039865802BR5908OUTRAFOT6009SAO PAULO6304FC65"
-
-    malformed = client.put(
-        f"/admin/parent-galleries/{parent_id}/pricing",
-        json={
-            "pricing_mode": "fixed",
-            "fixed_unit_price_cents": 700,
-            "pix": {"copy_paste": "não-é-pix"},
-        },
-    )
-    assert malformed.status_code == 422
-    divergent = client.put(
-        f"/admin/parent-galleries/{parent_id}/pricing",
-        json={
-            "pricing_mode": "fixed",
-            "fixed_unit_price_cents": 700,
-            "pix": {"copy_paste": pix_code, "qr_code_payload": other_code},
-        },
-    )
-    assert divergent.status_code == 422
-
-    saved = client.put(
-        f"/admin/parent-galleries/{parent_id}/pricing",
-        json={
-            "pricing_mode": "fixed",
-            "fixed_unit_price_cents": 700,
-            "pix": {"copy_paste": pix_code, "instructions": "Aguarde a análise."},
-        },
-    )
-    assert saved.status_code == 200
-    assert saved.json()["pix"]["copy_paste"] == pix_code
-    assert saved.json()["pix"]["qr_code_payload"] is None
-    assert saved.json()["pix"]["review_required"] is False
-    assert saved.json()["pix"]["qr_png_data_url"].startswith("data:image/png;base64,")
-
-    simple = client.put(
-        f"/admin/parent-galleries/{parent_id}/pricing",
-        json={
-            "pricing_mode": "fixed",
-            "fixed_unit_price_cents": 700,
-            "pix": {
-                "copy_paste": "529.982.247-25",
-                "receiver_name": "João Fotografia",
-                "receiver_city": "São Paulo",
-                "instructions": "Aguarde a análise.",
-            },
-        },
-    )
-    assert simple.status_code == 200
-    assert simple.json()["pix"] == {
-        "copy_paste": "52998224725",
-        "input_type": "cpf",
-        "receiver_name": "JOAO FOTOGRAFIA",
-        "receiver_city": "SAO PAULO",
-        "qr_code_payload": None,
-        "qr_png_data_url": simple.json()["pix"]["qr_png_data_url"],
-        "review_required": False,
-        "instructions": "Aguarde a análise.",
-    }
-    assert simple.json()["pix"]["qr_png_data_url"].startswith("data:image/png;base64,")
-    with SessionLocal() as db:
-        stored_pix = db.scalar(
-            select(PixCheckoutSettings).where(
-                PixCheckoutSettings.parent_gallery_id == UUID(parent_id)
-            )
-        )
-        assert stored_pix.copy_paste.startswith("000201")
-        assert stored_pix.pix_key == "52998224725"
-
-    missing_receiver = client.put(
-        f"/admin/parent-galleries/{parent_id}/pricing",
-        json={
-            "pricing_mode": "fixed",
-            "fixed_unit_price_cents": 700,
-            "pix": {"copy_paste": "fotografo@example.com"},
-        },
-    )
-    assert missing_receiver.status_code == 422
-    assert "nome do recebedor" in missing_receiver.json()["detail"]
+    parent_id = client.post("/admin/parent-galleries", json={"name": "Galeria PIX"}).json()["id"]
+    settings = client.get(f"/admin/parent-galleries/{parent_id}/pricing").json()["pix"]
+    assert settings["scope"] == "global"
+    assert settings["checkout_available"] is True
+    assert settings["qr_png_data_url"].startswith("data:image/png;base64,")
+    assert "copy_paste" not in settings
+    for legacy in ({}, {"copy_paste": VALID_PIX_A}, {"copy_paste": "invalid"}):
+        response = client.put(f"/admin/parent-galleries/{parent_id}/pricing", json={
+            "pricing_mode": "fixed", "fixed_unit_price_cents": 700, "pix": legacy,
+        })
+        assert response.status_code == 422
 
 
 def test_cart_and_checkout_share_progressive_quote_and_freeze_all_terms(
@@ -406,7 +351,6 @@ def test_cart_and_checkout_share_progressive_quote_and_freeze_all_terms(
         json={
             "pricing_mode": "progressive",
             "progressive_pricing_preset_id": preset["id"],
-            "pix": {"copy_paste": pix_code, "instructions": "Pagamento em análise."},
         },
     )
     assert configured.status_code == 200
@@ -2134,6 +2078,7 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
 
 
 def test_pending_checkout_freezes_prices_pix_and_selection(client: TestClient):
+    set_test_global_pix(instructions="Confirme com o fotógrafo.")
     with SessionLocal() as db:
         owner = Client(full_name="Cliente PIX", phone_e164="+5511555554321")
         db.add(owner)
@@ -2145,7 +2090,6 @@ def test_pending_checkout_freezes_prices_pix_and_selection(client: TestClient):
         gallery = db.get(DerivedGallery, gallery_id)
         db.add_all([
             PriceRule(parent_gallery_id=gallery.parent_gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=700),
-            PixCheckoutSettings(parent_gallery_id=gallery.parent_gallery_id, copy_paste="pix-copia-cola", instructions="Confirme com o fotógrafo."),
         ])
         db.commit()
         order = create_pending_checkout(db, gallery=gallery, client=owner, checkout_key="checkout-test-0001")
@@ -2154,7 +2098,7 @@ def test_pending_checkout_freezes_prices_pix_and_selection(client: TestClient):
         assert repeated.id == order.id
         assert order.total_cents == 700
         assert order.price_rule_snapshot["unit_price_cents"] == 700
-        assert order.pix_copy_paste_snapshot == "pix-copia-cola"
+        assert order.pix_copy_paste_snapshot == VALID_PIX_A
         assert order.pix_instructions_snapshot == "Confirme com o fotógrafo."
         assert not db.scalar(select(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery_id))
         assert db.scalar(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)).unit_price_cents == 700
@@ -2219,7 +2163,6 @@ def test_pending_order_is_private_and_preserves_pix_snapshot(client: TestClient)
         parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
         db.add_all([
             PriceRule(parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=1_200),
-            PixCheckoutSettings(parent_gallery_id=parent_id, copy_paste="pix-seguro", qr_code_payload="qr-pix", instructions="Aguarde a confirmação."),
         ])
         db.commit()
     authenticate_client(client, owner.phone_e164)
@@ -2227,12 +2170,12 @@ def test_pending_order_is_private_and_preserves_pix_snapshot(client: TestClient)
     order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "client-order-0001"}).json()
     private_order = client.get(f"/gallery/{gallery_id}/orders/{order['id']}")
     assert private_order.status_code == 200
-    assert private_order.json()["pix"]["copy_paste"] == "pix-seguro"
+    assert private_order.json()["pix"]["copy_paste"] == VALID_PIX_A
     assert private_order.json()["pix"]["confirmation"] == "A confirmação do pagamento é manual pelo fotógrafo."
     authenticate_client(client, other.phone_e164)
     denied = client.get(f"/gallery/{gallery_id}/orders/{order['id']}")
     assert denied.status_code == 403
-    assert "pix-seguro" not in denied.text
+    assert VALID_PIX_A not in denied.text
 
 
 def test_client_reports_own_pending_payment_idempotently(client: TestClient, monkeypatch):
@@ -2590,7 +2533,7 @@ def test_admin_pricing_requires_contiguous_tiers_and_returns_jump_warning(client
     authenticate_admin(client)
     invalid = client.put(
         f"/admin/parent-galleries/{parent_id}/pricing",
-        json={"tiers": [{"minimum_quantity": 2, "maximum_quantity": None, "unit_price_cents": 500}], "pix": {}},
+        json={"tiers": [{"minimum_quantity": 2, "maximum_quantity": None, "unit_price_cents": 500}]},
     )
     assert invalid.status_code == 422
     saved = client.put(
@@ -2600,13 +2543,12 @@ def test_admin_pricing_requires_contiguous_tiers_and_returns_jump_warning(client
                 {"minimum_quantity": 1, "maximum_quantity": 10, "unit_price_cents": 700},
                 {"minimum_quantity": 11, "maximum_quantity": None, "unit_price_cents": 500},
             ],
-            "pix": {"copy_paste": VALID_PIX_A, "instructions": "Confirme depois do PIX."},
         },
     )
     assert saved.status_code == 200
     assert saved.json()["has_downward_jump"] is False
     inherited = client.get(f"/admin/derived-galleries/{gallery_id}/pricing")
-    assert inherited.json()["pix"]["copy_paste"] == VALID_PIX_A
+    assert inherited.json()["pix"]["scope"] == "global"
     assert inherited.json()["inherited_from_parent_gallery_id"] == str(parent_id)
     assert inherited.json()["editable"] is False
     assert client.put(
@@ -2619,7 +2561,6 @@ def test_admin_pricing_requires_contiguous_tiers_and_returns_jump_warning(client
                     "unit_price_cents": 100,
                 }
             ],
-            "pix": {},
         },
     ).status_code == 409
 
@@ -2655,7 +2596,6 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                     "unit_price_cents": 700,
                 }
             ],
-            "pix": {"copy_paste": VALID_PIX_A, "instructions": "Instrução A"},
             "sales_message": "Mensagem A",
             "selection_duration_days": 14,
             "favorites_enabled": True,
@@ -2701,6 +2641,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
 
     client.cookies.clear()
     authenticate_admin(client)
+    set_test_global_pix(VALID_PIX_B, "Instrução B")
     changed_before_checkout = client.put(
         f"/admin/parent-galleries/{parent_id}/sales",
         json={
@@ -2711,7 +2652,6 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                     "unit_price_cents": 900,
                 }
             ],
-            "pix": {"copy_paste": VALID_PIX_B, "instructions": "Instrução B"},
             "sales_message": "Mensagem B",
             "selection_duration_days": 30,
             "favorites_enabled": False,
@@ -2739,6 +2679,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
 
     client.cookies.clear()
     authenticate_admin(client)
+    set_test_global_pix(VALID_PIX_A, "Instrução C")
     assert client.put(
         f"/admin/parent-galleries/{parent_id}/sales",
         json={
@@ -2749,7 +2690,6 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                     "unit_price_cents": 1_100,
                 }
             ],
-            "pix": {"copy_paste": VALID_PIX_A, "instructions": "Instrução C"},
             "sales_message": "Mensagem C",
             "selection_duration_days": 30,
             "favorites_enabled": False,
@@ -2777,7 +2717,6 @@ def test_admin_sees_pending_order_snapshots_without_confirming_it(client: TestCl
         gallery = db.get(DerivedGallery, gallery_id)
         db.add_all([
             PriceRule(parent_gallery_id=gallery.parent_gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=900),
-            PixCheckoutSettings(parent_gallery_id=gallery.parent_gallery_id, copy_paste="pix-snapshot", instructions="Confirmação manual."),
             PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
         ])
         db.commit()
@@ -2790,7 +2729,7 @@ def test_admin_sees_pending_order_snapshots_without_confirming_it(client: TestCl
     assert order["payment_status"] == "pending"
     assert order["total_cents"] == 900
     assert order["price_rule"]["unit_price_cents"] == 900
-    assert order["pix"]["copy_paste"] == "pix-snapshot"
+    assert order["pix"]["copy_paste"] == VALID_PIX_A
     assert order["items"] == [{"photo_id": str(photo_id), "name": "IMG_0001.jpg", "unit_price_cents": 900}]
     with SessionLocal() as db:
         assert db.scalar(select(SaleOrder).where(SaleOrder.derived_gallery_id == gallery_id)).payment_status == "pending"

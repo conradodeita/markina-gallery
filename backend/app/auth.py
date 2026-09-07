@@ -141,7 +141,8 @@ class AdminSecurityChallenge(Base):
     __tablename__ = "admin_security_challenge"
     __table_args__ = (
         CheckConstraint(
-            "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp')"
+            "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp', "
+            "'change_pix_otp')"
         ),
         CheckConstraint("attempts >= 0"),
         CheckConstraint("resend_count >= 0"),
@@ -618,6 +619,7 @@ class SaleOrder(Base):
     pix_copy_paste_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     pix_qr_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     pix_instructions_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pix_configuration_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     pii_minimized_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -904,6 +906,32 @@ class PixCheckoutSettings(Base):
     receiver_city: Mapped[str | None] = mapped_column(String(15), nullable=True)
     review_required: Mapped[bool] = mapped_column(Boolean, default=False)
     instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class GlobalPixSettings(Base):
+    """PIX único do fotógrafo; pedidos conservam a versão efetiva em snapshot."""
+
+    __tablename__ = "global_pix_settings"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'unconfigured', 'review_required')"),
+        CheckConstraint("version >= 0"),
+        CheckConstraint("singleton = 1"),
+        CheckConstraint("status != 'active' OR copy_paste IS NOT NULL"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    singleton: Mapped[int] = mapped_column(Integer, unique=True, default=1)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), unique=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="unconfigured")
+    input_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    pix_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
+    receiver_name: Mapped[str | None] = mapped_column(String(25), nullable=True)
+    receiver_city: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    legacy_group_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
