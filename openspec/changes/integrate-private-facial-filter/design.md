@@ -178,3 +178,11 @@ Cada verificação OTP concluída em contexto de galeria reutiliza o cadastro ú
 8. Habilitar somente o piloto sintético adulto por operação autorizada; deixar o reconciliador automático criar políticas internas e observar fila e limpeza antes de ampliar.
 
 Rollback: desligar o kill switch, cancelar novas operações, executar purge idempotente e retornar aplicação/face worker à versão saudável. As tabelas aditivas permanecem para auditoria e limpeza; nenhuma down migration destrutiva será executada.
+
+## Estado operacional verificado — 2026-09-07
+
+O piloto sintético adulto está publicado em homologação no SHA funcional `07aa6dffdcbeb70e3a0f7eba91cc66dfaa150961`. O run `34073819354`, o deployment da aplicação `6300430858` e a ativação protegida `6300438039` concluíram com sucesso. O host ARM64 confirmou 4 CPUs e 24.564.524 KiB de memória; o `face-worker` está saudável, sem porta, com concorrência 1, limite de 1 CPU e 768 MiB. Alembic está em `20260906_0046 (head)`, `facial_enabled=true`, `minor_search_enabled=false`, e os healthchecks externos `/healthz` e `/api/health` responderam HTTP 200.
+
+A primeira ativação do mesmo incremento, no run `34073273777`, detectou 502 após a recriação isolada da API: o Nginx preservou temporariamente o endereço interno do container anterior. O rollback restaurou a configuração facial e interrompeu o worker. O runbook operacional passou a validar `nginx -t` e recarregar o Nginx da própria Markina depois de recriar a API, sem recriar o proxy, publicar porta ou alcançar outro projeto; a repetição protegida confirmou o reparo.
+
+Antes da ativação, a limpeza autorizada removeu galerias, clientes, fotos, pedidos e mídia de teste após backup lógico exclusivo, preservando administrador, configurações e pareamento WhatsApp. Por isso o reconciliador automático encontrou inventário vazio e não processou imagens desconhecidas. A homologação permanece restrita a adultos sintéticos; imagens reais de crianças, fluxo infantil, ativação em produção, ensaio concorrente ARM de 500–1.000 JPEGs e revisão visual autenticada continuam fora deste aceite operacional.

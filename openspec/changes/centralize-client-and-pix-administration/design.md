@@ -78,3 +78,11 @@ A migration criará as estruturas e agrupará configurações legadas não vazia
 4. Verificar migração no head, autorização, auditoria, checkout antigo/novo e rollback em PostgreSQL descartável antes de qualquer deploy.
 5. Em homologação autorizada, testar somente clientes e pagamentos sintéticos; excluir o contato sintético relatado apenas por uma confirmação humana posterior na nova interface.
 6. Rollback da aplicação restaura a leitura por galeria porque os dados legados não foram removidos; antes de reabrir novos checkouts, conferir seus recebedores legados, que não acompanham alterações globais posteriores. O downgrade estrutural é recusado quando há desafios PIX ou snapshots globais em pedidos: ambos devem permanecer auditáveis. Sem esses dados, o downgrade conserva todos os registros e campos comerciais legados.
+
+## Estado da entrega PIX — 2026-09-07
+
+O recorte PIX desta change está implementado e publicado em homologação no SHA funcional `07aa6dffdcbeb70e3a0f7eba91cc66dfaa150961`, pelo run verde `34073819354` e deployment `6300430858`. A migration `20260906_0046` está no head remoto. O painel global em `Configurações`, a confirmação por senha e OTP administrativo, a leitura somente na etapa 02 e o snapshot imutável por pedido estão presentes; a configuração por galeria permanece apenas como legado preservado para compatibilidade e rollback, sem servir de origem para novos checkouts.
+
+O inventário posterior confirmou zero clientes, galerias, fotos e pedidos após a limpeza autorizada, com administrador, configurações e pareamento WhatsApp preservados. `/healthz` e `/api/health` responderam HTTP 200. A paridade é funcional: o commit posterior `9bb077fb1de2b78c76d8674aee09cdcbeb473c34` contém somente evidências OpenSpec e não exige nova publicação da aplicação.
+
+Esta confirmação não conclui a change inteira. O diretório global e o lifecycle de exclusão de clientes das seções 3 e 4 continuam pendentes, assim como o cenário sintético de exclusão e a revisão humana autenticada do PIX em desktop/mobile. As specs não devem ser sincronizadas nem a change arquivada antes da implementação desse escopo e do aceite humano correspondente.
