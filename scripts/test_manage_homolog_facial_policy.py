@@ -55,6 +55,8 @@ def main() -> int:
         ("compose up -d --no-deps --force-recreate api worker", "recarga dos processos persistentes"),
         ("PhotoAsset.created_at >= started_at", "escopo temporal do lote"),
         ("len(photo_ids) != expected_count", "contagem exata antes do backfill"),
+        ("count_correction", "correção auditada da contagem registrada"),
+        ("observed_persisted_batch_count", "motivo fixo da correção de contagem"),
         ("enqueue_photo_index_if_eligible", "backfill pela idempotência normal"),
         ("purge_gallery_records", "purga síncrona"),
         ("photo_face_embedding", "prova agregada de embeddings"),
@@ -123,6 +125,7 @@ def main() -> int:
         ("Facial-Batch", "vínculo corretivo ao lote"),
         ("Facial-Authorization", "vínculo corretivo à autorização"),
         ("Facial-Expected-Count", "vínculo corretivo à quantidade"),
+        ("Facial-Recorded-Count", "vínculo à quantidade originalmente registrada"),
         ("Facial-Contains-Minors", "vínculo corretivo à declaração de menores"),
         ("RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token corretivo"),
     ):

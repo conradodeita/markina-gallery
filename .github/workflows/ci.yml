@@ -164,11 +164,13 @@ jobs:
           batch_id="$(read_trailer Facial-Batch)"
           authorization_ref="$(read_trailer Facial-Authorization)"
           expected_count="$(read_trailer Facial-Expected-Count)"
+          recorded_count="$(read_trailer Facial-Recorded-Count)"
           contains_minors="$(read_trailer Facial-Contains-Minors)"
           [[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "SHA publicado inválido" >&2; exit 1; }
           [[ "$batch_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] || { echo "batch_id inválido" >&2; exit 1; }
           [[ "$authorization_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] || { echo "authorization_ref inválido" >&2; exit 1; }
           [[ "$expected_count" =~ ^[0-9]+$ ]] && (( expected_count >= 500 && expected_count <= 1000 )) || { echo "expected_count inválido" >&2; exit 1; }
+          [[ "$recorded_count" =~ ^[0-9]+$ ]] && (( recorded_count >= 500 && recorded_count <= 1000 )) || { echo "recorded_count inválido" >&2; exit 1; }
           [[ "$contains_minors" == "true" || "$contains_minors" == "false" ]] || { echo "contains_minors inválido" >&2; exit 1; }
 
           key_file="$(mktemp)"
@@ -177,5 +179,5 @@ jobs:
           printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
           printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
           chmod 600 "$key_file" "$known_hosts_file"
-          remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode reconcile-private --sha %q --batch-id %q --authorization-ref %q --expected-count %q --contains-minors %q --confirmation %q' "$GITHUB_REPOSITORY" "$deployed_sha" "$batch_id" "$authorization_ref" "$expected_count" "$contains_minors" 'RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG')"
+          remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode reconcile-private --sha %q --batch-id %q --authorization-ref %q --expected-count %q --recorded-count %q --contains-minors %q --confirmation %q' "$GITHUB_REPOSITORY" "$deployed_sha" "$batch_id" "$authorization_ref" "$expected_count" "$recorded_count" "$contains_minors" 'RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG')"
           ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/manage-homolog-facial.sh

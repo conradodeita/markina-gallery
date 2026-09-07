@@ -25,6 +25,7 @@ ORIGIN_REF=""
 AUTHORIZATION_REF=""
 OPERATOR_REF=""
 EXPECTED_COUNT=""
+RECORDED_COUNT=""
 RETENTION_HOURS=""
 WINDOW_MINUTES=""
 CONTAINS_MINORS=""
@@ -34,7 +35,7 @@ ACTIVATION_STARTED=0
 PAUSE_STARTED=0
 
 usage() {
-  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|reconcile-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
+  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|reconcile-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--recorded-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
 }
 
 fail() {
@@ -61,6 +62,7 @@ parse_arguments() {
       --authorization-ref) AUTHORIZATION_REF="${2:-}"; shift 2 ;;
       --operator-ref) OPERATOR_REF="${2:-}"; shift 2 ;;
       --expected-count) EXPECTED_COUNT="${2:-}"; shift 2 ;;
+      --recorded-count) RECORDED_COUNT="${2:-}"; shift 2 ;;
       --retention-hours) RETENTION_HOURS="${2:-}"; shift 2 ;;
       --window-minutes) WINDOW_MINUTES="${2:-}"; shift 2 ;;
       --contains-minors) CONTAINS_MINORS="${2:-}"; shift 2 ;;
@@ -485,7 +487,15 @@ reconcile_private() {
   [[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" == "true" ]] || { fail "janela facial privada não está ativa"; return 1; }
   [[ "$(read_env_value FACIAL_HOMOLOG_BATCH_ID)" == "$BATCH_ID" ]] || { fail "batch-id diverge do lote ativo"; return 1; }
   [[ "$(read_env_value FACIAL_HOMOLOG_AUTHORIZATION_REF)" == "$AUTHORIZATION_REF" ]] || { fail "authorization-ref diverge do lote ativo"; return 1; }
-  [[ "$(read_env_value FACIAL_HOMOLOG_EXPECTED_COUNT)" == "$EXPECTED_COUNT" ]] || { fail "expected-count diverge do lote ativo"; return 1; }
+  local active_count
+  active_count="$(read_env_value FACIAL_HOMOLOG_EXPECTED_COUNT)"
+  if [[ "$active_count" != "$EXPECTED_COUNT" ]]; then
+    [[ "$RECORDED_COUNT" =~ ^[0-9]+$ ]] && (( RECORDED_COUNT >= 500 && RECORDED_COUNT <= 1000 )) || { fail "recorded-count é obrigatório para corrigir a quantidade ativa"; return 1; }
+    [[ "$active_count" == "$RECORDED_COUNT" ]] || { fail "recorded-count diverge do lote ativo"; return 1; }
+  else
+    [[ -z "$RECORDED_COUNT" || "$RECORDED_COUNT" == "$EXPECTED_COUNT" ]] || { fail "recorded-count inesperado sem divergência ativa"; return 1; }
+    RECORDED_COUNT="$EXPECTED_COUNT"
+  fi
   [[ "$(read_env_value FACIAL_HOMOLOG_CONTAINS_MINORS)" == "$CONTAINS_MINORS" ]] || { fail "contains-minors diverge do lote ativo"; return 1; }
   [[ -n "$(facial_container_id)" ]] || { fail "face-worker privado ativo não foi encontrado"; return 1; }
   record_inventory
@@ -493,7 +503,7 @@ reconcile_private() {
   local -a manifest_window
   mapfile -t manifest_window < <(
     FACIAL_STATE_DIR="$STATE_DIR" FACIAL_BATCH_ID="$BATCH_ID" \
-    FACIAL_AUTHORIZATION_REF="$AUTHORIZATION_REF" FACIAL_EXPECTED_COUNT="$EXPECTED_COUNT" \
+    FACIAL_AUTHORIZATION_REF="$AUTHORIZATION_REF" FACIAL_RECORDED_COUNT="$RECORDED_COUNT" \
     FACIAL_CONTAINS_MINORS="$CONTAINS_MINORS" python3 - <<'PY'
 import json
 import os
@@ -505,7 +515,7 @@ payload = json.loads(path.read_text(encoding="utf-8"))
 expected = {
     "batch_id": os.environ["FACIAL_BATCH_ID"],
     "authorization_ref": os.environ["FACIAL_AUTHORIZATION_REF"],
-    "expected_count": int(os.environ["FACIAL_EXPECTED_COUNT"]),
+    "expected_count": int(os.environ["FACIAL_RECORDED_COUNT"]),
     "contains_minors": os.environ["FACIAL_CONTAINS_MINORS"] == "true",
     "status": "active",
 }
@@ -611,6 +621,43 @@ with SessionLocal() as db:
         raise SystemExit(f"cobertura de jobs divergente: {covered}/{expected_count}")
     print(json.dumps({"batch_id": os.environ["FACIAL_RECONCILE_BATCH"], "photos": expected_count, "job_states": states}, sort_keys=True))
 PY
+  if [[ "$RECORDED_COUNT" != "$EXPECTED_COUNT" ]]; then
+    local correction_time temp_env temp_manifest manifest_path
+    correction_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    temp_env="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
+    manifest_path="$STATE_DIR/facial-batch-$BATCH_ID.json"
+    temp_manifest="$(mktemp "${manifest_path}.tmp.XXXXXX")"
+    python3 - "$ENV_FILE" "$temp_env" "$manifest_path" "$temp_manifest" "$RECORDED_COUNT" "$EXPECTED_COUNT" "$correction_time" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+env_path, env_temp, manifest_path, manifest_temp = map(Path, sys.argv[1:5])
+recorded, corrected, corrected_at = sys.argv[5:]
+lines = env_path.read_text(encoding="utf-8").splitlines()
+matches = [index for index, line in enumerate(lines) if line.startswith("FACIAL_HOMOLOG_EXPECTED_COUNT=")]
+if len(matches) != 1 or lines[matches[0]] != f"FACIAL_HOMOLOG_EXPECTED_COUNT={recorded}":
+    raise SystemExit("quantidade ativa mudou durante a reconciliação")
+lines[matches[0]] = f"FACIAL_HOMOLOG_EXPECTED_COUNT={corrected}"
+env_temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+if payload.get("expected_count") != int(recorded) or payload.get("status") != "active":
+    raise SystemExit("manifesto mudou durante a reconciliação")
+payload["expected_count"] = int(corrected)
+payload["count_correction"] = {
+    "from": int(recorded),
+    "to": int(corrected),
+    "corrected_at": corrected_at,
+    "reason": "observed_persisted_batch_count",
+}
+manifest_temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+    chmod 600 "$temp_env" "$temp_manifest"
+    mv "$temp_env" "$ENV_FILE"
+    mv "$temp_manifest" "$manifest_path"
+    printf '%s corrected-private-count batch=%s from=%s to=%s sha=%s\n' "$correction_time" "$BATCH_ID" "$RECORDED_COUNT" "$EXPECTED_COUNT" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
+  fi
   printf '%s reconciled-private batch=%s photos=%s sha=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$EXPECTED_COUNT" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
 }
 

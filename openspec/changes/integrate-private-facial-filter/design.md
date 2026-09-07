@@ -158,6 +158,8 @@ API, worker de mídia e worker facial leem a configuração facial no início do
 
 Se uma janela privada autorizada já estiver ativa e fotos do lote tiverem concluído as prévias sem job facial por divergência de configuração, uma reconciliação corretiva explícita poderá enfileirar somente as fotos persistidas dentro da janela registrada no manifesto. O procedimento exigirá SHA publicado, lote, autorização, quantidade e declaração de menores exatamente iguais ao gate ativo, inventário imediatamente anterior, contagem exata do lote e ambas as prévias prontas. A operação será idempotente pela chave normal de índice, não recriará mídia, não alterará a retenção ou a janela, não reiniciará o worker de mídia durante carga e não tocará em recursos de terceiros.
 
+Quando a própria evidência persistida provar que a quantidade registrada na ativação contém erro material, a reconciliação SHALL declarar simultaneamente a quantidade registrada e a quantidade observada. A correção somente será aceita para o mesmo lote, autorização, declaração de menores e janela ainda ativa, depois de comprovar que a quantidade observada corresponde exatamente às fotos de conteúdo com ambas as prévias prontas. Após o enfileiramento idempotente, ambiente e manifesto serão atualizados de forma restrita, com valores anterior/novo, instante UTC e motivo fixo, sem alterar início, vencimento, retenção ou qualquer mídia.
+
 Alternativa rejeitada: fechar o lote e exigir novo upload. Isso apagaria os derivados faciais conforme o contrato de encerramento, perderia a medição já iniciada e imporia novo tratamento de dados sem necessidade técnica.
 
 ## Risks / Trade-offs
