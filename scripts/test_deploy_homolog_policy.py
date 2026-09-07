@@ -27,6 +27,10 @@ def main() -> int:
     require('git status --porcelain', "recusa de checkout sujo", SCRIPT)
     require('ensure_pii_fingerprint_salt', "configuração segura do fingerprint de PII", SCRIPT)
     require('ensure_gallery_capability_signing_key', "configuração segura da assinatura de galerias", SCRIPT)
+    require('ensure_public_app_origin', "sincronização da origem pública para operações sensíveis", SCRIPT)
+    require('MARKINA_PUBLIC_BASE_URL é obrigatória', "origem pública obrigatória", SCRIPT)
+    require('sincronizada com a origem pública autorizada', "registro sanitizado da origem configurada", SCRIPT)
+    require('parsed.path not in {"", "/"}', "recusa de URL pública com caminho", SCRIPT)
     require('GALLERY_CAPABILITY_SIGNING_KEY', "segredo dedicado para links de galeria", SCRIPT)
     require('deve ser diferente de $fingerprint_key', "separação entre segredos HMAC", SCRIPT)
     require('openssl rand -hex 32', "geração criptográfica do fingerprint de PII", SCRIPT)
@@ -114,6 +118,7 @@ def main() -> int:
     require('secrets.HOMOLOG_SSH_PRIVATE_KEY', "chave via secret", WORKFLOW)
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
+    require('MARKINA_PUBLIC_BASE_URL=%q', "origem pública encaminhada ao deploy", WORKFLOW)
     forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)

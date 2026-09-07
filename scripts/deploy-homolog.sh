@@ -143,6 +143,57 @@ ensure_gallery_capability_signing_key() {
   echo "$key configurado com segredo aleatório exclusivo de homologação"
 }
 
+ensure_public_app_origin() {
+  local env_file="${1:-$ENV_FILE}"
+  local public_url="${2:-$PUBLIC_BASE_URL}"
+  local key="PUBLIC_APP_ORIGIN" normalized occurrences temp_file line replaced=0
+
+  [[ -n "$public_url" ]] || fail "MARKINA_PUBLIC_BASE_URL é obrigatória para validar operações sensíveis"
+  normalized="$({ PUBLIC_ORIGIN_VALUE="$public_url" python3 - <<'PY'
+import os
+from urllib.parse import urlsplit
+
+raw = os.environ["PUBLIC_ORIGIN_VALUE"].strip()
+parsed = urlsplit(raw)
+if (
+    parsed.scheme != "https"
+    or not parsed.netloc
+    or not parsed.hostname
+    or parsed.username
+    or parsed.password
+    or parsed.query
+    or parsed.fragment
+    or parsed.path not in {"", "/"}
+):
+    raise SystemExit("origem pública inválida")
+try:
+    parsed.port
+except ValueError as exc:
+    raise SystemExit("porta da origem pública inválida") from exc
+print(f"https://{parsed.netloc.rstrip('/')}".rstrip("/"))
+PY
+  } 2>/dev/null)" || fail "MARKINA_PUBLIC_BASE_URL não representa uma origem HTTPS válida"
+
+  occurrences="$(grep -c "^${key}=" "$env_file" || true)"
+  [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
+      replaced=1
+    else
+      printf '%s\n' "$line" >> "$temp_file"
+    fi
+  done < "$env_file"
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
+  fi
+  mv "$temp_file" "$env_file"
+  chmod 600 "$env_file"
+  echo "$key sincronizada com a origem pública autorizada de homologação"
+}
+
 record_predeploy_inventory() {
   echo "inventário Markina pré-deploy"
   df -hP "$PROJECT_ROOT"
@@ -188,6 +239,7 @@ verify_target() {
   verify_facial_predeploy_safe_default
   ensure_pii_fingerprint_salt
   ensure_gallery_capability_signing_key
+  ensure_public_app_origin
   compose config --quiet
   record_predeploy_inventory
 }

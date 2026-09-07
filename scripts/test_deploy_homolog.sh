@@ -45,7 +45,8 @@ health_output="$(mktemp)"
 rollback_log="$(mktemp)"
 secrets_env="$(mktemp)"
 same_secret_env="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env"' EXIT
+origin_env="$(mktemp)"
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env"' EXIT
 
 printf 'APP_ENV=homologation\nAUTH_PII_FINGERPRINT_SALT=\nGALLERY_CAPABILITY_SIGNING_KEY=\n' >"$secrets_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" SECRETS_ENV="$secrets_env" \
@@ -76,6 +77,27 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
 fi
 grep -Fq 'GALLERY_CAPABILITY_SIGNING_KEY deve ser diferente de AUTH_PII_FINGERPRINT_SALT' "$output"
 
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origin "$ORIGIN_ENV" "https://markina-homolog.example/"
+    [[ "$(grep -c "^PUBLIC_APP_ORIGIN=" "$ORIGIN_ENV")" -eq 1 ]]
+    grep -Fxq "PUBLIC_APP_ORIGIN=https://markina-homolog.example" "$ORIGIN_ENV"
+    [[ "$(stat -c %a "$ORIGIN_ENV")" == "600" ]]
+  ' >"$output" 2>&1
+grep -Fq 'PUBLIC_APP_ORIGIN sincronizada com a origem pública autorizada de homologação' "$output"
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origin "$ORIGIN_ENV" "https://markina-homolog.example/caminho"
+  ' >"$output" 2>&1; then
+  echo "origem pública com caminho foi aceita" >&2
+  exit 1
+fi
+grep -Fq 'MARKINA_PUBLIC_BASE_URL não representa uma origem HTTPS válida' "$output"
+
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
@@ -88,7 +110,7 @@ fi
 grep -Fq 'checkout remoto possui alterações locais' "$dirty_output"
 
 facial_env="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$facial_env"' EXIT
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$facial_env"' EXIT
 printf 'FACIAL_PROCESSING_ENABLED=true\n' >"$facial_env"
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
@@ -131,7 +153,7 @@ fi
 grep -Fq 'serviço Markina não ficou saudável: api (unhealthy)' "$health_output"
 
 whatsapp_output="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$whatsapp_output"' EXIT
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$whatsapp_output"' EXIT
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
