@@ -276,6 +276,12 @@ wait_for_service() {
   fi
 }
 
+reload_reverse_proxy() {
+  wait_for_service nginx
+  compose exec -T nginx nginx -t
+  compose exec -T nginx nginx -s reload
+}
+
 verify_activation() {
   local face_container unexpected_ports
   wait_for_service api
@@ -308,6 +314,7 @@ rollback_activation() {
     cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"
     compose_facial stop face-worker >/dev/null 2>&1 || true
     compose up -d --no-deps --force-recreate api >/dev/null 2>&1 || true
+    reload_reverse_proxy >/dev/null 2>&1 || true
   fi
   exit "$exit_code"
 }
@@ -320,6 +327,7 @@ rollback_pause() {
     cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"
     compose_facial up -d --no-deps face-worker >/dev/null 2>&1 || true
     compose up -d --no-deps --force-recreate api >/dev/null 2>&1 || true
+    reload_reverse_proxy >/dev/null 2>&1 || true
   fi
   exit "$exit_code"
 }
@@ -343,6 +351,7 @@ pause_synthetic() {
   compose_facial stop face-worker
   compose up -d --no-deps --force-recreate api
   wait_for_service api
+  reload_reverse_proxy
   compose exec -T api python -c '
 import os
 import sys
@@ -365,6 +374,7 @@ activate_synthetic() {
   ACTIVATION_STARTED=1
   compose_facial up -d --build --no-deps face-worker
   compose up -d --no-deps --force-recreate api
+  reload_reverse_proxy
   verify_activation
   record_inventory
   printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "activated-synthetic-adults" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
