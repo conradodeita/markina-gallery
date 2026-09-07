@@ -117,7 +117,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Incluir foto/excluir foto da indexação em massa antes da liberação do evento.
 - Registrar consentimento versionado da cliente, busca, revogação, exclusão e operação administrativa; cada login OTP em contexto de galeria também gera notificação idempotente de acesso ao fotógrafo sem transportar o OTP.
 - Apagar foto de referência e embedding temporário conforme retenção configurada; oferecer exclusão de dados biométricos.
-- Validar desempenho, licença comercial, compatibilidade ARM, precisão facial e qualidade técnica com um piloto sintético/anônimo de 500–1.000 JPEGs antes de ativar em clientes reais; OFIQ ou qualquer modelo adicional exige validação separada de código, pesos e dependências.
+- Validar desempenho, licença comercial, compatibilidade ARM, precisão facial e qualidade técnica com 500–1.000 JPEGs em homologação privada. O lote pode ser sintético ou conter dados reais de adultos e menores quando for enviado pelo administrador/fotógrafo e possuir autorização explícita por execução, origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Essa medição não autoriza produção; OFIQ ou qualquer modelo adicional exige validação separada de código, pesos e dependências.
 
 ## Fase 8 — Privacidade, observabilidade e métricas
 

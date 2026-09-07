@@ -42,6 +42,20 @@ O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegi
 - **WHEN** todas as prévias elegíveis já possuem o mesmo fingerprint e versões de embedding e qualidade
 - **THEN** o worker não recalcula a galeria e permanece aguardando novos jobs sem consumo ativo de CPU
 
+### Requirement: Progresso administrativo cobre todas as pastas
+
+O painel administrativo SHALL exibir na etapa 04, em `Processamento automático` → `Reconhecimento facial`, uma barra de progresso agregada para toda a Galeria pública. O total SHALL incluir cada foto de conteúdo assim que seu upload estiver persistido, independentemente da pasta e mesmo enquanto as prévias ainda estiverem em preparação. A interface SHALL continuar consultando o estado enquanto existir foto não indexada, job na fila ou job em processamento, e SHALL distinguir contagens reais de fotos prontas, aguardando preparo, na fila, em processamento e com falha sem fabricar percentual. Ativos técnicos de capa SHALL NOT participar desse total.
+
+#### Scenario: Upload distribuído entre pastas
+
+- **WHEN** o administrador envia fotos para uma ou mais pastas da mesma Galeria pública com o processamento facial habilitado
+- **THEN** a etapa 04 apresenta imediatamente `prontas/total` para o conjunto recebido em todas as pastas e atualiza a barra até cada foto terminar ou expor uma falha recuperável
+
+#### Scenario: Prévia ainda não gerou job facial
+
+- **WHEN** uma foto já foi aceita, mas sua prévia limpa ou protegida ainda está sendo preparada
+- **THEN** a foto participa do total e da contagem de itens aguardando preparo, e o painel não interrompe a atualização por ainda não existir job facial para ela
+
 ### Requirement: Qualidade técnica versionada por rosto
 
 O sistema SHALL calcular indicadores técnicos explicáveis para cada rosto indexado, incluindo nitidez local, corte nas bordas, tamanho/proeminência e pose. Após o gate conservador de similaridade, SHALL classificar somente o rosto correspondente à referência em `best` ou `other`; a qualidade SHALL NOT ocultar ou excluir fotos, inferir estética pessoal ou avaliar beleza, emoção, gênero, raça ou idade.
@@ -128,12 +142,17 @@ A busca SHALL retornar somente possíveis fotos já visíveis à cliente na Gale
 
 ### Requirement: Proteção reforçada para menores
 
-O sistema SHALL manter busca infantil desabilitada enquanto não houver mecanismo não biométrico de comprovação do responsável, consentimento verificável, aviso acessível, avaliação do melhor interesse e RIPD aprovado. A referência SHALL NOT ser usada para estimar idade, autenticar identidade, inferir atributos, treinar modelo ou publicidade.
+O sistema SHALL manter busca infantil desabilitada por padrão. Em homologação privada, o operador MAY habilitá-la somente para uma execução explicitamente autorizada e vinculada a lote enviado pelo administrador/fotógrafo, com origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Fora desse modo controlado, a habilitação SHALL exigir mecanismo não biométrico de comprovação do responsável, consentimento verificável, aviso acessível, avaliação do melhor interesse e RIPD aprovado. A referência SHALL NOT ser usada para estimar idade, autenticar identidade, inferir atributos, treinar modelo ou publicidade.
 
 #### Scenario: Política infantil incompleta
 
 - **WHEN** uma referência é declarada como pertencente a criança e qualquer controle infantil obrigatório está ausente
 - **THEN** o sistema bloqueia o tratamento biométrico, preserva a alternativa manual e elimina qualquer upload recebido
+
+#### Scenario: Homologação privada autorizada com menor
+
+- **WHEN** o administrador/fotógrafo inicia uma execução de homologação explicitamente autorizada, vinculada a lote documentado que inclui menores e com todos os controles temporários válidos
+- **THEN** o sistema limita o tratamento àquele ambiente, lote, finalidade e janela, audita somente identificadores mínimos e exige purge e desativação do gate infantil ao encerrar
 
 ### Requirement: Auditoria sem biometria e exercício de direitos
 

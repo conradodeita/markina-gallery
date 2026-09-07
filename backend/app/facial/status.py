@@ -8,7 +8,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
-from app.auth import FacialJob, GalleryFacialPolicy, MediaDerivative, PhotoAsset, now
+from app.auth import (
+    FacialJob,
+    GalleryFacialPolicy,
+    MediaDerivative,
+    PhotoAsset,
+    PhotoFolder,
+    now,
+)
 from app.facial.indexing import CLIENT_PRESENTATION_VARIANT, FACIAL_ANALYSIS_VARIANT
 
 
@@ -24,6 +31,7 @@ class FacialIndexStatus:
     queued: int
     processing: int
     failed: int
+    waiting_previews: int
     unindexed: int
     failures: tuple[dict[str, object], ...]
     page: int
@@ -37,6 +45,7 @@ def gallery_index_status(
     parent_gallery_id: UUID,
     page: int = 1,
     page_size: int = 50,
+    processing_enabled: bool = False,
 ) -> FacialIndexStatus:
     if page < 1 or not 1 <= page_size <= 100:
         raise FacialStatusError("Paginação facial inválida.")
@@ -45,8 +54,19 @@ def gallery_index_status(
             GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
         )
     )
-    protected_preview = aliased(MediaDerivative)
     photo_ids = list(
+        db.scalars(
+            select(PhotoAsset.id)
+            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+            .where(
+                PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.purpose == "content",
+            )
+            .order_by(PhotoAsset.id)
+        )
+    )
+    protected_preview = aliased(MediaDerivative)
+    eligible_photo_ids = list(
         db.scalars(
             select(PhotoAsset.id)
             .join(
@@ -69,12 +89,12 @@ def gallery_index_status(
         )
     )
     latest: dict[UUID, FacialJob] = {}
-    if photo_ids and policy:
+    if eligible_photo_ids and policy:
         for job in db.scalars(
             select(FacialJob)
             .where(
                 FacialJob.parent_gallery_id == parent_gallery_id,
-                FacialJob.photo_asset_id.in_(photo_ids),
+                FacialJob.photo_asset_id.in_(eligible_photo_ids),
                 FacialJob.kind == "index",
                 FacialJob.model_version == policy.model_version,
                 FacialJob.quality_version == policy.quality_version,
@@ -103,15 +123,19 @@ def gallery_index_status(
         for job in failed_jobs[start : start + page_size]
     )
     total = len(photo_ids)
+    waiting_previews = max(0, total - len(eligible_photo_ids))
     ready = counts["completed"]
-    unindexed = max(0, total - len(latest))
+    unindexed = max(0, len(eligible_photo_ids) - len(latest))
     state = _aggregate_state(
-        policy_status=policy.status if policy else "disabled",
+        policy_status=(
+            policy.status if policy else ("pending" if processing_enabled else "disabled")
+        ),
         total=total,
         ready=ready,
         queued=counts["queued"],
         processing=counts["processing"],
         failed=counts["failed"],
+        waiting_previews=waiting_previews,
         unindexed=unindexed,
     )
     return FacialIndexStatus(
@@ -121,6 +145,7 @@ def gallery_index_status(
         queued=counts["queued"],
         processing=counts["processing"],
         failed=counts["failed"],
+        waiting_previews=waiting_previews,
         unindexed=unindexed,
         failures=failures,
         page=page,
@@ -174,6 +199,7 @@ def _aggregate_state(
     queued: int,
     processing: int,
     failed: int,
+    waiting_previews: int,
     unindexed: int,
 ) -> str:
     if policy_status not in {"active", "pending"}:
@@ -182,7 +208,7 @@ def _aggregate_state(
         return "empty"
     if ready == total:
         return "ready"
-    if failed and not (ready or queued or processing or unindexed):
+    if failed and not (ready or queued or processing or waiting_previews or unindexed):
         return "failed"
     if ready or failed:
         return "partial"

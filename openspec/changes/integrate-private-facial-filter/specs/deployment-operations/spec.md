@@ -25,7 +25,22 @@ O processamento SHALL usar fila bloqueante de baixa prioridade, concorrência e 
 
 ### Requirement: Operação reversível e verificável
 
-Deploy SHALL exigir inventário, backup, migration aditiva, modelos verificados por hash, feature flag desligada e smoke sintético sem crianças. Rollback SHALL desligar novas operações e preservar estruturas para limpeza controlada, sem down migration destrutiva nem perda de histórico comercial.
+Deploy SHALL exigir inventário, backup, migration aditiva, modelos verificados por hash, feature flag desligada e smoke inicial sem dados pessoais. Uma carga real de adultos ou menores em homologação SHALL começar somente após autorização humana explícita da execução e registro de responsável, origem, finalidade, quantidade, identificador interno e retenção do lote, sob acesso autenticado, criptografia e exclusão controlada. Rollback SHALL desligar novas operações e preservar estruturas para limpeza controlada, sem down migration destrutiva nem perda de histórico comercial.
+
+#### Scenario: Carga real controlada em homologação
+
+- **WHEN** o administrador/fotógrafo apresenta um lote real documentado e a execução é autorizada no ambiente privado de homologação
+- **THEN** o sistema limita o tratamento ao lote e à janela aprovados, coleta somente métricas agregadas e exige prova de limpeza e desativação dos gates temporários ao final
+
+#### Scenario: Transição do piloto legado antes do deploy privado
+
+- **WHEN** homologação ainda executa o piloto facial legado fora do gate privado e um SHA autorizado precisa publicar a operação vinculada a lote
+- **THEN** uma transição explícita e auditável desliga somente `FACIAL_PROCESSING_ENABLED`, interrompe somente o `face-worker`, recria somente a API da Markina e mantém as fotos intactas, sem reativação automática depois do deploy
+
+#### Scenario: Piloto privado ativo durante deploy comum
+
+- **WHEN** `FACIAL_HOMOLOG_PRIVATE_MODE=true` ou a transição legada não foi explicitamente autorizada
+- **THEN** o deploy comum continua falhando antes de trocar código ou banco e exige o fechamento ou procedimento de upgrade privado aplicável
 
 #### Scenario: Rollback da funcionalidade
 

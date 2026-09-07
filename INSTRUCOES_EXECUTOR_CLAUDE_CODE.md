@@ -267,7 +267,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Fotos escolares e dados biométricos exigem minimização, transparência, consentimento específico do cliente/responsável para a referência enviada e fluxo de exclusão. O checkbox pertence à consulta da cliente, não à rotina de upload do fotógrafo; não tratar isso como texto decorativo.
 - Termo versionado, aceite auditável, finalidade explícita, expiração de referência facial e exclusão de embedding devem existir antes da feature ir a produção.
 - Feedback facial remove o resultado daquela consulta e pode criar revisão humana; nunca retreinar/aplicar associação automaticamente a partir de um único feedback.
-- Dados reais de crianças nunca entram em homologação.
+- Homologação privada pode usar dados reais de adultos e crianças quando o lote for enviado pelo administrador/fotógrafo e estiver vinculado a autorização humana explícita por execução, origem e finalidade documentadas, acesso autenticado, proteção criptográfica, retenção mínima e exclusão controlada. Essa autorização não se estende à produção nem ao fluxo infantil comum.
 
 ## 11. Ordem de implementação
 

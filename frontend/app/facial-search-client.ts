@@ -50,6 +50,7 @@ export type FacialIndexStatus = {
   queued: number;
   processing: number;
   failed: number;
+  waiting_previews: number;
   unindexed: number;
   failures: Array<{ job_id: string; photo_id: string; category: string }>;
   pagination: { page: number; page_size: number; total: number };

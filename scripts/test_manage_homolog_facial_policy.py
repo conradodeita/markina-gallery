@@ -1,4 +1,4 @@
-"""Verificações estruturais da ativação facial sintética em homologação."""
+"""Verificações estruturais da janela facial privada em homologação."""
 
 import re
 import sys
@@ -6,7 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (ROOT / "scripts" / "manage-homolog-facial.sh").read_text(encoding="utf-8")
-WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+WORKFLOW = (ROOT / ".github" / "workflows" / "facial-homolog.yml").read_text(
+    encoding="utf-8"
+)
+CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
 
 def require(text: str, description: str, source: str) -> None:
@@ -20,57 +23,90 @@ def forbid(pattern: str, description: str, source: str) -> None:
 
 
 def main() -> int:
-    require('readonly PROJECT_ROOT="/opt/markina-gallery"', "diretório fixo Markina", SCRIPT)
-    require('readonly PROJECT_NAME="markina-gallery"', "projeto Compose fixo", SCRIPT)
-    require('readonly ENV_FILE="docker/.env.homolog"', "ambiente fixo de homologação", SCRIPT)
-    require('[[ "$(pwd -P)" == "$PROJECT_ROOT" ]]', "recusa de diretório inesperado", SCRIPT)
-    require('git status --porcelain', "recusa de checkout remoto sujo", SCRIPT)
-    require('o SHA publicado diverge do SHA autorizado', "vínculo ao SHA autorizado", SCRIPT)
-    require('record_inventory', "inventário imediatamente anterior", SCRIPT)
-    require('architecture=%s cpus=%s', "inventário de arquitetura e CPUs", SCRIPT)
-    require('MemTotal', "inventário de memória", SCRIPT)
-    require('docker ps \\', "inventário de containers", SCRIPT)
-    require('label=com.docker.compose.project=$PROJECT_NAME', "escopo exclusivo do projeto", SCRIPT)
-    require('ENABLE_SYNTHETIC_ADULT_FACIAL_HOMOLOG', "confirmação forte", SCRIPT)
-    require('PAUSE_SYNTHETIC_FACIAL_FOR_DEPLOY', "confirmação forte da pausa para upgrade", SCRIPT)
-    require('aarch64', "gate ARM64", SCRIPT)
-    require('FACIAL_PROCESSING_ENABLED": "true"', "ativação explícita", SCRIPT)
-    require('homolog-synthetic-only-no-real-data-v1', "escopo apenas sintético", SCRIPT)
-    require('FACIAL_MINOR_SEARCH_ENABLED": "false"', "menores bloqueados", SCRIPT)
-    require('secrets.token_bytes(32)', "chave AEAD gerada no host", SCRIPT)
-    require('chmod 600 "$ENV_FILE"', "permissão restrita da configuração", SCRIPT)
-    require('facial-env-preactivate-', "backup restrito antes da alteração", SCRIPT)
-    require('compose_facial up -d --build --no-deps face-worker', "subida isolada do worker", SCRIPT)
-    require('compose up -d --no-deps --force-recreate api', "recriação limitada da API", SCRIPT)
-    require('reload_reverse_proxy', "recarga do proxy após recriar a API", SCRIPT)
-    require('compose exec -T nginx nginx -t', "validação do Nginx da Markina", SCRIPT)
-    require('compose exec -T nginx nginx -s reload', "recarga sem interrupção do Nginx da Markina", SCRIPT)
-    require('target_environment="$(grep \'^APP_ENV=\' "$ENV_FILE"', "ambiente herdado do host", SCRIPT)
-    require('$target_environment" == "staging"', "identificador staging permitido", SCRIPT)
-    require('settings.credential_environment == settings.environment', "credencial vinculada ao ambiente", SCRIPT)
-    require('logs --no-color --tail 80 face-worker', "diagnóstico sanitizado do worker", SCRIPT)
-    require('settings.worker_concurrency == 1', "concorrência unitária", SCRIPT)
-    require('unexpected_ports', "verificação de portas do worker", SCRIPT)
-    require('rollback_activation', "rollback de configuração", SCRIPT)
-    require('compose_facial stop face-worker', "rollback limitado ao worker facial", SCRIPT)
-    forbid(r'\bdocker\s+system\s+prune\b', "docker system prune", SCRIPT)
-    forbid(r'\bcompose(?:_facial)?\s+down\b', "docker compose down", SCRIPT)
-    forbid(r'\bgit\s+(?:reset|checkout)\b', "descarte Git", SCRIPT)
-    forbid(r'\bdocker\s+(?:rm|rmi)\b', "remoção de containers ou imagens", SCRIPT)
-    forbid(r'echo\s+.*FACIAL_AEAD_KEYS_JSON', "impressão de chave facial", SCRIPT)
+    for text, description in (
+        ('readonly PROJECT_ROOT="/opt/markina-gallery"', "diretório fixo"),
+        ('readonly PROJECT_NAME="markina-gallery"', "projeto Compose fixo"),
+        ('readonly ENV_FILE="docker/.env.homolog"', "ambiente fixo"),
+        ('[[ "$(pwd -P)" == "$PROJECT_ROOT" ]]', "recusa de diretório inesperado"),
+        ("git status --porcelain", "recusa de checkout remoto sujo"),
+        ("o SHA publicado diverge do SHA autorizado", "vínculo ao SHA"),
+        ("activate-private", "ativação privada"),
+        ("pause-legacy-for-private-upgrade", "transição legada"),
+        ("close-private", "fechamento privado"),
+        ("ENABLE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de ativação"),
+        ("PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE", "token de transição legada"),
+        ("CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de fechamento"),
+        ("FACIAL_HOMOLOG_BATCH_ID", "vínculo ao lote"),
+        ("FACIAL_HOMOLOG_ORIGIN_REF", "origem documentada"),
+        ("FACIAL_HOMOLOG_AUTHORIZATION_REF", "autorização documentada"),
+        ("FACIAL_HOMOLOG_OPERATOR_REF", "operador documentado"),
+        ("EXPECTED_COUNT >= 500", "piso do lote"),
+        ("EXPECTED_COUNT <= 1000", "teto do lote"),
+        ("RETENTION_HOURS <= 72", "retenção limitada"),
+        ("WINDOW_MINUTES <= 240", "janela limitada"),
+        ("secrets.token_bytes(32)", "chave AEAD gerada no host"),
+        ('chmod 600 "$ENV_FILE"', "permissão restrita"),
+        ("compose_facial up -d --build --no-deps face-worker", "subida isolada"),
+        ("compose_facial stop face-worker", "parada isolada"),
+        ("purge_gallery_records", "purga síncrona"),
+        ("photo_face_embedding", "prova agregada de embeddings"),
+        ("facial_search_candidate", "prova agregada de candidatos"),
+        ("reference_locator_ciphertext IS NOT NULL", "prova de referências"),
+        ("closed-and-purged", "manifesto de fechamento"),
+        ('"FACIAL_HOMOLOG_PRIVATE_MODE": "false"', "restauração do gate"),
+        ('"FACIAL_MINOR_SEARCH_ENABLED": "false"', "restauração do gate de menores"),
+        ("reload_reverse_proxy", "recarga do proxy"),
+        ("rollback_pause", "rollback da pausa"),
+        ('cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"', "restauração do backup de ambiente"),
+        ("s.private_homologation_active", "validação fail-closed"),
+        ('[[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" != "true" ]]', "recusa de gate privado na transição legada"),
+        ('[[ "${facial_enabled,,}" == "true" ]]', "exigência de flag ativa na pausa"),
+    ):
+        require(text, description, SCRIPT)
 
-    require('activate-synthetic-facial-homolog:', "job facial dedicado", WORKFLOW)
-    require('needs: [deploy-homolog]', "ativação somente após deploy verde", WORKFLOW)
-    require('environment: homolog', "Environment protegido", WORKFLOW)
-    require('Homolog-Facial: activate-synthetic-adults', "trailer explícito", WORKFLOW)
-    require('Homolog-Facial: upgrade-synthetic', "trailer explícito de upgrade", WORKFLOW)
-    require('--mode pause-synthetic', "pausa controlada antes do deploy", WORKFLOW)
-    require('ENABLE_SYNTHETIC_ADULT_FACIAL_HOMOLOG', "token de confirmação no job", WORKFLOW)
-    require('secrets.HOMOLOG_SSH_PRIVATE_KEY', "SSH por secret", WORKFLOW)
-    require('StrictHostKeyChecking=yes', "host SSH verificado", WORKFLOW)
-    require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto fixo", WORKFLOW)
-    require('< scripts/manage-homolog-facial.sh', "script auditado enviado por stdin", WORKFLOW)
-    forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
+    for pattern, description in (
+        (r"\bdocker\s+system\s+prune\b", "docker system prune"),
+        (r"\bcompose(?:_facial)?\s+down\b", "docker compose down"),
+        (r"\bgit\s+(?:reset|checkout)\b", "descarte Git"),
+        (r"\bdocker\s+(?:rm|rmi)\b", "remoção de containers ou imagens"),
+        (r"echo\s+.*FACIAL_AEAD_KEYS_JSON", "impressão de chave facial"),
+        (r"activate-synthetic|pause-synthetic", "modo sintético legado"),
+    ):
+        forbid(pattern, description, SCRIPT)
+
+    for text, description in (
+        ("workflow_dispatch", "operação exclusivamente manual"),
+        ("environment: homolog", "Environment protegido"),
+        ("ref: ${{ inputs.sha }}", "scripts vinculados ao SHA publicado"),
+        ("origin_ref", "entrada de origem"),
+        ("authorization_ref", "entrada de autorização"),
+        ("operator_ref", "entrada de operador"),
+        ("expected_count", "quantidade esperada"),
+        ("contains_minors", "declaração de menores"),
+        ("ENABLE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação da ativação"),
+        ("BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação do benchmark"),
+        ("CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação do fechamento"),
+        ("StrictHostKeyChecking=yes", "host SSH verificado"),
+        ("< scripts/manage-homolog-facial.sh", "operador auditado por stdin"),
+        ("< scripts/benchmark-homolog-facial.py", "observador auditado por stdin"),
+        ("actions/upload-artifact@v4", "evidência agregada"),
+        ("retention-days: 7", "retenção curta da evidência"),
+    ):
+        require(text, description, WORKFLOW)
+
+    forbid(r"activate-synthetic-facial-homolog", "ativação automática legada", CI)
+    forbid(r"Homolog-Facial: activate", "ativação por commit", CI)
+    require(
+        "Homolog-Facial: pause-legacy-for-private-upgrade",
+        "trailer de transição legada",
+        CI,
+    )
+    require(
+        "PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE",
+        "confirmação da transição legada no CI",
+        CI,
+    )
+    forbid(r"password\s*[:=]\s*[\"']?[^${\s]", "senha literal", WORKFLOW)
 
     print("manage-homolog-facial policy: ok")
     return 0

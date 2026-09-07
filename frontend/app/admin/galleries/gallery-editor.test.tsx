@@ -6,7 +6,7 @@ vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), useParams: () => ({ sourceId: "source-1" }) }));
 
 import NewGalleryPage from "./new/page";
-import GalleryEditor from "./sources/[sourceId]/edit/gallery-editor";
+import GalleryEditor, { photoBulkDeleteBatches } from "./sources/[sourceId]/edit/gallery-editor";
 import SourceGalleryDetailPage from "./sources/[sourceId]/page";
 
 afterEach(() => {
@@ -647,6 +647,102 @@ describe("editor administrativo de galeria", () => {
       expect.objectContaining({ method: "DELETE" }),
     ));
   });
+
+  it("particiona 2.001 fotos em 21 lotes dentro do limite defensivo", () => {
+    const photoIds = Array.from({ length: 2_001 }, (_, index) => `photo-${index + 1}`);
+    const batches = photoBulkDeleteBatches([...photoIds, photoIds[0]]);
+
+    expect(batches).toHaveLength(21);
+    expect(batches.every((batch) => batch.length <= 100)).toBe(true);
+    expect(batches.flat()).toEqual(photoIds);
+  });
+
+  it("exclui vários lotes sequenciais com uma única confirmação e resultado consolidado", async () => {
+    const photos = Array.from({ length: 201 }, (_, index) => ({
+      id: `photo-${index + 1}`,
+      name: `FOTO_${String(index + 1).padStart(4, "0")}.jpg`,
+      preview_url: null,
+      status: "completed",
+      error: null,
+      can_delete: true,
+      is_cover: false,
+    }));
+    let remainingPhotos = photos;
+    const deletedBatches: string[][] = [];
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote grande", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
+      if (path.endsWith("/photos") && init?.method === "DELETE") {
+        const ids = JSON.parse(String(init.body)).photo_ids as string[];
+        deletedBatches.push(ids);
+        const blockedIds = deletedBatches.length === 1 ? [ids.at(-2)!] : [];
+        const missingIds = deletedBatches.length === 1 ? [ids.at(-1)!] : [];
+        const deletedIds = ids.filter((id) => !blockedIds.includes(id) && !missingIds.includes(id));
+        remainingPhotos = remainingPhotos.filter((photo) => !deletedIds.includes(photo.id));
+        return response({ deleted_ids: deletedIds, blocked_ids: blockedIds, missing_ids: missingIds });
+      }
+      if (path.endsWith("/photos")) return response({ photos: remainingPhotos });
+      return response({ clients: [] });
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", confirm);
+
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Lote grande/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Selecionar todas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Excluir selecionadas" }));
+
+    expect(await screen.findByText("199 foto(s) excluída(s); 1 protegida(s) por regra comercial; 1 já ausente(s).", {}, { timeout: 5_000 })).toBeTruthy();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(deletedBatches).toHaveLength(3);
+    expect(deletedBatches.every((batch) => batch.length <= 100)).toBe(true);
+    expect(deletedBatches.flat()).toEqual(photos.map((photo) => photo.id));
+  }, 10_000);
+
+  it("informa o resultado parcial, atualiza a pasta e permite repetir após falha", async () => {
+    const photos = Array.from({ length: 201 }, (_, index) => ({
+      id: `partial-${index + 1}`,
+      name: `PARCIAL_${String(index + 1).padStart(4, "0")}.jpg`,
+      preview_url: null,
+      status: "completed",
+      error: null,
+      can_delete: true,
+      is_cover: false,
+    }));
+    let remainingPhotos = photos;
+    let deleteRequests = 0;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote parcial", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
+      if (path.endsWith("/photos") && init?.method === "DELETE") {
+        deleteRequests += 1;
+        if (deleteRequests === 3) return response({ detail: "Falha simulada no terceiro lote." }, 503);
+        const ids = JSON.parse(String(init.body)).photo_ids as string[];
+        remainingPhotos = remainingPhotos.filter((photo) => !ids.includes(photo.id));
+        return response({ deleted_ids: ids, blocked_ids: [], missing_ids: [] });
+      }
+      if (path.endsWith("/photos")) return response({ photos: remainingPhotos });
+      return response({ clients: [] });
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", confirm);
+
+    render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Lote parcial/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Selecionar todas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Excluir selecionadas" }));
+
+    expect(await screen.findByText("Resultado parcial: 200 foto(s) excluída(s). A exclusão não foi concluída: Falha simulada no terceiro lote.")).toBeTruthy();
+    expect(screen.queryByText("PARCIAL_0001.jpg")).toBeNull();
+    expect(screen.getByText("PARCIAL_0201.jpg")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Selecionar todas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Excluir selecionadas" }));
+    expect(await screen.findByText("1 foto(s) excluída(s).")).toBeTruthy();
+    expect(deleteRequests).toBe(4);
+    expect(confirm).toHaveBeenCalledTimes(2);
+  }, 15_000);
 
   it("mantém controles de apresentação próprios e direciona a proteção global", async () => {
     const details = { available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }], cover_options: [], settings: { cover_photo_id: null, cover_preview_url: null, cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };

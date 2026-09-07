@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FacialPolicyPanel } from "./facial-policy-panel";
@@ -8,7 +8,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const index = { state: "empty", progress: { ready: 0, total: 12 }, queued: 0, processing: 0, failed: 0, unindexed: 12, failures: [], pagination: { page: 1, page_size: 50, total: 0 } };
+const index = { state: "empty", progress: { ready: 0, total: 12 }, queued: 0, processing: 0, failed: 0, waiting_previews: 0, unindexed: 12, failures: [], pagination: { page: 1, page_size: 50, total: 0 } };
 
 function response(value: object, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(value), { status }));
@@ -38,7 +38,44 @@ describe("painel facial administrativo", () => {
     render(<FacialPolicyPanel galleryId="gallery-1" />);
 
     expect(await screen.findByText("7 de 12 fotos prontas")).toBeTruthy();
-    expect(screen.getByText("1 processando · 0 na fila · 0 falhas")).toBeTruthy();
+    expect(screen.getByText("0 aguardando prévias · 12 aguardando indexação · 1 processando · 0 na fila · 0 falhas")).toBeTruthy();
+  });
+
+  it("mantém a barra atualizada enquanto fotos de qualquer pasta aguardam preparo", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => response({ ...index, state: "pending", progress: { ready: 0, total: 636 }, waiting_previews: 636, unindexed: 0 }))
+      .mockImplementation(() => response({ ...index, state: "ready", progress: { ready: 636, total: 636 }, waiting_previews: 0, unindexed: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FacialPolicyPanel galleryId="gallery-1" />);
+
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    expect(screen.getByText("0 de 636 fotos prontas")).toBeTruthy();
+    expect(screen.getByText("636 aguardando prévias", { exact: false })).toBeTruthy();
+    expect(screen.getByText("todas as fotos recebidas em todas as pastas", { exact: false })).toBeTruthy();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1800); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("636 de 636 fotos prontas")).toBeTruthy();
+  });
+
+  it("não mantém polling quando restam somente falhas terminais", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => response({
+      ...index,
+      state: "partial",
+      progress: { ready: 11, total: 12 },
+      failed: 1,
+      unindexed: 0,
+      failures: [{ job_id: "job-1", photo_id: "photo-123456789", category: "processing_unavailable" }],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FacialPolicyPanel galleryId="gallery-1" />);
+
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5400); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("expõe erro sanitizado e permite retentar somente falhas listadas", async () => {
@@ -63,5 +100,16 @@ describe("painel facial administrativo", () => {
     render(<FacialPolicyPanel galleryId="gallery-1" />);
     expect(await screen.findByText("Reconhecimento facial indisponível")).toBeTruthy();
     expect(screen.getByText("falha sintética")).toBeTruthy();
+  });
+
+  it("reconsulta quando um novo lote começa depois de o painel estar estável", async () => {
+    const fetchMock = vi.fn(() => response({ ...index, state: "ready", progress: { ready: 12, total: 12 }, unindexed: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<FacialPolicyPanel galleryId="gallery-1" refreshToken={0} />);
+
+    expect(await screen.findByText("12 de 12 fotos prontas")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    view.rerender(<FacialPolicyPanel galleryId="gallery-1" refreshToken={1} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

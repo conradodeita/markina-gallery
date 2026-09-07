@@ -1,6 +1,6 @@
 ## Context
 
-Consulte `proposal.md` e os resultados de `spike-private-facial-discovery`. O baseline YuNet + SFace obteve 14,36 fotos/s no Oracle ARM com 2 CPUs, 100% de cobertura no corpus sintético, zero falsos positivos e recall de 98,62% no limiar preliminar `0,750`. Esses números aprovam a base técnica, mas não autorizam dados reais nem tornam o limiar definitivo.
+Consulte `proposal.md` e os resultados de `spike-private-facial-discovery`. O baseline YuNet + SFace obteve 14,36 fotos/s no Oracle ARM com 2 CPUs, 100% de cobertura no corpus sintético, zero falsos positivos e recall de 98,62% no limiar preliminar `0,750`. Esses números aprovam a base técnica, mas não substituem a autorização operacional específica para cada lote real nem tornam o limiar definitivo.
 
 A aplicação já possui prévias protegidas, `MediaJob`, worker, Redis, auditoria, outboxes e seleção persistente. A change `consolidate-shared-private-galleries-and-progressive-sales` define Galeria pública como superfície principal da cliente e garante uma privada operacional por `Galeria pública + cliente`; esta change depende desses contratos e não pode reintroduzir propriedade exclusiva ou dois cards concorrentes.
 
@@ -22,7 +22,7 @@ O roadmap ainda descreve revisão do fotógrafo antes de liberar qualquer result
 - autenticar cliente por rosto, estimar idade, inferir atributos ou identificar uma pessoa como verdade;
 - treinar ou ajustar modelo automaticamente com fotos, seleções ou feedbacks;
 - criar grade anônima, pesquisar entre eventos ou ampliar acesso por resultado;
-- usar dados reais de crianças em homologação;
+- usar dados reais em homologação sem upload pelo administrador/fotógrafo, origem documentada, autorização humana explícita por execução, acesso autenticado, proteção criptográfica, retenção mínima e exclusão controlada;
 - introduzir vector database, serviço externo de reconhecimento ou pesos sem licença comercial;
 - habilitar produção, definir parecer jurídico ou substituir seleção manual.
 
@@ -38,7 +38,7 @@ Alternativa rejeitada: gravar fotos encontradas como origem `facial` na privada.
 
 `FACIAL_PROCESSING_ENABLED=false` será o kill switch de ambiente. Quando o operador habilitar o subsistema com todas as versões, chaves e modelos válidos, o backend criará ou reconciliará automaticamente uma `GalleryFacialPolicy` interna para cada Galeria pública ativa, com versão do aviso, referência da hipótese legal, política infantil, limiar e modelo. Somente uma política interna `active` e coerente permite novos jobs.
 
-O fotógrafo não declara autorização, não prepara política e não ativa o filtro por galeria na interface. O painel é informativo: progresso, falhas sanitizadas e retentativa. A autorização operacional para dados reais continua externa ao fluxo da galeria e bloqueada se a configuração de ambiente não declarar versões jurídicas aprovadas; testes e homologação usam somente configuração sintética adulta explícita.
+O fotógrafo não declara autorização, não prepara política e não ativa o filtro por galeria na interface. O painel é informativo: progresso, falhas sanitizadas e retentativa. A autorização operacional para dados reais continua externa ao fluxo da galeria e bloqueada se a configuração de ambiente não declarar versões jurídicas aprovadas. A homologação privada pode usar lote real de adultos e menores enviado pelo administrador/fotógrafo quando houver origem documentada, autorização humana explícita para a execução, acesso autenticado, criptografia, retenção mínima e exclusão controlada.
 
 Alternativa rejeitada: um checkbox ou declaração do fotógrafo por galeria. Isso transfere ao usuário uma decisão operacional que deve ser validada pelo ambiente e cria uma etapa sem valor na rotina de upload.
 
@@ -110,6 +110,8 @@ A resposta inclui rank e IDs, não score. O texto sempre fala em possibilidades.
 
 O frontend mostrará `Procurar por reconhecimento facial` como ação opcional, modal de consentimento destacado, upload mobile-first, progresso cancelável e mensagens orientativas. O fotógrafo verá indexação automática com `prontas/total`, fila, processamento, falhas e retentativa, sem botões de preparar, ativar, suspender ou revogar política. A cliente verá etapas e contagens reais do snapshot; não haverá percentual inventado quando uma etapa não expuser unidade mensurável.
 
+Na etapa 04 administrativa, o denominador facial abrangerá todas as fotos de conteúdo da Galeria pública desde a persistência do upload, e não apenas aquelas que já concluíram `admin_preview` e `client_preview`; ativos técnicos de capa ficam fora da contagem. A agregação permanece por Galeria pública, atravessa todas as pastas e expõe fotos ainda sem job como `aguardando preparo`. O painel continuará consultando enquanto houver itens sem job concluído, enfileirados ou em processamento; falhas terminais permanecem visíveis e não causam polling infinito quando forem o único trabalho restante.
+
 Resultados aparecem acima das pastas em `Melhores resultados encontrados` e `Outros resultados encontrados`, seguidos pelo acervo integral. Os três blocos reutilizam o mesmo card/favorito/seleção; uma foto repetida visualmente referencia o mesmo estado, e selecionar ou desmarcar atualiza o resumo e a cotação existentes.
 
 A UI não mantém referência em local storage, não renderiza score e não cria rota/card de “galeria facial”. Ela mantém apenas o `request_id` opaco necessário para retomar a consulta autorizada; perder esse identificador não concede nem revoga acesso. Depois da limpeza, mostra evidência de que a referência foi apagada. A alternativa manual permanece visível em todos os estados.
@@ -120,9 +122,9 @@ A configuração global de proteção visual preserva texto repetido e adiciona 
 
 ### 10. Consentimento da referência e tratamento de menores
 
-A indexação técnica do acervo é governada pela configuração operacional do ambiente e não pede declaração do fotógrafo dentro da galeria. O checkbox da cliente cobre somente o uso temporário da foto de referência para procurar possíveis correspondências naquela Galeria pública autenticada; o recibo é versionado, isolado por cliente e eliminado junto dos dados temporários conforme a retenção. Para referência declarada de criança, `minor_processing_mode` exige representação legal comprovada por mecanismo não biométrico definido e habilitado; até lá o backend recusa. O sistema não estima idade pela face.
+A indexação técnica do acervo é governada pela configuração operacional do ambiente e não pede declaração do fotógrafo dentro da galeria. O checkbox da cliente cobre somente o uso temporário da foto de referência para procurar possíveis correspondências naquela Galeria pública autenticada; o recibo é versionado, isolado por cliente e eliminado junto dos dados temporários conforme a retenção. Em homologação privada, uma referência de menor pode ser processada somente no lote e na execução autorizados, sob operação do administrador/fotógrafo e com origem documentada. Fora desse modo controlado, `minor_processing_mode` exige representação legal comprovada por mecanismo não biométrico definido e habilitado. O sistema não estima idade pela face.
 
-Homologação usa somente adultos sintéticos. Testes de fluxo infantil usam flags e fixtures sem imagem humana. RIPD e textos aprovados são artefatos operacionais obrigatórios antes de qualquer piloto com dado real.
+Homologação pode usar imagens sintéticas ou dados reais de adultos e menores no modo privado controlado. Para lote real, o registro operacional identifica o responsável pelo upload, a origem, a finalidade, a autorização, a quantidade, o identificador interno, a data e o prazo de exclusão sem incluir nomes, imagens ou biometria no Git. RIPD e textos aprovados continuam obrigatórios antes de produção ou de disponibilizar o fluxo infantil fora da operação controlada de homologação.
 
 ### 11. Retenção, revogação e auditoria
 
@@ -173,9 +175,11 @@ Cada verificação OTP concluída em contexto de galeria reutiliza o cadastro ú
 3. Introduzir criptografia, repositórios, jobs e face worker com modelos verificados; manter `FACIAL_PROCESSING_ENABLED=false`.
 4. Implementar APIs e frontend com indisponibilidade explícita quando a flag estiver desligada.
 5. Executar testes unitários, integração, contratos, concorrência, retenção, segurança e corpus sintético local; validar que busca não cria entidade comercial.
-6. Preparar inventário e runbook de homologação, incluindo CPU/memória/disco, modelos, secrets e rollback; nenhuma imagem real infantil.
-7. Em deploy futuramente autorizado, aplicar backup/migration, publicar com flag desligada e validar healthchecks/smoke sintético.
-8. Habilitar somente o piloto sintético adulto por operação autorizada; deixar o reconciliador automático criar políticas internas e observar fila e limpeza antes de ampliar.
+6. Preparar inventário e runbook de homologação, incluindo CPU/memória/disco, modelos, secrets, registro de origem/autorização do lote real e rollback.
+7. Em deploy futuramente autorizado, aplicar backup/migration, publicar com flag desligada e validar healthchecks e smoke sem dado pessoal antes da carga controlada.
+8. Habilitar o piloto privado por operação autorizada; admitir dados reais de adultos e menores somente no lote documentado, deixar o reconciliador automático criar políticas internas e observar fila, retenção e limpeza antes de ampliar.
+
+Para migrar uma homologação que ainda esteja executando o piloto legado fora de `FACIAL_HOMOLOG_PRIVATE_MODE`, o commit autorizado pode usar uma única transição `pause-legacy-for-private-upgrade`. O preflight exige flag facial verdadeira, `face-worker` ativo, marcador privado diferente de `true`, confirmação exata e checkout remoto limpo; então registra inventário, salva backup restrito do ambiente, muda somente o kill switch para `false`, para somente o worker facial, recria somente a API e valida os healthchecks. O deploy seguinte permanece com a feature desligada e não reativa o legado. Se a pausa falhar, o backup restaura a configuração e o worker; se o modo privado já estiver ativo, a transição recusa e preserva o gate de fechamento privado.
 
 Rollback: desligar o kill switch, cancelar novas operações, executar purge idempotente e retornar aplicação/face worker à versão saudável. As tabelas aditivas permanecem para auditoria e limpeza; nenhuma down migration destrutiva será executada.
 
@@ -185,4 +189,4 @@ O piloto sintético adulto está publicado em homologação no SHA funcional `07
 
 A primeira ativação do mesmo incremento, no run `34073273777`, detectou 502 após a recriação isolada da API: o Nginx preservou temporariamente o endereço interno do container anterior. O rollback restaurou a configuração facial e interrompeu o worker. O runbook operacional passou a validar `nginx -t` e recarregar o Nginx da própria Markina depois de recriar a API, sem recriar o proxy, publicar porta ou alcançar outro projeto; a repetição protegida confirmou o reparo.
 
-Antes da ativação, a limpeza autorizada removeu galerias, clientes, fotos, pedidos e mídia de teste após backup lógico exclusivo, preservando administrador, configurações e pareamento WhatsApp. Por isso o reconciliador automático encontrou inventário vazio e não processou imagens desconhecidas. A homologação permanece restrita a adultos sintéticos; imagens reais de crianças, fluxo infantil, ativação em produção, ensaio concorrente ARM de 500–1.000 JPEGs e revisão visual autenticada continuam fora deste aceite operacional.
+Antes da ativação, a limpeza autorizada removeu galerias, clientes, fotos, pedidos e mídia de teste após backup lógico exclusivo, preservando administrador, configurações e pareamento WhatsApp. Por isso o reconciliador automático encontrou inventário vazio e não processou imagens desconhecidas. Esse aceite histórico cobriu somente adultos sintéticos. A política revisada permite que o próximo ensaio concorrente ARM use 500–1.000 JPEGs reais de adultos e menores, desde que o lote e a execução cumpram o gate privado documentado; ativação em produção e revisão visual autenticada continuam fora do aceite já concluído.

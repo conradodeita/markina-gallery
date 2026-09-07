@@ -165,3 +165,84 @@ def test_stale_completed_version_does_not_count_as_ready() -> None:
 
     assert report.ready == 1
     assert report.unindexed == 1
+
+
+def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
+    db, parent, _photos, _jobs = _fixture()
+    second_folder = PhotoFolder(
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        name="Outra pasta",
+        status="preparing",
+        purpose="content",
+        position=1,
+    )
+    waiting_photo = PhotoAsset(
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        folder_id=second_folder.id,
+        filename="aguardando.jpg",
+        storage_key=f"{parent.id}/aguardando.jpg",
+        available=False,
+    )
+    cover_folder = PhotoFolder(
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        name="Capas",
+        status="preparing",
+        purpose="cover_assets",
+        position=2,
+    )
+    cover_photo = PhotoAsset(
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        folder_id=cover_folder.id,
+        filename="capa.jpg",
+        storage_key=f"covers/{parent.id}/capa.jpg",
+        available=False,
+    )
+    db.add_all((second_folder, waiting_photo, cover_folder, cover_photo))
+    db.commit()
+
+    report = gallery_index_status(db, parent_gallery_id=parent.id)
+
+    assert report.total == 7
+    assert report.ready == 1
+    assert report.waiting_previews == 1
+    assert report.unindexed == 1
+
+
+def test_enabled_environment_reports_pending_before_automatic_policy_exists() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    parent = ParentGallery(id=uuid4(), name="Evento novo")
+    folder = PhotoFolder(
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        name="Uploads",
+        status="preparing",
+        purpose="content",
+    )
+    photo = PhotoAsset(
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        folder_id=folder.id,
+        filename="recebida.jpg",
+        storage_key=f"{parent.id}/recebida.jpg",
+        available=False,
+    )
+    db.add_all((parent, folder, photo))
+    db.commit()
+
+    report = gallery_index_status(
+        db,
+        parent_gallery_id=parent.id,
+        processing_enabled=True,
+    )
+
+    assert report.state == "pending"
+    assert report.total == 1
+    assert report.ready == 0
+    assert report.waiting_previews == 1
+    assert report.unindexed == 0

@@ -30,7 +30,7 @@
 
 - Produto mobile-first; painel administrativo objetivo para um fotógrafo no MVP.
 - Não implemente grade pública de evento coletivo, processamento/armazenamento de RAWs, prévias servidas do Google Drive ou criação automatizada de álbuns no Google Photos.
-- Busca facial só pode avançar após spike validado; dados reais de crianças nunca são usados em homologação.
+- Busca facial pode ser validada em homologação privada com dados reais de adultos e menores quando o lote for enviado pelo administrador/fotógrafo e houver autorização humana explícita por execução, origem e finalidade documentadas, acesso autenticado, proteção criptográfica, retenção mínima e exclusão controlada. Essa autorização não habilita produção nem dispensa os gates próprios do fluxo infantil fora da homologação controlada.
 - Preserve privacidade: acesso de cliente por OTP, links de convite seguros e auditabilidade para ações críticas e dados biométricos.
 - A máquina local e o Oracle compartilham infraestrutura com outros projetos. Não altere recursos de terceiros (containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados).
 - Nunca execute `docker system prune`, prunes equivalentes, nem `docker compose down` sem explicitar projeto e arquivo: `-p markina-gallery -f docker/docker-compose.yml`.

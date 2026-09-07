@@ -37,6 +37,27 @@ type DetailsData = { available: boolean; capabilities: string[]; font_options: F
 type VisualPreview = { folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
 type UnlinkPreview = { operation_type: "unlink_client"; target: { parent_gallery_id: string; parent_gallery_name: string; client_id: string; client_name: string }; inventory: { remove: Record<string, number>; preserve: Record<string, number | Record<string, number>> }; consequences: { gallery_relationship_removed: boolean; private_gallery_removed: boolean; client_preserved: boolean; commercial_history_preserved: boolean; other_gallery_relationships_preserved: boolean; restoration_available_after_start: boolean } };
 type LifecycleOperation = { operation_id: string; status: string; status_url: string; last_error: string | null; progress: { label: string; percent: number; failed_step: string | null }; actions: { can_cancel: boolean; can_retry: boolean; should_poll: boolean; poll_after_ms: number | null } };
+type PhotoBulkDeleteResult = { deleted_ids?: string[]; blocked_ids?: string[]; missing_ids?: string[] };
+
+const PHOTO_BULK_DELETE_BATCH_SIZE = 100;
+
+export function photoBulkDeleteBatches(photoIds: string[]) {
+  const uniquePhotoIds = [...new Set(photoIds)];
+  return Array.from(
+    { length: Math.ceil(uniquePhotoIds.length / PHOTO_BULK_DELETE_BATCH_SIZE) },
+    (_, index) => uniquePhotoIds.slice(
+      index * PHOTO_BULK_DELETE_BATCH_SIZE,
+      (index + 1) * PHOTO_BULK_DELETE_BATCH_SIZE,
+    ),
+  );
+}
+
+function bulkDeleteMessage(result: Required<PhotoBulkDeleteResult>) {
+  const parts = [`${result.deleted_ids.length} foto(s) excluída(s)`];
+  if (result.blocked_ids.length) parts.push(`${result.blocked_ids.length} protegida(s) por regra comercial`);
+  if (result.missing_ids.length) parts.push(`${result.missing_ids.length} já ausente(s)`);
+  return `${parts.join("; ")}.`;
+}
 
 const stepOrder: StepId[] = ["ajustes", "vendas", "detalhes", "imagens", "clientes"];
 function folderPublicationClass(folder: Folder) {
@@ -98,6 +119,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [details, setDetails] = useState<DetailsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
   const [uploadState, setUploadState] = useState<{ phase: "idle" | "uploading" | "success" | "error"; current: number; total: number; filename?: string }>({ phase: "idle", current: 0, total: 0 });
   const [failed, setFailed] = useState(false);
   const [visualPreview, setVisualPreview] = useState<VisualPreview | null>(null);
@@ -111,6 +133,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [privateActionBusy, setPrivateActionBusy] = useState(false);
   const [privateActionError, setPrivateActionError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [facialRefresh, setFacialRefresh] = useState(0);
   const previewDialog = useRef<HTMLDivElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const coverUploadInput = useRef<HTMLInputElement>(null);
@@ -317,28 +340,48 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       setExpandedPhoto(null);
       await inspectFolder(openFolderId);
       setRefresh((value) => value + 1);
+      setFacialRefresh((value) => value + 1);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível excluir a foto.");
     }
   }
 
   async function deleteSelectedPhotos() {
-    const eligible = photos.filter((photo) => selectedPhotoIds.includes(photo.id) && photo.can_delete);
+    if (bulkDeleteBusy) return;
+    const batches = photoBulkDeleteBatches(selectedPhotoIds);
+    const uniquePhotoIds = batches.flat();
+    const selectedSet = new Set(uniquePhotoIds);
+    const eligible = photos.filter((photo) => selectedSet.has(photo.id) && photo.can_delete);
     if (!eligible.length) return;
     if (!window.confirm(`Excluir ${eligible.length} foto(s) selecionada(s)? Esta ação não pode ser desfeita.`)) return;
+    const result: Required<PhotoBulkDeleteResult> = { deleted_ids: [], blocked_ids: [], missing_ids: [] };
+    let completedBatches = 0;
+    let finalMessage = "";
+    setBulkDeleteBusy(true);
     try {
-      const result = await jsonRequest(`/api/admin/photo-folders/${openFolderId}/photos`, {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ photo_ids: selectedPhotoIds }),
-      });
-      const blockedCount = result.blocked_ids?.length ?? 0;
-      setMessage(blockedCount ? `${result.deleted_ids.length} foto(s) excluída(s); ${blockedCount} protegida(s) por compra confirmada.` : `${result.deleted_ids.length} foto(s) excluída(s).`);
-      setSelectedPhotoIds([]);
+      for (const batch of batches) {
+        const batchResult = await jsonRequest(`/api/admin/photo-folders/${openFolderId}/photos`, {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ photo_ids: batch }),
+        }) as PhotoBulkDeleteResult;
+        result.deleted_ids.push(...(Array.isArray(batchResult?.deleted_ids) ? batchResult.deleted_ids : []));
+        result.blocked_ids.push(...(Array.isArray(batchResult?.blocked_ids) ? batchResult.blocked_ids : []));
+        result.missing_ids.push(...(Array.isArray(batchResult?.missing_ids) ? batchResult.missing_ids : []));
+        completedBatches += 1;
+      }
+      finalMessage = bulkDeleteMessage(result);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Não foi possível excluir as fotos.";
+      finalMessage = completedBatches
+        ? `Resultado parcial: ${bulkDeleteMessage(result)} A exclusão não foi concluída: ${reason}`
+        : reason;
+    } finally {
       await inspectFolder(openFolderId);
       setRefresh((value) => value + 1);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível excluir as fotos.");
+      setFacialRefresh((value) => value + 1);
+      setMessage(finalMessage);
+      setBulkDeleteBusy(false);
     }
   }
 
@@ -599,6 +642,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             storage_key: `${sourceId}/${folderId}/${Date.now()}-${index}-${safeName}`,
           }),
         });
+        if (index === 0) setFacialRefresh((value) => value + 1);
         await jsonRequest(`/api/admin/photo-assets/${photo.id}/source`, {
           method: "PUT",
           headers: { "content-type": "image/jpeg" },
@@ -817,7 +861,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         <section className="gallery-editor-panel">
           <div className="section-heading"><div><p className="eyebrow">Etapa 4</p><h2>Imagens e pastas</h2></div><StatusBadge>{folders.length} pasta(s)</StatusBadge></div>
           <p className="gallery-scope-note">Crie pastas e revise os JPEGs. Cada foto fica disponível automaticamente assim que sua prévia protegida termina de processar.</p>
-          <FacialPolicyPanel galleryId={sourceId} />
+          <FacialPolicyPanel galleryId={sourceId} refreshToken={facialRefresh} />
           <fieldset className="gallery-organization-panel">
             <legend>Organização das pastas</legend>
             <label>Exibição das pastas<select aria-label="Exibição das pastas" value={visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode} onChange={saveFolderOrganization}><option value="individual">Pastas lado a lado</option><option value="sequential">Sequência cronológica</option></select></label>
@@ -830,7 +874,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <div className="gallery-folder-workspace">
               <div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Disponível" : "Preparando prévias"}</StatusBadge></div>
               {uploadState.phase !== "idle" ? <div className={`upload-status upload-status--${uploadState.phase}`} role="status"><strong>{uploadState.phase === "uploading" ? `Enviando foto ${uploadState.current} de ${uploadState.total}` : uploadState.phase === "success" ? "Upload concluído" : "Falha no upload"}</strong>{uploadState.filename ? <span>{uploadState.filename}</span> : null}{uploadState.phase === "uploading" ? <progress value={uploadState.current} max={uploadState.total} /> : null}</div> : null}
-              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={!selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>Excluir selecionadas</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={!photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={!photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={!photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}
+              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={bulkDeleteBusy || !photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}
               <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
             </div>
           ) : null}

@@ -132,6 +132,14 @@ def main() -> None:
         repository=repository,
     )
     while worker.processed_jobs < settings.max_jobs_per_process:
+        if (
+            settings.private_homologation_enabled
+            and not settings.private_homologation_active
+        ):
+            worker.unload()
+            raise FacialConfigurationError(
+                "A janela privada de homologação expirou; o worker foi interrompido."
+            )
         worker.run_cycle()
         try:
             messenger = whatsapp_provider_from_environment()

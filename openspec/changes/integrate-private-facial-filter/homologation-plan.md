@@ -1,4 +1,4 @@
-# Inventário e roteiro de homologação sintética
+# Inventário e roteiro de homologação privada controlada
 
 ## Inventário zero-impact proposto
 
@@ -19,20 +19,22 @@ Nenhum container, rede, volume, proxy, firewall, DNS, certificado ou secret de t
 3. executar build e migration autorizados com flag desligada;
 4. validar `/healthz` e `/api/health`, login do fotógrafo, login OTP e seleção manual antes de tocar no filtro;
 5. confirmar migration no head e ausência do `face-worker`/portas novas no profile padrão;
-6. com autorização operacional separada, habilitar a configuração sintética e iniciar o profile `facial`, verificando healthcheck/uso ocioso;
-7. criar uma Galeria pública exclusivamente sintética, com 500–1.000 JPEGs de adultos ficcionais, e confirmar que a política interna e o backfill nascem automaticamente uma única vez;
+6. com autorização operacional separada e registro do lote, habilitar a configuração privada de homologação e iniciar o profile `facial`, verificando healthcheck/uso ocioso;
+7. criar uma Galeria pública de teste autenticada, com 500–1.000 JPEGs sintéticos ou reais de adultos e menores enviados pelo administrador/fotógrafo, e confirmar que a política interna e o backfill nascem automaticamente uma única vez;
 8. observar prévias simultâneas, fila, prontas/total, CPU, RSS, disco, backpressure, carga/descarga do modelo e ausência de impacto no worker de mídia;
 9. executar consentimento, `ready|no_face|multiple_faces|low_quality|no_candidates|failed`, fechamento/retomada, seleção, cotação, cancelamento, expiração e revogação;
 10. confirmar via prova de limpeza que referências, candidatas, outbox pendente e embeddings foram eliminados, enquanto fotos, privada, seleções e histórico permaneceram;
-11. revisar UI móvel/desktop e acessibilidade com imagens sintéticas adultas;
+11. revisar UI móvel/desktop e acessibilidade com imagens pertencentes ao lote autorizado;
 12. desligar a flag/profile por operação controlada e registrar resultados, métricas e rollback.
 
-Falha de healthcheck, isolamento, retenção, backpressure, regressão de mídia/seleção manual ou recurso acima do limite interrompe apenas o piloto facial e aciona rollback. Nenhum dado real ou infantil poderá ser introduzido.
+O ensaio do item 8 usa `scripts/benchmark-homolog-facial.py`: primeiro `snapshot`, depois `monitor` iniciado antes do upload e limitado ao SHA publicado. O observador exige `BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG` e confere identificador do lote, referência da autorização, quantidade esperada e declaração sobre menores contra o gate ativo. O modo monitor aceita 30–14.400 segundos e registra JSONL agregado para um arquivo temporário fora do Git. A execução SHALL ser interrompida se a quantidade divergir do lote autorizado ou se faltarem origem documentada, finalidade, responsável, retenção ou autorização humana explícita. O relatório final consolida tempo ativo e throughput facial, estados das filas de mídia/facial, derivados, rostos agregados, picos de CPU/memória/PIDs, delta de disco e health dos serviços, sem identificador de pessoa, título, nome de arquivo, telefone, imagem, embedding ou score.
 
-## Ativação sintética auditável
+Falha de healthcheck, isolamento, retenção, backpressure, regressão de mídia/seleção manual ou recurso acima do limite interrompe apenas o piloto facial e aciona rollback. Nenhum dado fora do lote registrado e autorizado poderá ser introduzido.
 
-O script `scripts/manage-homolog-facial.sh` oferece inventário e ativação somente no checkout fixo `/opt/markina-gallery`, exige SHA integral, repositório esperado, host ARM64 e o token explícito `ENABLE_SYNTHETIC_ADULT_FACIAL_HOMOLOG`. O job `activate-synthetic-facial-homolog` somente executa depois do deploy verde quando o commit autorizado contém o trailer `Homolog-Facial: activate-synthetic-adults`.
+## Ativação privada auditável
 
-Antes da mutação, o script registra SHA, arquitetura, CPUs, memória, disco, migration, containers, portas e presença dos gates sem revelar valores secretos. A ativação faz backup restrito de `docker/.env.homolog`, gera ou preserva a chave AEAD no próprio host, fixa versões identificadas como exclusivas da homologação sintética, mantém menores desabilitados, constrói o runtime ARM e recria somente `api` e `face-worker`. O worker continua sem porta, concorrência 1, limite de 1 CPU e 768 MiB. Falha de configuração, build, healthcheck ou porta restaura o arquivo anterior, interrompe somente o worker facial e recria somente a API.
+O script `scripts/manage-homolog-facial.sh` oferece inventário, ativação e fechamento somente no checkout fixo `/opt/markina-gallery`, exige SHA integral, repositório esperado e host ARM64 para ativar. O workflow manual `.github/workflows/facial-homolog.yml` usa confirmações explícitas da homologação privada, vincula a execução ao registro operacional do lote e exige aprovação humana do ambiente `homolog`; não há ativação por push ou trailer de commit.
 
-Enquanto o piloto estiver ativo, o deploy comum SHALL falhar no preflight antes de alterar código ou banco. A política da galeria deve ser revogada e a prova de limpeza confirmada antes de desligar o profile e liberar um novo deploy.
+Antes da mutação, o script registra SHA, arquitetura, CPUs, memória, disco, migration, containers, portas, identificador não pessoal do lote e presença dos gates sem revelar valores secretos ou dados das pessoas. A ativação faz backup restrito de `docker/.env.homolog`, gera ou preserva a chave AEAD no próprio host, fixa versões identificadas como exclusivas da homologação privada e habilita o tratamento de menores somente durante execução que o autorize expressamente. O runtime ARM recria somente `api` e `face-worker`; o worker continua sem porta, concorrência 1, limite de 1 CPU e 768 MiB. Falha de configuração, build, healthcheck ou porta restaura o arquivo anterior, interrompe somente o worker facial e recria somente a API.
+
+Enquanto o piloto estiver ativo, o deploy comum SHALL falhar no preflight antes de alterar código ou banco. A política da galeria deve ser revogada, a prova de limpeza confirmada e qualquer gate temporário de menores novamente desabilitado antes de desligar o profile e liberar um novo deploy.

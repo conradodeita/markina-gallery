@@ -15,7 +15,7 @@ const stateLabels: Record<FacialIndexStatus["state"], string> = {
   failed: "Com falhas",
 };
 
-export function FacialPolicyPanel({ galleryId }: { galleryId: string }) {
+export function FacialPolicyPanel({ galleryId, refreshToken = 0 }: { galleryId: string; refreshToken?: number }) {
   const [index, setIndex] = useState<FacialIndexStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -35,10 +35,14 @@ export function FacialPolicyPanel({ galleryId }: { galleryId: string }) {
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
-  }, [load]);
+  }, [load, refreshToken]);
 
   useEffect(() => {
-    if (!index || (!index.queued && !index.processing)) return;
+    if (
+      !index
+      || index.state === "disabled"
+      || (!index.waiting_previews && !index.unindexed && !index.queued && !index.processing)
+    ) return;
     const timer = window.setTimeout(() => void load(), 1800);
     return () => window.clearTimeout(timer);
   }, [index, load]);
@@ -69,12 +73,13 @@ export function FacialPolicyPanel({ galleryId }: { galleryId: string }) {
         <StatusBadge tone={index.state === "ready" ? "success" : index.state === "failed" || index.state === "partial" ? "warning" : "neutral"}>{stateLabels[index.state]}</StatusBadge>
       </header>
       <p>Após o upload, as prévias limpas são indexadas uma única vez em segundo plano. Não é necessário preparar ou ativar esta galeria.</p>
+      <p className="field-hint">A barra reúne todas as fotos recebidas em todas as pastas desta galeria desde o início do preparo.</p>
       <p className="field-hint">A cliente decide se deseja usar uma foto temporária como filtro e confirma o consentimento no próprio acesso. A seleção manual continua disponível.</p>
       {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
       <div className="facial-index-progress" aria-live="polite">
         <div><span>Índice da galeria</span><strong>{progress.ready} de {progress.total} fotos prontas</strong></div>
         <progress value={progress.ready} max={Math.max(progress.total, 1)} aria-label="Progresso da indexação facial" />
-        <small>{index.processing ?? 0} processando · {index.queued ?? 0} na fila · {index.failed ?? 0} falhas</small>
+        <small>{index.waiting_previews ?? 0} aguardando prévias · {index.unindexed ?? 0} aguardando indexação · {index.processing ?? 0} processando · {index.queued ?? 0} na fila · {index.failed ?? 0} falhas</small>
       </div>
       {failures.length ? <div className="facial-index-failures"><strong>Falhas técnicas</strong><ul>{failures.map((failure) => <li key={failure.job_id}>Foto {failure.photo_id.slice(0, 8)} · {failure.category}</li>)}</ul></div> : null}
       {failures.length ? <div className="gallery-access-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void retryFailures()}>{busy ? "Tentando novamente…" : "Tentar falhas novamente"}</MarkinaButton></div> : null}

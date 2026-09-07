@@ -6,8 +6,10 @@ import base64
 import binascii
 import json
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 
@@ -16,6 +18,7 @@ from app.facial.model_assets import load_manifest, verify_models
 DEFAULT_MANIFEST_PATH = (
     Path(__file__).resolve().parents[2] / "facial-assets" / "model-manifest.json"
 )
+PRIVATE_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 
 
 class FacialConfigurationError(RuntimeError):
@@ -44,6 +47,19 @@ def _integer(name: str, default: int, *, minimum: int, maximum: int) -> int:
 
 def _text(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def _utc_datetime(name: str) -> datetime | None:
+    raw = _text(name)
+    if not raw:
+        return None
+    try:
+        value = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise FacialConfigurationError(f"{name} deve ser um instante ISO-8601 UTC.") from exc
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise FacialConfigurationError(f"{name} deve ser um instante ISO-8601 UTC.")
+    return value.astimezone(UTC)
 
 
 def _keys() -> Mapping[str, bytes]:
@@ -107,6 +123,15 @@ class FacialSettings:
     queue_block_seconds: int
     max_reference_bytes: int
     max_reference_pixels: int
+    private_homologation_enabled: bool = False
+    homolog_batch_id: str = ""
+    homolog_origin_ref: str = ""
+    homolog_authorization_ref: str = ""
+    homolog_operator_ref: str = ""
+    homolog_expected_count: int = 0
+    homolog_retention_hours: int = 0
+    homolog_contains_minors: bool = False
+    homolog_window_expires_at: datetime | None = None
 
     @property
     def active_key(self) -> bytes:
@@ -116,6 +141,26 @@ class FacialSettings:
             raise FacialConfigurationError(
                 "A chave AEAD facial ativa não está disponível."
             ) from exc
+
+    @property
+    def private_homologation_active(self) -> bool:
+        expiry = self.homolog_window_expires_at
+        references = (
+            self.homolog_batch_id,
+            self.homolog_origin_ref,
+            self.homolog_authorization_ref,
+            self.homolog_operator_ref,
+        )
+        return bool(
+            self.private_homologation_enabled
+            and self.environment in {"homolog", "staging"}
+            and all(PRIVATE_REFERENCE_RE.fullmatch(value) for value in references)
+            and 500 <= self.homolog_expected_count <= 1000
+            and 1 <= self.homolog_retention_hours <= 72
+            and expiry is not None
+            and expiry > datetime.now(UTC)
+            and self.homolog_contains_minors == self.minor_search_enabled
+        )
 
 
 def facial_settings_from_environment(
@@ -176,6 +221,19 @@ def facial_settings_from_environment(
         max_reference_pixels=_integer(
             "FACIAL_MAX_REFERENCE_PIXELS", 25_000_000, minimum=1_000_000, maximum=40_000_000
         ),
+        private_homologation_enabled=_boolean("FACIAL_HOMOLOG_PRIVATE_MODE"),
+        homolog_batch_id=_text("FACIAL_HOMOLOG_BATCH_ID"),
+        homolog_origin_ref=_text("FACIAL_HOMOLOG_ORIGIN_REF"),
+        homolog_authorization_ref=_text("FACIAL_HOMOLOG_AUTHORIZATION_REF"),
+        homolog_operator_ref=_text("FACIAL_HOMOLOG_OPERATOR_REF"),
+        homolog_expected_count=_integer(
+            "FACIAL_HOMOLOG_EXPECTED_COUNT", 0, minimum=0, maximum=1000
+        ),
+        homolog_retention_hours=_integer(
+            "FACIAL_HOMOLOG_RETENTION_HOURS", 0, minimum=0, maximum=72
+        ),
+        homolog_contains_minors=_boolean("FACIAL_HOMOLOG_CONTAINS_MINORS"),
+        homolog_window_expires_at=_utc_datetime("FACIAL_HOMOLOG_WINDOW_EXPIRES_AT"),
     )
     if not settings.queue_name or len(settings.queue_name) > 120:
         raise FacialConfigurationError("FACIAL_QUEUE_NAME é inválida.")
@@ -212,9 +270,13 @@ def _validate_enabled(
         raise FacialConfigurationError(
             "A versão configurada dos modelos faciais diverge do manifesto."
         )
-    if settings.minor_search_enabled:
+    if settings.private_homologation_enabled and not settings.private_homologation_active:
         raise FacialConfigurationError(
-            "A busca facial infantil permanece bloqueada até aprovação humana e jurídica."
+            "A autorização privada de homologação está incompleta, divergente ou expirada."
+        )
+    if settings.minor_search_enabled and not settings.private_homologation_active:
+        raise FacialConfigurationError(
+            "A busca facial infantil exige homologação privada autorizada e vigente."
         )
     _ = settings.active_key
     if verify_runtime_assets:

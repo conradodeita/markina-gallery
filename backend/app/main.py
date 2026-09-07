@@ -3006,11 +3006,18 @@ def admin_parent_gallery_facial_index(
     require_admin(request)
     _parent_gallery_or_404(db, parent_gallery_id)
     try:
+        try:
+            processing_enabled = facial_settings_from_environment(
+                verify_runtime_assets=False
+            ).enabled
+        except FacialConfigurationError:
+            processing_enabled = False
         report = gallery_index_status(
             db,
             parent_gallery_id=parent_gallery_id,
             page=page,
             page_size=page_size,
+            processing_enabled=processing_enabled,
         )
     except FacialStatusError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3020,6 +3027,7 @@ def admin_parent_gallery_facial_index(
         "queued": report.queued,
         "processing": report.processing,
         "failed": report.failed,
+        "waiting_previews": report.waiting_previews,
         "unindexed": report.unindexed,
         "failures": list(report.failures),
         "pagination": {

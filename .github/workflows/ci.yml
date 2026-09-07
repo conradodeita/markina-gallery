@@ -108,8 +108,8 @@ jobs:
           printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
           printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
           chmod 600 "$key_file" "$known_hosts_file"
-          if git log -1 --pretty=%B | grep -Fxq 'Homolog-Facial: upgrade-synthetic'; then
-            pause_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode pause-synthetic --confirmation %q' "$GITHUB_REPOSITORY" 'PAUSE_SYNTHETIC_FACIAL_FOR_DEPLOY')"
+          if git log -1 --pretty=%B | grep -Fxq 'Homolog-Facial: pause-legacy-for-private-upgrade'; then
+            pause_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode pause-legacy-for-private-upgrade --confirmation %q' "$GITHUB_REPOSITORY" 'PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE')"
             ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$pause_command" < scripts/manage-homolog-facial.sh
           fi
           remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$GITHUB_SHA")"
@@ -122,45 +122,3 @@ jobs:
           fi
           maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
           ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$maintenance_command" < scripts/maintain-homolog-data.sh
-
-  activate-synthetic-facial-homolog:
-    if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/develop' &&
-      (contains(github.event.head_commit.message, 'Homolog-Facial: activate-synthetic-adults') ||
-      contains(github.event.head_commit.message, 'Homolog-Facial: upgrade-synthetic'))
-    needs: [deploy-homolog]
-    runs-on: ubuntu-latest
-    environment: homolog
-    permissions:
-      contents: read
-    env:
-      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
-      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
-      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
-      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
-      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Validar política da ativação facial
-        run: bash scripts/test_deploy_homolog.sh
-      - name: Ativar piloto facial sintético adulto
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS; do
-            if [[ -z "${!required}" ]]; then
-              echo "Secret obrigatório ausente: $required" >&2
-              exit 1
-            fi
-          done
-          key_file="$(mktemp)"
-          known_hosts_file="$(mktemp)"
-          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
-          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
-          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
-          chmod 600 "$key_file" "$known_hosts_file"
-          remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode activate-synthetic --confirmation %q --sha %q' "$GITHUB_REPOSITORY" 'ENABLE_SYNTHETIC_ADULT_FACIAL_HOMOLOG' "$GITHUB_SHA")"
-          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/manage-homolog-facial.sh

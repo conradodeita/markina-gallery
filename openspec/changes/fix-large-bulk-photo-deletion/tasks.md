@@ -1,0 +1,15 @@
+## 1. Correção da exclusão em massa
+
+- [x] 1.1 Particionar no editor uma seleção deduplicada em lotes sequenciais de no máximo 100 IDs, manter uma única confirmação e consolidar removidas, bloqueadas e ausentes; verificar com teste unitário que 2.001 fotos geram 21 lotes e com teste de interface que múltiplos lotes resultam em uma única confirmação e mensagem consolidada. Evidência: `npm test -- gallery-editor.test.tsx` aprovou 46/46 testes em 2026-09-07; os casos novos comprovam deduplicação de 2.001 IDs em 21 lotes de até 100 e três requisições sequenciais com uma confirmação e totais consolidados.
+- [x] 1.2 Tratar falha intermediária sem ocultar lotes já concluídos, recarregando a pasta e informando o resultado parcial; verificar com teste de interface que uma falha posterior preserva a contagem confirmada e permite nova tentativa a partir do estado atualizado. Evidência: o mesmo comando aprovou o cenário que confirma 200 remoções, falha no terceiro lote, recarrega a única foto remanescente e conclui uma segunda tentativa segura.
+
+## 2. Validação local
+
+- [x] 2.1 Executar os testes focados do editor, lint e typecheck do frontend; corrigir somente regressões relacionadas e registrar os comandos e resultados nesta task. Evidência em 2026-09-07: `npm test -- gallery-editor.test.tsx` aprovou 46/46 e a suíte final isolada `npm test` aprovou 160/160 em 28 arquivos; `npx tsc --noEmit` e `npm run build` passaram, com 19 páginas geradas. ESLint dos dois arquivos alterados passou com zero erros e cinco avisos preexistentes de `<img>`; `npx eslint . --ignore-pattern .pytest_cache` passou com zero erros e 22 avisos preexistentes. O script `npm run lint` sem exclusão não analisou o código por `EPERM` no cache preexistente `frontend/.pytest_cache`, que foi preservado.
+- [x] 2.2 Executar `openspec validate fix-large-bulk-photo-deletion --strict` e revisar o diff da change e do frontend, confirmando ausência de migration, segredo, dado real ou alteração não relacionada. Evidência em 2026-09-07: a validação estrita aprovou a change; `git diff --check` passou apenas com avisos CRLF; a revisão limitou a implementação aos dois arquivos do editor/teste e aos artefatos desta change. A varredura confirmou somente menções documentais às palavras de controle, sem migration, segredo, credencial, dado real ou operação em homologação.
+
+## 3. Validação controlada em homologação
+
+- [ ] 3.1 Após publicação do SHA autorizado e nova autorização humana explícita para o alvo destrutivo exato, apresentar inventário da Galeria pública/pasta e validar uma exclusão superior a 2.000 fotos com uma única confirmação; registrar quantidades removidas, bloqueadas, ausentes e remanescentes sem afetar recursos de outros projetos.
+
+Bloqueio atual: a implementação ainda não possui SHA publicado em homologação e esta execução não recebeu inventário nem autorização destrutiva específica para uma Galeria pública/pasta com mais de 2.000 fotos. As 637 fotos mencionadas anteriormente não atendem ao volume mínimo desta validação. Nenhum dado de homologação foi alterado.
