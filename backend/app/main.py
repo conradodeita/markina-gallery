@@ -117,6 +117,14 @@ from app.client_identity import (
     resolve_client_by_phone,
     verify_canonical_phone,
 )
+from app.client_lifecycle import (
+    ClientDeletionBlocked,
+    ClientLifecycleError,
+    delete_client_operational_graph,
+    deletion_inventory,
+    list_client_directory,
+    remove_facial_reference_files,
+)
 from app.commercial_removal import (
     CommercialRemovalBlocked,
     CommercialRemovalPreparationFailed,
@@ -678,8 +686,8 @@ def db_session():
 DatabaseSession = Annotated[Session, Depends(db_session)]
 
 
-def require_admin(request: Request) -> None:
-    current_session(request, Role.ADMIN)
+def require_admin(request: Request) -> AuthSession:
+    return current_session(request, Role.ADMIN)
 
 
 def require_same_origin(request: Request) -> None:
@@ -2167,23 +2175,15 @@ def admin_validation_summary(
 def admin_clients(
     request: Request,
     query: str | None = Query(default=None, max_length=200),
+    cursor: str | None = Query(default=None, max_length=400),
+    limit: int = Query(default=30, ge=1, le=100),
     db: Session = Depends(db_session),
-) -> dict[str, list[dict[str, str]]]:
+) -> dict[str, object]:
     require_admin(request)
-    statement = select(Client).order_by(func.lower(Client.full_name), Client.id)
-    if query:
-        normalized = query.strip()
-        statement = statement.where(
-            func.lower(Client.full_name).contains(normalized.casefold())
-            | Client.phone_e164.contains(normalized)
-        )
-    clients = db.scalars(statement)
-    return {
-        "clients": [
-            {"id": str(item.id), "name": item.full_name, "phone": item.phone_e164}
-            for item in clients
-        ]
-    }
+    try:
+        return list_client_directory(db, query=query, cursor=cursor, limit=limit)
+    except ClientLifecycleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/admin/clients", status_code=status.HTTP_201_CREATED)
@@ -2216,75 +2216,6 @@ def create_client(
     return {"id": str(client.id)}
 
 
-def client_deletion_inventory(db: Session, client: Client) -> dict[str, object]:
-    """Conta referências que impedem apagar uma identidade de cliente."""
-
-    direct_models = {
-        "gallery_accesses": GalleryAccess,
-        "public_gallery_registrations": ParentGalleryRegistration,
-        "private_galleries_owned": DerivedGallery,
-        "private_gallery_memberships": DerivedGalleryMembership,
-        "gallery_capabilities": GalleryAccessCapability,
-        "selections": PhotoSelection,
-        "favorites": PhotoFavorite,
-        "views": PhotoView,
-        "comments": PhotoComment,
-        "orders": SaleOrder,
-        "payment_communications": PaymentCommunication,
-        "membership_notifications": GalleryMembershipNotificationOutbox,
-    }
-    blockers = {
-        name: int(
-            db.scalar(select(func.count()).select_from(model).where(model.client_id == client.id))
-            or 0
-        )
-        for name, model in direct_models.items()
-    }
-    blockers["sessions"] = int(
-        db.scalar(
-            select(func.count())
-            .select_from(AuthSession)
-            .where(AuthSession.role == Role.CLIENT.value, AuthSession.subject_id == client.id)
-        )
-        or 0
-    )
-    phones = list(
-        db.scalars(select(ClientPhone.phone_e164).where(ClientPhone.client_id == client.id))
-    )
-    fingerprints = [pii_fingerprint(phone) for phone in phones]
-    blockers["otp_challenges"] = int(
-        db.scalar(
-            select(func.count()).select_from(AuthChallenge).where(
-                AuthChallenge.kind == "client_otp",
-                (AuthChallenge.subject.in_(phones) if phones else False)
-                | (AuthChallenge.subject_fingerprint.in_(fingerprints) if fingerprints else False),
-            )
-        )
-        or 0
-    )
-    blockers["whatsapp_deliveries"] = int(
-        db.scalar(
-            select(func.count()).select_from(WhatsAppDelivery).where(
-                (WhatsAppDelivery.recipient_phone.in_(phones) if phones else False)
-                | (
-                    WhatsAppDelivery.recipient_fingerprint.in_(fingerprints)
-                    if fingerprints
-                    else False
-                ),
-            )
-        )
-        or 0
-    )
-    blocking = {name: quantity for name, quantity in blockers.items() if quantity}
-    return {
-        "client_id": str(client.id),
-        "blockers": blockers,
-        "blocking": blocking,
-        "can_delete": not blocking,
-        "removable": {"client": 1, "phone_records": len(phones)},
-    }
-
-
 @app.patch("/admin/clients/{client_id}")
 def update_client_name(
     client_id: UUID,
@@ -2310,34 +2241,41 @@ def get_client_deletion_inventory(
     client = db.get(Client, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Cliente não encontrada.")
-    return client_deletion_inventory(db, client)
+    return deletion_inventory(db, client)
 
 
-@app.delete("/admin/clients/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/admin/clients/{client_id}")
 def delete_client(
     client_id: UUID, request: Request, db: Session = Depends(db_session)
-) -> Response:
-    require_admin(request)
-    client = db.scalar(select(Client).where(Client.id == client_id).with_for_update())
-    if not client:
-        raise HTTPException(status_code=404, detail="Cliente não encontrada.")
-    inventory = client_deletion_inventory(db, client)
-    if not inventory["can_delete"]:
+) -> dict[str, object]:
+    admin_session = require_admin(request)
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+    if not 12 <= len(idempotency_key) <= 128:
+        raise HTTPException(
+            status_code=422,
+            detail="Informe uma chave idempotente entre 12 e 128 caracteres.",
+        )
+    try:
+        payload, reference_ids = delete_client_operational_graph(
+            db,
+            client_id=client_id,
+            actor_admin_id=admin_session.subject_id,
+            idempotency_key=idempotency_key,
+        )
+    except ClientDeletionBlocked as exc:
         raise HTTPException(
             status_code=409,
             detail={
                 "message": (
-                    "Este cadastro possui vínculos ou histórico protegido. "
-                    "Edite o telefone ou desvincule a cliente em vez de excluí-la."
+                    "Este cadastro possui histórico comercial protegido. "
+                    "Edite o telefone ou administre os vínculos sem apagar o histórico."
                 ),
-                "blocking": inventory["blocking"],
+                "inventory": exc.inventory,
             },
-        )
-    try:
-        db.execute(delete(ClientPhone).where(ClientPhone.client_id == client.id))
-        db.delete(client)
-        audit(db, "client.deleted_without_history", str(client_id))
-        db.commit()
+        ) from exc
+    except ClientLifecycleError as exc:
+        status_code = 404 if str(exc) == "Cliente não encontrada." else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
@@ -2347,7 +2285,11 @@ def delete_client(
                 "Atualize o inventário e tente novamente."
             ),
         ) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if reference_ids:
+        remove_facial_reference_files(
+            Path(getenv("FACIAL_REFERENCE_ROOT", "./media/facial-references")), reference_ids
+        )
+    return payload
 
 
 @app.get("/admin/parent-galleries")
@@ -4269,6 +4211,7 @@ def change_client_phone(
         raise neutral_error()
     try:
         change_verified_phone(db, client, phone)
+        revoke_subject_sessions(db, Role.CLIENT.value, client.id)
         db.flush()
     except (ClientIdentityConflict, IntegrityError) as exc:
         db.rollback()

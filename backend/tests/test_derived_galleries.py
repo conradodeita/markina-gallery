@@ -14,6 +14,7 @@ from app.auth import (
     AdminUser,
     AuditEvent,
     AuthChallenge,
+    AuthSession,
     Base,
     BrandingSettings,
     Client,
@@ -725,6 +726,12 @@ def test_admin_operational_catalog_creates_and_lists_only_authorized_data(client
             "id": created_client.json()["id"],
             "name": "Cliente Operacional",
             "phone": "+5511988887777",
+            "aggregates": {
+                "public_galleries": 0,
+                "private_galleries": 0,
+                "orders": 0,
+            },
+            "deletion_eligible": True,
         }
     ]
     assert client.get("/admin/clients?query=98888").json()["clients"][0]["name"] == (
@@ -787,10 +794,15 @@ def test_admin_edits_and_deletes_client_without_dependencies(client: TestClient)
     inventory = client.get(f"/admin/clients/{client_id}/deletion-inventory")
     assert inventory.status_code == 200
     assert inventory.json()["can_delete"] is True
-    assert inventory.json()["removable"] == {"client": 1, "phone_records": 1}
+    assert inventory.json()["operational_removable"]["client"] == 1
+    assert inventory.json()["operational_removable"]["phone_records"] == 1
 
-    deleted = client.delete(f"/admin/clients/{client_id}")
-    assert deleted.status_code == 204
+    deleted = client.delete(
+        f"/admin/clients/{client_id}",
+        headers={"Idempotency-Key": "delete-without-dependencies-0001"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["status"] == "completed"
     assert client.get("/admin/clients").json()["clients"] == []
     with SessionLocal() as db:
         assert db.get(Client, UUID(client_id)) is None
@@ -809,7 +821,7 @@ def test_admin_edits_and_deletes_client_without_dependencies(client: TestClient)
         }
 
 
-def test_admin_cannot_delete_client_with_gallery_or_commercial_history(client: TestClient):
+def test_admin_can_delete_client_with_only_public_gallery_registration(client: TestClient):
     authenticate_admin(client)
     created = client.post(
         "/admin/clients",
@@ -824,12 +836,15 @@ def test_admin_cannot_delete_client_with_gallery_or_commercial_history(client: T
     ).status_code == 200
 
     inventory = client.get(f"/admin/clients/{client_id}/deletion-inventory").json()
-    assert inventory["can_delete"] is False
-    assert inventory["blocking"]["public_gallery_registrations"] == 1
-    denied = client.delete(f"/admin/clients/{client_id}")
-    assert denied.status_code == 409
-    assert "Edite o telefone" in denied.json()["detail"]["message"]
-    assert client.get("/admin/clients").json()["clients"][0]["id"] == client_id
+    assert inventory["can_delete"] is True
+    assert inventory["operational_removable"]["public_gallery_registrations"] == 1
+    deleted = client.delete(
+        f"/admin/clients/{client_id}",
+        headers={"Idempotency-Key": "delete-public-registration-0001"},
+    )
+    assert deleted.status_code == 200
+    assert client.get("/admin/clients").json()["clients"] == []
+    assert client.get(f"/admin/parent-galleries/{parent_id}/editor").status_code == 200
 
 
 def test_admin_client_deletion_reports_concurrent_dependency(
@@ -845,7 +860,10 @@ def test_admin_client_deletion_reports_concurrent_dependency(
         raise IntegrityError("DELETE client", {}, Exception("foreign key race"))
 
     monkeypatch.setattr(Session, "commit", fail_commit)
-    denied = client.delete(f"/admin/clients/{client_id}")
+    denied = client.delete(
+        f"/admin/clients/{client_id}",
+        headers={"Idempotency-Key": "delete-concurrent-dependency-0001"},
+    )
     assert denied.status_code == 409
     assert "nova dependência" in denied.json()["detail"]
 
@@ -1063,12 +1081,32 @@ def test_phone_change_preserves_gallery_owner_and_retires_old_phone(client: Test
         db.add(owner)
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        stale_session = AuthSession(
+            token_hash="old-phone-session",
+            role="client",
+            subject_id=owner.id,
+            expires_at=now() + timedelta(days=1),
+        )
+        db.add(stale_session)
+        db.commit()
+        stale_session_id = stale_session.id
     authenticate_admin(client)
     challenge = client.post("/auth/client/challenge", json={"full_name": owner.full_name, "phone": "+5511666666666"}).json()["challenge_id"]
     with SessionLocal() as db:
         db.get(AuthChallenge, UUID(challenge)).secret_hash = token_hash("123456")
         db.commit()
     assert client.post(f"/admin/clients/{owner.id}/phone", json={"phone_e164": "+5511666666666", "challenge_id": challenge, "code": "123456"}).status_code == 200
+    with SessionLocal() as db:
+        assert db.get(DerivedGallery, gallery_id).client_id == owner.id
+        assert db.get(AuthSession, stale_session_id).revoked_at is not None
+        phones = list(
+            db.scalars(select(ClientPhone).where(ClientPhone.client_id == owner.id))
+        )
+        assert {phone.phone_e164: phone.active for phone in phones} == {
+            "+5511555555555": False,
+            "+5511666666666": True,
+        }
     client.cookies.clear()
     authenticate_client(client, "+5511666666666")
     assert client.get(f"/gallery/{gallery_id}/review").status_code == 200

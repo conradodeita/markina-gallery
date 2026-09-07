@@ -207,7 +207,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
-      if (path.endsWith("/clients/client-2/deletion-inventory")) return response({ client_id: "client-2", blockers: { orders: 1 }, blocking: { orders: 1 }, can_delete: false, removable: { client: 1, phone_records: 1 } });
+      if (path.endsWith("/clients/client-2/deletion-inventory")) return response({ client_id: "client-2", operational_removable: { client: 1, phone_records: 1 }, commercial_protected: { orders: 1 }, can_delete: false });
       if (path.startsWith("/api/admin/clients")) return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
       return response({ photos: [] });
     }));
@@ -215,9 +215,32 @@ describe("editor administrativo de galeria", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Editar cadastro de Beatriz Cliente" }));
     fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
-    expect(await screen.findByText("Exclusão bloqueada")).toBeTruthy();
-    expect(screen.getByText("1 pedidos")).toBeTruthy();
+    expect(await screen.findByText("Exclusão bloqueada pelo histórico comercial")).toBeTruthy();
+    expect(screen.getByText("1 pedido(s)")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Excluir cadastro definitivamente" })).toBeNull();
+  });
+
+  it("exclui pela etapa 05 uma cliente com vínculos apenas operacionais", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
+      if (path.endsWith("/clients/client-2/deletion-inventory")) return response({ client_id: "client-2", operational_removable: { client: 1, public_gallery_registrations: 1, private_galleries_exclusive: 1 }, commercial_protected: { orders: 0 }, can_delete: true });
+      if (path === "/api/admin/clients/client-2" && init?.method === "DELETE") return response({ receipt_id: "receipt-2", client_id: "client-2", status: "completed", counts: { clients: 1 }, completed_at: "2026-09-07T12:00:00+00:00" });
+      if (path.startsWith("/api/admin/clients")) return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
+      return response({ photos: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar cadastro de Beatriz Cliente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
+    expect(await screen.findByText("Consequências desta exclusão")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Excluir cadastro definitivamente" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/clients/client-2",
+      expect.objectContaining({ method: "DELETE", headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
+    expect(await screen.findByText("Cadastro e estado operacional excluídos.")).toBeTruthy();
   });
 
   it("apresenta estados por texto, contraste semântico e cartões responsivos", async () => {

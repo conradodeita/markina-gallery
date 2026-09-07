@@ -84,6 +84,22 @@ def change_verified_phone(
 
     target = assert_phone_available(db, phone_e164, client_id=client.id)
     timestamp = now()
+    previous_phone = client.phone_e164
+    previous_record = db.scalar(
+        select(ClientPhone).where(
+            ClientPhone.client_id == client.id,
+            ClientPhone.phone_e164 == previous_phone,
+        )
+    )
+    if previous_phone != phone_e164 and not previous_record:
+        db.add(
+            ClientPhone(
+                client_id=client.id,
+                phone_e164=previous_phone,
+                active=False,
+                retired_at=timestamp,
+            )
+        )
     for current in db.scalars(
         select(ClientPhone).where(
             ClientPhone.client_id == client.id,

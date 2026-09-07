@@ -340,6 +340,31 @@ button, input { font: inherit; }.auth-shell { min-height: 100svh; display: grid;
 .client-delete-zone p { margin:0; }
 .client-delete-blocked { padding:13px; border:1px solid #e0b7b1; border-radius:10px; background:#fff4f2; color:#7d2d28; }
 .client-delete-blocked ul { margin:8px 0; padding-left:20px; }
+.client-delete-confirmation { display:grid; gap:10px; padding:14px; border:1px solid #b9d2bf; border-radius:12px; background:#f3f8f3; }
+.client-delete-confirmation p,.client-delete-confirmation ul { margin:0; }
+.client-delete-confirmation ul { padding-left:20px; color:#3f4b41; }
+.client-directory-shell { max-width:1180px; }
+.client-directory-layout { display:grid; grid-template-columns:minmax(260px,340px) minmax(0,1fr); align-items:start; gap:22px; }
+.client-directory-create { position:sticky; top:20px; display:grid; gap:14px; background:#f3f3f1; }
+.client-directory-create h2,.client-directory-results h2 { margin:0; }
+.client-directory-results { display:grid; gap:16px; min-width:0; padding:clamp(18px,3vw,26px); border:1px solid #d7d7d4; border-radius:18px; background:#fff; }
+.client-directory-toolbar { display:flex; align-items:end; justify-content:space-between; gap:18px; }
+.client-directory-toolbar > div { display:grid; gap:4px; }
+.client-directory-toolbar label { display:grid; width:min(100%,360px); gap:7px; color:#333; font-size:.82rem; font-weight:800; }
+.client-directory-toolbar input { width:100%; min-height:44px; padding:11px 12px; border:1px solid #cacac6; border-radius:9px; background:#fafafa; color:#171717; font:inherit; }
+.client-directory-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.client-directory-card { display:grid; gap:16px; min-width:0; padding:18px; border:1px solid #dadad6; border-radius:14px; background:#f7f7f5; }
+.client-directory-card header,.client-directory-card-footer { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.client-directory-card header > div { display:grid; min-width:0; gap:4px; }
+.client-directory-card header strong { overflow-wrap:anywhere; font-size:1rem; }
+.client-directory-card header small,.client-directory-card-footer span { color:#5b5b57; font-size:.8rem; overflow-wrap:anywhere; }
+.client-directory-card dl { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:0; }
+.client-directory-card dl div { display:grid; gap:3px; padding:9px; border:1px solid #dededa; border-radius:9px; background:#fff; }
+.client-directory-card dt { color:#676762; font-size:.7rem; font-weight:750; }
+.client-directory-card dd { margin:0; font-size:1.15rem; font-weight:850; }
+.client-directory-card-footer { align-items:center; }
+@media (max-width:900px) { .client-directory-layout { grid-template-columns:1fr; }.client-directory-create { position:static; }.client-directory-grid { grid-template-columns:1fr; } }
+@media (max-width:560px) { .client-directory-toolbar,.client-directory-card header,.client-directory-card-footer { align-items:stretch; flex-direction:column; }.client-directory-toolbar label { width:100%; }.client-directory-card-footer .mk-button { width:100%; }.client-directory-results { padding:16px; }.client-directory-card dl { gap:5px; }.client-directory-card dl div { padding:8px 6px; } }
 @media (max-width:760px) {
   .admin-frame .gallery-stepper { grid-template-columns:repeat(5,minmax(86px,1fr)); overflow-x:auto; }
   .gallery-client-grid { grid-template-columns:1fr; }

@@ -264,6 +264,38 @@ class ClientPhone(Base):
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ClientDeletionReceipt(Base):
+    """Resultado mínimo e reaplicável de uma exclusão global de cliente."""
+
+    __tablename__ = "client_deletion_receipt"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_client_deletion_receipt_idempotency"),
+        CheckConstraint(
+            "status IN ('completed')", name="ck_client_deletion_receipt_status"
+        ),
+        CheckConstraint(
+            "length(inventory_fingerprint) = 64",
+            name="ck_client_deletion_receipt_fingerprint",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) = 64",
+            name="ck_client_deletion_receipt_idempotency_fingerprint",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(String(64))
+    target_client_id: Mapped[UUID] = mapped_column(index=True)
+    actor_admin_id: Mapped[UUID] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=False, index=True
+    )
+    inventory_fingerprint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="completed")
+    removed_counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class GalleryAccess(Base):
     __tablename__ = "gallery_access"
     __table_args__ = (UniqueConstraint("client_id", "gallery_id"),)
