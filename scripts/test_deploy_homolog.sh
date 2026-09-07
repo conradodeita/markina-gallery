@@ -46,7 +46,9 @@ rollback_log="$(mktemp)"
 secrets_env="$(mktemp)"
 same_secret_env="$(mktemp)"
 origin_env="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env"' EXIT
+payload_env="$(mktemp)"
+invalid_payload_env="$(mktemp)"
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$payload_env" "$invalid_payload_env"' EXIT
 
 printf 'APP_ENV=homologation\nAUTH_PII_FINGERPRINT_SALT=\nGALLERY_CAPABILITY_SIGNING_KEY=\n' >"$secrets_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" SECRETS_ENV="$secrets_env" \
@@ -64,6 +66,35 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
     [[ "$(stat -c %a "$SECRETS_ENV")" == "600" ]]
   ' >"$output" 2>&1
 grep -Fq 'GALLERY_CAPABILITY_SIGNING_KEY configurado com segredo aleatório exclusivo de homologação' "$output"
+
+printf 'APP_ENV=homologation\nEMAIL_PAYLOAD_ENCRYPTION_KEY=\n' >"$payload_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" PAYLOAD_ENV="$payload_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_sensitive_payload_encryption_key "$PAYLOAD_ENV"
+    value="$(grep "^EMAIL_PAYLOAD_ENCRYPTION_KEY=" "$PAYLOAD_ENV")"
+    value="${value#*=}"
+    [[ -n "$value" ]]
+    PAYLOAD_KEY_VALUE="$value" python3 - <<'"'"'PY'"'"'
+import base64
+import os
+
+assert len(base64.urlsafe_b64decode(os.environ["PAYLOAD_KEY_VALUE"].encode("ascii"))) == 32
+PY
+    [[ "$(stat -c %a "$PAYLOAD_ENV")" == "600" ]]
+  ' >"$output" 2>&1
+grep -Fq 'EMAIL_PAYLOAD_ENCRYPTION_KEY configurada com segredo aleatório exclusivo de homologação' "$output"
+
+printf 'EMAIL_PAYLOAD_ENCRYPTION_KEY=invalida\n' >"$invalid_payload_env"
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" PAYLOAD_ENV="$invalid_payload_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_sensitive_payload_encryption_key "$PAYLOAD_ENV"
+  ' >"$output" 2>&1; then
+  echo "chave de payload inválida não foi recusada" >&2
+  exit 1
+fi
+grep -Fq 'EMAIL_PAYLOAD_ENCRYPTION_KEY deve codificar exatamente 32 bytes em base64 urlsafe' "$output"
 
 same_secret="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 printf 'AUTH_PII_FINGERPRINT_SALT=%s\nGALLERY_CAPABILITY_SIGNING_KEY=%s\n' "$same_secret" "$same_secret" >"$same_secret_env"
@@ -110,7 +141,7 @@ fi
 grep -Fq 'checkout remoto possui alterações locais' "$dirty_output"
 
 facial_env="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$facial_env"' EXIT
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$payload_env" "$invalid_payload_env" "$facial_env"' EXIT
 printf 'FACIAL_PROCESSING_ENABLED=true\n' >"$facial_env"
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '

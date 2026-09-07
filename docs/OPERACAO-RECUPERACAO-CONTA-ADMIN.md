@@ -32,7 +32,7 @@ Os nomes abaixo devem existir somente no arquivo externo do ambiente ou no geren
 | --- | --- |
 | `EMAIL_PROVIDER` | `sandbox` sem efeito externo ou `smtp` para entrega real |
 | `EMAIL_CREDENTIAL_ENV` | Deve ser exatamente igual a `APP_ENV` |
-| `EMAIL_PAYLOAD_ENCRYPTION_KEY` | Chave AES-GCM urlsafe-base64 de 32 bytes, exclusiva do ambiente |
+| `EMAIL_PAYLOAD_ENCRYPTION_KEY` | Chave AES-GCM urlsafe-base64 de 32 bytes, exclusiva do ambiente; o deploy de homologação preserva a existente e gera uma aleatória quando ausente |
 | `PUBLIC_APP_ORIGIN` | Origem canônica HTTPS, sem caminho, credencial, query ou fragmento |
 | `SMTP_HOST`, `SMTP_PORT` | Endpoint SMTP próprio do ambiente |
 | `SMTP_USER`, `SMTP_PASSWORD` | Credenciais externas; nunca registrar ou versionar |
@@ -56,7 +56,7 @@ Antes de habilitar SMTP real em homologação, o operador humano deve:
 4. publicar DMARC inicialmente com política e relatórios apropriados ao domínio, endurecendo a política após observação;
 5. testar com caixas sintéticas e conferir `SPF=pass`, `DKIM=pass` e `DMARC=pass` nos cabeçalhos recebidos.
 
-Não use dados reais de clientes nos testes. DNS e credenciais exigem ação humana e não são modificados pelo deploy da aplicação.
+Não use dados reais de clientes nos testes. DNS e credenciais externas exigem ação humana e não são modificados pelo deploy da aplicação. A automação de homologação pode inicializar somente os segredos internos documentados, como a cifra de payloads, no arquivo restrito do próprio projeto.
 
 ## Outbox, retenção e reconciliação
 
@@ -69,7 +69,7 @@ Não use dados reais de clientes nos testes. DNS e credenciais exigem ação hum
 
 1. Consulte Configurações > Segurança da conta ou `GET /admin/email/channel` com sessão administrativa. A resposta não expõe host, usuário, senha, destinatário ou link.
 2. Se `sandbox`, confirme `EMAIL_PROVIDER` no ambiente externo.
-3. Se indisponível, confira presença (não o valor em logs) de `EMAIL_PAYLOAD_ENCRYPTION_KEY`, `PUBLIC_APP_ORIGIN` e variáveis SMTP, além da igualdade `EMAIL_CREDENTIAL_ENV=APP_ENV`.
+3. Se indisponível, confira presença (não o valor em logs) de `EMAIL_PAYLOAD_ENCRYPTION_KEY`, `PUBLIC_APP_ORIGIN` e variáveis SMTP, além da igualdade `EMAIL_CREDENTIAL_ENV=APP_ENV`. O deploy de homologação valida a chave de payload preexistente e cria uma nova somente quando o campo está ausente ou vazio; formato inválido interrompe a publicação sem substituir o valor.
 4. Confirme acesso de saída ao SMTP e relógio UTC. Não imprima payloads cifrados/decriptados.
 5. Para estado `unknown`, reconcilie pelo ID externo sanitizado e horário antes de repetir a solicitação pelo produto.
 

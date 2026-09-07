@@ -192,6 +192,33 @@ def test_wrong_password_unavailable_channel_rate_limit_and_sensitive_audit(clien
         assert "+5511999999999" not in events
 
 
+def test_pix_challenge_fails_closed_when_sensitive_payload_key_is_missing(
+    client, monkeypatch
+):
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("AUTH_PII_FINGERPRINT_SALT", "homolog-test-fingerprint-salt-32-bytes")
+    monkeypatch.delenv("EMAIL_PAYLOAD_ENCRYPTION_KEY", raising=False)
+
+    response = client.post(
+        "/admin/settings/pix/challenge",
+        json={
+            "current_password": "Senha-atual-2026",
+            "configuration": {
+                "copy_paste": "financeiro@example.test",
+                "receiver_name": "MARKINA",
+                "receiver_city": "SAO PAULO",
+            },
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Confirmação segura temporariamente indisponível."
+    }
+    with SessionLocal() as db:
+        assert not list(db.scalars(select(AdminSecurityChallenge)))
+
+
 def test_settings_are_read_only_in_sales_and_saving_without_pix_is_allowed(client):
     source = client.post("/admin/parent-galleries", json={"name": "Galeria PIX"}).json()["id"]
     url = f"/admin/parent-galleries/{source}/sales"

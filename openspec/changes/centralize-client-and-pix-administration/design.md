@@ -50,6 +50,8 @@ Alternativa descartada: escolher uma galeria como padrão ou manter override por
 
 O propósito dos desafios administrativos será ampliado com uma ação de PIX. O primeiro passo exige senha atual e vincula à sessão um fingerprint da configuração proposta, guardando o payload somente no envelope cifrado; o segundo confirma o OTP enviado ao WhatsApp administrativo pronto. A gravação incrementa a versão e audita apenas UUID, versão e resultado. Remover a configuração segue o mesmo fluxo.
 
+Em homologação, o deploy valida `EMAIL_PAYLOAD_ENCRYPTION_KEY` como base64 urlsafe de exatamente 32 bytes e preserva qualquer valor válido existente. Quando a variável estiver ausente ou vazia no arquivo restrito do próprio projeto, a automação gera uma chave aleatória exclusiva antes de iniciar os serviços; valor inválido interrompe a publicação sem substituição. O endpoint retorna indisponibilidade sanitizada e faz rollback se a cifra ou o canal seguro não puderem ser inicializados, em vez de deixar erro interno ou desafio parcial.
+
 Alternativa descartada: salvar diretamente por sessão autenticada. O roadmap classifica mudança de PIX como ação sensível e exige confirmação pelo WhatsApp validado.
 
 ### 6. A etapa 02 perde a escrita PIX e preserva o restante

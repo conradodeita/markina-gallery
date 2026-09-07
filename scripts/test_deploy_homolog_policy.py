@@ -27,11 +27,13 @@ def main() -> int:
     require('git status --porcelain', "recusa de checkout sujo", SCRIPT)
     require('ensure_pii_fingerprint_salt', "configuração segura do fingerprint de PII", SCRIPT)
     require('ensure_gallery_capability_signing_key', "configuração segura da assinatura de galerias", SCRIPT)
+    require('ensure_sensitive_payload_encryption_key', "configuração segura da cifra de propostas PIX", SCRIPT)
     require('ensure_public_app_origin', "sincronização da origem pública para operações sensíveis", SCRIPT)
     require('MARKINA_PUBLIC_BASE_URL é obrigatória', "origem pública obrigatória", SCRIPT)
     require('sincronizada com a origem pública autorizada', "registro sanitizado da origem configurada", SCRIPT)
     require('parsed.path not in {"", "/"}', "recusa de URL pública com caminho", SCRIPT)
     require('GALLERY_CAPABILITY_SIGNING_KEY', "segredo dedicado para links de galeria", SCRIPT)
+    require('EMAIL_PAYLOAD_ENCRYPTION_KEY', "segredo dedicado para propostas PIX", SCRIPT)
     require('deve ser diferente de $fingerprint_key', "separação entre segredos HMAC", SCRIPT)
     require('openssl rand -hex 32', "geração criptográfica do fingerprint de PII", SCRIPT)
     require('chmod 600 "$env_file"', "permissão restrita do arquivo de ambiente", SCRIPT)
@@ -105,6 +107,7 @@ def main() -> int:
     forbid(r'\b(?:rm|rmdir)\s+-[A-Za-z]*r', "remoção recursiva", SCRIPT)
     forbid(r'echo\s+.*\$salt', "impressão do segredo de fingerprint", SCRIPT)
     forbid(r'echo\s+.*\$signing_key', "impressão do segredo de assinatura", SCRIPT)
+    forbid(r'echo\s+.*\$generated', "impressão do segredo de payload", SCRIPT)
 
     require('branches: [develop]', "gatilho restrito a develop", WORKFLOW)
     require(

@@ -143,6 +143,61 @@ ensure_gallery_capability_signing_key() {
   echo "$key configurado com segredo aleatório exclusivo de homologação"
 }
 
+ensure_sensitive_payload_encryption_key() {
+  local env_file="${1:-$ENV_FILE}"
+  local key="EMAIL_PAYLOAD_ENCRYPTION_KEY" line value occurrences generated temp_file replaced=0
+  occurrences="$(grep -c "^${key}=" "$env_file" || true)"
+  [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  chmod 600 "$env_file"
+
+  if [[ "$occurrences" -eq 1 ]]; then
+    line="$(grep "^${key}=" "$env_file")"
+    value="${line#*=}"
+    if [[ -n "$value" ]]; then
+      PAYLOAD_KEY_VALUE="$value" python3 - <<'PY' || fail "$key deve codificar exatamente 32 bytes em base64 urlsafe"
+import base64
+import os
+
+try:
+    decoded = base64.urlsafe_b64decode(os.environ["PAYLOAD_KEY_VALUE"].encode("ascii"))
+except (ValueError, UnicodeEncodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if len(decoded) == 32 else 1)
+PY
+      unset value line
+      return 0
+    fi
+  fi
+
+  command -v openssl >/dev/null 2>&1 || fail "openssl é obrigatório para gerar $key"
+  generated="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '\n\r')"
+  [[ -n "$generated" ]] || fail "não foi possível gerar $key com entropia suficiente"
+  PAYLOAD_KEY_VALUE="$generated" python3 - <<'PY' || fail "não foi possível validar $key gerada"
+import base64
+import os
+
+decoded = base64.urlsafe_b64decode(os.environ["PAYLOAD_KEY_VALUE"].encode("ascii"))
+raise SystemExit(0 if len(decoded) == 32 else 1)
+PY
+  temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s=%s\n' "$key" "$generated" >> "$temp_file"
+      replaced=1
+    else
+      printf '%s\n' "$line" >> "$temp_file"
+    fi
+  done < "$env_file"
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$generated" >> "$temp_file"
+  fi
+  mv "$temp_file" "$env_file"
+  unset generated value line
+  echo "$key configurada com segredo aleatório exclusivo de homologação"
+}
+
 ensure_public_app_origin() {
   local env_file="${1:-$ENV_FILE}"
   local public_url="${2:-$PUBLIC_BASE_URL}"
@@ -239,6 +294,7 @@ verify_target() {
   verify_facial_predeploy_safe_default
   ensure_pii_fingerprint_salt
   ensure_gallery_capability_signing_key
+  ensure_sensitive_payload_encryption_key
   ensure_public_app_origin
   compose config --quiet
   record_predeploy_inventory

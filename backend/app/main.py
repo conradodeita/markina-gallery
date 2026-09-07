@@ -41,6 +41,7 @@ from app.admin_account import (
     verify_security_challenge,
 )
 from app.admin_security import (
+    AdminSecurityConfigurationError,
     consume_admin_action_token,
     invalidate_admin_security_material,
 )
@@ -1776,10 +1777,17 @@ def admin_global_pix_challenge(
         target = canonical_proposal(configuration, settings.version if settings else 0)
     except PixCodeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    challenge, _code, queued = create_security_challenge(
-        db, purpose="change_pix_otp", subject_fingerprint=pii_fingerprint(str(admin.id)),
-        admin=admin, session_id=session.id, target=target,
-    )
+    try:
+        challenge, _code, queued = create_security_challenge(
+            db, purpose="change_pix_otp", subject_fingerprint=pii_fingerprint(str(admin.id)),
+            admin=admin, session_id=session.id, target=target,
+        )
+    except (AdminSecurityConfigurationError, WhatsAppConfigurationError):
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Confirmação segura temporariamente indisponível.",
+        ) from None
     if not queued:
         challenge.used_at = now()
         challenge.encrypted_target = None
