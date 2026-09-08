@@ -102,9 +102,9 @@ print(f"{str(s.enabled).lower()}|{s.environment}")
 ')"
 IFS='|' read -r runtime_enabled runtime_environment <<<"$runtime_state"
 [[ "$runtime_enabled" == "true" ]] || fail "runtime facial de homologação não está habilitado"
+echo "runtime facial: enabled=true environment=$runtime_environment"
 [[ "$runtime_environment" == "homolog" || "$runtime_environment" == "homologation" ]] \
   || fail "APP_ENV não identifica homologação"
-echo "runtime facial: enabled=true environment=$runtime_environment"
 
 scope_state="$(
   compose exec -T \
