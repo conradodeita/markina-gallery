@@ -1,6 +1,6 @@
 # frontend — Portal Markina Gallery (Next.js)
 
-Scaffolding da fundação: apenas `GET /api/health` e uma página placeholder. **Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra da Markina Gallery existe aqui ainda.**
+Inclui a rota de entrada unificada: cliente por nome, telefone e OTP; fotógrafo por e-mail, senha e TOTP. A interface chama `/api/auth/*`; autorização e destino ficam no backend.
 
 Comandos:
 

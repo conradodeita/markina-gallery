@@ -1,0 +1,8 @@
+title = "Markina Gallery"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Chave idempotente sintética usada somente no teste de checkout"
+regexes = ['''^communication-order-key-0001$''']

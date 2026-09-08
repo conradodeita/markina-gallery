@@ -1,0 +1,48 @@
+name: Relato de erro
+description: Ajude a corrigir um comportamento reproduzível sem expor dados sensíveis.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Não inclua fotos privadas, dados de crianças, credenciais, URLs autenticadas, `.env` ou dumps de banco. Para vulnerabilidades, não abra esta issue pública.
+  - type: textarea
+    id: summary
+    attributes:
+      label: O que aconteceu?
+      description: Descreva o comportamento observado e o comportamento esperado.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Como reproduzir?
+      description: Informe passos mínimos usando apenas dados sintéticos ou públicos.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impacto e privacidade
+      description: Há impacto em acesso, dados pessoais, mídia, pagamentos ou segurança? Não inclua dados sensíveis.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit, branch ou ambiente afetado
+      description: Não informe URLs autenticadas nem credenciais.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmações
+      options:
+        - label: Usei apenas dados sintéticos ou públicos.
+          required: true
+        - label: Esta issue não relata vulnerabilidade nem contém segredo ou dado pessoal.
+          required: true

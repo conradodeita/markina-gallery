@@ -1,0 +1,40 @@
+:root {
+  --mk-canvas: #f7f7f5;
+  --mk-surface: #ffffff;
+  --mk-surface-subtle: #f0f1ed;
+  --mk-ink: #1c1d1b;
+  --mk-ink-muted: #62655e;
+  --mk-border: #d9dcd5;
+  --mk-brand: #222622;
+  --mk-brand-strong: #111310;
+  --mk-success: #247146;
+  --mk-warning: #875d00;
+  --mk-danger: #a6372d;
+  --mk-focus: #1769e0;
+  --mk-radius-sm: 0.5rem;
+  --mk-radius-md: 0.875rem;
+  --mk-radius-lg: 1.25rem;
+  --mk-shadow-sm: 0 1px 2px rgb(20 24 19 / 8%);
+  --mk-shadow-md: 0 14px 38px rgb(20 24 19 / 9%);
+  --mk-space-1: 0.25rem;
+  --mk-space-2: 0.5rem;
+  --mk-space-3: 0.75rem;
+  --mk-space-4: 1rem;
+  --mk-space-5: 1.5rem;
+  --mk-space-6: 2rem;
+  --mk-space-8: 3rem;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid var(--mk-focus);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
