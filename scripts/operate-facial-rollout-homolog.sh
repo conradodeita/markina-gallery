@@ -95,13 +95,16 @@ revision="$(compose run --rm --no-deps migrate alembic current 2>/dev/null | tr 
 runtime_state="$(compose exec -T api python -c '
 from app.facial.config import facial_settings_from_environment
 s = facial_settings_from_environment(verify_runtime_assets=False)
-assert s.enabled and s.environment in {"homolog", "homologation"}
 assert all((s.model_version, s.quality_version, s.calibration_version,
             s.legal_notice_version, s.consent_version,
             s.legal_basis_reference, s.retention_policy_version))
-print("enabled")
+print(f"{str(s.enabled).lower()}|{s.environment}")
 ')"
-[[ "$runtime_state" == "enabled" ]] || fail "runtime facial de homologação não está habilitado"
+IFS='|' read -r runtime_enabled runtime_environment <<<"$runtime_state"
+[[ "$runtime_enabled" == "true" ]] || fail "runtime facial de homologação não está habilitado"
+[[ "$runtime_environment" == "homolog" || "$runtime_environment" == "homologation" ]] \
+  || fail "APP_ENV não identifica homologação"
+echo "runtime facial: enabled=true environment=$runtime_environment"
 
 scope_state="$(
   compose exec -T \
