@@ -49,6 +49,10 @@ Será criada uma estrutura aditiva de rollout e aprovação, referenciada por UU
 
 O painel administrativo exibirá somente estado técnico, cobertura e ação operacional permitida ao fotógrafo. Aprovações jurídicas e de segurança pertencem à configuração de rollout e à auditoria, não a um diálogo repetido para cada foto.
 
+O comando administrativo `Refazer reconhecimento facial` não executará novo upload nem duplicará mídia. Ele reconciliará fotos elegíveis que não possuem job da versão vigente e recolocará na fila todas as falhas atuais da galeria, inclusive em lotes acima de 2.000 itens; jobs concluídos permanecem idempotentes e inalterados.
+
+Em homologação, a ponte remota para essa configuração será um workflow protegido do GitHub separado do deploy. Cada execução SHALL ficar restrita ao projeto Compose `markina-gallery`, a um único UUID público de Galeria pública e ao SHA integral já publicado. A ativação SHALL repetir inventário técnico, criar backup lógico exclusivo da Markina imediatamente antes da mutação, resolver um administrador existente sem registrar seu identificador nos logs e chamar a mesma operação persistente usada pelo produto. Inventário, ativação e suspensão serão modos explícitos; nenhum deles reintroduzirá lote, janela, token ou estado do benchmark encerrado.
+
 ### 5. Separar classes de trabalho e priorizar consultas
 
 O banco continuará como fonte durável única, mas o claim aceitará classes de job. Haverá consumidores isolados para `search`, `index` e `maintenance` (`cleanup|purge`), todos sem porta. `search` terá prioridade interativa; `maintenance` terá reserva para que retenção e purge não sofram starvation; `index` usará capacidade remanescente e desacelerará durante picos.

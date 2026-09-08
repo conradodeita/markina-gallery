@@ -132,10 +132,21 @@ from app.commercial_removal import (
     CommercialRemovalPreparationFailed,
     apply_commercial_removal_policy,
 )
-from app.email_delivery import EmailConfigurationError, email_channel_payload, public_app_origin
+from app.email_delivery import (
+    EmailConfigurationError,
+    email_channel_payload,
+    public_app_origin,
+)
 from app.facial.capacity import FacialSearchCapacityError
-from app.facial.config import FacialConfigurationError, facial_settings_from_environment
-from app.facial.indexing import enqueue_gallery_backfill_page
+from app.facial.config import (
+    FacialConfigurationError,
+    facial_settings_from_environment,
+)
+from app.facial.indexing import (
+    enqueue_gallery_backfill_page,
+    reconcile_gallery_index,
+)
+from app.facial.jobs import FacialJobError
 from app.facial.observability import (
     FACIAL_ADMISSION_COUNTER,
     collect_facial_metrics,
@@ -174,6 +185,7 @@ from app.facial.security import enforce_facial_search_rate_limit
 from app.facial.status import (
     FacialStatusError,
     gallery_index_status,
+    retry_all_failed_index_jobs,
     retry_failed_index_jobs,
 )
 from app.gallery_access import (
@@ -3136,6 +3148,56 @@ def retry_parent_gallery_facial_index(
     )
     db.commit()
     return {"retried": changed}
+
+
+@app.post("/admin/parent-galleries/{parent_gallery_id}/facial-index/reprocess")
+def reprocess_parent_gallery_facial_index(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, int]:
+    require_same_origin(request)
+    current_session(request, Role.ADMIN)
+    _parent_gallery_or_404(db, parent_gallery_id)
+    try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        if not rollout_is_active(
+            db,
+            settings=settings,
+            parent_gallery_id=parent_gallery_id,
+        ):
+            raise FacialStatusError(
+                "Reconhecimento facial indisponível para esta galeria."
+            )
+        report = gallery_index_status(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            processing_enabled=True,
+        )
+        scanned = 0
+        if report.unindexed:
+            reconciliation = reconcile_gallery_index(
+                db,
+                parent_gallery_id=parent_gallery_id,
+                derivatives_root=derivatives_root(),
+                settings=settings,
+                page_size=100,
+            )
+            scanned = reconciliation.photos_scanned
+        retried = retry_all_failed_index_jobs(
+            db,
+            parent_gallery_id=parent_gallery_id,
+        )
+    except (FacialConfigurationError, FacialJobError, FacialStatusError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(
+        db,
+        "facial.index_reprocess_requested",
+        f"scope_count:1;photos_scanned:{scanned};retried:{retried}",
+    )
+    db.commit()
+    return {"photos_scanned": scanned, "retried": retried}
 
 
 @app.get("/admin/parent-galleries/{parent_gallery_id}/photos")

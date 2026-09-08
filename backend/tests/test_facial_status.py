@@ -21,6 +21,7 @@ from app.auth import (
 from app.facial.status import (
     FacialStatusError,
     gallery_index_status,
+    retry_all_failed_index_jobs,
     retry_failed_index_jobs,
 )
 
@@ -180,6 +181,35 @@ def test_retry_is_scoped_and_idempotent() -> None:
         retry_failed_index_jobs(
             db, parent_gallery_id=uuid4(), job_ids={jobs[4].id}
         )
+
+
+def test_retry_all_failed_index_jobs_handles_more_than_two_thousand() -> None:
+    db, parent, _photos, jobs = _fixture()
+    instant = now()
+    bulk = []
+    for index in range(2_001):
+        bulk.append(
+            FacialJob(
+                kind="index",
+                status="failed",
+                idempotency_key=f"bulk-retry-{index}",
+                parent_gallery_id=parent.id,
+                photo_asset_id=uuid4(),
+                model_version="model-v1",
+                quality_version="quality-v1",
+                preview_fingerprint=f"{index:064x}"[-64:],
+                attempts=3,
+                last_error_category="provider_unavailable",
+                available_at=instant,
+            )
+        )
+    db.add_all(bulk)
+    db.commit()
+
+    assert retry_all_failed_index_jobs(db, parent_gallery_id=parent.id) == 2_003
+    db.commit()
+    assert all(job.status == "queued" for job in (*bulk, jobs[3], jobs[4]))
+    assert retry_all_failed_index_jobs(db, parent_gallery_id=parent.id) == 0
 
 
 def test_stale_completed_version_does_not_count_as_ready() -> None:

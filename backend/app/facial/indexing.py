@@ -12,7 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
-from app.auth import FacialJob, GalleryFacialPolicy, MediaDerivative, ParentGallery, PhotoAsset
+from app.auth import (
+    FacialJob,
+    GalleryFacialPolicy,
+    MediaDerivative,
+    ParentGallery,
+    PhotoAsset,
+)
 from app.facial.config import (
     FacialConfigurationError,
     FacialSettings,
@@ -41,6 +47,13 @@ class AutomaticReconciliation:
     galleries_changed: int
     photos_scanned: int
     jobs_queued: int
+
+
+@dataclass(frozen=True)
+class GalleryReconciliation:
+    pages: int
+    photos_scanned: int
+    eligible_index_jobs: int
 
 
 def preview_fingerprint(path: Path) -> str:
@@ -214,6 +227,47 @@ def enqueue_gallery_backfill_page(
         scanned=len(page),
         next_cursor=page[-1][0].id if len(rows) > limit else None,
         completed=len(rows) <= limit,
+    )
+
+
+def reconcile_gallery_index(
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+    derivatives_root: Path,
+    settings: FacialSettings,
+    page_size: int = 100,
+) -> GalleryReconciliation:
+    """Reconcilia todo o acervo existente sem criar jobs duplicados."""
+
+    if not rollout_is_active(
+        db,
+        settings=settings,
+        parent_gallery_id=parent_gallery_id,
+    ):
+        raise FacialJobError("Rollout facial ativo não encontrado para a galeria.")
+    pages = scanned = eligible = 0
+    cursor = None
+    while True:
+        page = enqueue_gallery_backfill_page(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            derivatives_root=derivatives_root,
+            cursor=cursor,
+            limit=page_size,
+            settings=settings,
+        )
+        db.commit()
+        pages += 1
+        scanned += page.scanned
+        eligible += page.queued
+        if page.completed:
+            break
+        cursor = page.next_cursor
+    return GalleryReconciliation(
+        pages=pages,
+        photos_scanned=scanned,
+        eligible_index_jobs=eligible,
     )
 
 
