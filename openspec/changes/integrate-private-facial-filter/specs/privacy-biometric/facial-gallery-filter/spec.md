@@ -47,6 +47,11 @@ O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegi
 - **WHEN** detector, modelo ou armazenamento falha durante a indexação
 - **THEN** o estado facial registra falha retomável e a foto permanece utilizável pelos fluxos não biométricos autorizados
 
+#### Scenario: Observação facial geometricamente inutilizável
+
+- **WHEN** o detector retorna em uma foto uma observação cuja caixa ou landmarks não permitem calcular os indicadores técnicos versionados
+- **THEN** o worker descarta somente essa observação, preserva as demais faces válidas e conclui a foto com zero rostos quando nenhuma observação utilizável restar, sem registrar falha operacional
+
 #### Scenario: Galeria sem alteração
 
 - **WHEN** todas as prévias elegíveis já possuem o mesmo fingerprint e versões de embedding e qualidade

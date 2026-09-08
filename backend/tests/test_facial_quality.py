@@ -72,6 +72,24 @@ def test_quality_rejects_invalid_geometry_without_inferred_attributes() -> None:
         assess_face_quality(
             _face(), image_width=640, image_height=480, largest_face_area=1
         )
+    with pytest.raises(FacialQualityError, match="Métricas"):
+        assess_face_quality(
+            _face(blur=float("nan")), image_width=640, image_height=480
+        )
+    with pytest.raises(FacialQualityError, match="Métricas"):
+        assess_face_quality(
+            _face(
+                landmarks=(
+                    (float("nan"), 125),
+                    (210, 125),
+                    (170, 160),
+                    (145, 200),
+                    (195, 200),
+                )
+            ),
+            image_width=640,
+            image_height=480,
+        )
     assert {
         "age",
         "gender",

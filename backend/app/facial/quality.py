@@ -51,6 +51,12 @@ def assess_face_quality(
     x, y, width, height = face.box
     if width < 1 or height < 1 or len(face.landmarks) != 5:
         raise FacialQualityError("Geometria facial inválida.")
+    if not math.isfinite(face.blur_variance) or not all(
+        math.isfinite(coordinate)
+        for landmark in face.landmarks
+        for coordinate in landmark
+    ):
+        raise FacialQualityError("Métricas faciais inválidas.")
     image_area = image_width * image_height
     face_area = width * height
     largest = largest_face_area if largest_face_area is not None else face_area
@@ -62,7 +68,7 @@ def assess_face_quality(
     relative_prominence = face_area / largest
     large_enough = min(width, height) >= 96 and face_area_ratio >= 0.02
     prominent_enough = relative_prominence >= 0.65
-    sharp_enough = math.isfinite(face.blur_variance) and face.blur_variance >= 45.0
+    sharp_enough = face.blur_variance >= 45.0
 
     first_eye, second_eye, nose, first_mouth, second_mouth = face.landmarks
     eye_dx = second_eye[0] - first_eye[0]

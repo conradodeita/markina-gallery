@@ -28,7 +28,7 @@ from app.facial.provider import (
     OpenCvSFaceProvider,
     normalize_embedding,
 )
-from app.facial.quality import assess_face_quality
+from app.facial.quality import FacialQualityError, assess_face_quality
 
 
 class FacialEngineError(RuntimeError):
@@ -95,12 +95,17 @@ def replace_photo_index(
     )
     records: list[PhotoFaceEmbedding] = []
     for ordinal, face in enumerate(observations):
-        assessment = assess_face_quality(
-            face,
-            image_width=derivative.width or 1,
-            image_height=derivative.height or 1,
-            largest_face_area=largest_face_area,
-        )
+        try:
+            assessment = assess_face_quality(
+                face,
+                image_width=derivative.width or 1,
+                image_height=derivative.height or 1,
+                largest_face_area=largest_face_area,
+            )
+        except FacialQualityError:
+            # Uma detecção sem geometria utilizável equivale a ausência daquela face;
+            # ela não torna indisponíveis a foto nem as outras observações válidas.
+            continue
         payload = json.dumps(
             {
                 "embedding": face.embedding,

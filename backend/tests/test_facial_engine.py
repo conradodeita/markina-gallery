@@ -37,6 +37,16 @@ def _face(vector, *, blur: float = 100.0) -> FaceObservation:
     )
 
 
+def _invalid_face(vector) -> FaceObservation:
+    return FaceObservation(
+        embedding=vector,
+        detection_confidence=0.99,
+        box=(100, 80, 180, 180),
+        landmarks=((130, 125), (130, 125), (170, 160), (145, 200), (195, 200)),
+        blur_variance=100.0,
+    )
+
+
 class Provider:
     def __init__(self, by_name) -> None:
         self.by_name = by_name
@@ -245,6 +255,68 @@ def test_vector_search_is_gallery_scoped_and_orders_best_before_other(
     assert sentinel[0].id not in {match.photo_id for match in matches}
     assert "similarity" not in repr(matches[0])
     assert other_gallery.id != first_gallery.id
+
+
+def test_index_skips_only_invalid_face_observations_and_can_finish_empty(
+    tmp_path: Path,
+) -> None:
+    db = Session(create_engine("sqlite:///:memory:"))
+    Base.metadata.create_all(db.bind)
+    parent, photos = _gallery(db, tmp_path, photos=2)
+    settings = _settings(tmp_path)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    provider = Provider(
+        {
+            str(photos[0].id): [
+                _invalid_face(_vector(0.9, 0.1)),
+                _face(_vector(1.0)),
+            ],
+            str(photos[1].id): [_invalid_face(_vector(1.0))],
+        }
+    )
+
+    assert (
+        replace_photo_index(
+            db,
+            photo_id=photos[0].id,
+            derivatives_root=tmp_path,
+            provider=provider,
+            cipher=cipher,
+            settings=settings,
+        )
+        == 1
+    )
+    repository = FacialJobRepository()
+    job, _created = repository.enqueue(
+        db,
+        kind="index",
+        idempotency_key="worker-index-invalid-observation",
+        parent_gallery_id=parent.id,
+        photo_asset_id=photos[1].id,
+        model_version="model-v1",
+        quality_version="quality-v1",
+        preview_fingerprint="b" * 64,
+    )
+    db.commit()
+    claim = repository.claim_next(db, lease_seconds=60)
+    assert claim is not None and claim.id == job.id
+
+    completed = process_claimed_index_job(
+        db,
+        claim,
+        repository=repository,
+        provider=provider,
+        cipher=cipher,
+        settings=settings,
+        derivatives_root=tmp_path,
+    )
+
+    assert completed.status == "completed"
+    assert (completed.progress_done, completed.progress_total) == (0, 0)
+    rows = list(db.scalars(select(PhotoFaceEmbedding)))
+    assert [(row.photo_asset_id, row.face_ordinal) for row in rows] == [
+        (photos[0].id, 1)
+    ]
 
 
 def test_claimed_index_job_runs_in_worker_and_finishes_durably(tmp_path: Path) -> None:

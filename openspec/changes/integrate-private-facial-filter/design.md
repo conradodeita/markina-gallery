@@ -148,6 +148,8 @@ O runtime inicial não incorporará digiKam, Facet ou outro aplicativo completo.
 
 A similaridade primeiro aplica o gate conservador de candidata. Entre candidatas, somente o ordinal facial que correspondeu à referência participa da qualidade. `best` exige correspondência forte e todos os gates técnicos mínimos; `other` preserva correspondências possíveis com qualidade inferior. Qualidade nunca remove, oculta, vende ou cria seleção. O sistema não calcula beleza, emoção, gênero, raça, idade, atratividade ou valor estético da pessoa.
 
+Uma observação isolada cuja caixa ou landmarks não permitam calcular esses indicadores é considerada tecnicamente inutilizável e não é persistida. As demais observações válidas da mesma foto continuam sendo indexadas; se nenhuma restar, a foto conclui com zero rostos. A inconsistência geométrica de uma detecção não transforma a foto inteira em falha operacional, pois isso confundiria ausência de rosto utilizável com indisponibilidade do detector, modelo ou armazenamento.
+
 Alternativa rejeitada: avaliar a foto inteira, o maior rosto ou o centro como sujeito. Em eventos e grupos, isso pode favorecer outra pessoa e reduzir a utilidade para quem realizou a busca.
 
 ### 14. Reconciliação normativa
