@@ -4,15 +4,19 @@ Data: 2026-09-08. Este inventário foi produzido somente a partir do repositóri
 
 ## Estado da candidata
 
-- branch local: `develop`;
-- base atual: `eeb9147f41a3ed53bef0d566ab39f415ddcee150`;
-- SHA publicável da change: pendente de commit, revisão, merge em `main` e CI verde;
+- branch candidata: `feature/productionize-facial-search`;
+- base `develop` na abertura do PR: `eeb9147f41a3ed53bef0d566ab39f415ddcee150`;
+- Pull Request de homologação: `#52`, com destino `develop`;
+- SHA raiz da change: `30fc5bdfa06984ec2220dd4085b6360ef7b94621`; o SHA publicável será o HEAD final aprovado do PR;
+- CI inicial do PR: `backend`, `frontend`, `openspec` e `gitleaks` aprovados; `deploy-homolog` corretamente ignorado em evento `pull_request`;
 - migration head: `20260908_0051`;
 - primeiro deploy de produção: MUST usar `FACIAL_PROCESSING_ENABLED=false`;
 - domínio/subdomínio de produção: não definido no repositório;
 - inventário real do host, capacidade livre, backup imediatamente anterior e configuração externa: pendentes.
 
-O SHA da base não representa as alterações ainda não commitadas e SHALL NOT ser usado como candidato facial.
+O SHA candidato acima é publicável apenas em homologação após merge aprovado em `develop`. Ele não constitui aprovação de produção, canary ou fluxo infantil; o candidato de produção continuará pendente de merge/revisão em `main` e dos gates descritos neste documento.
+
+O workflow de `develop` solicita explicitamente `FACIAL_PROCESSING_ENABLED=true` somente em homologação. O deploy registra inventário Markina antes dessa alteração, persiste a flag atomicamente, inicia as três classes de worker sem portas e restaura o estado anterior em falha; defaults locais e o primeiro deploy de produção continuam `false`.
 
 ## Projeto, serviços e isolamento
 

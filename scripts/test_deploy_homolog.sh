@@ -146,6 +146,17 @@ printf 'FACIAL_PROCESSING_ENABLED=false\n' >"$facial_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    set_facial_enabled true "$FACIAL_ENV"
+    grep -Fxq "FACIAL_PROCESSING_ENABLED=true" "$FACIAL_ENV"
+    [[ "$(stat -c %a "$FACIAL_ENV")" == "600" ]]
+    set_facial_enabled false "$FACIAL_ENV"
+    grep -Fxq "FACIAL_PROCESSING_ENABLED=false" "$FACIAL_ENV"
+  ' >"$output" 2>&1
+grep -Fq 'FACIAL_PROCESSING_ENABLED persistido como true em homologação' "$output"
+
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
     compose() { [[ "$1" == "ps" ]] && return 0; }
     verify_facial_deploy_state "$FACIAL_ENV"
   ' >"$output" 2>&1

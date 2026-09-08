@@ -40,7 +40,9 @@ def main() -> int:
     require('chmod 600 "$temp_file"', "permissão restrita do arquivo de ambiente temporário", SCRIPT)
     require('record_predeploy_inventory', "inventário remoto antes do deploy", SCRIPT)
     require('df -hP "$PROJECT_ROOT"', "registro de espaço livre", SCRIPT)
+    require('docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME"', "containers limitados ao projeto Markina", SCRIPT)
     require('docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME"', "inventário limitado aos volumes Markina", SCRIPT)
+    require('docker network ls --filter "label=com.docker.compose.project=$PROJECT_NAME"', "inventário limitado às redes Markina", SCRIPT)
     require('origin não aponta para o repositório GitHub esperado', "recusa de origem Git inesperada", SCRIPT)
     require('git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop', "validação de SHA em develop", SCRIPT)
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
@@ -73,6 +75,7 @@ def main() -> int:
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
     require('verify_facial_deploy_state', "verificação coerente do estado facial", SCRIPT)
     require('read_facial_enabled', "leitura persistente do kill switch facial", SCRIPT)
+    require('set_facial_enabled', "alteração atômica do kill switch facial", SCRIPT)
     require(
         'deve permanecer ausente com flag=false',
         "combinação desligada coerente",
@@ -127,6 +130,8 @@ def main() -> int:
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
     require('MARKINA_PUBLIC_BASE_URL=%q', "origem pública encaminhada ao deploy", WORKFLOW)
+    require('HOMOLOG_FACIAL_PROCESSING_ENABLED: "true"', "homologação facial persistentemente habilitada", WORKFLOW)
+    require('--facial-enabled %q', "estado facial explícito encaminhado ao deploy", WORKFLOW)
     forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)

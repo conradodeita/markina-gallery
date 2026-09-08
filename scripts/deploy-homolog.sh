@@ -15,15 +15,18 @@ readonly EXPECTED_REPOSITORY="${MARKINA_EXPECTED_REPOSITORY:?MARKINA_EXPECTED_RE
 
 DEPLOY_SHA=""
 PUBLIC_BASE_URL="${MARKINA_PUBLIC_BASE_URL:-}"
+REQUESTED_FACIAL_ENABLED=""
 PREVIOUS_SHA=""
+PREVIOUS_FACIAL_ENABLED=""
 MIGRATION_CHANGED=0
 SCHEMA_ROLLBACK_UNSAFE=0
 SHA_SWITCHED=0
+FACIAL_ENV_CHANGED=0
 FACIAL_DEPLOY_ENABLED="false"
 readonly FACIAL_SERVICES=("face-search-worker" "face-index-worker" "face-maintenance-worker")
 
 usage() {
-  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>]" >&2
+  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>]" >&2
 }
 
 fail() {
@@ -51,6 +54,35 @@ read_facial_enabled() {
   value="${value,,}"
   [[ "$value" == "true" || "$value" == "false" ]] || fail "FACIAL_PROCESSING_ENABLED deve ser true ou false"
   printf '%s\n' "$value"
+}
+
+set_facial_enabled() {
+  local desired="$1" env_file="${2:-$ENV_FILE}"
+  local current line temp_file replaced=0
+  desired="${desired,,}"
+  [[ "$desired" == "true" || "$desired" == "false" ]] || fail "estado facial solicitado deve ser true ou false"
+  current="$(read_facial_enabled "$env_file")"
+  if [[ "$current" == "$desired" ]]; then
+    echo "FACIAL_PROCESSING_ENABLED já está persistido como $desired"
+    return 0
+  fi
+
+  temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "FACIAL_PROCESSING_ENABLED="* ]]; then
+      printf 'FACIAL_PROCESSING_ENABLED=%s\n' "$desired" >> "$temp_file"
+      replaced=1
+    else
+      printf '%s\n' "$line" >> "$temp_file"
+    fi
+  done < "$env_file"
+  if [[ "$replaced" -eq 0 ]]; then
+    printf 'FACIAL_PROCESSING_ENABLED=%s\n' "$desired" >> "$temp_file"
+  fi
+  mv "$temp_file" "$env_file"
+  chmod 600 "$env_file"
+  echo "FACIAL_PROCESSING_ENABLED persistido como $desired em homologação"
 }
 
 verify_facial_deploy_state() {
@@ -274,9 +306,17 @@ PY
 record_predeploy_inventory() {
   echo "inventário Markina pré-deploy"
   df -hP "$PROJECT_ROOT"
+  docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Names}} {{.Status}} {{.Ports}}'
   compose ps
   compose config --images
   docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Name}}'
+  docker network ls --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Name}}'
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl list-units --type=service --all 'markina*' --no-legend --no-pager || true
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn | awk 'NR == 1 || $4 ~ /(^|:)8080$/'
+  fi
 }
 
 parse_arguments() {
@@ -290,6 +330,10 @@ parse_arguments() {
         PUBLIC_BASE_URL="${2:-}"
         shift 2
         ;;
+      --facial-enabled)
+        REQUESTED_FACIAL_ENABLED="${2:-}"
+        shift 2
+        ;;
       *)
         usage
         fail "argumento não permitido: $1"
@@ -299,6 +343,8 @@ parse_arguments() {
 
   [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "o SHA deve ter 40 caracteres hexadecimais minúsculos"
   [[ -z "$PUBLIC_BASE_URL" || "$PUBLIC_BASE_URL" =~ ^https://[^[:space:]]+$ ]] || fail "a URL pública deve usar HTTPS"
+  REQUESTED_FACIAL_ENABLED="${REQUESTED_FACIAL_ENABLED,,}"
+  [[ -z "$REQUESTED_FACIAL_ENABLED" || "$REQUESTED_FACIAL_ENABLED" == "true" || "$REQUESTED_FACIAL_ENABLED" == "false" ]] || fail "--facial-enabled deve ser true ou false"
 }
 
 verify_target() {
@@ -313,14 +359,21 @@ verify_target() {
   [[ "$origin_url" =~ github\.com[:/]${EXPECTED_REPOSITORY//\//\/}(\.git)?$ ]] || fail "origin não aponta para o repositório GitHub esperado"
 
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
-  FACIAL_DEPLOY_ENABLED="$(read_facial_enabled)"
+  PREVIOUS_FACIAL_ENABLED="$(read_facial_enabled)"
+  FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
   verify_facial_deploy_state
+  compose config --quiet
+  record_predeploy_inventory
   ensure_pii_fingerprint_salt
   ensure_gallery_capability_signing_key
   ensure_sensitive_payload_encryption_key
   ensure_public_app_origin
+  if [[ -n "$REQUESTED_FACIAL_ENABLED" ]]; then
+    set_facial_enabled "$REQUESTED_FACIAL_ENABLED"
+    FACIAL_DEPLOY_ENABLED="$REQUESTED_FACIAL_ENABLED"
+    [[ "$FACIAL_DEPLOY_ENABLED" == "$PREVIOUS_FACIAL_ENABLED" ]] || FACIAL_ENV_CHANGED=1
+  fi
   compose config --quiet
-  record_predeploy_inventory
 }
 
 record_revision() {
@@ -445,6 +498,13 @@ start_whatsapp_infrastructure_if_active() {
 rollback_code_if_safe() {
   local exit_code="$1"
   trap - ERR
+  if [[ "$FACIAL_ENV_CHANGED" -eq 1 ]]; then
+    set_facial_enabled "$PREVIOUS_FACIAL_ENABLED"
+    FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
+    if [[ "$SHA_SWITCHED" -eq 1 && "$PREVIOUS_FACIAL_ENABLED" == "false" ]]; then
+      compose stop "${FACIAL_SERVICES[@]}" || true
+    fi
+  fi
   if [[ "$SHA_SWITCHED" -eq 1 && "$MIGRATION_CHANGED" -eq 0 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 0 && -n "$PREVIOUS_SHA" ]]; then
     echo "falha antes de mudança de schema; restaurando somente código Markina para $PREVIOUS_SHA" >&2
     git switch --detach "$PREVIOUS_SHA"
@@ -456,6 +516,13 @@ rollback_code_if_safe() {
     verify_facial_deploy_state
     record_revision "last-rollback" "$PREVIOUS_SHA"
   else
+    if [[ "$SHA_SWITCHED" -eq 1 && "$FACIAL_ENV_CHANGED" -eq 1 ]]; then
+      compose up -d --build --no-deps api worker
+      if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
+        compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"
+      fi
+      verify_facial_deploy_state
+    fi
     echo "rollback automático de código não é seguro após mudança de schema; banco não foi restaurado" >&2
   fi
   exit "$exit_code"
@@ -463,8 +530,8 @@ rollback_code_if_safe() {
 
 main() {
   parse_arguments "$@"
-  verify_target
   trap 'rollback_code_if_safe $?' ERR
+  verify_target
 
   git fetch --quiet origin develop
   git fetch --quiet origin "$DEPLOY_SHA"
