@@ -103,8 +103,11 @@ print(f"{str(s.enabled).lower()}|{s.environment}")
 IFS='|' read -r runtime_enabled runtime_environment <<<"$runtime_state"
 [[ "$runtime_enabled" == "true" ]] || fail "runtime facial de homologação não está habilitado"
 echo "runtime facial: enabled=true environment=$runtime_environment"
-[[ "$runtime_environment" == "homolog" || "$runtime_environment" == "homologation" ]] \
-  || fail "APP_ENV não identifica homologação"
+case "$runtime_environment" in
+  homolog|homologation) rollout_environment="homolog" ;;
+  staging) rollout_environment="staging" ;;
+  *) fail "APP_ENV não identifica homologação" ;;
+esac
 
 scope_state="$(
   compose exec -T \
@@ -154,7 +157,7 @@ echo "backup lógico exclusivo da Markina criado antes da mutação"
 
 compose exec -T api python -m app.facial.manage_rollout \
   --action "$ACTION" \
-  --environment homolog \
+  --environment "$rollout_environment" \
   --stage "$STAGE" \
   --sha "$EXPECTED_SHA" \
   --inventory-ref "${RUN_REFERENCE}:inventory" \
@@ -162,17 +165,17 @@ compose exec -T api python -m app.facial.manage_rollout \
   --gate-set-version "homolog-product-gates-v1" \
   --approved-gates "$REQUIRED_GATES" \
   --allowlist "$GALLERY_ID" \
-  --confirmation "$CONFIRMATION" \
+  --confirmation "${ACTION^^}_FACIAL_${rollout_environment^^}_${STAGE^^}" \
   --actor-admin-id "$resolved_actor_id"
 
 if [[ "$ACTION" == "activate" ]]; then
   if ! compose exec -T api python -m app.facial.reconcile_gallery \
     --gallery-id "$GALLERY_ID" --page-size 100; then
     compose exec -T api python -m app.facial.manage_rollout \
-      --action suspend --environment homolog --stage "$STAGE" --sha "$EXPECTED_SHA" \
+      --action suspend --environment "$rollout_environment" --stage "$STAGE" --sha "$EXPECTED_SHA" \
       --inventory-ref "${RUN_REFERENCE}:inventory" --backup-ref "${RUN_REFERENCE}:backup" \
       --gate-set-version "homolog-product-gates-v1" --approved-gates "$REQUIRED_GATES" \
-      --allowlist "$GALLERY_ID" --confirmation "SUSPEND_FACIAL_HOMOLOG_${STAGE^^}" \
+      --allowlist "$GALLERY_ID" --confirmation "SUSPEND_FACIAL_${rollout_environment^^}_${STAGE^^}" \
       --actor-admin-id "$resolved_actor_id" \
       || fail "reconciliação falhou e a contenção não foi confirmada"
     fail "reconciliação falhou; rollout suspenso como contenção"
@@ -186,10 +189,10 @@ if [[ "$ACTION" == "activate" ]]; then
   done
   if [[ "$health" != "healthy" ]]; then
     compose exec -T api python -m app.facial.manage_rollout \
-      --action suspend --environment homolog --stage "$STAGE" --sha "$EXPECTED_SHA" \
+      --action suspend --environment "$rollout_environment" --stage "$STAGE" --sha "$EXPECTED_SHA" \
       --inventory-ref "${RUN_REFERENCE}:inventory" --backup-ref "${RUN_REFERENCE}:backup" \
       --gate-set-version "homolog-product-gates-v1" --approved-gates "$REQUIRED_GATES" \
-      --allowlist "$GALLERY_ID" --confirmation "SUSPEND_FACIAL_HOMOLOG_${STAGE^^}" \
+      --allowlist "$GALLERY_ID" --confirmation "SUSPEND_FACIAL_${rollout_environment^^}_${STAGE^^}" \
       --actor-admin-id "$resolved_actor_id" \
       || fail "worker não voltou saudável e a contenção não foi confirmada"
     fail "worker de índice não voltou saudável; rollout suspenso como contenção"
@@ -199,3 +202,4 @@ else
   echo "rollout persistente suspenso; novas admissões bloqueadas"
 fi
 unset resolved_actor_id
+unset rollout_environment runtime_environment runtime_enabled

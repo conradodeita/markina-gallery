@@ -20,9 +20,15 @@ def main() -> None:
     require("pg_dump -Fc", "backup lógico anterior", SCRIPT)
     require("python -m app.facial.manage_rollout", "operação persistente", SCRIPT)
     require("python -m app.facial.reconcile_gallery", "backfill explícito", SCRIPT)
-    require('runtime_environment" == "homolog"', "alias canônico de homologação", SCRIPT)
-    require('runtime_environment" == "homologation"', "alias histórico de homologação", SCRIPT)
+    require("homolog|homologation)", "aliases explícitos de homologação", SCRIPT)
+    require('staging) rollout_environment="staging"', "rótulo efetivo observado", SCRIPT)
     require("runtime facial: enabled=true environment=", "diagnóstico sanitizado", SCRIPT)
+    require('--environment "$rollout_environment"', "ambiente interno derivado", SCRIPT)
+    require(
+        '${ACTION^^}_FACIAL_${rollout_environment^^}_${STAGE^^}',
+        "confirmação interna vinculada ao runtime",
+        SCRIPT,
+    )
     require("compose restart face-index-worker", "backfill pós-ativação", SCRIPT)
     require("rollout suspenso como contenção", "contenção de falha", SCRIPT)
     require('PUBLIC_BASE_URL="https://markina-homolog.duckdns.org"', "healthcheck externo", SCRIPT)
