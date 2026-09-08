@@ -157,20 +157,27 @@ grep -Fq 'FACIAL_PROCESSING_ENABLED persistido como true em homologação' "$out
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
-    compose() { [[ "$1" == "ps" ]] && return 0; }
+    compose() { echo "o Compose anterior não conhece os workers novos" >&2; return 99; }
+    docker() { [[ "$1" == "ps" ]] && return 0; }
     verify_facial_deploy_state "$FACIAL_ENV"
   ' >"$output" 2>&1
 grep -Fq 'flag=false workers=ausentes' "$output"
+if grep -Fq 'o Compose anterior não conhece os workers novos' "$output"; then
+  echo "a verificação inicial consultou workers ausentes no Compose anterior" >&2
+  exit 1
+fi
 
 printf 'FACIAL_PROCESSING_ENABLED=true\n' >"$facial_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     compose() {
-      [[ "$1" == "ps" ]] && { printf "container-%s\n" "$3"; return 0; }
       [[ "$1" == "exec" ]] && return 0
     }
-    docker() { [[ "$1" == "inspect" ]] && printf "healthy\n"; }
+    docker() {
+      [[ "$1" == "ps" ]] && { printf "container-sintetico\n"; return 0; }
+      [[ "$1" == "inspect" ]] && printf "healthy\n"
+    }
     verify_facial_deploy_state "$FACIAL_ENV"
   ' >"$output" 2>&1
 grep -Fq 'flag=true workers=saudáveis' "$output"
@@ -178,11 +185,12 @@ grep -Fq 'flag=true workers=saudáveis' "$output"
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
-    compose() {
-      [[ "$1" == "ps" && "$3" == "face-index-worker" ]] && return 0
-      [[ "$1" == "ps" ]] && { printf "container-%s\n" "$3"; return 0; }
+    compose() { [[ "$1" == "exec" ]] && return 0; }
+    docker() {
+      [[ "$1" == "ps" && "$*" == *"service=face-index-worker"* ]] && return 0
+      [[ "$1" == "ps" ]] && { printf "container-sintetico\n"; return 0; }
+      [[ "$1" == "inspect" ]] && printf "healthy\n"
     }
-    docker() { [[ "$1" == "inspect" ]] && printf "healthy\n"; }
     verify_facial_deploy_state "$FACIAL_ENV"
   ' >"$output" 2>&1; then
   echo "deploy aceitou combinação facial incoerente" >&2

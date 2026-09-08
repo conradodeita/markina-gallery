@@ -89,7 +89,14 @@ verify_facial_deploy_state() {
   local env_file="${1:-$ENV_FILE}" expected service container status
   expected="$(read_facial_enabled "$env_file")"
   for service in "${FACIAL_SERVICES[@]}"; do
-    container="$(compose ps -q "$service")"
+    # O script novo roda por stdin enquanto o checkout remoto ainda aponta para
+    # a versão anterior. Consulte os labels Docker diretamente para que o
+    # bootstrap não dependa de o Compose antigo já conhecer os serviços novos.
+    container="$(
+      docker ps --quiet \
+        --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+        --filter "label=com.docker.compose.service=$service"
+    )"
     if [[ "$expected" == "false" ]]; then
       [[ -z "$container" ]] || fail "$service deve permanecer ausente com flag=false"
       continue
