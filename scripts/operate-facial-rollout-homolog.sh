@@ -95,7 +95,7 @@ revision="$(compose run --rm --no-deps migrate alembic current 2>/dev/null | tr 
 runtime_state="$(compose exec -T api python -c '
 from app.facial.config import facial_settings_from_environment
 s = facial_settings_from_environment(verify_runtime_assets=False)
-assert s.enabled and s.environment == "homolog"
+assert s.enabled and s.environment in {"homolog", "homologation"}
 assert all((s.model_version, s.quality_version, s.calibration_version,
             s.legal_notice_version, s.consent_version,
             s.legal_basis_reference, s.retention_policy_version))

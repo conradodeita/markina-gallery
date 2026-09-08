@@ -18,6 +18,7 @@ from app.facial.purge import enqueue_gallery_purge, invalidate_gallery_searches
 ROLLOUT_ENVIRONMENTS = frozenset(
     {"local", "development", "test", "homolog", "staging", "prod", "production"}
 )
+ROLLOUT_ENVIRONMENT_ALIASES = {"homologation": "homolog"}
 ROLLOUT_STAGES = frozenset({"dark", "canary", "limited", "general"})
 ACTIVE_STAGES = frozenset({"canary", "limited", "general"})
 APPROVAL_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$")
@@ -57,6 +58,7 @@ def read_rollout(
     parent_gallery_id: UUID,
     for_update: bool = False,
 ) -> FacialRollout | None:
+    environment = _validate_environment(environment)
     query = select(FacialRollout).where(
         FacialRollout.environment == environment,
         FacialRollout.parent_gallery_id == parent_gallery_id,
@@ -134,7 +136,10 @@ def activate_rollout(
         raise FacialRolloutError("A ativação exige etapa canary, limited ou general.")
     if not APPROVAL_REFERENCE_RE.fullmatch(approval_reference.strip()):
         raise FacialRolloutError("Referência opaca de aprovação inválida.")
-    if not settings.enabled or settings.environment != environment:
+    if (
+        not settings.enabled
+        or canonical_rollout_environment(settings.environment) != environment
+    ):
         raise FacialRolloutError("O kill switch e o ambiente facial não autorizam ativação.")
     if not calibration_is_approved(db, settings):
         raise FacialRolloutError("Calibração e grupos relevantes não foram aprovados.")
@@ -276,7 +281,14 @@ def _required_rollout(
 
 
 def _validate_environment(environment: str) -> str:
+    return canonical_rollout_environment(environment)
+
+
+def canonical_rollout_environment(environment: str) -> str:
+    """Normaliza apenas aliases operacionais explícitos do rollout."""
+
     normalized = environment.strip().lower()
+    normalized = ROLLOUT_ENVIRONMENT_ALIASES.get(normalized, normalized)
     if normalized not in ROLLOUT_ENVIRONMENTS:
         raise FacialRolloutError("Ambiente de rollout facial inválido.")
     return normalized

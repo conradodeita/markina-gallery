@@ -53,6 +53,8 @@ O comando administrativo `Refazer reconhecimento facial` não executará novo up
 
 Em homologação, a ponte remota para essa configuração será um workflow protegido do GitHub separado do deploy. Cada execução SHALL ficar restrita ao projeto Compose `markina-gallery`, a um único UUID público de Galeria pública e ao SHA integral já publicado. A ativação SHALL repetir inventário técnico, criar backup lógico exclusivo da Markina imediatamente antes da mutação, resolver um administrador existente sem registrar seu identificador nos logs e chamar a mesma operação persistente usada pelo produto. Inventário, ativação e suspensão serão modos explícitos; nenhum deles reintroduzirá lote, janela, token ou estado do benchmark encerrado.
 
+O host histórico pode identificar esse mesmo ambiente como `APP_ENV=homologation`. O rollout SHALL canonicalizar exclusivamente esse alias para `homolog`, mantendo a correspondência exata entre `APP_ENV` e o ambiente das credenciais faciais e recusando qualquer outro alias implícito. Assim, os registros e tokens operacionais permanecem estáveis sem enfraquecer o isolamento de credenciais.
+
 ### 5. Separar classes de trabalho e priorizar consultas
 
 O banco continuará como fonte durável única, mas o claim aceitará classes de job. Haverá consumidores isolados para `search`, `index` e `maintenance` (`cleanup|purge`), todos sem porta. `search` terá prioridade interativa; `maintenance` terá reserva para que retenção e purge não sofram starvation; `index` usará capacidade remanescente e desacelerará durante picos.

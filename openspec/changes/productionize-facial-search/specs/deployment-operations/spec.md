@@ -14,6 +14,11 @@ O deploy SHALL detectar e validar o estado facial autorizado do ambiente antes d
 - **WHEN** a flag, o profile, as chaves, os modelos ou o estado efetivo dos processos divergem antes ou depois do deploy
 - **THEN** a operação falha fechada, não amplia o rollout e restaura somente a versão saudável da Markina quando o rollback for comprovadamente seguro
 
+#### Scenario: Alias explícito do ambiente de homologação
+
+- **WHEN** o host identifica homologação como `APP_ENV=homologation` e as credenciais faciais correspondem exatamente a esse valor
+- **THEN** o rollout canonicaliza somente esse alias para `homolog`, preserva tokens e registros operacionais estáveis e continua recusando ambiente ou credencial divergente
+
 ### Requirement: Ferramentas de benchmark fora do caminho de produção
 
 Scripts, tokens, manifestos, janelas e relatórios criados exclusivamente para o benchmark privado SHALL NOT controlar o runtime, o deploy comum ou a autorização de produção. A evidência agregada histórica MAY permanecer arquivada pelo prazo documentado, sem fotos, PII, vetores ou scores.

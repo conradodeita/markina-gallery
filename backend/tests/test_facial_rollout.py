@@ -223,6 +223,33 @@ def test_active_rollout_fails_closed_for_version_or_environment_drift() -> None:
     ) is False
 
 
+def test_homologation_runtime_reads_canonical_homolog_rollout() -> None:
+    db, gallery, admin = _fixture()
+    runtime_settings = _settings(environment="homologation")
+    prepare_rollout(
+        db,
+        environment="homolog",
+        parent_gallery_id=gallery.id,
+        draft=draft_from_settings(runtime_settings),
+    )
+    activate_rollout(
+        db,
+        environment="homolog",
+        parent_gallery_id=gallery.id,
+        actor_admin_id=admin.id,
+        approval_reference="approval-homolog-alias",
+        stage="canary",
+        settings=runtime_settings,
+    )
+    db.commit()
+
+    assert rollout_is_active(
+        db,
+        settings=runtime_settings,
+        parent_gallery_id=gallery.id,
+    ) is True
+
+
 def test_admin_payload_exposes_only_operational_rollout_state() -> None:
     db, gallery, admin = _fixture()
     settings = _settings()
