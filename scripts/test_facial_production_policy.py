@@ -79,6 +79,12 @@ def main() -> None:
         assert heading in inventory
     assert "FACIAL_PROCESSING_ENABLED=false" in inventory
     assert "2 CPU e 1.536 MiB" in inventory
+    compose = (ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
+    maintenance = compose.split("  face-maintenance-worker:\n", 1)[1].split(
+        "\nvolumes:\n", 1
+    )[0]
+    assert "dockerfile: Dockerfile.face" in maintenance
+    assert "app.facial.maintenance_worker_entrypoint" in maintenance
     print("facial production policy: ok")
 
 

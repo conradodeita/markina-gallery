@@ -77,6 +77,7 @@ def main() -> int:
     require('report_container_state', "diagnóstico sanitizado de falha de healthcheck", SCRIPT)
     require('oom={{.State.OOMKilled}}', "sinal agregado de OOM sem logs do job", SCRIPT)
     require('restart_count={{.RestartCount}}', "contagem agregada de reinícios", SCRIPT)
+    require('exception_class=\\1', "classe de exceção sem mensagem ou conteúdo do job", SCRIPT)
     require(
         'docker.compose.service=$service',
         "bootstrap facial independente dos serviços definidos no Compose anterior",

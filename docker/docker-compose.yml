@@ -421,7 +421,9 @@ services:
 
   face-maintenance-worker:
     profiles: ["facial"]
-    build: ../backend
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.face
     command: ["python", "-m", "app.facial.maintenance_worker_entrypoint"]
     restart: unless-stopped
     environment:

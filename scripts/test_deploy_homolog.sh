@@ -223,6 +223,10 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
         return 0
       fi
       [[ "$1" == "inspect" ]] && printf "unhealthy\n"
+      if [[ "$1" == "logs" ]]; then
+        printf "conteúdo-proibido-do-job\nModuleNotFoundError: conteúdo-proibido-do-job\n"
+        return 0
+      fi
     }
     seq() { printf "1\n"; }
     sleep() { :; }
@@ -235,6 +239,11 @@ grep -Fq 'serviço Markina não ficou saudável: api (unhealthy)' "$health_outpu
 grep -Fq 'diagnóstico sanitizado: service=api' "$health_output"
 grep -Fq 'oom=' "$health_output"
 grep -Fq 'restart_count=' "$health_output"
+grep -Fq 'exception_class=ModuleNotFoundError' "$health_output"
+if grep -Fq 'conteúdo-proibido-do-job' "$health_output"; then
+  echo "diagnóstico expôs conteúdo da mensagem de exceção" >&2
+  exit 1
+fi
 
 whatsapp_output="$(mktemp)"
 trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$whatsapp_output"' EXIT

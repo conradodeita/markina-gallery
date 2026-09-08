@@ -451,6 +451,12 @@ report_container_state() {
   docker inspect --format \
     'diagnóstico sanitizado: service='"$service"' status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}} restart_count={{.RestartCount}} state_error={{if .State.Error}}present{{else}}absent{{end}}' \
     "$container" || true
+  docker logs --tail 80 "$container" 2>&1 \
+    | sed -nE 's/^([A-Za-z_][A-Za-z0-9_.]*(Error|Exception)):.*/exception_class=\1/p' \
+    | tail -n 5 \
+    | while IFS= read -r exception_class; do
+        printf 'diagnóstico sanitizado: service=%s %s\n' "$service" "$exception_class"
+      done || true
 }
 
 wait_for_health() {
