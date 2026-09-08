@@ -162,6 +162,14 @@ Quando a própria evidência persistida provar que a quantidade registrada na at
 
 Alternativa rejeitada: fechar o lote e exigir novo upload. Isso apagaria os derivados faciais conforme o contrato de encerramento, perderia a medição já iniciada e imporia novo tratamento de dados sem necessidade técnica.
 
+### 17. Retomada limitada de uma fila expirada
+
+Uma janela expirada pode deixar jobs de indexação já duráveis na fila sem indicar falha de reconhecimento. A retomada é uma operação separada de ativação e reconciliação: exige autorização humana explícita, janela anterior comprovadamente expirada e correspondência exata de SHA publicado, lote, autorização, quantidade e declaração de menores entre argumentos, ambiente e manifesto. Origem, responsável, finalidade e retenção são imutáveis; a única alteração de escopo é um novo `window_expires_at` entre 30 e 240 minutos, registrado no histórico do manifesto.
+
+Antes da mutação, a operação inventaria o host, comprova cobertura exata do lote por jobs terminais ou pendentes e recusa falhas, cancelamentos, foto sem job ou processamento concorrente. Depois de aguardar o worker de mídia ficar ocioso, faz backup restrito do ambiente e manifesto, atualiza atomicamente apenas o vencimento e recria `api`, `worker` e `face-worker` da Markina para que todos recebam o mesmo gate. O rollback restaura ambos os arquivos e os processos anteriores sem tocar fotos, banco, proxy ou recursos de terceiros fora do recarregamento do Nginx da própria aplicação.
+
+O benchmark de continuação separa o início da medição do início do escopo: recursos e tempo são medidos a partir da retomada, mas fotos, derivados, jobs e embeddings são agregados desde `recorded_at` do manifesto original. Assim, as 636 fotos permanecem o denominador verificável sem reupload e o relatório continua sem nome, arquivo, imagem, vetor, score ou outro identificador pessoal.
+
 ## Risks / Trade-offs
 
 - [Base legal inadequada para pessoas incidentais] → flag global e política interna automática fail-closed; RIPD e revisão jurídica antes de dado real.

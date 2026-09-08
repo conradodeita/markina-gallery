@@ -159,6 +159,11 @@ O sistema SHALL manter busca infantil desabilitada por padrão. Em homologação
 - **WHEN** o administrador/fotógrafo inicia uma execução de homologação explicitamente autorizada, vinculada a lote documentado que inclui menores e com todos os controles temporários válidos
 - **THEN** o sistema limita o tratamento àquele ambiente, lote, finalidade e janela, audita somente identificadores mínimos e exige purge e desativação do gate infantil ao encerrar
 
+#### Scenario: Continuação autorizada após expiração da janela
+
+- **WHEN** a janela controlada expira com jobs duráveis do mesmo lote ainda pendentes e o administrador/fotógrafo autoriza explicitamente sua conclusão
+- **THEN** o sistema MAY reabrir o gate infantil somente por uma nova janela limitada, mantendo idênticos lote, origem, finalidade, autorização, quantidade, responsável e retenção, sem aceitar novas fotos nem ampliar o uso fora daquela homologação
+
 ### Requirement: Auditoria sem biometria e exercício de direitos
 
 O sistema SHALL auditar política, consentimento, estado, versão do modelo, limiar, contagens agregadas, exclusão, revogação e ator em UTC, sem registrar imagem, embedding, landmarks, caixa facial, similaridade individual ou identidade inferida. Cliente e fotógrafo SHALL possuir ações autorizadas para consultar estado, revogar finalidade e solicitar eliminação sem revelar dados de terceiros.

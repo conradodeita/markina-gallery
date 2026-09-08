@@ -16,6 +16,7 @@ readonly PAUSE_TOKEN="PAUSE_AUTHORIZED_PRIVATE_FACIAL_FOR_DEPLOY"
 readonly LEGACY_PAUSE_TOKEN="PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE"
 readonly CLOSE_TOKEN="CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 readonly RECONCILE_TOKEN="RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
+readonly RESUME_TOKEN="RESUME_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 
 MODE=""
 CONFIRMATION=""
@@ -31,11 +32,13 @@ WINDOW_MINUTES=""
 CONTAINS_MINORS=""
 WINDOW_EXPIRES_AT=""
 ENV_BACKUP=""
+MANIFEST_BACKUP=""
 ACTIVATION_STARTED=0
 PAUSE_STARTED=0
+RESUME_STARTED=0
 
 usage() {
-  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|reconcile-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--recorded-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
+  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|reconcile-private|resume-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--recorded-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
 }
 
 fail() {
@@ -69,7 +72,7 @@ parse_arguments() {
       *) usage; fail "argumento não permitido: $1"; return 1 ;;
     esac
   done
-  [[ "$MODE" == "inventory" || "$MODE" == "pause-legacy-for-private-upgrade" || "$MODE" == "pause-private" || "$MODE" == "activate-private" || "$MODE" == "reconcile-private" || "$MODE" == "close-private" ]] || {
+  [[ "$MODE" == "inventory" || "$MODE" == "pause-legacy-for-private-upgrade" || "$MODE" == "pause-private" || "$MODE" == "activate-private" || "$MODE" == "reconcile-private" || "$MODE" == "resume-private" || "$MODE" == "close-private" ]] || {
     usage
     fail "modo não permitido"
     return 1
@@ -381,6 +384,19 @@ rollback_pause() {
   exit "$exit_code"
 }
 
+rollback_resume() {
+  local exit_code="$1"
+  trap - ERR
+  if [[ "$RESUME_STARTED" -eq 1 && -f "$ENV_BACKUP" && -f "$MANIFEST_BACKUP" ]]; then
+    cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"
+    cp --preserve=mode "$MANIFEST_BACKUP" "$STATE_DIR/facial-batch-$BATCH_ID.json"
+    compose_facial stop face-worker >/dev/null 2>&1 || true
+    compose up -d --no-deps --force-recreate api worker >/dev/null 2>&1 || true
+    reload_reverse_proxy >/dev/null 2>&1 || true
+  fi
+  exit "$exit_code"
+}
+
 pause_active_worker() {
   local history_event="$1"
   record_inventory
@@ -661,6 +677,167 @@ PY
   printf '%s reconciled-private batch=%s photos=%s sha=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$EXPECTED_COUNT" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
 }
 
+resume_private() {
+  [[ "$CONFIRMATION" == "$RESUME_TOKEN" ]] || { fail "confirmação explícita da retomada privada ausente"; return 1; }
+  validate_reference "$BATCH_ID" "batch-id" || return 1
+  validate_reference "$AUTHORIZATION_REF" "authorization-ref" || return 1
+  [[ "$EXPECTED_COUNT" =~ ^[0-9]+$ ]] && (( EXPECTED_COUNT >= 500 && EXPECTED_COUNT <= 1000 )) || { fail "expected-count deve ficar entre 500 e 1000"; return 1; }
+  [[ "$WINDOW_MINUTES" =~ ^[0-9]+$ ]] && (( WINDOW_MINUTES >= 30 && WINDOW_MINUTES <= 240 )) || { fail "window-minutes deve ficar entre 30 e 240"; return 1; }
+  [[ "$CONTAINS_MINORS" == "true" || "$CONTAINS_MINORS" == "false" ]] || { fail "contains-minors deve ser true ou false"; return 1; }
+  [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]] || { fail "o host de homologação não é ARM64"; return 1; }
+  [[ "$(read_env_value FACIAL_PROCESSING_ENABLED)" == "true" ]] || { fail "processamento facial não está configurado para o lote"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" == "true" ]] || { fail "manifestação privada do lote não está ativa"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_BATCH_ID)" == "$BATCH_ID" ]] || { fail "batch-id diverge do lote expirado"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_AUTHORIZATION_REF)" == "$AUTHORIZATION_REF" ]] || { fail "authorization-ref diverge do lote expirado"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_EXPECTED_COUNT)" == "$EXPECTED_COUNT" ]] || { fail "expected-count diverge do lote expirado"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_CONTAINS_MINORS)" == "$CONTAINS_MINORS" ]] || { fail "contains-minors diverge do lote expirado"; return 1; }
+
+  record_inventory
+  local manifest_path old_expiry started_at scope_expires_at timestamp temp_env temp_manifest
+  local -a manifest_scope
+  manifest_path="$STATE_DIR/facial-batch-$BATCH_ID.json"
+  old_expiry="$(read_env_value FACIAL_HOMOLOG_WINDOW_EXPIRES_AT)"
+  mapfile -t manifest_scope < <(
+    FACIAL_MANIFEST_PATH="$manifest_path" FACIAL_BATCH_ID="$BATCH_ID" \
+    FACIAL_AUTHORIZATION_REF="$AUTHORIZATION_REF" FACIAL_EXPECTED_COUNT="$EXPECTED_COUNT" \
+    FACIAL_CONTAINS_MINORS="$CONTAINS_MINORS" FACIAL_OLD_EXPIRY="$old_expiry" python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+payload = json.loads(Path(os.environ["FACIAL_MANIFEST_PATH"]).read_text(encoding="utf-8"))
+expected = {
+    "batch_id": os.environ["FACIAL_BATCH_ID"],
+    "authorization_ref": os.environ["FACIAL_AUTHORIZATION_REF"],
+    "expected_count": int(os.environ["FACIAL_EXPECTED_COUNT"]),
+    "contains_minors": os.environ["FACIAL_CONTAINS_MINORS"] == "true",
+    "status": "active",
+    "window_expires_at": os.environ["FACIAL_OLD_EXPIRY"],
+}
+if any(payload.get(key) != value for key, value in expected.items()):
+    raise SystemExit("manifesto diverge da retomada autorizada")
+started = datetime.fromisoformat(payload["recorded_at"])
+expired = datetime.fromisoformat(payload["window_expires_at"])
+scope_expired = datetime.fromisoformat(payload.get("scope_expires_at", payload["window_expires_at"]))
+if started >= scope_expired or scope_expired > expired or expired >= datetime.now(timezone.utc):
+    raise SystemExit("retomada exige uma janela anterior válida e já expirada")
+print(started.isoformat())
+print(scope_expired.isoformat())
+PY
+  )
+  [[ "${#manifest_scope[@]}" -eq 2 ]] || { fail "manifesto não forneceu o escopo original do lote"; return 1; }
+  started_at="${manifest_scope[0]}"
+  scope_expires_at="${manifest_scope[1]}"
+
+  FACIAL_BATCH_STARTED_AT="$started_at" FACIAL_BATCH_EXPIRES_AT="$scope_expires_at" \
+  FACIAL_EXPECTED_COUNT="$EXPECTED_COUNT" compose exec -T \
+    -e FACIAL_BATCH_STARTED_AT -e FACIAL_BATCH_EXPIRES_AT -e FACIAL_EXPECTED_COUNT api python - <<'PY'
+import json
+import os
+from datetime import datetime
+
+from sqlalchemy import func, select
+
+from app.auth import FacialJob, ParentGallery, PhotoAsset, PhotoFolder, SessionLocal
+
+started_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_STARTED_AT"])
+expires_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_EXPIRES_AT"])
+expected_count = int(os.environ["FACIAL_EXPECTED_COUNT"])
+with SessionLocal() as db:
+    photo_ids = list(db.scalars(
+        select(PhotoAsset.id)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .join(ParentGallery, ParentGallery.id == PhotoAsset.parent_gallery_id)
+        .where(
+            PhotoAsset.created_at >= started_at,
+            PhotoAsset.created_at < expires_at,
+            PhotoFolder.purpose == "content",
+            ParentGallery.active.is_(True),
+            ParentGallery.lifecycle_status == "active",
+        )
+        .order_by(PhotoAsset.id)
+    ))
+    if len(photo_ids) != expected_count:
+        raise SystemExit(f"lote persistido divergente: {len(photo_ids)}/{expected_count}")
+    states = {
+        status: int(count)
+        for status, count in db.execute(
+            select(FacialJob.status, func.count(func.distinct(FacialJob.photo_asset_id)))
+            .where(FacialJob.kind == "index", FacialJob.photo_asset_id.in_(photo_ids))
+            .group_by(FacialJob.status)
+        )
+    }
+    covered = db.scalar(select(func.count(func.distinct(FacialJob.photo_asset_id))).where(
+        FacialJob.kind == "index", FacialJob.photo_asset_id.in_(photo_ids)
+    )) or 0
+    if covered != expected_count:
+        raise SystemExit(f"cobertura de jobs divergente: {covered}/{expected_count}")
+    if states.get("failed", 0) or states.get("cancelled", 0) or states.get("processing", 0):
+        raise SystemExit(f"fila não está segura para retomada: {json.dumps(states, sort_keys=True)}")
+    if states.get("queued", 0) <= 0 or states.get("queued", 0) + states.get("completed", 0) != expected_count:
+        raise SystemExit(f"fila pendente diverge do lote: {json.dumps(states, sort_keys=True)}")
+    print(json.dumps({"photos": expected_count, "job_states": states}, sort_keys=True))
+PY
+
+  wait_for_media_worker_idle
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  ENV_BACKUP="$STATE_DIR/facial-env-preresume-${timestamp}.backup"
+  MANIFEST_BACKUP="$STATE_DIR/facial-manifest-preresume-${BATCH_ID}-${timestamp}.backup"
+  cp --preserve=mode "$ENV_FILE" "$ENV_BACKUP"
+  cp --preserve=mode "$manifest_path" "$MANIFEST_BACKUP"
+  chmod 600 "$ENV_BACKUP" "$MANIFEST_BACKUP"
+  RESUME_STARTED=1
+  compose_facial stop face-worker || true
+  temp_env="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
+  temp_manifest="$(mktemp "${manifest_path}.tmp.XXXXXX")"
+  FACIAL_WINDOW_MINUTES="$WINDOW_MINUTES" FACIAL_OLD_EXPIRY="$old_expiry" \
+    python3 - "$ENV_FILE" "$temp_env" "$manifest_path" "$temp_manifest" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+env_path, env_temp, manifest_path, manifest_temp = map(Path, sys.argv[1:])
+old_expiry = os.environ["FACIAL_OLD_EXPIRY"]
+now = datetime.now(timezone.utc)
+new_expiry = (now + timedelta(minutes=int(os.environ["FACIAL_WINDOW_MINUTES"]))).isoformat()
+lines = env_path.read_text(encoding="utf-8").splitlines()
+matches = [index for index, line in enumerate(lines) if line.startswith("FACIAL_HOMOLOG_WINDOW_EXPIRES_AT=")]
+if len(matches) != 1 or lines[matches[0]] != f"FACIAL_HOMOLOG_WINDOW_EXPIRES_AT={old_expiry}":
+    raise SystemExit("vencimento ativo mudou durante a retomada")
+lines[matches[0]] = f"FACIAL_HOMOLOG_WINDOW_EXPIRES_AT={new_expiry}"
+env_temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+if payload.get("status") != "active" or payload.get("window_expires_at") != old_expiry:
+    raise SystemExit("manifesto mudou durante a retomada")
+payload.setdefault("scope_expires_at", old_expiry)
+resumptions = payload.setdefault("resumptions", [])
+if not isinstance(resumptions, list):
+    raise SystemExit("histórico de retomadas inválido")
+resumptions.append({
+    "authorized_at": now.isoformat(),
+    "from_window_expires_at": old_expiry,
+    "to_window_expires_at": new_expiry,
+    "window_minutes": int(os.environ["FACIAL_WINDOW_MINUTES"]),
+})
+payload["window_expires_at"] = new_expiry
+manifest_temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  chmod 600 "$temp_env" "$temp_manifest"
+  mv "$temp_env" "$ENV_FILE"
+  mv "$temp_manifest" "$manifest_path"
+  WINDOW_EXPIRES_AT="$(read_env_value FACIAL_HOMOLOG_WINDOW_EXPIRES_AT)"
+  compose_facial up -d --no-deps --force-recreate face-worker
+  compose up -d --no-deps --force-recreate api worker
+  reload_reverse_proxy
+  verify_activation
+  record_inventory
+  printf '%s resumed-private batch=%s photos=%s window_minutes=%s sha=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$EXPECTED_COUNT" "$WINDOW_MINUTES" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
+}
+
 purge_and_prove() {
   FACIAL_CLOSING_BATCH="$BATCH_ID" compose exec -T -e FACIAL_CLOSING_BATCH api python - <<'PY'
 import json
@@ -750,6 +927,7 @@ main() {
     pause-private) trap 'rollback_pause $?' ERR; pause_private ;;
     activate-private) trap 'rollback_activation $?' ERR; activate_private ;;
     reconcile-private) reconcile_private ;;
+    resume-private) trap 'rollback_resume $?' ERR; resume_private ;;
     close-private) close_private ;;
   esac
 }

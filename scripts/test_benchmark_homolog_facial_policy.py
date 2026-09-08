@@ -38,6 +38,13 @@ def test_observer_is_scoped_read_only_and_privacy_minimized() -> None:
     require("facial_throughput_photos_per_second", "throughput calculado")
     require("resource_maxima", "máximas de recursos")
     require("used_delta_bytes", "variação de disco")
+    require("--scope-from-manifest", "escopo retomado explícito")
+    require('STATE_DIR = Path("/var/lib/markina-gallery/deploy-state")', "manifesto operacional restrito")
+    require('payload["recorded_at"]', "início original do lote")
+    require('payload.get("scope_expires_at"', "fim imutável do lote original")
+    require("manifesto diverge do lote autorizado", "vínculo do manifesto retomado")
+    require("continuation_completed", "progresso medido na retomada")
+    require("continuation_throughput_photos_per_second", "throughput da continuação")
     for forbidden, label in (
         (r"\b(delete|update|insert|truncate)\s+", "SQL mutável"),
         (r"\bdocker\s+(rm|rmi|stop|restart|kill|system\s+prune)\b", "mutação Docker"),

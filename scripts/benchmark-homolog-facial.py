@@ -24,6 +24,7 @@ PROJECT_ROOT = Path("/opt/markina-gallery")
 PROJECT_NAME = "markina-gallery"
 COMPOSE_FILE = "docker/docker-compose.yml"
 ENV_FILE = "docker/.env.homolog"
+STATE_DIR = Path("/var/lib/markina-gallery/deploy-state")
 CONFIRMATION = "BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 SERVICES = ("api", "worker", "face-worker", "db")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -35,11 +36,16 @@ import sys
 from sqlalchemy import text
 from app.auth import SessionLocal
 
-started_at = sys.argv[1]
+started_at, scope_expires_at = sys.argv[1:3]
 with SessionLocal() as db:
     row = db.execute(text("""
         WITH new_photos AS (
-            SELECT id FROM photo_asset WHERE created_at >= CAST(:started_at AS timestamptz)
+            SELECT id FROM photo_asset
+            WHERE created_at >= CAST(:started_at AS timestamptz)
+              AND created_at < COALESCE(
+                  CAST(NULLIF(:scope_expires_at, '') AS timestamptz),
+                  'infinity'::timestamptz
+              )
         ), media AS (
             SELECT
                 COUNT(*) FILTER (WHERE status = 'queued') AS queued,
@@ -91,7 +97,7 @@ with SessionLocal() as db:
             COALESCE(embeddings.faces, 0) AS faces,
             COALESCE(embeddings.photos_with_faces, 0) AS photos_with_faces
         FROM media CROSS JOIN facial CROSS JOIN derivatives CROSS JOIN embeddings
-    """), {"started_at": started_at}).mappings().one()
+    """), {"started_at": started_at, "scope_expires_at": scope_expires_at}).mappings().one()
 print(json.dumps(dict(row), default=lambda value: value.isoformat()))
 '''
 
@@ -108,6 +114,7 @@ class Options:
     authorization_ref: str
     expected_count: int
     contains_minors: bool
+    scope_from_manifest: bool
 
 
 def parse_args(argv: list[str]) -> Options:
@@ -122,6 +129,11 @@ def parse_args(argv: list[str]) -> Options:
     parser.add_argument("--authorization-ref", required=True)
     parser.add_argument("--expected-count", required=True, type=int)
     parser.add_argument("--contains-minors", choices=("true", "false"), required=True)
+    parser.add_argument(
+        "--scope-from-manifest",
+        action="store_true",
+        help="usar recorded_at do manifesto original em uma retomada autorizada",
+    )
     args = parser.parse_args(argv)
     if not SHA_RE.fullmatch(args.sha):
         parser.error("--sha deve conter 40 caracteres hexadecimais minúsculos")
@@ -150,6 +162,7 @@ def parse_args(argv: list[str]) -> Options:
         authorization_ref=args.authorization_ref,
         expected_count=args.expected_count,
         contains_minors=args.contains_minors == "true",
+        scope_from_manifest=args.scope_from_manifest,
     )
 
 
@@ -212,9 +225,41 @@ def verify_target(options: Options) -> None:
         raise RuntimeError("gate privado ativo diverge do lote autorizado para a medição")
 
 
-def db_snapshot(started_at: str) -> dict[str, Any]:
-    result = compose("exec", "-T", "api", "python", "-c", DB_SNAPSHOT, started_at)
+def db_snapshot(started_at: str, scope_expires_at: str = "") -> dict[str, Any]:
+    result = compose(
+        "exec", "-T", "api", "python", "-c", DB_SNAPSHOT, started_at, scope_expires_at
+    )
     return json.loads(result.stdout)
+
+
+def manifest_scope(
+    options: Options, measurement_started_at: datetime
+) -> tuple[str, str]:
+    if not options.scope_from_manifest:
+        return measurement_started_at.isoformat(), ""
+    path = STATE_DIR / f"facial-batch-{options.batch_id}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    expected = {
+        "batch_id": options.batch_id,
+        "authorization_ref": options.authorization_ref,
+        "expected_count": options.expected_count,
+        "contains_minors": options.contains_minors,
+        "status": "active",
+    }
+    if any(payload.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("manifesto diverge do lote autorizado para o benchmark retomado")
+    recorded_at = datetime.fromisoformat(payload["recorded_at"])
+    expires_at = datetime.fromisoformat(payload["window_expires_at"])
+    scope_expires_at = datetime.fromisoformat(
+        payload.get("scope_expires_at", payload["window_expires_at"])
+    )
+    if (
+        recorded_at >= scope_expires_at
+        or scope_expires_at > expires_at
+        or expires_at <= measurement_started_at
+    ):
+        raise RuntimeError("janela do manifesto não está vigente para o benchmark retomado")
+    return recorded_at.isoformat(), scope_expires_at.isoformat()
 
 
 def parse_bytes(value: str) -> int:
@@ -320,14 +365,16 @@ def is_settled(
 
 
 def monitor(options: Options) -> int:
-    started_at = datetime.now(timezone.utc).isoformat()
+    measurement_started_at = datetime.now(timezone.utc)
+    started_at, scope_expires_at = manifest_scope(options, measurement_started_at)
     started_monotonic = time.monotonic()
     initial_disk = root_disk()
     maxima: dict[str, dict[str, float | int]] = {}
     samples = 0
     stable_samples = 0
     previous_photos = -1
-    final_db: dict[str, Any] = {}
+    final_db = db_snapshot(started_at, scope_expires_at)
+    initial_completed = int(final_db["facial_completed"])
     emit(
         "benchmark_started",
         sha=options.expected_sha,
@@ -338,11 +385,15 @@ def monitor(options: Options) -> int:
         cpus=os.cpu_count(),
         duration_seconds=options.duration,
         interval_seconds=options.interval,
+        scope_started_at=started_at,
+        scope_expires_at=scope_expires_at or None,
+        scope_from_manifest=options.scope_from_manifest,
+        initial_facial_completed=initial_completed,
         health=service_health(),
         disk=initial_disk,
     )
     while time.monotonic() - started_monotonic <= options.duration:
-        db = db_snapshot(started_at)
+        db = db_snapshot(started_at, scope_expires_at)
         resources = resource_snapshot()
         samples += 1
         for service, values in resources.items():
@@ -378,6 +429,8 @@ def monitor(options: Options) -> int:
             datetime.fromisoformat(last) - datetime.fromisoformat(first)
         ).total_seconds()
     throughput = round(completed / active_seconds, 3) if active_seconds and active_seconds > 0 else None
+    completed_delta = completed - initial_completed
+    continuation_throughput = round(completed_delta / elapsed, 3) if elapsed > 0 else None
     final_disk = root_disk()
     success = (
         int(final_db.get("photos", 0)) == options.expected_count
@@ -394,6 +447,8 @@ def monitor(options: Options) -> int:
         db=final_db,
         facial_active_seconds=active_seconds,
         facial_throughput_photos_per_second=throughput,
+        continuation_completed=completed_delta,
+        continuation_throughput_photos_per_second=continuation_throughput,
         resource_maxima=maxima,
         disk={
             "initial": initial_disk,

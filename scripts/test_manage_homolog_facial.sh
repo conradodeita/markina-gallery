@@ -37,6 +37,9 @@ parse_arguments --mode pause-legacy-for-private-upgrade
 MODE=""
 parse_arguments --mode reconcile-private
 [[ "$MODE" == "reconcile-private" ]]
+MODE=""
+parse_arguments --mode resume-private
+[[ "$MODE" == "resume-private" ]]
 
 pause_result="$({
   CONFIRMATION="PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE"
@@ -80,6 +83,19 @@ if (
   reconcile_private >/dev/null 2>&1
 ); then
   echo "reconciliação aceitou batch-id divergente" >&2
+  exit 1
+fi
+
+if (
+  CONFIRMATION="token-invalido"
+  BATCH_ID="batch-2026-09-07"
+  AUTHORIZATION_REF="approval-register-42"
+  EXPECTED_COUNT="500"
+  WINDOW_MINUTES="30"
+  CONTAINS_MINORS="true"
+  resume_private >/dev/null 2>&1
+); then
+  echo "retomada aceitou token inválido" >&2
   exit 1
 fi
 
