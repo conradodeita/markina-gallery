@@ -2,6 +2,7 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 
 from app.auth import (
     FacialJob,
+    FacialRollout,
     FacialSearchCandidate,
     FacialSearchNotificationOutbox,
     FacialSearchRequest,
@@ -32,6 +33,11 @@ def test_facial_models_are_scoped_versioned_and_disabled_by_default() -> None:
     )
     assert "uq_face_embedding_versioned_photo_face" in _constraint_names(
         PhotoFaceEmbedding, UniqueConstraint
+    )
+    assert FacialRollout.__table__.c.status.default.arg == "prepared"
+    assert FacialRollout.__table__.c.stage.default.arg == "dark"
+    assert "uq_facial_rollout_environment_gallery" in _constraint_names(
+        FacialRollout, UniqueConstraint
     )
 
 
@@ -77,6 +83,7 @@ def test_facial_models_never_define_plain_biometric_or_pii_columns() -> None:
         FacialSearchCandidate,
         FacialJob,
         FacialSearchNotificationOutbox,
+        FacialRollout,
     )
     for model in models:
         assert forbidden.isdisjoint(model.__table__.columns.keys())
@@ -90,3 +97,12 @@ def test_facial_state_and_progress_checks_exist() -> None:
         FacialSearchRequest, CheckConstraint
     )
     assert "ck_facial_job_progress" in _constraint_names(FacialJob, CheckConstraint)
+    assert "ck_facial_rollout_environment" in _constraint_names(
+        FacialRollout, CheckConstraint
+    )
+    assert "ck_facial_rollout_status" in _constraint_names(
+        FacialRollout, CheckConstraint
+    )
+    assert "ck_facial_rollout_stage" in _constraint_names(
+        FacialRollout, CheckConstraint
+    )

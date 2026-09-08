@@ -11,12 +11,14 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    AdminUser,
     AuditEvent,
     Base,
     Client,
     DerivedGallery,
     DerivedGalleryMembership,
     FacialJob,
+    FacialRollout,
     FacialSearchRequest,
     FacialSearchSnapshotItem,
     GalleryFacialPolicy,
@@ -25,8 +27,11 @@ from app.auth import (
     ParentGalleryRegistration,
     PhotoAsset,
     PhotoFolder,
+    now,
 )
+from app.facial.capacity import FacialSearchCapacityError, measure_search_queue
 from app.facial.config import FacialSettings
+from app.facial.representation import create_legal_representation
 from app.facial.search import (
     FacialSearchError,
     create_search_request,
@@ -42,13 +47,11 @@ def _jpeg() -> bytes:
     return stream.getvalue()
 
 
-def _settings(
-    tmp_path: Path, *, enabled: bool = True, minor_search_enabled: bool = False
-) -> FacialSettings:
+def _settings(tmp_path: Path, *, enabled: bool = True) -> FacialSettings:
     return FacialSettings(
         enabled=enabled,
-        environment="staging" if minor_search_enabled else "test",
-        credential_environment="staging" if minor_search_enabled else "test",
+        environment="test",
+        credential_environment="test",
         manifest_path=tmp_path / "manifest.json",
         model_root=tmp_path / "models",
         reference_root=tmp_path / "references",
@@ -60,7 +63,6 @@ def _settings(
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
-        minor_search_enabled=minor_search_enabled,
         similarity_threshold_milli=750,
         active_key_id="test",
         aead_keys={"test": b"k" * 32},
@@ -74,19 +76,6 @@ def _settings(
         queue_block_seconds=10,
         max_reference_bytes=10_485_760,
         max_reference_pixels=25_000_000,
-        private_homologation_enabled=minor_search_enabled,
-        homolog_batch_id="minor-client-test" if minor_search_enabled else "",
-        homolog_origin_ref="event-origin-test" if minor_search_enabled else "",
-        homolog_authorization_ref="approval-test" if minor_search_enabled else "",
-        homolog_operator_ref="photographer-test" if minor_search_enabled else "",
-        homolog_expected_count=500 if minor_search_enabled else 0,
-        homolog_retention_hours=24 if minor_search_enabled else 0,
-        homolog_contains_minors=minor_search_enabled,
-        homolog_window_expires_at=(
-            datetime.now(UTC) + timedelta(hours=1)
-            if minor_search_enabled
-            else None
-        ),
     )
 
 
@@ -141,7 +130,35 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
         client_id=client.id,
         status="active",
     )
-    db.add_all((parent, client, registration, folder, photo, protected_derivative, derivative, policy))
+    rollouts = tuple(
+        FacialRollout(
+            environment=environment,
+            parent_gallery_id=parent.id,
+            status="active",
+            stage="canary",
+            model_version="model-v1",
+            quality_version="quality-v1",
+            calibration_version="calibration-v1",
+            legal_notice_version="notice-v1",
+            consent_version="consent-v1",
+            legal_basis_reference="synthetic-only",
+            retention_policy_version="retention-v1",
+        )
+        for environment in ("test", "staging")
+    )
+    db.add_all(
+        (
+            parent,
+            client,
+            registration,
+            folder,
+            photo,
+            protected_derivative,
+            derivative,
+            policy,
+            *rollouts,
+        )
+    )
     if index_ready:
         db.add(
             FacialJob(
@@ -164,10 +181,13 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
     settings = _settings(tmp_path)
 
     available = search_availability(
-        db, parent_gallery_id=parent.id, settings=settings
+        db, parent_gallery_id=parent.id, client_id=_client.id, settings=settings
     )
     unavailable = search_availability(
-        db, parent_gallery_id=parent.id, settings=_settings(tmp_path, enabled=False)
+        db,
+        parent_gallery_id=parent.id,
+        client_id=_client.id,
+        settings=_settings(tmp_path, enabled=False),
     )
 
     assert available["state"] == "consent_required"
@@ -179,6 +199,84 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
         "manual_selection_available": True,
         "minor_search_available": False,
     }
+
+
+def test_search_admission_requires_gallery_in_active_rollout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    rollout = db.scalar(
+        select(FacialRollout).where(
+            FacialRollout.parent_gallery_id == parent.id,
+            FacialRollout.environment == "test",
+        )
+    )
+    assert rollout is not None
+    rollout.status = "prepared"
+    db.commit()
+
+    assert search_availability(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        settings=_settings(tmp_path),
+    )["state"] == "unavailable"
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        create_search_request(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            consent_version="consent-v1",
+            subject_declaration="adult",
+            representation_reference=None,
+            payload=_jpeg(),
+            settings=_settings(tmp_path),
+        )
+    assert not (tmp_path / "references").exists()
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 0
+
+
+def test_saturated_search_queue_refuses_before_storing_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    settings = _settings(tmp_path)
+    object.__setattr__(settings, "search_queue_max_depth", 1)
+    object.__setattr__(settings, "search_queue_max_age_seconds", 30)
+    object.__setattr__(settings, "search_retry_after_seconds", 17)
+    db.add(
+        FacialJob(
+            kind="search",
+            status="queued",
+            idempotency_key="saturated-search-queue",
+            parent_gallery_id=parent.id,
+            search_request_id=uuid4(),
+            available_at=datetime.now(UTC),
+            created_at=datetime.now(UTC) - timedelta(seconds=45),
+        )
+    )
+    db.commit()
+
+    pressure = measure_search_queue(db)
+    assert pressure.depth == 1
+    assert pressure.oldest_age_seconds >= 30
+    with pytest.raises(FacialSearchCapacityError) as refused:
+        create_search_request(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            consent_version="consent-v1",
+            subject_declaration="adult",
+            representation_reference=None,
+            payload=_jpeg(),
+            settings=settings,
+        )
+
+    assert refused.value.retry_after_seconds == 17
+    assert not (tmp_path / "references").exists()
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 0
 
 
 def test_adult_consent_creates_durable_request_without_private_gallery(
@@ -217,6 +315,14 @@ def test_adult_consent_creates_durable_request_without_private_gallery(
         "progress",
         "reference_deleted",
         "expires_at",
+        "poll_after_ms",
+        "estimate",
+    }
+    assert payload["poll_after_ms"] == 2000
+    assert payload["estimate"] == {
+        "remaining_items": 1,
+        "seconds": None,
+        "confidence": "unavailable",
     }
     audit_subject = db.scalar(
         select(AuditEvent.subject).where(AuditEvent.event == "facial.search_consented")
@@ -277,6 +383,185 @@ def test_accepts_one_hundred_isolated_durable_client_searches(
     ) == 100
 
 
+def test_latest_search_repeats_client_gallery_authorization_and_expiry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    request = create_search_request(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=uuid4(),
+            client_id=client.id,
+        )
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=uuid4(),
+        )
+
+    registration = db.scalar(
+        select(ParentGalleryRegistration).where(
+            ParentGalleryRegistration.parent_gallery_id == parent.id,
+            ParentGalleryRegistration.client_id == client.id,
+        )
+    )
+    assert registration is not None
+    registration.status = "unlinked"
+    db.commit()
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+        )
+
+    registration.status = "active"
+    request.status = "queued"
+    request.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.commit()
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+        )
+
+
+def test_latest_search_isolated_between_two_concurrent_galleries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, first_parent, client = _fixture(tmp_path, index_ready=True)
+    second_parent = ParentGallery(id=uuid4(), name="Segundo evento")
+    second_folder = PhotoFolder(
+        id=uuid4(),
+        parent_gallery_id=second_parent.id,
+        name="Fotos",
+        status="released",
+        purpose="content",
+    )
+    second_photo = PhotoAsset(
+        id=uuid4(),
+        parent_gallery_id=second_parent.id,
+        folder_id=second_folder.id,
+        filename="segunda.jpg",
+        storage_key=f"{second_parent.id}/segunda.jpg",
+        available=True,
+    )
+    second_policy = GalleryFacialPolicy(
+        id=uuid4(),
+        parent_gallery_id=second_parent.id,
+        status="active",
+        legal_notice_version="notice-v1",
+        legal_basis_reference="synthetic-only",
+        retention_policy_version="retention-v1",
+        minor_policy_version="minor-disabled-v1",
+        model_version="model-v1",
+        quality_version="quality-v1",
+        calibration_version="calibration-v1",
+        index_generation=1,
+    )
+    db.add_all(
+        (
+            second_parent,
+            second_folder,
+            second_photo,
+            MediaDerivative(
+                photo_asset_id=second_photo.id,
+                variant="client_preview",
+                status="ready",
+                relative_path=f"{second_photo.id}/client_preview.jpg",
+            ),
+            MediaDerivative(
+                photo_asset_id=second_photo.id,
+                variant="admin_preview",
+                status="ready",
+                relative_path=f"{second_photo.id}/admin_preview.jpg",
+            ),
+            second_policy,
+            ParentGalleryRegistration(
+                parent_gallery_id=second_parent.id,
+                client_id=client.id,
+                status="active",
+            ),
+            FacialRollout(
+                environment="test",
+                parent_gallery_id=second_parent.id,
+                status="active",
+                stage="canary",
+                model_version="model-v1",
+                quality_version="quality-v1",
+                calibration_version="calibration-v1",
+                legal_notice_version="notice-v1",
+                consent_version="consent-v1",
+                legal_basis_reference="synthetic-only",
+                retention_policy_version="retention-v1",
+            ),
+            FacialJob(
+                kind="index",
+                status="completed",
+                idempotency_key=f"index:{second_photo.id}",
+                parent_gallery_id=second_parent.id,
+                photo_asset_id=second_photo.id,
+                model_version="model-v1",
+                quality_version="quality-v1",
+                preview_fingerprint="b" * 64,
+            ),
+        )
+    )
+    db.commit()
+
+    first = create_search_request(
+        db,
+        parent_gallery_id=first_parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    second = create_search_request(
+        db,
+        parent_gallery_id=second_parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    restored_first, _ = read_latest_search_result(
+        db,
+        parent_gallery_id=first_parent.id,
+        client_id=client.id,
+    )
+    restored_second, _ = read_latest_search_result(
+        db,
+        parent_gallery_id=second_parent.id,
+        client_id=client.id,
+    )
+    assert restored_first.id == first.id
+    assert restored_second.id == second.id
+    assert restored_first.id != restored_second.id
+
+
 def test_stale_consent_and_minor_search_fail_before_persisting_reference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -296,7 +581,7 @@ def test_stale_consent_and_minor_search_fail_before_persisting_reference(
             subject_declaration="adult",
             **common,
         )
-    with pytest.raises(FacialSearchError, match="infantil"):
+    with pytest.raises(FacialSearchError, match="representação legal"):
         create_search_request(
             consent_version="consent-v1",
             subject_declaration="minor",
@@ -308,16 +593,44 @@ def test_stale_consent_and_minor_search_fail_before_persisting_reference(
 def test_authorized_minor_reference_requires_guardian_confirmation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("APP_ENV", "test")
     db, parent, client = _fixture(tmp_path, index_ready=True)
-    settings = _settings(tmp_path, minor_search_enabled=True)
+    settings = _settings(tmp_path)
+
+    unavailable_without_proof = search_availability(
+        db, parent_gallery_id=parent.id, client_id=client.id, settings=settings
+    )
+    assert unavailable_without_proof["minor_search_available"] is False
+    assert unavailable_without_proof["minor_representation_reference"] is None
+    admin = AdminUser(
+        id=uuid4(),
+        email="minor-proof-admin@example.test",
+        password_hash="unused",
+        totp_secret="unused",
+    )
+    db.add(admin)
+    db.flush()
+    proof = create_legal_representation(
+        db,
+        client_id=client.id,
+        parent_gallery_id=parent.id,
+        subject_scope_reference="minor-subject-scope-opaque",
+        authority_kind="parent",
+        verification_method="admin_attestation",
+        terms_version=settings.minor_policy_version,
+        evidence_reference="minor-evidence-opaque",
+        verified_by_admin_id=admin.id,
+        expires_at=now() + timedelta(days=30),
+    )
+    db.commit()
 
     available = search_availability(
-        db, parent_gallery_id=parent.id, settings=settings
+        db, parent_gallery_id=parent.id, client_id=client.id, settings=settings
     )
     assert available["minor_search_available"] is True
+    assert available["minor_representation_reference"] == str(proof.id)
 
-    with pytest.raises(FacialSearchError, match="responsável"):
+    with pytest.raises(FacialSearchError, match="representação legal"):
         create_search_request(
             db,
             parent_gallery_id=parent.id,
@@ -335,7 +648,7 @@ def test_authorized_minor_reference_requires_guardian_confirmation(
         client_id=client.id,
         consent_version="consent-v1",
         subject_declaration="minor",
-        representation_reference="guardian-self-declaration-v1",
+        representation_reference=str(proof.id),
         payload=_jpeg(),
         settings=settings,
     )
@@ -343,7 +656,7 @@ def test_authorized_minor_reference_requires_guardian_confirmation(
 
     assert item.status == "queued"
     assert item.subject_declaration == "minor"
-    assert item.representation_reference == "guardian-self-declaration-v1"
+    assert item.representation_reference == str(proof.id)
 
 
 def test_terminal_index_failure_is_excluded_without_blocking_client_search(

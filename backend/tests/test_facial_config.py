@@ -1,7 +1,6 @@
 """Configuração segura e desligada por padrão do subsistema facial."""
 
 import base64
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -25,15 +24,6 @@ def _clear_facial_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "FACIAL_RETENTION_POLICY_VERSION",
         "FACIAL_MINOR_POLICY_VERSION",
         "FACIAL_MINOR_SEARCH_ENABLED",
-        "FACIAL_HOMOLOG_PRIVATE_MODE",
-        "FACIAL_HOMOLOG_BATCH_ID",
-        "FACIAL_HOMOLOG_ORIGIN_REF",
-        "FACIAL_HOMOLOG_AUTHORIZATION_REF",
-        "FACIAL_HOMOLOG_OPERATOR_REF",
-        "FACIAL_HOMOLOG_EXPECTED_COUNT",
-        "FACIAL_HOMOLOG_RETENTION_HOURS",
-        "FACIAL_HOMOLOG_CONTAINS_MINORS",
-        "FACIAL_HOMOLOG_WINDOW_EXPIRES_AT",
         "FACIAL_SIMILARITY_THRESHOLD_MILLI",
         "FACIAL_AEAD_ACTIVE_KEY_ID",
         "FACIAL_AEAD_KEYS_JSON",
@@ -121,7 +111,7 @@ def test_enabled_facial_configuration_validates_manifest_models_and_secret_redac
     assert str(key) not in repr(settings)
 
 
-def test_enabled_facial_configuration_rejects_unsafe_retention_and_unguarded_minor_search(
+def test_enabled_facial_configuration_rejects_unsafe_retention_and_ignores_legacy_minor_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_facial_environment(monkeypatch)
@@ -132,117 +122,10 @@ def test_enabled_facial_configuration_rejects_unsafe_retention_and_unguarded_min
 
     monkeypatch.setenv("FACIAL_REFERENCE_RETENTION_SECONDS", "900")
     monkeypatch.setenv("FACIAL_MINOR_SEARCH_ENABLED", "true")
-    with pytest.raises(FacialConfigurationError, match="infantil"):
-        facial_settings_from_environment()
-
-
-def test_private_homologation_indexes_authorized_minor_batch_without_client_minor_gate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_facial_environment(monkeypatch)
-    _valid_enabled_environment(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "staging")
-    monkeypatch.setenv("FACIAL_CREDENTIAL_ENV", "staging")
-    monkeypatch.setenv("FACIAL_MINOR_SEARCH_ENABLED", "false")
-    monkeypatch.setenv("FACIAL_HOMOLOG_PRIVATE_MODE", "true")
-    monkeypatch.setenv("FACIAL_HOMOLOG_BATCH_ID", "benchmark-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_ORIGIN_REF", "archive-event-42")
-    monkeypatch.setenv("FACIAL_HOMOLOG_AUTHORIZATION_REF", "approval-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_OPERATOR_REF", "photographer-admin")
-    monkeypatch.setenv("FACIAL_HOMOLOG_EXPECTED_COUNT", "500")
-    monkeypatch.setenv("FACIAL_HOMOLOG_RETENTION_HOURS", "24")
-    monkeypatch.setenv("FACIAL_HOMOLOG_CONTAINS_MINORS", "true")
-    monkeypatch.setenv(
-        "FACIAL_HOMOLOG_WINDOW_EXPIRES_AT",
-        (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
-    )
-
     settings = facial_settings_from_environment(verify_runtime_assets=False)
-
-    assert settings.private_homologation_active is True
-    assert settings.homolog_contains_minors is True
-    assert settings.minor_search_enabled is False
+    assert not hasattr(settings, "minor_search_enabled")
 
 
-def test_private_homologation_accepts_separate_authorized_client_minor_gate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_facial_environment(monkeypatch)
-    _valid_enabled_environment(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "staging")
-    monkeypatch.setenv("FACIAL_CREDENTIAL_ENV", "staging")
-    monkeypatch.setenv("FACIAL_MINOR_SEARCH_ENABLED", "true")
-    monkeypatch.setenv("FACIAL_HOMOLOG_PRIVATE_MODE", "true")
-    monkeypatch.setenv("FACIAL_HOMOLOG_BATCH_ID", "benchmark-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_ORIGIN_REF", "archive-event-42")
-    monkeypatch.setenv("FACIAL_HOMOLOG_AUTHORIZATION_REF", "approval-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_OPERATOR_REF", "photographer-admin")
-    monkeypatch.setenv("FACIAL_HOMOLOG_EXPECTED_COUNT", "500")
-    monkeypatch.setenv("FACIAL_HOMOLOG_RETENTION_HOURS", "24")
-    monkeypatch.setenv("FACIAL_HOMOLOG_CONTAINS_MINORS", "true")
-    monkeypatch.setenv(
-        "FACIAL_HOMOLOG_WINDOW_EXPIRES_AT",
-        (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
-    )
-
-    settings = facial_settings_from_environment(verify_runtime_assets=False)
-
-    assert settings.private_homologation_active is True
-    assert settings.minor_search_enabled is True
-
-
-@pytest.mark.parametrize(
-    ("name", "value"),
-    (
-        ("FACIAL_HOMOLOG_EXPECTED_COUNT", "499"),
-        ("FACIAL_HOMOLOG_ORIGIN_REF", "origem com espaço"),
-        ("FACIAL_HOMOLOG_CONTAINS_MINORS", "false"),
-    ),
-)
-def test_private_homologation_rejects_incomplete_or_divergent_batch(
-    monkeypatch: pytest.MonkeyPatch, name: str, value: str
-) -> None:
-    _clear_facial_environment(monkeypatch)
-    _valid_enabled_environment(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "homolog")
-    monkeypatch.setenv("FACIAL_CREDENTIAL_ENV", "homolog")
-    monkeypatch.setenv("FACIAL_MINOR_SEARCH_ENABLED", "true")
-    monkeypatch.setenv("FACIAL_HOMOLOG_PRIVATE_MODE", "true")
-    monkeypatch.setenv("FACIAL_HOMOLOG_BATCH_ID", "benchmark-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_ORIGIN_REF", "archive-event-42")
-    monkeypatch.setenv("FACIAL_HOMOLOG_AUTHORIZATION_REF", "approval-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_OPERATOR_REF", "photographer-admin")
-    monkeypatch.setenv("FACIAL_HOMOLOG_EXPECTED_COUNT", "500")
-    monkeypatch.setenv("FACIAL_HOMOLOG_RETENTION_HOURS", "24")
-    monkeypatch.setenv("FACIAL_HOMOLOG_CONTAINS_MINORS", "true")
-    monkeypatch.setenv(
-        "FACIAL_HOMOLOG_WINDOW_EXPIRES_AT",
-        (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
-    )
-    monkeypatch.setenv(name, value)
-
-    with pytest.raises(FacialConfigurationError, match="homologação"):
-        facial_settings_from_environment(verify_runtime_assets=False)
-
-
-def test_private_homologation_rejects_expired_window(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_facial_environment(monkeypatch)
-    _valid_enabled_environment(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "staging")
-    monkeypatch.setenv("FACIAL_CREDENTIAL_ENV", "staging")
-    monkeypatch.setenv("FACIAL_HOMOLOG_PRIVATE_MODE", "true")
-    monkeypatch.setenv("FACIAL_HOMOLOG_BATCH_ID", "benchmark-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_ORIGIN_REF", "archive-event-42")
-    monkeypatch.setenv("FACIAL_HOMOLOG_AUTHORIZATION_REF", "approval-2026-09-07")
-    monkeypatch.setenv("FACIAL_HOMOLOG_OPERATOR_REF", "photographer-admin")
-    monkeypatch.setenv("FACIAL_HOMOLOG_EXPECTED_COUNT", "500")
-    monkeypatch.setenv("FACIAL_HOMOLOG_RETENTION_HOURS", "24")
-    monkeypatch.setenv(
-        "FACIAL_HOMOLOG_WINDOW_EXPIRES_AT",
-        (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
-    )
-
-    with pytest.raises(FacialConfigurationError, match="expirada"):
-        facial_settings_from_environment(verify_runtime_assets=False)
+def test_removed_minor_flag_is_absent_from_runtime_configuration() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "app" / "facial" / "config.py"
+    assert "FACIAL_MINOR_SEARCH_ENABLED" not in config_path.read_text(encoding="utf-8")

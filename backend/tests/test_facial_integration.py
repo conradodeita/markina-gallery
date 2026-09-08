@@ -18,6 +18,7 @@ from app.auth import (
     Client,
     DerivedGallery,
     FacialJob,
+    FacialRollout,
     FacialSearchCandidate,
     GalleryFacialPolicy,
     ParentGallery,
@@ -86,7 +87,6 @@ def _configure(monkeypatch, tmp_path: Path) -> None:
         "FACIAL_LEGAL_BASIS_REFERENCE": "synthetic-adults-only",
         "FACIAL_RETENTION_POLICY_VERSION": "synthetic-retention-v1",
         "FACIAL_MINOR_POLICY_VERSION": "minor-disabled-v1",
-        "FACIAL_MINOR_SEARCH_ENABLED": "false",
         "FACIAL_AEAD_ACTIVE_KEY_ID": "test-key",
         "FACIAL_AEAD_KEYS_JSON": json.dumps({"test-key": key}),
         "MEDIA_SOURCE_ROOT": str(tmp_path / "source"),
@@ -153,6 +153,23 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
                 maximum_quantity=None,
                 unit_price_cents=700,
             ),
+        )
+    )
+    db.add(
+        FacialRollout(
+            environment=settings.environment,
+            parent_gallery_id=gallery.id,
+            status="active",
+            stage="canary",
+            model_version=settings.model_version,
+            quality_version=settings.quality_version,
+            calibration_version=settings.calibration_version,
+            legal_notice_version=settings.legal_notice_version,
+            consent_version=settings.consent_version,
+            legal_basis_reference=settings.legal_basis_reference,
+            retention_policy_version=settings.retention_policy_version,
+            approval_reference="synthetic-approval",
+            approved_by_admin_id=admin.id,
         )
     )
     photos = []

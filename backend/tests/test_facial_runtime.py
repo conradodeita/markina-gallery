@@ -28,7 +28,6 @@ def _settings(tmp_path: Path, *, max_jobs: int = 2, idle: int = 30) -> FacialSet
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
-        minor_search_enabled=False,
         similarity_threshold_milli=750,
         active_key_id="test",
         aead_keys={"test": b"k" * 32},
@@ -80,6 +79,7 @@ def test_empty_queue_blocks_without_loading_or_reprocessing(tmp_path: Path) -> N
     loads = []
     worker = BlockingFacialWorker(
         settings=_settings(tmp_path),
+        job_class="search",
         session_factory=factory,
         wake_source=wake,
         provider_loader=lambda: loads.append("loaded"),
@@ -88,7 +88,7 @@ def test_empty_queue_blocks_without_loading_or_reprocessing(tmp_path: Path) -> N
     )
 
     assert worker.run_cycle() is False
-    assert wake.calls == [("markina:facial:jobs", 10)]
+    assert wake.calls == [("markina:facial:jobs:search", 10)]
     assert loads == []
     assert worker.processed_jobs == 0
 
@@ -107,6 +107,7 @@ def test_cleanup_job_does_not_load_models(tmp_path: Path) -> None:
         db.commit()
     worker = BlockingFacialWorker(
         settings=_settings(tmp_path),
+        job_class="maintenance",
         session_factory=factory,
         wake_source=WakeSource([0.0]),
         provider_loader=lambda: loads.append("loaded"),
@@ -127,6 +128,7 @@ def test_redis_failure_falls_back_to_paused_database_poll(tmp_path: Path) -> Non
     pauses = []
     worker = BlockingFacialWorker(
         settings=_settings(tmp_path),
+        job_class="search",
         session_factory=factory,
         wake_source=UnavailableWakeSource(),
         provider_loader=lambda: object(),
@@ -159,6 +161,7 @@ def test_provider_startup_failure_is_delegated_without_losing_claim(
     failures = []
     worker = BlockingFacialWorker(
         settings=_settings(tmp_path),
+        job_class="index",
         session_factory=factory,
         wake_source=WakeSource([0.0]),
         provider_loader=lambda: (_ for _ in ()).throw(RuntimeError("detalhe")),
@@ -192,6 +195,7 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
 
     worker = BlockingFacialWorker(
         settings=_settings(tmp_path, idle=10),
+        job_class="index",
         session_factory=factory,
         wake_source=wake,
         provider_loader=loader,
@@ -203,9 +207,13 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
     with factory() as db:
         repository.enqueue(
             db,
-            kind="cleanup",
+            kind="index",
             idempotency_key="first",
             parent_gallery_id=parent_id,
+            photo_asset_id=uuid4(),
+            model_version="model-v1",
+            quality_version="quality-v1",
+            preview_fingerprint="b" * 64,
         )
         db.commit()
     assert worker.run_cycle() is True
@@ -218,9 +226,13 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
     with factory() as db:
         repository.enqueue(
             db,
-            kind="cleanup",
+            kind="index",
             idempotency_key="second",
             parent_gallery_id=parent_id,
+            photo_asset_id=uuid4(),
+            model_version="model-v1",
+            quality_version="quality-v1",
+            preview_fingerprint="c" * 64,
         )
         db.commit()
     assert worker.run_cycle() is True

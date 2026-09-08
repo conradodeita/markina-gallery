@@ -71,31 +71,36 @@ def main() -> int:
     require('compose config --services | grep -Fxq evolution-api', "ativação do perfil WhatsApp sem ler segredos", SCRIPT)
     require('start_whatsapp_infrastructure_if_active', "gate do provedor real antes dos workers", SCRIPT)
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
-    require('verify_facial_safe_default', "verificação do kill switch facial após deploy", SCRIPT)
-    require('verify_facial_predeploy_safe_default', "preflight facial antes de qualquer deploy", SCRIPT)
+    require('verify_facial_deploy_state', "verificação coerente do estado facial", SCRIPT)
+    require('read_facial_enabled', "leitura persistente do kill switch facial", SCRIPT)
     require(
-        'piloto facial deve ser desativado antes de um novo deploy',
-        "bloqueio precoce com piloto facial ativo",
+        'deve permanecer ausente com flag=false',
+        "combinação desligada coerente",
         SCRIPT,
     )
     require(
-        'face-worker deve ser desativado antes de um novo deploy',
-        "bloqueio precoce com worker facial ativo",
+        'deve estar ativo com flag=true',
+        "combinação habilitada coerente",
         SCRIPT,
     )
     require(
-        'FACIAL_PROCESSING_ENABLED deve permanecer false neste deploy',
-        "falha fechada quando a flag facial está ativa",
+        'face-search-worker" "face-index-worker" "face-maintenance-worker',
+        "três classes faciais no deploy",
         SCRIPT,
     )
     require(
-        'label=com.docker.compose.service=face-worker',
-        "inventário do worker facial restrito ao projeto",
+        'compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"',
+        "atualização explícita dos workers faciais",
         SCRIPT,
     )
     require(
-        'facial safe default confirmado: flag=false profile=inativo',
-        "evidência operacional do estado facial seguro",
+        'if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]',
+        "preservação da combinação facial no deploy e rollback",
+        SCRIPT,
+    )
+    require(
+        'estado facial coerente confirmado: flag=$expected',
+        "evidência operacional do estado facial persistente",
         SCRIPT,
     )
     require('rollback automático de código não é seguro após mudança de schema', "bloqueio de rollback de banco", SCRIPT)

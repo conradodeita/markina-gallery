@@ -8,22 +8,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const index = { state: "processing", progress: { ready: 0, total: 12 }, queued: 0, processing: 0, failed: 0, waiting_previews: 0, unindexed: 12, failures: [], pagination: { page: 1, page_size: 50, total: 0 } };
+const index = { state: "processing", rollout: { status: "active", stage: "canary", available: true }, progress: { ready: 0, total: 12 }, queued: 0, processing: 0, failed: 0, waiting_previews: 0, unindexed: 12, failures: [], pagination: { page: 1, page_size: 50, total: 0 } };
 
 function response(value: object, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(value), { status }));
 }
 
 describe("painel facial administrativo", () => {
-  it("explica a indexação automática sem oferecer ativação manual", async () => {
+  it("explica a indexação administrativa e mostra o rollout aplicável", async () => {
     const fetchMock = vi.fn(() => response(index));
     vi.stubGlobal("fetch", fetchMock);
     render(<FacialPolicyPanel galleryId="gallery-1" />);
 
     expect(screen.getByText("Reconhecimento em processamento")).toBeTruthy();
     expect(await screen.findByText("Processamento automático")).toBeTruthy();
-    expect(screen.getByText("inclusive quando contêm menores", { exact: false })).toBeTruthy();
-    expect(screen.getByText("Não existe política, declaração ou ativação manual para o administrador.", { exact: false })).toBeTruthy();
+    expect(screen.getByText("adultos e menores da mesma forma técnica", { exact: false })).toBeTruthy();
+    expect(screen.getByText("Disponível nesta galeria")).toBeTruthy();
+    expect(screen.getByText("Etapa canary")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/gallery-1/facial-index",
       { credentials: "same-origin" },
@@ -42,6 +43,22 @@ describe("painel facial administrativo", () => {
     expect(screen.getByText("0 aguardando prévias · 12 aguardando indexação · 1 processando · 0 na fila · 0 falhas")).toBeTruthy();
     expect(screen.getByText("5 de 12 fotos com rosto · 41,7%")).toBeTruthy();
     expect(screen.getByText("18 rostos detectados", { exact: false })).toBeTruthy();
+  });
+
+  it("mostra estado vazio e rollout indisponível sem inventar progresso", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({
+      ...index,
+      state: "completed",
+      rollout: { status: "unavailable", stage: null, available: false },
+      progress: { ready: 0, total: 0 },
+      unindexed: 0,
+      coverage: { photos_with_faces: 0, total: 0, percent: 0, detected_faces: 0 },
+    })));
+    render(<FacialPolicyPanel galleryId="gallery-1" />);
+
+    expect(await screen.findByText("Rollout não disponível")).toBeTruthy();
+    expect(screen.getByText("Ainda não há fotos desta galeria para processar.")).toBeTruthy();
+    expect(screen.getByText("0 de 0 fotos prontas")).toBeTruthy();
   });
 
   it("mantém a barra atualizada enquanto fotos de qualquer pasta aguardam preparo", async () => {
@@ -70,7 +87,7 @@ describe("painel facial administrativo", () => {
       progress: { ready: 11, total: 12 },
       failed: 1,
       unindexed: 0,
-      failures: [{ job_id: "job-1", photo_id: "photo-123456789", category: "processing_unavailable" }],
+      failures: [{ job_id: "job-1", photo_id: "photo-123456789", attempts: 3, error_category: "processing_unavailable" }],
     }));
     vi.stubGlobal("fetch", fetchMock);
     render(<FacialPolicyPanel galleryId="gallery-1" />);
@@ -84,14 +101,17 @@ describe("painel facial administrativo", () => {
   it("expõe erro sanitizado e permite retentar somente falhas listadas", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/retry") && init?.method === "POST") return response({ retried: 1 });
-      return response({ ...index, state: "failed", failed: 1, failures: [{ job_id: "job-1", photo_id: "photo-123456789", category: "processing_unavailable" }] });
+      return response({ ...index, state: "failed", failed: 1, failures: [{ job_id: "job-1", photo_id: "photo-123456789", attempts: 3, error_category: "processing_unavailable" }] });
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<FacialPolicyPanel galleryId="gallery-1" />);
 
     expect(await screen.findByText("Falhas técnicas")).toBeTruthy();
     expect(screen.getByText(/processing_unavailable/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Tentar falhas novamente" }));
+    const retry = screen.getByRole("button", { name: "Tentar falhas novamente" });
+    retry.focus();
+    expect(document.activeElement).toBe(retry);
+    fireEvent.click(retry);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/gallery-1/facial-index/retry",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ job_ids: ["job-1"] }) }),

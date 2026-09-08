@@ -1296,6 +1296,225 @@ class GalleryFacialPolicy(Base):
     )
 
 
+class FacialRollout(Base):
+    """Escopo persistente e auditável de rollout facial por ambiente/galeria."""
+
+    __tablename__ = "facial_rollout"
+    __table_args__ = (
+        UniqueConstraint(
+            "environment",
+            "parent_gallery_id",
+            name="uq_facial_rollout_environment_gallery",
+        ),
+        CheckConstraint(
+            "environment IN ('local', 'development', 'test', 'homolog', "
+            "'staging', 'prod', 'production')",
+            name="ck_facial_rollout_environment",
+        ),
+        CheckConstraint(
+            "status IN ('prepared', 'active', 'suspended', 'revoked')",
+            name="ck_facial_rollout_status",
+        ),
+        CheckConstraint(
+            "stage IN ('dark', 'canary', 'limited', 'general')",
+            name="ck_facial_rollout_stage",
+        ),
+        Index(
+            "ix_facial_rollout_environment_status",
+            "environment",
+            "status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    environment: Mapped[str] = mapped_column(String(24), index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="prepared", index=True)
+    stage: Mapped[str] = mapped_column(String(16), default="dark", index=True)
+    model_version: Mapped[str] = mapped_column(String(120))
+    quality_version: Mapped[str] = mapped_column(String(120))
+    calibration_version: Mapped[str] = mapped_column(String(120))
+    legal_notice_version: Mapped[str] = mapped_column(String(80))
+    consent_version: Mapped[str] = mapped_column(String(80))
+    legal_basis_reference: Mapped[str] = mapped_column(String(200))
+    retention_policy_version: Mapped[str] = mapped_column(String(80))
+    approval_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    approved_by_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=True, index=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    suspended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class FacialCalibrationApproval(Base):
+    """Aprovação humana agregada do limiar e dos grupos avaliados."""
+
+    __tablename__ = "facial_calibration_approval"
+    __table_args__ = (
+        CheckConstraint(
+            "environment IN ('prod', 'production')",
+            name="ck_facial_calibration_environment",
+        ),
+        CheckConstraint(
+            "status IN ('approved', 'revoked')",
+            name="ck_facial_calibration_status",
+        ),
+        CheckConstraint(
+            "similarity_threshold_milli BETWEEN 0 AND 1000",
+            name="ck_facial_calibration_threshold",
+        ),
+        CheckConstraint(
+            "relevant_group_count > 0 AND approved_group_count = relevant_group_count",
+            name="ck_facial_calibration_groups",
+        ),
+        Index(
+            "ix_facial_calibration_effective",
+            "environment",
+            "model_version",
+            "quality_version",
+            "calibration_version",
+            "status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    environment: Mapped[str] = mapped_column(String(24), index=True)
+    model_version: Mapped[str] = mapped_column(String(120))
+    quality_version: Mapped[str] = mapped_column(String(120))
+    calibration_version: Mapped[str] = mapped_column(String(120))
+    similarity_threshold_milli: Mapped[int] = mapped_column(Integer)
+    criteria_version: Mapped[str] = mapped_column(String(80))
+    corpus_reference: Mapped[str] = mapped_column(String(200))
+    approval_reference: Mapped[str] = mapped_column(String(200))
+    relevant_group_count: Mapped[int] = mapped_column(Integer)
+    approved_group_count: Mapped[int] = mapped_column(Integer)
+    approved_by_admin_id: Mapped[UUID] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="approved", index=True)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class FacialRolloutOperation(Base):
+    """Recibo agregado da operação protegida, sem conteúdo dos gates."""
+
+    __tablename__ = "facial_rollout_operation"
+    __table_args__ = (
+        CheckConstraint(
+            "environment IN ('local', 'development', 'test', 'homolog', "
+            "'staging', 'prod', 'production')",
+            name="ck_facial_rollout_operation_environment",
+        ),
+        CheckConstraint(
+            "action IN ('activate', 'suspend')",
+            name="ck_facial_rollout_operation_action",
+        ),
+        CheckConstraint(
+            "stage IN ('dark', 'canary', 'limited', 'general')",
+            name="ck_facial_rollout_operation_stage",
+        ),
+        CheckConstraint(
+            "allowlist_count > 0",
+            name="ck_facial_rollout_operation_allowlist",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    environment: Mapped[str] = mapped_column(String(24), index=True)
+    action: Mapped[str] = mapped_column(String(16), index=True)
+    stage: Mapped[str] = mapped_column(String(16), index=True)
+    deployment_sha: Mapped[str] = mapped_column(String(40))
+    inventory_reference: Mapped[str] = mapped_column(String(200))
+    backup_reference: Mapped[str] = mapped_column(String(200))
+    gate_set_version: Mapped[str] = mapped_column(String(80))
+    allowlist_digest: Mapped[str] = mapped_column(String(64))
+    allowlist_count: Mapped[int] = mapped_column(Integer)
+    approved_by_admin_id: Mapped[UUID] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=False, index=True
+    )
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class FacialLegalRepresentation(Base):
+    """Prova não biométrica e minimizada de representação para consulta infantil."""
+
+    __tablename__ = "facial_legal_representation"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'revoked')",
+            name="ck_facial_legal_representation_status",
+        ),
+        CheckConstraint(
+            "authority_kind IN ('parent', 'legal_guardian', 'court_order')",
+            name="ck_facial_legal_representation_authority",
+        ),
+        CheckConstraint(
+            "verification_method IN ('admin_attestation', 'trusted_provider')",
+            name="ck_facial_legal_representation_verification",
+        ),
+        CheckConstraint(
+            "expires_at > valid_from",
+            name="ck_facial_legal_representation_validity",
+        ),
+        Index(
+            "ix_facial_representation_scope_validity",
+            "client_id",
+            "parent_gallery_id",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    client_id: Mapped[UUID] = mapped_column(
+        ForeignKey("client.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_scope_reference: Mapped[str] = mapped_column(String(200))
+    authority_kind: Mapped[str] = mapped_column(String(24))
+    verification_method: Mapped[str] = mapped_column(String(32))
+    terms_version: Mapped[str] = mapped_column(String(80))
+    evidence_reference: Mapped[str] = mapped_column(String(200))
+    verified_by_admin_id: Mapped[UUID] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
 class PhotoFaceEmbedding(Base):
     """Envelope cifrado de uma face indexada e sua qualidade técnica."""
 

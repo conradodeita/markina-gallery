@@ -1,0 +1,194 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { FacialSearchResult } from "../facial-search-client";
+import { FacialSearchPanel } from "./facial-search-panel";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  window.sessionStorage.clear();
+  window.localStorage.clear();
+});
+
+function response(value: object, status = 200) {
+  return Promise.resolve(new Response(JSON.stringify(value), { status }));
+}
+
+const queued: FacialSearchResult = {
+  id: "request-1",
+  gallery_id: "gallery-1",
+  status: "queued",
+  progress: {
+    index: { ready: 2, total: 2 },
+    comparison: { done: 0, total: 2 },
+  },
+  reference_deleted: false,
+  expires_at: "2099-01-01T00:00:00Z",
+  poll_after_ms: 1000,
+  estimate: { remaining_items: 2, seconds: null, confidence: "unavailable" },
+};
+
+function Harness() {
+  const [result, setResult] = useState<FacialSearchResult | null>(queued);
+  return (
+    <>
+      <FacialSearchPanel galleryId="gallery-1" result={result} onResult={setResult} />
+      <output data-testid="search-state">{result?.status ?? "none"}</output>
+    </>
+  );
+}
+
+function EmptyHarness() {
+  const [result, setResult] = useState<FacialSearchResult | null>(null);
+  return (
+    <>
+      <FacialSearchPanel galleryId="gallery-1" result={result} onResult={setResult} />
+      <output data-testid="search-state">{result?.status ?? "none"}</output>
+    </>
+  );
+}
+
+describe("polling da busca facial", () => {
+  it("aumenta o intervalo sem progresso e para ao expirar", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) {
+        return response({
+          state: "consent_required",
+          manual_selection_available: true,
+          minor_search_available: false,
+          consent_version: "consent-v1",
+        });
+      }
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      reads += 1;
+      if (reads === 1) return response(queued);
+      return response({ ...queued, status: "expired", poll_after_ms: null });
+    }));
+    render(<Harness />);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.getByText(/2 itens restantes/)).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(reads).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1499); });
+    expect(reads).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(reads).toBe(2);
+    expect(screen.getByTestId("search-state").textContent).toBe("expired");
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(reads).toBe(2);
+  });
+
+  it("encerra polling e remove retomada quando a consulta foi revogada", async () => {
+    vi.useFakeTimers();
+    window.sessionStorage.setItem("markina:facial-search:gallery-1", "request-1");
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) {
+        return response({
+          state: "consent_required",
+          manual_selection_available: true,
+          minor_search_available: false,
+          consent_version: "consent-v1",
+        });
+      }
+      reads += 1;
+      return response({ detail: "Consulta facial indisponível." }, 404);
+    }));
+    render(<Harness />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(screen.getByTestId("search-state").textContent).toBe("none");
+    expect(window.sessionStorage.getItem("markina:facial-search:gallery-1")).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(reads).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("jornada mobile e privacidade da referência", () => {
+  it("envia JPEG pela captura mobile e persiste somente o identificador opaco da consulta", async () => {
+    const created = { ...queued, id: "opaque-request-2" };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) {
+        return response({
+          state: "consent_required",
+          manual_selection_available: true,
+          minor_search_available: false,
+          consent_version: "consent-v1",
+          legal_notice_version: "notice-v1",
+        });
+      }
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches") && init?.method === "POST") return response(created, 202);
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmptyHarness />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    const input = screen.getByLabelText("Foto JPEG com uma pessoa") as HTMLInputElement;
+    expect(input.accept).toBe("image/jpeg");
+    expect(input.getAttribute("capture")).toBe("user");
+    const reference = new File(["private-reference-bytes"], "referencia.jpg", { type: "image/jpeg" });
+    fireEvent.change(input, { target: { files: [reference] } });
+    fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo o uso temporário/ }));
+    fireEvent.submit(screen.getByRole("button", { name: "Concordar e procurar" }).closest("form")!);
+
+    await waitFor(() => expect(screen.getByTestId("search-state").textContent).toBe("queued"));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/gallery-1/facial-searches",
+      expect.objectContaining({ method: "POST", body: reference }),
+    );
+    expect(window.sessionStorage.length).toBe(1);
+    expect(window.sessionStorage.getItem("markina:facial-search:gallery-1")).toBe("opaque-request-2");
+    expect(window.localStorage.length).toBe(0);
+    expect(JSON.stringify({ ...window.sessionStorage })).not.toContain("private-reference-bytes");
+    expect(document.querySelector("img[src^='data:'], img[src^='blob:']")).toBeNull();
+  });
+
+  it.each([
+    ["no_face", "Nenhum rosto foi detectado", "Tente uma foto frontal, bem iluminada e com o rosto inteiro."],
+    ["multiple_faces", "A foto enviada contém mais de um rosto", "Recorte a imagem para manter somente a pessoa procurada."],
+    ["low_quality", "A foto não tem qualidade suficiente", "Envie outra foto com mais nitidez e melhor iluminação."],
+  ] as const)("mostra mensagem sanitizada para %s sem renderizar a referência", async (status, title, guidance) => {
+    const terminal = { ...queued, status, reference_deleted: true, poll_after_ms: null };
+    window.sessionStorage.setItem("markina:facial-search:gallery-1", terminal.id);
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: false, consent_version: "consent-v1" });
+      return response(terminal);
+    }));
+    render(<Harness />);
+
+    expect(await screen.findByText(title)).toBeTruthy();
+    expect(screen.getByText(guidance)).toBeTruthy();
+    expect(screen.getByText("Foto de referência eliminada")).toBeTruthy();
+    expect(document.querySelector("img[src^='data:'], img[src^='blob:']")).toBeNull();
+    expect(document.body.textContent).not.toContain("private-reference-bytes");
+  });
+
+  it("cancela no backend, encerra o progresso e remove a retomada local", async () => {
+    window.sessionStorage.setItem("markina:facial-search:gallery-1", queued.id);
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: false, consent_version: "consent-v1" });
+      if (init?.method === "DELETE") return response({ ...queued, status: "cancelled", reference_deleted: true });
+      return response(queued);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Harness />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar busca" }));
+    await waitFor(() => expect(screen.getByTestId("search-state").textContent).toBe("none"));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/gallery-1/facial-searches/request-1",
+      expect.objectContaining({ method: "DELETE", credentials: "same-origin" }),
+    );
+    expect(window.sessionStorage.getItem("markina:facial-search:gallery-1")).toBeNull();
+    expect(screen.queryByRole("progressbar", { name: "Progresso da busca facial" })).toBeNull();
+  });
+});

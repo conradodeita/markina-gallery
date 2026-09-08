@@ -46,5 +46,6 @@ Cada ambiente tem banco, Redis, segredos, WhatsApp e integrações totalmente di
 ## Deploy e rollback
 
 - Passo a passo por ambiente: `docs/CHECKLIST-DEPLOY-ROLLBACK.md`.
+- Busca facial: SLOs e rollout em `docs/OPERACAO-BUSCA-FACIAL-PRODUCAO.md`; RIPD, papéis e incidente em `docs/GOVERNANCA-E-INCIDENTE-BUSCA-FACIAL.md`.
 - Backups diários cifrados no Google Drive com restauração testada em homologação: implementados pela mudança do domínio `media-storage`; até lá, backups manuais constam do checklist.
 - SMTP transacional com SPF/DKIM/DMARC será configurado na mudança do domínio `messaging`/`auth`.

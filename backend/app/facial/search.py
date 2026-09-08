@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -21,12 +21,19 @@ from app.auth import (
     expired,
     now,
 )
+from app.facial.capacity import require_search_capacity
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
 from app.facial.jobs import FacialJobRepository
 from app.facial.notifications import cancel_pending_search_notifications
 from app.facial.policy import activation_inventory, read_policy
 from app.facial.reference_store import FacialReferenceStore
+from app.facial.representation import (
+    FacialLegalRepresentationError,
+    find_valid_legal_representation,
+    require_valid_legal_representation,
+)
+from app.facial.rollout import rollout_is_active
 from app.facial.status import gallery_index_status
 
 
@@ -34,15 +41,43 @@ class FacialSearchError(RuntimeError):
     """Consulta facial não pode ser criada sem revelar o recurso protegido."""
 
 
+_TERMINAL_SEARCH_STATES = frozenset(
+    {
+        "ready",
+        "no_face",
+        "multiple_faces",
+        "low_quality",
+        "index_incomplete",
+        "no_candidates",
+        "cancelled",
+        "expired",
+        "failed",
+    }
+)
+_POLL_AFTER_MS = {
+    "queued": 2000,
+    "waiting_index": 5000,
+    "validating_reference": 1500,
+    "searching": 1500,
+    "ranking": 1000,
+}
+
+
 def search_availability(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    client_id: UUID,
     settings: FacialSettings,
 ) -> dict[str, object]:
     policy = read_policy(db, parent_gallery_id)
     if (
-        policy is None
+        not rollout_is_active(
+            db,
+            settings=settings,
+            parent_gallery_id=parent_gallery_id,
+        )
+        or policy is None
         or policy.status != "active"
         or activation_inventory(policy, settings)
     ):
@@ -56,10 +91,19 @@ def search_availability(
         parent_gallery_id=parent_gallery_id,
         processing_enabled=settings.enabled,
     )
+    minor_representation = find_valid_legal_representation(
+        db,
+        client_id=client_id,
+        parent_gallery_id=parent_gallery_id,
+        terms_version=settings.minor_policy_version,
+    )
     return {
         "state": "consent_required",
         "manual_selection_available": True,
-        "minor_search_available": settings.minor_search_enabled,
+        "minor_search_available": minor_representation is not None,
+        "minor_representation_reference": (
+            str(minor_representation.id) if minor_representation else None
+        ),
         "consent_version": settings.consent_version,
         "legal_notice_version": policy.legal_notice_version,
         "reference_retention_seconds": settings.reference_retention_seconds,
@@ -87,7 +131,12 @@ def create_search_request(
 ) -> FacialSearchRequest:
     policy = read_policy(db, parent_gallery_id)
     if (
-        policy is None
+        not rollout_is_active(
+            db,
+            settings=settings,
+            parent_gallery_id=parent_gallery_id,
+        )
+        or policy is None
         or policy.status != "active"
         or activation_inventory(policy, settings)
     ):
@@ -97,16 +146,22 @@ def create_search_request(
     if subject_declaration not in {"adult", "minor"}:
         raise FacialSearchError("Declaração do sujeito inválida.")
     if subject_declaration == "minor":
-        if not settings.minor_search_enabled:
-            raise FacialSearchError(
-                "A busca facial infantil permanece indisponível até os controles exigidos."
+        try:
+            representation = require_valid_legal_representation(
+                db,
+                representation_reference=representation_reference,
+                client_id=client_id,
+                parent_gallery_id=parent_gallery_id,
+                terms_version=settings.minor_policy_version,
             )
-        if representation_reference != "guardian-self-declaration-v1":
+        except FacialLegalRepresentationError as exc:
             raise FacialSearchError(
-                "A confirmação do pai, mãe ou responsável é obrigatória."
-            )
+                "A representação legal vigente é obrigatória para esta busca."
+            ) from exc
+        representation_reference = str(representation.id)
     elif representation_reference:
         raise FacialSearchError("Representação não é aplicável a uma consulta adulta.")
+    require_search_capacity(db, settings)
 
     request_id = uuid4()
     snapshot = _build_snapshot(
@@ -338,6 +393,13 @@ def _retire_prior_searches(
 
 
 def search_request_payload(item: FacialSearchRequest) -> dict[str, object]:
+    waiting_for_index = item.status == "waiting_index"
+    remaining_items = max(
+        0,
+        (item.snapshot_total - item.snapshot_ready)
+        if waiting_for_index
+        else (item.compare_total - item.compare_done),
+    )
     return {
         "id": str(item.id),
         "gallery_id": str(item.parent_gallery_id),
@@ -348,6 +410,16 @@ def search_request_payload(item: FacialSearchRequest) -> dict[str, object]:
         },
         "reference_deleted": item.reference_deleted_at is not None,
         "expires_at": item.expires_at.isoformat(),
+        "poll_after_ms": (
+            None
+            if item.status in _TERMINAL_SEARCH_STATES
+            else _POLL_AFTER_MS.get(item.status, 2000)
+        ),
+        "estimate": {
+            "remaining_items": remaining_items,
+            "seconds": None,
+            "confidence": "unavailable",
+        },
     }
 
 
@@ -402,7 +474,11 @@ def read_latest_search_result(
         .where(
             FacialSearchRequest.parent_gallery_id == parent_gallery_id,
             FacialSearchRequest.client_id == client_id,
-            FacialSearchRequest.status != "cancelled",
+            FacialSearchRequest.status.not_in(("cancelled", "expired")),
+            or_(
+                FacialSearchRequest.status.in_(("ready", "no_candidates")),
+                FacialSearchRequest.expires_at > now(),
+            ),
             ParentGalleryRegistration.status == "active",
             ParentGallery.active.is_(True),
             ParentGallery.lifecycle_status == "active",

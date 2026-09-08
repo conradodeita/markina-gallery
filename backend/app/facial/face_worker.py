@@ -11,7 +11,12 @@ from app.auth import SessionLocal
 from app.facial.config import FacialConfigurationError, facial_settings_from_environment
 from app.facial.crypto import FacialCipher
 from app.facial.indexing import reconcile_automatic_gallery_policies
-from app.facial.jobs import ClaimedFacialJob, FacialJobError, FacialJobRepository
+from app.facial.jobs import (
+    FACIAL_JOB_KINDS_BY_CLASS,
+    ClaimedFacialJob,
+    FacialJobError,
+    FacialJobRepository,
+)
 from app.facial.model_assets import verify_models
 from app.facial.notifications import process_next_search_notification
 from app.facial.provider import OpenCvSFaceProvider
@@ -30,11 +35,22 @@ class _UnavailableMessenger:
         raise WhatsAppConfigurationError("Canal transacional indisponível.")
 
 
-def main() -> None:
-    settings = facial_settings_from_environment()
+def main(worker_class: str | None = None) -> None:
+    active_class = (worker_class or os.getenv("FACIAL_WORKER_CLASS", "")).strip().lower()
+    if active_class not in FACIAL_JOB_KINDS_BY_CLASS:
+        raise FacialConfigurationError(
+            "FACIAL_WORKER_CLASS deve ser search, index ou maintenance."
+        )
+    settings = facial_settings_from_environment(
+        verify_runtime_assets=active_class != "maintenance"
+    )
     if not settings.enabled:
         raise FacialConfigurationError("O worker facial não pode iniciar com a flag desligada.")
-    model_paths = verify_models(settings.manifest_path, settings.model_root)
+    model_paths = (
+        verify_models(settings.manifest_path, settings.model_root)
+        if active_class in {"search", "index"}
+        else {}
+    )
     cipher = FacialCipher(
         active_key_id=settings.active_key_id,
         keys=settings.aead_keys,
@@ -43,13 +59,14 @@ def main() -> None:
     derivatives_root = Path(
         os.getenv("MEDIA_DERIVATIVES_ROOT", "/var/lib/markina/derivatives")
     ).resolve()
-    with SessionLocal() as db:
-        reconcile_automatic_gallery_policies(
-            db,
-            derivatives_root=derivatives_root,
-            settings=settings,
-        )
-        db.commit()
+    if active_class == "index":
+        with SessionLocal() as db:
+            reconcile_automatic_gallery_policies(
+                db,
+                derivatives_root=derivatives_root,
+                settings=settings,
+            )
+            db.commit()
 
     def provider_loader() -> OpenCvSFaceProvider:
         return OpenCvSFaceProvider(model_paths["yunet"], model_paths["sface"])
@@ -123,6 +140,7 @@ def main() -> None:
     )
     worker = BlockingFacialWorker(
         settings=settings,
+        job_class=active_class,
         session_factory=SessionLocal,
         wake_source=wake_source,
         provider_loader=provider_loader,
@@ -132,26 +150,19 @@ def main() -> None:
         repository=repository,
     )
     while worker.processed_jobs < settings.max_jobs_per_process:
-        if (
-            settings.private_homologation_enabled
-            and not settings.private_homologation_active
-        ):
-            worker.unload()
-            raise FacialConfigurationError(
-                "A janela privada de homologação expirou; o worker foi interrompido."
-            )
         worker.run_cycle()
-        try:
-            messenger = whatsapp_provider_from_environment()
-        except WhatsAppConfigurationError:
-            messenger = _UnavailableMessenger()
-        with SessionLocal() as db:
-            process_next_search_notification(
-                db,
-                provider=messenger,
-                cipher=cipher,
-                settings=settings,
-            )
+        if active_class == "search":
+            try:
+                messenger = whatsapp_provider_from_environment()
+            except WhatsAppConfigurationError:
+                messenger = _UnavailableMessenger()
+            with SessionLocal() as db:
+                process_next_search_notification(
+                    db,
+                    provider=messenger,
+                    cipher=cipher,
+                    settings=settings,
+                )
 
 
 if __name__ == "__main__":

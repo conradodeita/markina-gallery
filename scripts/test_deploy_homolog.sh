@@ -142,17 +142,42 @@ grep -Fq 'checkout remoto possui alterações locais' "$dirty_output"
 
 facial_env="$(mktemp)"
 trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$payload_env" "$invalid_payload_env" "$facial_env"' EXIT
+printf 'FACIAL_PROCESSING_ENABLED=false\n' >"$facial_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    compose() { [[ "$1" == "ps" ]] && return 0; }
+    verify_facial_deploy_state "$FACIAL_ENV"
+  ' >"$output" 2>&1
+grep -Fq 'flag=false workers=ausentes' "$output"
+
 printf 'FACIAL_PROCESSING_ENABLED=true\n' >"$facial_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    compose() {
+      [[ "$1" == "ps" ]] && { printf "container-%s\n" "$3"; return 0; }
+      [[ "$1" == "exec" ]] && return 0
+    }
+    docker() { [[ "$1" == "inspect" ]] && printf "healthy\n"; }
+    verify_facial_deploy_state "$FACIAL_ENV"
+  ' >"$output" 2>&1
+grep -Fq 'flag=true workers=saudáveis' "$output"
+
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
-    docker() { :; }
-    verify_facial_predeploy_safe_default "$FACIAL_ENV"
+    compose() {
+      [[ "$1" == "ps" && "$3" == "face-index-worker" ]] && return 0
+      [[ "$1" == "ps" ]] && { printf "container-%s\n" "$3"; return 0; }
+    }
+    docker() { [[ "$1" == "inspect" ]] && printf "healthy\n"; }
+    verify_facial_deploy_state "$FACIAL_ENV"
   ' >"$output" 2>&1; then
-  echo "deploy aceitou piloto facial ativo no preflight" >&2
+  echo "deploy aceitou combinação facial incoerente" >&2
   exit 1
 fi
-grep -Fq 'piloto facial deve ser desativado antes de um novo deploy' "$output"
+grep -Fq 'face-index-worker deve estar ativo com flag=true' "$output"
 
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
@@ -208,6 +233,7 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
     PREVIOUS_SHA=1111111111111111111111111111111111111111
     git() { printf "git %s\n" "$*" >> "$ROLLBACK_LOG"; }
     compose() { printf "compose %s\n" "$*" >> "$ROLLBACK_LOG"; }
+    verify_facial_deploy_state() { printf "facial rollback verificado\n" >> "$ROLLBACK_LOG"; }
     record_revision() { printf "record %s %s\n" "$1" "$2" >> "$ROLLBACK_LOG"; }
     rollback_code_if_safe 23
   ' >"$output" 2>&1
@@ -216,7 +242,30 @@ set -e
 [[ "$safe_rollback_status" -eq 23 ]]
 grep -Fq 'git switch --detach 1111111111111111111111111111111111111111' "$rollback_log"
 grep -Fq 'compose up -d --build --no-deps api web worker' "$rollback_log"
+grep -Fq 'facial rollback verificado' "$rollback_log"
 grep -Fq 'record last-rollback 1111111111111111111111111111111111111111' "$rollback_log"
+
+: >"$rollback_log"
+set +e
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ROLLBACK_LOG="$rollback_log" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    SHA_SWITCHED=1
+    MIGRATION_CHANGED=0
+    SCHEMA_ROLLBACK_UNSAFE=0
+    FACIAL_DEPLOY_ENABLED=true
+    PREVIOUS_SHA=2222222222222222222222222222222222222222
+    git() { printf "git %s\n" "$*" >> "$ROLLBACK_LOG"; }
+    compose() { printf "compose %s\n" "$*" >> "$ROLLBACK_LOG"; }
+    verify_facial_deploy_state() { printf "facial rollback ativo verificado\n" >> "$ROLLBACK_LOG"; }
+    record_revision() { printf "record %s %s\n" "$1" "$2" >> "$ROLLBACK_LOG"; }
+    rollback_code_if_safe 24
+  ' >"$output" 2>&1
+enabled_rollback_status=$?
+set -e
+[[ "$enabled_rollback_status" -eq 24 ]]
+grep -Fq 'compose up -d --build --no-deps face-search-worker face-index-worker face-maintenance-worker' "$rollback_log"
+grep -Fq 'facial rollback ativo verificado' "$rollback_log"
 
 : >"$rollback_log"
 set +e
@@ -239,6 +288,5 @@ grep -Fq 'banco não foi restaurado' "$output"
 
 python3 "$SCRIPT_DIR/test_deploy_homolog_policy.py"
 python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
-python3 "$SCRIPT_DIR/test_manage_homolog_facial_policy.py"
-bash "$SCRIPT_DIR/test_manage_homolog_facial.sh"
+python3 "$SCRIPT_DIR/test_facial_production_policy.py"
 echo "deploy-homolog shell: ok"

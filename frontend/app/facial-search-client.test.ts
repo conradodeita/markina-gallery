@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { facialAdminApi, facialSearchApi } from "./facial-search-client";
+import { FacialApiError, facialAdminApi, facialSearchApi } from "./facial-search-client";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -73,6 +73,20 @@ describe("contratos HTTP faciais", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/gallery-1/facial-searches/latest",
       { credentials: "same-origin" },
+    );
+  });
+
+  it("preserva status e Retry-After em indisponibilidade temporária", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: "Busca temporariamente indisponível." }),
+      { status: 503, headers: { "Retry-After": "17" } },
+    )));
+
+    await expect(facialSearchApi.availability("gallery-1")).rejects.toEqual(
+      expect.objectContaining<Partial<FacialApiError>>({
+        status: 503,
+        retryAfterSeconds: 17,
+      }),
     );
   });
 

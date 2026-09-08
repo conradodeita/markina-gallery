@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Base,
+    FacialRollout,
     GalleryFacialPolicy,
     MediaDerivative,
     ParentGallery,
@@ -71,7 +72,6 @@ def _settings(tmp_path: Path) -> FacialSettings:
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
-        minor_search_enabled=False,
         similarity_threshold_milli=750,
         active_key_id="test",
         aead_keys={"test": b"k" * 32},
@@ -108,7 +108,20 @@ def _gallery(db: Session, root: Path, *, photos: int):
         quality_version="quality-v1",
         calibration_version="calibration-v1",
     )
-    db.add_all((parent, folder, policy))
+    rollout = FacialRollout(
+        environment="test",
+        parent_gallery_id=parent.id,
+        status="active",
+        stage="canary",
+        model_version="model-v1",
+        quality_version="quality-v1",
+        calibration_version="calibration-v1",
+        legal_notice_version="notice-v1",
+        consent_version="consent-v1",
+        legal_basis_reference="synthetic-only",
+        retention_policy_version="retention-v1",
+    )
+    db.add_all((parent, folder, policy, rollout))
     created = []
     for index in range(photos):
         photo = PhotoAsset(
@@ -358,3 +371,49 @@ def test_claimed_index_job_runs_in_worker_and_finishes_durably(tmp_path: Path) -
     assert db.scalar(
         select(func.count()).select_from(PhotoFaceEmbedding)
     ) == 1
+
+
+def test_claimed_index_job_is_cancelled_if_rollout_is_suspended(
+    tmp_path: Path,
+) -> None:
+    db = Session(create_engine("sqlite:///:memory:"))
+    Base.metadata.create_all(db.bind)
+    parent, photos = _gallery(db, tmp_path, photos=1)
+    settings = _settings(tmp_path)
+    repository = FacialJobRepository()
+    job, _created = repository.enqueue(
+        db,
+        kind="index",
+        idempotency_key="worker-index-suspended-rollout",
+        parent_gallery_id=parent.id,
+        photo_asset_id=photos[0].id,
+        model_version=settings.model_version,
+        quality_version=settings.quality_version,
+        preview_fingerprint="c" * 64,
+    )
+    db.commit()
+    claim = repository.claim_next(db, lease_seconds=60)
+    assert claim is not None
+    rollout = db.scalar(
+        select(FacialRollout).where(
+            FacialRollout.parent_gallery_id == parent.id
+        )
+    )
+    assert rollout is not None
+    rollout.status = "suspended"
+    db.commit()
+
+    cancelled = process_claimed_index_job(
+        db,
+        claim,
+        repository=repository,
+        provider=Provider({}),
+        cipher=FacialCipher(active_key_id="test", keys={"test": b"k" * 32}),
+        settings=settings,
+        derivatives_root=tmp_path,
+    )
+
+    assert cancelled.id == job.id
+    assert cancelled.status == "cancelled"
+    assert cancelled.lease_token is None
+    assert db.scalar(select(func.count()).select_from(PhotoFaceEmbedding)) == 0

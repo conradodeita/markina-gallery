@@ -1,14 +1,18 @@
 """Execução retomável da busca facial sem depender da tela aberta."""
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
 from PIL import Image
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from app.auth import (
     AuditEvent,
@@ -17,6 +21,7 @@ from app.auth import (
     DerivedGallery,
     DerivedGalleryMembership,
     FacialJob,
+    FacialRollout,
     FacialSearchCandidate,
     FacialSearchNotificationOutbox,
     FacialSearchRequest,
@@ -31,6 +36,7 @@ from app.auth import (
     PhotoSelection,
     now,
 )
+from app.facial.capacity import FacialSearchCapacityError
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher
 from app.facial.engine import replace_photo_index
@@ -118,7 +124,6 @@ def _settings(tmp_path: Path) -> FacialSettings:
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
-        minor_search_enabled=False,
         similarity_threshold_milli=750,
         active_key_id="test",
         aead_keys={"test": b"k" * 32},
@@ -164,7 +169,20 @@ def _base(tmp_path: Path):
         calibration_version="calibration-v1",
         index_generation=1,
     )
-    db.add_all((parent, client, registration, folder, policy))
+    rollout = FacialRollout(
+        environment="test",
+        parent_gallery_id=parent.id,
+        status="active",
+        stage="canary",
+        model_version="model-v1",
+        quality_version="quality-v1",
+        calibration_version="calibration-v1",
+        legal_notice_version="notice-v1",
+        consent_version="consent-v1",
+        legal_basis_reference="synthetic-only",
+        retention_policy_version="retention-v1",
+    )
+    db.add_all((parent, client, registration, folder, policy, rollout))
     db.commit()
     return engine, db, parent, client, folder
 
@@ -252,6 +270,255 @@ def _create_request(db, parent, client, settings):
     )
     db.commit()
     return item
+
+
+def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    database_path = tmp_path / "concurrent-load.db"
+    engine = create_engine(
+        f"sqlite:///{database_path}",
+        connect_args={"timeout": 60},
+        poolclass=NullPool,
+    )
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        connection.exec_driver_sql("PRAGMA busy_timeout=60000")
+        connection.commit()
+    Base.metadata.create_all(engine)
+    settings = replace(
+        _settings(tmp_path),
+        reference_root=tmp_path / "concurrent-references",
+        search_queue_max_depth=100,
+    )
+    galleries = [
+        ParentGallery(id=uuid4(), name=f"Evento sintético {index}")
+        for index in range(2)
+    ]
+    gallery_ids = [gallery.id for gallery in galleries]
+    with Session(engine) as setup:
+        setup.add_all(galleries)
+        for gallery in galleries:
+            setup.add_all(
+                (
+                    GalleryFacialPolicy(
+                        id=uuid4(),
+                        parent_gallery_id=gallery.id,
+                        status="active",
+                        legal_notice_version="notice-v1",
+                        legal_basis_reference="synthetic-only",
+                        retention_policy_version="retention-v1",
+                        minor_policy_version="minor-disabled-v1",
+                        model_version="model-v1",
+                        quality_version="quality-v1",
+                        calibration_version="calibration-v1",
+                        index_generation=1,
+                    ),
+                    FacialRollout(
+                        environment="test",
+                        parent_gallery_id=gallery.id,
+                        status="active",
+                        stage="canary",
+                        model_version="model-v1",
+                        quality_version="quality-v1",
+                        calibration_version="calibration-v1",
+                        legal_notice_version="notice-v1",
+                        consent_version="consent-v1",
+                        legal_basis_reference="synthetic-only",
+                        retention_policy_version="retention-v1",
+                    ),
+                )
+            )
+        clients = []
+        for index in range(100):
+            gallery = galleries[index % len(galleries)]
+            client = Client(
+                id=uuid4(),
+                full_name=f"Cliente sintética {index}",
+                phone_e164=f"+55118{index:08d}",
+            )
+            clients.append((client.id, gallery.id))
+            setup.add_all(
+                (
+                    client,
+                    ParentGalleryRegistration(
+                        parent_gallery_id=gallery.id,
+                        client_id=client.id,
+                        status="active",
+                    ),
+                )
+            )
+        setup.commit()
+
+    barrier = Barrier(100)
+    payload = _jpeg()
+
+    def admit(scope: tuple) -> tuple:
+        client_id, gallery_id = scope
+        with Session(engine) as session:
+            barrier.wait(timeout=30)
+            item = create_search_request(
+                session,
+                parent_gallery_id=gallery_id,
+                client_id=client_id,
+                consent_version="consent-v1",
+                subject_declaration="adult",
+                representation_reference=None,
+                payload=payload,
+                settings=settings,
+            )
+            session.commit()
+            return item.id, client_id, gallery_id
+
+    with ThreadPoolExecutor(max_workers=100) as executor:
+        accepted = list(executor.map(admit, clients))
+    expected_scope = {
+        request_id: (client_id, gallery_id)
+        for request_id, client_id, gallery_id in accepted
+    }
+
+    assert len(expected_scope) == 100
+    assert len(list(settings.reference_root.glob("*.reference"))) == 100
+    with Session(engine) as session:
+        assert session.scalar(select(func.count()).select_from(FacialSearchRequest)) == 100
+        assert session.scalar(
+            select(func.count())
+            .select_from(FacialJob)
+            .where(FacialJob.kind == "search", FacialJob.status == "queued")
+        ) == 100
+        client_id, gallery_id = clients[0]
+        with pytest.raises(FacialSearchCapacityError):
+            create_search_request(
+                session,
+                parent_gallery_id=gallery_id,
+                client_id=client_id,
+                consent_version="consent-v1",
+                subject_declaration="adult",
+                representation_reference=None,
+                payload=payload,
+                settings=settings,
+            )
+        session.rollback()
+    assert len(list(settings.reference_root.glob("*.reference"))) == 100
+
+    repository = FacialJobRepository()
+    first_session = Session(engine)
+    stale_claim = repository.claim_next(
+        first_session, lease_seconds=60, job_class="search"
+    )
+    assert stale_claim is not None
+    claimed_job = first_session.get(FacialJob, stale_claim.id)
+    assert claimed_job is not None
+    claimed_job.lease_expires_at = now() - timedelta(seconds=1)
+    first_session.commit()
+    first_session.close()
+
+    with Session(engine) as resumed_session:
+        resumed_claim = repository.claim_next(
+            resumed_session, lease_seconds=60, job_class="search"
+        )
+        assert resumed_claim is not None and resumed_claim.id == stale_claim.id
+        assert resumed_claim.lease_token != stale_claim.lease_token
+        process_claimed_search_job(
+            resumed_session,
+            resumed_claim,
+            repository=repository,
+            provider=Provider([]),
+            cipher=FacialCipher(active_key_id="test", keys={"test": b"k" * 32}),
+            settings=settings,
+        )
+        processed = 1
+        while claim := repository.claim_next(
+            resumed_session, lease_seconds=60, job_class="search"
+        ):
+            process_claimed_search_job(
+                resumed_session,
+                claim,
+                repository=repository,
+                provider=Provider([]),
+                cipher=FacialCipher(
+                    active_key_id="test", keys={"test": b"k" * 32}
+                ),
+                settings=settings,
+            )
+            processed += 1
+
+        assert processed == 100
+        assert resumed_session.scalar(
+            select(func.count())
+            .select_from(FacialJob)
+            .where(FacialJob.kind == "search", FacialJob.status == "completed")
+        ) == 100
+        assert resumed_session.scalar(
+            select(func.count())
+            .select_from(FacialSearchRequest)
+            .where(FacialSearchRequest.status == "no_face")
+        ) == 100
+        for request_id, (client_id, gallery_id) in expected_scope.items():
+            request, candidates = read_search_result(
+                resumed_session,
+                parent_gallery_id=gallery_id,
+                client_id=client_id,
+                request_id=request_id,
+            )
+            assert (request.client_id, request.parent_gallery_id) == (
+                client_id,
+                gallery_id,
+            )
+            assert candidates == []
+        first_request_id, (first_client_id, first_gallery_id) = next(
+            iter(expected_scope.items())
+        )
+        with pytest.raises(FacialSearchError):
+            read_search_result(
+                resumed_session,
+                parent_gallery_id=(
+                    gallery_ids[1]
+                    if first_gallery_id == gallery_ids[0]
+                    else gallery_ids[0]
+                ),
+                client_id=first_client_id,
+                request_id=first_request_id,
+            )
+    assert list(settings.reference_root.glob("*.reference")) == []
+    engine.dispose()
+
+
+def test_claimed_search_is_cancelled_if_rollout_is_suspended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    _engine, db, parent, client, _folder = _base(tmp_path)
+    settings = _settings(tmp_path)
+    repository = FacialJobRepository()
+    request = _create_request(db, parent, client, settings)
+    claim = repository.claim_next(db, lease_seconds=60)
+    assert claim is not None and claim.kind == "search"
+    rollout = db.scalar(
+        select(FacialRollout).where(
+            FacialRollout.parent_gallery_id == parent.id,
+            FacialRollout.environment == settings.environment,
+        )
+    )
+    assert rollout is not None
+    rollout.status = "suspended"
+    db.commit()
+
+    completed = process_claimed_search_job(
+        db,
+        claim,
+        repository=repository,
+        provider=Provider([_face(_vector(1.0))]),
+        cipher=FacialCipher(active_key_id="test", keys={"test": b"k" * 32}),
+        settings=settings,
+    )
+
+    db.refresh(request)
+    assert completed.status == "completed"
+    assert request.status == "cancelled"
+    assert request.reference_deleted_at is not None
+    assert request.reference_locator_ciphertext is None
 
 
 def test_worker_resumes_in_another_session_and_persists_only_rank_and_band(
