@@ -159,7 +159,6 @@ class FacialSettings:
             and 1 <= self.homolog_retention_hours <= 72
             and expiry is not None
             and expiry > datetime.now(UTC)
-            and self.homolog_contains_minors == self.minor_search_enabled
         )
 
 
@@ -274,9 +273,13 @@ def _validate_enabled(
         raise FacialConfigurationError(
             "A autorização privada de homologação está incompleta, divergente ou expirada."
         )
-    if settings.minor_search_enabled and not settings.private_homologation_active:
+    if settings.minor_search_enabled and (
+        not settings.private_homologation_active
+        or not settings.homolog_contains_minors
+    ):
         raise FacialConfigurationError(
-            "A busca facial infantil exige homologação privada autorizada e vigente."
+            "A busca facial infantil da cliente exige homologação privada autorizada, "
+            "vigente e declarada com menores."
         )
     _ = settings.active_key
     if verify_runtime_assets:

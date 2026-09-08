@@ -42,6 +42,40 @@ describe("contratos HTTP faciais", () => {
     ]);
   });
 
+  it("envia a confirmação versionada do responsável somente na consulta infantil", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "request-1" }), { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["jpeg"], "crianca.jpg", { type: "image/jpeg" });
+
+    await facialSearchApi.create(
+      "gallery-1",
+      file,
+      "consent-v1",
+      "minor",
+      "guardian-self-declaration-v1",
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/gallery-1/facial-searches",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-facial-subject-declaration": "minor",
+          "x-facial-representation-reference": "guardian-self-declaration-v1",
+        }),
+      }),
+    );
+  });
+
+  it("recupera a busca mais recente da cliente autenticada", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "request-latest" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await facialSearchApi.latest("gallery-1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/gallery-1/facial-searches/latest",
+      { credentials: "same-origin" },
+    );
+  });
+
   it("envia somente IDs de jobs na retentativa administrativa", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ retried: 2 }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

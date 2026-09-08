@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.auth import (
@@ -13,6 +13,7 @@ from app.auth import (
     GalleryFacialPolicy,
     MediaDerivative,
     PhotoAsset,
+    PhotoFaceEmbedding,
     PhotoFolder,
     now,
 )
@@ -37,6 +38,8 @@ class FacialIndexStatus:
     page: int
     page_size: int
     failure_total: int
+    photos_with_faces: int
+    detected_faces: int
 
 
 def gallery_index_status(
@@ -127,9 +130,7 @@ def gallery_index_status(
     ready = counts["completed"]
     unindexed = max(0, len(eligible_photo_ids) - len(latest))
     state = _aggregate_state(
-        policy_status=(
-            policy.status if policy else ("pending" if processing_enabled else "disabled")
-        ),
+        processing_enabled=processing_enabled,
         total=total,
         ready=ready,
         queued=counts["queued"],
@@ -138,6 +139,28 @@ def gallery_index_status(
         waiting_previews=waiting_previews,
         unindexed=unindexed,
     )
+    photos_with_faces = detected_faces = 0
+    if policy:
+        photos_with_faces = int(
+            db.scalar(
+                select(func.count(func.distinct(PhotoFaceEmbedding.photo_asset_id))).where(
+                    PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
+                    PhotoFaceEmbedding.model_version == policy.model_version,
+                    PhotoFaceEmbedding.quality_version == policy.quality_version,
+                )
+            )
+            or 0
+        )
+        detected_faces = int(
+            db.scalar(
+                select(func.count()).select_from(PhotoFaceEmbedding).where(
+                    PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
+                    PhotoFaceEmbedding.model_version == policy.model_version,
+                    PhotoFaceEmbedding.quality_version == policy.quality_version,
+                )
+            )
+            or 0
+        )
     return FacialIndexStatus(
         state=state,
         total=total,
@@ -151,6 +174,8 @@ def gallery_index_status(
         page=page,
         page_size=page_size,
         failure_total=len(failed_jobs),
+        photos_with_faces=photos_with_faces,
+        detected_faces=detected_faces,
     )
 
 
@@ -193,7 +218,7 @@ def retry_failed_index_jobs(
 
 def _aggregate_state(
     *,
-    policy_status: str,
+    processing_enabled: bool,
     total: int,
     ready: int,
     queued: int,
@@ -202,14 +227,13 @@ def _aggregate_state(
     waiting_previews: int,
     unindexed: int,
 ) -> str:
-    if policy_status not in {"active", "pending"}:
-        return "disabled"
     if total == 0:
-        return "empty"
-    if ready == total:
-        return "ready"
-    if failed and not (ready or queued or processing or waiting_previews or unindexed):
+        return "completed"
+    unfinished = queued + processing + waiting_previews + unindexed
+    if unfinished:
+        return "processing" if processing_enabled else "failed"
+    if failed:
         return "failed"
-    if ready or failed:
-        return "partial"
-    return "pending"
+    if ready == total:
+        return "completed"
+    return "failed"

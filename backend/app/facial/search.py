@@ -51,11 +51,15 @@ def search_availability(
             "manual_selection_available": True,
             "minor_search_available": False,
         }
-    index = gallery_index_status(db, parent_gallery_id=parent_gallery_id)
+    index = gallery_index_status(
+        db,
+        parent_gallery_id=parent_gallery_id,
+        processing_enabled=settings.enabled,
+    )
     return {
         "state": "consent_required",
         "manual_selection_available": True,
-        "minor_search_available": False,
+        "minor_search_available": settings.minor_search_enabled,
         "consent_version": settings.consent_version,
         "legal_notice_version": policy.legal_notice_version,
         "reference_retention_seconds": settings.reference_retention_seconds,
@@ -93,10 +97,15 @@ def create_search_request(
     if subject_declaration not in {"adult", "minor"}:
         raise FacialSearchError("Declaração do sujeito inválida.")
     if subject_declaration == "minor":
-        raise FacialSearchError(
-            "A busca facial infantil permanece indisponível até os controles exigidos."
-        )
-    if representation_reference:
+        if not settings.minor_search_enabled:
+            raise FacialSearchError(
+                "A busca facial infantil permanece indisponível até os controles exigidos."
+            )
+        if representation_reference != "guardian-self-declaration-v1":
+            raise FacialSearchError(
+                "A confirmação do pai, mãe ou responsável é obrigatória."
+            )
+    elif representation_reference:
         raise FacialSearchError("Representação não é aplicável a uma consulta adulta.")
 
     request_id = uuid4()
@@ -109,16 +118,17 @@ def create_search_request(
         quality_version=policy.quality_version,
     )
     snapshot_ready = sum(item.status == "ready" for item in snapshot)
+    snapshot_pending = any(item.status == "pending" for item in snapshot)
     item = FacialSearchRequest(
         id=request_id,
         parent_gallery_id=parent_gallery_id,
         client_id=client_id,
         policy_id=policy.id,
-        status="waiting_index" if snapshot_ready < len(snapshot) else "queued",
+        status="waiting_index" if snapshot_pending else "queued",
         consent_version=consent_version,
         legal_notice_version=policy.legal_notice_version or "",
         subject_declaration=subject_declaration,
-        representation_reference=None,
+        representation_reference=representation_reference,
         model_version=policy.model_version,
         quality_version=policy.quality_version,
         index_generation=policy.index_generation,
@@ -260,6 +270,8 @@ def _build_snapshot(
             status=(
                 "ready"
                 if job is not None and job.status == "completed"
+                else "excluded"
+                if job is not None and job.status in {"failed", "cancelled"}
                 else "pending"
             ),
         )
@@ -369,6 +381,43 @@ def read_search_result(
         )
     )
     return item, candidates
+
+
+def read_latest_search_result(
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+    client_id: UUID,
+) -> tuple[FacialSearchRequest, list[FacialSearchCandidate]]:
+    """Recupera somente a consulta mais recente do vínculo autenticado."""
+
+    item = db.scalar(
+        select(FacialSearchRequest)
+        .join(
+            ParentGalleryRegistration,
+            (ParentGalleryRegistration.parent_gallery_id == parent_gallery_id)
+            & (ParentGalleryRegistration.client_id == client_id),
+        )
+        .join(ParentGallery, ParentGallery.id == parent_gallery_id)
+        .where(
+            FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+            FacialSearchRequest.client_id == client_id,
+            FacialSearchRequest.status != "cancelled",
+            ParentGalleryRegistration.status == "active",
+            ParentGallery.active.is_(True),
+            ParentGallery.lifecycle_status == "active",
+        )
+        .order_by(FacialSearchRequest.created_at.desc(), FacialSearchRequest.id.desc())
+        .limit(1)
+    )
+    if item is None:
+        raise FacialSearchError("Consulta facial indisponível.")
+    return read_search_result(
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=client_id,
+        request_id=item.id,
+    )
 
 
 def cancel_search_request(

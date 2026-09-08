@@ -36,11 +36,13 @@ def main() -> int:
         ("close-private", "fechamento privado"),
         ("reconcile-private", "reconciliação privada"),
         ("resume-private", "retomada privada"),
+        ("retry-failed-private", "retentativa privada"),
         ("ENABLE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de ativação"),
         ("PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE", "token de transição legada"),
         ("CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de fechamento"),
         ("RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de reconciliação"),
         ("RESUME_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de retomada"),
+        ("RETRY_FAILED_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de retentativa"),
         ("FACIAL_HOMOLOG_BATCH_ID", "vínculo ao lote"),
         ("FACIAL_HOMOLOG_ORIGIN_REF", "origem documentada"),
         ("FACIAL_HOMOLOG_AUTHORIZATION_REF", "autorização documentada"),
@@ -84,6 +86,9 @@ def main() -> int:
         ("s.private_homologation_active", "validação fail-closed"),
         ('[[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" != "true" ]]', "recusa de gate privado na transição legada"),
         ('[[ "${facial_enabled,,}" == "true" ]]', "exigência de flag ativa na pausa"),
+        ('allowed_errors = {"provider_unavailable", "timeout", "internal_failure"}', "categorias técnicas retentáveis"),
+        ('not 1 <= len(failed) <= 10', "limite corretivo de falhas"),
+        ('attempts_preserved', "preservação de tentativas"),
     ):
         require(text, description, SCRIPT)
 
@@ -110,6 +115,7 @@ def main() -> int:
         ("ENABLE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação da ativação"),
         ("RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação da reconciliação"),
         ("RESUME_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação da retomada"),
+        ("RETRY_FAILED_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação da retentativa"),
         ("BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação do benchmark"),
         ("CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "confirmação do fechamento"),
         ("StrictHostKeyChecking=yes", "host SSH verificado"),
@@ -132,6 +138,16 @@ def main() -> int:
         "confirmação da transição legada no CI",
         CI,
     )
+    require(
+        "Homolog-Facial: pause-private-for-upgrade",
+        "trailer de pausa conservadora do lote privado",
+        CI,
+    )
+    require(
+        "PAUSE_AUTHORIZED_PRIVATE_FACIAL_FOR_DEPLOY",
+        "confirmação da pausa conservadora no CI",
+        CI,
+    )
     for text, description in (
         ("reconcile-facial-homolog", "job corretivo isolado"),
         ("!contains(github.event.head_commit.message, 'Homolog-Facial: reconcile-private')", "deploy comum excluído da reconciliação"),
@@ -147,6 +163,9 @@ def main() -> int:
         ("Homolog-Facial: resume-private", "trailer exato de retomada"),
         ("Facial-Window-Minutes", "janela limitada da retomada"),
         ("RESUME_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de retomada no CI"),
+        ("retry-failed-facial-homolog", "job protegido de retentativa"),
+        ("Homolog-Facial: retry-failed-private", "trailer exato de retentativa"),
+        ("RETRY_FAILED_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG", "token de retentativa no CI"),
         ("--scope-from-manifest", "benchmark retomado no lote original"),
     ):
         require(text, description, CI)

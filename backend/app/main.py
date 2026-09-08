@@ -151,6 +151,7 @@ from app.facial.search import (
     authorize_search_candidate_selection,
     cancel_search_request,
     create_search_request,
+    read_latest_search_result,
     read_search_result,
     reject_search_candidate,
     search_availability,
@@ -3027,6 +3028,14 @@ def admin_parent_gallery_facial_index(
         "queued": report.queued,
         "processing": report.processing,
         "failed": report.failed,
+        "coverage": {
+            "photos_with_faces": report.photos_with_faces,
+            "total": report.total,
+            "percent": round(
+                report.photos_with_faces * 100 / report.total, 1
+            ) if report.total else 0.0,
+            "detected_faces": report.detected_faces,
+        },
         "waiting_previews": report.waiting_previews,
         "unindexed": report.unindexed,
         "failures": list(report.failures),
@@ -7502,6 +7511,26 @@ async def create_public_gallery_facial_search(
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return search_request_payload(item)
+
+
+@app.get(
+    "/public-galleries/{parent_gallery_id}/facial-searches/latest"
+)
+def latest_public_gallery_facial_search_result(
+    parent_gallery_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    try:
+        item, candidates = read_latest_search_result(
+            db,
+            parent_gallery_id=parent_gallery_id,
+            client_id=session.subject_id,
+        )
+    except FacialSearchError as exc:
+        raise HTTPException(status_code=404, detail="Consulta facial indisponível.") from exc
+    return search_result_payload(item, candidates)
 
 
 @app.get(

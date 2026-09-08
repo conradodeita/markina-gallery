@@ -45,11 +45,12 @@ export type FacialSearchResult = {
 };
 
 export type FacialIndexStatus = {
-  state: "disabled" | "empty" | "pending" | "processing" | "ready" | "partial" | "failed";
+  state: "processing" | "completed" | "failed";
   progress: { ready: number; total: number };
   queued: number;
   processing: number;
   failed: number;
+  coverage: { photos_with_faces: number; total: number; percent: number; detected_faces: number };
   waiting_previews: number;
   unindexed: number;
   failures: Array<{ job_id: string; photo_id: string; category: string }>;
@@ -73,17 +74,21 @@ export const facialSearchApi = {
     file: File,
     consentVersion: string,
     subjectDeclaration: "adult" | "minor",
+    representationReference?: string,
   ) => jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches`, {
     method: "POST",
     headers: {
       "content-type": "image/jpeg",
       "x-facial-consent-version": consentVersion,
       "x-facial-subject-declaration": subjectDeclaration,
+      ...(representationReference ? { "x-facial-representation-reference": representationReference } : {}),
     },
     body: file,
   }),
   read: (galleryId: string, requestId: string) =>
     jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches/${requestId}`),
+  latest: (galleryId: string) =>
+    jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches/latest`),
   cancel: (galleryId: string, requestId: string) =>
     jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches/${requestId}`, { method: "DELETE" }),
   reject: (galleryId: string, requestId: string, photoId: string) =>

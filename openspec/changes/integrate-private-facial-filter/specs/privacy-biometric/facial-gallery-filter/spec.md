@@ -6,17 +6,22 @@ Definir o tratamento biométrico mínimo, isolado e reversível necessário para
 
 ### Requirement: Gate global e política interna automática
 
-O processamento facial SHALL permanecer desligado por padrão no ambiente. Quando o operador habilitar o subsistema com versão de aviso, referência da hipótese legal, retenção, modelos, criptografia e configuração aplicável a menores válidos, o sistema SHALL criar ou reconciliar automaticamente uma política técnica interna para cada Galeria pública ativa e SHALL NOT exigir declaração, preparação ou ativação manual do fotógrafo. Desligar globalmente SHALL interromper novas indexações e consultas sem retirar seleção manual, pedidos ou histórico.
+O processamento facial SHALL permanecer desligado por padrão no ambiente. Quando o operador habilitar o subsistema com versões, retenção, modelos e criptografia válidos, o sistema SHALL criar ou reconciliar automaticamente uma configuração técnica interna para cada Galeria pública ativa e SHALL NOT exigir declaração, preparação, autorização sobre menores ou ativação manual do fotógrafo. A presença de adultos ou menores nas fotos do acervo SHALL NOT bloquear nem alterar a indexação administrativa. Desligar globalmente SHALL interromper novas indexações e consultas sem retirar seleção manual, pedidos ou histórico.
 
 #### Scenario: Ambiente sem prontidão
 
 - **WHEN** a configuração operacional não possui todos os controles obrigatórios vigentes
-- **THEN** o sistema mantém a indexação indisponível, informa o estado no painel sem pedir uma ação jurídica ao fotógrafo e não inicia tratamento biométrico
+- **THEN** o sistema não inicia novos jobs, informa falha técnica no painel sem apresentar bloqueio de política nem pedir ação jurídica ao fotógrafo
 
 #### Scenario: Galeria elegível em ambiente habilitado
 
 - **WHEN** uma Galeria pública ativa possui prévias elegíveis e o subsistema global está válido e habilitado
 - **THEN** o sistema garante automaticamente a política interna versionada e agenda somente a indexação que estiver ausente ou divergente
+
+#### Scenario: Acervo administrativo contém menores
+
+- **WHEN** fotos do acervo contêm adultos, menores ou ambos e o subsistema global está válido e habilitado
+- **THEN** o sistema indexa todas as fotos elegíveis pelo mesmo pipeline automático, sem exigir `FACIAL_MINOR_SEARCH_ENABLED`, declaração, consentimento ou desbloqueio do administrador
 
 #### Scenario: Kill switch global
 
@@ -25,7 +30,7 @@ O processamento facial SHALL permanecer desligado por padrão no ambiente. Quand
 
 ### Requirement: Indexação assíncrona desacoplada da mídia
 
-O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegida da foto estiver pronta, em fila facial independente e de baixa prioridade. A indexação SHALL nascer de foto ou derivado novo, mudança explícita de versão, backfill ou retentativa, e SHALL NOT manter varredura recorrente da galeria. O estado facial SHALL ser `disabled`, `pending`, `ready`, `partial`, `failed` ou `purged`; falha facial SHALL NOT impedir publicação, visualização ou seleção manual da foto.
+O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegida da foto estiver pronta, em fila facial independente e de baixa prioridade. A indexação SHALL nascer de foto ou derivado novo, mudança explícita de versão, backfill ou retentativa, e SHALL NOT manter varredura recorrente da galeria. O estado administrativo agregado SHALL ser somente `processing`, `completed` ou `failed`; estado de política SHALL NOT fazer parte desse contrato. Falha facial SHALL NOT impedir publicação, visualização ou seleção manual da foto.
 
 #### Scenario: Prévia pronta em ambiente habilitado
 
@@ -49,7 +54,9 @@ O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegi
 
 ### Requirement: Progresso administrativo cobre todas as pastas
 
-O painel administrativo SHALL exibir na etapa 04, em `Processamento automático` → `Reconhecimento facial`, uma barra de progresso agregada para toda a Galeria pública. O total SHALL incluir cada foto de conteúdo assim que seu upload estiver persistido, independentemente da pasta e mesmo enquanto as prévias ainda estiverem em preparação. A interface SHALL continuar consultando o estado enquanto existir foto não indexada, job na fila ou job em processamento, e SHALL distinguir contagens reais de fotos prontas, aguardando preparo, na fila, em processamento e com falha sem fabricar percentual. Ativos técnicos de capa SHALL NOT participar desse total.
+O painel administrativo SHALL exibir na etapa 04, em `Processamento automático` → `Reconhecimento facial`, uma barra de progresso agregada para toda a Galeria pública. O total SHALL incluir cada foto de conteúdo assim que seu upload estiver persistido, independentemente da pasta e mesmo enquanto as prévias ainda estiverem em preparação. A interface SHALL continuar consultando enquanto o estado for `processing`, SHALL encerrar em `completed` quando todas as fotos terminarem e SHALL encerrar em `failed` quando restarem falhas ou o serviço não puder concluir o trabalho. O painel SHALL distinguir contagens reais de fotos prontas, aguardando preparo, na fila, em processamento e com falha sem fabricar percentual, e SHALL NOT exibir estado, gate ou ação de política. Ativos técnicos de capa SHALL NOT participar desse total.
+
+Além do progresso técnico, o painel SHALL informar separadamente a cobertura facial do acervo: quantidade e porcentagem de fotos de conteúdo que possuem ao menos um rosto detectado, usando como denominador o total recebido na Galeria pública. Foto processada com zero rostos SHALL contar como processamento concluído e SHALL NOT ser classificada como falha. A cobertura SHALL ser informativa para a decisão humana de compartilhar o link e SHALL NOT impor limiar automático sem configuração de negócio aprovada.
 
 #### Scenario: Upload distribuído entre pastas
 
@@ -60,6 +67,11 @@ O painel administrativo SHALL exibir na etapa 04, em `Processamento automático`
 
 - **WHEN** uma foto já foi aceita, mas sua prévia limpa ou protegida ainda está sendo preparada
 - **THEN** a foto participa do total e da contagem de itens aguardando preparo, e o painel não interrompe a atualização por ainda não existir job facial para ela
+
+#### Scenario: Cobertura facial após o processamento
+
+- **WHEN** a Galeria pública possui fotos processadas com e sem rostos detectados
+- **THEN** o painel mostra `fotos com rosto/total` e sua porcentagem separadamente de `fotos processadas/total`, sem tratar ausência de rosto como erro
 
 ### Requirement: Qualidade técnica versionada por rosto
 
@@ -112,10 +124,20 @@ Cada consulta SHALL ser um job durável independente da presença do navegador. 
 - **WHEN** a cliente fecha a tela depois que o upload foi aceito
 - **THEN** o job continua até estado terminal, a referência segue a retenção definida e a consulta pode ser retomada sem novo tratamento duplicado
 
+#### Scenario: Cliente retorna pela galeria ou pela notificação
+
+- **WHEN** uma cliente autenticada retorna à mesma Galeria pública sem o identificador salvo na aba original
+- **THEN** o sistema recupera somente sua consulta mais recente, ainda válida e pertencente àquela galeria, e reapresenta progresso ou resultados sem revelar consulta de outra cliente
+
 #### Scenario: Índice ainda em preparação
 
 - **WHEN** a consulta é criada enquanto parte do snapshot ainda não foi indexada
 - **THEN** o sistema informa `waiting_index` com contagem `ready/total` e só conclui contra aquele snapshot, sem incorporar silenciosamente fotos carregadas depois
+
+#### Scenario: Cem ou mais clientes iniciam consultas
+
+- **WHEN** ao menos 100 clientes autenticadas e vinculadas enviam referências válidas para a mesma Galeria pública em uma janela concorrente
+- **THEN** cada consulta é aceita como job durável e isolado por cliente, recebe progresso próprio, não substitui consulta de outra pessoa e pode aguardar capacidade do worker sem depender da aba do navegador
 
 ### Requirement: Exclusão da referência e retenção curta
 
@@ -147,7 +169,7 @@ A busca SHALL retornar somente possíveis fotos já visíveis à cliente na Gale
 
 ### Requirement: Proteção reforçada para menores
 
-O sistema SHALL manter busca infantil desabilitada por padrão. Em homologação privada, o operador MAY habilitá-la somente para uma execução explicitamente autorizada e vinculada a lote enviado pelo administrador/fotógrafo, com origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Fora desse modo controlado, a habilitação SHALL exigir mecanismo não biométrico de comprovação do responsável, consentimento verificável, aviso acessível, avaliação do melhor interesse e RIPD aprovado. A referência SHALL NOT ser usada para estimar idade, autenticar identidade, inferir atributos, treinar modelo ou publicidade.
+O sistema SHALL manter a consulta iniciada por uma cliente com referência infantil desabilitada por padrão. Esse gate SHALL se aplicar somente ao upload temporário da referência e à consulta da cliente; SHALL NOT bloquear a indexação administrativa do acervo, mesmo quando as fotos contenham menores. Em homologação privada, o operador MAY habilitar a consulta infantil somente para uma execução explicitamente autorizada e vinculada a lote enviado pelo administrador/fotógrafo, com origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Fora desse modo controlado, a habilitação SHALL exigir mecanismo não biométrico de comprovação do responsável, consentimento verificável, aviso acessível, avaliação do melhor interesse e RIPD aprovado. A referência SHALL NOT ser usada para estimar idade, autenticar identidade, inferir atributos, treinar modelo ou publicidade.
 
 #### Scenario: Política infantil incompleta
 

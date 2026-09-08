@@ -77,7 +77,7 @@ describe("Galeria pública da cliente", () => {
 
   it("consente, filtra em dois blocos e seleciona candidata pela mesma jornada comercial", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/facial-search") && !init?.method) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: false, consent_version: "consent-v1", legal_notice_version: "notice-v1", reference_retention_seconds: 900, candidate_retention_seconds: 86400 });
+      if (path.endsWith("/facial-search") && !init?.method) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: true, consent_version: "consent-v1", legal_notice_version: "notice-v1", reference_retention_seconds: 900, candidate_retention_seconds: 86400 });
       if (path.endsWith("/facial-searches") && init?.method === "POST") return response({ id: "request-1", gallery_id: "public-1", status: "ready", progress: { index: { ready: 2, total: 2 }, comparison: { done: 2, total: 2 } }, reference_deleted: true, expires_at: new Date(Date.now() + 60_000).toISOString(), candidates: [{ photo_id: "photo-2", rank: 1, quality_band: "best" }, { photo_id: "photo-1", rank: 2, quality_band: "other" }] }, 202);
       if (path.includes("/candidates/photo-2/selection") && init?.method === "POST") return response({ status: "selected", private_gallery_id: "private-1", gallery_created: true, reference_created: true, selection_created: true, cart: { quantity: 1, total_cents: 700 } }, 201);
       if (path.includes("/candidates/photo-1") && init?.method === "DELETE") return response({ rejected: true });
@@ -92,8 +92,20 @@ describe("Galeria pública da cliente", () => {
     expect(screen.getByText(/foto de referência é eliminada automaticamente/)).toBeTruthy();
     const file = new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Foto JPEG com uma pessoa"), { target: { files: [file] } });
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Confirmo que sou pai, mãe ou responsável/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo o uso temporário/ }));
     fireEvent.submit(screen.getByRole("button", { name: "Concordar e procurar" }).closest("form")!);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/public-1/facial-searches",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-facial-subject-declaration": "minor",
+          "x-facial-representation-reference": "guardian-self-declaration-v1",
+        }),
+      }),
+    ));
 
     expect(await screen.findByText("Melhores resultados encontrados")).toBeTruthy();
     expect(screen.getByText("Outros resultados encontrados")).toBeTruthy();
@@ -130,6 +142,25 @@ describe("Galeria pública da cliente", () => {
     );
     expect(window.sessionStorage.getItem("markina:facial-search:public-1")).toBe("request-restored");
     expect(document.querySelector("img[src*='referencia']")).toBeNull();
+  });
+
+  it("recupera a consulta mais recente após fechar a aba e mantém melhores resultados no topo", async () => {
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
+      if (path.endsWith("/facial-searches/latest")) return response({ id: "latest-request", gallery_id: "public-1", status: "ready", progress: { index: { ready: 2, total: 2 }, comparison: { done: 2, total: 2 } }, reference_deleted: true, expires_at: new Date(Date.now() + 60_000).toISOString(), candidates: [{ photo_id: "photo-2", rank: 1, quality_band: "best" }, { photo_id: "photo-1", rank: 2, quality_band: "other" }] });
+      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview-1" }, { id: "photo-2", name: "Foto 2", preview_url: "/preview-2" }] });
+      return response({ id: "public-1", name: "Festa", event_name: null, description: null, access_mode: "standard", photos_url: "/photos" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PublicGalleryPage />);
+
+    expect(await screen.findByText("Melhores resultados encontrados")).toBeTruthy();
+    expect(screen.getByText("Outros resultados encontrados")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/public-1/facial-searches/latest",
+      { credentials: "same-origin" },
+    );
+    expect(window.sessionStorage.getItem("markina:facial-search:public-1")).toBe("latest-request");
   });
 
   it("leva o foco ao consentimento e permite cancelar por teclado", async () => {

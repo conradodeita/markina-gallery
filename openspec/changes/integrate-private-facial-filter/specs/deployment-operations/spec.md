@@ -47,6 +47,12 @@ Deploy SHALL exigir inventário, backup, migration aditiva, modelos verificados 
 - **WHEN** `FACIAL_HOMOLOG_PRIVATE_MODE=true` ou a transição legada não foi explicitamente autorizada
 - **THEN** o deploy comum continua falhando antes de trocar código ou banco e exige o fechamento ou procedimento de upgrade privado aplicável
 
+#### Scenario: Upgrade autorizado preserva o lote privado
+
+- **WHEN** um novo SHA aprovado precisa ser publicado enquanto o lote privado permanece registrado
+- **THEN** uma transição protegida e explícita inventaria o host, faz backup restrito, desliga somente `FACIAL_PROCESSING_ENABLED`, interrompe somente o `face-worker` e mantém fotos, embeddings, jobs, manifesto, vínculos e retenção intactos
+- **AND** o deploy continua com o gate desligado e SHALL NOT reabrir a janela automaticamente
+
 #### Scenario: Rollback da funcionalidade
 
 - **WHEN** o operador aciona o rollback facial
@@ -57,8 +63,14 @@ Deploy SHALL exigir inventário, backup, migration aditiva, modelos verificados 
 - **WHEN** o inventário detecta que um lote privado ainda autorizado concluiu prévias enquanto o worker de mídia mantinha o gate antigo
 - **THEN** uma reconciliação explícita, vinculada ao mesmo SHA, lote, autorização, quantidade e declaração de menores, enfileira idempotentemente somente as fotos daquela janela sem apagar mídia, repetir upload, ampliar prazo ou interromper a geração de prévias
 
-#### Scenario: Retomada de lote expirado com fila durável pendente
+#### Scenario: Retomada de lote expirado ou pausado com trabalho durável
 
 - **WHEN** a janela de um lote privado expira depois do upload e uma autorização humana explícita permite concluir os jobs duráveis pendentes
-- **THEN** uma operação protegida comprova o mesmo SHA, lote, autorização, quantidade e declaração de menores, exige a janela anterior expirada, recusa lease ainda vigente, admite lease expirada como job durável retomável, preserva origem, responsável, finalidade e retenção, abre somente uma nova janela entre 30 e 240 minutos e recria somente os processos persistentes da Markina necessários para retomar o worker facial
+- **THEN** uma operação protegida comprova o mesmo SHA, lote, autorização, quantidade e declaração de menores, exige a janela anterior expirada, admite o gate pausado para upgrade, recusa lease ainda vigente e cancelamento, admite lease expirada, jobs pendentes, jobs concluídos e até dez falhas técnicas terminais como cobertura durável retomável, preserva origem, responsável, finalidade e retenção, abre somente uma nova janela entre 30 e 240 minutos e recria somente os processos persistentes da Markina necessários para retomar o worker facial
 - **AND** o benchmark retomado usa o início registrado no manifesto original para cobrir exatamente o mesmo lote, sem novo upload, sem selecionar fotos por nome e sem produzir relatório com PII ou biometria
+
+#### Scenario: Retentativa final de poucas falhas técnicas do lote ativo
+
+- **WHEN** o benchmark esgota a fila do lote autorizado com até dez jobs técnicos falhos, nenhum job aberto e a janela privada ainda vigente
+- **THEN** uma operação protegida MAY registrar somente categorias e contagens sanitizadas, reenfileirar apenas esses jobs do escopo original sem zerar tentativas ou alterar fotos e executar nova medição até o estado terminal
+- **AND** lote, SHA, autorização, quantidade, menores, origem, finalidade, responsável, retenção e vencimento permanecem inalterados

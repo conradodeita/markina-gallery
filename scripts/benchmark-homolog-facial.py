@@ -210,7 +210,7 @@ def verify_target(options: Options) -> None:
         "api",
         "python",
         "-c",
-        "import json, os; from app.facial.config import facial_settings_from_environment; s=facial_settings_from_environment(verify_runtime_assets=False); print(json.dumps({'enabled':s.enabled,'private':s.private_homologation_active,'batch':s.homolog_batch_id,'authorization':s.homolog_authorization_ref,'count':s.homolog_expected_count,'minors':s.minor_search_enabled}))",
+        "import json, os; from app.facial.config import facial_settings_from_environment; s=facial_settings_from_environment(verify_runtime_assets=False); print(json.dumps({'enabled':s.enabled,'private':s.private_homologation_active,'batch':s.homolog_batch_id,'authorization':s.homolog_authorization_ref,'count':s.homolog_expected_count,'minors':s.homolog_contains_minors,'client_minor_search':s.minor_search_enabled}))",
     ).stdout
     gate = json.loads(runtime)
     expected_gate = {
@@ -220,6 +220,7 @@ def verify_target(options: Options) -> None:
         "authorization": options.authorization_ref,
         "count": options.expected_count,
         "minors": options.contains_minors,
+        "client_minor_search": options.contains_minors,
     }
     if gate != expected_gate:
         raise RuntimeError("gate privado ativo diverge do lote autorizado para a medição")

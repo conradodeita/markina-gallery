@@ -40,6 +40,9 @@ parse_arguments --mode reconcile-private
 MODE=""
 parse_arguments --mode resume-private
 [[ "$MODE" == "resume-private" ]]
+MODE=""
+parse_arguments --mode retry-failed-private
+[[ "$MODE" == "retry-failed-private" ]]
 
 pause_result="$({
   CONFIRMATION="PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE"
@@ -60,6 +63,18 @@ if (
   pause_legacy_for_private_upgrade >/dev/null 2>&1
 ); then
   echo "transição legada aceitou gate privado ativo" >&2
+  exit 1
+fi
+
+if (
+  CONFIRMATION="token-invalido"
+  BATCH_ID="batch-2026-09-07"
+  AUTHORIZATION_REF="approval-register-42"
+  EXPECTED_COUNT="500"
+  CONTAINS_MINORS="true"
+  retry_failed_private >/dev/null 2>&1
+); then
+  echo "retentativa aceitou token inválido" >&2
   exit 1
 fi
 

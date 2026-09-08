@@ -17,6 +17,7 @@ readonly LEGACY_PAUSE_TOKEN="PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE"
 readonly CLOSE_TOKEN="CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 readonly RECONCILE_TOKEN="RECONCILE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 readonly RESUME_TOKEN="RESUME_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
+readonly RETRY_FAILED_TOKEN="RETRY_FAILED_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
 
 MODE=""
 CONFIRMATION=""
@@ -39,7 +40,7 @@ PAUSE_STARTED=0
 RESUME_STARTED=0
 
 usage() {
-  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|reconcile-private|resume-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--recorded-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
+  echo "Uso: manage-homolog-facial.sh --mode inventory|pause-legacy-for-private-upgrade|pause-private|activate-private|reconcile-private|resume-private|retry-failed-private|close-private [--confirmation <token>] [--sha <sha>] [--batch-id <ref>] [--origin-ref <ref>] [--authorization-ref <ref>] [--operator-ref <ref>] [--expected-count 500..1000] [--recorded-count 500..1000] [--retention-hours 1..72] [--window-minutes 30..240] [--contains-minors true|false]" >&2
 }
 
 fail() {
@@ -77,7 +78,7 @@ parse_arguments() {
       *) usage; fail "argumento não permitido: $1"; return 1 ;;
     esac
   done
-  [[ "$MODE" == "inventory" || "$MODE" == "pause-legacy-for-private-upgrade" || "$MODE" == "pause-private" || "$MODE" == "activate-private" || "$MODE" == "reconcile-private" || "$MODE" == "resume-private" || "$MODE" == "close-private" ]] || {
+  [[ "$MODE" == "inventory" || "$MODE" == "pause-legacy-for-private-upgrade" || "$MODE" == "pause-private" || "$MODE" == "activate-private" || "$MODE" == "reconcile-private" || "$MODE" == "resume-private" || "$MODE" == "retry-failed-private" || "$MODE" == "close-private" ]] || {
     usage
     fail "modo não permitido"
     return 1
@@ -217,6 +218,8 @@ if operation == "activate":
         "FACIAL_LEGAL_BASIS_REFERENCE": os.environ["FACIAL_AUTHORIZATION_REF"],
         "FACIAL_RETENTION_POLICY_VERSION": f"homolog-private-{os.environ['FACIAL_RETENTION_HOURS']}h-v1",
         "FACIAL_MINOR_POLICY_VERSION": "homolog-private-minors-authorized-v1" if contains_minors == "true" else "homolog-private-adults-v1",
+        # Este gate pertence somente à referência enviada pela cliente.
+        # A indexação administrativa não depende dele.
         "FACIAL_MINOR_SEARCH_ENABLED": contains_minors,
         "FACIAL_HOMOLOG_PRIVATE_MODE": "true",
         "FACIAL_HOMOLOG_BATCH_ID": os.environ["FACIAL_BATCH_ID"],
@@ -355,6 +358,7 @@ from app.facial.config import facial_settings_from_environment
 s = facial_settings_from_environment(verify_runtime_assets=False)
 assert s.enabled and s.private_homologation_active
 assert s.homolog_batch_id == os.environ["FACIAL_EXPECTED_BATCH"]
+assert s.homolog_contains_minors == (os.environ["FACIAL_EXPECTED_MINORS"] == "true")
 assert s.minor_search_enabled == (os.environ["FACIAL_EXPECTED_MINORS"] == "true")
 assert s.worker_concurrency == 1
 print("gate privado vinculado ao lote validado")'
@@ -726,7 +730,9 @@ resume_private() {
   [[ "$WINDOW_MINUTES" =~ ^[0-9]+$ ]] && (( WINDOW_MINUTES >= 30 && WINDOW_MINUTES <= 240 )) || { fail "window-minutes deve ficar entre 30 e 240"; return 1; }
   [[ "$CONTAINS_MINORS" == "true" || "$CONTAINS_MINORS" == "false" ]] || { fail "contains-minors deve ser true ou false"; return 1; }
   [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]] || { fail "o host de homologação não é ARM64"; return 1; }
-  [[ "$(read_env_value FACIAL_PROCESSING_ENABLED)" == "true" ]] || { fail "processamento facial não está configurado para o lote"; return 1; }
+  local processing_enabled
+  processing_enabled="$(read_env_value FACIAL_PROCESSING_ENABLED)"
+  [[ "$processing_enabled" == "true" || "$processing_enabled" == "false" ]] || { fail "gate de processamento facial inválido"; return 1; }
   [[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" == "true" ]] || { fail "manifestação privada do lote não está ativa"; return 1; }
   [[ "$(read_env_value FACIAL_HOMOLOG_BATCH_ID)" == "$BATCH_ID" ]] || { fail "batch-id diverge do lote expirado"; return 1; }
   [[ "$(read_env_value FACIAL_HOMOLOG_AUTHORIZATION_REF)" == "$AUTHORIZATION_REF" ]] || { fail "authorization-ref diverge do lote expirado"; return 1; }
@@ -756,6 +762,7 @@ expected = {
     "status": "active",
     "window_expires_at": os.environ["FACIAL_OLD_EXPIRY"],
 }
+
 if any(payload.get(key) != value for key, value in expected.items()):
     raise SystemExit("manifesto diverge da retomada autorizada")
 started = datetime.fromisoformat(payload["recorded_at"])
@@ -822,16 +829,20 @@ with SessionLocal() as db:
         or_(FacialJob.lease_expires_at.is_(None), FacialJob.lease_expires_at > instant),
     )) or 0
     reclaimable_processing = states.get("processing", 0) - active_processing
-    if states.get("failed", 0) or states.get("cancelled", 0) or active_processing:
+    if states.get("cancelled", 0) or active_processing:
         raise SystemExit(f"fila não está segura para retomada: {json.dumps(states, sort_keys=True)}")
     pending = states.get("queued", 0) + reclaimable_processing
-    if pending <= 0 or pending + states.get("completed", 0) != expected_count:
+    failed = states.get("failed", 0)
+    if failed > 10:
+        raise SystemExit(f"quantidade de falhas fora do limite de retomada: {failed}")
+    if pending + failed + states.get("completed", 0) != expected_count:
         raise SystemExit(f"fila pendente diverge do lote: {json.dumps(states, sort_keys=True)}")
     print(json.dumps({
         "photos": expected_count,
         "job_states": states,
         "active_processing": active_processing,
         "reclaimable_processing": reclaimable_processing,
+        "failed_terminal": failed,
     }, sort_keys=True))
 PY
 
@@ -894,6 +905,127 @@ PY
   verify_activation
   record_inventory
   printf '%s resumed-private batch=%s photos=%s window_minutes=%s sha=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$EXPECTED_COUNT" "$WINDOW_MINUTES" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
+}
+
+retry_failed_private() {
+  [[ "$CONFIRMATION" == "$RETRY_FAILED_TOKEN" ]] || { fail "confirmação explícita da retentativa privada ausente"; return 1; }
+  validate_reference "$BATCH_ID" "batch-id" || return 1
+  validate_reference "$AUTHORIZATION_REF" "authorization-ref" || return 1
+  [[ "$EXPECTED_COUNT" =~ ^[0-9]+$ ]] && (( EXPECTED_COUNT >= 500 && EXPECTED_COUNT <= 1000 )) || { fail "expected-count deve ficar entre 500 e 1000"; return 1; }
+  [[ "$CONTAINS_MINORS" == "true" || "$CONTAINS_MINORS" == "false" ]] || { fail "contains-minors deve ser true ou false"; return 1; }
+  [[ "$(read_env_value FACIAL_PROCESSING_ENABLED)" == "true" ]] || { fail "processamento facial não está ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" == "true" ]] || { fail "janela facial privada não está ativa"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_BATCH_ID)" == "$BATCH_ID" ]] || { fail "batch-id diverge do lote ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_AUTHORIZATION_REF)" == "$AUTHORIZATION_REF" ]] || { fail "authorization-ref diverge do lote ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_EXPECTED_COUNT)" == "$EXPECTED_COUNT" ]] || { fail "expected-count diverge do lote ativo"; return 1; }
+  [[ "$(read_env_value FACIAL_HOMOLOG_CONTAINS_MINORS)" == "$CONTAINS_MINORS" ]] || { fail "contains-minors diverge do lote ativo"; return 1; }
+  [[ -n "$(facial_container_id)" ]] || { fail "face-worker privado ativo não foi encontrado"; return 1; }
+  record_inventory
+
+  local -a manifest_scope
+  mapfile -t manifest_scope < <(
+    FACIAL_MANIFEST_PATH="$STATE_DIR/facial-batch-$BATCH_ID.json" FACIAL_BATCH_ID="$BATCH_ID" \
+    FACIAL_AUTHORIZATION_REF="$AUTHORIZATION_REF" FACIAL_EXPECTED_COUNT="$EXPECTED_COUNT" \
+    FACIAL_CONTAINS_MINORS="$CONTAINS_MINORS" python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+payload = json.loads(Path(os.environ["FACIAL_MANIFEST_PATH"]).read_text(encoding="utf-8"))
+expected = {
+    "batch_id": os.environ["FACIAL_BATCH_ID"],
+    "authorization_ref": os.environ["FACIAL_AUTHORIZATION_REF"],
+    "expected_count": int(os.environ["FACIAL_EXPECTED_COUNT"]),
+    "contains_minors": os.environ["FACIAL_CONTAINS_MINORS"] == "true",
+    "status": "active",
+}
+if any(payload.get(key) != value for key, value in expected.items()):
+    raise SystemExit("manifesto diverge da retentativa autorizada")
+started = datetime.fromisoformat(payload["recorded_at"])
+scope_expired = datetime.fromisoformat(payload.get("scope_expires_at", payload["window_expires_at"]))
+window_expires = datetime.fromisoformat(payload["window_expires_at"])
+if started >= scope_expired or scope_expired > window_expires or window_expires <= datetime.now(timezone.utc):
+    raise SystemExit("janela do lote não está vigente para retentativa")
+print(started.isoformat())
+print(scope_expired.isoformat())
+PY
+  )
+  [[ "${#manifest_scope[@]}" -eq 2 ]] || { fail "manifesto não forneceu o escopo original do lote"; return 1; }
+
+  FACIAL_BATCH_STARTED_AT="${manifest_scope[0]}" FACIAL_BATCH_EXPIRES_AT="${manifest_scope[1]}" \
+  FACIAL_EXPECTED_COUNT="$EXPECTED_COUNT" FACIAL_RETRY_BATCH="$BATCH_ID" compose exec -T \
+    -e FACIAL_BATCH_STARTED_AT -e FACIAL_BATCH_EXPIRES_AT -e FACIAL_EXPECTED_COUNT \
+    -e FACIAL_RETRY_BATCH api python - <<'PY'
+import json
+import os
+from datetime import datetime
+
+from sqlalchemy import func, select, update
+
+from app.auth import FacialJob, ParentGallery, PhotoAsset, PhotoFolder, SessionLocal, now
+
+started_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_STARTED_AT"])
+expires_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_EXPIRES_AT"])
+expected_count = int(os.environ["FACIAL_EXPECTED_COUNT"])
+allowed_errors = {"provider_unavailable", "timeout", "internal_failure"}
+with SessionLocal() as db:
+    photo_ids = list(db.scalars(
+        select(PhotoAsset.id)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .join(ParentGallery, ParentGallery.id == PhotoAsset.parent_gallery_id)
+        .where(
+            PhotoAsset.created_at >= started_at,
+            PhotoAsset.created_at < expires_at,
+            PhotoFolder.purpose == "content",
+            ParentGallery.active.is_(True),
+            ParentGallery.lifecycle_status == "active",
+        )
+        .order_by(PhotoAsset.id)
+    ))
+    if len(photo_ids) != expected_count:
+        raise SystemExit(f"lote persistido divergente: {len(photo_ids)}/{expected_count}")
+    states = {
+        status: int(count)
+        for status, count in db.execute(
+            select(FacialJob.status, func.count(func.distinct(FacialJob.photo_asset_id)))
+            .where(FacialJob.kind == "index", FacialJob.photo_asset_id.in_(photo_ids))
+            .group_by(FacialJob.status)
+        )
+    }
+    if states.get("queued", 0) or states.get("processing", 0) or states.get("cancelled", 0):
+        raise SystemExit(f"fila ainda possui trabalho aberto ou cancelado: {json.dumps(states, sort_keys=True)}")
+    failed = list(db.scalars(select(FacialJob).where(
+        FacialJob.kind == "index",
+        FacialJob.photo_asset_id.in_(photo_ids),
+        FacialJob.status == "failed",
+    ).with_for_update()))
+    if not 1 <= len(failed) <= 10 or states.get("completed", 0) + len(failed) != expected_count:
+        raise SystemExit(f"quantidade de falhas fora do limite corretivo: {len(failed)}")
+    categories = {
+        category or "missing": int(count)
+        for category, count in db.execute(
+            select(FacialJob.last_error_category, func.count())
+            .where(FacialJob.id.in_([item.id for item in failed]))
+            .group_by(FacialJob.last_error_category)
+        )
+    }
+    if not set(categories).issubset(allowed_errors):
+        raise SystemExit(f"categoria não autorizada para retentativa: {json.dumps(categories, sort_keys=True)}")
+    db.execute(
+        update(FacialJob)
+        .where(FacialJob.id.in_([item.id for item in failed]))
+        .values(status="queued", available_at=now(), lease_token=None, lease_expires_at=None, updated_at=now())
+    )
+    db.commit()
+    print(json.dumps({
+        "batch_id": os.environ["FACIAL_RETRY_BATCH"],
+        "retried": len(failed),
+        "error_categories": categories,
+        "attempts_preserved": True,
+    }, sort_keys=True))
+PY
+  printf '%s retried-private-failures batch=%s photos=%s sha=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$EXPECTED_COUNT" "$(git rev-parse HEAD)" >> "$STATE_DIR/facial-history.log"
 }
 
 purge_and_prove() {
@@ -986,6 +1118,7 @@ main() {
     activate-private) trap 'rollback_activation $?' ERR; activate_private ;;
     reconcile-private) reconcile_private ;;
     resume-private) trap 'rollback_resume $?' ERR; resume_private ;;
+    retry-failed-private) retry_failed_private ;;
     close-private) close_private ;;
   esac
 }

@@ -35,6 +35,8 @@ export function FacialSearchPanel({
   const [availability, setAvailability] = useState<FacialSearchAvailability | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [consented, setConsented] = useState(false);
+  const [subjectDeclaration, setSubjectDeclaration] = useState<"adult" | "minor" | "">("");
+  const [guardianConfirmed, setGuardianConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
@@ -44,19 +46,32 @@ export function FacialSearchPanel({
   function closeDialog() {
     setDialogOpen(false);
     setConsented(false);
+    setSubjectDeclaration("");
+    setGuardianConfirmed(false);
     if (fileInput.current) fileInput.current.value = "";
   }
 
   useEffect(() => {
     let active = true;
-    facialSearchApi.availability(galleryId)
-      .then((value) => { if (active) setAvailability(value); })
-      .catch(() => { if (active) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false }); });
     const restored = window.sessionStorage.getItem(storageKey);
+    facialSearchApi.availability(galleryId)
+      .then((value) => {
+        if (!active) return;
+        setAvailability(value);
+      })
+      .catch(() => { if (active) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false }); });
     if (restored) {
       facialSearchApi.read(galleryId, restored)
         .then((value) => { if (active) onResult(value); })
         .catch(() => window.sessionStorage.removeItem(storageKey));
+    } else {
+      facialSearchApi.latest(galleryId)
+        .then((latest) => {
+          if (!active || !latest?.id || !latest?.status || !latest?.progress) return;
+          window.sessionStorage.setItem(storageKey, latest.id);
+          onResult(latest);
+        })
+        .catch(() => undefined);
     }
     return () => { active = false; };
   }, [galleryId, onResult, storageKey]);
@@ -82,11 +97,18 @@ export function FacialSearchPanel({
       setError("Escolha uma foto JPEG nítida com apenas um rosto.");
       return;
     }
-    if (!consented || !availability?.consent_version) return;
+    if (!consented || !availability?.consent_version || !subjectDeclaration) return;
+    if (subjectDeclaration === "minor" && !guardianConfirmed) return;
     setBusy(true);
     setError("");
     try {
-      const created = await facialSearchApi.create(galleryId, file, availability.consent_version, "adult");
+      const created = await facialSearchApi.create(
+        galleryId,
+        file,
+        availability.consent_version,
+        subjectDeclaration,
+        subjectDeclaration === "minor" ? "guardian-self-declaration-v1" : undefined,
+      );
       window.sessionStorage.setItem(storageKey, created.id);
       onResult(created);
       closeDialog();
@@ -134,7 +156,7 @@ export function FacialSearchPanel({
         </div>
       )}
       {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
-      {dialogOpen ? <div className="mk-dialog-backdrop" role="presentation" onMouseDown={closeDialog}><section ref={consentDialog} className="mk-dialog facial-consent-dialog" role="dialog" aria-modal="true" aria-labelledby="facial-consent-title" aria-describedby="facial-consent-purpose facial-consent-limits" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") closeDialog(); }}><p className="eyebrow">Consentimento específico</p><h2 id="facial-consent-title">Usar uma foto como filtro?</h2><p id="facial-consent-purpose">A imagem será usada somente para procurar possibilidades nesta Galeria pública. Ela e a representação biométrica temporária serão eliminadas ao concluir ou em até {Math.ceil((availability.reference_retention_seconds ?? 900) / 60)} minutos.</p><p id="facial-consent-limits">O sistema não confirma identidade, não seleciona nem compra fotos automaticamente. Resultados temporários expiram em até {Math.ceil((availability.candidate_retention_seconds ?? 86400) / 3600)} horas.</p><form onSubmit={submit}><label>Foto JPEG com uma pessoa<input ref={fileInput} type="file" accept="image/jpeg" capture="user" required /></label><label className="gallery-toggle"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> Autorizo o uso temporário desta foto exclusivamente para procurar possíveis correspondências nesta galeria e declaro ter autorização para enviá-la. Li o aviso {availability.legal_notice_version}.</label><p className="field-hint">Depois do processamento, a foto de referência é eliminada automaticamente. Você também poderá usar “Excluir busca” para remover os resultados temporários. Busca de criança permanece indisponível até o fluxo específico de representação legal ser aprovado.</p><div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!consented || busy}>{busy ? "Enviando…" : "Concordar e procurar"}</MarkinaButton></div></form></section></div> : null}
+      {dialogOpen ? <div className="mk-dialog-backdrop" role="presentation" onMouseDown={closeDialog}><section ref={consentDialog} className="mk-dialog facial-consent-dialog" role="dialog" aria-modal="true" aria-labelledby="facial-consent-title" aria-describedby="facial-consent-purpose facial-consent-limits" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") closeDialog(); }}><p className="eyebrow">Consentimento específico</p><h2 id="facial-consent-title">Usar uma foto como filtro?</h2><p id="facial-consent-purpose">A imagem será usada somente para procurar possibilidades nesta Galeria pública. Ela e a representação biométrica temporária serão eliminadas ao concluir ou em até {Math.ceil((availability.reference_retention_seconds ?? 900) / 60)} minutos.</p><p id="facial-consent-limits">O sistema não confirma identidade, não seleciona nem compra fotos automaticamente. Resultados temporários expiram em até {Math.ceil((availability.candidate_retention_seconds ?? 86400) / 3600)} horas.</p><form onSubmit={submit}><label>Foto JPEG com uma pessoa<input ref={fileInput} type="file" accept="image/jpeg" capture="user" required /></label><fieldset><legend>Quem aparece na foto enviada?</legend><label className="gallery-toggle"><input type="radio" name="facial-subject" value="adult" checked={subjectDeclaration === "adult"} onChange={() => { setSubjectDeclaration("adult"); setGuardianConfirmed(false); }} required /> Pessoa adulta</label><label className="gallery-toggle"><input type="radio" name="facial-subject" value="minor" checked={subjectDeclaration === "minor"} disabled={!availability.minor_search_available} onChange={() => setSubjectDeclaration("minor")} required /> Criança ou adolescente</label></fieldset>{subjectDeclaration === "minor" ? <label className="gallery-toggle"><input type="checkbox" checked={guardianConfirmed} onChange={(event) => setGuardianConfirmed(event.target.checked)} required /> Confirmo que sou pai, mãe ou responsável e autorizo esta busca nesta galeria.</label> : null}<label className="gallery-toggle"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> Autorizo o uso temporário desta foto exclusivamente para procurar possíveis correspondências nesta galeria e declaro ter autorização para enviá-la. Li o aviso {availability.legal_notice_version}.</label><p className="field-hint">Depois do processamento, a foto de referência é eliminada automaticamente. Você também poderá usar “Excluir busca” para remover os resultados temporários.{!availability.minor_search_available ? " A busca de criança ainda não está disponível neste ambiente." : ""}</p><div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!consented || !subjectDeclaration || (subjectDeclaration === "minor" && !guardianConfirmed) || busy}>{busy ? "Enviando…" : "Concordar e procurar"}</MarkinaButton></div></form></section></div> : null}
     </section>
   );
 }

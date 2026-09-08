@@ -73,7 +73,7 @@ jobs:
         run: /tmp/gitleaks git -v
 
   deploy-homolog:
-    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && !contains(github.event.head_commit.message, 'Homolog-Facial: reconcile-private') && !contains(github.event.head_commit.message, 'Homolog-Facial: resume-private') }}"
+    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && !contains(github.event.head_commit.message, 'Homolog-Facial: reconcile-private') && !contains(github.event.head_commit.message, 'Homolog-Facial: resume-private') && !contains(github.event.head_commit.message, 'Homolog-Facial: retry-failed-private') }}"
     needs: [backend, frontend, openspec, gitleaks]
     runs-on: ubuntu-latest
     environment: homolog
@@ -110,6 +110,10 @@ jobs:
           chmod 600 "$key_file" "$known_hosts_file"
           if git log -1 --pretty=%B | grep -Fxq 'Homolog-Facial: pause-legacy-for-private-upgrade'; then
             pause_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode pause-legacy-for-private-upgrade --confirmation %q' "$GITHUB_REPOSITORY" 'PAUSE_LEGACY_FACIAL_FOR_PRIVATE_UPGRADE')"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$pause_command" < scripts/manage-homolog-facial.sh
+          fi
+          if git log -1 --pretty=%B | grep -Fxq 'Homolog-Facial: pause-private-for-upgrade'; then
+            pause_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode pause-private --confirmation %q' "$GITHUB_REPOSITORY" 'PAUSE_AUTHORIZED_PRIVATE_FACIAL_FOR_DEPLOY')"
             ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$pause_command" < scripts/manage-homolog-facial.sh
           fi
           remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$GITHUB_SHA")"
@@ -250,6 +254,76 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: facial-benchmark-resume-${{ github.sha }}
+          path: facial-benchmark.jsonl
+          if-no-files-found: warn
+          retention-days: 7
+
+  retry-failed-facial-homolog:
+    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && contains(github.event.head_commit.message, 'Homolog-Facial: retry-failed-private') }}"
+    needs: [backend, frontend, openspec, gitleaks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: homolog
+    permissions:
+      contents: read
+    env:
+      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
+      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
+      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
+      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
+      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validar retentativa limitada do lote ativo
+        run: |
+          bash scripts/test_manage_homolog_facial.sh
+          python scripts/test_manage_homolog_facial_policy.py
+          python scripts/test_benchmark_homolog_facial_policy.py
+      - name: Retentar somente falhas técnicas e medir conclusão
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Secret obrigatório ausente: $required" >&2; exit 1; }
+          done
+          commit_message="$(git log -1 --pretty=%B)"
+          grep -Fxq 'Homolog-Facial: retry-failed-private' <<<"$commit_message" || { echo "trailer exato de retentativa ausente" >&2; exit 1; }
+          read_trailer() {
+            local key="$1"
+            local -a values
+            mapfile -t values < <(git interpret-trailers --parse <<<"$commit_message" | sed -n "s/^${key}: //p")
+            [[ "${#values[@]}" -eq 1 ]] || { echo "trailer $key deve aparecer exatamente uma vez" >&2; exit 1; }
+            printf '%s' "${values[0]}"
+          }
+          deployed_sha="$(read_trailer Facial-Deployed-SHA)"
+          batch_id="$(read_trailer Facial-Batch)"
+          authorization_ref="$(read_trailer Facial-Authorization)"
+          expected_count="$(read_trailer Facial-Expected-Count)"
+          contains_minors="$(read_trailer Facial-Contains-Minors)"
+          [[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "SHA publicado inválido" >&2; exit 1; }
+          [[ "$batch_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] || { echo "batch_id inválido" >&2; exit 1; }
+          [[ "$authorization_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] || { echo "authorization_ref inválido" >&2; exit 1; }
+          [[ "$expected_count" =~ ^[0-9]+$ ]] && (( expected_count >= 500 && expected_count <= 1000 )) || { echo "expected_count inválido" >&2; exit 1; }
+          [[ "$contains_minors" == "true" || "$contains_minors" == "false" ]] || { echo "contains_minors inválido" >&2; exit 1; }
+
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh_base=(ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST")
+          retry_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode retry-failed-private --sha %q --batch-id %q --authorization-ref %q --expected-count %q --contains-minors %q --confirmation %q' "$GITHUB_REPOSITORY" "$deployed_sha" "$batch_id" "$authorization_ref" "$expected_count" "$contains_minors" 'RETRY_FAILED_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG')"
+          "${ssh_base[@]}" "$retry_command" < scripts/manage-homolog-facial.sh
+          benchmark_command="$(printf 'cd /opt/markina-gallery && python3 - --mode monitor --sha %q --duration 1800 --interval 5 --settle-samples 6 --batch-id %q --authorization-ref %q --expected-count %q --contains-minors %q --scope-from-manifest --confirmation %q' "$deployed_sha" "$batch_id" "$authorization_ref" "$expected_count" "$contains_minors" 'BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG')"
+          "${ssh_base[@]}" "$benchmark_command" < scripts/benchmark-homolog-facial.py | tee facial-benchmark.jsonl
+      - name: Preservar somente métricas agregadas da retentativa
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: facial-benchmark-retry-${{ github.sha }}
           path: facial-benchmark.jsonl
           if-no-files-found: warn
           retention-days: 7

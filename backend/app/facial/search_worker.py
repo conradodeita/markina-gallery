@@ -286,12 +286,11 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
                 )
             )
         )
-        completed_by_photo: dict[UUID, FacialJob] = {}
-        completed_jobs = db.scalars(
+        latest_by_photo: dict[UUID, FacialJob] = {}
+        index_jobs = db.scalars(
             select(FacialJob)
             .where(
                 FacialJob.kind == "index",
-                FacialJob.status == "completed",
                 FacialJob.parent_gallery_id == request.parent_gallery_id,
                 FacialJob.photo_asset_id.in_(photo_ids),
                 FacialJob.model_version == request.model_version,
@@ -299,16 +298,23 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
             )
             .order_by(FacialJob.created_at.desc(), FacialJob.id.desc())
         )
-        for completed in completed_jobs:
-            completed_by_photo.setdefault(completed.photo_asset_id, completed)
+        for index_job in index_jobs:
+            latest_by_photo.setdefault(index_job.photo_asset_id, index_job)
         for item in pending_items:
             if item.photo_asset_id not in eligible:
                 item.status = "excluded"
                 continue
-            completed = completed_by_photo.get(item.photo_asset_id)
-            if completed is not None and completed.preview_fingerprint:
+            index_job = latest_by_photo.get(item.photo_asset_id)
+            if index_job is not None and index_job.status in {"failed", "cancelled"}:
+                item.status = "excluded"
+                continue
+            if (
+                index_job is not None
+                and index_job.status == "completed"
+                and index_job.preview_fingerprint
+            ):
                 item.status = "ready"
-                item.preview_fingerprint = completed.preview_fingerprint
+                item.preview_fingerprint = index_job.preview_fingerprint
 
     request.snapshot_ready = sum(item.status == "ready" for item in items)
     request.compare_total = request.snapshot_ready

@@ -7,7 +7,7 @@ on:
         description: Operação autorizada
         required: true
         type: choice
-        options: [inventory, activate-private, reconcile-private, resume-private, monitor, close-private]
+        options: [inventory, activate-private, reconcile-private, resume-private, retry-failed-private, monitor, close-private]
       sha:
         description: SHA completo já publicado em homologação
         required: true
@@ -111,6 +111,7 @@ jobs:
               expected_confirmation="RESUME_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG"
               (( WINDOW_MINUTES >= 30 && WINDOW_MINUTES <= 240 )) || { echo "window_minutes inválido" >&2; exit 1; }
               ;;
+            retry-failed-private) expected_confirmation="RETRY_FAILED_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;
             monitor) expected_confirmation="BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;
             close-private) expected_confirmation="CLOSE_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;
             inventory) expected_confirmation="INVENTORY_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG" ;;
@@ -132,14 +133,14 @@ jobs:
           else
             remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q bash -s -- --mode %q --sha %q --batch-id %q --origin-ref %q --authorization-ref %q --operator-ref %q --expected-count %q --retention-hours %q --window-minutes %q --contains-minors %q --confirmation %q' "$GITHUB_REPOSITORY" "$MODE" "$EXPECTED_SHA" "$BATCH_ID" "$ORIGIN_REF" "$AUTHORIZATION_REF" "$OPERATOR_REF" "$EXPECTED_COUNT" "$RETENTION_HOURS" "$WINDOW_MINUTES" "$CONTAINS_MINORS" "$CONFIRMATION")"
             "${ssh_base[@]}" "$remote_command" < scripts/manage-homolog-facial.sh
-            if [[ "$MODE" == "resume-private" ]]; then
+            if [[ "$MODE" == "resume-private" || "$MODE" == "retry-failed-private" ]]; then
               benchmark_command="$(printf 'cd /opt/markina-gallery && python3 - --mode monitor --sha %q --duration %q --batch-id %q --authorization-ref %q --expected-count %q --contains-minors %q --scope-from-manifest --confirmation %q' "$EXPECTED_SHA" "$((WINDOW_MINUTES * 60))" "$BATCH_ID" "$AUTHORIZATION_REF" "$EXPECTED_COUNT" "$CONTAINS_MINORS" 'BENCHMARK_AUTHORIZED_PRIVATE_FACIAL_HOMOLOG')"
               "${ssh_base[@]}" "$benchmark_command" < scripts/benchmark-homolog-facial.py | tee facial-benchmark.jsonl
             fi
           fi
 
       - name: Preservar somente métricas agregadas
-        if: inputs.mode == 'monitor' || inputs.mode == 'resume-private'
+        if: inputs.mode == 'monitor' || inputs.mode == 'resume-private' || inputs.mode == 'retry-failed-private'
         uses: actions/upload-artifact@v4
         with:
           name: facial-benchmark-${{ inputs.batch_id }}-${{ inputs.sha }}
