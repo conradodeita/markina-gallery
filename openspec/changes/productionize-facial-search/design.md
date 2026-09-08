@@ -55,6 +55,8 @@ Em homologação, a ponte remota para essa configuração será um workflow prot
 
 O host histórico pode identificar esse mesmo ambiente como `APP_ENV=homologation`. O rollout SHALL canonicalizar exclusivamente esse alias para `homolog`, mantendo a correspondência exata entre `APP_ENV` e o ambiente das credenciais faciais e recusando qualquer outro alias implícito. Assim, os registros e tokens operacionais permanecem estáveis sem enfraquecer o isolamento de credenciais.
 
+O inventário remoto comprovou que o host atual usa `APP_ENV=staging`. Esse valor continuará sendo um ambiente interno distinto no modelo persistente: somente o operador fixado em `/opt/markina-gallery`, no projeto Compose e subdomínio de homologação conhecidos, pode associá-lo ao Environment protegido `homolog`. A confirmação humana permanece vinculada a `HOMOLOG`, enquanto a confirmação interna entregue ao runtime é derivada de `STAGING`; nenhuma canonicalização global de `staging` para `homolog` será feita.
+
 ### 5. Separar classes de trabalho e priorizar consultas
 
 O banco continuará como fonte durável única, mas o claim aceitará classes de job. Haverá consumidores isolados para `search`, `index` e `maintenance` (`cleanup|purge`), todos sem porta. `search` terá prioridade interativa; `maintenance` terá reserva para que retenção e purge não sofram starvation; `index` usará capacidade remanescente e desacelerará durante picos.

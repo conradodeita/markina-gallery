@@ -19,6 +19,11 @@ O deploy SHALL detectar e validar o estado facial autorizado do ambiente antes d
 - **WHEN** o host identifica homologação como `APP_ENV=homologation` e as credenciais faciais correspondem exatamente a esse valor
 - **THEN** o rollout canonicaliza somente esse alias para `homolog`, preserva tokens e registros operacionais estáveis e continua recusando ambiente ou credencial divergente
 
+#### Scenario: Rótulo interno staging no host fixo de homologação
+
+- **WHEN** o inventário do projeto, checkout, portas e subdomínio fixos de homologação comprova `APP_ENV=staging`
+- **THEN** o operador protegido preserva `staging` como ambiente interno distinto, deriva a confirmação interna correspondente e mantém a autorização humana vinculada ao Environment `homolog`, sem criar alias global
+
 ### Requirement: Ferramentas de benchmark fora do caminho de produção
 
 Scripts, tokens, manifestos, janelas e relatórios criados exclusivamente para o benchmark privado SHALL NOT controlar o runtime, o deploy comum ou a autorização de produção. A evidência agregada histórica MAY permanecer arquivada pelo prazo documentado, sem fotos, PII, vetores ou scores.
