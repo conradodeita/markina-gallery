@@ -10,7 +10,11 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.facial.config import FacialSettings
-from app.facial.jobs import ClaimedFacialJob, FacialJobRepository
+from app.facial.jobs import (
+    ClaimedFacialJob,
+    FacialJobRepository,
+    facial_queue_name,
+)
 
 
 class BlockingWakeSource(Protocol):
@@ -24,6 +28,7 @@ class BlockingFacialWorker:
         self,
         *,
         settings: FacialSettings,
+        job_class: str,
         session_factory: Callable[[], Session],
         wake_source: BlockingWakeSource,
         provider_loader: Callable[[], object],
@@ -36,6 +41,8 @@ class BlockingFacialWorker:
         provider_unloader: Callable[[object], None] | None = None,
     ) -> None:
         self._settings = settings
+        self._job_class = job_class
+        self._queue_name = facial_queue_name(settings.queue_name, job_class)
         self._session_factory = session_factory
         self._wake_source = wake_source
         self._provider_loader = provider_loader
@@ -60,7 +67,7 @@ class BlockingFacialWorker:
             self._unload_if_idle()
             try:
                 self._wake_source.brpop(
-                    self._settings.queue_name,
+                    self._queue_name,
                     timeout=self._settings.queue_block_seconds,
                 )
             except (ConnectionError, TimeoutError, OSError):
@@ -107,7 +114,9 @@ class BlockingFacialWorker:
     def _claim(self) -> ClaimedFacialJob | None:
         with self._session_factory() as db:
             return self._repository.claim_next(
-                db, lease_seconds=self._settings.job_lease_seconds
+                db,
+                lease_seconds=self._settings.job_lease_seconds,
+                job_class=self._job_class,
             )
 
     def _unload_if_idle(self) -> None:

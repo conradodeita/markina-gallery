@@ -20,6 +20,7 @@ from app.facial.config import (
 )
 from app.facial.jobs import FacialJobError, FacialJobRepository
 from app.facial.policy import FacialPolicyError, ensure_automatic_policy
+from app.facial.rollout import rollout_is_active
 
 logger = logging.getLogger(__name__)
 FACIAL_ANALYSIS_VARIANT = "admin_preview"
@@ -95,6 +96,12 @@ def enqueue_photo_index_if_eligible(
         if not active.enabled or derivative.variant != FACIAL_ANALYSIS_VARIANT:
             return None
         if derivative.status != "ready" or not photo.available:
+            return None
+        if not rollout_is_active(
+            db,
+            settings=active,
+            parent_gallery_id=photo.parent_gallery_id,
+        ):
             return None
         protected_preview_ready = db.scalar(
             select(MediaDerivative.id).where(
@@ -233,6 +240,12 @@ def reconcile_automatic_gallery_policies(
     )
     changed_count = scanned_photos = queued_jobs = 0
     for gallery_id in gallery_ids:
+        if not rollout_is_active(
+            db,
+            settings=settings,
+            parent_gallery_id=gallery_id,
+        ):
+            continue
         _policy, changed = ensure_automatic_policy(
             db,
             parent_gallery_id=gallery_id,

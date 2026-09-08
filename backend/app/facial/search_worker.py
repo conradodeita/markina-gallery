@@ -29,6 +29,7 @@ from app.facial.jobs import ClaimedFacialJob, FacialJobError, FacialJobRepositor
 from app.facial.notifications import enqueue_search_notification
 from app.facial.provider import OpenCvSFaceProvider, analyze_query
 from app.facial.reference_store import FacialReferenceError, FacialReferenceStore
+from app.facial.rollout import rollout_is_active
 
 _TERMINAL_STATES = {
     "ready",
@@ -256,7 +257,11 @@ def _request_is_authorized(
         and policy
         and policy.parent_gallery_id == request.parent_gallery_id
         and policy.status == "active"
-        and settings.enabled
+        and rollout_is_active(
+            db,
+            settings=settings,
+            parent_gallery_id=request.parent_gallery_id,
+        )
         and request.model_version == settings.model_version == policy.model_version
         and request.quality_version
         == settings.quality_version

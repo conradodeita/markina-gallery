@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.auth import (
     Base,
     FacialJob,
+    FacialRollout,
     GalleryFacialPolicy,
     MediaDerivative,
     ParentGallery,
@@ -41,7 +42,6 @@ def _settings(tmp_path: Path, *, enabled: bool = True) -> FacialSettings:
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
-        minor_search_enabled=False,
         similarity_threshold_milli=750,
         active_key_id="test",
         aead_keys={"test": b"k" * 32},
@@ -111,7 +111,27 @@ def _eligible_photo(
         calibration_version="calibration-v1",
     )
     db.add(ParentGallery(id=parent_id, name="Evento sintético"))
-    db.add_all((folder, photo, protected_derivative, derivative))
+    db.add_all(
+        (
+            folder,
+            photo,
+            protected_derivative,
+            derivative,
+            FacialRollout(
+                environment="test",
+                parent_gallery_id=parent_id,
+                status="active",
+                stage="canary",
+                model_version="model-v1",
+                quality_version="quality-v1",
+                calibration_version="calibration-v1",
+                legal_notice_version="notice-v1",
+                consent_version="consent-v1",
+                legal_basis_reference="synthetic-only",
+                retention_policy_version="retention-v1",
+            ),
+        )
+    )
     if include_policy:
         db.add(policy)
     db.commit()
@@ -180,6 +200,47 @@ def test_disabled_global_gate_neither_creates_policy_nor_job(tmp_path: Path) -> 
 
     assert queued is None
     assert db.scalar(select(func.count()).select_from(GalleryFacialPolicy)) == 0
+    assert db.scalar(select(func.count()).select_from(FacialJob)) == 0
+
+
+def test_rollout_allowlist_and_versions_fail_closed_before_enqueue(
+    tmp_path: Path,
+) -> None:
+    db = _session()
+    photo, derivative, path = _eligible_photo(
+        db, tmp_path, include_policy=False
+    )
+    rollout = db.scalar(select(FacialRollout))
+    assert rollout is not None
+    rollout.status = "prepared"
+    db.commit()
+
+    assert (
+        enqueue_photo_index_if_eligible(
+            db,
+            photo,
+            derivative,
+            derivative_path=path,
+            settings=_settings(tmp_path),
+        )
+        is None
+    )
+    assert db.scalar(select(func.count()).select_from(GalleryFacialPolicy)) == 0
+    assert db.scalar(select(func.count()).select_from(FacialJob)) == 0
+
+    rollout.status = "active"
+    rollout.quality_version = "quality-not-approved"
+    db.commit()
+    assert (
+        enqueue_photo_index_if_eligible(
+            db,
+            photo,
+            derivative,
+            derivative_path=path,
+            settings=_settings(tmp_path),
+        )
+        is None
+    )
     assert db.scalar(select(func.count()).select_from(FacialJob)) == 0
 
 

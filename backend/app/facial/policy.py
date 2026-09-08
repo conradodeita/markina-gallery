@@ -174,8 +174,6 @@ def activation_inventory(
         "calibration_version": policy.calibration_version
         == settings.calibration_version,
         "encryption_key": bool(settings.active_key_id and settings.aead_keys),
-        "minor_gate": not settings.minor_search_enabled
-        or settings.private_homologation_active,
     }
     missing.extend(name for name, valid in expected.items() if not valid)
     return missing

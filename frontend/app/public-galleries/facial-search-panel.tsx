@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
+import { FacialApiError, facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
 import { MarkinaButton, StatusBadge, SystemState } from "../ui-kit";
 
 const terminalStates = new Set(["ready", "no_face", "multiple_faces", "low_quality", "index_incomplete", "no_candidates", "cancelled", "expired", "failed"]);
@@ -41,6 +41,7 @@ export function FacialSearchPanel({
   const [error, setError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const consentDialog = useRef<HTMLElement>(null);
+  const polling = useRef({ signature: "", delay: 0 });
   const storageKey = `markina:facial-search:${galleryId}`;
 
   function closeDialog() {
@@ -78,13 +79,25 @@ export function FacialSearchPanel({
 
   useEffect(() => {
     if (!result || terminalStates.has(result.status)) return;
+    const signature = `${result.status}:${result.progress.index.ready}:${result.progress.comparison.done}`;
+    const baseDelay = result.poll_after_ms ?? 2000;
+    polling.current = polling.current.signature === signature
+      ? { signature, delay: Math.min(10_000, Math.max(baseDelay, Math.round(polling.current.delay * 1.5))) }
+      : { signature, delay: baseDelay };
     const timer = window.setTimeout(() => {
       facialSearchApi.read(galleryId, result.id)
         .then(onResult)
-        .catch((cause) => setError(cause instanceof Error ? cause.message : "Não foi possível atualizar a busca."));
-    }, 1500);
+        .catch((cause) => {
+          if (cause instanceof FacialApiError && cause.status === 404) {
+            window.sessionStorage.removeItem(storageKey);
+            onResult(null);
+            return;
+          }
+          setError(cause instanceof Error ? cause.message : "Não foi possível atualizar a busca.");
+        });
+    }, polling.current.delay);
     return () => window.clearTimeout(timer);
-  }, [galleryId, onResult, result]);
+  }, [galleryId, onResult, result, storageKey]);
 
   useEffect(() => {
     if (dialogOpen) consentDialog.current?.focus();
@@ -107,13 +120,18 @@ export function FacialSearchPanel({
         file,
         availability.consent_version,
         subjectDeclaration,
-        subjectDeclaration === "minor" ? "guardian-self-declaration-v1" : undefined,
+        subjectDeclaration === "minor"
+          ? availability.minor_representation_reference ?? undefined
+          : undefined,
       );
       window.sessionStorage.setItem(storageKey, created.id);
       onResult(created);
       closeDialog();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível iniciar a busca.");
+      const retry = cause instanceof FacialApiError && cause.retryAfterSeconds
+        ? ` Tente novamente em ${cause.retryAfterSeconds} segundos.`
+        : "";
+      setError(`${cause instanceof Error ? cause.message : "Não foi possível iniciar a busca."}${retry}`);
     } finally {
       setBusy(false);
     }
@@ -147,7 +165,7 @@ export function FacialSearchPanel({
       {!result ? <MarkinaButton type="button" onClick={() => { setDialogOpen(true); setError(""); }}>Enviar foto para procurar</MarkinaButton> : (
         <div className="facial-search-status" aria-live="polite">
           <div><StatusBadge tone={result.status === "ready" ? "success" : result.status === "failed" ? "danger" : "neutral"}>{stateLabels[result.status] ?? result.status}</StatusBadge><span>{result.reference_deleted ? "Foto de referência eliminada" : "Foto protegida temporariamente"}</span></div>
-          {!terminalStates.has(result.status) ? <><progress value={progressValue} max={100} aria-label="Progresso da busca facial" /><small>{progressValue}% concluído. Você pode fechar esta tela; avisaremos quando terminar.</small></> : null}
+          {!terminalStates.has(result.status) ? <><progress value={progressValue} max={100} aria-label="Progresso da busca facial" /><small>{progressValue}% concluído · {result.estimate?.remaining_items ?? 0} itens restantes. Tempo restante ainda não disponível. Você pode fechar esta tela; avisaremos quando terminar.</small></> : null}
           {result.status === "no_face" ? <p>Tente uma foto frontal, bem iluminada e com o rosto inteiro.</p> : null}
           {result.status === "multiple_faces" ? <p>Recorte a imagem para manter somente a pessoa procurada.</p> : null}
           {result.status === "low_quality" ? <p>Envie outra foto com mais nitidez e melhor iluminação.</p> : null}

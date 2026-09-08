@@ -27,8 +27,11 @@ from app.auth import (
     DerivedGalleryMembership,
     DerivedGalleryPhoto,
     DerivedGalleryPhotoOrigin,
+    FacialSearchCandidate,
+    FacialSearchRequest,
     GalleryAccess,
     GalleryAccessCapability,
+    GalleryFacialPolicy,
     GalleryLifecycleOperation,
     MediaDerivative,
     MediaJob,
@@ -1416,6 +1419,7 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
             name="Galeria pública selecionável",
             pricing_mode="fixed",
             fixed_unit_price_cents=700,
+            favorites_enabled=True,
         )
         db.add_all([owner, parent])
         db.flush()
@@ -1457,6 +1461,7 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
 
     with TestClient(app) as client:
         authenticate_client(client, owner_phone)
+        assert client.get(f"/public-galleries/{parent_id}").json()["favorites_enabled"] is True
         first_response = client.post(f"/public-galleries/{parent_id}/photos/{first_id}/selection")
         assert first_response.status_code == 201
         assert first_response.json()["gallery_created"] is True
@@ -1483,6 +1488,7 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         }
         assert repeated.json()["cart"]["quantity"] == 1
         assert repeated.json()["cart"]["total_cents"] == 700
+        assert client.post(f"/gallery/{private_id}/photos/{first_id}/favorite").status_code == 201
         library = client.get("/library").json()
         assert len(library["journeys"]) == 1
         journey = library["journeys"][0]
@@ -1513,6 +1519,10 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         assert {photo["id"]: photo["selected"] for photo in public_state["photos"]} == {
             str(first_id): True,
             str(second_id): True,
+        }
+        assert {photo["id"]: photo["favorited"] for photo in public_state["photos"]} == {
+            str(first_id): True,
+            str(second_id): False,
         }
         assert public_state["cart"]["quantity"] == 2
         assert public_state["cart"]["total_cents"] == 1400
@@ -1547,6 +1557,17 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         assert (
             db.scalar(
                 select(func.count())
+                .select_from(PhotoFavorite)
+                .where(
+                    PhotoFavorite.derived_gallery_id == private_id,
+                    PhotoFavorite.client_id == owner_id,
+                )
+            )
+            == 1
+        )
+        assert (
+            db.scalar(
+                select(func.count())
                 .select_from(PhotoSelection)
                 .where(
                     PhotoSelection.derived_gallery_id == private_id,
@@ -1570,6 +1591,152 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
             )
         )
         assert origins == {"admin"}
+
+
+def test_facial_result_api_creates_no_commercial_state_until_explicit_selection() -> None:
+    owner_phone = "+5511999999867"
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente da consulta facial", phone_e164=owner_phone)
+        parent = ParentGallery(
+            name="Galeria com consulta facial",
+            pricing_mode="fixed",
+            fixed_unit_price_cents=700,
+        )
+        db.add_all((owner, parent))
+        db.flush()
+        folder = PhotoFolder(
+            parent_gallery_id=parent.id,
+            name="Lote facial",
+            status="released",
+            purpose="content",
+        )
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="candidata.jpg",
+            storage_key="facial/candidata.jpg",
+            available=True,
+        )
+        policy = GalleryFacialPolicy(
+            parent_gallery_id=parent.id,
+            status="active",
+            legal_notice_version="notice-v1",
+            legal_basis_reference="test-only",
+            retention_policy_version="retention-v1",
+            minor_policy_version="minor-disabled-v1",
+            model_version="model-v1",
+            quality_version="quality-v1",
+            calibration_version="calibration-v1",
+            index_generation=1,
+        )
+        db.add_all(
+            (
+                photo,
+                policy,
+                ParentGalleryRegistration(
+                    parent_gallery_id=parent.id,
+                    client_id=owner.id,
+                    status="active",
+                ),
+                PriceRule(
+                    parent_gallery_id=parent.id,
+                    minimum_quantity=1,
+                    maximum_quantity=None,
+                    unit_price_cents=700,
+                ),
+            )
+        )
+        db.flush()
+        search = FacialSearchRequest(
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+            policy_id=policy.id,
+            status="ready",
+            consent_version="consent-v1",
+            legal_notice_version="notice-v1",
+            subject_declaration="adult",
+            model_version="model-v1",
+            quality_version="quality-v1",
+            index_generation=1,
+            snapshot_total=1,
+            snapshot_ready=1,
+            compare_total=1,
+            compare_done=1,
+            reference_deleted_at=now(),
+            completed_at=now(),
+            expires_at=now() + timedelta(hours=1),
+        )
+        db.add(search)
+        db.flush()
+        db.add(
+            FacialSearchCandidate(
+                search_request_id=search.id,
+                parent_gallery_id=parent.id,
+                client_id=owner.id,
+                photo_asset_id=photo.id,
+                rank=1,
+                quality_band="best",
+                expires_at=now() + timedelta(hours=1),
+            )
+        )
+        db.commit()
+        parent_id, owner_id, photo_id, search_id = parent.id, owner.id, photo.id, search.id
+
+    def commercial_counts() -> tuple[int, int, int, int, int]:
+        with SessionLocal() as db:
+            return (
+                db.scalar(select(func.count()).select_from(DerivedGallery)) or 0,
+                db.scalar(select(func.count()).select_from(DerivedGalleryMembership)) or 0,
+                db.scalar(select(func.count()).select_from(PhotoSelection)) or 0,
+                db.scalar(select(func.count()).select_from(SaleOrder)) or 0,
+                db.scalar(select(func.count()).select_from(PaymentCommunication)) or 0,
+            )
+
+    with TestClient(app) as client:
+        authenticate_client(client, owner_phone)
+        result = client.get(
+            f"/public-galleries/{parent_id}/facial-searches/{search_id}"
+        )
+        assert result.status_code == 200
+        assert result.json()["candidates"] == [
+            {"photo_id": str(photo_id), "rank": 1, "quality_band": "best"}
+        ]
+        assert commercial_counts() == (0, 0, 0, 0, 0)
+
+        selected = client.post(
+            f"/public-galleries/{parent_id}/facial-searches/{search_id}"
+            f"/candidates/{photo_id}/selection"
+        )
+        assert selected.status_code == 201
+        assert selected.json()["gallery_created"] is True
+        assert selected.json()["reference_created"] is True
+        assert selected.json()["selection_created"] is True
+        assert selected.json()["cart"]["quantity"] == 1
+        assert selected.json()["cart"]["total_cents"] == 700
+        private_id = selected.json()["private_gallery_id"]
+        assert commercial_counts() == (1, 1, 1, 0, 0)
+
+        repeated_by_manual_flow = client.post(
+            f"/public-galleries/{parent_id}/photos/{photo_id}/selection"
+        )
+        assert repeated_by_manual_flow.status_code == 201
+        assert repeated_by_manual_flow.json()["private_gallery_id"] == private_id
+        assert repeated_by_manual_flow.json()["gallery_created"] is False
+        assert repeated_by_manual_flow.json()["reference_created"] is False
+        assert repeated_by_manual_flow.json()["selection_created"] is False
+        assert repeated_by_manual_flow.json()["cart"] == selected.json()["cart"]
+        assert commercial_counts() == (1, 1, 1, 0, 0)
+
+    with SessionLocal() as db:
+        gallery = db.scalar(
+            select(DerivedGallery).where(
+                DerivedGallery.parent_gallery_id == parent_id,
+                DerivedGallery.client_id == owner_id,
+            )
+        )
+        assert gallery is not None and str(gallery.id) == private_id
 
 
 def test_public_selection_state_is_isolated_and_shared_reference_survives_unselect() -> None:

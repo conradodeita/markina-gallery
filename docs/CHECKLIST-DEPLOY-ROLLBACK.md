@@ -30,6 +30,16 @@ Limitado à Markina Gallery. Nunca afeta containers, imagens, redes, volumes, pr
 - [ ] Varredura de segredos: gitleaks sem achados
 - [ ] Backups do banco confirmados (manuais até a mudança `media-storage`)
 
+### 2.1 Gate adicional do subsistema facial
+
+- [ ] Primeiro deploy de produção mantém `FACIAL_PROCESSING_ENABLED=false`
+- [ ] SHA integral, inventário imediatamente anterior e backup restrito registrados por referências opacas
+- [ ] Migrations aditivas, manifesto/modelos, chave ativa e ambiente das credenciais verificados sem imprimir valores
+- [ ] PostgreSQL, Redis e workers faciais sem portas públicas; somente Nginx da Markina publicado
+- [ ] Segurança, privacidade, base legal, calibração, capacidade, recuperação e aprovação humana registrados
+- [ ] Allowlist e etapa `dark|canary|limited|general` aprovadas; operação protegida confirmada explicitamente
+- [ ] Fluxo infantil permanece desligado até representação, consentimento e aprovação jurídica/humana vigentes
+
 ## 3. Rollback (somente a Markina Gallery)
 
 - [ ] Identificar versão anterior saudável (imagem/tag ou commit)
@@ -37,6 +47,7 @@ Limitado à Markina Gallery. Nunca afeta containers, imagens, redes, volumes, pr
 - [ ] Healthchecks verdes e smoke test repetidos
 - [ ] Se necessário, restaurar banco a partir do backup do dia (procedimento de restauração testado em homologação)
 - [ ] Registrar incidente e causa no relatório do proprietário
+- [ ] Se facial estiver ativo, suspender o escopo, bloquear novas admissões e manter `maintenance` até comprovar purge agregado
 
 ## 4. Pós-deploy
 

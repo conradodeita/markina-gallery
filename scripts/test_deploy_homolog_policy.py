@@ -40,7 +40,9 @@ def main() -> int:
     require('chmod 600 "$temp_file"', "permissão restrita do arquivo de ambiente temporário", SCRIPT)
     require('record_predeploy_inventory', "inventário remoto antes do deploy", SCRIPT)
     require('df -hP "$PROJECT_ROOT"', "registro de espaço livre", SCRIPT)
+    require('docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME"', "containers limitados ao projeto Markina", SCRIPT)
     require('docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME"', "inventário limitado aos volumes Markina", SCRIPT)
+    require('docker network ls --filter "label=com.docker.compose.project=$PROJECT_NAME"', "inventário limitado às redes Markina", SCRIPT)
     require('origin não aponta para o repositório GitHub esperado', "recusa de origem Git inesperada", SCRIPT)
     require('git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop', "validação de SHA em develop", SCRIPT)
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
@@ -71,31 +73,37 @@ def main() -> int:
     require('compose config --services | grep -Fxq evolution-api', "ativação do perfil WhatsApp sem ler segredos", SCRIPT)
     require('start_whatsapp_infrastructure_if_active', "gate do provedor real antes dos workers", SCRIPT)
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
-    require('verify_facial_safe_default', "verificação do kill switch facial após deploy", SCRIPT)
-    require('verify_facial_predeploy_safe_default', "preflight facial antes de qualquer deploy", SCRIPT)
+    require('verify_facial_deploy_state', "verificação coerente do estado facial", SCRIPT)
+    require('read_facial_enabled', "leitura persistente do kill switch facial", SCRIPT)
+    require('set_facial_enabled', "alteração atômica do kill switch facial", SCRIPT)
     require(
-        'piloto facial deve ser desativado antes de um novo deploy',
-        "bloqueio precoce com piloto facial ativo",
+        'deve permanecer ausente com flag=false',
+        "combinação desligada coerente",
         SCRIPT,
     )
     require(
-        'face-worker deve ser desativado antes de um novo deploy',
-        "bloqueio precoce com worker facial ativo",
+        'deve estar ativo com flag=true',
+        "combinação habilitada coerente",
         SCRIPT,
     )
     require(
-        'FACIAL_PROCESSING_ENABLED deve permanecer false neste deploy',
-        "falha fechada quando a flag facial está ativa",
+        'face-search-worker" "face-index-worker" "face-maintenance-worker',
+        "três classes faciais no deploy",
         SCRIPT,
     )
     require(
-        'label=com.docker.compose.service=face-worker',
-        "inventário do worker facial restrito ao projeto",
+        'compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"',
+        "atualização explícita dos workers faciais",
         SCRIPT,
     )
     require(
-        'facial safe default confirmado: flag=false profile=inativo',
-        "evidência operacional do estado facial seguro",
+        'if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]',
+        "preservação da combinação facial no deploy e rollback",
+        SCRIPT,
+    )
+    require(
+        'estado facial coerente confirmado: flag=$expected',
+        "evidência operacional do estado facial persistente",
         SCRIPT,
     )
     require('rollback automático de código não é seguro após mudança de schema', "bloqueio de rollback de banco", SCRIPT)
@@ -122,6 +130,8 @@ def main() -> int:
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
     require('MARKINA_PUBLIC_BASE_URL=%q', "origem pública encaminhada ao deploy", WORKFLOW)
+    require('HOMOLOG_FACIAL_PROCESSING_ENABLED: "true"', "homologação facial persistentemente habilitada", WORKFLOW)
+    require('--facial-enabled %q', "estado facial explícito encaminhado ao deploy", WORKFLOW)
     forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)

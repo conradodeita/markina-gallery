@@ -77,12 +77,13 @@ describe("Galeria pública da cliente", () => {
 
   it("consente, filtra em dois blocos e seleciona candidata pela mesma jornada comercial", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/facial-search") && !init?.method) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: true, consent_version: "consent-v1", legal_notice_version: "notice-v1", reference_retention_seconds: 900, candidate_retention_seconds: 86400 });
-      if (path.endsWith("/facial-searches") && init?.method === "POST") return response({ id: "request-1", gallery_id: "public-1", status: "ready", progress: { index: { ready: 2, total: 2 }, comparison: { done: 2, total: 2 } }, reference_deleted: true, expires_at: new Date(Date.now() + 60_000).toISOString(), candidates: [{ photo_id: "photo-2", rank: 1, quality_band: "best" }, { photo_id: "photo-1", rank: 2, quality_band: "other" }] }, 202);
+      if (path.endsWith("/facial-search") && !init?.method) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: true, minor_representation_reference: "representation-opaque-1", consent_version: "consent-v1", legal_notice_version: "notice-v1", reference_retention_seconds: 900, candidate_retention_seconds: 86400 });
+      if (path.endsWith("/facial-searches") && init?.method === "POST") return response({ id: "request-1", gallery_id: "public-1", status: "ready", progress: { index: { ready: 3, total: 3 }, comparison: { done: 3, total: 3 } }, reference_deleted: true, expires_at: new Date(Date.now() + 60_000).toISOString(), candidates: [{ photo_id: "photo-1", rank: 3, quality_band: "other" }, { photo_id: "photo-2", rank: 1, quality_band: "best" }, { photo_id: "photo-3", rank: 2, quality_band: "best" }, { photo_id: "photo-2", rank: 8, quality_band: "other" }] }, 202);
       if (path.includes("/candidates/photo-2/selection") && init?.method === "POST") return response({ status: "selected", private_gallery_id: "private-1", gallery_created: true, reference_created: true, selection_created: true, cart: { quantity: 1, total_cents: 700 } }, 201);
+      if (path.endsWith("/gallery/private-1/photos/photo-2/favorite") && init?.method === "POST") return response({ status: "favorited" }, 201);
       if (path.includes("/candidates/photo-1") && init?.method === "DELETE") return response({ rejected: true });
-      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview-1", selected: false }, { id: "photo-2", name: "Foto 2", preview_url: "/preview-2", selected: false }], cart: { quantity: 0, items: [] } });
-      return response({ id: "public-1", name: "Festa", event_name: null, description: null, access_mode: "standard", photos_url: "/photos" });
+      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview-1", selected: false, favorited: false }, { id: "photo-2", name: "Foto 2", preview_url: "/preview-2", selected: false, favorited: false }, { id: "photo-3", name: "Foto 3", preview_url: "/preview-3", selected: false, favorited: false }], cart: { quantity: 0, items: [] } });
+      return response({ id: "public-1", name: "Festa", event_name: null, description: null, access_mode: "standard", photos_url: "/photos", favorites_enabled: true });
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<PublicGalleryPage />);
@@ -102,7 +103,7 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           "x-facial-subject-declaration": "minor",
-          "x-facial-representation-reference": "guardian-self-declaration-v1",
+          "x-facial-representation-reference": "representation-opaque-1",
         }),
       }),
     ));
@@ -111,13 +112,26 @@ describe("Galeria pública da cliente", () => {
     expect(screen.getByText("Outros resultados encontrados")).toBeTruthy();
     expect(screen.getByText("Foto de referência eliminada")).toBeTruthy();
     const featured = screen.getByRole("region", { name: "Possibilidades encontradas" });
+    const fullCollection = screen.getByRole("heading", { name: "Fotos disponíveis" });
+    expect(featured.compareDocumentPosition(fullCollection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect([...featured.querySelectorAll("img")].map((image) => image.getAttribute("alt"))).toEqual([
+      "Prévia protegida de Foto 2",
+      "Prévia protegida de Foto 3",
+      "Prévia protegida de Foto 1",
+    ]);
     fireEvent.click(featured.querySelectorAll<HTMLButtonElement>("button[aria-pressed='false']")[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/public-1/facial-searches/request-1/candidates/photo-2/selection",
       expect.objectContaining({ method: "POST" }),
     ));
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
-    fireEvent.click(screen.getAllByRole("button", { name: "Não é esta pessoa" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "☆ Favoritar" })[0]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/gallery/private-1/photos/photo-2/favorite",
+      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+    ));
+    expect(screen.getAllByRole("button", { name: "★ Favorita" }).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole("button", { name: "Não é esta pessoa" })[2]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/public-1/facial-searches/request-1/candidates/photo-1",
       expect.objectContaining({ method: "DELETE" }),

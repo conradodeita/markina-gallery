@@ -10,8 +10,8 @@ import { GalleryPresentation, type GalleryPresentationFolder } from "../../galle
 import { SystemState } from "../../ui-kit";
 import { FacialSearchPanel } from "../facial-search-panel";
 
-type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
-type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; previewUrl: string };
+type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
+type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; favorited: boolean; previewUrl: string };
 type Cart = {
   quantity: number;
   total_cents?: number;
@@ -25,6 +25,7 @@ export default function PublicGalleryPage() {
   const [gallery, setGallery] = useState<PublicGallery | null>(null);
   const [photos, setPhotos] = useState<PublicPhoto[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [privateGalleryId, setPrivateGalleryId] = useState<string | null>(null);
   const [cart, setCart] = useState<Cart>({ quantity: 0, items: [] });
   const [selectingId, setSelectingId] = useState<string | null>(null);
@@ -41,6 +42,7 @@ export default function PublicGalleryPage() {
       setGallery(await galleryResponse.json());
       const result = await photosResponse.json();
       setSelectedIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.selected).map((photo: PublicPhoto) => photo.id));
+      setFavoriteIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.favorited).map((photo: PublicPhoto) => photo.id));
       setPrivateGalleryId(result.private_gallery_id ?? null);
       setCart(result.cart ?? { quantity: 0, items: [] });
       setPhotos((result.photos ?? []).map((photo: Omit<PublicPhoto, "previewUrl">) => ({
@@ -85,6 +87,29 @@ export default function PublicGalleryPage() {
     }
   }
 
+  async function toggleFavorite(photo: PublicPhoto) {
+    if (!privateGalleryId || selectingId) return;
+    const favorited = favoriteIds.includes(photo.id);
+    setSelectingId(photo.id);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/gallery/${privateGalleryId}/photos/${photo.id}/favorite`, {
+        method: favorited ? "DELETE" : "POST",
+        credentials: "same-origin",
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Não foi possível atualizar o favorito.");
+      setFavoriteIds((current) => favorited
+        ? current.filter((id) => id !== photo.id)
+        : current.includes(photo.id) ? current : [...current, photo.id]);
+      setMessage(favorited ? "A foto saiu dos favoritos." : "A foto foi adicionada aos favoritos.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o favorito.");
+    } finally {
+      setSelectingId(null);
+    }
+  }
+
   if (failed) return <main className="admin-shell"><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><Link href="/library">Voltar à biblioteca</Link></main>;
   if (!gallery) return <SystemState tone="loading" title="Abrindo Galeria pública" detail="Confirmando seu acesso antes de carregar qualquer prévia." />;
 
@@ -96,7 +121,11 @@ export default function PublicGalleryPage() {
   }, new Map<string, { id: string; name: string; position: number; photos: PublicPhoto[] }>()).values()]
     .sort((left, right) => left.position - right.position)
     .map(({ id, name, photos: folderPhotos }) => ({ id, name, photos: folderPhotos })) as GalleryPresentationFolder<PublicPhoto>[];
-  const candidateByPhoto = new Map((facialResult?.candidates ?? []).map((candidate) => [candidate.photo_id, candidate]));
+  const candidateByPhoto = (facialResult?.candidates ?? []).reduce((unique, candidate) => {
+    const current = unique.get(candidate.photo_id);
+    if (!current || candidate.rank < current.rank) unique.set(candidate.photo_id, candidate);
+    return unique;
+  }, new Map<string, NonNullable<FacialSearchResult["candidates"]>[number]>());
   const candidatePhotos = photos
     .filter((photo) => candidateByPhoto.has(photo.id))
     .sort((left, right) => (candidateByPhoto.get(left.id)?.rank ?? 0) - (candidateByPhoto.get(right.id)?.rank ?? 0));
@@ -123,10 +152,12 @@ export default function PublicGalleryPage() {
       {privateGalleryId && message ? <div className="public-selection-result" role="status"><span>{message}</span><Link href={`/gallery/${privateGalleryId}`}>Revisar seleção</Link></div> : message ? <p className="notice" role="alert">{message}</p> : null}
       <GalleryPresentation galleryName={gallery.name} eyebrow="Galeria pública autorizada" context={<p>{gallery.description || gallery.event_name || "Escolha suas fotos e retome sua seleção nesta mesma galeria quando quiser."}</p>} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} modeLabel={<><strong>Acesso confirmado</strong><span>Suas escolhas ficam salvas nesta galeria e permanecem disponíveis quando você voltar.</span></>} emptyDetail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
-        return <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>;
+        const favorited = favoriteIds.includes(photo.id);
+        return <><button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker" aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}</>;
       }} renderFeaturedPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
-        return <><button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button><button type="button" className="gallery-presentation-marker gallery-presentation-marker--reject" onClick={() => { void rejectCandidate(photo); }}>Não é esta pessoa</button></>;
+        const favorited = favoriteIds.includes(photo.id);
+        return <><button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker" aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}<button type="button" className="gallery-presentation-marker gallery-presentation-marker--reject" onClick={() => { void rejectCandidate(photo); }}>Não é esta pessoa</button></>;
       }} />
       {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>

@@ -35,6 +35,82 @@ class FacialPurgeReport:
     jobs_cancelled: int
 
 
+def invalidate_gallery_searches(
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+) -> FacialPurgeReport:
+    """Invalida resultados e jobs de busca antes do purge físico assíncrono."""
+
+    instant = now()
+    notification_result = db.execute(
+        update(FacialSearchNotificationOutbox)
+        .where(
+            FacialSearchNotificationOutbox.parent_gallery_id == parent_gallery_id,
+            FacialSearchNotificationOutbox.status.in_(("queued", "processing")),
+        )
+        .values(
+            status="cancelled",
+            payload_ciphertext=b"",
+            payload_nonce=b"",
+            last_error_category="purpose_revoked",
+            updated_at=instant,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    candidate_result = db.execute(
+        delete(FacialSearchCandidate)
+        .where(FacialSearchCandidate.parent_gallery_id == parent_gallery_id)
+        .execution_options(synchronize_session=False)
+    )
+    request_result = db.execute(
+        update(FacialSearchRequest)
+        .where(
+            FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+            FacialSearchRequest.status.not_in(("cancelled", "expired")),
+        )
+        .values(
+            status="cancelled",
+            completed_at=instant,
+            updated_at=instant,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    job_result = db.execute(
+        update(FacialJob)
+        .where(
+            FacialJob.parent_gallery_id == parent_gallery_id,
+            FacialJob.kind == "search",
+            FacialJob.status.in_(("queued", "processing")),
+        )
+        .values(
+            status="cancelled",
+            lease_token=None,
+            lease_expires_at=None,
+            last_error_category="purpose_revoked",
+            updated_at=instant,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    report = FacialPurgeReport(
+        embeddings=0,
+        candidates=candidate_result.rowcount or 0,
+        requests_cancelled=request_result.rowcount or 0,
+        notifications_cancelled=notification_result.rowcount or 0,
+        jobs_cancelled=job_result.rowcount or 0,
+    )
+    db.add(
+        AuditEvent(
+            event="facial.search_scope_invalidated",
+            subject=(
+                f"gallery_id:{parent_gallery_id};candidates:{report.candidates};"
+                f"requests:{report.requests_cancelled};jobs:{report.jobs_cancelled}"
+            ),
+        )
+    )
+    return report
+
+
 def facial_cleanup_proof(
     db: Session, *, parent_gallery_id: UUID
 ) -> dict[str, int | bool]:
@@ -230,16 +306,27 @@ def purge_gallery_records(
         )
         .values(
             status="cancelled",
-            reference_locator_ciphertext=None,
-            reference_locator_nonce=None,
-            reference_key_id=None,
-            reference_deleted_at=instant,
             completed_at=instant,
             updated_at=instant,
         )
         .execution_options(synchronize_session=False)
     )
     requests = request_result.rowcount or 0
+    db.execute(
+        update(FacialSearchRequest)
+        .where(
+            FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+            FacialSearchRequest.reference_locator_ciphertext.is_not(None),
+        )
+        .values(
+            reference_locator_ciphertext=None,
+            reference_locator_nonce=None,
+            reference_key_id=None,
+            reference_deleted_at=instant,
+            updated_at=instant,
+        )
+        .execution_options(synchronize_session=False)
+    )
     jobs = _cancel_and_detach_jobs(
         db,
         FacialJob.parent_gallery_id == parent_gallery_id,

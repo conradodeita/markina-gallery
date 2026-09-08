@@ -39,7 +39,6 @@ def _settings(tmp_path: Path, *, enabled: bool) -> FacialSettings:
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
-        minor_search_enabled=False,
         similarity_threshold_milli=750,
         active_key_id="test",
         aead_keys={"test": b"k" * 32},

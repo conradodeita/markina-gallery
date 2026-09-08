@@ -18,6 +18,7 @@ export type FacialSearchAvailability = {
   state: "unavailable" | "consent_required";
   manual_selection_available: true;
   minor_search_available: boolean;
+  minor_representation_reference?: string | null;
   consent_version?: string;
   legal_notice_version?: string;
   reference_retention_seconds?: number;
@@ -41,11 +42,33 @@ export type FacialSearchResult = {
   };
   reference_deleted: boolean;
   expires_at: string;
+  poll_after_ms: number | null;
+  estimate: {
+    remaining_items: number;
+    seconds: number | null;
+    confidence: "unavailable" | "low" | "medium" | "high";
+  };
   candidates?: FacialCandidate[];
 };
 
+export class FacialApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryAfterSeconds: number | null,
+  ) {
+    super(message);
+    this.name = "FacialApiError";
+  }
+}
+
 export type FacialIndexStatus = {
   state: "processing" | "completed" | "failed";
+  rollout: {
+    status: "prepared" | "active" | "suspended" | "revoked" | "unavailable";
+    stage: "dark" | "canary" | "limited" | "general" | null;
+    available: boolean;
+  };
   progress: { ready: number; total: number };
   queued: number;
   processing: number;
@@ -53,7 +76,7 @@ export type FacialIndexStatus = {
   coverage: { photos_with_faces: number; total: number; percent: number; detected_faces: number };
   waiting_previews: number;
   unindexed: number;
-  failures: Array<{ job_id: string; photo_id: string; category: string }>;
+  failures: Array<{ job_id: string; photo_id: string; attempts: number; error_category: string }>;
   pagination: { page: number; page_size: number; total: number };
 };
 
@@ -61,7 +84,12 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", ...init });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.detail ?? "Não foi possível concluir a operação facial.");
+    const retryAfter = Number(response.headers.get("Retry-After"));
+    throw new FacialApiError(
+      payload?.detail ?? "Não foi possível concluir a operação facial.",
+      response.status,
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+    );
   }
   return payload as T;
 }

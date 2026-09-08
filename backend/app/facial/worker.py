@@ -13,6 +13,7 @@ from app.facial.engine import replace_photo_index
 from app.facial.jobs import ClaimedFacialJob, FacialJobError, FacialJobRepository
 from app.facial.provider import OpenCvSFaceProvider
 from app.facial.purge import purge_gallery_records, purge_photo_records
+from app.facial.rollout import rollout_is_active
 
 
 def process_claimed_index_job(
@@ -33,6 +34,12 @@ def process_claimed_index_job(
         or job.parent_gallery_id is None
     ):
         raise FacialJobError("Job facial não pode ser executado.")
+    if not rollout_is_active(
+        db,
+        settings=settings,
+        parent_gallery_id=job.parent_gallery_id,
+    ):
+        return repository.cancel(db, claim)
     indexed = replace_photo_index(
         db,
         photo_id=job.photo_asset_id,

@@ -68,7 +68,7 @@ def test_dispatch_is_idempotent_and_wakes_only_the_facial_queue(db: Session) -> 
     )
     assert first.id == second.id
     assert (first_created, second_created) == (True, False)
-    assert calls == [("markina:facial:jobs", str(first.id))]
+    assert calls == [("markina:facial:jobs:index", str(first.id))]
     assert all("media" not in queue for queue, _ in calls)
 
 
@@ -93,6 +93,68 @@ def test_claim_respects_priority_and_does_not_double_claim(db: Session) -> None:
     assert repository.claim_next(db, lease_seconds=60) is None
 
 
+def test_worker_classes_claim_only_their_jobs_and_maintenance_is_not_starved(
+    db: Session,
+) -> None:
+    repository = FacialJobRepository()
+    parent_id = _parent_id(db)
+    index, _ = repository.enqueue(
+        db,
+        kind="index",
+        idempotency_key="class-index",
+        parent_gallery_id=parent_id,
+        photo_asset_id=uuid4(),
+        model_version="model-v1",
+        quality_version="quality-v1",
+        preview_fingerprint="a" * 64,
+    )
+    search, _ = repository.enqueue(
+        db,
+        kind="search",
+        idempotency_key="class-search",
+        parent_gallery_id=parent_id,
+        search_request_id=uuid4(),
+    )
+    cleanup, _ = repository.enqueue(
+        db,
+        kind="cleanup",
+        idempotency_key="class-cleanup",
+        parent_gallery_id=parent_id,
+        priority=20,
+    )
+    purge, _ = repository.enqueue(
+        db,
+        kind="purge",
+        idempotency_key="class-purge",
+        parent_gallery_id=parent_id,
+        priority=0,
+    )
+    db.commit()
+
+    search_claim = repository.claim_next(
+        db, lease_seconds=60, job_class="search"
+    )
+    index_claim = repository.claim_next(
+        db, lease_seconds=60, job_class="index"
+    )
+    first_maintenance = repository.claim_next(
+        db, lease_seconds=60, job_class="maintenance"
+    )
+    second_maintenance = repository.claim_next(
+        db, lease_seconds=60, job_class="maintenance"
+    )
+
+    assert search_claim is not None and search_claim.id == search.id
+    assert index_claim is not None and index_claim.id == index.id
+    assert first_maintenance is not None and first_maintenance.id == purge.id
+    assert second_maintenance is not None and second_maintenance.id == cleanup.id
+    assert repository.claim_next(
+        db, lease_seconds=60, job_class="maintenance"
+    ) is None
+    with pytest.raises(FacialJobError, match="Classe"):
+        repository.claim_next(db, lease_seconds=60, job_class="unknown")
+
+
 def test_expired_lease_is_resumed_and_stale_worker_cannot_finish(db: Session) -> None:
     repository = FacialJobRepository()
     job, _ = repository.enqueue(
@@ -102,13 +164,17 @@ def test_expired_lease_is_resumed_and_stale_worker_cannot_finish(db: Session) ->
         parent_gallery_id=_parent_id(db),
     )
     db.commit()
-    first = repository.claim_next(db, lease_seconds=60)
+    first = repository.claim_next(
+        db, lease_seconds=60, job_class="maintenance"
+    )
     assert first is not None
     job = db.get(FacialJob, job.id)
     job.lease_expires_at = now() - timedelta(seconds=1)
     db.commit()
 
-    resumed = repository.claim_next(db, lease_seconds=60)
+    resumed = repository.claim_next(
+        db, lease_seconds=60, job_class="maintenance"
+    )
 
     assert resumed is not None and resumed.id == first.id
     assert resumed.lease_token != first.lease_token

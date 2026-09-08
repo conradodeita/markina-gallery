@@ -6,6 +6,7 @@ import base64
 import json
 import secrets
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
@@ -132,8 +133,14 @@ from app.commercial_removal import (
     apply_commercial_removal_policy,
 )
 from app.email_delivery import EmailConfigurationError, email_channel_payload, public_app_origin
+from app.facial.capacity import FacialSearchCapacityError
 from app.facial.config import FacialConfigurationError, facial_settings_from_environment
 from app.facial.indexing import enqueue_gallery_backfill_page
+from app.facial.observability import (
+    FACIAL_ADMISSION_COUNTER,
+    collect_facial_metrics,
+    evaluate_facial_alerts,
+)
 from app.facial.policy import (
     FacialPolicyDraft,
     FacialPolicyError,
@@ -146,6 +153,11 @@ from app.facial.policy import (
 )
 from app.facial.purge import facial_cleanup_proof
 from app.facial.reference_store import FacialReferenceError
+from app.facial.rollout import (
+    read_rollout,
+    rollout_is_active,
+    rollout_status_payload,
+)
 from app.facial.search import (
     FacialSearchError,
     authorize_search_candidate_selection,
@@ -158,6 +170,7 @@ from app.facial.search import (
     search_request_payload,
     search_result_payload,
 )
+from app.facial.security import enforce_facial_search_rate_limit
 from app.facial.status import (
     FacialStatusError,
     gallery_index_status,
@@ -2180,6 +2193,33 @@ def admin_validation_summary(
     }
 
 
+@app.get("/admin/facial-observability")
+def admin_facial_observability(
+    request: Request,
+    expected_enabled: bool | None = Query(default=None),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    """Exporta somente sinais faciais agregados para operação autenticada."""
+
+    require_admin(request)
+    environment = getenv("APP_ENV", "development").strip().lower()
+    try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        enabled = settings.enabled
+    except FacialConfigurationError:
+        enabled = False
+    metrics = collect_facial_metrics(
+        db,
+        environment=environment,
+        enabled=enabled,
+    )
+    alerts = evaluate_facial_alerts(metrics, expected_enabled=expected_enabled)
+    return {
+        "metrics": [asdict(metric) for metric in metrics],
+        "alerts": [asdict(alert) for alert in alerts],
+    }
+
+
 @app.get("/admin/clients")
 def admin_clients(
     request: Request,
@@ -3006,11 +3046,22 @@ def admin_parent_gallery_facial_index(
 ) -> dict[str, object]:
     require_admin(request)
     _parent_gallery_or_404(db, parent_gallery_id)
+    rollout = None
     try:
         try:
-            processing_enabled = facial_settings_from_environment(
+            settings = facial_settings_from_environment(
                 verify_runtime_assets=False
-            ).enabled
+            )
+            rollout = read_rollout(
+                db,
+                environment=settings.environment,
+                parent_gallery_id=parent_gallery_id,
+            )
+            processing_enabled = rollout_is_active(
+                db,
+                settings=settings,
+                parent_gallery_id=parent_gallery_id,
+            )
         except FacialConfigurationError:
             processing_enabled = False
         report = gallery_index_status(
@@ -3024,6 +3075,10 @@ def admin_parent_gallery_facial_index(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "state": report.state,
+        "rollout": rollout_status_payload(
+            rollout,
+            available=processing_enabled,
+        ),
         "progress": {"ready": report.ready, "total": report.total},
         "queued": report.queued,
         "processing": report.processing,
@@ -3057,12 +3112,21 @@ def retry_parent_gallery_facial_index(
     require_same_origin(request)
     session = current_session(request, Role.ADMIN)
     try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        if not rollout_is_active(
+            db,
+            settings=settings,
+            parent_gallery_id=parent_gallery_id,
+        ):
+            raise FacialStatusError(
+                "Reconhecimento facial indisponível para esta galeria."
+            )
         changed = retry_failed_index_jobs(
             db,
             parent_gallery_id=parent_gallery_id,
             job_ids=set(payload.job_ids),
         )
-    except FacialStatusError as exc:
+    except (FacialConfigurationError, FacialStatusError) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     audit(
@@ -7414,6 +7478,7 @@ def public_gallery_for_client(
         "event_name": parent.event_name,
         "description": parent.description,
         "access_mode": parent.access_mode,
+        "favorites_enabled": parent.favorites_enabled,
         "folder_display_mode": parent.folder_display_mode,
         "cover_title_font": normalize_title_font(parent.cover_title_font),
         "cover_title_color": parent.cover_title_color,
@@ -7452,7 +7517,10 @@ def public_gallery_facial_search_availability(
             "minor_search_available": False,
         }
     return search_availability(
-        db, parent_gallery_id=parent_gallery_id, settings=settings
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=session.subject_id,
+        settings=settings,
     )
 
 
@@ -7479,6 +7547,12 @@ async def create_public_gallery_facial_search(
         "image/jpeg"
     ):
         raise HTTPException(status_code=415, detail="Envie uma imagem JPEG.")
+    enforce_facial_search_rate_limit(
+        db,
+        client_id=session.subject_id,
+        parent_gallery_id=parent_gallery_id,
+        ip_address=request.client.host if request.client else "unknown",
+    )
     consent_version = request.headers.get("x-facial-consent-version", "").strip()
     subject_declaration = request.headers.get(
         "x-facial-subject-declaration", ""
@@ -7504,6 +7578,15 @@ async def create_public_gallery_facial_search(
             settings=settings,
         )
         db.commit()
+        FACIAL_ADMISSION_COUNTER.record("accepted")
+    except FacialSearchCapacityError as exc:
+        db.rollback()
+        FACIAL_ADMISSION_COUNTER.record("refused")
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
     except (FacialConfigurationError, FacialSearchError) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -7691,6 +7774,18 @@ def public_gallery_photos(
         if gallery
         else set()
     )
+    favorites = (
+        set(
+            db.scalars(
+                select(PhotoFavorite.photo_asset_id).where(
+                    PhotoFavorite.derived_gallery_id == gallery.id,
+                    PhotoFavorite.client_id == session.subject_id,
+                )
+            )
+        )
+        if gallery
+        else set()
+    )
     photos = list(
         db.scalars(
             select(PhotoAsset)
@@ -7739,6 +7834,7 @@ def public_gallery_photos(
                 "width": derivatives[photo.id].width if photo.id in derivatives else None,
                 "height": derivatives[photo.id].height if photo.id in derivatives else None,
                 "selected": photo.id in selections,
+                "favorited": photo.id in favorites,
             }
             for photo in photos
         ],

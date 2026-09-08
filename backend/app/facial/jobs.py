@@ -17,6 +17,12 @@ from app.facial.crypto import FacialCryptoError
 from app.facial.provider import FacialProviderError
 from app.facial.reference_store import FacialReferenceError
 
+FACIAL_JOB_KINDS_BY_CLASS = {
+    "search": frozenset({"search"}),
+    "index": frozenset({"index"}),
+    "maintenance": frozenset({"purge", "cleanup"}),
+}
+
 
 class FacialJobError(RuntimeError):
     """Operação inválida ou lease perdido na fila facial."""
@@ -24,6 +30,19 @@ class FacialJobError(RuntimeError):
 
 class FacialQueueNotificationError(RuntimeError):
     """Falha transitória já sanitizada pelo adaptador da fila."""
+
+
+def facial_job_class(kind: str) -> str:
+    for job_class, kinds in FACIAL_JOB_KINDS_BY_CLASS.items():
+        if kind in kinds:
+            return job_class
+    raise FacialJobError("Tipo de job facial inválido.")
+
+
+def facial_queue_name(base_name: str, job_class: str) -> str:
+    if job_class not in FACIAL_JOB_KINDS_BY_CLASS:
+        raise FacialJobError("Classe de worker facial inválida.")
+    return f"{base_name}:{job_class}"
 
 
 class QueueNotifier(Protocol):
@@ -114,20 +133,26 @@ class FacialJobRepository:
         *,
         lease_seconds: int,
         instant: datetime | None = None,
+        job_class: str | None = None,
     ) -> ClaimedFacialJob | None:
         current = instant or now()
-        item = db.scalar(
-            select(FacialJob)
-            .where(
-                FacialJob.available_at <= current,
-                or_(
-                    FacialJob.status == "queued",
-                    (
-                        (FacialJob.status == "processing")
-                        & (FacialJob.lease_expires_at <= current)
-                    ),
+        query = select(FacialJob).where(
+            FacialJob.available_at <= current,
+            or_(
+                FacialJob.status == "queued",
+                (
+                    (FacialJob.status == "processing")
+                    & (FacialJob.lease_expires_at <= current)
                 ),
-            )
+            ),
+        )
+        if job_class is not None:
+            kinds = FACIAL_JOB_KINDS_BY_CLASS.get(job_class)
+            if kinds is None:
+                raise FacialJobError("Classe de worker facial inválida.")
+            query = query.where(FacialJob.kind.in_(kinds))
+        item = db.scalar(
+            query
             .order_by(FacialJob.priority, FacialJob.available_at, FacialJob.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -167,6 +192,18 @@ class FacialJobRepository:
         item = self._leased(db, claim)
         item.status = "completed"
         item.progress_done = item.progress_total
+        item.lease_token = None
+        item.lease_expires_at = None
+        item.last_error_category = None
+        item.updated_at = now()
+        db.commit()
+        return item
+
+    def cancel(self, db: Session, claim: ClaimedFacialJob) -> FacialJob:
+        """Encerra sem retentativa um job cujo escopo deixou de ser autorizado."""
+
+        item = self._leased(db, claim)
+        item.status = "cancelled"
         item.lease_token = None
         item.lease_expires_at = None
         item.last_error_category = None
@@ -248,7 +285,13 @@ class FacialJobDispatcher:
         db.commit()
         if created and self._notifier is not None:
             try:
-                self._notifier.lpush(self._queue_name, str(item.id))
+                self._notifier.lpush(
+                    facial_queue_name(
+                        self._queue_name,
+                        facial_job_class(str(job.get("kind", ""))),
+                    ),
+                    str(item.id),
+                )
             except (
                 ConnectionError,
                 TimeoutError,
