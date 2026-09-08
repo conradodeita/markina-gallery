@@ -217,7 +217,13 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     compose() { [[ "$1" == "ps" ]] && printf "container-sintetico\n"; }
-    docker() { [[ "$1" == "inspect" ]] && printf "unhealthy\n"; }
+    docker() {
+      if [[ "$1" == "inspect" && "$*" == *"diagnóstico sanitizado:"* ]]; then
+        printf "diagnóstico sanitizado: service=api status=running health=unhealthy exit_code=0 oom=false restart_count=2 state_error=absent\n"
+        return 0
+      fi
+      [[ "$1" == "inspect" ]] && printf "unhealthy\n"
+    }
     seq() { printf "1\n"; }
     sleep() { :; }
     wait_for_health
@@ -226,6 +232,9 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
   exit 1
 fi
 grep -Fq 'serviço Markina não ficou saudável: api (unhealthy)' "$health_output"
+grep -Fq 'diagnóstico sanitizado: service=api' "$health_output"
+grep -Fq 'oom=' "$health_output"
+grep -Fq 'restart_count=' "$health_output"
 
 whatsapp_output="$(mktemp)"
 trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$whatsapp_output"' EXIT

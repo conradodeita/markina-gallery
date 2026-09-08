@@ -445,6 +445,14 @@ create_backup() {
   echo "backup lógico exclusivo da Markina criado"
 }
 
+report_container_state() {
+  local service="$1" container="$2"
+  [[ -n "$container" ]] || return 0
+  docker inspect --format \
+    'diagnóstico sanitizado: service='"$service"' status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}} restart_count={{.RestartCount}} state_error={{if .State.Error}}present{{else}}absent{{end}}' \
+    "$container" || true
+}
+
 wait_for_health() {
   local service container status attempt
   local services=(api web worker nginx)
@@ -459,7 +467,10 @@ wait_for_health() {
       [[ "$status" == "healthy" ]] && break
       sleep 2
     done
-    [[ "$status" == "healthy" ]] || fail "serviço Markina não ficou saudável: $service ($status)"
+    if [[ "$status" != "healthy" ]]; then
+      report_container_state "$service" "$container"
+      fail "serviço Markina não ficou saudável: $service ($status)"
+    fi
   done
 
   curl --fail --silent --show-error --retry 5 --retry-delay 2 http://127.0.0.1:8080/healthz >/dev/null

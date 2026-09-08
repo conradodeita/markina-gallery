@@ -149,7 +149,13 @@ def main(worker_class: str | None = None) -> None:
         processor=processor,
         repository=repository,
     )
-    while worker.processed_jobs < settings.max_jobs_per_process:
+    # Search e index reciclam o processo para liberar o runtime dos modelos.
+    # Maintenance não carrega modelos e precisa permanecer vivo enquanto drena
+    # lotes grandes de purge/cleanup, inclusive acima do limite por processo.
+    while (
+        active_class == "maintenance"
+        or worker.processed_jobs < settings.max_jobs_per_process
+    ):
         worker.run_cycle()
         if active_class == "search":
             try:

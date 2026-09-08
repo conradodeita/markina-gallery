@@ -74,6 +74,9 @@ def main() -> int:
     require('start_whatsapp_infrastructure_if_active', "gate do provedor real antes dos workers", SCRIPT)
     require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
     require('verify_facial_deploy_state', "verificação coerente do estado facial", SCRIPT)
+    require('report_container_state', "diagnóstico sanitizado de falha de healthcheck", SCRIPT)
+    require('oom={{.State.OOMKilled}}', "sinal agregado de OOM sem logs do job", SCRIPT)
+    require('restart_count={{.RestartCount}}', "contagem agregada de reinícios", SCRIPT)
     require(
         'docker.compose.service=$service',
         "bootstrap facial independente dos serviços definidos no Compose anterior",
