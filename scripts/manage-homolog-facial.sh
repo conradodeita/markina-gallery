@@ -778,9 +778,9 @@ import json
 import os
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
-from app.auth import FacialJob, ParentGallery, PhotoAsset, PhotoFolder, SessionLocal
+from app.auth import FacialJob, ParentGallery, PhotoAsset, PhotoFolder, SessionLocal, now
 
 started_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_STARTED_AT"])
 expires_at = datetime.fromisoformat(os.environ["FACIAL_BATCH_EXPIRES_AT"])
@@ -814,11 +814,25 @@ with SessionLocal() as db:
     )) or 0
     if covered != expected_count:
         raise SystemExit(f"cobertura de jobs divergente: {covered}/{expected_count}")
-    if states.get("failed", 0) or states.get("cancelled", 0) or states.get("processing", 0):
+    instant = now()
+    active_processing = db.scalar(select(func.count(func.distinct(FacialJob.photo_asset_id))).where(
+        FacialJob.kind == "index",
+        FacialJob.photo_asset_id.in_(photo_ids),
+        FacialJob.status == "processing",
+        or_(FacialJob.lease_expires_at.is_(None), FacialJob.lease_expires_at > instant),
+    )) or 0
+    reclaimable_processing = states.get("processing", 0) - active_processing
+    if states.get("failed", 0) or states.get("cancelled", 0) or active_processing:
         raise SystemExit(f"fila não está segura para retomada: {json.dumps(states, sort_keys=True)}")
-    if states.get("queued", 0) <= 0 or states.get("queued", 0) + states.get("completed", 0) != expected_count:
+    pending = states.get("queued", 0) + reclaimable_processing
+    if pending <= 0 or pending + states.get("completed", 0) != expected_count:
         raise SystemExit(f"fila pendente diverge do lote: {json.dumps(states, sort_keys=True)}")
-    print(json.dumps({"photos": expected_count, "job_states": states}, sort_keys=True))
+    print(json.dumps({
+        "photos": expected_count,
+        "job_states": states,
+        "active_processing": active_processing,
+        "reclaimable_processing": reclaimable_processing,
+    }, sort_keys=True))
 PY
 
   wait_for_media_worker_idle

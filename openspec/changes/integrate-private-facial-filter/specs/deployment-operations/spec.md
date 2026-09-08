@@ -60,5 +60,5 @@ Deploy SHALL exigir inventário, backup, migration aditiva, modelos verificados 
 #### Scenario: Retomada de lote expirado com fila durável pendente
 
 - **WHEN** a janela de um lote privado expira depois do upload e uma autorização humana explícita permite concluir os jobs duráveis pendentes
-- **THEN** uma operação protegida comprova o mesmo SHA, lote, autorização, quantidade e declaração de menores, exige a janela anterior expirada, preserva origem, responsável, finalidade e retenção, abre somente uma nova janela entre 30 e 240 minutos e recria somente os processos persistentes da Markina necessários para retomar o worker facial
+- **THEN** uma operação protegida comprova o mesmo SHA, lote, autorização, quantidade e declaração de menores, exige a janela anterior expirada, recusa lease ainda vigente, admite lease expirada como job durável retomável, preserva origem, responsável, finalidade e retenção, abre somente uma nova janela entre 30 e 240 minutos e recria somente os processos persistentes da Markina necessários para retomar o worker facial
 - **AND** o benchmark retomado usa o início registrado no manifesto original para cobrir exatamente o mesmo lote, sem novo upload, sem selecionar fotos por nome e sem produzir relatório com PII ou biometria

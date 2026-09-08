@@ -72,6 +72,8 @@ def main() -> int:
         ("rollback_resume", "rollback da retomada"),
         ("retomada exige uma janela anterior válida e já expirada", "recusa de janela ainda vigente"),
         ("fila pendente diverge do lote", "prova exata da fila pendente"),
+        ("FacialJob.lease_expires_at > instant", "recusa de lease facial ainda vigente"),
+        ('"reclaimable_processing": reclaimable_processing', "lease expirada retomável"),
         ('payload.setdefault("resumptions", [])', "histórico de retomadas no manifesto"),
         ('"window_minutes": int(os.environ["FACIAL_WINDOW_MINUTES"])', "janela retomada auditada"),
         ("write_worker_facial_override", "override facial temporário do worker"),
