@@ -78,6 +78,8 @@ def main() -> int:
         ('"reclaimable_processing": reclaimable_processing', "lease expirada retomável"),
         ('payload.setdefault("resumptions", [])', "histórico de retomadas no manifesto"),
         ('"window_minutes": int(os.environ["FACIAL_WINDOW_MINUTES"])', "janela retomada auditada"),
+        ('lines[processing_matches[0]] = "FACIAL_PROCESSING_ENABLED=true"', "reativação atômica do gate na retomada"),
+        ("gate de processamento facial ausente ou duplicado", "recusa de gate ambíguo na retomada"),
         ("write_worker_facial_override", "override facial temporário do worker"),
         ('line.startswith("FACIAL_")', "override limitado às chaves faciais"),
         ('lines = ["services:", "  worker:", "    environment:"]', "override limitado ao worker"),

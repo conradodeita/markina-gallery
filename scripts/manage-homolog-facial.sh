@@ -870,9 +870,13 @@ old_expiry = os.environ["FACIAL_OLD_EXPIRY"]
 now = datetime.now(timezone.utc)
 new_expiry = (now + timedelta(minutes=int(os.environ["FACIAL_WINDOW_MINUTES"]))).isoformat()
 lines = env_path.read_text(encoding="utf-8").splitlines()
+processing_matches = [index for index, line in enumerate(lines) if line.startswith("FACIAL_PROCESSING_ENABLED=")]
+if len(processing_matches) != 1:
+    raise SystemExit("gate de processamento facial ausente ou duplicado")
 matches = [index for index, line in enumerate(lines) if line.startswith("FACIAL_HOMOLOG_WINDOW_EXPIRES_AT=")]
 if len(matches) != 1 or lines[matches[0]] != f"FACIAL_HOMOLOG_WINDOW_EXPIRES_AT={old_expiry}":
     raise SystemExit("vencimento ativo mudou durante a retomada")
+lines[processing_matches[0]] = "FACIAL_PROCESSING_ENABLED=true"
 lines[matches[0]] = f"FACIAL_HOMOLOG_WINDOW_EXPIRES_AT={new_expiry}"
 env_temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
