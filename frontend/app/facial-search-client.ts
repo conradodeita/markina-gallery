@@ -134,4 +134,8 @@ export const facialAdminApi = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ job_ids: jobIds }),
     }),
+  reprocess: (galleryId: string) =>
+    jsonRequest<{ photos_scanned: number; retried: number }>(`/api/admin/parent-galleries/${galleryId}/facial-index/reprocess`, {
+      method: "POST",
+    }),
 };

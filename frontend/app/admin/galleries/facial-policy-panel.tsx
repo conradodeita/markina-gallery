@@ -50,15 +50,15 @@ export function FacialPolicyPanel({ galleryId, refreshToken = 0 }: { galleryId: 
     return () => window.clearTimeout(timer);
   }, [index, load]);
 
-  async function retryFailures() {
-    if (!index || busy || !index.failures.length) return;
+  async function reprocessIndex() {
+    if (!index || busy || !index.rollout.available || !index.progress.total) return;
     setBusy(true);
     setError("");
     try {
-      await facialAdminApi.retry(galleryId, index.failures.map((failure) => failure.job_id));
+      await facialAdminApi.reprocess(galleryId);
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível retentar o processamento facial.");
+      setError(cause instanceof Error ? cause.message : "Não foi possível refazer o reconhecimento facial.");
     } finally {
       setBusy(false);
     }
@@ -97,7 +97,7 @@ export function FacialPolicyPanel({ galleryId, refreshToken = 0 }: { galleryId: 
         <small>{coverage.detected_faces} rostos detectados. Fotos sem rosto detectável continuam contando como processamento concluído.</small>
       </div>
       {failures.length ? <div className="facial-index-failures"><strong>Falhas técnicas</strong><ul>{failures.map((failure) => <li key={failure.job_id}>Foto {failure.photo_id.slice(0, 8)} · {failure.error_category}</li>)}</ul></div> : null}
-      {failures.length ? <div className="gallery-access-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void retryFailures()}>{busy ? "Tentando novamente…" : "Tentar falhas novamente"}</MarkinaButton></div> : null}
+      {rollout.available && progress.total ? <div className="gallery-access-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void reprocessIndex()}>{busy ? "Reprocessando…" : "Refazer reconhecimento facial"}</MarkinaButton><small>Recoloca falhas e fotos sem índice na fila, sem duplicar as fotos.</small></div> : null}
     </section>
   );
 }

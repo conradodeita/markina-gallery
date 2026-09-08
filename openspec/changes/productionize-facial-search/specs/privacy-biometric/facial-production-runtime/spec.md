@@ -32,6 +32,11 @@ Quando a capacidade estiver habilitada para uma galeria, o sistema SHALL indexar
 - **WHEN** a foto contém pessoa de costas, rosto distante, desfocado ou nenhuma observação tecnicamente utilizável
 - **THEN** o job termina com sucesso técnico, cobertura facial não é incrementada e upload/publicação permanecem disponíveis
 
+#### Scenario: Administrador solicita reprocessamento
+
+- **WHEN** o administrador aciona `Refazer reconhecimento facial` em uma galeria habilitada após falha ou interrupção
+- **THEN** o sistema reconcilia fotos elegíveis sem índice e recoloca falhas técnicas na fila de forma idempotente, sem duplicar o arquivo original, a prévia ou um índice já concluído
+
 ### Requirement: Busca facial autenticada e individual da cliente
 
 A cliente SHALL poder enviar uma referência somente após autenticação, vínculo vigente com a Galeria pública, aviso e consentimento versionados. A consulta SHALL continuar em job durável se a cliente fechar a página, SHALL ser recuperável no retorno e SHALL mostrar progresso real. Ao concluir, `Melhores resultados encontrados` e `Outros resultados encontrados` SHALL aparecer antes do acervo integral, sem expor score, vetor ou identidade inferida.

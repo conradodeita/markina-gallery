@@ -213,6 +213,9 @@ def test_facial_policy_admin_routes_reject_anonymous_access() -> None:
             "similarity_threshold_milli": 750,
         },
     ).status_code == 403
+    assert client.post(
+        f"/admin/parent-galleries/{gallery_id}/facial-index/reprocess"
+    ).status_code == 403
 
 
 def test_revoke_is_idempotent_and_keeps_policy_disabled() -> None:

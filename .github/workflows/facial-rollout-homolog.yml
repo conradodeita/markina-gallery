@@ -1,0 +1,87 @@
+name: Facial rollout homolog
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Operação persistente e restrita
+        type: choice
+        options: [inventory, activate, suspend]
+        required: true
+      gallery_id:
+        description: UUID público da Galeria pública; uma por execução
+        type: string
+        required: true
+      stage:
+        description: Etapa persistente do rollout
+        type: choice
+        options: [canary, limited, general]
+        default: canary
+        required: true
+      expected_sha:
+        description: SHA integral já publicado em homologação
+        type: string
+        required: true
+      actor_admin_id:
+        description: UUID do admin; vazio somente quando existir exatamente um
+        type: string
+        required: false
+      confirmation:
+        description: Ex. ACTIVATE_FACIAL_HOMOLOG_CANARY; vazio no inventário
+        type: string
+        required: false
+
+jobs:
+  facial-rollout:
+    runs-on: ubuntu-latest
+    environment: homolog
+    permissions:
+      contents: read
+    env:
+      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
+      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
+      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
+      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
+      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
+      ROLLOUT_ACTION: ${{ inputs.action }}
+      ROLLOUT_GALLERY_ID: ${{ inputs.gallery_id }}
+      ROLLOUT_STAGE: ${{ inputs.stage }}
+      ROLLOUT_EXPECTED_SHA: ${{ inputs.expected_sha }}
+      ROLLOUT_ACTOR_ADMIN_ID: ${{ inputs.actor_admin_id }}
+      ROLLOUT_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validar escopo local
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$ROLLOUT_EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "SHA integral inválido" >&2; exit 1; }
+          [[ "$ROLLOUT_GALLERY_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "UUID público inválido" >&2; exit 1; }
+          if [[ "$ROLLOUT_ACTION" == "inventory" ]]; then
+            [[ -z "$ROLLOUT_CONFIRMATION" ]] || { echo "Inventário não aceita confirmação" >&2; exit 1; }
+          else
+            expected="${ROLLOUT_ACTION^^}_FACIAL_HOMOLOG_${ROLLOUT_STAGE^^}"
+            [[ "$ROLLOUT_CONFIRMATION" == "$expected" ]] || { echo "Confirmação literal inválida" >&2; exit 1; }
+          fi
+      - name: Executar operação isolada
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Secret obrigatório ausente: $required" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          run_reference="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          remote_command="$(printf 'cd /opt/markina-gallery && bash -s -- --action %q --gallery-id %q --stage %q --expected-sha %q --actor-admin-id %q --confirmation %q --run-reference %q' \
+            "$ROLLOUT_ACTION" "$ROLLOUT_GALLERY_ID" "$ROLLOUT_STAGE" "$ROLLOUT_EXPECTED_SHA" \
+            "$ROLLOUT_ACTOR_ADMIN_ID" "$ROLLOUT_CONFIRMATION" "$run_reference")"
+          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" \
+            "$remote_command" < scripts/operate-facial-rollout-homolog.sh

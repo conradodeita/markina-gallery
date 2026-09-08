@@ -216,6 +216,50 @@ def retry_failed_index_jobs(
     return changed
 
 
+def retry_all_failed_index_jobs(
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+) -> int:
+    """Recoloca todas as falhas atuais da galeria na fila, sem criar arquivos/jobs."""
+
+    policy = db.scalar(
+        select(GalleryFacialPolicy).where(
+            GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
+        )
+    )
+    if policy is None:
+        return 0
+    latest: dict[UUID, FacialJob] = {}
+    for job in db.scalars(
+        select(FacialJob)
+        .where(
+            FacialJob.parent_gallery_id == parent_gallery_id,
+            FacialJob.kind == "index",
+            FacialJob.model_version == policy.model_version,
+            FacialJob.quality_version == policy.quality_version,
+        )
+        .order_by(FacialJob.created_at, FacialJob.id)
+        .with_for_update()
+    ):
+        if job.photo_asset_id is not None:
+            latest[job.photo_asset_id] = job
+    changed = 0
+    for job in latest.values():
+        if job.status != "failed":
+            continue
+        job.status = "queued"
+        job.attempts = 0
+        job.available_at = now()
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.last_error_category = None
+        job.updated_at = now()
+        changed += 1
+    db.flush()
+    return changed
+
+
 def _aggregate_state(
     *,
     processing_enabled: bool,

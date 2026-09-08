@@ -98,9 +98,9 @@ describe("painel facial administrativo", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("expõe erro sanitizado e permite retentar somente falhas listadas", async () => {
+  it("expõe erro sanitizado e permite refazer falhas sem novo upload", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/retry") && init?.method === "POST") return response({ retried: 1 });
+      if (path.endsWith("/reprocess") && init?.method === "POST") return response({ photos_scanned: 0, retried: 1 });
       return response({ ...index, state: "failed", failed: 1, failures: [{ job_id: "job-1", photo_id: "photo-123456789", attempts: 3, error_category: "processing_unavailable" }] });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -108,14 +108,15 @@ describe("painel facial administrativo", () => {
 
     expect(await screen.findByText("Falhas técnicas")).toBeTruthy();
     expect(screen.getByText(/processing_unavailable/)).toBeTruthy();
-    const retry = screen.getByRole("button", { name: "Tentar falhas novamente" });
+    const retry = screen.getByRole("button", { name: "Refazer reconhecimento facial" });
     retry.focus();
     expect(document.activeElement).toBe(retry);
     fireEvent.click(retry);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/gallery-1/facial-index/retry",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ job_ids: ["job-1"] }) }),
+      "/api/admin/parent-galleries/gallery-1/facial-index/reprocess",
+      expect.objectContaining({ method: "POST" }),
     ));
+    expect(screen.getByText("sem duplicar as fotos", { exact: false })).toBeTruthy();
   });
 
   it("mantém o painel fechado quando a leitura inicial falha", async () => {
