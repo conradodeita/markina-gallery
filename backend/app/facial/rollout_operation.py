@@ -14,9 +14,10 @@ from app.facial.config import FacialSettings
 from app.facial.rollout import (
     ACTIVE_STAGES,
     APPROVAL_REFERENCE_RE,
-    ROLLOUT_ENVIRONMENTS,
     ROLLOUT_STAGES,
+    FacialRolloutError,
     activate_rollout,
+    canonical_rollout_environment,
     draft_from_settings,
     prepare_rollout,
     read_rollout,
@@ -63,13 +64,19 @@ def execute_protected_rollout_operation(
     settings: FacialSettings,
 ) -> FacialRolloutOperation:
     action = proof.action.strip().lower()
-    environment = proof.environment.strip().lower()
     stage = proof.stage.strip().lower()
     if action not in {"activate", "suspend"}:
         raise FacialRolloutOperationError("Ação de rollout inválida.")
-    if environment not in ROLLOUT_ENVIRONMENTS or stage not in ROLLOUT_STAGES:
+    if stage not in ROLLOUT_STAGES:
         raise FacialRolloutOperationError("Ambiente ou etapa de rollout inválidos.")
-    if environment != settings.environment:
+    try:
+        environment = canonical_rollout_environment(proof.environment)
+        settings_environment = canonical_rollout_environment(settings.environment)
+    except FacialRolloutError as error:
+        raise FacialRolloutOperationError(
+            "Ambiente ou etapa de rollout inválidos."
+        ) from error
+    if environment != settings_environment:
         raise FacialRolloutOperationError("Escopo diverge da configuração do ambiente.")
     if not FULL_SHA_RE.fullmatch(proof.deployment_sha):
         raise FacialRolloutOperationError("SHA integral publicado é obrigatório.")

@@ -111,6 +111,25 @@ def test_protected_operation_activates_exact_allowlist_and_records_aggregate_rec
     assert all(str(gallery.id) not in operation.allowlist_digest for gallery in galleries)
 
 
+def test_homologation_runtime_uses_canonical_homolog_rollout_scope() -> None:
+    db, admin, galleries = _fixture()
+    operation = execute_protected_rollout_operation(
+        db,
+        proof=_proof(
+            admin.id,
+            [galleries[0].id],
+            environment="homolog",
+            confirmation="ACTIVATE_FACIAL_HOMOLOG_CANARY",
+        ),
+        settings=_settings(environment="homologation"),
+    )
+    db.commit()
+
+    rollout = db.scalar(select(FacialRollout))
+    assert operation.environment == "homolog"
+    assert rollout is not None and rollout.environment == "homolog"
+
+
 @pytest.mark.parametrize(
     "changes,match",
     [
@@ -121,6 +140,7 @@ def test_protected_operation_activates_exact_allowlist_and_records_aggregate_rec
         ({"approved_gates": frozenset({"security"})}, "Todos os gates"),
         ({"allowlist": ()}, "Allowlist"),
         ({"confirmation": "YES"}, "Confirmação"),
+        ({"environment": "qa"}, "Ambiente"),
     ],
 )
 def test_protected_operation_rejects_missing_fields(changes, match: str) -> None:

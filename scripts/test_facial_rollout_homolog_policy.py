@@ -20,6 +20,7 @@ def main() -> None:
     require("pg_dump -Fc", "backup lógico anterior", SCRIPT)
     require("python -m app.facial.manage_rollout", "operação persistente", SCRIPT)
     require("python -m app.facial.reconcile_gallery", "backfill explícito", SCRIPT)
+    require('{"homolog", "homologation"}', "aliases explícitos de homologação", SCRIPT)
     require("compose restart face-index-worker", "backfill pós-ativação", SCRIPT)
     require("rollout suspenso como contenção", "contenção de falha", SCRIPT)
     require('PUBLIC_BASE_URL="https://markina-homolog.duckdns.org"', "healthcheck externo", SCRIPT)
