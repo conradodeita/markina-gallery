@@ -168,6 +168,8 @@ Uma janela expirada pode deixar jobs de indexação já duráveis na fila sem in
 
 Antes da mutação, a operação inventaria o host, comprova cobertura exata do lote por jobs terminais ou pendentes e recusa falhas, cancelamentos, foto sem job ou processamento concorrente. Depois de aguardar o worker de mídia ficar ocioso, faz backup restrito do ambiente e manifesto, atualiza atomicamente apenas o vencimento e recria `api`, `worker` e `face-worker` da Markina para que todos recebam o mesmo gate. O rollback restaura ambos os arquivos e os processos anteriores sem tocar fotos, banco, proxy ou recursos de terceiros fora do recarregamento do Nginx da própria aplicação.
 
+Quando o SHA já publicado antecede o mapeamento facial do worker de mídia, o script transmitido e validado pode gerar um override Compose temporário `0600`, contendo apenas nomes `FACIAL_*` interpolados do ambiente restrito e somente a seção `worker`. O override existe apenas durante a recriação, não altera o checkout, não publica portas, não inclui valores ou outros segredos no arquivo e é removido tanto no sucesso quanto no rollback.
+
 O benchmark de continuação separa o início da medição do início do escopo: recursos e tempo são medidos a partir da retomada, mas fotos, derivados, jobs e embeddings são agregados desde `recorded_at` do manifesto original. Assim, as 636 fotos permanecem o denominador verificável sem reupload e o relatório continua sem nome, arquivo, imagem, vetor, score ou outro identificador pessoal.
 
 ## Risks / Trade-offs

@@ -33,6 +33,7 @@ CONTAINS_MINORS=""
 WINDOW_EXPIRES_AT=""
 ENV_BACKUP=""
 MANIFEST_BACKUP=""
+RUNTIME_OVERRIDE_FILE=""
 ACTIVATION_STARTED=0
 PAUSE_STARTED=0
 RESUME_STARTED=0
@@ -47,11 +48,15 @@ fail() {
 }
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+  local -a compose_files=(-f "$COMPOSE_FILE")
+  [[ -z "$RUNTIME_OVERRIDE_FILE" || ! -f "$RUNTIME_OVERRIDE_FILE" ]] || compose_files+=(-f "$RUNTIME_OVERRIDE_FILE")
+  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" "${compose_files[@]}" "$@"
 }
 
 compose_facial() {
-  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --profile facial "$@"
+  local -a compose_files=(-f "$COMPOSE_FILE")
+  [[ -z "$RUNTIME_OVERRIDE_FILE" || ! -f "$RUNTIME_OVERRIDE_FILE" ]] || compose_files+=(-f "$RUNTIME_OVERRIDE_FILE")
+  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" "${compose_files[@]}" --profile facial "$@"
 }
 
 parse_arguments() {
@@ -390,11 +395,47 @@ rollback_resume() {
   if [[ "$RESUME_STARTED" -eq 1 && -f "$ENV_BACKUP" && -f "$MANIFEST_BACKUP" ]]; then
     cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"
     cp --preserve=mode "$MANIFEST_BACKUP" "$STATE_DIR/facial-batch-$BATCH_ID.json"
+    [[ -z "$RUNTIME_OVERRIDE_FILE" ]] || rm -f -- "$RUNTIME_OVERRIDE_FILE"
+    RUNTIME_OVERRIDE_FILE=""
     compose_facial stop face-worker >/dev/null 2>&1 || true
     compose up -d --no-deps --force-recreate api worker >/dev/null 2>&1 || true
     reload_reverse_proxy >/dev/null 2>&1 || true
   fi
   exit "$exit_code"
+}
+
+write_worker_facial_override() {
+  RUNTIME_OVERRIDE_FILE="$(mktemp "$STATE_DIR/facial-runtime-override.XXXXXX")"
+  python3 - "$ENV_FILE" "$RUNTIME_OVERRIDE_FILE" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+source, target = map(Path, sys.argv[1:])
+keys = []
+for line in source.read_text(encoding="utf-8").splitlines():
+    if line.startswith("FACIAL_") and "=" in line:
+        key = line.split("=", 1)[0]
+        if not re.fullmatch(r"FACIAL_[A-Z0-9_]+", key):
+            raise SystemExit("nome de variável facial inválido no ambiente")
+        if key not in keys:
+            keys.append(key)
+required = {
+    "FACIAL_PROCESSING_ENABLED",
+    "FACIAL_HOMOLOG_PRIVATE_MODE",
+    "FACIAL_HOMOLOG_BATCH_ID",
+    "FACIAL_HOMOLOG_EXPECTED_COUNT",
+    "FACIAL_HOMOLOG_WINDOW_EXPIRES_AT",
+    "FACIAL_MINOR_SEARCH_ENABLED",
+}
+if not required.issubset(keys):
+    raise SystemExit("ambiente não contém os gates mínimos do worker")
+lines = ["services:", "  worker:", "    environment:"]
+lines.extend(f'      {key}: "${{{key}}}"' for key in sorted(keys))
+target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+  chmod 600 "$RUNTIME_OVERRIDE_FILE"
+  compose config --quiet
 }
 
 pause_active_worker() {
@@ -830,8 +871,11 @@ PY
   mv "$temp_env" "$ENV_FILE"
   mv "$temp_manifest" "$manifest_path"
   WINDOW_EXPIRES_AT="$(read_env_value FACIAL_HOMOLOG_WINDOW_EXPIRES_AT)"
+  write_worker_facial_override
   compose_facial up -d --no-deps --force-recreate face-worker
   compose up -d --no-deps --force-recreate api worker
+  rm -f -- "$RUNTIME_OVERRIDE_FILE"
+  RUNTIME_OVERRIDE_FILE=""
   reload_reverse_proxy
   verify_activation
   record_inventory

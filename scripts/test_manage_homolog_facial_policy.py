@@ -74,6 +74,10 @@ def main() -> int:
         ("fila pendente diverge do lote", "prova exata da fila pendente"),
         ('payload.setdefault("resumptions", [])', "histórico de retomadas no manifesto"),
         ('"window_minutes": int(os.environ["FACIAL_WINDOW_MINUTES"])', "janela retomada auditada"),
+        ("write_worker_facial_override", "override facial temporário do worker"),
+        ('line.startswith("FACIAL_")', "override limitado às chaves faciais"),
+        ('lines = ["services:", "  worker:", "    environment:"]', "override limitado ao worker"),
+        ('rm -f -- "$RUNTIME_OVERRIDE_FILE"', "remoção do override temporário"),
         ('cp --preserve=mode "$ENV_BACKUP" "$ENV_FILE"', "restauração do backup de ambiente"),
         ("s.private_homologation_active", "validação fail-closed"),
         ('[[ "$(read_env_value FACIAL_HOMOLOG_PRIVATE_MODE)" != "true" ]]', "recusa de gate privado na transição legada"),
@@ -88,6 +92,7 @@ def main() -> int:
         (r"\bdocker\s+(?:rm|rmi)\b", "remoção de containers ou imagens"),
         (r"echo\s+.*FACIAL_AEAD_KEYS_JSON", "impressão de chave facial"),
         (r"activate-synthetic|pause-synthetic", "modo sintético legado"),
+        (r"env_file:\s*docker/\.env\.homolog", "injeção integral do ambiente no worker"),
     ):
         forbid(pattern, description, SCRIPT)
 
