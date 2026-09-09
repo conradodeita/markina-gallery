@@ -90,6 +90,23 @@ describe("contratos HTTP faciais", () => {
     );
   });
 
+  it("traduz rejeição não JSON do proxy para o limite explícito de 30 MB", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      "<html>Request Entity Too Large</html>",
+      { status: 413, headers: { "content-type": "text/html" } },
+    )));
+
+    await expect(facialSearchApi.create(
+      "gallery-1",
+      new File(["jpeg"], "rosto.jpg", { type: "image/jpeg" }),
+      "consent-v1",
+      "adult",
+    )).rejects.toEqual(expect.objectContaining<Partial<FacialApiError>>({
+      message: "A foto excede o limite de 30 MB.",
+      status: 413,
+    }));
+  });
+
   it("envia somente IDs de jobs na retentativa administrativa", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ retried: 2 }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

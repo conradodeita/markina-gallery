@@ -92,7 +92,7 @@ describe("Galeria pública da cliente", () => {
     expect(screen.getByText(/Autorizo o uso temporário desta foto exclusivamente/)).toBeTruthy();
     expect(screen.getByText(/foto de referência é eliminada automaticamente/)).toBeTruthy();
     const file = new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" });
-    fireEvent.change(screen.getByLabelText("Foto JPEG com uma pessoa"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Confirmo que sou pai, mãe ou responsável/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo o uso temporário/ }));
@@ -186,10 +186,10 @@ describe("Galeria pública da cliente", () => {
     render(<PublicGalleryPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
-    const dialog = screen.getByRole("dialog", { name: "Usar uma foto como filtro?" });
+    const dialog = screen.getByRole("dialog", { name: "Encontre suas fotos" });
     expect(document.activeElement).toBe(dialog);
     expect(dialog.getAttribute("aria-describedby")).toContain("facial-consent-purpose");
     fireEvent.keyDown(dialog, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Usar uma foto como filtro?" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Encontre suas fotos" })).toBeNull();
   });
 });

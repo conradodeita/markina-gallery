@@ -85,6 +85,7 @@ def search_availability(
             "state": "unavailable",
             "manual_selection_available": True,
             "minor_search_available": False,
+            "max_reference_bytes": settings.max_reference_bytes,
         }
     index = gallery_index_status(
         db,
@@ -108,6 +109,7 @@ def search_availability(
         "legal_notice_version": policy.legal_notice_version,
         "reference_retention_seconds": settings.reference_retention_seconds,
         "candidate_retention_seconds": settings.candidate_retention_seconds,
+        "max_reference_bytes": settings.max_reference_bytes,
         "index": {
             "state": index.state,
             "ready": index.ready,

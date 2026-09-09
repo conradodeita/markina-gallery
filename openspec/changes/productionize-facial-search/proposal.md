@@ -8,6 +8,8 @@ O benchmark privado já comprovou no ARM a capacidade de indexar o acervo real, 
 - Manter `FACIAL_PROCESSING_ENABLED` como kill switch técnico por ambiente, com homologação apta a permanecer ativa para validação funcional e produção inicialmente desligada até todos os gates desta change serem aprovados.
 - Tornar deploy, upgrade e rollback do `face-worker` compatíveis com o estado facial persistente do ambiente, sem janela de benchmark, porta adicional ou intervenção em recursos de terceiros.
 - Consolidar o contrato operacional de produção para indexação automática, progresso/cobertura administrativa, busca autenticada da cliente, retomada após sair da página e resultados ordenados no topo.
+- Permitir que a cliente escolha explicitamente uma foto JPEG já existente no celular ou abra a câmera, usando um diálogo mobile-first coeso em vez do controle nativo de arquivo exposto.
+- Aceitar referências JPEG de até 30 MB com o mesmo limite efetivo no navegador e na API, margem de transporte no proxy e mensagem específica antes do envio quando o arquivo exceder esse limite.
 - Validar admissão durável e backpressure para pelo menos 100 consultas simultâneas, com limites, SLOs, métricas agregadas e alertas que não exponham imagem, vetor, score ou PII.
 - Formalizar os gates de produção para segurança, calibração, equidade, base legal, consentimento, representação de menores, retenção, revogação, atendimento a direitos e resposta a incidente.
 - Executar rollout progressivo e reversível, começando por contas/galerias explicitamente permitidas e expandindo somente após evidência técnica, jurídica e humana registrada.

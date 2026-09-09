@@ -71,6 +71,17 @@ def test_facial_configuration_is_disabled_without_secrets(
     assert settings.aead_keys == {}
     assert settings.reference_retention_seconds == 900
     assert settings.candidate_retention_seconds == 86400
+    assert settings.max_reference_bytes == 31_457_280
+
+
+def test_facial_configuration_rejects_reference_above_30_mib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_facial_environment(monkeypatch)
+    monkeypatch.setenv("FACIAL_MAX_REFERENCE_BYTES", "31457281")
+
+    with pytest.raises(FacialConfigurationError, match="FACIAL_MAX_REFERENCE_BYTES"):
+        facial_settings_from_environment()
 
 
 def test_enabled_facial_configuration_fails_closed_when_incomplete_or_cross_environment(
