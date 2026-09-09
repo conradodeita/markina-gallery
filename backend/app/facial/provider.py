@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 EXPECTED_EMBEDDING_DIMENSIONS = 128
+MAX_DETECTION_SIDE = 1600
+MAX_DETECTION_PIXELS = 2_000_000
 
 
 class FacialProviderError(RuntimeError):
@@ -120,6 +122,8 @@ class OpenCvSFaceProvider:
         if height < 1 or width < 1:
             raise FacialProviderError("Imagem facial não pôde ser lida.")
         try:
+            image = self._bounded_detection_image(image, width=width, height=height)
+            height, width = int(image.shape[0]), int(image.shape[1])
             self._detector.setInputSize((width, height))
             _, detected = self._detector.detect(image)
             if detected is None:
@@ -147,3 +151,19 @@ class OpenCvSFaceProvider:
             raise
         except Exception as exc:
             raise FacialProviderError("Processamento facial falhou.") from exc
+
+    def _bounded_detection_image(
+        self, image: Any, *, width: int, height: int
+    ) -> Any:
+        side_scale = MAX_DETECTION_SIDE / max(width, height)
+        pixel_scale = math.sqrt(MAX_DETECTION_PIXELS / (width * height))
+        scale = min(1.0, side_scale, pixel_scale)
+        if scale >= 1.0:
+            return image
+        target_width = max(1, math.floor(width * scale))
+        target_height = max(1, math.floor(height * scale))
+        return self._cv2.resize(
+            image,
+            (target_width, target_height),
+            interpolation=self._cv2.INTER_AREA,
+        )

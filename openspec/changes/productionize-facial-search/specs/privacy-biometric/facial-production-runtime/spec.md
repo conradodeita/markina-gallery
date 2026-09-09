@@ -39,7 +39,7 @@ Quando a capacidade estiver habilitada para uma galeria, o sistema SHALL indexar
 
 ### Requirement: Busca facial autenticada e individual da cliente
 
-A cliente SHALL poder enviar uma referência somente após autenticação, vínculo vigente com a Galeria pública, aviso e consentimento versionados. No celular, a interface SHALL oferecer escolhas explícitas para usar uma foto JPEG existente ou abrir a câmera e SHALL NOT forçar captura ao escolher o arquivo existente. O diálogo SHALL usar controles coesos e responsivos, sem expor o campo nativo de arquivo como ação principal. Em desktop, o diálogo SHALL preservar largura legível, hierarquia visual e ações acessíveis sem ultrapassar o viewport. O sistema SHALL aceitar JPEGs de até 30 MiB no navegador, proxy e API, SHALL informar o limite antes do envio e SHALL apresentar mensagem específica quando ele for excedido, preservando as validações de tipo, pixels e descompressão. A consulta SHALL continuar em job durável se a cliente fechar a página, SHALL ser recuperável no retorno e SHALL mostrar progresso real. Ao concluir, `Melhores resultados encontrados` e `Outros resultados encontrados` SHALL aparecer antes do acervo integral, sem expor score, vetor ou identidade inferida.
+A cliente SHALL poder enviar uma referência somente após autenticação, vínculo vigente com a Galeria pública, aviso e consentimento versionados. No celular, a interface SHALL oferecer escolhas explícitas para usar uma foto JPEG existente ou abrir a câmera e SHALL NOT forçar captura ao escolher o arquivo existente. O diálogo SHALL usar controles coesos e responsivos, sem expor o campo nativo de arquivo como ação principal. Em desktop, o diálogo SHALL preservar largura legível, hierarquia visual e ações acessíveis sem ultrapassar o viewport. O sistema SHALL aceitar JPEGs de até 30 MiB no navegador, proxy e API, SHALL informar o limite antes do envio e SHALL apresentar mensagem específica quando ele for excedido, preservando as validações de tipo, pixels e descompressão. O detector SHALL limitar a resolução de sua cópia de trabalho sem modificar o arquivo original nem reduzir o limite funcional de 30 MiB. A consulta SHALL continuar em job durável se a cliente fechar a página, SHALL ser recuperável no retorno e SHALL mostrar progresso real. Uma interrupção abrupta SHALL ser retomada por lease e SHALL terminar com resultado sanitizado após o máximo de tentativas, sem manter a interface indefinidamente em `validating_reference`. Ao concluir, `Melhores resultados encontrados` e `Outros resultados encontrados` SHALL aparecer antes do acervo integral, sem expor score, vetor ou identidade inferida.
 
 #### Scenario: Cliente escolhe a origem da referência no celular
 
@@ -62,6 +62,21 @@ A cliente SHALL poder enviar uma referência somente após autenticação, vínc
 
 - **WHEN** a cliente fecha a página após a admissão válida da referência e retorna autenticada enquanto a consulta ainda existe
 - **THEN** a interface recupera a consulta mais recente do backend, retoma o progresso e apresenta o resultado terminal sem exigir que a aba original permaneça aberta
+
+#### Scenario: Referência JPEG de alta resolução
+
+- **WHEN** uma JPEG válida dentro do limite de 30 MiB possui resolução superior ao orçamento de trabalho do detector
+- **THEN** o provider preserva a referência original e executa detecção sobre cópia proporcional limitada, sem exceder o orçamento de memória definido
+
+#### Scenario: Worker interrompido durante a validação
+
+- **WHEN** o processo termina abruptamente depois de marcar a consulta como `validating_reference`
+- **THEN** outro worker retoma o job após o lease e, se o máximo de tentativas já foi excedido, encerra a consulta como falha sanitizada e elimina a referência temporária
+
+#### Scenario: Galeria pública em desktop largo
+
+- **WHEN** a cliente abre a Galeria pública em um navegador desktop largo
+- **THEN** a grade usa a largura útil do viewport e a visualização ampliada pode ocupar a área disponível, mantendo a foto inteira sem o limite de leitura de 960 pixels das demais páginas
 
 #### Scenario: Referência tecnicamente inadequada
 

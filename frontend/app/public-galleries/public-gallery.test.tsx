@@ -1,4 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
@@ -14,6 +16,15 @@ afterEach(() => {
 function response(value: object, status = 200) { return Promise.resolve(new Response(JSON.stringify(value), { status })); }
 
 describe("Galeria pública da cliente", () => {
+  it("usa a largura útil do desktop e amplia a foto sem limitar as demais páginas", () => {
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    expect(css).toContain(".public-gallery-shell { display:grid; width:min(calc(100% - 32px),1760px);");
+    expect(css).toContain(".gallery-presentation { width:100%;");
+    expect(css).toContain(".gallery-presentation-dialog { width:min(100%,1600px);");
+    expect(css).toContain(".gallery-presentation-grid { grid-template-columns:repeat(4,minmax(0,1fr));");
+    expect(css).toContain("@media (max-width: 560px)");
+  });
+
   it("carrega somente após autorização e mantém a primeira seleção na jornada pública", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/photos/photo-1/selection") && init?.method === "POST") return response({ status: "selected", private_gallery_id: "private-1", gallery_created: true, reference_created: true, selection_created: true, cart: { quantity: 1, total_cents: 700, savings_cents: 0 } }, 201);

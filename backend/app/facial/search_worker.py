@@ -75,6 +75,26 @@ def process_claimed_search_job(
             _delete_reference(request, store)
             db.commit()
             return repository.complete(db, claim)
+        # Uma morte abrupta (por exemplo, OOM do processo) não atravessa a
+        # fronteira de exceção abaixo. O próximo claim incrementa `attempts`;
+        # depois do orçamento normal, ele encerra e higieniza a consulta sem
+        # executar novamente o trecho que derrubou o consumidor anterior.
+        if job.attempts > max_attempts:
+            _finish_request(
+                db,
+                request,
+                status="failed",
+                store=store,
+                cipher=cipher,
+                settings=settings,
+            )
+            return repository.fail(
+                db,
+                claim,
+                TimeoutError("Worker interrompido durante tentativas anteriores."),
+                max_attempts=max_attempts,
+                retry_delay_seconds=retry_delay_seconds,
+            )
         if not _request_is_authorized(db, request, settings):
             _finish_request(
                 db,

@@ -708,6 +708,45 @@ def test_incomplete_index_and_terminal_technical_failure_are_sanitized(
     assert request2.reference_deleted_at is not None
 
 
+def test_interrupted_search_exhaustion_leaves_validating_state_and_deletes_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    _engine, db, parent, client, _folder = _base(tmp_path)
+    settings = _settings(tmp_path)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    request = _create_request(db, parent, client, settings)
+    job = db.scalar(
+        select(FacialJob).where(FacialJob.search_request_id == request.id)
+    )
+    assert job is not None
+    job.status = "processing"
+    job.lease_token = "consumer-interrompido"
+    job.lease_expires_at = now() - timedelta(seconds=1)
+    job.attempts = 3
+    request.status = "validating_reference"
+    db.commit()
+
+    repository = FacialJobRepository()
+    claim = repository.claim_next(db, lease_seconds=60, job_class="search")
+    assert claim is not None
+    failed = process_claimed_search_job(
+        db,
+        claim,
+        repository=repository,
+        provider=Provider([_face(_vector(1.0))], fail_query=True),
+        cipher=cipher,
+        settings=settings,
+        max_attempts=3,
+    )
+
+    db.refresh(request)
+    assert failed.status == "failed"
+    assert failed.last_error_category == "timeout"
+    assert request.status == "failed"
+    assert request.reference_deleted_at is not None
+
+
 def test_read_reject_and_cancel_repeat_full_client_gallery_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
