@@ -1,11 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/navigation", () => ({ useParams: () => ({ galleryId: "gallery-1" }) }));
+const navigation = vi.hoisted(() => ({ mode: null as string | null }));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ galleryId: "gallery-1" }),
+  useSearchParams: () => ({ get: (name: string) => name === "mode" ? navigation.mode : null }),
+}));
 
 import GalleryPage from "./[galleryId]/page";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  navigation.mode = null;
+});
 
 const review = {
   gallery: { name: "Festa escolar", message: "Escolha suas favoritas", selection_expires_at: null, selection_open: true, favorites_enabled: true, comments_enabled: true, cover_preview_url: "/gallery/gallery-1/photos/new-1/preview" },
@@ -33,7 +40,7 @@ describe("galeria privada da cliente", () => {
       screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("src"),
     ).toBe("/api/gallery/gallery-1/photos/new-1/preview");
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("draggable")).toBe("false");
-    expect(screen.getByRole("img", { name: "Capa de Festa escolar" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/new-1/preview");
+    expect(screen.queryByRole("img", { name: "Capa de Festa escolar" })).toBeNull();
     const presentation = screen.getByRole("region", { name: "Apresentação de Festa escolar" });
     expect(presentation).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de IMG_001.jpg" }));
@@ -72,6 +79,87 @@ describe("galeria privada da cliente", () => {
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeTruthy();
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Selecionar" })).toBeTruthy();
+  });
+
+  it("abre a revisão somente com fotos selecionadas e sem a capa editorial", async () => {
+    navigation.mode = "review";
+    const selectedReview = {
+      ...review,
+      photos: [
+        { ...review.photos[0], selected: true },
+        { ...review.photos[1], selected: false },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }
+          : path.endsWith("/cart") ? { quantity: 1, total_cents: 700, items: [{ id: "new-1", name: "IMG_001.jpg" }] }
+            : path.endsWith("/payment-communications") ? { orders: [] }
+              : selectedReview,
+    ), { status: 200 }))));
+
+    render(<GalleryPage />);
+
+    expect(await screen.findByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Prévia protegida de IMG_002.jpg" })).toBeNull();
+    expect(screen.queryByRole("img", { name: "Capa de Festa escolar" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Todas/ }).textContent).toContain("1");
+    expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
+  });
+
+  it("mostra e troca comentários somente no contexto da foto ampliada", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (options?.method === "DELETE" && path.endsWith("/comments/comment-1")) return Promise.resolve(new Response(null, { status: 204 }));
+      if (options?.method === "POST" && path.endsWith("/photos/bought-1/comments")) return Promise.resolve(new Response(JSON.stringify({ id: "comment-3" }), { status: 201 }));
+      if (path.endsWith("/comments")) return Promise.resolve(new Response(JSON.stringify({ comments: [
+        { id: "comment-1", photo_id: "new-1", body: "Recortar à esquerda" },
+        { id: "comment-2", photo_id: "bought-1", body: "Clarear esta foto" },
+      ] }), { status: 200 }));
+      if (path.endsWith("/folders")) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }), { status: 200 }));
+      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 0 }), { status: 200 }));
+      if (path.endsWith("/payment-communications")) return Promise.resolve(new Response(JSON.stringify({ orders: [] }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify(review), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Ampliar prévia protegida de IMG_001.jpg" }));
+    expect(screen.getByRole("region", { name: "Comentários de IMG_001.jpg" }).textContent).toContain("Recortar à esquerda");
+    expect(screen.queryByText("Clarear esta foto")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Foto" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remover" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/gallery/gallery-1/comments/comment-1",
+      expect.objectContaining({ method: "DELETE" }),
+    ));
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+    const secondComments = screen.getByRole("region", { name: "Comentários de IMG_002.jpg" });
+    expect(secondComments.textContent).toContain("Clarear esta foto");
+    expect(screen.queryByText("Recortar à esquerda")).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Comentário sobre IMG_002.jpg" }), { target: { value: "Nova observação" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Enviar comentário" }).closest("form")!);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/gallery/gallery-1/photos/bought-1/comments",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ body: "Nova observação" }) }),
+    ));
+  });
+
+  it("mantém a ampliação sem painel quando comentários estão desabilitados", async () => {
+    const commentsDisabled = { ...review, gallery: { ...review.gallery, comments_enabled: false } };
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [] }
+          : path.endsWith("/cart") ? { quantity: 0 }
+            : path.endsWith("/payment-communications") ? { orders: [] }
+              : commentsDisabled,
+    ), { status: 200 }))));
+    render(<GalleryPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Ampliar prévia protegida de IMG_001.jpg" }));
+    expect(screen.getByRole("dialog", { name: "Prévia ampliada de IMG_001.jpg" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Comentários" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: /Comentário sobre/ })).toBeNull();
   });
 
   it("explica o encerramento e retorna à Galeria pública autorizada", async () => {

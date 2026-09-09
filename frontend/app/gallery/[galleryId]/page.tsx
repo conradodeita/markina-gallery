@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
@@ -66,6 +66,8 @@ type Review = {
 
 export default function GalleryPage() {
   const { galleryId } = useParams<{ galleryId: string }>();
+  const searchParams = useSearchParams();
+  const selectionReviewMode = searchParams.get("mode") === "review";
   const [review, setReview] = useState<Review | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -73,7 +75,6 @@ export default function GalleryPage() {
   const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
   const [paymentOrders, setPaymentOrders] = useState<PaymentOrder[]>([]);
   const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
-  const [activePhotoId, setActivePhotoId] = useState("");
   const [message, setMessage] = useState("");
   const [closedGallery, setClosedGallery] = useState<{ publicGalleryUrl: string | null } | null>(null);
   const [filter, setFilter] = useState<"all" | "nova" | "visualizada mas não comprada" | "já comprada">("all");
@@ -118,7 +119,6 @@ export default function GalleryPage() {
         });
         setLoadFailed(false);
         setReleasedFolders(folderResult.folders ?? []);
-        setActivePhotoId((current) => current || result.photos[0]?.id || "");
       })
       .catch(() => {
         setReview(null);
@@ -249,11 +249,12 @@ export default function GalleryPage() {
       loadCart();
     }
   }
-  async function addComment(event: FormEvent<HTMLFormElement>) {
+  async function addComment(event: FormEvent<HTMLFormElement>, photoId: string) {
     event.preventDefault();
-    const body = new FormData(event.currentTarget).get("body");
+    const form = event.currentTarget;
+    const body = new FormData(form).get("body");
     const response = await fetch(
-      `/api/gallery/${galleryId}/photos/${activePhotoId}/comments`,
+      `/api/gallery/${galleryId}/photos/${photoId}/comments`,
       {
         method: "POST",
         credentials: "same-origin",
@@ -267,7 +268,7 @@ export default function GalleryPage() {
         : "Não foi possível enviar o comentário.",
     );
     if (response.ok) {
-      event.currentTarget.reset();
+      form.reset();
       loadComments();
     }
   }
@@ -315,15 +316,37 @@ export default function GalleryPage() {
     return (
       <SystemState title="Nenhuma foto liberada ainda" detail="Quando o fotógrafo concluir uma rodada, ela aparecerá aqui." />
     );
-  const activeComments = comments.filter(
-    (comment) => comment.photo_id === activePhotoId,
-  );
-  const counts = review.photos.reduce(
+  const reviewPhotos = selectionReviewMode ? review.photos.filter((photo) => photo.selected) : review.photos;
+  const counts = reviewPhotos.reduce(
     (result, photo) => ({ ...result, [photo.purchaseState]: (result[photo.purchaseState] ?? 0) + 1 }),
     {} as Record<string, number>,
   );
-  const visiblePhotos = filter === "all" ? review.photos : review.photos.filter((photo) => photo.purchaseState === filter);
+  const visiblePhotos = filter === "all" ? reviewPhotos : reviewPhotos.filter((photo) => photo.purchaseState === filter);
   const presentationFolders = releasedFolders.map((folder) => ({ id: folder.id, name: folder.name, photos: visiblePhotos.filter((photo) => photo.folderId === folder.id) })).filter((folder) => folder.photos.length);
+  function renderPhotoComments(photo: ReviewPhoto) {
+    const photoComments = comments.filter((comment) => comment.photo_id === photo.id);
+    return (
+      <section className="gallery-photo-comments" aria-label={`Comentários de ${photo.name}`}>
+        <h2>Comentários</h2>
+        <form className="auth-form" onSubmit={(event) => addComment(event, photo.id)}>
+          <label>
+            Comentário sobre {photo.name}
+            <input name="body" maxLength={2000} required />
+          </label>
+          <button type="submit" className="primary">Enviar comentário</button>
+        </form>
+        <ul className="photo-list">
+          {photoComments.map((comment) => (
+            <li key={comment.id}>
+              {comment.body}
+              <button type="button" className="link-button" onClick={() => removeComment(comment.id)}>Remover</button>
+            </li>
+          ))}
+        </ul>
+        {!photoComments.length ? <p className="form-message">Nenhum comentário nesta foto.</p> : null}
+      </section>
+    );
+  }
   return (
     <main className="admin-shell">
       {!review.gallery.selection_open && (
@@ -344,12 +367,12 @@ export default function GalleryPage() {
         {(["all", "nova", "visualizada mas não comprada", "já comprada"] as const).map((value) => (
           <button key={value} type="button" className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>
             {value === "all" ? "Todas" : value === "nova" ? "Novas fotos" : value === "visualizada mas não comprada" ? "Vistas, não compradas" : "Já compradas"}
-            <span>{value === "all" ? review.photos.length : counts[value] ?? 0}</span>
+            <span>{value === "all" ? reviewPhotos.length : counts[value] ?? 0}</span>
           </button>
         ))}
       </nav>
       {!visiblePhotos.length && <p className="notice">Nenhuma foto nesta categoria.</p>}
-      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} coverUrl={review.gallery.cover_preview_url ? `/api${review.gallery.cover_preview_url}` : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} folderDisplayMode={review.gallery.folder_display_mode ?? "individual"} titleStyle={{ color: review.gallery.cover_title_color, fontFamily: galleryFontFamily(review.gallery.cover_title_font), fontSize: review.gallery.cover_title_size, position: review.gallery.cover_title_position }} emptyDetail="Nenhuma foto desta categoria está disponível neste momento." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => <>
+      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: selectionReviewMode ? "Fotos selecionadas" : "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} folderDisplayMode={review.gallery.folder_display_mode ?? "individual"} titleStyle={{ color: review.gallery.cover_title_color, fontFamily: galleryFontFamily(review.gallery.cover_title_font), fontSize: review.gallery.cover_title_size, position: review.gallery.cover_title_position }} emptyDetail={selectionReviewMode ? "Nenhuma foto permanece selecionada. Volte à galeria pública para escolher suas fotos." : "Nenhuma foto desta categoria está disponível neste momento."} showCopyrightProtectionDialog renderExpandedPhotoContent={review.gallery.comments_enabled ? renderPhotoComments : undefined} renderPhotoMarkers={(photo) => <>
         <StatusBadge tone={photo.purchaseState === "já comprada" ? "success" : photo.purchaseState === "visualizada mas não comprada" ? "warning" : "neutral"}>{photo.purchaseState}</StatusBadge>
         {photo.purchaseState === "já comprada" ? <span className="gallery-presentation-marker is-purchased">Comprada</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={photo.selected} disabled={!review.gallery.selection_open} onClick={() => interaction(photo, "selection")}>{photo.selected ? "✓ Desmarcar" : "Selecionar"}</button>}
         {review.gallery.favorites_enabled ? <button type="button" className="gallery-presentation-marker" aria-pressed={photo.favorited} onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}
@@ -372,47 +395,6 @@ export default function GalleryPage() {
           {order.payment_status === "pending" && (!status || status === "refused") && <button className="primary" type="button" disabled={paymentBusy === order.order_id} onClick={() => reportPayment(order.order_id)}>{paymentBusy === order.order_id ? "Informando…" : "Informar pagamento"}</button>}
         </article>;
       })}</section>}
-      {review.gallery.comments_enabled && (
-        <section className="admin-card">
-          <h2>Comentários</h2>
-          <label>
-            Foto
-            <select
-              value={activePhotoId}
-              onChange={(event) => setActivePhotoId(event.target.value)}
-            >
-              {review.photos.map((photo) => (
-                <option key={photo.id} value={photo.id}>
-                  {photo.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <form className="auth-form" onSubmit={addComment}>
-            <label>
-              Comentário
-              <input name="body" maxLength={2000} required />
-            </label>
-            <button className="primary">Enviar comentário</button>
-          </form>
-          <ul className="photo-list">
-            {activeComments.map((comment) => (
-              <li key={comment.id}>
-                {comment.body}
-                <button
-                  className="link-button"
-                  onClick={() => removeComment(comment.id)}
-                >
-                  Remover
-                </button>
-              </li>
-            ))}
-          </ul>
-          {!activeComments.length && (
-            <p className="form-message">Nenhum comentário nesta foto.</p>
-          )}
-        </section>
-      )}
       {message && (
         <p className="form-message" role="status">
           {message}
