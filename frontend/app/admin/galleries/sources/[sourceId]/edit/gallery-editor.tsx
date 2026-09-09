@@ -32,7 +32,7 @@ type GalleryLink = { status: "active" | "unavailable" | "legacy_unrecoverable"; 
 type PrivateMember = { membership_id: string; client_id: string; client_name: string; phone_e164: string | null; status: "active" | "blocked" | "unlinked"; selected_count: number; purchased_count: number; order_count: number; confirmed_total_cents: number; payment_status: "none" | "pending" | "confirmed" };
 type PrivateAccessState = { loading: boolean; error: string | null; link: GalleryLink | null; members: PrivateMember[] };
 type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
-type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing"; preview_url: string | null; width: number | null; height: number | null };
+type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing" | "failed"; preview_url: string | null; width: number | null; height: number | null; error?: string | null };
 type DetailsData = { available: boolean; capabilities: string[]; font_options: FontOption[]; cover_options: CoverOption[]; settings: { cover_photo_id: string | null; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string } };
 type VisualPreview = { folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
 type UnlinkPreview = { operation_type: "unlink_client"; target: { parent_gallery_id: string; parent_gallery_name: string; client_id: string; client_name: string }; inventory: { remove: Record<string, number>; preserve: Record<string, number | Record<string, number>> }; consequences: { gallery_relationship_removed: boolean; private_gallery_removed: boolean; client_preserved: boolean; commercial_history_preserved: boolean; other_gallery_relationships_preserved: boolean; restoration_available_after_start: boolean } };
@@ -270,7 +270,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     () => folders.find((folder) => folder.id === openFolderId) ?? null,
     [folders, openFolderId],
   );
-  const coverPreviewUrl = details?.cover_options?.find((option) => option.id === details.settings?.cover_photo_id)?.preview_url ?? details?.settings?.cover_preview_url ?? editor?.gallery.cover_preview_url ?? null;
+  const currentCover = details?.cover_options?.find((option) => option.id === details.settings?.cover_photo_id) ?? details?.cover_options?.[0] ?? null;
+  const coverPreviewUrl = currentCover?.preview_url ?? details?.settings?.cover_preview_url ?? editor?.gallery.cover_preview_url ?? null;
   const titleFontFamily = details?.font_options?.find((option) => option.token === visualPreview?.cover_title_font)?.css_family ?? "var(--font-system-sans)";
   const activeEditableForm = currentStep === "ajustes" ? "gallery-settings-step" : currentStep === "vendas" ? "gallery-sales-step" : currentStep === "detalhes" ? "gallery-details-step" : null;
 
@@ -314,21 +315,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       setPhotos(data.photos ?? []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível abrir a pasta.");
-    }
-  }
-
-  async function setCover(photo: Photo) {
-    try {
-      await jsonRequest(`/api/admin/parent-galleries/${sourceId}/cover`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ photo_id: photo.id }),
-      });
-      setPhotos((current) => current.map((item) => ({ ...item, is_cover: item.id === photo.id })));
-      setMessage("Foto definida como capa da galeria.");
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível definir a capa.");
     }
   }
 
@@ -583,7 +569,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       });
       await jsonRequest(`/api${registered.upload_url}`, { method: "PUT", headers: { "content-type": "image/jpeg" }, body: file });
       setUploadState({ phase: "success", current: 1, total: 1, filename: file.name });
-      setMessage("Capa enviada para processamento. As opções serão atualizadas automaticamente.");
+      setMessage("Capa definida e enviada para processamento. A prévia será atualizada automaticamente.");
       setRefresh((value) => value + 1);
     } catch (error) {
       setUploadState({ phase: "error", current: 0, total: 1, filename: file.name });
@@ -591,11 +577,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     } finally {
       event.target.value = "";
     }
-  }
-
-  async function setCoverOption(option: CoverOption) {
-    const result = await mutate(`/api/admin/parent-galleries/${sourceId}/cover`, "PUT", { photo_id: option.id });
-    if (result) setMessage("Capa atualizada na prévia protegida.");
   }
 
   async function saveImagesAndAdvance() {
@@ -838,10 +819,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <div className="gallery-customization-panels">
                 <fieldset className="gallery-customization-panel">
                   <legend>Capa e título</legend>
-                  <p>Envie um JPEG dedicado ou escolha uma foto pronta da própria Galeria pública.</p>
+                  <p>Envie do seu dispositivo o JPEG que será usado exclusivamente como capa. As fotos das pastas não são carregadas nesta etapa.</p>
                   <input ref={coverUploadInput} type="file" accept="image/jpeg" hidden onChange={uploadCover} />
-                  <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>Enviar imagem de capa</MarkinaButton>
-                  {details?.cover_options?.length ? <div className="gallery-cover-options" role="group" aria-label="Opções de capa">{details.cover_options.map((option) => <button type="button" key={option.id} disabled={option.status !== "ready"} aria-pressed={details.settings?.cover_photo_id === option.id} onClick={() => setCoverOption(option)}>{option.preview_url ? <img src={`/api${option.preview_url}`} alt="" /> : <span>Processando</span>}<strong>{option.name}</strong><small>{option.source === "cover_assets" ? "Capa dedicada" : "Foto da galeria"}</small></button>)}</div> : <p className="gallery-scope-note">Nenhuma imagem enviada ainda.</p>}
+                  <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>{currentCover ? "Substituir imagem de capa" : "Enviar imagem de capa"}</MarkinaButton>
+                  {currentCover ? <div className={`cover-upload-current cover-upload-current--${currentCover.status}`} role="status"><strong>{currentCover.name}</strong><small>{currentCover.status === "ready" ? "Capa pronta para apresentação" : currentCover.status === "failed" ? currentCover.error ?? "O processamento falhou. Envie novamente esta capa ou escolha outro JPEG." : "Processando a prévia protegida da capa"}</small></div> : <p className="gallery-scope-note">Nenhuma imagem de capa enviada ainda.</p>}
                   <label>Tipografia do título<select name="cover_title_font" defaultValue={details?.settings?.cover_title_font ?? editor.gallery.cover_title_font}>{details?.font_options?.map((option) => <option key={option.token} value={option.token}>{option.label} · {option.category === "handwritten" ? "Manuscrita" : option.category === "editorial" ? "Editorial" : "Sem serifa"}</option>)}</select></label>
                   <label>Cor do título<input name="cover_title_color" type="color" defaultValue={editor.gallery.cover_title_color} /></label>
                   <label>Tamanho do título<input name="cover_title_size" type="number" min={12} max={96} defaultValue={editor.gallery.cover_title_size} /></label>
@@ -874,7 +855,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <div className="gallery-folder-workspace">
               <div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Disponível" : "Preparando prévias"}</StatusBadge></div>
               {uploadState.phase !== "idle" ? <div className={`upload-status upload-status--${uploadState.phase}`} role="status"><strong>{uploadState.phase === "uploading" ? `Enviando foto ${uploadState.current} de ${uploadState.total}` : uploadState.phase === "success" ? "Upload concluído" : "Falha no upload"}</strong>{uploadState.filename ? <span>{uploadState.filename}</span> : null}{uploadState.phase === "uploading" ? <progress value={uploadState.current} max={uploadState.total} /> : null}</div> : null}
-              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button" disabled={bulkDeleteBusy || !photo.preview_url || photo.is_cover} onClick={() => setCover(photo)}>{photo.is_cover ? "Capa atual" : "Usar como capa"}</button><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}
+              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione os JPEGs abaixo para iniciar o processamento." />}
               <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
             </div>
           ) : null}

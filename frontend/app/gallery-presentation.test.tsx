@@ -56,6 +56,31 @@ describe("apresentação editorial compartilhada", () => {
     expect(screen.queryByRole("button", { name: /Selecionar Horizontal/ })).toBeNull();
   });
 
+  it("mantém conteúdo contextual sob a mídia e notifica a troca da foto ampliada", () => {
+    const onExpandedPhotoChange = vi.fn();
+    render(
+      <GalleryPresentation
+        galleryName="Evento"
+        folders={folders.slice(0, 1)}
+        onExpandedPhotoChange={onExpandedPhotoChange}
+        renderExpandedPhotoContent={(photo) => <section aria-label={`Painel de ${photo.name}`}>Conteúdo de {photo.name}</section>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    const dialog = screen.getByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" });
+    const media = screen.getByRole("img", { name: "Prévia protegida ampliada de Horizontal.jpg" }).closest(".gallery-presentation-dialog-media")!;
+    const context = screen.getByRole("region", { name: "Painel de Horizontal.jpg" }).closest(".gallery-presentation-dialog-context")!;
+    expect(media.compareDocumentPosition(context) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(onExpandedPhotoChange).toHaveBeenLastCalledWith(folders[0].photos[0]);
+
+    fireEvent.keyDown(dialog, { key: "ArrowRight" });
+    expect(screen.getByRole("region", { name: "Painel de Vertical.jpg" })).toBeTruthy();
+    expect(onExpandedPhotoChange).toHaveBeenLastCalledWith(folders[0].photos[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(onExpandedPhotoChange).toHaveBeenLastCalledWith(null);
+  });
+
   it("explica a limitação de screenshot e bloqueia cópia direta", () => {
     render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
     fireEvent.keyUp(window, { key: "PrintScreen" });

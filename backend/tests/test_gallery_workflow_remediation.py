@@ -480,6 +480,25 @@ def test_dedicated_cover_upload_reuses_technical_folder_and_media_pipeline(
     with SessionLocal() as db:
         photo = db.get(PhotoAsset, photo_id)
         assert photo is not None and photo.available is False
+        parent = db.get(ParentGallery, parent_id)
+        assert parent is not None and parent.cover_photo_id == photo_id
+    processing_details = client.get(f"/admin/parent-galleries/{parent_id}/details").json()
+    assert processing_details["settings"]["cover_photo_id"] == str(photo_id)
+    assert processing_details["cover_options"] == [
+        {
+            "id": str(photo_id),
+            "name": "Capa principal",
+            "source": "cover_assets",
+            "status": "processing",
+            "preview_url": None,
+            "width": None,
+            "height": None,
+            "error": None,
+        }
+    ]
+    with SessionLocal() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        assert photo is not None
         generate_derivatives(db, photo)
         assert (
             len(
@@ -495,10 +514,6 @@ def test_dedicated_cover_upload_reuses_technical_folder_and_media_pipeline(
             == 1
         )
 
-    selected = client.put(
-        f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(photo_id)}
-    )
-    assert selected.status_code == 200
     details = client.get(f"/admin/parent-galleries/{parent_id}/details").json()
     assert details["settings"]["cover_photo_id"] == str(photo_id)
     assert details["cover_options"][0]["status"] == "ready"
@@ -507,3 +522,101 @@ def test_dedicated_cover_upload_reuses_technical_folder_and_media_pipeline(
     assert (
         client.get(f"/admin/parent-galleries/{parent_id}/available-photos").json()["photos"] == []
     )
+
+
+def test_details_returns_only_the_configured_legacy_cover_without_cataloging_content(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento legado")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Conteúdo", purpose="content")
+        db.add(folder)
+        db.flush()
+        legacy_cover = ready_photo(
+            db, parent=parent, folder=folder, filename="capa-legada.jpg"
+        )
+        ready_photo(db, parent=parent, folder=folder, filename="outra-foto.jpg")
+        parent.cover_photo_id = legacy_cover.id
+        db.commit()
+        parent_id, legacy_cover_id = parent.id, legacy_cover.id
+
+    details = client.get(f"/admin/parent-galleries/{parent_id}/details")
+    assert details.status_code == 200
+    assert details.json()["settings"]["cover_photo_id"] == str(legacy_cover_id)
+    assert details.json()["cover_options"] == [
+        {
+            "id": str(legacy_cover_id),
+            "name": "capa-legada.jpg",
+            "source": "content",
+            "status": "ready",
+            "preview_url": f"/admin/photo-assets/{legacy_cover_id}/watermarked-preview",
+            "width": 1200,
+            "height": 800,
+            "error": None,
+        }
+    ]
+
+
+def test_latest_accepted_cover_upload_wins_and_failed_cover_remains_recoverable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento concorrente")
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+    uploads = []
+    for index in (1, 2):
+        registered = client.post(
+            f"/admin/parent-galleries/{parent_id}/cover-photos",
+            json={
+                "filename": f"capa-{index}.jpg",
+                "display_name": f"Capa {index}",
+                "idempotency_key": f"cover-concurrent-key-{index:04d}",
+            },
+        )
+        assert registered.status_code == 201
+        accepted = client.put(
+            registered.json()["upload_url"],
+            content=jpeg_bytes(),
+            headers={"content-type": "image/jpeg"},
+        )
+        assert accepted.status_code == 202
+        uploads.append(UUID(registered.json()["id"]))
+
+    with SessionLocal() as db:
+        parent = db.get(ParentGallery, parent_id)
+        assert parent is not None and parent.cover_photo_id == uploads[1]
+        failed_job = db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == uploads[1]))
+        assert failed_job is not None
+        failed_job.status = "failed"
+        failed_job.last_error = "Falha sintética recuperável"
+        first_photo = db.get(PhotoAsset, uploads[0])
+        assert first_photo is not None
+        generate_derivatives(db, first_photo)
+        db.commit()
+        assert db.scalar(
+            select(ParentGallery.cover_photo_id).where(ParentGallery.id == parent_id)
+        ) == uploads[1]
+        assert len(
+            list(
+                db.scalars(
+                    select(PhotoAsset).join(PhotoFolder).where(
+                        PhotoAsset.parent_gallery_id == parent_id,
+                        PhotoFolder.purpose == "cover_assets",
+                    )
+                )
+            )
+        ) == 2
+
+    details = client.get(f"/admin/parent-galleries/{parent_id}/details").json()
+    assert details["cover_options"][0]["id"] == str(uploads[1])
+    assert details["cover_options"][0]["status"] == "failed"
+    assert details["cover_options"][0]["error"] == "Falha sintética recuperável"

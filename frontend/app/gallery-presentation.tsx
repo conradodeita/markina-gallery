@@ -37,6 +37,8 @@ type GalleryPresentationProps<TPhoto extends GalleryPresentationPhoto> = {
   renderPhotoMarkers?: (photo: TPhoto) => ReactNode;
   featuredGroups?: Array<{ id: string; title: string; detail: string; photos: TPhoto[] }>;
   renderFeaturedPhotoMarkers?: (photo: TPhoto) => ReactNode;
+  renderExpandedPhotoContent?: (photo: TPhoto) => ReactNode;
+  onExpandedPhotoChange?: (photo: TPhoto | null) => void;
   showCopyrightProtectionDialog?: boolean;
 };
 
@@ -68,6 +70,8 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   renderPhotoMarkers,
   featuredGroups = [],
   renderFeaturedPhotoMarkers,
+  renderExpandedPhotoContent,
+  onExpandedPhotoChange,
   showCopyrightProtectionDialog = false,
 }: GalleryPresentationProps<TPhoto>) {
   const availableFolders = folders.filter((folder) => folder.photos.length > 0);
@@ -98,6 +102,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
         setProtectionMessage("Captura detectada. O navegador não consegue impedir screenshots; a prévia continua identificada pela marca-d’água.");
         if (showCopyrightProtectionDialog) {
           setExpandedPhotoId(null);
+          onExpandedPhotoChange?.(null);
           setCopyrightDialogOpen(true);
         }
       }
@@ -108,6 +113,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
         setProtectionMessage("Conteúdo protegido: o download direto está desativado. A marca-d’água identifica esta prévia.");
         if (showCopyrightProtectionDialog) {
           setExpandedPhotoId(null);
+          onExpandedPhotoChange?.(null);
           setCopyrightDialogOpen(true);
         }
       }
@@ -118,11 +124,11 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
       window.removeEventListener("keyup", detectScreenshot);
       window.removeEventListener("keydown", detectSaveShortcut);
     };
-  }, [showCopyrightProtectionDialog]);
+  }, [showCopyrightProtectionDialog, onExpandedPhotoChange]);
 
   function showCopyrightWarning() {
     if (!showCopyrightProtectionDialog) return;
-    setExpandedPhotoId(null);
+    closeExpanded();
     setCopyrightDialogOpen(true);
   }
 
@@ -132,9 +138,19 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
     showCopyrightWarning();
   }
 
+  function openExpanded(photo: TPhoto) {
+    setExpandedPhotoId(photo.id);
+    onExpandedPhotoChange?.(photo);
+  }
+
+  function closeExpanded() {
+    setExpandedPhotoId(null);
+    onExpandedPhotoChange?.(null);
+  }
+
   function moveExpanded(step: number) {
     if (!photos.length || expandedIndex < 0) return;
-    setExpandedPhotoId(photos[(expandedIndex + step + photos.length) % photos.length].id);
+    openExpanded(photos[(expandedIndex + step + photos.length) % photos.length]);
   }
 
   const heroTitleStyle = {
@@ -143,7 +159,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
     fontSize: titleStyle?.fontSize ? `${titleStyle.fontSize}px` : undefined,
   };
   const renderPhoto = (photo: TPhoto, markers = renderPhotoMarkers) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
-    <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => setExpandedPhotoId(photo.id)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
+    <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => openExpanded(photo)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
     {markers ? <div className="gallery-presentation-photo-markers">{markers(photo)}</div> : null}
     <div className="gallery-presentation-photo-details"><strong>{photo.name}</strong>{renderPhotoDetails?.(photo)}</div>
   </article>;
@@ -191,7 +207,43 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
 
       {copyrightDialogOpen ? <div className="mk-dialog-backdrop" role="presentation" onMouseDown={() => setCopyrightDialogOpen(false)}><div ref={copyrightDialog} className="mk-dialog gallery-copyright-dialog" role="dialog" aria-modal="true" aria-labelledby="gallery-copyright-title" aria-describedby="gallery-copyright-law gallery-copyright-request gallery-copyright-thanks" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") setCopyrightDialogOpen(false); }}><p className="eyebrow">Proteção da obra fotográfica</p><h2 id="gallery-copyright-title">Conteúdo protegido por direitos autorais</h2><p id="gallery-copyright-law">Nossas fotos são protegidas por direitos autorais, conforme estabelecido na <strong>Lei nº 9.610/98</strong>, especialmente em seu <strong>artigo 79</strong>.</p><p id="gallery-copyright-request">Pedimos que não copie ou compartilhe as imagens sem nossa autorização prévia.</p><p id="gallery-copyright-thanks"><strong>Agradecemos pela sua compreensão!</strong></p><div className="mk-dialog__actions"><button type="button" className="mk-button mk-button--primary" onClick={() => setCopyrightDialogOpen(false)}>Entendi</button></div></div></div> : null}
 
-      {expandedPhoto ? <div className="gallery-presentation-dialog-backdrop" role="presentation" onMouseDown={() => setExpandedPhotoId(null)}><div ref={dialog} className="gallery-presentation-dialog" role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhotoId(null); if (event.key === "ArrowLeft") moveExpanded(-1); if (event.key === "ArrowRight") moveExpanded(1); }} onTouchStart={(event) => { touchStartX.current = event.changedTouches[0]?.clientX ?? null; }} onTouchEnd={(event) => { const end = event.changedTouches[0]?.clientX; if (touchStartX.current !== null && end !== undefined && Math.abs(end - touchStartX.current) > 50) moveExpanded(end < touchStartX.current ? 1 : -1); touchStartX.current = null; }}><div className="gallery-presentation-dialog-header"><span>Prévia protegida</span><button type="button" className="gallery-presentation-close" onClick={() => setExpandedPhotoId(null)}>Fechar</button></div><div className="gallery-presentation-dialog-media gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}><img src={expandedPhoto.previewUrl} alt={`Prévia protegida ampliada de ${expandedPhoto.name}`} draggable={false} width={expandedPhoto.width ?? undefined} height={expandedPhoto.height ?? undefined} /></div><div className="gallery-presentation-dialog-footer"><strong>{expandedPhoto.name}</strong>{photos.length > 1 ? <div><button type="button" onClick={() => moveExpanded(-1)}>Anterior</button><button type="button" onClick={() => moveExpanded(1)}>Próxima</button></div> : null}</div></div></div> : null}
+      {expandedPhoto ? (
+        <div className="gallery-presentation-dialog-backdrop" role="presentation" onMouseDown={closeExpanded}>
+          <div
+            ref={dialog}
+            className="gallery-presentation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Prévia ampliada de ${expandedPhoto.name}`}
+            tabIndex={-1}
+            onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeExpanded();
+              if (event.key === "ArrowLeft") moveExpanded(-1);
+              if (event.key === "ArrowRight") moveExpanded(1);
+            }}
+            onTouchStart={(event) => { touchStartX.current = event.changedTouches[0]?.clientX ?? null; }}
+            onTouchEnd={(event) => {
+              const end = event.changedTouches[0]?.clientX;
+              if (touchStartX.current !== null && end !== undefined && Math.abs(end - touchStartX.current) > 50) moveExpanded(end < touchStartX.current ? 1 : -1);
+              touchStartX.current = null;
+            }}
+          >
+            <div className="gallery-presentation-dialog-header">
+              <span>Prévia protegida</span>
+              <button type="button" className="gallery-presentation-close" onClick={closeExpanded}>Fechar</button>
+            </div>
+            <div className="gallery-presentation-dialog-media gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
+              <img src={expandedPhoto.previewUrl} alt={`Prévia protegida ampliada de ${expandedPhoto.name}`} draggable={false} width={expandedPhoto.width ?? undefined} height={expandedPhoto.height ?? undefined} />
+            </div>
+            {renderExpandedPhotoContent ? <div className="gallery-presentation-dialog-context">{renderExpandedPhotoContent(expandedPhoto)}</div> : null}
+            <div className="gallery-presentation-dialog-footer">
+              <strong>{expandedPhoto.name}</strong>
+              {photos.length > 1 ? <div><button type="button" onClick={() => moveExpanded(-1)}>Anterior</button><button type="button" onClick={() => moveExpanded(1)}>Próxima</button></div> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

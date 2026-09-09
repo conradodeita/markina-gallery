@@ -2825,38 +2825,44 @@ def parent_gallery_details(
 ) -> dict[str, object]:
     require_admin(request)
     gallery = _parent_gallery_or_404(db, parent_gallery_id)
-    cover_rows = list(
-        db.execute(
-            select(PhotoAsset, PhotoFolder, MediaDerivative)
-            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
-            .outerjoin(
-                MediaDerivative,
-                (MediaDerivative.photo_asset_id == PhotoAsset.id)
-                & (MediaDerivative.variant == "client_preview")
-                & (MediaDerivative.status == "ready"),
-            )
-            .where(PhotoAsset.parent_gallery_id == gallery.id)
-            .order_by(PhotoFolder.purpose, PhotoFolder.position, PhotoAsset.created_at)
-        )
+    cover = db.get(PhotoAsset, gallery.cover_photo_id) if gallery.cover_photo_id else None
+    if cover and cover.parent_gallery_id != gallery.id:
+        cover = None
+    cover_folder = db.get(PhotoFolder, cover.folder_id) if cover else None
+    cover_derivative = _client_preview_derivative(db, cover.id) if cover else None
+    cover_job = (
+        db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == cover.id)) if cover else None
+    )
+    cover_status = (
+        "ready"
+        if cover_derivative
+        else "failed"
+        if cover_job and cover_job.status == "failed"
+        else "processing"
+    )
+    cover_options = (
+        [
+            {
+                "id": str(cover.id),
+                "name": cover.display_name or cover.filename,
+                "source": cover_folder.purpose if cover_folder else "cover_assets",
+                "status": cover_status,
+                "preview_url": f"/admin/photo-assets/{cover.id}/watermarked-preview"
+                if cover_derivative
+                else None,
+                "width": cover_derivative.width if cover_derivative else None,
+                "height": cover_derivative.height if cover_derivative else None,
+                "error": cover_job.last_error if cover_status == "failed" and cover_job else None,
+            }
+        ]
+        if cover
+        else []
     )
     return {
         "available": True,
         "capabilities": ["cover", "title"],
         "font_options": list(TITLE_FONT_OPTIONS),
-        "cover_options": [
-            {
-                "id": str(photo.id),
-                "name": photo.display_name or photo.filename,
-                "source": folder.purpose,
-                "status": "ready" if derivative else "processing",
-                "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview"
-                if derivative
-                else None,
-                "width": derivative.width if derivative else None,
-                "height": derivative.height if derivative else None,
-            }
-            for photo, folder, derivative in cover_rows
-        ],
+        "cover_options": cover_options,
         "settings": {
             "cover_photo_id": str(gallery.cover_photo_id) if gallery.cover_photo_id else None,
             "cover_preview_url": _cover_preview_url(db, gallery),
@@ -4860,6 +4866,11 @@ async def import_photo_source(
     destination = safe_source_path(photo)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(body)
+    if folder.purpose == "cover_assets":
+        gallery = db.get(ParentGallery, photo.parent_gallery_id)
+        if gallery:
+            gallery.cover_photo_id = photo.id
+            audit(db, "parent_gallery.cover_upload_accepted", str(photo.id))
     enqueue_derivatives(db, photo)
     audit(db, "photo_asset.imported", str(photo.id))
     db.commit()

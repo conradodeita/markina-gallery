@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
+vi.mock("next/link", () => ({ default: ({ children, href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => <a href={href} {...props}>{children}</a> }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ galleryId: "public-1" }) }));
 
 import PublicGalleryPage from "./[galleryId]/page";
@@ -40,11 +40,13 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({ method: "POST", credentials: "same-origin" }),
     ));
     expect(await screen.findByText("Sua seleção foi iniciada e ficará salva nesta galeria.")).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "Revisar seleção" })).toHaveLength(2);
+    const proceedLinks = screen.getAllByRole("link", { name: "Prosseguir" });
+    expect(proceedLinks).toHaveLength(2);
     expect((screen.getByRole("button", { name: /Desmarcar/ }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("7,00");
-    expect(screen.getAllByRole("link", { name: "Revisar seleção" })[1].getAttribute("href")).toBe("/gallery/private-1");
+    expect(proceedLinks[1].getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(proceedLinks[1].className).toContain("selection-summary__proceed");
   });
 
   it("não mostra grade coletiva ou não autorizada quando o backend nega", async () => {

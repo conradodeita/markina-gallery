@@ -603,13 +603,12 @@ describe("editor administrativo de galeria", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-new/edit/ajustes"));
   });
 
-  it("abre a prévia protegida em modal e envia a escolha de capa ao backend", async () => {
+  it("abre a prévia protegida sem oferecer a foto de conteúdo como capa", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: "/admin/photo-assets/photo-1/watermarked-preview", released_at: null }] });
       if (path.endsWith("/clients")) return response({ clients: [] });
       if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "FOTO_001.jpg", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", status: "completed", error: null, can_delete: true, is_cover: false }] });
-      if (path.endsWith("/cover") && init?.method === "PUT") return response({ photo_id: "photo-1", preview_url: "/admin/photo-assets/photo-1/watermarked-preview" });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -621,11 +620,9 @@ describe("editor administrativo de galeria", () => {
     expect(dialog).toBeTruthy();
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Usar como capa" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/source-1/cover",
-      expect.objectContaining({ method: "PUT" }),
-    ));
+    expect(screen.queryByRole("button", { name: "Usar como capa" })).toBeNull();
+    expect(screen.queryByText("Capa atual")).toBeNull();
+    expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/cover") && init?.method === "PUT")).toBe(false);
   });
 
   it("confirma a exclusão no contexto da pasta, sem criar dados no navegador", async () => {
@@ -779,20 +776,17 @@ describe("editor administrativo de galeria", () => {
     expect(screen.queryByLabelText(/css/i)).toBeNull();
   });
 
-  it("escolhe uma capa pronta e atualiza a prévia de título de forma reativa", async () => {
-    const details = { available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }, { token: "handwritten-caveat", label: "Caveat", category: "handwritten", css_family: "var(--font-handwritten-caveat)" }], cover_options: [{ id: "cover-1", name: "CAPA.jpg", source: "cover_assets", status: "ready", preview_url: "/admin/photo-assets/cover-1/watermarked-preview", width: 1600, height: 1067 }], settings: { cover_photo_id: "cover-1", cover_preview_url: "/admin/photo-assets/cover-1/watermarked-preview", cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : path.endsWith("/cover") && init?.method === "PUT" ? response({ photo_id: "cover-1" }) : response(details));
+  it("mostra somente a capa vigente e atualiza a prévia de título de forma reativa", async () => {
+    const details = { available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }, { token: "handwritten-caveat", label: "Caveat", category: "handwritten", css_family: "var(--font-handwritten-caveat)" }], cover_options: [{ id: "cover-1", name: "CAPA.jpg", source: "cover_assets", status: "ready", preview_url: "/admin/photo-assets/cover-1/watermarked-preview", width: 1600, height: 1067, error: null }, { id: "content-1", name: "NÃO LISTAR.jpg", source: "content", status: "ready", preview_url: "/admin/photo-assets/content-1/watermarked-preview", width: 1600, height: 1067, error: null }], settings: { cover_photo_id: "cover-1", cover_preview_url: "/admin/photo-assets/cover-1/watermarked-preview", cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
+    const fetchMock = vi.fn((path: string, _init?: RequestInit) => path.endsWith("/editor") ? response(editor) : response(details));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="detalhes" />);
 
-    const coverButton = (await screen.findByText("CAPA.jpg")).closest("button") as HTMLButtonElement;
-    coverButton.focus();
-    expect(document.activeElement).toBe(coverButton);
-    fireEvent.click(coverButton);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/source-1/cover",
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ photo_id: "cover-1" }) }),
-    ));
+    expect(await screen.findByText("CAPA.jpg")).toBeTruthy();
+    expect(screen.getByText("Capa pronta para apresentação")).toBeTruthy();
+    expect(screen.queryByText("NÃO LISTAR.jpg")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Opções de capa" })).toBeNull();
+    expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/cover") && init?.method === "PUT")).toBe(false);
     fireEvent.change(screen.getByLabelText("Tipografia do título"), { target: { value: "handwritten-caveat" } });
     fireEvent.change(screen.getByLabelText("Cor do título"), { target: { value: "#112233" } });
     const previewTitle = screen.getByText("Festa escolar", { selector: ".gallery-customization-preview-image strong" });
@@ -826,7 +820,8 @@ describe("editor administrativo de galeria", () => {
       "/api/admin/photo-assets/cover-2/source",
       expect.objectContaining({ method: "PUT", body: file }),
     ));
-    expect(await screen.findByText(/Capa enviada para processamento/)).toBeTruthy();
+    expect(await screen.findByText(/Capa definida e enviada para processamento/)).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/cover") && init?.method === "PUT")).toBe(false);
   });
 
   it("mantém Imagens focada em pastas e upload", async () => {
