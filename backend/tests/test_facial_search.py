@@ -74,7 +74,7 @@ def _settings(tmp_path: Path, *, enabled: bool = True) -> FacialSettings:
         model_idle_seconds=300,
         job_lease_seconds=120,
         queue_block_seconds=10,
-        max_reference_bytes=10_485_760,
+        max_reference_bytes=31_457_280,
         max_reference_pixels=25_000_000,
     )
 
@@ -193,11 +193,13 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
     assert available["state"] == "consent_required"
     assert available["index"] == {"state": "processing", "ready": 0, "total": 1}
     assert available["consent_version"] == "consent-v1"
+    assert available["max_reference_bytes"] == 31_457_280
     assert available["minor_search_available"] is False
     assert unavailable == {
         "state": "unavailable",
         "manual_selection_available": True,
         "minor_search_available": False,
+        "max_reference_bytes": 31_457_280,
     }
 
 

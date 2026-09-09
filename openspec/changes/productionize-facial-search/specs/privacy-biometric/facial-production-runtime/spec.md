@@ -39,7 +39,24 @@ Quando a capacidade estiver habilitada para uma galeria, o sistema SHALL indexar
 
 ### Requirement: Busca facial autenticada e individual da cliente
 
-A cliente SHALL poder enviar uma referência somente após autenticação, vínculo vigente com a Galeria pública, aviso e consentimento versionados. A consulta SHALL continuar em job durável se a cliente fechar a página, SHALL ser recuperável no retorno e SHALL mostrar progresso real. Ao concluir, `Melhores resultados encontrados` e `Outros resultados encontrados` SHALL aparecer antes do acervo integral, sem expor score, vetor ou identidade inferida.
+A cliente SHALL poder enviar uma referência somente após autenticação, vínculo vigente com a Galeria pública, aviso e consentimento versionados. No celular, a interface SHALL oferecer escolhas explícitas para usar uma foto JPEG existente ou abrir a câmera e SHALL NOT forçar captura ao escolher o arquivo existente. O diálogo SHALL usar controles coesos e responsivos, sem expor o campo nativo de arquivo como ação principal. Em desktop, o diálogo SHALL preservar largura legível, hierarquia visual e ações acessíveis sem ultrapassar o viewport. O sistema SHALL aceitar JPEGs de até 30 MiB no navegador, proxy e API, SHALL informar o limite antes do envio e SHALL apresentar mensagem específica quando ele for excedido, preservando as validações de tipo, pixels e descompressão. A consulta SHALL continuar em job durável se a cliente fechar a página, SHALL ser recuperável no retorno e SHALL mostrar progresso real. Ao concluir, `Melhores resultados encontrados` e `Outros resultados encontrados` SHALL aparecer antes do acervo integral, sem expor score, vetor ou identidade inferida.
+
+#### Scenario: Cliente escolhe a origem da referência no celular
+
+- **WHEN** a cliente abre o diálogo de busca facial em um smartphone
+- **THEN** ela pode escolher uma foto JPEG da galeria do aparelho ou usar a câmera por ações distintas, com alvo de toque legível, sem pré-visualizar nem persistir a referência no navegador
+
+#### Scenario: Cliente usa a busca facial no desktop
+
+- **WHEN** a cliente abre o diálogo em um navegador desktop
+- **THEN** o conteúdo permanece centralizado, legível e contido no viewport, com origem, declaração, consentimento e ações em hierarquia clara
+
+#### Scenario: Cliente seleciona uma referência grande
+
+- **WHEN** a cliente escolhe uma JPEG de até 30 MiB
+- **THEN** navegador, proxy e API aceitam o envio sob o mesmo contrato funcional
+- **WHEN** o arquivo excede 30 MiB
+- **THEN** a interface impede a transferência e informa especificamente o limite de 30 MB
 
 #### Scenario: Cliente abandona e retorna
 

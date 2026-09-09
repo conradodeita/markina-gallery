@@ -111,7 +111,7 @@ describe("polling da busca facial", () => {
 });
 
 describe("jornada mobile e privacidade da referência", () => {
-  it("envia JPEG pela captura mobile e persiste somente o identificador opaco da consulta", async () => {
+  it("oferece fototeca e câmera separadas, envia JPEG e persiste somente o identificador opaco", async () => {
     const created = { ...queued, id: "opaque-request-2" };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/facial-search")) {
@@ -121,6 +121,7 @@ describe("jornada mobile e privacidade da referência", () => {
           minor_search_available: false,
           consent_version: "consent-v1",
           legal_notice_version: "notice-v1",
+          max_reference_bytes: 31_457_280,
         });
       }
       if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
@@ -131,14 +132,30 @@ describe("jornada mobile e privacidade da referência", () => {
     render(<EmptyHarness />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
-    const input = screen.getByLabelText("Foto JPEG com uma pessoa") as HTMLInputElement;
-    expect(input.accept).toBe("image/jpeg");
-    expect(input.getAttribute("capture")).toBe("user");
+    const libraryInput = screen.getByLabelText("Escolher foto JPEG da galeria do celular") as HTMLInputElement;
+    const cameraInput = screen.getByLabelText("Tirar foto JPEG com a câmera") as HTMLInputElement;
+    expect(libraryInput.accept).toBe("image/jpeg");
+    expect(libraryInput.getAttribute("capture")).toBeNull();
+    expect(libraryInput.hidden).toBe(true);
+    expect(cameraInput.accept).toBe("image/jpeg");
+    expect(cameraInput.getAttribute("capture")).toBe("user");
+    expect(cameraInput.hidden).toBe(true);
+    const libraryClick = vi.spyOn(libraryInput, "click");
+    const cameraClick = vi.spyOn(cameraInput, "click");
+    fireEvent.click(screen.getByRole("button", { name: "Escolher foto do celular" }));
+    fireEvent.click(screen.getByRole("button", { name: "Usar câmera" }));
+    expect(libraryClick).toHaveBeenCalledOnce();
+    expect(cameraClick).toHaveBeenCalledOnce();
+    const submitButton = screen.getByRole("button", { name: "Concordar e procurar" }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
     const reference = new File(["private-reference-bytes"], "referencia.jpg", { type: "image/jpeg" });
-    fireEvent.change(input, { target: { files: [reference] } });
+    Object.defineProperty(reference, "size", { value: 31_457_280 });
+    fireEvent.change(libraryInput, { target: { files: [reference] } });
+    expect(screen.getByText("Foto selecionada e pronta para envio.")).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo o uso temporário/ }));
-    fireEvent.submit(screen.getByRole("button", { name: "Concordar e procurar" }).closest("form")!);
+    expect(submitButton.disabled).toBe(false);
+    fireEvent.submit(submitButton.closest("form")!);
 
     await waitFor(() => expect(screen.getByTestId("search-state").textContent).toBe("queued"));
     expect(fetchMock).toHaveBeenCalledWith(
@@ -150,6 +167,34 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(window.localStorage.length).toBe(0);
     expect(JSON.stringify({ ...window.sessionStorage })).not.toContain("private-reference-bytes");
     expect(document.querySelector("img[src^='data:'], img[src^='blob:']")).toBeNull();
+  });
+
+  it("rejeita JPEG acima de 30 MB antes do upload e mantém o erro visível no diálogo", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      void init;
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required",
+        manual_selection_available: true,
+        minor_search_available: false,
+        consent_version: "consent-v1",
+        max_reference_bytes: 31_457_280,
+      });
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmptyHarness />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    const reference = new File(["jpeg"], "grande.jpg", { type: "image/jpeg" });
+    Object.defineProperty(reference, "size", { value: 31_457_281 });
+    fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), {
+      target: { files: [reference] },
+    });
+
+    expect(screen.getByRole("alert").textContent).toBe("Escolha uma foto JPEG de até 30 MB.");
+    expect(screen.queryByText("Foto selecionada e pronta para envio.")).toBeNull();
+    expect((screen.getByRole("button", { name: "Concordar e procurar" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 
   it.each([

@@ -23,6 +23,7 @@ export type FacialSearchAvailability = {
   legal_notice_version?: string;
   reference_retention_seconds?: number;
   candidate_retention_seconds?: number;
+  max_reference_bytes?: number;
   index?: { state: string; ready: number; total: number };
 };
 
@@ -86,7 +87,9 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const retryAfter = Number(response.headers.get("Retry-After"));
     throw new FacialApiError(
-      payload?.detail ?? "Não foi possível concluir a operação facial.",
+      payload?.detail ?? (response.status === 413
+        ? "A foto excede o limite de 30 MB."
+        : "Não foi possível concluir a operação facial."),
       response.status,
       Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
     );

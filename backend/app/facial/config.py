@@ -171,7 +171,7 @@ def facial_settings_from_environment(
             "FACIAL_QUEUE_BLOCK_SECONDS", 10, minimum=1, maximum=60
         ),
         max_reference_bytes=_integer(
-            "FACIAL_MAX_REFERENCE_BYTES", 10_485_760, minimum=65_536, maximum=20_971_520
+            "FACIAL_MAX_REFERENCE_BYTES", 31_457_280, minimum=65_536, maximum=31_457_280
         ),
         max_reference_pixels=_integer(
             "FACIAL_MAX_REFERENCE_PIXELS", 25_000_000, minimum=1_000_000, maximum=40_000_000
