@@ -18,6 +18,15 @@ class FakeImage:
     shape = (480, 640, 3)
 
 
+class LargeFakeImage:
+    shape = (4000, 6000, 3)
+
+
+class ResizedFakeImage:
+    def __init__(self, width: int, height: int) -> None:
+        self.shape = (height, width, 3)
+
+
 class FakeVariance:
     def var(self) -> float:
         return 64.0
@@ -57,12 +66,18 @@ class Factory:
 class FakeCv2:
     COLOR_BGR2GRAY = 1
     CV_64F = 2
+    INTER_AREA = 3
 
     def __init__(self, faces, *, dimensions: int = 128) -> None:
         self.detector = FakeDetector(faces)
         self.recognizer = FakeRecognizer(dimensions)
         self.FaceDetectorYN = Factory(self.detector)
         self.FaceRecognizerSF = Factory(self.recognizer)
+        self.resize_calls = []
+
+    def resize(self, _image, size, *, interpolation):
+        self.resize_calls.append((size, interpolation))
+        return ResizedFakeImage(*size)
 
     @staticmethod
     def cvtColor(image, _conversion):
@@ -124,6 +139,23 @@ def test_provider_rejects_wrong_embedding_dimensions_and_sanitizes_failure(
         provider.observe_image(FakeImage())
     with pytest.raises(FacialProviderError, match="não pôde ser lida"):
         provider.observe_image(None)
+
+
+def test_provider_bounds_high_resolution_detection_without_changing_contract(
+    tmp_path: Path,
+) -> None:
+    cv2 = FakeCv2(None)
+    provider = OpenCvSFaceProvider(*_model_files(tmp_path), cv2_module=cv2)
+
+    assert provider.observe_image(LargeFakeImage()) == []
+
+    assert len(cv2.resize_calls) == 1
+    (width, height), interpolation = cv2.resize_calls[0]
+    assert interpolation == cv2.INTER_AREA
+    assert width / height == pytest.approx(1.5, rel=0.01)
+    assert max(width, height) <= 1600
+    assert width * height <= 2_000_000
+    assert cv2.detector.input_size == (width, height)
 
 
 def test_query_requires_exactly_one_technically_usable_face() -> None:
