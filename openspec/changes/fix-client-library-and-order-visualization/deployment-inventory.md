@@ -1,16 +1,18 @@
 # Inventário de deploy em homologação
 
-## Estado candidato
+## Estado implantado
 
 - Change: `fix-client-library-and-order-visualization`.
-- Branch local: `feature/fix-client-library-and-order-visualization`.
+- Branch integrada: `feature/fix-client-library-and-order-visualization`.
 - Base da implementação: `0d48ab8de41f8ad59ee26439c9a3edd876e34727`, igual a `origin/develop` no início desta change.
 - SHA de implementação validada: `2573f8c7ab8cf3359d444094dafb1b5278b7eda4`.
-- SHA candidato de deploy: SHALL ser confirmado depois da integração em `develop`; o deploy MUST publicar exatamente o SHA integrado.
+- SHA integrado e publicado em homologação: `67dbd2933616d2005363db97c1fca9c6b66804bc`.
 - Destino previsto: `https://markina-homolog.duckdns.org`.
 - Migration: nenhuma.
 - Alterações de runtime: somente frontend; backend de produção, workers, filas, reconhecimento facial, preços, PIX, WhatsApp, mídia, banco e dados permanecem inalterados.
-- Autorização de push, merge e deploy desta change: pendente.
+- Autorização humana de push, merge, deploy e acompanhamento: concedida em `2026-09-10`.
+- Pull request integrado: `#63` (`https://github.com/conradodeita/markina-gallery/pull/63`).
+- Workflow de `develop`: execução `34540912766`, concluída com backend, frontend, Gitleaks, OpenSpec e `deploy-homolog` aprovados.
 
 ## Topologia preservada
 
@@ -29,13 +31,14 @@
 - Não alterar secrets nem `FACIAL_PROCESSING_ENABLED`; a configuração vigente SHALL ser preservada.
 - O teste backend adicionado apenas comprova que `/library` permanece em `15` consultas e `/library/purchases` em `6` consultas ao crescer de uma para cinco galerias/pedidos; nenhuma alteração backend de runtime foi necessária.
 
-## Ordem proposta após autorização
+## Execução autorizada
 
-1. Confirmar o SHA integrado em `develop` e os checks focados desta change.
-2. Inventariar no host o SHA remoto, containers, portas, volumes, espaço e estado facial antes da publicação.
-3. Publicar o frontend no SHA integrado usando exclusivamente o projeto Markina; preservar API, dados, mídia, workers e serviços de terceiros.
-4. Confirmar containers saudáveis e HTTP `200` em `/healthz`, `/api/health` e `/library`.
-5. Executar o roteiro autenticado em `homologation-checklist.md` no desktop e no celular.
+1. O SHA integrado em `develop` foi confirmado e publicado exatamente como `67dbd2933616d2005363db97c1fca9c6b66804bc`.
+2. O inventário remoto confirmou o projeto `markina-gallery`, entrada `127.0.0.1:8080`, subdomínio `markina-homolog.duckdns.org` e serviços saudáveis, sem remover o container órfão preexistente reportado pelo Compose.
+3. O frontend foi publicado preservando API, dados, mídia, workers e serviços de terceiros; nenhuma migration foi executada.
+4. `/healthz`, `/api/health` e `/library` responderam HTTP `200` após o deploy.
+5. `FACIAL_PROCESSING_ENABLED=true` permaneceu inalterado e os workers faciais permaneceram saudáveis.
+6. O roteiro autenticado foi executado sem selecionar fotos, informar/confirmar pagamento, enviar mídia ou alterar estado comercial; os resultados estão registrados em `homologation-checklist.md`.
 
 ## Rollback
 
