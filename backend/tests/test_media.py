@@ -127,6 +127,45 @@ def test_watermark_applies_configurable_opacity_shadow_position_and_security_lin
     assert plain.tobytes() != layered.tobytes()
 
 
+@pytest.mark.parametrize(
+    ("direction", "size", "position"),
+    [
+        ("horizontal", 10, "top-left"),
+        ("diagonal", 48, "middle-center"),
+        ("vertical", 96, "bottom-right"),
+    ],
+)
+def test_watermark_composes_text_once_and_keeps_security_grid_independent(
+    monkeypatch, direction, size, position
+):
+    source = Image.new("RGB", (1200, 800), color=(40, 60, 80))
+    composites: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    original_alpha_composite = Image.Image.alpha_composite
+
+    def recording_alpha_composite(self, overlay, dest=(0, 0), source=(0, 0)):
+        composites.append((overlay.size, tuple(dest)))
+        return original_alpha_composite(self, overlay, dest, source)
+
+    monkeypatch.setattr(Image.Image, "alpha_composite", recording_alpha_composite)
+    rendered = watermark(
+        source,
+        BrandingSettings(
+            watermark_text="MARCA ÚNICA",
+            watermark_direction=direction,
+            watermark_size=size,
+            watermark_position=position,
+            watermark_shadow=True,
+            watermark_security_lines=True,
+        ),
+    )
+
+    grid_composites = [item for item in composites if item[0] == source.size]
+    text_composites = [item for item in composites if item[0] != source.size]
+    assert rendered.size == source.size
+    assert len(grid_composites) == 1
+    assert len(text_composites) == 1
+
+
 def test_protection_reprocessing_does_not_rewrite_clean_analysis_preview(
     tmp_path, monkeypatch
 ):
