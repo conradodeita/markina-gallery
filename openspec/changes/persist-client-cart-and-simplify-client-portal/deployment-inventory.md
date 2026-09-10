@@ -6,11 +6,11 @@
 - Branch local: `feature/persist-client-cart-and-simplify-client-portal`.
 - Base registrada antes da implementação: `7ca6c9407aef6d41451b916f792b7f50015fd028`.
 - SHA de implementação validada: `7d8bf4efb4b334e3a2d102bc7fb025dfe5ffc67f`.
-- SHA candidato de deploy: SHALL ser confirmado depois da integração em `develop`; o deploy deverá publicar exatamente o SHA integrado, sem reconstruir a partir de outra referência.
+- SHA integrado e publicado: `0d48ab8de41f8ad59ee26439c9a3edd876e34727`.
 - Destino: `https://markina-homolog.duckdns.org`.
 - Migration aditiva: `20260910_0053_persistent_client_cart`.
 - Alterações de runtime: API e frontend; nenhum worker, fila, mídia, preço, PIX, WhatsApp ou reconhecimento facial é alterado.
-- Autorização de deploy desta change: pendente.
+- Autorização de deploy desta change: recebida nesta tarefa em 2026-09-10 antes do push, integração e aprovação do Environment `homolog`.
 
 ## Topologia preservada
 
@@ -43,3 +43,15 @@ A migration adiciona `sale_order.frozen_at`, índice comum e índice único parc
 ## Rollback
 
 Se a aplicação falhar após a migration, retornar somente API/web/Nginx da Markina ao SHA saudável anterior e manter a coluna/índices aditivos. Não reconstruir seleções nem descongelar pedidos. Restore de banco ou downgrade exige novo inventário, análise dos pedidos criados depois da publicação e nova autorização humana explícita.
+
+## Resultado — 2026-09-10
+
+- PR `#62` integrado em `develop` por merge commit.
+- Workflow `CI` `34511397653` aprovado no Environment `homolog` e concluído com sucesso.
+- O inventário remoto restrito à Markina foi executado antes da mudança.
+- Backup lógico exclusivo da Markina foi criado antes do Alembic.
+- Migration confirmada: `20260909_0052 (head) -> 20260910_0053 (head)`.
+- `FACIAL_PROCESSING_ENABLED=true` permaneceu persistido; workers faciais foram confirmados saudáveis antes e depois do deploy.
+- SHA publicado e registrado como saudável: `0d48ab8de41f8ad59ee26439c9a3edd876e34727`.
+- Healthchecks externos confirmados com HTTP `200` em `/healthz`, `/api/health` e na entrada do cliente.
+- Nenhum dado, mídia, volume, rede, proxy, DNS, firewall, certificado ou recurso de terceiro foi removido ou alterado.
