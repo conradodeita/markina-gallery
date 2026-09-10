@@ -5,7 +5,7 @@
 - Change: `persist-client-cart-and-simplify-client-portal`.
 - Branch local: `feature/persist-client-cart-and-simplify-client-portal`.
 - Base registrada antes da implementação: `7ca6c9407aef6d41451b916f792b7f50015fd028`.
-- SHA de implementação validada: `2b25685bb6cb6ed62b07cc2396aa2e4e142ff941`.
+- SHA de implementação validada: `7d8bf4efb4b334e3a2d102bc7fb025dfe5ffc67f`.
 - SHA candidato de deploy: SHALL ser confirmado depois da integração em `develop`; o deploy deverá publicar exatamente o SHA integrado, sem reconstruir a partir de outra referência.
 - Destino: `https://markina-homolog.duckdns.org`.
 - Migration aditiva: `20260910_0053_persistent_client_cart`.
