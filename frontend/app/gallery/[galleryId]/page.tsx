@@ -46,6 +46,7 @@ type PaymentOrder = {
   communication: { id: string; status: "pending_review" | "confirmed" | "refused" } | null;
   notification: { status: "queued" | "processing" | "sent" | "failed"; last_error: string | null } | null;
 };
+type ReopeningRequest = { id: string; status: "pending" | "approved" | "refused"; approved_until: string | null; created_at: string };
 type Review = {
   gallery: {
     name: string;
@@ -74,6 +75,7 @@ export default function GalleryPage() {
   const [cart, setCart] = useState<Cart>({ quantity: 0 });
   const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
   const [paymentOrders, setPaymentOrders] = useState<PaymentOrder[]>([]);
+  const [reopening, setReopening] = useState<ReopeningRequest | null>(null);
   const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
   const [message, setMessage] = useState("");
   const [closedGallery, setClosedGallery] = useState<{ publicGalleryUrl: string | null } | null>(null);
@@ -83,6 +85,7 @@ export default function GalleryPage() {
   const [pixCopied, setPixCopied] = useState(false);
   const checkoutKey = useRef("");
   const paymentKeys = useRef<Record<string, string>>({});
+  const reopeningKey = useRef("");
   function load() {
     Promise.all([
       fetch(`/api/gallery/${galleryId}/review`, { credentials: "same-origin" }),
@@ -151,12 +154,27 @@ export default function GalleryPage() {
       })
       .catch(() => setPaymentOrders([]));
   }
+  function loadReopening() {
+    fetch(`/api/gallery/${galleryId}/reopening-requests`, { credentials: "same-origin" })
+      .then(async (response) => { if (!response.ok) throw new Error(); setReopening((await response.json()).request ?? null); })
+      .catch(() => setReopening(null));
+  }
   useEffect(() => {
     load();
     loadComments();
     loadCart();
     loadPaymentOrders();
+    loadReopening();
   }, [galleryId]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function requestReopening() {
+    if (paymentBusy || reopening?.status === "pending") return;
+    setPaymentBusy("reopening");
+    reopeningKey.current ||= globalThis.crypto?.randomUUID?.() ?? `reopening-${Date.now()}-${galleryId}`;
+    const response = await fetch(`/api/gallery/${galleryId}/reopening-requests`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotency_key: reopeningKey.current }) });
+    setMessage(response.ok ? "Solicitação enviada ao fotógrafo. Esta galeria continua congelada até a aprovação." : "Não foi possível solicitar a reabertura.");
+    if (response.ok) loadReopening();
+    setPaymentBusy("");
+  }
   async function interaction(
     photo: ReviewPhoto,
     kind: "selection" | "favorite",
@@ -312,7 +330,7 @@ export default function GalleryPage() {
         detail="Carregando prévias protegidas."
       />
     );
-  if (!review.photos.length)
+  if (!review.photos.length && review.gallery.selection_open)
     return (
       <SystemState title="Nenhuma foto liberada ainda" detail="Quando o fotógrafo concluir uma rodada, ela aparecerá aqui." />
     );
@@ -350,10 +368,11 @@ export default function GalleryPage() {
   return (
     <main className="admin-shell">
       {!review.gallery.selection_open && (
-        <p className="notice">
-          O prazo para novas seleções terminou. Seu histórico continua
-          disponível.
-        </p>
+        <section className="admin-card gallery-reopening" aria-live="polite">
+          <h2>Solicitar novo prazo para seleção das fotos</h2>
+          <p>O prazo para novas seleções terminou e esta galeria está congelada. Você ainda pode consultar fotos, pedidos e pagamentos, mas não pode alterar ou finalizar a seleção.</p>
+          {reopening?.status === "pending" ? <StatusBadge tone="warning">Reabertura solicitada</StatusBadge> : reopening?.status === "refused" ? <><StatusBadge tone="danger">Solicitação recusada</StatusBadge><button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>Solicitar reabertura da galeria</button></> : <button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>{paymentBusy === "reopening" ? "Solicitando…" : "Solicitar reabertura da galeria"}</button>}
+        </section>
       )}
       {review.gallery.selection_expires_at && review.gallery.selection_open && (
         <p className="form-message">
@@ -377,7 +396,7 @@ export default function GalleryPage() {
         {photo.purchaseState === "já comprada" ? <span className="gallery-presentation-marker is-purchased">Comprada</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={photo.selected} disabled={!review.gallery.selection_open} onClick={() => interaction(photo, "selection")}>{photo.selected ? "✓ Desmarcar" : "Selecionar"}</button>}
         {review.gallery.favorites_enabled ? <button type="button" className="gallery-presentation-marker" aria-pressed={photo.favorited} onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}
       </>} />
-      {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
+      {cart.quantity > 0 && review.gallery.selection_open ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
         {cart.items?.length ? <details><summary>Revisar seleção</summary><ul className="photo-list" aria-label="Fotos no carrinho">{cart.items.map((item) => <li key={item.id}>{item.name}<button type="button" className="link-button" onClick={() => removeFromCart(item.id)}>Remover do carrinho</button></li>)}</ul></details> : null}

@@ -305,6 +305,7 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
                 .where(
                     PhotoAsset.id.in_(photo_ids),
                     PhotoAsset.parent_gallery_id == request.parent_gallery_id,
+                    PhotoAsset.derived_gallery_id.is_(None),
                     PhotoAsset.available.is_(True),
                     MediaDerivative.variant == "client_preview",
                     MediaDerivative.status == "ready",

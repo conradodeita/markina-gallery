@@ -387,7 +387,7 @@ class ParentGalleryRegistration(Base):
 
 
 class PhotoAsset(Base):
-    """Arquivo pertencente à Galeria pública; nunca é duplicado para a cliente."""
+    """Arquivo público ou pertencente exclusivamente a uma galeria privada."""
 
     __tablename__ = "photo_asset"
     __table_args__ = (
@@ -397,9 +397,22 @@ class PhotoAsset(Base):
             ["photo_folder.id", "photo_folder.parent_gallery_id"],
             name="fk_photo_asset_folder_gallery",
         ),
+        ForeignKeyConstraint(
+            ["folder_id", "parent_gallery_id", "derived_gallery_id"],
+            [
+                "photo_folder.id",
+                "photo_folder.parent_gallery_id",
+                "photo_folder.derived_gallery_id",
+            ],
+            name="fk_photo_asset_folder_scope",
+        ),
+        Index("ix_photo_asset_private_scope", "derived_gallery_id", "created_at"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     folder_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(512))
     display_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -409,13 +422,38 @@ class PhotoAsset(Base):
 
 
 class PhotoFolder(Base):
-    """Lote de fotos preparado pelo fotógrafo antes de sua liberação."""
+    """Lote público ou privado preparado pelo fotógrafo."""
 
     __tablename__ = "photo_folder"
     __table_args__ = (
-        UniqueConstraint("parent_gallery_id", "position"),
         UniqueConstraint("id", "parent_gallery_id", name="uq_photo_folder_id_parent"),
+        UniqueConstraint(
+            "id",
+            "parent_gallery_id",
+            "derived_gallery_id",
+            name="uq_photo_folder_id_parent_private",
+        ),
         CheckConstraint("purpose IN ('content', 'cover_assets')", name="ck_photo_folder_purpose"),
+        CheckConstraint(
+            "purpose != 'cover_assets' OR derived_gallery_id IS NULL",
+            name="ck_photo_folder_private_content_only",
+        ),
+        Index(
+            "uq_photo_folder_public_position",
+            "parent_gallery_id",
+            "position",
+            unique=True,
+            sqlite_where=text("derived_gallery_id IS NULL"),
+            postgresql_where=text("derived_gallery_id IS NULL"),
+        ),
+        Index(
+            "uq_photo_folder_private_position",
+            "derived_gallery_id",
+            "position",
+            unique=True,
+            sqlite_where=text("derived_gallery_id IS NOT NULL"),
+            postgresql_where=text("derived_gallery_id IS NOT NULL"),
+        ),
         Index(
             "uq_photo_folder_cover_assets_parent",
             "parent_gallery_id",
@@ -427,6 +465,9 @@ class PhotoFolder(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(16), default="preparing", index=True)
     purpose: Mapped[str] = mapped_column(String(24), default="content", server_default="content")
@@ -648,6 +689,7 @@ class SaleOrder(Base):
     client_phone_snapshot: Mapped[str | None] = mapped_column(String(16), nullable=True)
     price_rule_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     sales_message_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_message_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     pix_copy_paste_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     pix_qr_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     pix_instructions_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -673,6 +715,8 @@ class SaleOrderItem(Base):
     )
     photo_asset_id_snapshot: Mapped[UUID] = mapped_column(index=True)
     filename_snapshot: Mapped[str] = mapped_column(String(512))
+    folder_id_snapshot: Mapped[UUID | None] = mapped_column(nullable=True)
+    folder_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     checksum_sha256_snapshot: Mapped[str | None] = mapped_column(String(64), nullable=True)
     unit_price_cents: Mapped[int] = mapped_column(Integer)
 
@@ -985,6 +1029,39 @@ class PaymentCommunication(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class PaymentConfirmationCorrection(Base):
+    """Registro append-only de uma confirmação financeira corrigida pelo admin."""
+
+    __tablename__ = "payment_confirmation_correction"
+    __table_args__ = (
+        UniqueConstraint(
+            "payment_communication_id",
+            "idempotency_key",
+            name="uq_payment_confirmation_correction_idempotency",
+        ),
+        Index(
+            "ix_payment_confirmation_correction_order_created",
+            "sale_order_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    payment_communication_id: Mapped[UUID] = mapped_column(
+        ForeignKey("payment_communication.id"), nullable=False, index=True
+    )
+    sale_order_id: Mapped[UUID] = mapped_column(
+        ForeignKey("sale_order.id"), nullable=False, index=True
+    )
+    actor_admin_id: Mapped[UUID] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=False, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    previous_communication_status: Mapped[str] = mapped_column(String(20))
+    previous_order_status: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class PaymentMessageTemplate(Base):
     __tablename__ = "payment_message_template"
     __table_args__ = (UniqueConstraint("kind"), CheckConstraint("kind IN ('confirmed', 'refused')"))
@@ -1012,8 +1089,86 @@ class PaymentNotificationOutbox(Base):
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    rendered_body_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class GalleryReopeningRequest(Base):
+    """Pedido idempotente de reabertura de uma galeria privada expirada."""
+
+    __tablename__ = "gallery_reopening_request"
+    __table_args__ = (
+        UniqueConstraint(
+            "derived_gallery_id",
+            "idempotency_key",
+            name="uq_gallery_reopening_request_idempotency",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'refused')",
+            name="ck_gallery_reopening_request_status",
+        ),
+        Index(
+            "uq_gallery_reopening_request_pending",
+            "derived_gallery_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "ix_gallery_reopening_request_status_created",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requested_by_client_id: Mapped[UUID] = mapped_column(
+        ForeignKey("client.id"), nullable=False, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    decided_by_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=True, index=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
+class GalleryReopeningNotificationOutbox(Base):
+    """Aviso assíncrono ao fotógrafo, independente da solicitação persistida."""
+
+    __tablename__ = "gallery_reopening_notification_outbox"
+    __table_args__ = (
+        UniqueConstraint("gallery_reopening_request_id"),
+        Index("ix_reopening_notice_request", "gallery_reopening_request_id"),
+        CheckConstraint(
+            "status IN ('skipped', 'queued', 'processing', 'sent', 'failed')",
+            name="ck_gallery_reopening_notification_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_gallery_reopening_notification_attempts"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    gallery_reopening_request_id: Mapped[UUID] = mapped_column(
+        ForeignKey("gallery_reopening_request.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recipient_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="skipped", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now
+    )
 
 
 class ProgressivePricingPreset(Base):
@@ -1544,11 +1699,20 @@ class PhotoFaceEmbedding(Base):
             "model_version",
             "quality_version",
         ),
+        Index(
+            "ix_face_embedding_private_model",
+            "derived_gallery_id",
+            "model_version",
+            "quality_version",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(
         ForeignKey("parent_gallery.id"), nullable=False, index=True
+    )
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True, index=True
     )
     photo_asset_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     face_ordinal: Mapped[int] = mapped_column(Integer)
@@ -1742,6 +1906,9 @@ class FacialJob(Base):
     priority: Mapped[int] = mapped_column(Integer, default=100)
     parent_gallery_id: Mapped[UUID] = mapped_column(
         ForeignKey("parent_gallery.id"), nullable=False, index=True
+    )
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True, index=True
     )
     photo_asset_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("photo_asset.id"), nullable=True, index=True

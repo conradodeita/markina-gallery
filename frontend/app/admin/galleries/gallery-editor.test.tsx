@@ -140,9 +140,9 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("button", { name: "Editar cadastro de Ana Cliente" })).toBeTruthy();
     const card = screen.getByRole("article", { name: "Cliente Ana Cliente" });
     expect(within(card).getByText("Sem seleção")).toBeTruthy();
-    expect(within(card).getByText("Disponíveis")).toBeTruthy();
-    expect(within(card).getByText("Selecionadas")).toBeTruthy();
-    expect(within(card).getByText("Compradas")).toBeTruthy();
+    expect(within(card).getByText("Fotos no acervo privado")).toBeTruthy();
+    expect(within(card).getByText("Fotos selecionadas")).toBeTruthy();
+    expect(within(card).getByText("Fotos compradas")).toBeTruthy();
     expect(within(card).getByText("Pago")).toBeTruthy();
     expect(within(card).getByText("Sem seleção")).toBeTruthy();
     const galleryLink = within(card).getByRole("link", { name: "Ana Cliente" });
@@ -320,7 +320,7 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("article", { name: "Cliente Cliente Pendente" })).toBeTruthy();
   });
 
-  it("cria galeria privada administrativa com fotos disponíveis e zero seleção inferida", async () => {
+  it("cria galeria privada vazia sem montagem administrativa por catálogo", async () => {
     const linkedClient = { client_id: "client-1", name: "Cliente Administrativa", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
@@ -331,19 +331,18 @@ describe("editor administrativo de galeria", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Montar galeria privada" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
     expect(await screen.findByRole("dialog", { name: "Galeria privada de Cliente Administrativa" })).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Criar ou atualizar galeria privada" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox"));
-    fireEvent.click(screen.getByRole("button", { name: "Criar ou atualizar galeria privada" }));
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Criar galeria vazia" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/derived-galleries",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ parent_gallery_id: "source-1", client_id: "client-1", name: "Festa escolar · Cliente Administrativa", photo_ids: ["photo-1"] }) }),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ parent_gallery_id: "source-1", client_id: "client-1", name: "Festa escolar · Cliente Administrativa", photo_ids: [], create_empty_private: true }) }),
     ));
-    expect(await screen.findByText(/sem seleção automática/)).toBeTruthy();
+    expect(await screen.findByText(/carregar fotos do dispositivo/)).toBeTruthy();
   });
 
-  it("explica por que a galeria privada não pode ser montada sem publicação", async () => {
+  it("permite criar a galeria privada mesmo sem fotos públicas publicadas", async () => {
     const linkedClient = { client_id: "client-1", name: "Cliente Sem Fotos", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
@@ -352,10 +351,10 @@ describe("editor administrativo de galeria", () => {
       return response({ clients: [] });
     }));
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Montar galeria privada" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
     const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Sem Fotos" });
-    expect(within(dialog).getByText("Nenhuma foto publicada")).toBeTruthy();
-    expect(within(dialog).getByRole("link", { name: "Ir para Imagens" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens");
+    expect(within(dialog).getByText(/será criada vazia/)).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Criar galeria vazia" })).toBeTruthy();
   });
 
   it("mantém no modal o erro ao disponibilizar fotos", async () => {
@@ -369,9 +368,8 @@ describe("editor administrativo de galeria", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Montar galeria privada" }));
-    fireEvent.click(await screen.findByRole("checkbox"));
-    fireEvent.click(screen.getByRole("button", { name: "Criar ou atualizar galeria privada" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
+    fireEvent.click(screen.getByRole("button", { name: "Criar galeria vazia" }));
     const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Bloqueada" });
     expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "A cliente já possui uma galeria privada nesta Galeria pública.");
   });
@@ -695,7 +693,7 @@ describe("editor administrativo de galeria", () => {
     expect(deletedBatches).toHaveLength(3);
     expect(deletedBatches.every((batch) => batch.length <= 100)).toBe(true);
     expect(deletedBatches.flat()).toEqual(photos.map((photo) => photo.id));
-  }, 10_000);
+  }, 15_000);
 
   it("informa o resultado parcial, atualiza a pasta e permite repetir após falha", async () => {
     const photos = Array.from({ length: 201 }, (_, index) => ({

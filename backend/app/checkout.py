@@ -51,14 +51,17 @@ def create_pending_checkout(
     if not selections:
         raise CheckoutError("A seleção está vazia.")
     photo_ids = {selection.photo_asset_id for selection in selections}
+    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
+        DerivedGalleryPhoto.derived_gallery_id == gallery.id
+    )
     photos = list(
         db.scalars(
             select(PhotoAsset)
-            .join(DerivedGalleryPhoto)
-            .join(PhotoFolder)
+            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
-                DerivedGalleryPhoto.derived_gallery_id == gallery.id,
                 PhotoAsset.id.in_(photo_ids),
+                (PhotoAsset.derived_gallery_id == gallery.id)
+                | (PhotoAsset.id.in_(referenced_photo_ids)),
                 PhotoFolder.status == "released",
                 PhotoFolder.purpose == "content",
             )
@@ -125,14 +128,25 @@ def create_pending_checkout(
         for parcel in commercial_quote.quote.parcels
         for _ in range(parcel.quantity)
     ]
+    folders_by_id = {
+        folder.id: folder
+        for folder in db.scalars(
+            select(PhotoFolder).where(
+                PhotoFolder.id.in_({photo.folder_id for photo in photos})
+            )
+        )
+    }
     for photo, unit_price_cents in zip(
         sorted(photos, key=lambda item: str(item.id)), unit_prices, strict=True
     ):
+        folder = folders_by_id.get(photo.folder_id)
         db.add(
             SaleOrderItem(
                 sale_order_id=order.id,
                 photo_asset_id=photo.id,
                 filename_snapshot=photo.display_name or photo.filename,
+                folder_id_snapshot=folder.id if folder else None,
+                folder_name_snapshot=folder.name if folder else None,
                 unit_price_cents=unit_price_cents,
             )
         )

@@ -153,8 +153,10 @@ def derive_client_selection(
         or not registration
         or not photo
         or photo.parent_gallery_id != parent.id
+        or photo.derived_gallery_id is not None
         or not photo.available
         or not folder
+        or folder.derived_gallery_id is not None
         or folder.status != "released"
         or folder.purpose != "content"
     ):
@@ -219,45 +221,14 @@ def derive_admin_gallery(
     *,
     parent_gallery_id: UUID,
     client_id: UUID,
-    photo_ids: set[UUID],
     name: str | None = None,
 ) -> AdminPrivateDerivationResult:
-    """Cria/reutiliza privada administrativa somente com fotos publicadas."""
+    """Cria ou reutiliza uma privada administrativa vazia."""
 
-    if not photo_ids:
-        raise PrivateDerivationError(
-            "Selecione ao menos uma foto disponível para criar a galeria privada."
-        )
     parent = db.get(ParentGallery, parent_gallery_id)
     client = db.get(Client, client_id)
     if not parent or parent.lifecycle_status != "active" or not parent.active or not client:
         raise PrivateDerivationError("Galeria pública ou cliente indisponível.")
-    photos = list(
-        db.scalars(
-            select(PhotoAsset).where(
-                PhotoAsset.id.in_(photo_ids),
-                PhotoAsset.parent_gallery_id == parent.id,
-                PhotoAsset.available,
-            )
-        )
-    )
-    if len(photos) != len(photo_ids):
-        raise PrivateDerivationError(
-            "Todas as fotos devem estar disponíveis na Galeria pública informada."
-        )
-    folder_ids = {photo.folder_id for photo in photos}
-    released_folder_ids = set(
-        db.scalars(
-            select(PhotoFolder.id).where(
-                PhotoFolder.id.in_(folder_ids),
-                PhotoFolder.parent_gallery_id == parent.id,
-                PhotoFolder.status == "released",
-                PhotoFolder.purpose == "content",
-            )
-        )
-    )
-    if released_folder_ids != folder_ids:
-        raise PrivateDerivationError("Fotos de pasta em preparação não podem ser distribuídas.")
 
     link_client_to_parent(
         db,
@@ -275,16 +246,8 @@ def derive_admin_gallery(
         raise PrivateDerivationError("O acesso desta cliente à galeria privada está bloqueado.")
     gallery = resolution.gallery
     gallery_created = resolution.gallery_created
-    references_created = 0
-    for photo in photos:
-        references_created += int(ensure_private_photo_reference(
-            db,
-            gallery_id=gallery.id,
-            photo_id=photo.id,
-            origin="admin",
-        ))
     return AdminPrivateDerivationResult(
         gallery=gallery,
         gallery_created=gallery_created,
-        references_created=references_created,
+        references_created=0,
     )

@@ -13,6 +13,7 @@ from app.auth import (
     DerivedGalleryPhotoOrigin,
     GalleryAccess,
     GalleryAccessCapability,
+    PhotoAsset,
     PhotoComment,
     PhotoFavorite,
     PhotoSelection,
@@ -101,7 +102,12 @@ def remove_client_selection_and_close_if_empty(
             DerivedGalleryPhoto.derived_gallery_id == gallery.id
         )
     )
-    if references_left:
+    private_assets_left = db.scalar(
+        select(func.count()).select_from(PhotoAsset).where(
+            PhotoAsset.derived_gallery_id == gallery.id
+        )
+    )
+    if references_left or private_assets_left:
         return PrivateSelectionRemovalResult(
             True,
             bool(client_origin is not None or legacy_client_reference)

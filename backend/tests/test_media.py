@@ -15,6 +15,8 @@ from app.auth import (
     DerivedGallery,
     DerivedGalleryPhoto,
     GalleryAccess,
+    GalleryReopeningNotificationOutbox,
+    GalleryReopeningRequest,
     MediaDerivative,
     MediaJob,
     ParentGallery,
@@ -35,7 +37,11 @@ from app.auth import (
 from app.main import app
 from app.media import enqueue_derivatives, generate_derivatives, watermark
 from app.messaging import WhatsAppDeliveryError, WhatsAppDeliveryResult
-from app.worker import process_next_media_job, process_next_payment_notification
+from app.worker import (
+    process_next_gallery_reopening_notification,
+    process_next_media_job,
+    process_next_payment_notification,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -446,6 +452,48 @@ def test_worker_sends_payment_outbox_once_in_sandbox() -> None:
         delivered = db.get(PaymentNotificationOutbox, outbox_id)
         assert delivered.status == "sent"
         assert delivered.attempts == 1
+
+
+def test_worker_sends_reopening_notice_without_changing_request(monkeypatch) -> None:
+    sent: list[tuple[str, str, str]] = []
+
+    class RecordingProvider:
+        def send_transactional(self, phone_e164, message, *, idempotency_key):
+            sent.append((phone_e164, message, idempotency_key))
+
+    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
+    with SessionLocal() as db:
+        client = Client(full_name="Cliente Reabertura", phone_e164="+5511555554401")
+        parent = ParentGallery(name="Evento Reabertura")
+        db.add_all([client, parent])
+        db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Reabertura")
+        db.add(gallery)
+        db.flush()
+        reopening = GalleryReopeningRequest(
+            derived_gallery_id=gallery.id,
+            requested_by_client_id=client.id,
+            idempotency_key="reopening-worker-test",
+        )
+        db.add(reopening)
+        db.flush()
+        notice = GalleryReopeningNotificationOutbox(
+            gallery_reopening_request_id=reopening.id,
+            recipient_phone="+5511555554402",
+            status="queued",
+        )
+        db.add(notice)
+        db.commit()
+        reopening_id, notice_id = reopening.id, notice.id
+
+    assert process_next_gallery_reopening_notification() is True
+    assert process_next_gallery_reopening_notification() is False
+    assert len(sent) == 1
+    assert sent[0][0] == "+5511555554402"
+    assert "Galeria Reabertura" in sent[0][1]
+    with SessionLocal() as db:
+        assert db.get(GalleryReopeningRequest, reopening_id).status == "pending"
+        assert db.get(GalleryReopeningNotificationOutbox, notice_id).status == "sent"
 
 
 def test_worker_retries_transient_payment_delivery_until_limit(monkeypatch) -> None:

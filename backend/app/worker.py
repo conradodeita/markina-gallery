@@ -19,6 +19,8 @@ from app.auth import (
     EmailDelivery,
     EmailDeliveryAttempt,
     GalleryMembershipNotificationOutbox,
+    GalleryReopeningNotificationOutbox,
+    GalleryReopeningRequest,
     MediaDerivative,
     MediaJob,
     PaymentCommunication,
@@ -100,6 +102,8 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
         raise WhatsAppConfigurationError("Tipo de template não autorizado.")
     if communication.client_id != order.client_id or item.recipient_phone != client.phone_e164:
         raise WhatsAppConfigurationError("Destino da cliente não autorizado.")
+    if item.rendered_body_snapshot:
+        return item.rendered_body_snapshot
     template = db.scalar(
         select(PaymentMessageTemplate).where(PaymentMessageTemplate.kind == item.template_kind)
     )
@@ -601,6 +605,53 @@ def process_next_gallery_membership_notification() -> bool:
         return process_membership_outbox(db, send)
 
 
+def process_next_gallery_reopening_notification() -> bool:
+    """Envia o aviso da reabertura sem acoplar a persistência da solicitação."""
+    with SessionLocal() as db:
+        item = db.scalar(
+            select(GalleryReopeningNotificationOutbox)
+            .where(GalleryReopeningNotificationOutbox.status == "queued")
+            .order_by(GalleryReopeningNotificationOutbox.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if not item:
+            return False
+        item.status = "processing"
+        item.attempts += 1
+        item.updated_at = now()
+        db.commit()
+        item_id = item.id
+
+    with SessionLocal() as db:
+        item = db.get(GalleryReopeningNotificationOutbox, item_id)
+        reopening = (
+            db.get(GalleryReopeningRequest, item.gallery_reopening_request_id)
+            if item
+            else None
+        )
+        gallery = db.get(DerivedGallery, reopening.derived_gallery_id) if reopening else None
+        try:
+            if not item or not reopening or not gallery or not item.recipient_phone:
+                raise WhatsAppConfigurationError("Relação da reabertura indisponível.")
+            provider = whatsapp_provider_from_environment()
+            provider.send_transactional(
+                item.recipient_phone,
+                f"Solicitação de reabertura da galeria {gallery.name}. Revise em Vendas e pagamentos.",
+                idempotency_key=f"gallery-reopening:{item.id}",
+            )
+            item.status = "sent"
+            item.last_error = None
+        except (WhatsAppConfigurationError, WhatsAppDeliveryError) as error:
+            if item:
+                item.status = "failed"
+                item.last_error = sanitized_delivery_error(error)
+        if item:
+            item.updated_at = now()
+            db.commit()
+        return True
+
+
 def reconcile_next_unknown_delivery() -> bool:
     with SessionLocal() as db:
         delivery = db.scalar(
@@ -641,6 +692,7 @@ def main() -> None:
             or process_next_email_delivery()
             or materialize_next_payment_notification()
             or process_next_gallery_membership_notification()
+            or process_next_gallery_reopening_notification()
             or reconcile_next_unknown_delivery()
             or process_otp_privacy_cleanup()
             or process_admin_security_cleanup()

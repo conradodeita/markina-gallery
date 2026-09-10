@@ -56,13 +56,56 @@ describe("galeria privada da cliente", () => {
 
   it("preserva a identificação das fotos após expirar e bloqueia nova seleção", async () => {
     const expiredReview = { ...review, gallery: { ...review.gallery, selection_open: false, selection_expires_at: "2026-08-01T23:59:59Z" } };
-    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(path.endsWith("/comments") ? { comments: [] } : expiredReview), { status: 200 }))));
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [] }
+          : path.endsWith("/cart") ? { quantity: 2, total_cents: 1400 }
+            : path.endsWith("/payment-communications") ? { orders: [] }
+              : path.endsWith("/reopening-requests") && options?.method === "POST" ? { id: "reopening-1", status: "pending" }
+                : path.endsWith("/reopening-requests") ? { request: null }
+                  : expiredReview,
+    ), { status: options?.method === "POST" ? 201 : 200 })));
+    vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
     expect(await screen.findByText(/prazo para novas seleções terminou/i)).toBeTruthy();
     expect(screen.getAllByText("IMG_001.jpg").length).toBeGreaterThan(0);
     for (const button of screen.getAllByRole("button", { name: "Selecionar" })) {
       expect((button as HTMLButtonElement).disabled).toBe(true);
     }
+    expect(screen.queryByRole("complementary", { name: "Resumo da seleção" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Solicitar reabertura da galeria" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/gallery/gallery-1/reopening-requests",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    expect(await screen.findByText(/Solicitação enviada ao fotógrafo/)).toBeTruthy();
+  });
+
+  it("permite solicitar reabertura mesmo quando a galeria expirada ainda está vazia", async () => {
+    const expiredEmptyReview = {
+      ...review,
+      gallery: { ...review.gallery, selection_open: false, selection_expires_at: "2026-08-01T23:59:59Z" },
+      photos: [],
+    };
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [] }
+          : path.endsWith("/cart") ? { quantity: 0, items: [] }
+            : path.endsWith("/payment-communications") ? { orders: [] }
+              : path.endsWith("/reopening-requests") && options?.method === "POST" ? { id: "reopening-empty", status: "pending" }
+                : path.endsWith("/reopening-requests") ? { request: null }
+                  : expiredEmptyReview,
+    ), { status: options?.method === "POST" ? 201 : 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GalleryPage />);
+
+    expect(await screen.findByText(/prazo para novas seleções terminou/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Solicitar reabertura da galeria" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/gallery/gallery-1/reopening-requests",
+      expect.objectContaining({ method: "POST" }),
+    ));
   });
 
   it("mantém fotos administrativas com seleção zerada", async () => {

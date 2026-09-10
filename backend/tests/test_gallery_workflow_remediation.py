@@ -311,7 +311,7 @@ def test_released_folder_accepts_incremental_registration_as_unavailable(
         assert db.get(PhotoAsset, previous_id).available is True
 
 
-def test_admin_private_gallery_uses_only_published_photos_without_selecting_them(
+def test_admin_private_gallery_rejects_existing_photos_and_allows_empty_creation(
     client: TestClient,
 ) -> None:
     authenticate_admin(client)
@@ -364,13 +364,25 @@ def test_admin_private_gallery_uses_only_published_photos_without_selecting_them
     assert link_only.status_code == 201
     assert link_only.json()["private_gallery_id"] is None
 
-    created = client.post(
+    rejected_published = client.post(
         "/admin/derived-galleries",
         json={
             "parent_gallery_id": str(parent_id),
             "client_id": str(owner_id),
             "name": "Privada",
             "photo_ids": [str(published_id)],
+        },
+    )
+    assert rejected_published.status_code == 410
+
+    created = client.post(
+        "/admin/derived-galleries",
+        json={
+            "parent_gallery_id": str(parent_id),
+            "client_id": str(owner_id),
+            "name": "Privada",
+            "photo_ids": [],
+            "create_empty_private": True,
         },
     )
     repeated = client.post(
@@ -379,13 +391,14 @@ def test_admin_private_gallery_uses_only_published_photos_without_selecting_them
             "parent_gallery_id": str(parent_id),
             "client_id": str(owner_id),
             "name": "Privada",
-            "photo_ids": [str(published_id)],
+            "photo_ids": [],
+            "create_empty_private": True,
         },
     )
     assert created.status_code == repeated.status_code == 201
     assert created.json()["gallery_created"] is True
     assert repeated.json()["gallery_created"] is False
-    assert created.json()["references_created"] == 1
+    assert created.json()["references_created"] == 0
     assert repeated.json()["references_created"] == 0
     with SessionLocal() as db:
         assert db.scalar(select(PhotoSelection)) is None
@@ -400,11 +413,11 @@ def test_admin_private_gallery_uses_only_published_photos_without_selecting_them
                 "photo_ids": [str(rejected_id)],
             },
         )
-        assert rejected.status_code == 422
+        assert rejected.status_code == 410
 
     aggregate = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"]
     assert aggregate[0]["derived_gallery_id"] == created.json()["id"]
-    assert aggregate[0]["available_count"] == 1
+    assert aggregate[0]["available_count"] == 0
     assert aggregate[0]["selected_count"] == 0
 
 
@@ -608,7 +621,9 @@ def test_latest_accepted_cover_upload_wins_and_failed_cover_remains_recoverable(
         assert len(
             list(
                 db.scalars(
-                    select(PhotoAsset).join(PhotoFolder).where(
+                    select(PhotoAsset).join(
+                        PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id
+                    ).where(
                         PhotoAsset.parent_gallery_id == parent_id,
                         PhotoFolder.purpose == "cover_assets",
                     )

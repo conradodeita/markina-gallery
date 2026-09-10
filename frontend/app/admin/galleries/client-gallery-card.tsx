@@ -16,6 +16,7 @@ export type ClientGalleryRow = {
   purchased_count: number;
   gallery_status: "pending_registration" | "no_selection" | "blocked" | "expired" | "active";
   commercial_status?: "pending_review" | "awaiting_payment" | "paid" | "overdue" | "cancelled" | "no_order";
+  reopening_status?: "pending" | "approved" | "refused" | null;
 };
 
 const galleryStatus = {
@@ -50,12 +51,13 @@ export function ClientGalleryCard({ person, actions }: { person: ClientGalleryRo
       </span>
     </header>
     <dl className="gallery-client-counts">
-      <div><dt>Disponíveis</dt><dd>{person.available_count}</dd></div>
-      <div><dt>Selecionadas</dt><dd>{person.selected_count}</dd></div>
-      <div><dt>Compradas</dt><dd>{person.purchased_count}</dd></div>
+      <div><dt>Fotos no acervo privado</dt><dd>{person.available_count}</dd></div>
+      <div><dt>Fotos selecionadas</dt><dd>{person.selected_count}</dd></div>
+      <div><dt>Fotos compradas</dt><dd>{person.purchased_count}</dd></div>
     </dl>
     {person.gallery_status === "pending_registration" ? <p className="gallery-client-pending">O vínculo já existe. No primeiro acesso pelo link, a cliente ainda precisa validar este WhatsApp com o código OTP.</p> : null}
-    {person.derived_gallery_id ? <Link className="gallery-client-open" href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <p className="gallery-client-pending">A galeria privada será criada quando houver fotos disponíveis ou uma primeira seleção.</p>}
+    {person.reopening_status === "pending" ? <p className="gallery-client-pending">A cliente solicitou reabertura. Decida em Vendas e pagamentos.</p> : null}
+    {person.derived_gallery_id ? <Link className="gallery-client-open" href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <p className="gallery-client-pending">Crie uma galeria privada vazia e carregue nela as fotos do dispositivo.</p>}
     {actions ? <div className="gallery-client-card-actions">{actions}</div> : null}
   </article>;
 }
