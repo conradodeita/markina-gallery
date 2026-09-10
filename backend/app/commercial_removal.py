@@ -92,6 +92,9 @@ def apply_commercial_removal_policy(
     report = CommercialRemovalReport()
     for order in orders:
         if order.payment_status == "pending":
+            if order.frozen_at is None and order.checkout_key is not None:
+                # O rascunho acompanha PhotoSelection e não é histórico comercial.
+                continue
             order.payment_status = "cancelled"
             report.cancelled_pending_orders += 1
             db.add(

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ClientCartLink } from "../../client-cart";
 import { facialSearchApi, type FacialSearchResult } from "../../facial-search-client";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
@@ -11,7 +12,8 @@ import { SystemState } from "../../ui-kit";
 import { FacialSearchPanel } from "../facial-search-panel";
 
 type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
-type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; favorited: boolean; previewUrl: string };
+type CommercialState = "available" | "selected" | "awaiting_payment" | "payment_reported" | "purchased";
+type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; favorited: boolean; commercial_state?: CommercialState; previewUrl: string };
 type Cart = {
   quantity: number;
   total_cents?: number;
@@ -60,6 +62,7 @@ export default function PublicGalleryPage() {
   async function toggleSelection(photo: PublicPhoto, fromFacial = false) {
     if (selectingId) return;
     const selected = selectedIds.includes(photo.id);
+    if (!selected && photo.commercial_state && !["available", "selected"].includes(photo.commercial_state)) return;
     setSelectingId(photo.id);
     setMessage("");
     try {
@@ -149,21 +152,23 @@ export default function PublicGalleryPage() {
     <main className="admin-shell public-gallery-shell">
       <Link href="/library">← Sua biblioteca</Link>
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} />
-      {privateGalleryId && message ? <div className="public-selection-result" role="status"><span>{message}</span><Link className="selection-summary__proceed" href={`/gallery/${privateGalleryId}?mode=review`}>Prosseguir</Link></div> : message ? <p className="notice" role="alert">{message}</p> : null}
-      <GalleryPresentation galleryName={gallery.name} eyebrow="Galeria pública autorizada" context={<p>{gallery.description || gallery.event_name || "Escolha suas fotos e retome sua seleção nesta mesma galeria quando quiser."}</p>} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} modeLabel={<><strong>Acesso confirmado</strong><span>Suas escolhas ficam salvas nesta galeria e permanecem disponíveis quando você voltar.</span></>} emptyDetail="Esta Galeria pública está autorizada, mas ainda não possui fotos disponíveis para escolha." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
+      {message ? <p className="public-selection-result" role="status">{message}</p> : null}
+      <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
-        return <><button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker" aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}</>;
+        const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;
+        return <>{frozenLabel ? <span className="gallery-presentation-marker is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker" aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}</>;
       }} renderFeaturedPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
-        return <><button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker" aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}<button type="button" className="gallery-presentation-marker gallery-presentation-marker--reject" onClick={() => { void rejectCandidate(photo); }}>Não é esta pessoa</button></>;
+        const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;
+        return <>{frozenLabel ? <span className="gallery-presentation-marker is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker" aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}<button type="button" className="gallery-presentation-marker gallery-presentation-marker--reject" onClick={() => { void rejectCandidate(photo); }}>Não é esta pessoa</button></>;
       }} />
       {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
         {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
-        {privateGalleryId ? <Link className="primary selection-summary__proceed" href={`/gallery/${privateGalleryId}?mode=review`}>Prosseguir</Link> : null}
+        {privateGalleryId ? <ClientCartLink className="primary selection-summary__proceed" count={cart.quantity} href={`/gallery/${privateGalleryId}?mode=review`} /> : null}
       </aside> : null}
     </main>
   );

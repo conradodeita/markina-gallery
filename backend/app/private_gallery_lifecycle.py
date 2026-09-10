@@ -19,6 +19,7 @@ from app.auth import (
     PhotoSelection,
     PhotoView,
 )
+from app.checkout import lock_client_commerce, synchronize_editable_draft
 from app.commercial_removal import apply_commercial_removal_policy
 
 
@@ -37,6 +38,8 @@ def remove_client_selection_and_close_if_empty(
     photo_id: UUID,
 ) -> PrivateSelectionRemovalResult:
     """Remove apenas a justificativa client e encerra a privada realmente vazia."""
+
+    lock_client_commerce(db, gallery_id=gallery.id, client_id=client_id)
 
     selection = db.scalar(
         select(PhotoSelection).where(
@@ -96,6 +99,8 @@ def remove_client_selection_and_close_if_empty(
         if not origins_left and not other_client_selections:
             db.delete(reference)
             db.flush()
+
+    synchronize_editable_draft(db, gallery=gallery, client_id=client_id)
 
     references_left = db.scalar(
         select(func.count()).select_from(DerivedGalleryPhoto).where(

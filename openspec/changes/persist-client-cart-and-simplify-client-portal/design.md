@@ -4,6 +4,14 @@ Consulte `proposal.md` e os três delta specs. A implementação atual mantém a
 
 O roadmap e as changes `consolidate-shared-private-galleries-and-progressive-sales` e `complete-private-gallery-operations-and-sales` já estabelecem carrinho por cliente e Galeria pública, pedido complementar, isolamento entre membros, confirmação manual e histórico após expiração. Esta change corrige a fronteira de congelamento e a superfície de retomada sem substituir a projeção comercial, a reabertura ou a administração financeira dessas changes.
 
+### Inventário de implementação — 2026-09-10
+
+- `backend/app/checkout.py` cria o snapshot pendente e hoje remove `PhotoSelection`; passa a sincronizar o rascunho sem consumir o carrinho.
+- `backend/app/main.py` expõe carrinho, checkout, detalhe, comunicação, biblioteca e estados por foto; mantém confirmação/correção administrativa intactas e delega a nova projeção/transação a módulos do domínio.
+- `backend/app/auth.py` e a migration sucessora de `20260909_0052` recebem somente o marcador aditivo de congelamento e seu índice.
+- `frontend/app/public-galleries/[galleryId]/page.tsx`, `frontend/app/gallery/[galleryId]/page.tsx` e `frontend/app/library/page.tsx` são as superfícies de cliente afetadas; componentes administrativos não terão texto ou fluxo alterado.
+- `backend/app/facial/**`, `backend/app/media.py`, workers, regras de preço, configuração PIX, decisão administrativa, Docker e workflows permanecem fora do diff de implementação. A candidata facial continua usando o endpoint de seleção existente e recebe o mesmo estado comercial por `photo_id`.
+
 ## Goals / Non-Goals
 
 **Goals:**

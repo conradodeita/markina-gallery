@@ -90,6 +90,8 @@ def build_commercial_projections(
                 SaleOrder.parent_gallery_id_snapshot,
                 SaleOrder.client_id,
                 SaleOrder.payment_status,
+                SaleOrder.frozen_at,
+                SaleOrder.checkout_key,
                 SaleOrder.total_cents,
                 PaymentCommunication.status.label("communication_status"),
                 SaleOrderItem.photo_asset_id_snapshot,
@@ -110,6 +112,12 @@ def build_commercial_projections(
     purchased_photo_ids: dict[tuple[UUID, UUID], set[UUID]] = defaultdict(set)
     pending_review_order_ids: set[UUID] = set()
     for row in raw_order_rows:
+        if (
+            row.payment_status == "pending"
+            and row.frozen_at is None
+            and row.checkout_key is not None
+        ):
+            continue
         order_rows[row.id] = row
         if row.communication_status == "pending_review":
             pending_review_order_ids.add(row.id)

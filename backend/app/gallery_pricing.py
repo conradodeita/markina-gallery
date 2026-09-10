@@ -20,19 +20,24 @@ class GalleryQuote:
 
 
 def quote_parent_gallery(
-    db: Session, *, gallery: ParentGallery, quantity: int
+    db: Session,
+    *,
+    gallery: ParentGallery,
+    quantity: int,
+    rules: list[PriceRule] | None = None,
 ) -> GalleryQuote:
     if gallery.pricing_mode == "legacy_volume" or gallery.pricing_review_required:
         raise GalleryPricingError(
             "A configuração comercial desta galeria precisa ser revisada antes de novas compras."
         )
-    rules = list(
-        db.scalars(
-            select(PriceRule)
-            .where(PriceRule.parent_gallery_id == gallery.id)
-            .order_by(PriceRule.minimum_quantity)
+    if rules is None:
+        rules = list(
+            db.scalars(
+                select(PriceRule)
+                .where(PriceRule.parent_gallery_id == gallery.id)
+                .order_by(PriceRule.minimum_quantity)
+            )
         )
-    )
     tiers = [
         PriceTier(rule.minimum_quantity, rule.maximum_quantity, rule.unit_price_cents)
         for rule in rules

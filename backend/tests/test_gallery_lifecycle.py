@@ -1063,11 +1063,17 @@ def test_public_deletion_keeps_one_private_photo_copy_and_private_viewing(
                 "browse_url": f"/gallery/{private_id}",
                 "public_gallery": None,
                 "private_gallery": library.json()["galleries"][0],
-                "selection": {"quantity": 0, "items": []},
+                "selection": {
+                    "quantity": 0,
+                    "items": [],
+                    "draft_order_id": None,
+                },
+                "orders": [],
                 "has_prepared_photos": False,
                 "actions": {
                     "continue_url": None,
                     "review_url": None,
+                    "orders_url": None,
                     "prepared_url": None,
                     "fallback_url": f"/gallery/{private_id}",
                 },
@@ -1499,6 +1505,7 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         assert journey["actions"] == {
             "continue_url": f"/public-galleries/{parent_id}",
             "review_url": f"/gallery/{private_id}",
+            "orders_url": None,
             "prepared_url": None,
             "fallback_url": None,
         }
@@ -4062,6 +4069,10 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
                 "parent_gallery_name": "Galeria pública preservada",
                 "gallery_status_label": "Galeria removida",
                 "gallery_removed": True,
+                "payment_status": "confirmed",
+                "commercial_state": "purchased",
+                "communication_status": None,
+                "frozen_at": None,
                 "confirmed_at": response.json()["orders"][0]["confirmed_at"],
                 "total_cents": 1700,
                 "items": [

@@ -248,7 +248,7 @@ def test_settings_are_read_only_in_sales_and_saving_without_pix_is_allowed(clien
         assert config["copy_paste"] not in events
 
 
-def test_checkout_uses_global_versions_and_keeps_old_snapshots_and_selection(client):
+def test_checkout_updates_open_draft_to_global_pix_version_and_keeps_selection(client):
     import json
 
     with SessionLocal() as db:
@@ -312,31 +312,23 @@ def test_checkout_uses_global_versions_and_keeps_old_snapshots_and_selection(cli
         apply_configuration(
             db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 1))
         )
-        db.add(
-            PhotoSelection(
-                derived_gallery_id=gallery.id, client_id=owner.id, photo_asset_id=photo.id
-            )
-        )
-        db.flush()
         second = create_pending_checkout(
             db, gallery=gallery, client=owner, checkout_key="second-checkout"
         )
         db.commit()
         db.refresh(first)
-        assert first.pix_copy_paste_snapshot == first_code
-        assert first.pix_instructions_snapshot == "Primeira instrução"
-        assert first.pix_configuration_snapshot["receiver_name"] == "PRIMEIRO"
-        assert first.pix_configuration_snapshot["version"] == 1
-        assert second.pix_copy_paste_snapshot != first_code
-        assert second.pix_configuration_snapshot["version"] == 2
+        assert second.id == first.id
+        assert first.pix_copy_paste_snapshot != first_code
+        assert first.pix_instructions_snapshot == "Segunda instrução"
+        assert first.pix_configuration_snapshot["receiver_name"] == "SEGUNDO"
+        assert first.pix_configuration_snapshot["version"] == 2
         apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(None, 2)))
         db.commit()
-        assert (
+        with pytest.raises(CheckoutError, match="seleção foi mantida"):
             create_pending_checkout(
                 db, gallery=gallery, client=owner, checkout_key="first-checkout"
-            ).id
-            == first.id
-        )
+            )
+        assert db.get(PhotoSelection, selection.id)
 
 
 @pytest.mark.parametrize("value", ["529.982.247-25", "+55 (11) 99999-1234", "PHOTO@EXAMPLE.TEST"])
