@@ -33,3 +33,17 @@ Use uma cliente de teste autenticada por OTP que possua ao menos duas galerias e
 ## Gates operacionais
 
 Push, merge e deploy exigem autorização humana específica depois deste inventário. Após a publicação autorizada, registrar SHA efetivamente implantado, healthchecks e resultado deste roteiro antes de marcar a task 4.3 como concluída.
+
+## Evidência executada em 2026-09-10
+
+- Autorização humana recebida antes de push, merge, aprovação do ambiente e deploy; SHA implantado: `67dbd2933616d2005363db97c1fca9c6b66804bc`.
+- Workflow `34540912766` aprovado integralmente; `/healthz`, `/api/health` e `/library` responderam HTTP `200` após a publicação.
+- A navegação autenticada da Galeria pública para `/library` foi concluída e mostrou imediatamente `Minhas fotos`, uma jornada ativa, ação visível `Ver pedido` e dois pedidos independentes.
+- O espaço `Capa ainda não definida` não apareceu em `/library` nem na galeria privada; o hero/capa permaneceu presente na Galeria pública.
+- Os pedidos disponíveis no conjunto de teste mantiveram estado, quantidade e valor próprios: um pedido com `4` fotos e `R$ 28,00` em `Pagamento informado`, e outro com `2` fotos e `R$ 14,00` em `Aguardando pagamento`.
+- A expansão de `Ver fotos (4)` abriu somente a grade daquele pedido. Não houve controles `Anterior`/`Próxima`; a ampliação individual de `PAI00168.jpg` abriu um diálogo com ação `Fechar` e foi encerrada sem mutação comercial.
+- Em viewport `1440 x 900`, a grade do pedido calculou quatro colunas; em `390 x 844`, calculou duas colunas. Ambos os cenários ficaram sem rolagem horizontal.
+- Na galeria privada, os filtros e contadores refletiram o acervo de teste: `Todas 6`, `Carrinho 0`, `Aguardando pagamento 2`, `Pagamento informado 4` e `Compradas 0`; a grade móvel calculou duas colunas.
+- Os dois cards de pagamento ficaram separados por `18px`, preservaram rótulos textuais e usaram fundos/bordas distintos para `Pagamento informado` e `Aguardando pagamento`.
+- O conjunto autenticado disponível possuía uma galeria e dois pedidos em estados diferentes; o isolamento entre múltiplas galerias permanece coberto pelos testes automatizados de frontend e backend registrados em `tasks.md`.
+- A inspeção foi estritamente de leitura e interação local de UI: nenhuma foto foi selecionada, nenhum pagamento foi comunicado/confirmado, nenhuma mídia foi enviada e nenhum serviço ou recurso de terceiro foi alterado.
