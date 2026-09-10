@@ -48,7 +48,7 @@ def safe_derivative_path(derivative: MediaDerivative) -> Path:
 
 
 def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> Image.Image:
-    """Incorpora marcas repetidas sem alterar orientação ou enquadramento da foto."""
+    """Incorpora uma marca textual e a grade opcional sem alterar a foto."""
     marked = image.convert("RGBA")
     text = (settings.watermark_text if settings else None) or os.getenv("MEDIA_WATERMARK_TEXT", "MARKINA • PRÉVIA")
     direction = (settings.watermark_direction if settings else None) or "diagonal"
@@ -115,25 +115,19 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
         layer = layer.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
 
     horizontal, vertical = position.split("-", maxsplit=1)
-    anchor_x = {
+    raw_anchor_x = {
         "left": 12,
         "center": (marked.width - layer.width) // 2,
         "right": marked.width - layer.width - 12,
     }.get(vertical, (marked.width - layer.width) // 2)
-    anchor_y = {
+    raw_anchor_y = {
         "top": 20,
         "middle": (marked.height - layer.height) // 2,
         "bottom": marked.height - layer.height - 20,
     }.get(horizontal, (marked.height - layer.height) // 2)
-    gap_x, gap_y = max(220, layer.width + 70), max(150, layer.height + 70)
-    horizontal_steps = marked.width // gap_x + 3
-    vertical_steps = marked.height // gap_y + 3
-    for row in range(-vertical_steps, vertical_steps + 1):
-        y = anchor_y + row * gap_y
-        for column in range(-horizontal_steps, horizontal_steps + 1):
-            x = anchor_x + column * gap_x
-            if x < marked.width and x + layer.width > 0 and y < marked.height and y + layer.height > 0:
-                marked.alpha_composite(layer, (x, y))
+    anchor_x = min(max(0, raw_anchor_x), max(0, marked.width - layer.width))
+    anchor_y = min(max(0, raw_anchor_y), max(0, marked.height - layer.height))
+    marked.alpha_composite(layer, (anchor_x, anchor_y))
     return marked.convert("RGB")
 
 

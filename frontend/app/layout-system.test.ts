@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 
 const globals = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
 const tokens = readFileSync(join(process.cwd(), "app", "design-tokens.css"), "utf8");
+const presentation = readFileSync(join(process.cwd(), "app", "gallery-presentation.tsx"), "utf8");
+const publicGallery = readFileSync(join(process.cwd(), "app", "public-galleries", "[galleryId]", "page.tsx"), "utf8");
+const privateGallery = readFileSync(join(process.cwd(), "app", "gallery", "[galleryId]", "page.tsx"), "utf8");
 
 function declarations(selector: string) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -68,5 +71,19 @@ describe("sistema global de layout fluido", () => {
     const presentationRules = [...globals.matchAll(/\.gallery-presentation-grid\s*\{([^}]*)\}/g)].map((match) => match[1]);
     expect(presentationRules.some((rule) => rule.includes("repeat(auto-fit,minmax(240px,1fr))"))).toBe(true);
     expect(globals).toContain(".public-photo-grid { grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }");
+  });
+
+  it("mantém duas colunas efetivas na grade fotográfica da cliente no mobile", () => {
+    const mobileBlocks = [...globals.matchAll(/@media \(max-width:\s*560px\)\s*\{([\s\S]*?)\n\}/g)].map((match) => match[1]);
+    expect(mobileBlocks.some((block) => /\.gallery-presentation-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,minmax\(0,1fr\)\)/.test(block))).toBe(true);
+    expect(mobileBlocks.some((block) => /\.gallery-presentation-grid\s*\{[^}]*grid-template-columns:\s*1fr/.test(block))).toBe(false);
+    expect(mobileBlocks.some((block) => /\.gallery-presentation-photo\s*\{[^}]*grid-column:\s*span 1/.test(block))).toBe(true);
+  });
+
+  it("reutiliza a mesma grade na Galeria pública, privada e nos resultados faciais", () => {
+    expect(publicGallery).toContain("<GalleryPresentation");
+    expect(privateGallery).toContain("<GalleryPresentation");
+    expect(presentation.match(/className="gallery-presentation-grid"/g)).toHaveLength(2);
+    expect(presentation).toContain("featuredGroups");
   });
 });
