@@ -1,4 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const navigation = vi.hoisted(() => ({ mode: null as string | null }));
@@ -23,6 +26,54 @@ const review = {
 };
 
 describe("galeria privada da cliente", () => {
+  it("conta estados comerciais e diferencia os pedidos sem mostrar capa vazia", async () => {
+    const commercialReview = {
+      ...review,
+      photos: [
+        { ...review.photos[0], id: "available-1", name: "Disponível.jpg", commercial_state: "available" },
+        { ...review.photos[0], id: "selected-1", name: "Carrinho.jpg", selected: true, commercial_state: "selected" },
+        { ...review.photos[0], id: "awaiting-1", name: "Aguardando.jpg", commercial_state: "awaiting_payment" },
+        { ...review.photos[0], id: "reported-1", name: "Informada.jpg", commercial_state: "payment_reported" },
+        { ...review.photos[1], id: "purchased-1", name: "Comprada.jpg", commercial_state: "purchased" },
+      ],
+    };
+    const orders = [
+      { order_id: "awaiting-order", total_cents: 700, payment_status: "pending", commercial_state: "awaiting_payment", communication: null, notification: null, items: [] },
+      { order_id: "reported-order", total_cents: 700, payment_status: "pending", commercial_state: "payment_reported", communication: { id: "communication-1", status: "pending_review" }, notification: null, items: [] },
+      { order_id: "confirmed-order", total_cents: 700, payment_status: "confirmed", commercial_state: "purchased", communication: { id: "communication-2", status: "confirmed" }, notification: null, items: [] },
+    ];
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 5 }] }
+          : path.endsWith("/cart") ? { quantity: 1, items: [] }
+            : path.endsWith("/payment-communications") ? { orders }
+              : path.endsWith("/reopening-requests") ? { request: null }
+                : commercialReview,
+    ), { status: 200 }))));
+
+    render(<GalleryPage />);
+
+    const filters = await screen.findByRole("navigation", { name: "Filtrar fotos" });
+    expect(within(filters).getByRole("button", { name: /Todas/ }).textContent).toContain("5");
+    expect(within(filters).getByRole("button", { name: /Carrinho/ }).textContent).toContain("1");
+    expect(within(filters).getByRole("button", { name: /Aguardando pagamento/ }).textContent).toContain("1");
+    expect(within(filters).getByRole("button", { name: /Pagamento informado/ }).textContent).toContain("1");
+    expect(within(filters).getByRole("button", { name: /Compradas/ }).textContent).toContain("1");
+    expect(screen.queryByText("Capa ainda não definida")).toBeNull();
+    fireEvent.click(within(filters).getByRole("button", { name: /Pagamento informado/ }));
+    expect(screen.getByRole("img", { name: "Prévia protegida de Informada.jpg" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Prévia protegida de Disponível.jpg" })).toBeNull();
+
+    expect(screen.getByRole("article", { name: /Pedido awaiting-/ }).className).toContain("client-order-resume--awaiting-payment");
+    expect(screen.getByRole("article", { name: /Pedido reported-/ }).className).toContain("client-order-resume--payment-reported");
+    expect(screen.getByRole("article", { name: /Pedido confirmed-/ }).className).toContain("client-order-resume--purchased");
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    expect(css).toContain(".client-payment-orders { display:grid; gap:18px; }");
+    expect(css).toContain(".client-order-resume--awaiting-payment");
+    expect(css).toContain(".client-order-resume--payment-reported");
+    expect(css).toContain(".client-order-resume--purchased");
+  });
+
   it("retoma a etapa PIX do rascunho salvo após recarregar", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path.endsWith("/comments") ? { comments: [] }
@@ -61,7 +112,7 @@ describe("galeria privada da cliente", () => {
     render(<GalleryPage />);
 
     expect(await screen.findByRole("link", { name: "Carrinho (1)" })).toBeTruthy();
-    expect(screen.getByText("Pagamento informado")).toBeTruthy();
+    expect(screen.getAllByText("Pagamento informado").length).toBeGreaterThan(0);
     expect(screen.getByRole("img", { name: "Miniatura protegida de IMG_002.jpg" })).toBeTruthy();
   });
 
@@ -74,8 +125,8 @@ describe("galeria privada da cliente", () => {
     expect(screen.getByText("nova")).toBeTruthy();
     expect(screen.getAllByText("Comprada").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "☆ Favoritar" }).length).toBe(2);
-    expect(screen.getByRole("button", { name: /Novas fotos/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Já compradas/ }));
+    expect(screen.getByRole("button", { name: /Carrinho/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Compradas/ }));
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_002.jpg" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Todas/ }));
     expect(
@@ -352,13 +403,13 @@ describe("galeria privada da cliente", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
-    expect(await screen.findByText("Aguardando pagamento")).toBeTruthy();
+    expect((await screen.findAllByText("Aguardando pagamento")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Informar pagamento" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/gallery/gallery-1/orders/order-1/payment-communications",
       expect.objectContaining({ method: "POST" }),
     ));
-    expect(await screen.findByText("Pagamento informado")).toBeTruthy();
+    expect((await screen.findAllByText("Pagamento informado")).length).toBeGreaterThan(0);
     expect(screen.getByText("O pagamento está em análise.")).toBeTruthy();
   });
 });

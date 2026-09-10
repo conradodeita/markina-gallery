@@ -40,6 +40,7 @@ type GalleryPresentationProps<TPhoto extends GalleryPresentationPhoto> = {
   renderExpandedPhotoContent?: (photo: TPhoto) => ReactNode;
   onExpandedPhotoChange?: (photo: TPhoto | null) => void;
   showCopyrightProtectionDialog?: boolean;
+  showHero?: boolean;
 };
 
 type PhotoStyle = CSSProperties & {
@@ -73,6 +74,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   renderExpandedPhotoContent,
   onExpandedPhotoChange,
   showCopyrightProtectionDialog = false,
+  showHero = true,
 }: GalleryPresentationProps<TPhoto>) {
   const availableFolders = folders.filter((folder) => folder.photos.length > 0);
   const [activeFolderId, setActiveFolderId] = useState(availableFolders[0]?.id ?? "");
@@ -177,13 +179,13 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
 
       <p className="gallery-protection-notice" role="status" aria-live="polite"><span aria-hidden="true">◈</span>{protectionMessage}</p>
 
-      <div className="gallery-presentation-hero gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
+      {showHero ? <div className="gallery-presentation-hero gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
         {coverUrl ? <img src={coverUrl} alt={`Capa de ${galleryName}`} draggable={false} /> : <div className="gallery-presentation-hero-empty" role="status">Capa ainda não definida</div>}
         <div className={`gallery-presentation-title title-${titleStyle?.position ?? "bottom-left"}`} style={heroTitleStyle}>
           <span>Apresentação</span>
           <strong>{galleryName}</strong>
         </div>
-      </div>
+      </div> : null}
 
       {featuredGroups.some((group) => group.photos.length) ? <section className="gallery-featured-results" aria-labelledby="gallery-featured-title"><header><p className="eyebrow">Filtro da sua busca</p><h2 id="gallery-featured-title">Possibilidades encontradas</h2><p>Confira os resultados e selecione apenas as fotos que desejar. O acervo completo continua abaixo.</p></header>{featuredGroups.filter((group) => group.photos.length).map((group) => <section key={group.id} aria-labelledby={`featured-${group.id}`}><div className="gallery-presentation-collection-heading"><div><h3 id={`featured-${group.id}`}>{group.title}</h3><p>{group.detail}</p></div><span>{group.photos.length} foto{group.photos.length === 1 ? "" : "s"}</span></div><div className="gallery-presentation-grid">{group.photos.map((photo) => renderPhoto(photo, renderFeaturedPhotoMarkers ?? renderPhotoMarkers))}</div></section>)}</section> : null}
 

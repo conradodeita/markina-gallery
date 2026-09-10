@@ -109,12 +109,28 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .journey-selection-summary strong { color:#171717; font-size:.95rem; }
 .journey-selection-summary small { grid-column:1/-1; }
 .library-card-actions { display:grid; gap:8px; padding-top:8px; border-top:1px solid #e0e0e0; }
+.library-card-actions .mk-button--primary { color:#fff; }
 .library-card-actions span { color:#555; font-size:.8rem; line-height:1.45; }
 .library-history { display:grid; gap:12px; }
-.library-order { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 0; border-top:1px solid #ddd; }
-.library-order > div { display:grid; gap:4px; }
+.library-order { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:16px; padding:18px; border:1px solid #ddd; border-left:5px solid #8b928c; border-radius:14px; background:#fff; }
+.library-order--awaiting-payment { border-left-color:#a66b00; background:#fffbf0; }
+.library-order--payment-reported { border-left-color:#2d638f; background:#f3f8fc; }
+.library-order--purchased { border-left-color:#287a43; background:#f3faf5; }
+.library-order--cancelled { border-left-color:#9d3b35; background:#fff5f3; }
+.library-order-summary { display:grid; gap:4px; }
 .library-order small,.library-order time { color:#555; font-size:.8rem; }
-@media (max-width:560px) { .library-card-grid { grid-template-columns:1fr; }.journey-selection-summary { grid-template-columns:1fr; }.journey-selection-summary small { grid-column:auto; }.library-order { align-items:stretch; flex-direction:column; }.library-order button { width:100%; } }
+.library-order-photo-grid { display:grid; grid-column:1/-1; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.library-order-photo-grid figure { display:grid; gap:7px; min-width:0; margin:0; }
+.library-order-photo-grid button { display:block; width:100%; padding:0; overflow:hidden; border:1px solid #d5d9d5; border-radius:10px; background:#111; cursor:zoom-in; }
+.library-order-photo-grid img { display:block; width:100%; aspect-ratio:4/5; object-fit:contain; }
+.library-order-photo-grid figcaption { overflow:hidden; color:#444; font-size:.82rem; text-overflow:ellipsis; white-space:nowrap; }
+.library-photo-dialog-backdrop { position:fixed; z-index:45; inset:0; display:grid; place-items:center; padding:18px; background:#071009dd; }
+.library-photo-dialog { width:min(100%,1080px); max-height:calc(100dvh - 36px); display:grid; gap:12px; padding:14px; border-radius:16px; background:#fff; outline:0; }
+.library-photo-dialog > img { width:100%; max-height:calc(100dvh - 150px); object-fit:contain; background:#111; }
+.library-photo-dialog-close { justify-self:end; padding:8px 12px; border:1px solid #cfd5cf; border-radius:8px; background:#fff; cursor:pointer; }
+.library-history-retry { justify-self:start; }
+@media (max-width:700px) { .library-order-photo-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:560px) { .library-card-grid { grid-template-columns:1fr; }.journey-selection-summary { grid-template-columns:1fr; }.journey-selection-summary small { grid-column:auto; }.library-order { grid-template-columns:1fr; }.library-order > button { width:100%; }.library-order-photo-grid { grid-column:auto; } }
 .public-gallery-shell { display:grid; width:min(calc(100% - 32px),1760px); max-width:1760px; gap:22px; padding:32px 0 76px; }
 .public-photo-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; }
 .public-photo-grid article { display:grid; gap:12px; overflow:hidden; border:1px solid #d8d8d8; border-radius:15px; background:#fff; }
@@ -918,3 +934,10 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .client-order-resume .client-checkout-items {
   width: 100%;
 }
+.client-payment-orders { display:grid; gap:18px; }
+.client-payment-orders > h2 { margin:0 0 4px; }
+.client-order-resume { gap:10px; margin:0; padding:18px; border-left-width:6px; }
+.client-order-resume--awaiting-payment { border-color:#dfc78f; border-left-color:#9b6700; background:#fffaf0; }
+.client-order-resume--payment-reported { border-color:#afcce1; border-left-color:#2c638c; background:#f2f8fc; }
+.client-order-resume--purchased { border-color:#acd1b7; border-left-color:#287543; background:#f1faf4; }
+.client-order-resume--cancelled { border-color:#e3b5b0; border-left-color:#9d3b35; background:#fff4f2; }

@@ -1,5 +1,6 @@
 from datetime import UTC, timedelta
 from io import BytesIO
+from time import perf_counter
 from uuid import UUID, uuid4
 
 import pyotp
@@ -3638,6 +3639,140 @@ def test_client_cart_projection_is_batched_and_isolated_between_members() -> Non
             for cart in payload.values()
             for item in cart["items"]
         } == {f"IMG_{position}.jpg" for position in range(5)}
+
+
+def test_client_library_and_purchase_history_queries_remain_batched(
+    client: TestClient,
+) -> None:
+    phone = "+5511777777733"
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente", phone_e164=phone)
+        db.add(owner)
+        db.commit()
+        owner_id = owner.id
+
+    def add_gallery(position: int) -> None:
+        with SessionLocal() as db:
+            parent = ParentGallery(
+                name=f"Evento da biblioteca {position}",
+                event_name=f"Evento {position}",
+            )
+            db.add(parent)
+            db.flush()
+            folder = PhotoFolder(
+                parent_gallery_id=parent.id,
+                name="Fotos",
+                status="released",
+                purpose="content",
+            )
+            gallery = DerivedGallery(
+                parent_gallery_id=parent.id,
+                client_id=owner_id,
+                name=f"Privada {position}",
+            )
+            db.add_all(
+                [
+                    folder,
+                    gallery,
+                    ParentGalleryRegistration(
+                        parent_gallery_id=parent.id,
+                        client_id=owner_id,
+                        status="active",
+                    ),
+                ]
+            )
+            db.flush()
+            photo = PhotoAsset(
+                parent_gallery_id=parent.id,
+                folder_id=folder.id,
+                filename=f"IMG_{position:04d}.jpg",
+                storage_key=f"library-batched/{position}.jpg",
+            )
+            db.add(photo)
+            db.flush()
+            db.add(
+                DerivedGalleryPhoto(
+                    derived_gallery_id=gallery.id,
+                    photo_asset_id=photo.id,
+                    origin="client",
+                )
+            )
+            order = SaleOrder(
+                derived_gallery_id=gallery.id,
+                derived_gallery_id_snapshot=gallery.id,
+                derived_gallery_name_snapshot=gallery.name,
+                parent_gallery_id_snapshot=parent.id,
+                parent_gallery_name_snapshot=parent.name,
+                client_id=owner_id,
+                client_name_snapshot="Cliente",
+                payment_status="pending",
+                total_cents=700,
+                frozen_at=now(),
+            )
+            db.add(order)
+            db.flush()
+            db.add(
+                SaleOrderItem(
+                    sale_order_id=order.id,
+                    photo_asset_id=photo.id,
+                    photo_asset_id_snapshot=photo.id,
+                    filename_snapshot=photo.filename,
+                    folder_id_snapshot=folder.id,
+                    folder_name_snapshot=folder.name,
+                    unit_price_cents=700,
+                )
+            )
+            db.commit()
+
+    def measure(path: str) -> tuple[int, float, dict]:
+        statement_count = 0
+
+        def count_statement(*_args) -> None:
+            nonlocal statement_count
+            statement_count += 1
+
+        event.listen(engine, "before_cursor_execute", count_statement)
+        started_at = perf_counter()
+        try:
+            response = client.get(path)
+        finally:
+            elapsed = perf_counter() - started_at
+            event.remove(engine, "before_cursor_execute", count_statement)
+        assert response.status_code == 200
+        return statement_count, elapsed, response.json()
+
+    add_gallery(0)
+    authenticate_client(client, phone)
+    base_library_queries, base_library_seconds, base_library = measure("/library")
+    base_history_queries, base_history_seconds, base_history = measure("/library/purchases")
+
+    for position in range(1, 5):
+        add_gallery(position)
+
+    expanded_library_queries, expanded_library_seconds, expanded_library = measure("/library")
+    expanded_history_queries, expanded_history_seconds, expanded_history = measure(
+        "/library/purchases"
+    )
+
+    assert len(base_library["journeys"]) == len(base_history["orders"]) == 1
+    assert len(expanded_library["journeys"]) == len(expanded_history["orders"]) == 5
+    assert expanded_library_queries <= base_library_queries + 1
+    assert expanded_history_queries <= base_history_queries + 1
+    print(
+        "library batching diagnostic:",
+        {
+            "library": {
+                "one": [base_library_queries, round(base_library_seconds, 4)],
+                "five": [expanded_library_queries, round(expanded_library_seconds, 4)],
+            },
+            "purchases": {
+                "one": [base_history_queries, round(base_history_seconds, 4)],
+                "five": [expanded_history_queries, round(expanded_history_seconds, 4)],
+            },
+        },
+    )
+
+
 def test_private_media_payment_correction_and_reopening_contracts_start_missing(
     client: TestClient,
 ) -> None:
