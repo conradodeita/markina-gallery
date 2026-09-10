@@ -97,10 +97,12 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
     )
     retained_folder_ids = select(PhotoAsset.folder_id).where(
         PhotoAsset.parent_gallery_id == parent_gallery_id,
+        PhotoAsset.derived_gallery_id.is_(None),
         PhotoAsset.id.in_(retained_photo_ids),
     )
     removable_photo_ids = select(PhotoAsset.id).where(
         PhotoAsset.parent_gallery_id == parent_gallery_id,
+        PhotoAsset.derived_gallery_id.is_(None),
         PhotoAsset.id.not_in(retained_photo_ids),
     )
 
@@ -136,11 +138,13 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
             "folders": count(
                 PhotoFolder,
                 PhotoFolder.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.id.not_in(retained_folder_ids),
             ),
             "photos": count(
                 PhotoAsset,
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.id.not_in(retained_photo_ids),
             ),
             "media_derivatives": count(
@@ -166,11 +170,13 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
             "photos_referenced_by_private": count(
                 PhotoAsset,
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.id.in_(retained_photo_ids),
             ),
             "folders_with_private_photos": count(
                 PhotoFolder,
                 PhotoFolder.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.id.in_(retained_folder_ids),
             ),
             "available_references": count(
@@ -306,7 +312,9 @@ def client_unlink_inventory(
                 GalleryAccessCapability.client_id.is_(None),
             ),
             "photos": count(
-                PhotoAsset, PhotoAsset.parent_gallery_id == parent_gallery_id
+                PhotoAsset,
+                PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
             ),
             "orders": sum(order_counts.values()),
             "orders_by_status": {
@@ -334,6 +342,7 @@ def gallery_operational_storage_manifest(
     )
     removable_photo_ids = select(PhotoAsset.id).where(
         PhotoAsset.parent_gallery_id == parent_gallery_id,
+        PhotoAsset.derived_gallery_id.is_(None),
         PhotoAsset.id.not_in(retained_photo_ids),
     )
     sources = [

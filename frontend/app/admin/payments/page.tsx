@@ -23,6 +23,8 @@ type Communication = {
   created_at: string;
   decided_at: string | null;
   can_decide: boolean;
+  can_correct: boolean;
+  corrections: Array<{ id: string; created_at: string }>;
   photographer_notification: Delivery | null;
   client_notification: Delivery | null;
 };
@@ -39,6 +41,8 @@ type Order = {
   communications: Communication[];
   communication: Communication | null;
   delivery_statuses: string[];
+  folders: Array<{ id: string | null; name: string; items: Array<{ id: string; photo_id: string; name: string; unit_price_cents: number }> }>;
+  payment_message_snapshot: string | null;
 };
 type ClientGroup = {
   client: { id: string; name: string };
@@ -46,6 +50,9 @@ type ClientGroup = {
   orders: Order[];
 };
 type Dashboard = {
+  templates: Record<"confirmed" | "refused", string>;
+  templates_are_global: boolean;
+  selections_without_order?: Array<{ client: { id: string; name: string }; gallery: { id: string; name: string }; parent_gallery: { id: string; name: string }; selected_count: number; created_at: string; folders: Array<{ id: string; name: string; items: Array<{ id: string; name: string }> }> }>;
   summary: { clients: number; orders: number; total_cents: number; financial_statuses: Record<string, number>; failed_messages: number };
   facets: {
     parent_galleries: Array<{ id: string; name: string; count: number }>;
@@ -55,6 +62,7 @@ type Dashboard = {
   groups: ClientGroup[];
   page: { next_cursor: string | null; limit: number };
 };
+type Reopening = { id: string; gallery_id: string; gallery_name: string; status: "pending" | "approved" | "refused"; created_at: string; approved_until: string | null; notification: { id: string | null; status: string; attempts: number; can_retry: boolean } };
 type Filters = {
   query?: string;
   parent_gallery_id?: string;
@@ -108,6 +116,7 @@ export default function AdminPaymentsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [busyAction, setBusyAction] = useState("");
   const [message, setMessage] = useState("");
+  const [reopenings, setReopenings] = useState<Reopening[]>([]);
 
   const load = useCallback(async (nextFilters: Filters, cursor?: string | null, append = false) => {
     if (append) setLoadingMore(true);
@@ -141,6 +150,8 @@ export default function AdminPaymentsPage() {
       .catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
   }, []);
+  const loadReopenings = useCallback(() => fetch("/api/admin/gallery-reopening-requests", { credentials: "same-origin" }).then(async (response) => { if (!response.ok) throw new Error(); setReopenings((await response.json()).requests ?? []); }).catch(() => setReopenings([])), []);
+  useEffect(() => { void loadReopenings(); }, [loadReopenings]);
 
   async function decide(id: string, decision: "confirmed" | "refused") {
     setBusyAction(`decision:${id}`);
@@ -164,6 +175,28 @@ export default function AdminPaymentsPage() {
     setMessage(response.ok ? "Notificação reenfileirada." : "O limite de tentativas não permite novo envio.");
     if (response.ok) await load(filters);
     setBusyAction("");
+  }
+  async function correct(id: string) {
+    if (!window.confirm("Corrigir esta confirmação e devolver o pagamento para revisão? Nenhuma mensagem será enviada à cliente.")) return;
+    setBusyAction(`correction:${id}`);
+    const response = await fetch(`/api/admin/payment-communications/${id}/correction`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) });
+    setMessage(response.ok ? "Confirmação corrigida. O pagamento voltou para revisão sem enviar nova mensagem." : "Não foi possível corrigir a confirmação.");
+    if (response.ok) await load(filters); setBusyAction("");
+  }
+  async function decideReopening(item: Reopening, decision: "approved" | "refused") {
+    let selection_expires_at: string | null = null;
+    if (decision === "approved") { const value = window.prompt("Novo prazo (AAAA-MM-DD):"); if (!value) return; selection_expires_at = `${value}T23:59:59.000Z`; }
+    setBusyAction(`reopening:${item.id}`);
+    const response = await fetch(`/api/admin/gallery-reopening-requests/${item.id}/decision`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision, selection_expires_at }) });
+    setMessage(response.ok ? (decision === "approved" ? "Galeria reaberta para todos os membros." : "Solicitação recusada; a galeria permanece congelada.") : "Não foi possível registrar a decisão de reabertura.");
+    if (response.ok) { await loadReopenings(); await load(filters); } setBusyAction("");
+  }
+  async function retryReopening(item: Reopening) {
+    if (!item.notification.id) return;
+    setBusyAction(`reopening-notice:${item.id}`);
+    const response = await fetch(`/api/admin/gallery-reopening-notifications/${item.notification.id}/retry`, { method: "POST", credentials: "same-origin" });
+    setMessage(response.ok ? "Aviso de reabertura reenfileirado." : "Não foi possível reenfileirar o aviso.");
+    if (response.ok) await loadReopenings(); setBusyAction("");
   }
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
@@ -194,7 +227,7 @@ export default function AdminPaymentsPage() {
   const hasFilters = Object.values(filters).some(Boolean);
   return <main className="admin-shell payments-dashboard">
     <p className="eyebrow">Operação financeira · decisão manual</p>
-    <h1>Pagamentos por cliente</h1>
+    <h1>Vendas e pagamentos</h1>
     <p className="intro">A comunicação da cliente não confirma o PIX. Revise cada pedido e registre uma única decisão; o histórico comercial permanece mesmo quando a galeria é removida.</p>
 
     <section aria-label="Resumo de pagamentos" className="payment-summary">
@@ -203,6 +236,12 @@ export default function AdminPaymentsPage() {
       <MetricCard label="Aguardando revisão" value={dashboard.summary.financial_statuses.reported ?? 0} detail="Pagamentos comunicados" tone="warning" />
       <MetricCard label="Falhas de mensagem" value={dashboard.summary.failed_messages} detail="Entregas que exigem atenção" tone={dashboard.summary.failed_messages ? "danger" : "success"} />
     </section>
+
+    <section className="admin-card"><div className="section-heading"><div><h2>Mensagem global após conferência</h2><p>Qualquer edição afeta todas as clientes. O texto efetivamente usado fica salvo no pedido.</p></div><a className="mk-button mk-button--secondary" href="/admin/settings#payment-messages">Editar em Configurações</a></div><details><summary>Ver prévias</summary><p><strong>Pagamento confirmado:</strong> {dashboard.templates?.confirmed ?? "Olá {{cliente}}, o pagamento do pedido {{pedido}} foi confirmado."}</p><p><strong>Pagamento não localizado:</strong> {dashboard.templates?.refused ?? "Olá {{cliente}}, o pagamento do pedido {{pedido}} ainda não foi localizado."}</p></details></section>
+
+    {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
+
+    {dashboard.selections_without_order?.length ? <section className="admin-card"><div className="section-heading"><div><h2>Seleções sem pedido</h2><p>Clientes que já escolheram fotos, mas ainda não avançaram para o pedido.</p></div><StatusBadge>{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral">Seleção em aberto</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><strong>{selection.selected_count} foto(s)</strong></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
 
     <details className="admin-card payment-filters" open={hasFilters || undefined}>
       <summary>Filtros {hasFilters ? "ativos" : ""}</summary>
@@ -225,7 +264,7 @@ export default function AdminPaymentsPage() {
       {dashboard.groups.map((group) => <section className="admin-card payment-client-card" key={group.client.id}>
         <header><div><p className="eyebrow">Cliente</p><h2>{group.client.name}</h2></div><div className="payment-client-total"><strong>{money(group.totals.total_cents)}</strong><span>{group.totals.orders} pedido(s)</span></div></header>
         <div className="payment-orders">
-          {group.orders.map((order) => <OrderCard key={order.id} order={order} busyAction={busyAction} onDecide={decide} onRetry={retry} />)}
+          {group.orders.map((order) => <OrderCard key={order.id} order={order} busyAction={busyAction} onDecide={decide} onCorrect={correct} onRetry={retry} />)}
         </div>
       </section>)}
     </div>
@@ -235,7 +274,7 @@ export default function AdminPaymentsPage() {
   </main>;
 }
 
-function OrderCard({ order, busyAction, onDecide, onRetry }: { order: Order; busyAction: string; onDecide: (id: string, decision: "confirmed" | "refused") => Promise<void>; onRetry: (id: string) => Promise<void> }) {
+function OrderCard({ order, busyAction, onDecide, onCorrect, onRetry }: { order: Order; busyAction: string; onDecide: (id: string, decision: "confirmed" | "refused") => Promise<void>; onCorrect: (id: string) => Promise<void>; onRetry: (id: string) => Promise<void> }) {
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
@@ -243,9 +282,12 @@ function OrderCard({ order, busyAction, onDecide, onRetry }: { order: Order; bus
     <details>
       <summary>Ver pedido e mensagens</summary>
       <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div>{order.selection_expires_at ? <div><dt>Prazo</dt><dd>{new Date(order.selection_expires_at).toLocaleDateString("pt-BR")}</dd></div> : null}</dl>
+      {order.folders?.length ? <div>{order.folders.map((folder) => <section key={folder.id ?? folder.name}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name} · {money(item.unit_price_cents)}</li>)}</ul></section>)}</div> : null}
       {!communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
         {communication.can_decide ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `decision:${communication.id}`} onClick={() => void onDecide(communication.id, "confirmed")}>Confirmar pagamento</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `decision:${communication.id}`} onClick={() => void onDecide(communication.id, "refused")}>Pagamento não localizado</MarkinaButton></div> : null}
+        {communication.can_correct ? <MarkinaButton variant="secondary" disabled={busyAction === `correction:${communication.id}`} onClick={() => void onCorrect(communication.id)}>Corrigir confirmação</MarkinaButton> : null}
+        {order.payment_message_snapshot ? <details><summary>Mensagem enviada nesta confirmação</summary><p>{order.payment_message_snapshot}</p></details> : null}
         <DeliveryState label="Aviso ao fotógrafo" delivery={communication.photographer_notification} busyAction={busyAction} onRetry={onRetry} />
         {communication.status !== "pending_review" ? <DeliveryState label="Resposta à cliente" delivery={communication.client_notification} busyAction={busyAction} onRetry={onRetry} /> : null}
       </>}

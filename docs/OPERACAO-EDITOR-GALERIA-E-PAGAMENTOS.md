@@ -53,25 +53,29 @@ falhado, o editor permanece nessa etapa e mostra as contagens. Nenhuma
 referência de galeria privada é criada em massa.
 
 O endpoint legado de liberação aceita somente o payload sem destinos. Uma
-tentativa de enviar `gallery_ids` é recusada sem mutação parcial. Para atribuir
-fotos a uma cliente específica, use a etapa 05.
+tentativa de enviar `gallery_ids` é recusada sem mutação parcial. Fotos públicas
+entram na privada apenas pela seleção da própria cliente, nunca por atribuição
+manual do administrador.
 
 ## Etapa 05 — Clientes e acesso
 
-Os cards separam o estado da galeria do estado comercial e mostram disponíveis,
-selecionadas e compradas. **Montar galeria privada** cria ou reutiliza somente a
-privada da cliente escolhida e não marca as fotos como selecionadas ou
-compradas. **Desvincular cliente** executa a operação assíncrona orientada pelo
-backend; acompanhe o progresso e não repita a ação quando estiver bloqueada por
-revisão financeira.
+Os cards separam o estado da galeria do estado comercial e mostram **Fotos no
+acervo privado**, **Fotos selecionadas** e **Fotos compradas**. **Criar galeria
+privada** abre ou reutiliza a privada da cliente escolhida sem apresentar um
+catálogo público ao administrador. As seleções realizadas pela cliente na
+Galeria pública continuam entrando automaticamente nessa privada. Para
+adicionar conteúdo administrativo, abra a ficha privada, crie uma pasta e envie
+JPEGs novos do dispositivo. **Desvincular cliente** executa a operação
+assíncrona orientada pelo backend; acompanhe o progresso e não repita a ação
+quando estiver bloqueada por revisão financeira.
 
 No resumo, cada pasta de conteúdo tem miniatura protegida e abre o mesmo
 workspace da etapa 04 para revisar, adicionar ou excluir itens elegíveis. Pasta
 técnica de capa não aparece nessa superfície.
 
-## Painel Pagamentos
+## Vendas e pagamentos
 
-O painel agrupa pedidos e comunicações por cliente, inclusive quando a Galeria
+O painel agrupa seleções, pedidos e comunicações por cliente, inclusive quando a Galeria
 pública operacional já foi removida. O resumo e as contagens obedecem aos
 filtros combináveis de cliente, Galeria pública, período, situação financeira e
 entrega da mensagem. Use **Limpar filtros** para retornar ao conjunto completo

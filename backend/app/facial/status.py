@@ -63,6 +63,8 @@ def gallery_index_status(
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
             .order_by(PhotoAsset.id)
@@ -86,6 +88,7 @@ def gallery_index_status(
             )
             .where(
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.available.is_(True),
             )
             .order_by(PhotoAsset.id)
@@ -97,6 +100,7 @@ def gallery_index_status(
             select(FacialJob)
             .where(
                 FacialJob.parent_gallery_id == parent_gallery_id,
+                FacialJob.derived_gallery_id.is_(None),
                 FacialJob.photo_asset_id.in_(eligible_photo_ids),
                 FacialJob.kind == "index",
                 FacialJob.model_version == policy.model_version,

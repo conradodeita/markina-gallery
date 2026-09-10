@@ -15,7 +15,11 @@ from app.auth import (
     SessionLocal,
     engine,
 )
-from app.private_derivation import derive_admin_gallery, derive_client_selection
+from app.private_derivation import (
+    derive_admin_gallery,
+    derive_client_selection,
+    ensure_private_photo_reference,
+)
 from app.private_membership import (
     PrivateMembershipConflict,
     PrivateMembershipError,
@@ -254,7 +258,12 @@ def test_derivation_reuses_shared_collection_and_keeps_member_state_individual()
             db,
             parent_gallery_id=parent.id,
             client_id=member.id,
-            photo_ids={photos[0].id},
+        )
+        ensure_private_photo_reference(
+            db,
+            gallery_id=administrative.gallery.id,
+            photo_id=photos[0].id,
+            origin="admin",
         )
         selected = derive_client_selection(
             db,
@@ -266,7 +275,6 @@ def test_derivation_reuses_shared_collection_and_keeps_member_state_individual()
             db,
             parent_gallery_id=parent.id,
             client_id=member.id,
-            photo_ids={photos[1].id},
         )
         db.flush()
 
@@ -304,4 +312,4 @@ def test_derivation_reuses_shared_collection_and_keeps_member_state_individual()
                     == repeated_reference_id
                 )
             )
-        ) == {"admin", "client"}
+        ) == {"client"}

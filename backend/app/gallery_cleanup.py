@@ -76,6 +76,7 @@ def prepare_lifecycle_history(db: Session, operation: GalleryLifecycleOperation)
         db.scalars(
             select(PhotoAsset.id).where(
                 PhotoAsset.parent_gallery_id == operation.target_parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.id.not_in(retained_photo_ids),
             )
         )
@@ -191,6 +192,7 @@ def remove_operational_records(db: Session, operation: GalleryLifecycleOperation
         db.scalars(
             select(PhotoAsset.id).where(
                 PhotoAsset.parent_gallery_id == parent_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.id.not_in(retained_photo_ids),
             )
         )
@@ -238,8 +240,12 @@ def remove_operational_records(db: Session, operation: GalleryLifecycleOperation
         db,
         PhotoFolder,
         PhotoFolder.parent_gallery_id == parent_id,
+        PhotoFolder.derived_gallery_id.is_(None),
         PhotoFolder.id.not_in(
-            select(PhotoAsset.folder_id).where(PhotoAsset.parent_gallery_id == parent_id)
+            select(PhotoAsset.folder_id).where(
+                PhotoAsset.parent_gallery_id == parent_id,
+                PhotoAsset.derived_gallery_id.is_(None),
+            )
         ),
     )
     if parent:

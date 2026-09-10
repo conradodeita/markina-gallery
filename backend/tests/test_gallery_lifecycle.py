@@ -2762,7 +2762,7 @@ def test_legacy_facial_derivation_port_stays_disabled_and_unexposed() -> None:
         assert client.post(f"/public-galleries/{uuid4()}/facial-results").status_code == 404
 
 
-def test_admin_private_creation_requires_photo_and_private_invite_owner() -> None:
+def test_admin_private_creation_is_empty_and_private_invite_has_one_owner() -> None:
     owner_phone = "+5511999999821"
     other_phone = "+5511999999822"
     with SessionLocal() as db:
@@ -2880,7 +2880,7 @@ def test_admin_private_creation_requires_photo_and_private_invite_owner() -> Non
                 "photo_ids": [str(foreign_photo_id)],
             },
         )
-        assert wrong_origin.status_code == 422
+        assert wrong_origin.status_code == 410
 
         created = client.post(
             "/admin/derived-galleries",
@@ -2888,7 +2888,8 @@ def test_admin_private_creation_requires_photo_and_private_invite_owner() -> Non
                 "parent_gallery_id": str(parent_id),
                 "client_id": str(owner_id),
                 "name": "Seleção administrativa",
-                "photo_ids": [str(photo_id)],
+                "photo_ids": [],
+                "create_empty_private": True,
             },
         )
         assert created.status_code == 201
@@ -2896,8 +2897,14 @@ def test_admin_private_creation_requires_photo_and_private_invite_owner() -> Non
         gallery_id = UUID(created_payload["private_gallery_id"])
         invite_token = created_payload["invite_token"]
         assert invite_token
-        assert created_payload["references_created"] == 1
+        assert created_payload["references_created"] == 0
         assert created_payload["gallery_created"] is True
+
+        with SessionLocal() as db:
+            ensure_private_photo_reference(
+                db, gallery_id=gallery_id, photo_id=photo_id, origin="admin"
+            )
+            db.commit()
 
         repeated = client.post(
             "/admin/derived-galleries",
@@ -2905,7 +2912,8 @@ def test_admin_private_creation_requires_photo_and_private_invite_owner() -> Non
                 "parent_gallery_id": str(parent_id),
                 "client_id": str(owner_id),
                 "name": "Nome repetido não sobrescreve",
-                "photo_ids": [str(photo_id)],
+                "photo_ids": [],
+                "create_empty_private": True,
             },
         )
         assert repeated.status_code == 201
@@ -3180,7 +3188,7 @@ def test_private_gallery_unique_pair_survives_a_preflight_race() -> None:
         assert len(list(db.scalars(lookup))) == 1
 
 
-def test_admin_availability_records_origin_without_creating_selection() -> None:
+def test_admin_cannot_add_origin_to_existing_client_reference() -> None:
     with SessionLocal() as db:
         parent = ParentGallery(name="Galeria pública administrativa")
         owner = Client(full_name="Cliente administrativa", phone_e164="+5511999999500")
@@ -3230,9 +3238,8 @@ def test_admin_availability_records_origin_without_creating_selection() -> None:
                 "photo_ids": [str(photo_id)],
             },
         )
-        assert created.status_code == 201
-        gallery_id = UUID(created.json()["id"])
-        assert gallery_id == expected_gallery_id
+        assert created.status_code == 410
+        gallery_id = expected_gallery_id
 
     with SessionLocal() as db:
         assert set(
@@ -3248,7 +3255,7 @@ def test_admin_availability_records_origin_without_creating_selection() -> None:
                     DerivedGalleryPhoto.photo_asset_id == photo_id,
                 )
             )
-        ) == {"admin", "client"}
+        ) == {"client"}
         assert (
             db.scalar(select(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery_id))
             is None

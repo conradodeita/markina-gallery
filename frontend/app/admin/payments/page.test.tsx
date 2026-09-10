@@ -42,6 +42,8 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
         communications: [communication],
         communication,
         delivery_statuses: ["failed"],
+        folders: [],
+        payment_message_snapshot: null,
       }],
     }],
     page: { next_cursor: nextCursor, limit: 12 },
@@ -116,5 +118,32 @@ describe("controle operacional de pagamentos", () => {
     fireEvent.click(screen.getByRole("button", { name: "Carregar mais clientes" }));
     expect(await screen.findByRole("heading", { name: "Bia" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Ana" })).toBeTruthy();
+  });
+
+  it("corrige confirmação sem mensagem e decide reabertura na área unificada", async () => {
+    const correctedDashboard = dashboard();
+    const confirmed = { ...communication, status: "confirmed", can_decide: false, can_correct: true, corrections: [] };
+    correctedDashboard.groups[0].orders[0] = { ...correctedDashboard.groups[0].orders[0], financial_status: "confirmed", communication: confirmed, communications: [confirmed], folders: [] };
+    const reopening = { id: "reopening-1", gallery_id: "gallery-private-1", gallery_name: "Formatura privada", status: "pending", created_at: "2026-09-09T10:00:00Z", approved_until: null, notification: { id: "reopening-notice-1", status: "failed", attempts: 1, can_retry: true } };
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [reopening] }), { status: 200 }));
+      if (options?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "pending_review" }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify(correctedDashboard), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal("prompt", vi.fn(() => "2026-09-15"));
+    render(<AdminPaymentsPage />);
+    expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Corrigir confirmação" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/payment-communications/communication-1/correction",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    fireEvent.click(await screen.findByRole("button", { name: "Definir novo prazo" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/gallery-reopening-requests/reopening-1/decision",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "approved", selection_expires_at: "2026-09-15T23:59:59.000Z" }) }),
+    ));
   });
 });

@@ -145,6 +145,7 @@ def enqueue_photo_index_if_eligible(
                     fingerprint=fingerprint,
                 ),
                 parent_gallery_id=photo.parent_gallery_id,
+                derived_gallery_id=photo.derived_gallery_id,
                 photo_asset_id=photo.id,
                 model_version=policy.model_version,
                 quality_version=policy.quality_version,
@@ -193,6 +194,7 @@ def enqueue_gallery_backfill_page(
         )
         .where(
             PhotoAsset.parent_gallery_id == parent_gallery_id,
+            PhotoAsset.derived_gallery_id.is_(None),
             PhotoAsset.available.is_(True),
         )
         .order_by(PhotoAsset.id)

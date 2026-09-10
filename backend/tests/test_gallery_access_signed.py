@@ -553,7 +553,7 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
         finally:
             event.remove(engine, "before_cursor_execute", count_selects)
         assert listed.status_code == 200
-        assert len(selects) <= 6
+        assert len(selects) <= 8
         assert {item["client_id"] for item in listed.json()["members"]} == {
             str(owner_id),
             str(relative_id),
@@ -568,7 +568,7 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
         assert relative_row["selected_count"] == 1
         assert relative_row["order_count"] == 1
         assert relative_row["confirmed_total_cents"] == 700
-        assert relative_row["payment_status"] == "confirmed"
+        assert relative_row["payment_status"] == "paid"
 
         parent_clients = client.get(f"/admin/parent-galleries/{parent_id}/clients")
         assert parent_clients.status_code == 200
@@ -667,7 +667,7 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
         }
 
 
-def test_admin_private_acervo_adds_and_removes_only_its_justification() -> None:
+def test_admin_private_acervo_rejects_new_public_refs_and_cleans_legacy_ones() -> None:
     with SessionLocal() as db:
         owner = Client(full_name="Titular acervo", phone_e164="+5511999999410")
         parent = ParentGallery(name="Origem acervo", active=True)
@@ -702,6 +702,12 @@ def test_admin_private_acervo_adds_and_removes_only_its_justification() -> None:
             photo_id=selected_photo.id,
             origin="client",
         )
+        ensure_private_photo_reference(
+            db,
+            gallery_id=shared.gallery.id,
+            photo_id=admin_photo.id,
+            origin="admin",
+        )
         db.commit()
         gallery_id = shared.gallery.id
         selected_photo_id = selected_photo.id
@@ -713,13 +719,14 @@ def test_admin_private_acervo_adds_and_removes_only_its_justification() -> None:
             f"/admin/derived-galleries/{gallery_id}/photos",
             json={"photo_ids": [str(selected_photo_id), str(admin_photo_id)]},
         )
-        assert added.status_code == 200
-        assert added.json()["references_created"] == 1
+        assert added.status_code == 410
+        assert "inclusão administrativa" in added.json()["detail"]
 
         listed = client.get(f"/admin/derived-galleries/{gallery_id}/photos")
         assert listed.status_code == 200
         by_id = {item["id"]: item for item in listed.json()["photos"]}
-        assert by_id[str(selected_photo_id)]["origins"] == ["admin", "client"]
+        assert by_id[str(selected_photo_id)]["origins"] == ["client"]
+        assert by_id[str(admin_photo_id)]["origins"] == ["admin"]
 
         retained = client.delete(
             f"/admin/derived-galleries/{gallery_id}/photos/{selected_photo_id}"

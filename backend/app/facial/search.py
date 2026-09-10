@@ -286,6 +286,7 @@ def _build_snapshot(
             )
             .where(
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.available.is_(True),
                 MediaDerivative.variant == "client_preview",
                 MediaDerivative.status == "ready",
@@ -449,6 +450,7 @@ def read_search_result(
                 FacialSearchCandidate.rejected_at.is_(None),
                 FacialSearchCandidate.expires_at > now(),
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.available.is_(True),
             )
             .order_by(FacialSearchCandidate.rank)
@@ -632,6 +634,7 @@ def authorize_search_candidate_selection(
             FacialSearchCandidate.rejected_at.is_(None),
             FacialSearchCandidate.expires_at > now(),
             PhotoAsset.parent_gallery_id == parent_gallery_id,
+            PhotoAsset.derived_gallery_id.is_(None),
             PhotoAsset.available.is_(True),
         )
     )

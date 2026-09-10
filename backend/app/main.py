@@ -20,7 +20,7 @@ from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
@@ -51,7 +51,6 @@ from app.auth import (
     AdminPasswordInput,
     AdminSecurityChallenge,
     AdminUser,
-    AuditEvent,
     AuthChallenge,
     AuthSession,
     BrandingSettings,
@@ -66,19 +65,24 @@ from app.auth import (
     DerivedGalleryPhoto,
     DerivedGalleryPhotoOrigin,
     EmailDelivery,
+    FacialJob,
     GalleryAccess,
     GalleryAccessCapability,
     GalleryLifecycleOperation,
     GalleryMembershipNotificationOutbox,
+    GalleryReopeningNotificationOutbox,
+    GalleryReopeningRequest,
     MediaDerivative,
     MediaJob,
     ParentGallery,
     ParentGalleryRegistration,
     PaymentCommunication,
+    PaymentConfirmationCorrection,
     PaymentMessageTemplate,
     PaymentNotificationOutbox,
     PhotoAsset,
     PhotoComment,
+    PhotoFaceEmbedding,
     PhotoFavorite,
     PhotoFolder,
     PhotoSelection,
@@ -127,6 +131,7 @@ from app.client_lifecycle import (
     list_client_directory,
     remove_facial_reference_files,
 )
+from app.commercial_projection import build_commercial_projections
 from app.commercial_removal import (
     CommercialRemovalBlocked,
     CommercialRemovalPreparationFailed,
@@ -236,7 +241,7 @@ from app.messaging import (
     whatsapp_provider_from_environment,
 )
 from app.parent_registration import link_client_to_parent
-from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
+from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template, validate_template
 from app.pix import PixCodeError, pix_qr_data_url
 from app.pricing import (
     PriceTier,
@@ -249,7 +254,6 @@ from app.private_derivation import (
     PrivateDerivationError,
     derive_admin_gallery,
     derive_client_selection,
-    ensure_private_photo_reference,
 )
 from app.private_gallery_lifecycle import remove_client_selection_and_close_if_empty
 from app.private_membership import (
@@ -516,6 +520,7 @@ class DerivedGalleryInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     photo_ids: list[UUID] = Field(default_factory=list)
     access_enabled: bool = True
+    create_empty_private: bool = False
 
 
 class DerivedGallerySettingsInput(BaseModel):
@@ -582,6 +587,33 @@ class PaymentCommunicationInput(BaseModel):
 
 class PaymentDecisionInput(BaseModel):
     decision: Literal["confirmed", "refused"]
+
+
+class PaymentCorrectionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=12, max_length=128)
+
+
+class GalleryReopeningRequestInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=12, max_length=128)
+
+
+class GalleryReopeningDecisionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approved", "refused"]
+    selection_expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def require_future_expiry_for_approval(self):
+        if self.decision == "approved" and self.selection_expires_at is None:
+            raise ValueError("Informe o novo prazo para aprovar a reabertura.")
+        if self.decision == "refused" and self.selection_expires_at is not None:
+            raise ValueError("A recusa não recebe um novo prazo.")
+        return self
 
 
 class PaymentTemplateInput(BaseModel):
@@ -785,15 +817,31 @@ def require_parent_gallery_mutable(db: Session, parent_gallery_id: UUID) -> Pare
     return parent
 
 
-def require_derived_gallery_mutable(db: Session, gallery_id: UUID) -> DerivedGallery:
+def require_derived_gallery_mutable(
+    db: Session, gallery_id: UUID, *, allow_deleted_origin: bool = False
+) -> DerivedGallery:
     gallery = db.get(DerivedGallery, gallery_id)
     if not gallery:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
-    require_parent_gallery_mutable(db, gallery.parent_gallery_id)
+    if not allow_deleted_origin:
+        require_parent_gallery_mutable(db, gallery.parent_gallery_id)
     return gallery
 
 
 def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID) -> None:
+    private_owned = db.scalar(
+        select(PhotoAsset.id)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .where(
+            PhotoAsset.id == photo_id,
+            PhotoAsset.derived_gallery_id == gallery_id,
+            PhotoFolder.derived_gallery_id == gallery_id,
+            PhotoFolder.status == "released",
+            PhotoFolder.purpose == "content",
+        )
+    )
+    if private_owned:
+        return
     assigned = db.scalar(
         select(DerivedGalleryPhoto)
         .join(PhotoAsset, PhotoAsset.id == DerivedGalleryPhoto.photo_asset_id)
@@ -2478,6 +2526,7 @@ def _gallery_cover_photo(db: Session, gallery: ParentGallery) -> PhotoAsset | No
         .join(MediaDerivative, MediaDerivative.photo_asset_id == PhotoAsset.id)
         .where(
             PhotoAsset.parent_gallery_id == gallery.id,
+            PhotoAsset.derived_gallery_id.is_(None),
             PhotoFolder.purpose == "content",
             MediaDerivative.variant == "client_preview",
             MediaDerivative.status == "ready",
@@ -2530,13 +2579,17 @@ def _cover_assets_folder(db: Session, gallery: ParentGallery) -> PhotoFolder:
     folder = db.scalar(
         select(PhotoFolder).where(
             PhotoFolder.parent_gallery_id == gallery.id,
+            PhotoFolder.derived_gallery_id.is_(None),
             PhotoFolder.purpose == "cover_assets",
         )
     )
     if folder:
         return folder
     minimum_position = db.scalar(
-        select(func.min(PhotoFolder.position)).where(PhotoFolder.parent_gallery_id == gallery.id)
+        select(func.min(PhotoFolder.position)).where(
+            PhotoFolder.parent_gallery_id == gallery.id,
+            PhotoFolder.derived_gallery_id.is_(None),
+        )
     )
     folder = PhotoFolder(
         parent_gallery_id=gallery.id,
@@ -2562,6 +2615,7 @@ def parent_gallery_editor(
             .select_from(PhotoFolder)
             .where(
                 PhotoFolder.parent_gallery_id == gallery.id,
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
         )
@@ -2699,6 +2753,7 @@ def parent_gallery_summary(
         db.scalars(
             select(PhotoFolder).where(
                 PhotoFolder.parent_gallery_id == gallery.id,
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
         )
@@ -2710,6 +2765,7 @@ def parent_gallery_summary(
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.parent_gallery_id == gallery.id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
         )
@@ -2896,6 +2952,7 @@ def register_parent_gallery_cover_photo(
     asset = db.scalar(
         select(PhotoAsset).where(
             PhotoAsset.parent_gallery_id == gallery.id,
+            PhotoAsset.derived_gallery_id.is_(None),
             PhotoAsset.storage_key == storage_key,
         )
     )
@@ -3120,6 +3177,76 @@ def admin_parent_gallery_facial_index(
     }
 
 
+@app.get("/admin/derived-galleries/{gallery_id}/facial-index")
+def admin_private_gallery_facial_index(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    gallery = require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True)
+    photo_ids = list(
+        db.scalars(
+            select(PhotoAsset.id).where(PhotoAsset.derived_gallery_id == gallery.id)
+        )
+    )
+    jobs = list(
+        db.scalars(
+            select(FacialJob)
+            .where(
+                FacialJob.derived_gallery_id == gallery.id,
+                FacialJob.kind == "index",
+            )
+            .order_by(FacialJob.created_at.desc(), FacialJob.id.desc())
+        )
+    )
+    latest: dict[UUID, FacialJob] = {}
+    for job in jobs:
+        if job.photo_asset_id and job.photo_asset_id not in latest:
+            latest[job.photo_asset_id] = job
+    photos_with_faces = (
+        db.scalar(
+            select(func.count(func.distinct(PhotoFaceEmbedding.photo_asset_id))).where(
+                PhotoFaceEmbedding.derived_gallery_id == gallery.id
+            )
+        )
+        or 0
+    )
+    detected_faces = (
+        db.scalar(
+            select(func.count(PhotoFaceEmbedding.id)).where(
+                PhotoFaceEmbedding.derived_gallery_id == gallery.id
+            )
+        )
+        or 0
+    )
+    total = len(photo_ids)
+    completed = sum(job.status == "completed" for job in latest.values())
+    failed = sum(job.status == "failed" for job in latest.values())
+    queued = sum(job.status == "queued" for job in latest.values())
+    processing = sum(job.status == "processing" for job in latest.values())
+    return {
+        "state": (
+            "failed"
+            if failed
+            else "completed"
+            if total and completed == total
+            else "processing"
+            if processing or queued
+            else "waiting"
+        ),
+        "progress": {"ready": completed, "total": total},
+        "queued": queued,
+        "processing": processing,
+        "failed": failed,
+        "unindexed": max(0, total - len(latest)),
+        "coverage": {
+            "photos_with_faces": photos_with_faces,
+            "total": total,
+            "percent": round(photos_with_faces * 100 / total, 1) if total else 0.0,
+            "detected_faces": detected_faces,
+        },
+    }
+
+
 @app.post("/admin/parent-galleries/{parent_gallery_id}/facial-index/retry")
 def retry_parent_gallery_facial_index(
     parent_gallery_id: UUID,
@@ -3215,7 +3342,10 @@ def admin_parent_gallery_photos(
         raise HTTPException(status_code=404, detail="Galeria pública não encontrada.")
     photos = db.scalars(
         select(PhotoAsset)
-        .where(PhotoAsset.parent_gallery_id == parent_gallery_id)
+        .where(
+            PhotoAsset.parent_gallery_id == parent_gallery_id,
+            PhotoAsset.derived_gallery_id.is_(None),
+        )
         .order_by(PhotoAsset.filename)
     )
     return {
@@ -3239,6 +3369,7 @@ def admin_parent_gallery_available_photos(
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.available,
                 PhotoFolder.status == "released",
                 PhotoFolder.purpose == "content",
@@ -3251,6 +3382,7 @@ def admin_parent_gallery_available_photos(
         for folder in db.scalars(
             select(PhotoFolder).where(
                 PhotoFolder.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
         )
@@ -3307,6 +3439,7 @@ def admin_parent_gallery_folders(
             select(PhotoFolder)
             .where(
                 PhotoFolder.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
             .order_by(PhotoFolder.position, PhotoFolder.created_at)
@@ -3387,6 +3520,7 @@ def create_photo_folder(
     last_position = db.scalar(
         select(func.max(PhotoFolder.position)).where(
             PhotoFolder.parent_gallery_id == parent_gallery_id,
+            PhotoFolder.derived_gallery_id.is_(None),
             PhotoFolder.purpose == "content",
         )
     )
@@ -3415,7 +3549,12 @@ def rename_photo_folder(
     folder = db.get(PhotoFolder, folder_id)
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
-    require_parent_gallery_mutable(db, folder.parent_gallery_id)
+    if folder.derived_gallery_id:
+        require_derived_gallery_mutable(
+            db, folder.derived_gallery_id, allow_deleted_origin=True
+        )
+    else:
+        require_parent_gallery_mutable(db, folder.parent_gallery_id)
     if folder.status == "released":
         raise HTTPException(status_code=409, detail="Uma pasta liberada não pode ser renomeada.")
     folder.name = payload.name.strip()
@@ -3432,7 +3571,12 @@ def delete_photo_folder(
     folder = db.get(PhotoFolder, folder_id)
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
-    require_parent_gallery_mutable(db, folder.parent_gallery_id)
+    if folder.derived_gallery_id:
+        require_derived_gallery_mutable(
+            db, folder.derived_gallery_id, allow_deleted_origin=True
+        )
+    else:
+        require_parent_gallery_mutable(db, folder.parent_gallery_id)
     if folder.status == "released" or db.scalar(
         select(PhotoAsset.id).where(PhotoAsset.folder_id == folder.id)
     ):
@@ -3517,9 +3661,15 @@ def delete_folder_photo_asset(
         or not photo
         or photo.folder_id != folder.id
         or photo.parent_gallery_id != folder.parent_gallery_id
+        or photo.derived_gallery_id != folder.derived_gallery_id
     ):
         raise HTTPException(status_code=404, detail="Foto não encontrada nesta pasta.")
-    require_parent_gallery_mutable(db, folder.parent_gallery_id)
+    if folder.derived_gallery_id:
+        require_derived_gallery_mutable(
+            db, folder.derived_gallery_id, allow_deleted_origin=True
+        )
+    else:
+        require_parent_gallery_mutable(db, folder.parent_gallery_id)
     enforce_commercial_removal_or_409(
         db,
         parent_gallery_id=folder.parent_gallery_id,
@@ -3540,7 +3690,7 @@ def delete_folder_photo_asset(
         except ValueError:
             continue
     parent = db.get(ParentGallery, photo.parent_gallery_id)
-    if parent and parent.cover_photo_id == photo.id:
+    if not photo.derived_gallery_id and parent and parent.cover_photo_id == photo.id:
         parent.cover_photo_id = None
     db.execute(delete(PhotoComment).where(PhotoComment.photo_asset_id == photo.id))
     db.execute(delete(PhotoFavorite).where(PhotoFavorite.photo_asset_id == photo.id))
@@ -3613,11 +3763,25 @@ def register_folder_photo_asset(
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
     if folder.status not in {"preparing", "released"}:
         raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
-    parent = require_parent_gallery_mutable(db, folder.parent_gallery_id)
-    if not parent.active:
-        raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas fotos.")
+    if folder.derived_gallery_id:
+        gallery = require_derived_gallery_mutable(
+            db, folder.derived_gallery_id, allow_deleted_origin=True
+        )
+        if not gallery.access_enabled:
+            raise HTTPException(status_code=409, detail="A galeria privada está bloqueada.")
+        required_prefix = f"private/{gallery.id}/"
+        if not payload.storage_key.startswith(required_prefix):
+            raise HTTPException(
+                status_code=422,
+                detail="A chave de armazenamento não pertence à galeria privada.",
+            )
+    else:
+        parent = require_parent_gallery_mutable(db, folder.parent_gallery_id)
+        if not parent.active:
+            raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas fotos.")
     asset = PhotoAsset(
         parent_gallery_id=folder.parent_gallery_id,
+        derived_gallery_id=folder.derived_gallery_id,
         folder_id=folder.id,
         available=False,
         **payload.model_dump(),
@@ -3694,7 +3858,12 @@ def publish_photo_folder(
     folder = db.get(PhotoFolder, folder_id)
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
-    require_parent_gallery_mutable(db, folder.parent_gallery_id)
+    if folder.derived_gallery_id:
+        require_derived_gallery_mutable(
+            db, folder.derived_gallery_id, allow_deleted_origin=True
+        )
+    else:
+        require_parent_gallery_mutable(db, folder.parent_gallery_id)
     return _publish_photo_folder(db, folder)
 
 
@@ -3713,6 +3882,7 @@ def publish_parent_gallery_ready_photos(
             select(PhotoFolder)
             .where(
                 PhotoFolder.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
             .order_by(PhotoFolder.position, PhotoFolder.id)
@@ -3748,7 +3918,12 @@ def release_photo_folder(
     folder = db.get(PhotoFolder, folder_id)
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
-    require_parent_gallery_mutable(db, folder.parent_gallery_id)
+    if folder.derived_gallery_id:
+        require_derived_gallery_mutable(
+            db, folder.derived_gallery_id, allow_deleted_origin=True
+        )
+    else:
+        require_parent_gallery_mutable(db, folder.parent_gallery_id)
     return _publish_photo_folder(db, folder)
 
 
@@ -4318,38 +4493,15 @@ def clone_derived_gallery(
     request: Request,
     db: Session = Depends(db_session),
 ) -> dict[str, str]:
-    """Cria galeria privada independente, copiando apenas referências de fotos."""
+    """Recusa a antiga clonagem administrativa de referências existentes."""
     require_admin(request)
-    source = db.get(DerivedGallery, gallery_id)
-    if not source or not db.get(Client, payload.client_id):
-        raise HTTPException(status_code=404, detail="Galeria ou cliente não encontrado.")
-    require_parent_gallery_mutable(db, source.parent_gallery_id)
-    audit_key = f"derived_gallery.clone:{sha256(f'{gallery_id}:{payload.client_id}:{payload.idempotency_key}'.encode()).hexdigest()[:48]}"
-    duplicate = db.scalar(select(AuditEvent).where(AuditEvent.event == audit_key))
-    if duplicate:
-        return {"id": duplicate.subject}
-    photo_ids = set(
-        db.scalars(
-            select(DerivedGalleryPhoto.photo_asset_id)
-            .where(DerivedGalleryPhoto.derived_gallery_id == source.id)
-            .distinct()
-        )
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "A clonagem de fotos existentes foi encerrada. Crie uma galeria privada vazia "
+            "e carregue novos JPEGs do dispositivo; seleções da cliente continuam automáticas."
+        ),
     )
-    try:
-        result = derive_admin_gallery(
-            db,
-            parent_gallery_id=source.parent_gallery_id,
-            client_id=payload.client_id,
-            photo_ids=photo_ids,
-            name=payload.name or source.name,
-        )
-    except PrivateDerivationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    gallery = result.gallery
-    audit(db, audit_key, str(gallery.id))
-    audit(db, "derived_gallery.cloned", str(gallery.id))
-    db.commit()
-    return {"id": str(gallery.id)}
 
 
 @app.post("/admin/clients/{client_id}/phone")
@@ -4446,74 +4598,12 @@ def parent_gallery_clients(
     for gallery in galleries:
         if gallery.client_id not in all_memberships_by_client:
             galleries_by_client.setdefault(gallery.client_id, gallery)
-    available_by_gallery = dict(
-        db.execute(
-            select(
-                DerivedGallery.id,
-                func.count(func.distinct(DerivedGalleryPhoto.photo_asset_id)),
-            )
-            .join(
-                DerivedGalleryPhoto,
-                DerivedGalleryPhoto.derived_gallery_id == DerivedGallery.id,
-            )
-            .where(DerivedGallery.parent_gallery_id == parent_gallery_id)
-            .group_by(DerivedGallery.id)
-        ).all()
-    )
-    available_by_client = {
-        client_id: int(available_by_gallery.get(membership.derived_gallery_id, 0))
-        for client_id, membership in memberships_by_client.items()
-    }
-    for gallery in galleries:
-        if gallery.client_id not in all_memberships_by_client:
-            available_by_client.setdefault(
-                gallery.client_id, int(available_by_gallery.get(gallery.id, 0))
-            )
-    selected_by_client = dict(
-        db.execute(
-            select(
-                PhotoSelection.client_id,
-                func.count(func.distinct(PhotoSelection.photo_asset_id)),
-            )
-            .join(
-                DerivedGallery,
-                DerivedGallery.id == PhotoSelection.derived_gallery_id,
-            )
-            .where(DerivedGallery.parent_gallery_id == parent_gallery_id)
-            .group_by(PhotoSelection.client_id)
-        ).all()
-    )
-    purchased_by_client = dict(
-        db.execute(
-            select(
-                SaleOrder.client_id,
-                func.count(func.distinct(SaleOrderItem.photo_asset_id_snapshot)),
-            )
-            .join(SaleOrderItem, SaleOrderItem.sale_order_id == SaleOrder.id)
-            .where(
-                SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
-                SaleOrder.payment_status == "confirmed",
-            )
-            .group_by(SaleOrder.client_id)
-        ).all()
-    )
-    order_statuses_by_client: dict[UUID, set[str]] = defaultdict(set)
-    for order_client_id, payment_status in db.execute(
-        select(SaleOrder.client_id, SaleOrder.payment_status)
-        .where(SaleOrder.parent_gallery_id_snapshot == parent_gallery_id)
-        .distinct()
-    ):
-        order_statuses_by_client[order_client_id].add(payment_status)
-    pending_review_clients = set(
-        db.scalars(
-            select(PaymentCommunication.client_id)
-            .join(SaleOrder, SaleOrder.id == PaymentCommunication.sale_order_id)
-            .where(
-                SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
-                PaymentCommunication.status == "pending_review",
-            )
-            .distinct()
-        )
+    projections = build_commercial_projections(
+        db,
+        gallery_ids={gallery.id for gallery in galleries},
+        client_ids=client_ids,
+        parent_gallery_ids={parent_gallery_id},
+        galleries_by_id=galleries_by_id,
     )
     rows = []
     for client_id in client_ids:
@@ -4521,7 +4611,16 @@ def parent_gallery_clients(
         gallery = galleries_by_client.get(client_id)
         membership = memberships_by_client.get(client_id)
         registration = registrations_by_client.get(client_id)
-        selected_count = int(selected_by_client.get(client_id, 0))
+        projection = projections.get((gallery.id, client_id)) if gallery else next(
+            (
+                item
+                for (projection_gallery_id, projection_client_id), item in projections.items()
+                if projection_client_id == client_id
+                and projection_gallery_id not in galleries_by_id
+            ),
+            None,
+        )
+        selected_count = projection.selected_count if projection else 0
         phone_verified = phone_verification_by_client.get(client_id, True)
         if registration and (registration.status != "active" or not phone_verified):
             gallery_status = "pending_registration"
@@ -4535,19 +4634,13 @@ def parent_gallery_clients(
             gallery_status = "no_selection"
         else:
             gallery_status = "active"
-        order_statuses = order_statuses_by_client.get(client_id, set())
-        if client_id in pending_review_clients:
-            commercial_status = "pending_review"
-        elif "pending" in order_statuses:
-            commercial_status = "awaiting_payment"
-        elif "confirmed" in order_statuses:
-            commercial_status = "paid"
-        elif gallery_status == "expired":
-            commercial_status = "overdue"
-        elif "cancelled" in order_statuses:
-            commercial_status = "cancelled"
-        else:
-            commercial_status = "no_order"
+        commercial_status = (
+            projection.commercial_status
+            if projection
+            else "overdue"
+            if gallery_status == "expired"
+            else "no_order"
+        )
         rows.append(
             {
                 "client_id": str(client_id),
@@ -4557,11 +4650,12 @@ def parent_gallery_clients(
                 "registration_status": registration.status if registration else None,
                 "membership_status": membership.status if membership else None,
                 "derived_gallery_id": str(gallery.id) if gallery else None,
-                "available_count": int(available_by_client.get(client_id, 0)),
+                "available_count": projection.available_count if projection else 0,
                 "selected_count": selected_count,
-                "purchased_count": int(purchased_by_client.get(client_id, 0)),
+                "purchased_count": projection.purchased_count if projection else 0,
                 "gallery_status": gallery_status,
                 "commercial_status": commercial_status,
+                "reopening_status": projection.reopening_status if projection else None,
             }
         )
     return {
@@ -4745,6 +4839,12 @@ def selection_detail(
     sales_by_photo: dict[UUID, int] = {}
     for item in confirmed_items:
         sales_by_photo[item.photo_asset_id] = sales_by_photo.get(item.photo_asset_id, 0) + 1
+    projection = build_commercial_projections(
+        db,
+        gallery_ids={gallery.id},
+        client_ids={selected_client_id},
+        galleries_by_id={gallery.id: gallery},
+    )[(gallery.id, selected_client_id)]
     photos = []
     for selection in selected:
         photo = db.get(PhotoAsset, selection.photo_asset_id)
@@ -4768,8 +4868,12 @@ def selection_detail(
         "client": {"id": str(owner.id), "name": owner.full_name, "phone": owner.phone_e164}
         if owner
         else None,
-        "selection_count": len(photos),
+        "available_count": projection.available_count,
+        "selection_count": projection.selected_count,
+        "purchased_count": projection.purchased_count,
         "payment_status": next((order.payment_status for order in orders), "pending"),
+        "commercial_status": projection.commercial_status,
+        "reopening_status": projection.reopening_status,
         "photos": photos,
     }
 
@@ -4857,7 +4961,14 @@ async def import_photo_source(
     folder = db.get(PhotoFolder, photo.folder_id)
     if not folder or folder.parent_gallery_id != photo.parent_gallery_id:
         raise HTTPException(status_code=409, detail="A foto não possui uma pasta válida.")
-    require_parent_gallery_mutable(db, photo.parent_gallery_id)
+    if photo.derived_gallery_id:
+        if folder.derived_gallery_id != photo.derived_gallery_id:
+            raise HTTPException(status_code=409, detail="A foto não possui escopo privado válido.")
+        require_derived_gallery_mutable(
+            db, photo.derived_gallery_id, allow_deleted_origin=True
+        )
+    else:
+        require_parent_gallery_mutable(db, photo.parent_gallery_id)
     accepts_upload = (
         folder.purpose == "content" and folder.status in {"preparing", "released"}
     ) or (folder.purpose == "cover_assets" and folder.status == "preparing")
@@ -5523,7 +5634,15 @@ def create_derived_gallery(
         raise HTTPException(status_code=404, detail="Galeria pública ou cliente não encontrado.")
     require_parent_gallery_mutable(db, parent.id)
     requested_photo_ids = set(payload.photo_ids)
-    if not requested_photo_ids:
+    if requested_photo_ids:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=(
+                "A inclusão administrativa de fotos existentes foi encerrada. Crie a privada "
+                "vazia e carregue novos JPEGs do dispositivo; seleções da cliente continuam automáticas."
+            ),
+        )
+    if not requested_photo_ids and not payload.create_empty_private:
         registration = link_client_to_parent(
             db,
             parent_gallery_id=parent.id,
@@ -5543,7 +5662,6 @@ def create_derived_gallery(
             db,
             parent_gallery_id=parent.id,
             client_id=client.id,
-            photo_ids=requested_photo_ids,
             name=payload.name,
         )
     except PrivateDerivationError as exc:
@@ -5824,98 +5942,46 @@ def private_gallery_members(
     gallery = db.get(DerivedGallery, gallery_id)
     if not gallery:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
-    selected_counts = (
-        select(
-            PhotoSelection.client_id.label("client_id"),
-            func.count(func.distinct(PhotoSelection.photo_asset_id)).label("selected_count"),
-        )
-        .where(PhotoSelection.derived_gallery_id == gallery.id)
-        .group_by(PhotoSelection.client_id)
-        .subquery()
-    )
-    order_counts = (
-        select(
-            SaleOrder.client_id.label("client_id"),
-            func.count(SaleOrder.id).label("order_count"),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (SaleOrder.payment_status == "confirmed", SaleOrder.total_cents),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("confirmed_total_cents"),
-            func.max(
-                case((SaleOrder.payment_status == "confirmed", 2), (SaleOrder.payment_status == "pending", 1), else_=0)
-            ).label("payment_rank"),
-        )
-        .where(SaleOrder.derived_gallery_id_snapshot == gallery.id)
-        .group_by(SaleOrder.client_id)
-        .subquery()
-    )
-    purchased_counts = (
-        select(
-            SaleOrder.client_id.label("client_id"),
-            func.count(func.distinct(SaleOrderItem.photo_asset_id_snapshot)).label(
-                "purchased_count"
-            ),
-        )
-        .join(SaleOrderItem, SaleOrderItem.sale_order_id == SaleOrder.id)
-        .where(
-            SaleOrder.derived_gallery_id_snapshot == gallery.id,
-            SaleOrder.payment_status == "confirmed",
-        )
-        .group_by(SaleOrder.client_id)
-        .subquery()
-    )
     filters = [DerivedGalleryMembership.derived_gallery_id == gallery.id]
     if status_filter:
         filters.append(DerivedGalleryMembership.status == status_filter)
     total = db.scalar(select(func.count()).select_from(DerivedGalleryMembership).where(*filters))
     rows = db.execute(
-        select(
-            DerivedGalleryMembership,
-            Client,
-            func.coalesce(selected_counts.c.selected_count, 0),
-            func.coalesce(purchased_counts.c.purchased_count, 0),
-            func.coalesce(order_counts.c.order_count, 0),
-            func.coalesce(order_counts.c.confirmed_total_cents, 0),
-            func.coalesce(order_counts.c.payment_rank, 0),
-        )
+        select(DerivedGalleryMembership, Client)
         .join(Client, Client.id == DerivedGalleryMembership.client_id)
-        .outerjoin(selected_counts, selected_counts.c.client_id == Client.id)
-        .outerjoin(purchased_counts, purchased_counts.c.client_id == Client.id)
-        .outerjoin(order_counts, order_counts.c.client_id == Client.id)
         .where(*filters)
         .order_by(DerivedGalleryMembership.created_at, DerivedGalleryMembership.id)
         .offset(offset)
         .limit(limit)
     ).all()
+    projections = build_commercial_projections(
+        db,
+        gallery_ids={gallery.id},
+        client_ids={membership.client_id for membership, _client in rows},
+        galleries_by_id={gallery.id: gallery},
+    )
     return {
         "gallery_id": str(gallery.id),
         "total": total or 0,
         "page": {"offset": offset, "limit": limit},
         "members": [
-            _private_member_payload(
-                db,
-                membership,
-                client=client,
-                selected_count=selected_count,
-                purchased_count=purchased_count,
-                order_count=order_count,
-                confirmed_total_cents=confirmed_total_cents,
-                payment_status={0: "none", 1: "pending", 2: "confirmed"}[payment_rank],
-            )
-            for (
-                membership,
-                client,
-                selected_count,
-                purchased_count,
-                order_count,
-                confirmed_total_cents,
-                payment_rank,
-            ) in rows
+            {
+                **_private_member_payload(
+                    db,
+                    membership,
+                    client=client,
+                    selected_count=projection.selected_count,
+                    purchased_count=projection.purchased_count,
+                    order_count=projection.order_count,
+                    confirmed_total_cents=projection.confirmed_total_cents,
+                    payment_status=projection.commercial_status,
+                ),
+                "available_count": projection.available_count,
+                "commercial_status": projection.commercial_status,
+                "reopening_status": projection.reopening_status,
+            }
+            for membership, client in rows
+            for projection in [projections[(gallery.id, membership.client_id)]]
         ],
     }
 
@@ -6205,6 +6271,76 @@ def read_admin_gallery_membership_notification(
     return {"id": str(notification.id), "status": notification.admin_status}
 
 
+@app.get("/admin/derived-galleries/{gallery_id}/folders")
+def admin_private_gallery_folders(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    gallery = require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True)
+    folders = list(
+        db.scalars(
+            select(PhotoFolder)
+            .where(
+                PhotoFolder.derived_gallery_id == gallery.id,
+                PhotoFolder.purpose == "content",
+            )
+            .order_by(PhotoFolder.position, PhotoFolder.created_at)
+        )
+    )
+    counts = dict(
+        db.execute(
+            select(PhotoAsset.folder_id, func.count(PhotoAsset.id))
+            .where(PhotoAsset.derived_gallery_id == gallery.id)
+            .group_by(PhotoAsset.folder_id)
+        ).all()
+    )
+    return {
+        "total": len(folders),
+        "folders": [
+            {
+                "id": str(folder.id),
+                "name": folder.name,
+                "status": folder.status,
+                "position": folder.position,
+                "photo_count": counts.get(folder.id, 0),
+            }
+            for folder in folders
+        ],
+    }
+
+
+@app.post(
+    "/admin/derived-galleries/{gallery_id}/folders",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_private_gallery_folder(
+    gallery_id: UUID,
+    payload: PhotoFolderInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    gallery = require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True)
+    last_position = db.scalar(
+        select(func.max(PhotoFolder.position)).where(
+            PhotoFolder.derived_gallery_id == gallery.id,
+            PhotoFolder.purpose == "content",
+        )
+    )
+    folder = PhotoFolder(
+        parent_gallery_id=gallery.parent_gallery_id,
+        derived_gallery_id=gallery.id,
+        name=payload.name.strip(),
+        position=(last_position if last_position is not None else -1) + 1,
+        purpose="content",
+    )
+    db.add(folder)
+    db.flush()
+    audit(db, "private_gallery.folder_created", str(folder.id))
+    db.commit()
+    return {"id": str(folder.id), "status": folder.status, "position": folder.position}
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/photos")
 def admin_private_gallery_photos(
     gallery_id: UUID, request: Request, db: Session = Depends(db_session)
@@ -6213,14 +6349,20 @@ def admin_private_gallery_photos(
     gallery = db.get(DerivedGallery, gallery_id)
     if not gallery:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
-    rows = db.execute(
+    reference_rows = db.execute(
         select(DerivedGalleryPhoto, PhotoAsset, PhotoFolder)
         .join(PhotoAsset, PhotoAsset.id == DerivedGalleryPhoto.photo_asset_id)
         .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
         .where(DerivedGalleryPhoto.derived_gallery_id == gallery.id)
         .order_by(PhotoFolder.position, PhotoAsset.created_at, PhotoAsset.id)
     ).all()
-    reference_ids = [reference.id for reference, _photo, _folder in rows]
+    private_rows = db.execute(
+        select(PhotoAsset, PhotoFolder)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .where(PhotoAsset.derived_gallery_id == gallery.id)
+        .order_by(PhotoFolder.position, PhotoAsset.created_at, PhotoAsset.id)
+    ).all()
+    reference_ids = [reference.id for reference, _photo, _folder in reference_rows]
     origins_by_reference: dict[UUID, list[str]] = defaultdict(list)
     if reference_ids:
         for reference_id, origin in db.execute(
@@ -6232,19 +6374,33 @@ def admin_private_gallery_photos(
             )
         ):
             origins_by_reference[reference_id].append(origin)
+    photos = [
+        {
+            "id": str(photo.id),
+            "name": photo.display_name or photo.filename,
+            "folder_id": str(folder.id),
+            "folder_name": folder.name,
+            "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview",
+            "origins": sorted(origins_by_reference.get(reference.id) or [reference.origin]),
+            "ownership": "public_reference",
+        }
+        for reference, photo, folder in reference_rows
+    ]
+    photos.extend(
+        {
+            "id": str(photo.id),
+            "name": photo.display_name or photo.filename,
+            "folder_id": str(folder.id),
+            "folder_name": folder.name,
+            "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview",
+            "origins": ["private_upload"],
+            "ownership": "private",
+        }
+        for photo, folder in private_rows
+    )
     return {
         "gallery_id": str(gallery.id),
-        "photos": [
-            {
-                "id": str(photo.id),
-                "name": photo.display_name or photo.filename,
-                "folder_id": str(folder.id),
-                "folder_name": folder.name,
-                "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview",
-                "origins": sorted(origins_by_reference.get(reference.id) or [reference.origin]),
-            }
-            for reference, photo, folder in rows
-        ],
+        "photos": photos,
     }
 
 
@@ -6256,48 +6412,13 @@ def add_admin_private_gallery_photos(
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
     require_admin(request)
-    gallery = require_derived_gallery_mutable(db, gallery_id)
-    photo_ids = set(payload.photo_ids)
-    if len(photo_ids) != len(payload.photo_ids):
-        raise HTTPException(status_code=422, detail="A lista de fotos contém duplicidades.")
-    photos = list(
-        db.scalars(
-            select(PhotoAsset).where(
-                PhotoAsset.id.in_(photo_ids),
-                PhotoAsset.parent_gallery_id == gallery.parent_gallery_id,
-                PhotoAsset.available,
-            )
-        )
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "A inclusão administrativa de fotos existentes foi encerrada. Use uma pasta privada "
+            "para carregar novos JPEGs do dispositivo."
+        ),
     )
-    released_folder_ids = set(
-        db.scalars(
-            select(PhotoFolder.id).where(
-                PhotoFolder.id.in_({photo.folder_id for photo in photos}),
-                PhotoFolder.parent_gallery_id == gallery.parent_gallery_id,
-                PhotoFolder.status == "released",
-                PhotoFolder.purpose == "content",
-            )
-        )
-    )
-    if len(photos) != len(photo_ids) or released_folder_ids != {
-        photo.folder_id for photo in photos
-    }:
-        raise HTTPException(
-            status_code=422,
-            detail="Todas as fotos devem estar publicadas na Galeria pública desta privada.",
-        )
-    created = sum(
-        ensure_private_photo_reference(
-            db,
-            gallery_id=gallery.id,
-            photo_id=photo.id,
-            origin="admin",
-        )
-        for photo in photos
-    )
-    audit(db, "private_gallery.photos_added", str(gallery.id))
-    db.commit()
-    return {"gallery_id": str(gallery.id), "references_created": created}
 
 
 @app.delete("/admin/derived-galleries/{gallery_id}/photos/{photo_id}")
@@ -6601,6 +6722,130 @@ def renew_gallery_selection(
     audit(db, "derived_gallery.selection_renewed", str(gallery_id))
     db.commit()
     return {"id": str(gallery_id)}
+
+
+def _reopening_request_payload(
+    db: Session, reopening: GalleryReopeningRequest
+) -> dict[str, object]:
+    notification = db.scalar(
+        select(GalleryReopeningNotificationOutbox).where(
+            GalleryReopeningNotificationOutbox.gallery_reopening_request_id == reopening.id
+        )
+    )
+    return {
+        "id": str(reopening.id),
+        "gallery_id": str(reopening.derived_gallery_id),
+        "status": reopening.status,
+        "requested_by_client_id": str(reopening.requested_by_client_id),
+        "created_at": reopening.created_at.isoformat(),
+        "decided_at": reopening.decided_at.isoformat() if reopening.decided_at else None,
+        "approved_until": (
+            reopening.approved_until.isoformat() if reopening.approved_until else None
+        ),
+        "notification": {
+            "id": str(notification.id) if notification else None,
+            "status": notification.status if notification else "skipped",
+            "attempts": notification.attempts if notification else 0,
+            "can_retry": bool(notification and notification.status == "failed"),
+        },
+    }
+
+
+@app.get("/admin/gallery-reopening-requests")
+def list_gallery_reopening_requests(
+    request: Request,
+    status_filter: Literal["pending", "approved", "refused"] | None = Query(
+        default=None, alias="status"
+    ),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    query = select(GalleryReopeningRequest)
+    if status_filter:
+        query = query.where(GalleryReopeningRequest.status == status_filter)
+    items = list(
+        db.scalars(
+            query.order_by(
+                GalleryReopeningRequest.created_at.desc(),
+                GalleryReopeningRequest.id.desc(),
+            )
+        )
+    )
+    galleries = {
+        gallery.id: gallery
+        for gallery in db.scalars(
+            select(DerivedGallery).where(
+                DerivedGallery.id.in_({item.derived_gallery_id for item in items})
+            )
+        )
+    } if items else {}
+    return {
+        "requests": [
+            {
+                **_reopening_request_payload(db, item),
+                "gallery_name": galleries[item.derived_gallery_id].name
+                if item.derived_gallery_id in galleries
+                else "Galeria removida",
+            }
+            for item in items
+        ]
+    }
+
+
+@app.post("/admin/gallery-reopening-requests/{request_id}/decision")
+def decide_gallery_reopening_request(
+    request_id: UUID,
+    payload: GalleryReopeningDecisionInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    session = current_session(request, Role.ADMIN)
+    reopening = db.scalar(
+        select(GalleryReopeningRequest)
+        .where(GalleryReopeningRequest.id == request_id)
+        .with_for_update()
+    )
+    if not reopening:
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+    if reopening.status != "pending":
+        return _reopening_request_payload(db, reopening)
+    gallery = db.get(DerivedGallery, reopening.derived_gallery_id)
+    if not gallery:
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    if payload.decision == "approved":
+        assert payload.selection_expires_at is not None
+        if expired(payload.selection_expires_at):
+            raise HTTPException(status_code=422, detail="Informe um prazo futuro.")
+        gallery.selection_expires_at = payload.selection_expires_at
+        reopening.approved_until = payload.selection_expires_at
+    reopening.status = payload.decision
+    reopening.decided_by_admin_id = session.subject_id
+    reopening.decided_at = now()
+    audit(db, f"gallery.reopening_{payload.decision}", str(reopening.id))
+    db.commit()
+    return _reopening_request_payload(db, reopening)
+
+
+@app.post("/admin/gallery-reopening-notifications/{notification_id}/retry")
+def retry_gallery_reopening_notification(
+    notification_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    require_admin(request)
+    notification = db.scalar(
+        select(GalleryReopeningNotificationOutbox)
+        .where(GalleryReopeningNotificationOutbox.id == notification_id)
+        .with_for_update()
+    )
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notificação não encontrada.")
+    if notification.status != "failed":
+        raise HTTPException(status_code=409, detail="A notificação não pode ser reenfileirada.")
+    notification.status = "queued"
+    notification.last_error = None
+    db.commit()
+    return {"status": notification.status}
 
 
 @app.get("/admin/statistics")
@@ -7091,13 +7336,16 @@ def gallery_photos(
     """Lista somente os identificadores e nomes atribuídos à galeria privada."""
     session = current_session(request, Role.CLIENT)
     derived_gallery_for_client(db, gallery_id, session.subject_id, allow_deleted_origin=True)
+    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
+        DerivedGalleryPhoto.derived_gallery_id == gallery_id
+    )
     photos = list(
         db.scalars(
             select(PhotoAsset)
-            .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
-            .outerjoin(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
-                DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+                (PhotoAsset.derived_gallery_id == gallery_id)
+                | (PhotoAsset.id.in_(referenced_photo_ids)),
                 PhotoFolder.status == "released",
                 PhotoFolder.purpose == "content",
             )
@@ -7140,12 +7388,15 @@ def gallery_released_folders(
     """Lista somente os lotes liberados e vinculados à galeria privada da cliente."""
     session = current_session(request, Role.CLIENT)
     derived_gallery_for_client(db, gallery_id, session.subject_id, allow_deleted_origin=True)
+    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
+        DerivedGalleryPhoto.derived_gallery_id == gallery_id
+    )
     folders = db.scalars(
         select(PhotoFolder)
         .join(PhotoAsset, PhotoAsset.folder_id == PhotoFolder.id)
-        .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
         .where(
-            DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+            (PhotoAsset.derived_gallery_id == gallery_id)
+            | (PhotoAsset.id.in_(referenced_photo_ids)),
             PhotoFolder.status == "released",
             PhotoFolder.purpose == "content",
         )
@@ -7158,9 +7409,9 @@ def gallery_released_folders(
             db.scalar(
                 select(func.count(func.distinct(PhotoAsset.id)))
                 .select_from(PhotoAsset)
-                .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
                 .where(
-                    DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+                    (PhotoAsset.derived_gallery_id == gallery_id)
+                    | (PhotoAsset.id.in_(referenced_photo_ids)),
                     PhotoAsset.folder_id == folder.id,
                 )
             )
@@ -7186,13 +7437,16 @@ def gallery_review(
     gallery = derived_gallery_for_client(
         db, gallery_id, session.subject_id, allow_deleted_origin=True
     )
+    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
+        DerivedGalleryPhoto.derived_gallery_id == gallery_id
+    )
     photos = list(
         db.scalars(
             select(PhotoAsset)
-            .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
-                DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+                (PhotoAsset.derived_gallery_id == gallery_id)
+                | (PhotoAsset.id.in_(referenced_photo_ids)),
                 PhotoFolder.status == "released",
                 PhotoFolder.purpose == "content",
             )
@@ -7369,6 +7623,31 @@ def select_photo(
     gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
     require_selection_window(gallery)
     assigned_photo_for_gallery(db, gallery_id, photo_id)
+    private_photo = db.scalar(
+        select(PhotoAsset.id).where(
+            PhotoAsset.id == photo_id,
+            PhotoAsset.derived_gallery_id == gallery.id,
+        )
+    )
+    if private_photo:
+        selection = db.scalar(
+            select(PhotoSelection).where(
+                PhotoSelection.derived_gallery_id == gallery.id,
+                PhotoSelection.client_id == session.subject_id,
+                PhotoSelection.photo_asset_id == photo_id,
+            )
+        )
+        if not selection:
+            db.add(
+                PhotoSelection(
+                    derived_gallery_id=gallery.id,
+                    client_id=session.subject_id,
+                    photo_asset_id=photo_id,
+                )
+            )
+            audit(db, "photo_selection.created", str(gallery_id))
+            db.commit()
+        return {"status": "selected"}
     try:
         result = derive_client_selection(
             db,
@@ -7466,6 +7745,7 @@ def unselect_photo_from_public_gallery(
             "gallery_closed": False,
             "cart": {"quantity": 0, "items": []},
         }
+    require_selection_window(gallery)
     try:
         result = remove_client_selection_and_close_if_empty(
             db,
@@ -7865,8 +8145,10 @@ def public_gallery_photos(
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.available,
                 PhotoFolder.status == "released",
+                PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
             )
             .order_by(PhotoFolder.position, PhotoAsset.created_at, PhotoAsset.filename)
@@ -8001,6 +8283,7 @@ def unselect_photo(
 ) -> Response:
     session = current_session(request, Role.CLIENT)
     gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
+    require_selection_window(gallery)
     parent_gallery_id = gallery.parent_gallery_id
     try:
         result = remove_client_selection_and_close_if_empty(
@@ -8108,6 +8391,92 @@ def client_cart(
         db, gallery_id, session.subject_id, allow_deleted_origin=True
     )
     return _client_cart_payload(db, gallery, session.subject_id)
+
+
+@app.get("/gallery/{gallery_id}/reopening-requests")
+def client_gallery_reopening_request(
+    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    derived_gallery_for_client(
+        db, gallery_id, session.subject_id, allow_deleted_origin=True
+    )
+    reopening = db.scalar(
+        select(GalleryReopeningRequest)
+        .where(GalleryReopeningRequest.derived_gallery_id == gallery_id)
+        .order_by(GalleryReopeningRequest.created_at.desc())
+    )
+    return {
+        "request": _reopening_request_payload(db, reopening) if reopening else None
+    }
+
+
+@app.post(
+    "/gallery/{gallery_id}/reopening-requests",
+    status_code=status.HTTP_201_CREATED,
+)
+def request_gallery_reopening(
+    gallery_id: UUID,
+    payload: GalleryReopeningRequestInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    session = current_session(request, Role.CLIENT)
+    gallery = derived_gallery_for_client(
+        db, gallery_id, session.subject_id, allow_deleted_origin=True
+    )
+    if not gallery.selection_expires_at or not expired(gallery.selection_expires_at):
+        raise HTTPException(
+            status_code=409,
+            detail="A galeria ainda está aberta para seleção.",
+        )
+    existing = db.scalar(
+        select(GalleryReopeningRequest)
+        .where(
+            GalleryReopeningRequest.derived_gallery_id == gallery.id,
+            (
+                (GalleryReopeningRequest.idempotency_key == payload.idempotency_key)
+                | (GalleryReopeningRequest.status == "pending")
+            ),
+        )
+        .order_by(GalleryReopeningRequest.created_at.desc())
+    )
+    if existing:
+        return _reopening_request_payload(db, existing)
+    reopening = GalleryReopeningRequest(
+        derived_gallery_id=gallery.id,
+        requested_by_client_id=session.subject_id,
+        idempotency_key=payload.idempotency_key,
+    )
+    db.add(reopening)
+    db.flush()
+    try:
+        photographer_phone = configured_photographer_phone()
+    except WhatsAppConfigurationError:
+        photographer_phone = None
+    notification = GalleryReopeningNotificationOutbox(
+        gallery_reopening_request_id=reopening.id,
+        recipient_phone=photographer_phone,
+        status="queued" if photographer_phone else "skipped",
+    )
+    db.add(notification)
+    audit(db, "gallery.reopening_requested", str(reopening.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(
+            select(GalleryReopeningRequest)
+            .where(
+                GalleryReopeningRequest.derived_gallery_id == gallery_id,
+                GalleryReopeningRequest.status == "pending",
+            )
+            .order_by(GalleryReopeningRequest.created_at.desc())
+        )
+        if not existing:
+            raise
+        reopening = existing
+    return _reopening_request_payload(db, reopening)
 
 
 @app.post("/gallery/{gallery_id}/checkout", status_code=status.HTTP_201_CREATED)
@@ -8250,17 +8619,120 @@ def decide_payment_communication(
         order.payment_status = "cancelled"
     client = db.get(Client, communication.client_id)
     if client and client.id == order.client_id:
+        template = db.scalar(
+            select(PaymentMessageTemplate).where(
+                PaymentMessageTemplate.kind == payload.decision
+            )
+        )
+        rendered_message = render_template(
+            template.body if template else DEFAULT_PAYMENT_TEMPLATES[payload.decision],
+            cliente=order.client_name_snapshot or client.full_name,
+            pedido=str(order.id)[:8],
+            galeria=order.derived_gallery_name_snapshot,
+        )
+        order.payment_message_snapshot = rendered_message
+        decision_revision = (
+            db.scalar(
+                select(func.count(PaymentConfirmationCorrection.id)).where(
+                    PaymentConfirmationCorrection.payment_communication_id == communication.id
+                )
+            )
+            or 0
+        )
         db.add(
             PaymentNotificationOutbox(
                 payment_communication_id=communication.id,
                 recipient_phone=client.phone_e164,
                 template_kind=payload.decision,
-                idempotency_key=f"payment-decision:{communication.id}:{payload.decision}",
+                rendered_body_snapshot=rendered_message,
+                idempotency_key=(
+                    f"payment-decision:{communication.id}:{payload.decision}:{decision_revision}"
+                ),
             )
         )
     audit(db, f"payment.communication_{payload.decision}", str(communication.id))
     db.commit()
     return {"status": communication.status}
+
+
+@app.post("/admin/payment-communications/{communication_id}/correction")
+def correct_payment_confirmation(
+    communication_id: UUID,
+    payload: PaymentCorrectionInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    session = current_session(request, Role.ADMIN)
+    existing = db.scalar(
+        select(PaymentConfirmationCorrection).where(
+            PaymentConfirmationCorrection.payment_communication_id == communication_id,
+            PaymentConfirmationCorrection.idempotency_key == payload.idempotency_key,
+        )
+    )
+    if existing:
+        communication = db.get(PaymentCommunication, communication_id)
+        return {
+            "id": str(existing.id),
+            "status": communication.status if communication else "pending_review",
+        }
+    communication = db.scalar(
+        select(PaymentCommunication)
+        .where(PaymentCommunication.id == communication_id)
+        .with_for_update()
+    )
+    if not communication:
+        raise HTTPException(status_code=404, detail="Comunicação não encontrada.")
+    order = db.scalar(
+        select(SaleOrder)
+        .where(SaleOrder.id == communication.sale_order_id)
+        .with_for_update()
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+    if communication.status == "pending_review" and order.payment_status == "pending":
+        previous = db.scalar(
+            select(PaymentConfirmationCorrection)
+            .where(
+                PaymentConfirmationCorrection.payment_communication_id == communication.id
+            )
+            .order_by(PaymentConfirmationCorrection.created_at.desc())
+        )
+        if previous:
+            return {"id": str(previous.id), "status": communication.status}
+    if communication.status != "confirmed" or order.payment_status != "confirmed":
+        raise HTTPException(
+            status_code=409,
+            detail="Somente um pagamento confirmado pode ser corrigido.",
+        )
+    correction = PaymentConfirmationCorrection(
+        payment_communication_id=communication.id,
+        sale_order_id=order.id,
+        actor_admin_id=session.subject_id,
+        idempotency_key=payload.idempotency_key,
+        previous_communication_status=communication.status,
+        previous_order_status=order.payment_status,
+    )
+    db.add(correction)
+    communication.status = "pending_review"
+    communication.decided_by_admin_id = None
+    communication.decided_at = None
+    order.payment_status = "pending"
+    order.confirmed_at = None
+    audit(db, "payment.confirmation_corrected", str(communication.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(
+            select(PaymentConfirmationCorrection).where(
+                PaymentConfirmationCorrection.payment_communication_id == communication_id,
+                PaymentConfirmationCorrection.idempotency_key == payload.idempotency_key,
+            )
+        )
+        if not existing:
+            raise
+        correction = existing
+    return {"id": str(correction.id), "status": "pending_review"}
 
 
 @app.put("/admin/payment-message-templates/{kind}")
@@ -8369,6 +8841,26 @@ def list_payment_communications(
         communications_by_order[communication.sale_order_id].append(communication)
 
     communication_ids = [communication.id for communication in communication_rows]
+    correction_rows = (
+        list(
+            db.scalars(
+                select(PaymentConfirmationCorrection)
+                .where(
+                    PaymentConfirmationCorrection.payment_communication_id.in_(
+                        communication_ids
+                    )
+                )
+                .order_by(PaymentConfirmationCorrection.created_at.desc())
+            )
+        )
+        if communication_ids
+        else []
+    )
+    corrections_by_communication: dict[UUID, list[PaymentConfirmationCorrection]] = defaultdict(
+        list
+    )
+    for correction in correction_rows:
+        corrections_by_communication[correction.payment_communication_id].append(correction)
     notification_rows = (
         list(
             db.scalars(
@@ -8389,6 +8881,77 @@ def list_payment_communications(
         notifications_by_communication[notification.payment_communication_id].append(
             notification
         )
+
+    order_items = (
+        list(
+            db.scalars(
+                select(SaleOrderItem)
+                .where(SaleOrderItem.sale_order_id.in_(order_ids))
+                .order_by(SaleOrderItem.sale_order_id, SaleOrderItem.id)
+            )
+        )
+        if order_ids
+        else []
+    )
+    items_by_order: dict[UUID, list[SaleOrderItem]] = defaultdict(list)
+    for item in order_items:
+        items_by_order[item.sale_order_id].append(item)
+    selection_query = (
+        select(PhotoSelection, PhotoAsset, PhotoFolder, DerivedGallery, Client, ParentGallery)
+        .join(PhotoAsset, PhotoAsset.id == PhotoSelection.photo_asset_id)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .join(DerivedGallery, DerivedGallery.id == PhotoSelection.derived_gallery_id)
+        .join(Client, Client.id == PhotoSelection.client_id)
+        .outerjoin(ParentGallery, ParentGallery.id == DerivedGallery.parent_gallery_id)
+        .where(
+            ~select(SaleOrder.id)
+            .where(
+                SaleOrder.derived_gallery_id == PhotoSelection.derived_gallery_id,
+                SaleOrder.client_id == PhotoSelection.client_id,
+            )
+            .exists()
+        )
+        .order_by(PhotoSelection.created_at.desc())
+    )
+    if normalized_query:
+        selection_query = selection_query.where(
+            func.lower(Client.full_name).like(f"%{normalized_query}%")
+        )
+    if parent_gallery_id:
+        selection_query = selection_query.where(
+            DerivedGallery.parent_gallery_id == parent_gallery_id
+        )
+    if created_from:
+        selection_query = selection_query.where(PhotoSelection.created_at >= created_from)
+    if created_to:
+        selection_query = selection_query.where(PhotoSelection.created_at <= created_to)
+    selection_rows = list(db.execute(selection_query))
+    selection_groups: dict[tuple[UUID, UUID], dict[str, object]] = {}
+    for selection, photo, folder, gallery, client, parent in selection_rows:
+        key = (gallery.id, client.id)
+        group = selection_groups.setdefault(
+            key,
+            {
+                "client": {"id": str(client.id), "name": client.full_name},
+                "gallery": {"id": str(gallery.id), "name": gallery.name},
+                "parent_gallery": {
+                    "id": str(gallery.parent_gallery_id),
+                    "name": parent.name if parent else "Galeria pública removida",
+                },
+                "selected_count": 0,
+                "created_at": selection.created_at.isoformat(),
+                "folders": {},
+            },
+        )
+        group["selected_count"] += 1
+        folder_group = group["folders"].setdefault(
+            str(folder.id), {"id": str(folder.id), "name": folder.name, "items": []}
+        )
+        folder_group["items"].append({"id": str(photo.id), "name": photo.display_name or photo.filename})
+    configured_templates = {
+        template.kind: template.body
+        for template in db.scalars(select(PaymentMessageTemplate))
+    }
 
     max_attempts = payment_notification_max_attempts()
     prepared_orders: list[dict[str, object]] = []
@@ -8416,11 +8979,31 @@ def list_payment_communications(
                 client=client,
                 gallery=gallery,
                 notifications=notifications_by_communication.get(communication.id, []),
+                corrections=corrections_by_communication.get(communication.id, []),
                 max_attempts=max_attempts,
             )
             communication_payloads.append(payload)
             flat_by_id[str(communication.id)] = payload
 
+        folders: dict[str, dict[str, object]] = {}
+        for item in items_by_order.get(order.id, []):
+            folder_key = str(item.folder_id_snapshot) if item.folder_id_snapshot else "unknown"
+            folder = folders.setdefault(
+                folder_key,
+                {
+                    "id": str(item.folder_id_snapshot) if item.folder_id_snapshot else None,
+                    "name": item.folder_name_snapshot or "Pasta não disponível",
+                    "items": [],
+                },
+            )
+            folder["items"].append(
+                {
+                    "id": str(item.id),
+                    "photo_id": str(item.photo_asset_id_snapshot),
+                    "name": item.filename_snapshot,
+                    "unit_price_cents": item.unit_price_cents,
+                }
+            )
         prepared_orders.append(
             {
                 "id": str(order.id),
@@ -8446,6 +9029,8 @@ def list_payment_communications(
                 "communications": communication_payloads,
                 "communication": communication_payloads[0] if communication_payloads else None,
                 "delivery_statuses": sorted(delivery_states),
+                "folders": list(folders.values()),
+                "payment_message_snapshot": order.payment_message_snapshot,
                 "_client_id": order.client_id,
                 "_client_name": (
                     client.full_name
@@ -8522,6 +9107,15 @@ def list_payment_communications(
         for communication in order_payload["communications"]
     }
     return {
+        "templates": {
+            kind: configured_templates.get(kind, default)
+            for kind, default in DEFAULT_PAYMENT_TEMPLATES.items()
+        },
+        "templates_are_global": True,
+        "selections_without_order": [
+            {**item, "folders": list(item["folders"].values())}
+            for item in selection_groups.values()
+        ],
         "summary": {
             "clients": len(grouped),
             "orders": len(prepared_orders),
@@ -8572,6 +9166,7 @@ def _admin_payment_communication_payload(
     client: Client | None,
     gallery: DerivedGallery | None,
     notifications: list[PaymentNotificationOutbox],
+    corrections: list[PaymentConfirmationCorrection],
     max_attempts: int,
 ) -> dict[str, object]:
     photographer_delivery = next(
@@ -8605,6 +9200,14 @@ def _admin_payment_communication_payload(
         "created_at": item.created_at.isoformat(),
         "decided_at": item.decided_at.isoformat() if item.decided_at else None,
         "can_decide": item.status == "pending_review" and order.payment_status == "pending",
+        "can_correct": item.status == "confirmed" and order.payment_status == "confirmed",
+        "corrections": [
+            {
+                "id": str(correction.id),
+                "created_at": correction.created_at.isoformat(),
+            }
+            for correction in corrections
+        ],
         "photographer_notification": _delivery_payload(
             photographer_delivery, max_attempts
         ),

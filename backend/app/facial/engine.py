@@ -127,6 +127,7 @@ def replace_photo_index(
         records.append(
             PhotoFaceEmbedding(
                 parent_gallery_id=photo.parent_gallery_id,
+                derived_gallery_id=photo.derived_gallery_id,
                 photo_asset_id=photo.id,
                 face_ordinal=ordinal,
                 model_version=policy.model_version,
@@ -178,6 +179,8 @@ def search_gallery_index(
                 PhotoFaceEmbedding.model_version == settings.model_version,
                 PhotoFaceEmbedding.quality_version == settings.quality_version,
                 PhotoAsset.parent_gallery_id == gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
+                PhotoFaceEmbedding.derived_gallery_id.is_(None),
                 PhotoAsset.available.is_(True),
                 *(
                     (PhotoFaceEmbedding.photo_asset_id.in_(allowed_fingerprints),)
