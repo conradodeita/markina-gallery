@@ -7,6 +7,7 @@ useDefault = true
 description = "Valores sintéticos fixos usados exclusivamente em testes automatizados"
 regexes = [
   '''^communication-order-key-0001$''',
+  '''^operations-correction-0001$''',
   '''^(Atual-forte-2026|Nova-frase-forte-2027|Outra-frase-forte-2028)$''',
   '''^0123456789abcdef0123456789abcdef$''',
 ]
