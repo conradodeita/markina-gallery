@@ -671,6 +671,20 @@ class SaleOrder(Base):
             "client_id",
             "payment_status",
         ),
+        Index(
+            "uq_sale_order_editable_draft",
+            "derived_gallery_id",
+            "client_id",
+            unique=True,
+            sqlite_where=text(
+                "frozen_at IS NULL AND payment_status = 'pending' "
+                "AND checkout_key IS NOT NULL"
+            ),
+            postgresql_where=text(
+                "frozen_at IS NULL AND payment_status = 'pending' "
+                "AND checkout_key IS NOT NULL"
+            ),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -684,6 +698,9 @@ class SaleOrder(Base):
     parent_gallery_name_snapshot: Mapped[str] = mapped_column(String(200))
     payment_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     total_cents: Mapped[int] = mapped_column(Integer)
+    frozen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     client_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     client_phone_snapshot: Mapped[str | None] = mapped_column(String(16), nullable=True)

@@ -878,3 +878,43 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
   .gallery-presentation-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
   .gallery-presentation-photo { grid-column:span 1; }
 }
+
+.client-cart-link {
+  position: sticky;
+  top: 12px;
+  z-index: 24;
+  justify-self: end;
+  display: inline-flex;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--ink, #17211d);
+  color: #fff;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 18%);
+}
+
+.client-cart-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.client-cart-items li {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.client-cart-items img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.client-order-resume .client-checkout-items {
+  width: 100%;
+}

@@ -43,6 +43,7 @@ from app.auth import (
     token_hash,
 )
 from app.checkout import create_pending_checkout
+from app.client_commerce import client_carts_by_gallery_payload
 from app.gallery_access import issue_gallery_capability
 from app.global_pix import normalize_configuration
 from app.main import app
@@ -1122,6 +1123,56 @@ def test_expired_gallery_rejects_checkout_of_existing_selection(client: TestClie
     assert response.status_code == 403
 
 
+def test_expired_gallery_rejects_freezing_an_open_draft(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Prazo", phone_e164="+5511555555567")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        db.add_all(
+            [
+                PhotoSelection(
+                    derived_gallery_id=gallery_id,
+                    photo_asset_id=photo_id,
+                    client_id=owner.id,
+                ),
+                PriceRule(
+                    parent_gallery_id=gallery.parent_gallery_id,
+                    minimum_quantity=1,
+                    maximum_quantity=None,
+                    unit_price_cents=500,
+                ),
+            ]
+        )
+        db.commit()
+    authenticate_client(client, owner.phone_e164)
+    checkout = client.post(
+        f"/gallery/{gallery_id}/checkout",
+        json={"idempotency_key": "draft-before-expiration-0001"},
+    )
+    assert checkout.status_code == 201
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        gallery.selection_expires_at = now() - timedelta(minutes=1)
+        db.commit()
+    reported = client.post(
+        f"/gallery/{gallery_id}/orders/{checkout.json()['id']}/payment-communications",
+        json={"idempotency_key": "report-after-expiration-0001"},
+    )
+    assert reported.status_code == 403
+    with SessionLocal() as db:
+        order = db.get(SaleOrder, UUID(checkout.json()["id"]))
+        assert order.frozen_at is None
+        assert db.scalar(
+            select(PhotoSelection.id).where(
+                PhotoSelection.derived_gallery_id == gallery_id,
+                PhotoSelection.client_id == owner.id,
+            )
+        )
+
+
 def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
     with SessionLocal() as db:
         owner = Client(full_name="Cliente", phone_e164="+5511555555555")
@@ -1129,7 +1180,9 @@ def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
     authenticate_client(client, owner.phone_e164)
-    assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["purchase_state"] == "nova"
+    initial = client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]
+    assert initial["purchase_state"] == "nova"
+    assert initial["commercial_state"] == "available"
     with SessionLocal() as db:
         db.add(PhotoView(derived_gallery_id=gallery_id, client_id=owner.id, photo_asset_id=photo_id))
         db.commit()
@@ -1140,7 +1193,9 @@ def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
         db.flush()
         db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photo_id, filename_snapshot="IMG_0001.jpg", unit_price_cents=100))
         db.commit()
-    assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["purchase_state"] == "já comprada"
+    purchased = client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]
+    assert purchased["purchase_state"] == "já comprada"
+    assert purchased["commercial_state"] == "purchased"
     denied = client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection")
     assert denied.status_code == 409
     assert denied.json()["detail"] == "Foto indisponível para seleção."
@@ -1641,6 +1696,7 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
     assert journey["actions"] == {
         "continue_url": f"/public-galleries/{parent_id}",
         "review_url": None,
+        "orders_url": None,
         "prepared_url": f"/gallery/{gallery_id}",
         "fallback_url": None,
     }
@@ -2212,7 +2268,7 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     assert queued.json()["inventory"]["remove"]["photos"] == 1
 
 
-def test_pending_checkout_freezes_prices_pix_and_selection(client: TestClient):
+def test_pending_checkout_keeps_cart_editable_until_payment_is_reported(client: TestClient):
     set_test_global_pix(instructions="Confirme com o fotógrafo.")
     with SessionLocal() as db:
         owner = Client(full_name="Cliente PIX", phone_e164="+5511555554321")
@@ -2235,8 +2291,120 @@ def test_pending_checkout_freezes_prices_pix_and_selection(client: TestClient):
         assert order.price_rule_snapshot["unit_price_cents"] == 700
         assert order.pix_copy_paste_snapshot == VALID_PIX_A
         assert order.pix_instructions_snapshot == "Confirme com o fotógrafo."
-        assert not db.scalar(select(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery_id))
+        assert order.frozen_at is None
+        assert db.scalar(select(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery_id))
         assert db.scalar(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)).unit_price_cents == 700
+
+
+def test_checkout_reuses_and_resynchronizes_the_open_draft(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Rascunho", phone_e164="+5511555554320")
+        db.add(owner)
+        db.commit()
+    gallery_id, first_photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        first_photo = db.get(PhotoAsset, first_photo_id)
+        second_photo = PhotoAsset(
+            parent_gallery_id=gallery.parent_gallery_id,
+            folder_id=first_photo.folder_id,
+            filename="IMG_0002.jpg",
+            storage_key="events/one/img-0002.jpg",
+        )
+        db.add(second_photo)
+        db.flush()
+        ensure_private_photo_reference(
+            db, gallery_id=gallery.id, photo_id=second_photo.id, origin="admin"
+        )
+        db.add_all(
+            [
+                PriceRule(
+                    parent_gallery_id=gallery.parent_gallery_id,
+                    minimum_quantity=1,
+                    maximum_quantity=None,
+                    unit_price_cents=700,
+                ),
+                PhotoSelection(
+                    derived_gallery_id=gallery.id,
+                    client_id=owner.id,
+                    photo_asset_id=first_photo_id,
+                ),
+            ]
+        )
+        db.commit()
+        first = create_pending_checkout(
+            db, gallery=gallery, client=owner, checkout_key="draft-first-key"
+        )
+        db.commit()
+        assert client_carts_by_gallery_payload(
+            db, galleries=[gallery], client_id=owner.id
+        )[gallery.id]["draft_order_id"] == str(first.id)
+        db.add(
+            PhotoSelection(
+                derived_gallery_id=gallery.id,
+                client_id=owner.id,
+                photo_asset_id=second_photo.id,
+            )
+        )
+        db.commit()
+        assert client_carts_by_gallery_payload(
+            db, galleries=[gallery], client_id=owner.id
+        )[gallery.id]["draft_order_id"] is None
+        refreshed = create_pending_checkout(
+            db, gallery=gallery, client=owner, checkout_key="draft-second-key"
+        )
+        db.commit()
+        assert refreshed.id == first.id
+        assert refreshed.total_cents == 1400
+        assert len(
+            list(
+                db.scalars(
+                    select(SaleOrderItem).where(
+                        SaleOrderItem.sale_order_id == refreshed.id
+                    )
+                )
+            )
+        ) == 2
+        second_selection = db.scalar(
+            select(PhotoSelection).where(
+                PhotoSelection.derived_gallery_id == gallery.id,
+                PhotoSelection.client_id == owner.id,
+                PhotoSelection.photo_asset_id == second_photo.id,
+            )
+        )
+        db.delete(second_selection)
+        db.commit()
+        assert client_carts_by_gallery_payload(
+            db, galleries=[gallery], client_id=owner.id
+        )[gallery.id]["draft_order_id"] is None
+        reduced = create_pending_checkout(
+            db, gallery=gallery, client=owner, checkout_key="draft-third-key"
+        )
+        db.commit()
+        assert reduced.id == first.id
+        assert client_carts_by_gallery_payload(
+            db, galleries=[gallery], client_id=owner.id
+        )[gallery.id]["draft_order_id"] == str(first.id)
+        assert reduced.total_cents == 700
+        assert len(
+            list(
+                db.scalars(
+                    select(SaleOrderItem).where(
+                        SaleOrderItem.sale_order_id == reduced.id
+                    )
+                )
+            )
+        ) == 1
+        assert len(
+            list(
+                db.scalars(
+                    select(PhotoSelection).where(
+                        PhotoSelection.derived_gallery_id == gallery.id,
+                        PhotoSelection.client_id == owner.id,
+                    )
+                )
+            )
+        ) == 1
 
 
 def test_checkout_key_is_unique_for_the_same_client_and_gallery(client: TestClient):
@@ -2273,9 +2441,23 @@ def test_client_cart_and_checkout_are_private(client: TestClient):
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
-        parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
+        gallery = db.get(DerivedGallery, gallery_id)
+        parent_id = gallery.parent_gallery_id
+        first_photo = db.get(PhotoAsset, photo_id)
+        second_photo = PhotoAsset(
+            parent_gallery_id=parent_id,
+            folder_id=first_photo.folder_id,
+            filename="IMG_0002.jpg",
+            storage_key="events/cart/img-0002.jpg",
+        )
+        db.add(second_photo)
+        db.flush()
+        ensure_private_photo_reference(
+            db, gallery_id=gallery_id, photo_id=second_photo.id, origin="admin"
+        )
         db.add(PriceRule(parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500))
         db.commit()
+        second_photo_id = second_photo.id
     authenticate_client(client, owner.phone_e164)
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 201
     cart = client.get(f"/gallery/{gallery_id}/cart")
@@ -2285,6 +2467,25 @@ def test_client_cart_and_checkout_are_private(client: TestClient):
     assert checkout.status_code == 201
     assert checkout.json()["payment_status"] == "pending"
     assert client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "client-checkout-0001"}).json()["id"] == checkout.json()["id"]
+    assert client.post(
+        f"/gallery/{gallery_id}/photos/{second_photo_id}/selection"
+    ).status_code == 201
+    updated = client.get(
+        f"/gallery/{gallery_id}/orders/{checkout.json()['id']}"
+    ).json()
+    assert updated["total_cents"] == 1000
+    assert {item["photo_id"] for item in updated["items"]} == {
+        str(photo_id),
+        str(second_photo_id),
+    }
+    assert client.delete(
+        f"/gallery/{gallery_id}/photos/{second_photo_id}/selection"
+    ).status_code == 204
+    reduced = client.get(
+        f"/gallery/{gallery_id}/orders/{checkout.json()['id']}"
+    ).json()
+    assert reduced["total_cents"] == 500
+    assert [item["photo_id"] for item in reduced["items"]] == [str(photo_id)]
 
 
 def test_pending_order_is_private_and_preserves_pix_snapshot(client: TestClient):
@@ -2333,15 +2534,129 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
     assert first.json()["id"] == second.json()["id"] == third.json()["id"]
     assert first.json()["notification_status"] == "queued"
     with SessionLocal() as db:
-        assert db.get(SaleOrder, UUID(order["id"])).payment_status == "pending"
+        persisted_order = db.get(SaleOrder, UUID(order["id"]))
+        assert persisted_order.payment_status == "pending"
+        assert persisted_order.frozen_at is not None
+        assert not db.scalar(
+            select(PhotoSelection).where(
+                PhotoSelection.derived_gallery_id == gallery_id,
+                PhotoSelection.client_id == owner.id,
+            )
+        )
         outboxes = list(db.scalars(select(PaymentNotificationOutbox)))
         assert len(outboxes) == 1
         assert outboxes[0].template_kind == "photographer_reported"
         assert outboxes[0].recipient_phone == "+5511555554000"
+        first_item_ids = set(
+            db.scalars(
+                select(SaleOrderItem.photo_asset_id_snapshot).where(
+                    SaleOrderItem.sale_order_id == persisted_order.id
+                )
+            )
+        )
+        first_photo = db.get(PhotoAsset, photo_id)
+        complementary_photo = PhotoAsset(
+            parent_gallery_id=persisted_order.parent_gallery_id_snapshot,
+            folder_id=first_photo.folder_id,
+            filename="IMG_COMPLEMENTAR.jpg",
+            storage_key="events/one/img-complementar.jpg",
+        )
+        db.add(complementary_photo)
+        db.commit()
+        complementary_photo_id = complementary_photo.id
+        parent_id = persisted_order.parent_gallery_id_snapshot
     private_status = client.get(f"/gallery/{gallery_id}/payment-communications")
     assert private_status.status_code == 200
-    assert private_status.json()["orders"][0]["communication"]["status"] == "pending_review"
+    status_order = private_status.json()["orders"][0]
+    assert status_order["communication"]["status"] == "pending_review"
+    assert status_order["commercial_state"] == "payment_reported"
+    assert status_order["frozen_at"] is not None
+    assert status_order["items"] == [
+        {
+            "item_id": status_order["items"][0]["item_id"],
+            "photo_id": str(photo_id),
+            "name": "IMG_0001.jpg",
+            "unit_price_cents": 500,
+            "preview_url": f"/gallery/{gallery_id}/photos/{photo_id}/preview",
+        }
+    ]
     assert "+5511555554000" not in private_status.text
+    review = client.get(f"/gallery/{gallery_id}/review").json()
+    assert next(photo for photo in review["photos"] if photo["id"] == str(photo_id))[
+        "commercial_state"
+    ] == "payment_reported"
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 409
+    selected = client.post(
+        f"/public-galleries/{parent_id}/photos/{complementary_photo_id}/selection"
+    )
+    assert selected.status_code == 201
+    assert selected.json()["cart"]["quantity"] == 1
+    complementary_order = client.post(
+        f"/gallery/{gallery_id}/checkout",
+        json={"idempotency_key": "cart" * 3},
+    )
+    assert complementary_order.status_code == 201
+    assert complementary_order.json()["id"] != order["id"]
+    with SessionLocal() as db:
+        assert set(
+            db.scalars(
+                select(SaleOrderItem.photo_asset_id_snapshot).where(
+                    SaleOrderItem.sale_order_id == UUID(order["id"])
+                )
+            )
+        ) == first_item_ids
+
+
+def test_frozen_legacy_pending_order_remains_resumable_without_cart(
+    client: TestClient, monkeypatch
+):
+    monkeypatch.setenv("WHATSAPP_PHOTOGRAPHER_PHONE_E164", "+5511555554000")
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente Legada", phone_e164="+5511555554387")
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        order = SaleOrder(
+            derived_gallery_id=gallery_id,
+            client_id=owner.id,
+            payment_status="pending",
+            total_cents=500,
+            checkout_key="legacy-checkout-key",
+            frozen_at=now(),
+        )
+        db.add(order)
+        db.flush()
+        db.add(
+            SaleOrderItem(
+                sale_order_id=order.id,
+                photo_asset_id=photo_id,
+                unit_price_cents=500,
+                filename_snapshot="IMG_LEGADA.jpg",
+            )
+        )
+        db.commit()
+        order_id = order.id
+    authenticate_client(client, owner.phone_e164)
+
+    detail = client.get(f"/gallery/{gallery_id}/orders/{order_id}")
+    assert detail.status_code == 200
+    assert detail.json()["items"][0]["name"] == "IMG_LEGADA.jpg"
+    reported = client.post(
+        f"/gallery/{gallery_id}/orders/{order_id}/payment-communications",
+        json={"idempotency_key": "legacy-report-key"},
+    )
+    assert reported.status_code == 201
+    with SessionLocal() as db:
+        persisted = db.get(SaleOrder, order_id)
+        assert persisted.frozen_at is not None
+        assert persisted.total_cents == 500
+        assert not db.scalar(
+            select(PhotoSelection).where(
+                PhotoSelection.derived_gallery_id == gallery_id,
+                PhotoSelection.client_id == owner.id,
+            )
+        )
 
 
 def test_admin_confirms_payment_communication_once(client: TestClient):
@@ -3245,6 +3560,84 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
     }
 
 
+def test_client_cart_projection_is_batched_and_isolated_between_members() -> None:
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente do carrinho", phone_e164="+5511777777711")
+        other = Client(full_name="Outra cliente", phone_e164="+5511777777722")
+        db.add_all([owner, other])
+        db.flush()
+        galleries: list[DerivedGallery] = []
+        for position in range(5):
+            parent = ParentGallery(name=f"Evento {position}")
+            db.add(parent)
+            db.flush()
+            db.add(
+                PriceRule(
+                    parent_gallery_id=parent.id,
+                    minimum_quantity=1,
+                    maximum_quantity=None,
+                    unit_price_cents=500 + position,
+                )
+            )
+            folder = PhotoFolder(
+                parent_gallery_id=parent.id,
+                name="Fotos",
+                status="released",
+            )
+            gallery = DerivedGallery(
+                parent_gallery_id=parent.id,
+                client_id=owner.id,
+                name=f"Privada {position}",
+            )
+            db.add_all([folder, gallery])
+            db.flush()
+            photo = PhotoAsset(
+                parent_gallery_id=parent.id,
+                folder_id=folder.id,
+                filename=f"IMG_{position}.jpg",
+                storage_key=f"batched/{position}.jpg",
+            )
+            db.add(photo)
+            db.flush()
+            db.add_all(
+                [
+                    PhotoSelection(
+                        derived_gallery_id=gallery.id,
+                        photo_asset_id=photo.id,
+                        client_id=owner.id,
+                    ),
+                    PhotoSelection(
+                        derived_gallery_id=gallery.id,
+                        photo_asset_id=photo.id,
+                        client_id=other.id,
+                    ),
+                ]
+            )
+            galleries.append(gallery)
+        db.commit()
+
+        statement_count = 0
+
+        def count_statement(*_args) -> None:
+            nonlocal statement_count
+            statement_count += 1
+
+        event.listen(engine, "before_cursor_execute", count_statement)
+        try:
+            payload = client_carts_by_gallery_payload(
+                db, galleries=galleries, client_id=owner.id
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", count_statement)
+
+        assert statement_count <= 6
+        assert len(payload) == 5
+        assert all(cart["quantity"] == 1 for cart in payload.values())
+        assert {
+            item["name"]
+            for cart in payload.values()
+            for item in cart["items"]
+        } == {f"IMG_{position}.jpg" for position in range(5)}
 def test_private_media_payment_correction_and_reopening_contracts_start_missing(
     client: TestClient,
 ) -> None:

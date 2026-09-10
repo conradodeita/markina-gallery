@@ -23,6 +23,48 @@ const review = {
 };
 
 describe("galeria privada da cliente", () => {
+  it("retoma a etapa PIX do rascunho salvo após recarregar", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }
+          : path.endsWith("/cart") ? { quantity: 1, total_cents: 700, draft_order_id: "draft-1", items: [{ id: "new-1", name: "IMG_001.jpg", preview_url: "/gallery/gallery-1/photos/new-1/preview" }] }
+            : path.endsWith("/orders/draft-1") ? { id: "draft-1", total_cents: 700, items: [{ photo_id: "new-1", name: "IMG_001.jpg", unit_price_cents: 700, preview_url: "/gallery/gallery-1/photos/new-1/preview" }], pix: { copy_paste: "PIX", qr_png_data_url: null, instructions: null, confirmation: "Manual" } }
+              : path.endsWith("/payment-communications") ? { orders: [] }
+                : path.endsWith("/reopening-requests") ? { request: null }
+                  : review,
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryPage />);
+
+    expect(await screen.findByRole("heading", { name: "Revise suas fotos e faça o PIX" })).toBeTruthy();
+    expect(screen.getByText("PIX copia e cola")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Informar pagamento" })).toBeTruthy();
+  });
+
+  it("retoma carrinho e pedido comunicado com fotos após recarregar", async () => {
+    const commercialReview = {
+      ...review,
+      photos: [
+        { ...review.photos[0], selected: true, purchase_state: "selected" },
+        { ...review.photos[1], selected: false, purchase_state: "payment_reported" },
+      ],
+    };
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }
+          : path.endsWith("/cart") ? { quantity: 1, total_cents: 700, items: [{ id: "new-1", name: "IMG_001.jpg", preview_url: "/gallery/gallery-1/photos/new-1/preview" }] }
+            : path.endsWith("/payment-communications") ? { orders: [{ order_id: "order-1", total_cents: 700, payment_status: "pending", frozen_at: "2026-09-10T12:00:00Z", communication: { id: "communication-1", status: "pending_review" }, notification: null, items: [{ photo_id: "bought-1", name: "IMG_002.jpg", preview_url: "/gallery/gallery-1/photos/bought-1/preview", unit_price_cents: 700 }] }] }
+              : path.endsWith("/reopening-requests") ? { request: null }
+                : commercialReview,
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryPage />);
+
+    expect(await screen.findByRole("link", { name: "Carrinho (1)" })).toBeTruthy();
+    expect(screen.getByText("Pagamento informado")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Miniatura protegida de IMG_002.jpg" })).toBeTruthy();
+  });
+
   it("mostra estados e impede nova seleção de foto já comprada", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(path.endsWith("/comments") ? { comments: [] } : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] } : review), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
@@ -30,7 +72,7 @@ describe("galeria privada da cliente", () => {
     expect(await screen.findByRole("heading", { name: "Festa escolar", level: 1 })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Resumo da seleção" })).toBeNull();
     expect(screen.getByText("nova")).toBeTruthy();
-    expect(screen.getByText("já comprada")).toBeTruthy();
+    expect(screen.getAllByText("Comprada").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "☆ Favoritar" }).length).toBe(2);
     expect(screen.getByRole("button", { name: /Novas fotos/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Já compradas/ }));
@@ -49,7 +91,7 @@ describe("galeria privada da cliente", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const selectButtons = screen.getAllByRole("button", { name: "Selecionar" });
     expect(selectButtons).toHaveLength(1);
-    expect(screen.getByText("Comprada")).toBeTruthy();
+    expect(screen.getAllByText("Comprada").length).toBeGreaterThan(0);
     fireEvent.click(selectButtons[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/gallery/gallery-1/photos/new-1/selection", expect.objectContaining({ method: "POST" })));
   });
@@ -223,7 +265,7 @@ describe("galeria privada da cliente", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remover do carrinho" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remover IMG_001.jpg do carrinho" }));
     expect(await screen.findByText("Esta galeria privada foi encerrada")).toBeTruthy();
     expect(screen.getByText(/histórico de compras continuam preservados/i)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Voltar à Galeria pública" }).getAttribute("href")).toBe("/public-galleries/public-1");
@@ -264,7 +306,7 @@ describe("galeria privada da cliente", () => {
     expect(footer.textContent).toContain("2 fotos");
     expect(footerText).toContain("R$ 13,00");
     expect(footerText).toContain("Você economiza R$ 1,00");
-    fireEvent.click(screen.getByRole("button", { name: "Prosseguir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar para o PIX" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/gallery/gallery-1/checkout", expect.objectContaining({ method: "POST" })));
     expect(await screen.findByRole("heading", { name: /revise suas fotos e faça o pix/i })).toBeTruthy();
     expect(screen.getByRole("img", { name: "Miniatura protegida de IMG_001.jpg" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/new-1/preview");
@@ -284,7 +326,7 @@ describe("galeria privada da cliente", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
     expect(await screen.findByRole("list", { name: "Fotos no carrinho" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Remover do carrinho" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remover IMG_001.jpg do carrinho" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/gallery/gallery-1/photos/new-1/selection",
       expect.objectContaining({ method: "DELETE" }),
@@ -310,13 +352,13 @@ describe("galeria privada da cliente", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
-    expect(await screen.findByText("Pagamento ainda não comunicado")).toBeTruthy();
+    expect(await screen.findByText("Aguardando pagamento")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Informar pagamento" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/gallery/gallery-1/orders/order-1/payment-communications",
       expect.objectContaining({ method: "POST" }),
     ));
-    expect(await screen.findByText("Pagamento informado · aguardando revisão")).toBeTruthy();
+    expect(await screen.findByText("Pagamento informado")).toBeTruthy();
     expect(screen.getByText("O pagamento está em análise.")).toBeTruthy();
   });
 });

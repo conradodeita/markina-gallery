@@ -17,9 +17,12 @@ from app.auth import (
     PhotoAsset,
     PhotoFolder,
     PhotoSelection,
-    SaleOrder,
-    SaleOrderItem,
     expired,
+)
+from app.checkout import (
+    client_photo_is_frozen,
+    lock_client_commerce,
+    synchronize_editable_draft,
 )
 from app.parent_registration import link_client_to_parent
 from app.private_membership import ensure_private_membership
@@ -169,23 +172,16 @@ def derive_client_selection(
     )
     gallery = resolution.gallery
     gallery_created = resolution.gallery_created
+    lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
     if resolution.membership.status != "active":
         raise PrivateDerivationError("O acesso desta cliente à galeria privada está bloqueado.")
     if not gallery.access_enabled:
         raise PrivateDerivationError("A galeria privada está bloqueada.")
     if gallery.selection_expires_at and expired(gallery.selection_expires_at):
         raise PrivateDerivationError("O prazo de seleção expirou.")
-    already_confirmed = db.scalar(
-        select(SaleOrderItem.id)
-        .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
-        .where(
-            SaleOrder.derived_gallery_id_snapshot == gallery.id,
-            SaleOrder.client_id == client.id,
-            SaleOrder.payment_status == "confirmed",
-            SaleOrderItem.photo_asset_id_snapshot == photo.id,
-        )
-    )
-    if already_confirmed:
+    if client_photo_is_frozen(
+        db, gallery_id=gallery.id, client_id=client.id, photo_id=photo.id
+    ):
         raise PrivateDerivationError("Foto indisponível para seleção.")
 
     reference_created = ensure_private_photo_reference(
@@ -208,6 +204,8 @@ def derive_client_selection(
         ),
         selection_lookup,
     )
+    if selection_created:
+        synchronize_editable_draft(db, gallery=gallery, client_id=client.id)
     return PrivateDerivationResult(
         gallery=gallery,
         gallery_created=gallery_created,

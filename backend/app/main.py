@@ -115,7 +115,20 @@ from app.auth import (
     token_hash,
     validate_admin_password,
 )
-from app.checkout import CheckoutError, create_pending_checkout
+from app.checkout import (
+    CheckoutError,
+    client_photo_is_frozen,
+    create_pending_checkout,
+    freeze_pending_checkout,
+    lock_client_commerce,
+    synchronize_editable_draft,
+)
+from app.client_commerce import (
+    client_carts_by_gallery_payload,
+    client_orders_by_gallery_payload,
+    client_orders_payload,
+    client_photo_states,
+)
 from app.client_identity import (
     ClientIdentityConflict,
     assert_phone_available,
@@ -209,7 +222,6 @@ from app.gallery_lifecycle import (
     retry_failed_operation,
     transition_operation,
 )
-from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
 from app.gallery_visuals import (
     TITLE_FONT_OPTIONS,
     normalize_title_font,
@@ -6974,27 +6986,6 @@ def client_library(
     registrations_by_parent = {
         registration.parent_gallery_id: registration for registration in registrations
     }
-    public_rows: list[dict[str, object]] = []
-    parents_by_id: dict[UUID, ParentGallery] = {}
-    for registration in registrations:
-        parent = db.get(ParentGallery, registration.parent_gallery_id)
-        if not parent or not parent.active or parent.lifecycle_status != "active":
-            continue
-        parents_by_id[parent.id] = parent
-        access_state = "active" if registration.status == "active" else "pending_review"
-        public_rows.append(
-            {
-                "id": str(parent.id),
-                "name": parent.name,
-                "event_name": parent.event_name or "",
-                "access_mode": parent.access_mode,
-                "gallery_status": access_state,
-                "browse_url": f"/public-galleries/{parent.id}"
-                if access_state == "active"
-                else None,
-            }
-        )
-
     membership_rows = list(
         db.execute(
             select(DerivedGallery, DerivedGalleryMembership.status)
@@ -7023,26 +7014,58 @@ def client_library(
         )
     )
     membership_rows.sort(key=lambda row: row[0].created_at, reverse=True)
+    gallery_ids = [gallery.id for gallery, _membership_status in membership_rows]
+    parent_ids = {registration.parent_gallery_id for registration in registrations}
+    parent_ids.update(gallery.parent_gallery_id for gallery, _status in membership_rows)
+    parents_by_id = {
+        parent.id: parent
+        for parent in db.scalars(
+            select(ParentGallery).where(ParentGallery.id.in_(parent_ids))
+        )
+    }
+    public_rows: list[dict[str, object]] = []
+    for registration in registrations:
+        parent = parents_by_id.get(registration.parent_gallery_id)
+        if not parent or not parent.active or parent.lifecycle_status != "active":
+            continue
+        access_state = "active" if registration.status == "active" else "pending_review"
+        public_rows.append(
+            {
+                "id": str(parent.id),
+                "name": parent.name,
+                "event_name": parent.event_name or "",
+                "access_mode": parent.access_mode,
+                "gallery_status": access_state,
+                "browse_url": f"/public-galleries/{parent.id}"
+                if access_state == "active"
+                else None,
+            }
+        )
+
+    folders_by_gallery: dict[UUID, list[PhotoFolder]] = defaultdict(list)
+    if gallery_ids:
+        for derived_gallery_id, folder in db.execute(
+            select(DerivedGalleryPhoto.derived_gallery_id, PhotoFolder)
+            .join(PhotoAsset, PhotoAsset.id == DerivedGalleryPhoto.photo_asset_id)
+            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+            .where(
+                DerivedGalleryPhoto.derived_gallery_id.in_(gallery_ids),
+                PhotoFolder.status == "released",
+                PhotoFolder.purpose == "content",
+            )
+            .distinct()
+            .order_by(
+                DerivedGalleryPhoto.derived_gallery_id,
+                PhotoFolder.position,
+                PhotoFolder.created_at,
+            )
+        ):
+            folders_by_gallery[derived_gallery_id].append(folder)
     rows: list[dict[str, object]] = []
     galleries_by_id: dict[str, DerivedGallery] = {}
     for gallery, membership_status in membership_rows:
-        parent = db.get(ParentGallery, gallery.parent_gallery_id)
-        if parent:
-            parents_by_id[parent.id] = parent
-        folders = list(
-            db.scalars(
-                select(PhotoFolder)
-                .join(PhotoAsset, PhotoAsset.folder_id == PhotoFolder.id)
-                .join(DerivedGalleryPhoto, DerivedGalleryPhoto.photo_asset_id == PhotoAsset.id)
-                .where(
-                    DerivedGalleryPhoto.derived_gallery_id == gallery.id,
-                    PhotoFolder.status == "released",
-                    PhotoFolder.purpose == "content",
-                )
-                .distinct()
-                .order_by(PhotoFolder.position, PhotoFolder.created_at)
-            )
-        )
+        parent = parents_by_id.get(gallery.parent_gallery_id)
+        folders = folders_by_gallery[gallery.id]
         origin_removed = bool(parent and parent.lifecycle_status == "deleted")
         origin_registration = registrations_by_parent.get(gallery.parent_gallery_id)
         origin_available = bool(
@@ -7087,7 +7110,14 @@ def client_library(
         rows.append(private_row)
         galleries_by_id[str(gallery.id)] = gallery
 
-    gallery_ids = [gallery.id for gallery, _membership_status in membership_rows]
+    carts_by_gallery = client_carts_by_gallery_payload(
+        db,
+        galleries=[gallery for gallery, _membership_status in membership_rows],
+        client_id=session.subject_id,
+    )
+    orders_by_gallery = client_orders_by_gallery_payload(
+        db, gallery_ids=set(gallery_ids), client_id=session.subject_id
+    )
     prepared_gallery_ids: set[UUID] = set()
     if gallery_ids:
         prepared_gallery_ids.update(
@@ -7147,10 +7177,11 @@ def client_library(
         )
         primary_surface = "public" if public_url else "private" if private_url else "unavailable"
         primary_url = public_url or private_url
-        cart = (
-            _client_cart_payload(db, private_gallery, session.subject_id)
-            if private_gallery
-            else {"quantity": 0, "items": []}
+        cart = carts_by_gallery.get(
+            private_gallery.id, {"quantity": 0, "items": []}
+        ) if private_gallery else {"quantity": 0, "items": []}
+        gallery_orders = (
+            orders_by_gallery.get(private_gallery.id, []) if private_gallery else []
         )
         has_prepared_photos = bool(
             private_gallery and private_gallery.id in prepared_gallery_ids
@@ -7179,10 +7210,12 @@ def client_library(
                 "public_gallery": public_row,
                 "private_gallery": private_row,
                 "selection": cart,
+                "orders": gallery_orders,
                 "has_prepared_photos": has_prepared_photos,
                 "actions": {
                     "continue_url": public_url,
                     "review_url": private_url if int(cart.get("quantity", 0)) > 0 else None,
+                    "orders_url": private_url if gallery_orders else None,
                     "prepared_url": private_url if has_prepared_photos else None,
                     "fallback_url": private_url if not public_url else None,
                 },
@@ -7200,30 +7233,76 @@ def client_library(
 def client_purchase_history(
     request: Request, db: Session = Depends(db_session)
 ) -> dict[str, list[dict[str, object]]]:
-    """Histórico confirmado da própria cliente, sem variante administrativa."""
+    """Pedidos congelados da própria cliente, incluindo compras confirmadas."""
     session = current_session(request, Role.CLIENT)
-    orders = db.scalars(
-        select(SaleOrder)
-        .where(
-            SaleOrder.client_id == session.subject_id,
-            SaleOrder.payment_status == "confirmed",
+    orders = list(
+        db.scalars(
+            select(SaleOrder)
+            .where(
+                SaleOrder.client_id == session.subject_id,
+                ~(
+                    (SaleOrder.payment_status == "pending")
+                    & SaleOrder.frozen_at.is_(None)
+                    & SaleOrder.checkout_key.is_not(None)
+                ),
+            )
+            .order_by(SaleOrder.created_at.desc())
         )
-        .order_by(SaleOrder.confirmed_at.desc(), SaleOrder.created_at.desc())
     )
+    order_ids = [order.id for order in orders]
+    item_rows = (
+        list(
+            db.scalars(
+                select(SaleOrderItem)
+                .where(SaleOrderItem.sale_order_id.in_(order_ids))
+                .order_by(SaleOrderItem.filename_snapshot)
+            )
+        )
+        if order_ids
+        else []
+    )
+    items_by_order: dict[UUID, list[SaleOrderItem]] = defaultdict(list)
+    for item in item_rows:
+        items_by_order[item.sale_order_id].append(item)
+    history_by_item = {
+        historical.sale_order_item_id: historical
+        for historical in db.scalars(
+            select(CommercialHistoryMedia).where(
+                CommercialHistoryMedia.sale_order_item_id.in_(
+                    [item.id for item in item_rows]
+                ),
+                CommercialHistoryMedia.status == "ready",
+            )
+        )
+    }
+    communications_by_order: dict[UUID, PaymentCommunication] = {}
+    if order_ids:
+        for communication in db.scalars(
+            select(PaymentCommunication)
+            .where(
+                PaymentCommunication.sale_order_id.in_(order_ids),
+                PaymentCommunication.client_id == session.subject_id,
+            )
+            .order_by(PaymentCommunication.created_at)
+        ):
+            communications_by_order[communication.sale_order_id] = communication
+    operational_gallery_ids = {
+        order.derived_gallery_id for order in orders if order.derived_gallery_id
+    }
+    operational_galleries = {
+        gallery.id: gallery
+        for gallery in db.scalars(
+            select(DerivedGallery).where(
+                DerivedGallery.id.in_(operational_gallery_ids)
+            )
+        )
+    }
     result: list[dict[str, object]] = []
     for order in orders:
-        gallery = (
-            db.get(DerivedGallery, order.derived_gallery_id) if order.derived_gallery_id else None
-        )
-        items = db.scalars(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id))
+        gallery = operational_galleries.get(order.derived_gallery_id)
         item_payloads = []
-        for item in items:
-            historical_media = db.scalar(
-                select(CommercialHistoryMedia).where(
-                    CommercialHistoryMedia.sale_order_item_id == item.id,
-                    CommercialHistoryMedia.status == "ready",
-                )
-            )
+        for item in items_by_order[order.id]:
+            historical_media = history_by_item.get(item.id)
             item_payloads.append(
                 {
                     "item_id": str(item.id),
@@ -7251,6 +7330,23 @@ def client_purchase_history(
                 "parent_gallery_name": order.parent_gallery_name_snapshot,
                 "gallery_status_label": "Galeria ativa" if gallery else "Galeria removida",
                 "gallery_removed": gallery is None,
+                "payment_status": order.payment_status,
+                "commercial_state": (
+                    "purchased"
+                    if order.payment_status == "confirmed"
+                    else "cancelled"
+                    if order.payment_status == "cancelled"
+                    else "payment_reported"
+                    if communications_by_order.get(order.id)
+                    and communications_by_order[order.id].status == "pending_review"
+                    else "awaiting_payment"
+                ),
+                "communication_status": (
+                    communications_by_order[order.id].status
+                    if order.id in communications_by_order
+                    else None
+                ),
+                "frozen_at": order.frozen_at.isoformat() if order.frozen_at else None,
                 "confirmed_at": order.confirmed_at.isoformat() if order.confirmed_at else None,
                 "total_cents": order.total_cents,
                 "items": item_payloads,
@@ -7455,6 +7551,12 @@ def gallery_review(
         )
     )
     photo_ids = {photo.id for photo in photos}
+    commercial_states = client_photo_states(
+        db,
+        gallery_id=gallery.id,
+        client_id=session.subject_id,
+        photo_ids=photo_ids,
+    )
     parent = db.get(ParentGallery, gallery.parent_gallery_id)
     if not parent:
         raise HTTPException(status_code=403, detail="Acesso negado.")
@@ -7481,17 +7583,6 @@ def gallery_review(
             select(PhotoView.photo_asset_id).where(
                 PhotoView.derived_gallery_id == gallery_id,
                 PhotoView.client_id == session.subject_id,
-            )
-        )
-    )
-    purchased = set(
-        db.scalars(
-            select(SaleOrderItem.photo_asset_id)
-            .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
-            .where(
-                SaleOrder.derived_gallery_id == gallery_id,
-                SaleOrder.client_id == session.subject_id,
-                SaleOrder.payment_status == "confirmed",
             )
         )
     )
@@ -7541,8 +7632,13 @@ def gallery_review(
                 "height": derivatives[photo.id].height if photo.id in derivatives else None,
                 "selected": photo.id in selections,
                 "favorited": photo.id in favorites,
+                "commercial_state": commercial_states[photo.id],
                 "purchase_state": "já comprada"
-                if photo.id in purchased
+                if commercial_states[photo.id] == "purchased"
+                else "pagamento informado"
+                if commercial_states[photo.id] == "payment_reported"
+                else "aguardando pagamento"
+                if commercial_states[photo.id] == "awaiting_payment"
                 else ("visualizada mas não comprada" if photo.id in viewed else "nova"),
             }
             for photo in photos
@@ -7630,6 +7726,18 @@ def select_photo(
         )
     )
     if private_photo:
+        lock_client_commerce(
+            db, gallery_id=gallery.id, client_id=session.subject_id
+        )
+        if client_photo_is_frozen(
+            db,
+            gallery_id=gallery.id,
+            client_id=session.subject_id,
+            photo_id=photo_id,
+        ):
+            raise HTTPException(
+                status_code=409, detail="Foto indisponível para seleção."
+            )
         selection = db.scalar(
             select(PhotoSelection).where(
                 PhotoSelection.derived_gallery_id == gallery.id,
@@ -7646,6 +7754,10 @@ def select_photo(
                 )
             )
             audit(db, "photo_selection.created", str(gallery_id))
+            db.flush()
+            synchronize_editable_draft(
+                db, gallery=gallery, client_id=session.subject_id
+            )
             db.commit()
         return {"status": "selected"}
     try:
@@ -8154,6 +8266,16 @@ def public_gallery_photos(
             .order_by(PhotoFolder.position, PhotoAsset.created_at, PhotoAsset.filename)
         )
     )
+    commercial_states = (
+        client_photo_states(
+            db,
+            gallery_id=gallery.id,
+            client_id=session.subject_id,
+            photo_ids={photo.id for photo in photos},
+        )
+        if gallery
+        else {photo.id: "available" for photo in photos}
+    )
     derivatives = (
         {
             derivative.photo_asset_id: derivative
@@ -8190,6 +8312,7 @@ def public_gallery_photos(
                 "height": derivatives[photo.id].height if photo.id in derivatives else None,
                 "selected": photo.id in selections,
                 "favorited": photo.id in favorites,
+                "commercial_state": commercial_states[photo.id],
             }
             for photo in photos
         ],
@@ -8326,59 +8449,9 @@ def unselect_photo(
 def _client_cart_payload(
     db: Session, gallery: DerivedGallery, client_id: UUID
 ) -> dict[str, object]:
-    selections = list(
-        db.scalars(
-            select(PhotoSelection).where(
-                PhotoSelection.derived_gallery_id == gallery.id,
-                PhotoSelection.client_id == client_id,
-            )
-        )
-    )
-    result: dict[str, object] = {"quantity": len(selections), "items": []}
-    if not selections:
-        return result
-    parent = db.get(ParentGallery, gallery.parent_gallery_id)
-    if not parent:
-        return result
-    try:
-        commercial_quote = quote_parent_gallery(
-            db, gallery=parent, quantity=len(selections)
-        )
-    except GalleryPricingError as exc:
-        result["pricing_error"] = str(exc)
-        return result
-    photos = {
-        photo.id: photo
-        for photo in db.scalars(
-            select(PhotoAsset).where(
-                PhotoAsset.id.in_([item.photo_asset_id for item in selections])
-            )
-        )
-    }
-    result.update(
-        {
-            "items": [
-                {
-                    "id": str(item.photo_asset_id),
-                    "name": photos[item.photo_asset_id].display_name
-                    or photos[item.photo_asset_id].filename,
-                }
-                for item in selections
-                if item.photo_asset_id in photos
-            ],
-            "unit_price_cents": commercial_quote.quote.active_tier.unit_price_cents,
-            "total_cents": commercial_quote.quote.total_cents,
-            "base_total_cents": commercial_quote.quote.base_total_cents,
-            "savings_cents": commercial_quote.quote.savings_cents,
-            "parcels": commercial_quote.snapshot["parcels"],
-            "pricing_mode": parent.pricing_mode,
-            "tier": {
-                "minimum_quantity": commercial_quote.quote.active_tier.minimum_quantity,
-                "maximum_quantity": commercial_quote.quote.active_tier.maximum_quantity,
-            },
-        }
-    )
-    return result
+    return client_carts_by_gallery_payload(
+        db, galleries=[gallery], client_id=client_id
+    )[gallery.id]
 
 
 @app.get("/gallery/{gallery_id}/cart")
@@ -8516,7 +8589,7 @@ def communicate_payment(
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
     session = current_session(request, Role.CLIENT)
-    derived_gallery_for_client(db, gallery_id, session.subject_id)
+    gallery = derived_gallery_for_client(db, gallery_id, session.subject_id)
     order = db.scalar(
         select(SaleOrder).where(
             SaleOrder.id == order_id,
@@ -8534,6 +8607,31 @@ def communicate_payment(
                 (PaymentCommunication.idempotency_key == payload.idempotency_key)
                 | (PaymentCommunication.status == "pending_review")
             ),
+        )
+        .order_by(PaymentCommunication.created_at.desc())
+    )
+    if existing:
+        return {
+            "id": str(existing.id),
+            "status": existing.status,
+            "message": "Comunicação aguardando revisão do fotógrafo.",
+        }
+    require_selection_window(gallery)
+    client = db.get(Client, session.subject_id)
+    if not client:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    try:
+        order = freeze_pending_checkout(
+            db, gallery=gallery, client=client, order=order
+        )
+    except CheckoutError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    existing = db.scalar(
+        select(PaymentCommunication)
+        .where(
+            PaymentCommunication.sale_order_id == order.id,
+            PaymentCommunication.status == "pending_review",
         )
         .order_by(PaymentCommunication.created_at.desc())
     )
@@ -9282,63 +9380,11 @@ def client_payment_communications(
         require_access_enabled=False,
         allow_deleted_origin=True,
     )
-    orders = list(
-        db.scalars(
-            select(SaleOrder)
-            .where(
-                SaleOrder.derived_gallery_id == gallery_id,
-                SaleOrder.client_id == session.subject_id,
-            )
-            .order_by(SaleOrder.created_at.desc())
+    return {
+        "orders": client_orders_payload(
+            db, gallery_id=gallery_id, client_id=session.subject_id
         )
-    )
-    result = []
-    for order in orders:
-        communication = db.scalar(
-            select(PaymentCommunication)
-            .where(
-                PaymentCommunication.sale_order_id == order.id,
-                PaymentCommunication.client_id == session.subject_id,
-            )
-            .order_by(PaymentCommunication.created_at.desc())
-        )
-        delivery = None
-        if communication and communication.status in {"confirmed", "refused"}:
-            delivery = db.scalar(
-                select(PaymentNotificationOutbox).where(
-                    PaymentNotificationOutbox.payment_communication_id == communication.id,
-                    PaymentNotificationOutbox.template_kind == communication.status,
-                )
-            )
-        result.append(
-            {
-                "order_id": str(order.id),
-                "total_cents": order.total_cents,
-                "payment_status": order.payment_status,
-                "created_at": order.created_at.isoformat(),
-                "communication": (
-                    {
-                        "id": str(communication.id),
-                        "status": communication.status,
-                        "created_at": communication.created_at.isoformat(),
-                        "decided_at": communication.decided_at.isoformat()
-                        if communication.decided_at
-                        else None,
-                    }
-                    if communication
-                    else None
-                ),
-                "notification": (
-                    {
-                        "status": delivery.status,
-                        "last_error": delivery.last_error,
-                    }
-                    if delivery
-                    else None
-                ),
-            }
-        )
-    return {"orders": result}
+    }
 
 
 @app.get("/gallery/{gallery_id}/orders/{order_id}")
@@ -9375,6 +9421,8 @@ def client_pending_order(
     return {
         "id": str(order.id),
         "payment_status": order.payment_status,
+        "commercial_state": "draft" if order.frozen_at is None else "awaiting_payment",
+        "frozen_at": order.frozen_at.isoformat() if order.frozen_at else None,
         "total_cents": order.total_cents,
         "price_rule": order.price_rule_snapshot,
         "sales_message": order.sales_message_snapshot,
@@ -9387,10 +9435,14 @@ def client_pending_order(
         },
         "items": [
             {
-                "photo_id": str(item.photo_asset_id),
+                "photo_id": str(item.photo_asset_id_snapshot),
                 "name": item.filename_snapshot,
                 "unit_price_cents": item.unit_price_cents,
-                "preview_url": f"/gallery/{gallery_id}/photos/{item.photo_asset_id}/preview",
+                "preview_url": (
+                    f"/gallery/{gallery_id}/photos/{item.photo_asset_id_snapshot}/preview"
+                    if item.photo_asset_id is not None
+                    else None
+                ),
             }
             for item in items
         ],

@@ -44,21 +44,26 @@ describe("biblioteca privada da cliente", () => {
         public_gallery: publicGallery,
         private_gallery: privateGallery,
         selection: { quantity: 2, total_cents: 1400, savings_cents: 100 },
+        orders: [{ order_id: "reported-1", commercial_state: "payment_reported", total_cents: 2500 }],
         has_prepared_photos: true,
-        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", prepared_url: "/gallery/private-1", fallback_url: null },
+        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", orders_url: "/gallery/private-1", prepared_url: "/gallery/private-1", fallback_url: null },
       }],
     })));
     render(<LibraryPage />);
 
+    expect(await screen.findByRole("heading", { name: "Minhas fotos", level: 1 })).toBeTruthy();
+    expect(screen.queryByText("Sua área privada")).toBeNull();
+    expect(screen.queryByText(/Cada evento aparece uma única vez/)).toBeNull();
+    expect(screen.queryByText(/compras preservadas/i)).toBeNull();
     const section = await screen.findByRole("region", { name: "Galerias e seleções" });
     expect(within(section).getAllByRole("article")).toHaveLength(1);
-    expect(within(section).getByRole("link", { name: "Ver fotos e continuar" }).getAttribute("href")).toBe("/public-galleries/public-1");
-    expect(within(section).getByRole("link", { name: "Revisar seleção e fotos preparadas" }).getAttribute("href")).toBe("/gallery/private-1");
     expect(within(section).getByLabelText("Resumo da seleção").textContent).toContain("2 foto(s) selecionada(s)");
     expect(within(section).getByLabelText("Resumo da seleção").textContent).toContain("R$ 14,00");
-    expect(within(section).getByText("Apresentação")).toBeTruthy();
+    expect(within(section).getByRole("link", { name: "Carrinho (2)" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(within(section).getAllByRole("link")).toHaveLength(1);
+    expect(within(section).getByText("Pagamento informado")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Galerias privadas" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Histórico de compras" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Pedidos" })).toBeTruthy();
     expect(screen.getByText("Galeria removida", { exact: false })).toBeTruthy();
   });
 
@@ -82,8 +87,8 @@ describe("biblioteca privada da cliente", () => {
 
     const section = await screen.findByRole("region", { name: "Galerias e seleções" });
     expect(within(section).getAllByRole("article")).toHaveLength(1);
-    expect(within(section).getByRole("link", { name: "Ver fotos e continuar" }).getAttribute("href")).toBe("/public-galleries/public-1");
-    expect(within(section).getByRole("link", { name: "Revisar seleção" }).getAttribute("href")).toBe("/gallery/private-1");
+    expect(within(section).getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(within(section).getAllByRole("link")).toHaveLength(1);
     expect(screen.queryByText("Abrir galeria privada")).toBeNull();
   });
 
@@ -107,15 +112,14 @@ describe("biblioteca privada da cliente", () => {
     render(<LibraryPage />);
 
     expect(await screen.findByText("Origem indisponível")).toBeTruthy();
-    expect(screen.getByText(/Galeria pública de origem foi removida/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Abrir fotos preservadas" }).getAttribute("href")).toBe("/gallery/private-removed");
+    expect(screen.getByRole("link", { name: "Ver fotos" }).getAttribute("href")).toBe("/gallery/private-removed");
   });
 
   it("mostra estado vazio após desvinculação sem inventar acesso", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({ journeys: [], public_galleries: [], private_galleries: [], galleries: [] })));
     render(<LibraryPage />);
     expect(await screen.findByText("Nenhuma galeria disponível")).toBeTruthy();
-    expect(screen.getByText("Nenhuma compra confirmada")).toBeTruthy();
+    expect(screen.getByText("Nenhum pedido")).toBeTruthy();
   });
 
   it("não inventa galerias quando a consulta falha", async () => {

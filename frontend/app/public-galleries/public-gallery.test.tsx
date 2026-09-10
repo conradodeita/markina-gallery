@@ -40,13 +40,11 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({ method: "POST", credentials: "same-origin" }),
     ));
     expect(await screen.findByText("Sua seleção foi iniciada e ficará salva nesta galeria.")).toBeTruthy();
-    const proceedLinks = screen.getAllByRole("link", { name: "Prosseguir" });
-    expect(proceedLinks).toHaveLength(2);
     expect((screen.getByRole("button", { name: /Desmarcar/ }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("7,00");
-    expect(proceedLinks[1].getAttribute("href")).toBe("/gallery/private-1?mode=review");
-    expect(proceedLinks[1].className).toContain("selection-summary__proceed");
+    expect(screen.getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(screen.getByRole("link", { name: "Carrinho (1)" }).className).toContain("selection-summary__proceed");
   });
 
   it("não mostra grade coletiva ou não autorizada quando o backend nega", async () => {
@@ -138,6 +136,7 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({ method: "POST" }),
     ));
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
+    expect(screen.getByRole("link", { name: "Carrinho (1)" })).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "☆ Favoritar" })[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/gallery/private-1/photos/photo-2/favorite",
