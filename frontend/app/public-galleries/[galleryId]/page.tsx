@@ -113,7 +113,7 @@ export default function PublicGalleryPage() {
     }
   }
 
-  if (failed) return <main className="admin-shell"><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><Link href="/library">Voltar à biblioteca</Link></main>;
+  if (failed) return <main className="admin-shell"><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><Link href="/library" prefetch>Voltar à biblioteca</Link></main>;
   if (!gallery) return <SystemState tone="loading" title="Abrindo Galeria pública" detail="Confirmando seu acesso antes de carregar qualquer prévia." />;
 
   const folders = [...photos.reduce((grouped, photo) => {
@@ -150,7 +150,7 @@ export default function PublicGalleryPage() {
 
   return (
     <main className="admin-shell public-gallery-shell">
-      <Link href="/library">← Sua biblioteca</Link>
+      <Link href="/library" prefetch>← Sua biblioteca</Link>
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} />
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
       <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {

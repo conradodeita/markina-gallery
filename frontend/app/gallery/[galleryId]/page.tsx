@@ -52,6 +52,7 @@ type PaymentOrder = {
   notification: { status: "queued" | "processing" | "sent" | "failed"; last_error: string | null } | null;
   items?: Array<{ photo_id: string; name: string; preview_url: string | null; unit_price_cents: number }>;
 };
+type CommercialFilter = "all" | "selected" | "awaiting_payment" | "payment_reported" | "purchased";
 type ReopeningRequest = { id: string; status: "pending" | "approved" | "refused"; approved_until: string | null; created_at: string };
 type Review = {
   gallery: {
@@ -85,7 +86,7 @@ export default function GalleryPage() {
   const [releasedFolders, setReleasedFolders] = useState<ReleasedFolder[]>([]);
   const [message, setMessage] = useState("");
   const [closedGallery, setClosedGallery] = useState<{ publicGalleryUrl: string | null } | null>(null);
-  const [filter, setFilter] = useState<"all" | "nova" | "visualizada mas não comprada" | "já comprada">("all");
+  const [filter, setFilter] = useState<CommercialFilter>("all");
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [paymentBusy, setPaymentBusy] = useState("");
   const [pixCopied, setPixCopied] = useState(false);
@@ -350,10 +351,17 @@ export default function GalleryPage() {
     );
   const reviewPhotos = selectionReviewMode ? review.photos.filter((photo) => photo.selected) : review.photos;
   const counts = reviewPhotos.reduce(
-    (result, photo) => ({ ...result, [photo.purchaseState]: (result[photo.purchaseState] ?? 0) + 1 }),
+    (result, photo) => ({ ...result, [photo.commercialState]: (result[photo.commercialState] ?? 0) + 1 }),
     {} as Record<string, number>,
   );
-  const visiblePhotos = filter === "all" ? reviewPhotos : reviewPhotos.filter((photo) => photo.purchaseState === filter);
+  const visiblePhotos = filter === "all" ? reviewPhotos : reviewPhotos.filter((photo) => photo.commercialState === filter);
+  const filterOptions: Array<{ value: CommercialFilter; label: string }> = [
+    { value: "all", label: "Todas" },
+    { value: "selected", label: "Carrinho" },
+    { value: "awaiting_payment", label: "Aguardando pagamento" },
+    { value: "payment_reported", label: "Pagamento informado" },
+    { value: "purchased", label: "Compradas" },
+  ];
   const presentationFolders = releasedFolders.map((folder) => ({ id: folder.id, name: folder.name, photos: visiblePhotos.filter((photo) => photo.folderId === folder.id) })).filter((folder) => folder.photos.length);
   function renderPhotoComments(photo: ReviewPhoto) {
     const photoComments = comments.filter((comment) => comment.photo_id === photo.id);
@@ -398,15 +406,15 @@ export default function GalleryPage() {
         </p>
       )}
       <nav className="gallery-photo-filters" aria-label="Filtrar fotos">
-        {(["all", "nova", "visualizada mas não comprada", "já comprada"] as const).map((value) => (
+        {filterOptions.map(({ value, label }) => (
           <button key={value} type="button" className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>
-            {value === "all" ? "Todas" : value === "nova" ? "Novas fotos" : value === "visualizada mas não comprada" ? "Vistas, não compradas" : "Já compradas"}
+            {label}
             <span>{value === "all" ? reviewPhotos.length : counts[value] ?? 0}</span>
           </button>
         ))}
       </nav>
       {!visiblePhotos.length && <p className="notice">Nenhuma foto nesta categoria.</p>}
-      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: selectionReviewMode ? "Fotos selecionadas" : "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} folderDisplayMode={review.gallery.folder_display_mode ?? "individual"} titleStyle={{ color: review.gallery.cover_title_color, fontFamily: galleryFontFamily(review.gallery.cover_title_font), fontSize: review.gallery.cover_title_size, position: review.gallery.cover_title_position }} emptyDetail={selectionReviewMode ? "Nenhuma foto permanece selecionada. Volte à galeria pública para escolher suas fotos." : "Nenhuma foto desta categoria está disponível neste momento."} showCopyrightProtectionDialog renderExpandedPhotoContent={review.gallery.comments_enabled ? renderPhotoComments : undefined} renderPhotoMarkers={(photo) => <>
+      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: selectionReviewMode ? "Fotos selecionadas" : "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} folderDisplayMode={review.gallery.folder_display_mode ?? "individual"} titleStyle={{ color: review.gallery.cover_title_color, fontFamily: galleryFontFamily(review.gallery.cover_title_font), fontSize: review.gallery.cover_title_size, position: review.gallery.cover_title_position }} emptyDetail={selectionReviewMode ? "Nenhuma foto permanece selecionada. Volte à galeria pública para escolher suas fotos." : "Nenhuma foto desta categoria está disponível neste momento."} showHero={false} showCopyrightProtectionDialog renderExpandedPhotoContent={review.gallery.comments_enabled ? renderPhotoComments : undefined} renderPhotoMarkers={(photo) => <>
         <StatusBadge tone={photo.commercialState === "purchased" ? "success" : photo.commercialState === "payment_reported" || photo.purchaseState === "visualizada mas não comprada" ? "warning" : "neutral"}>{photo.commercialState === "purchased" ? "Comprada" : photo.commercialState === "payment_reported" ? "Pagamento informado" : photo.commercialState === "awaiting_payment" ? "Aguardando pagamento" : photo.purchaseState}</StatusBadge>
         {!["available", "selected"].includes(photo.commercialState) ? <span className="gallery-presentation-marker is-purchased">{photo.commercialState === "purchased" ? "Comprada" : photo.commercialState === "payment_reported" ? "Pagamento informado" : "Aguardando pagamento"}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={photo.selected} disabled={!review.gallery.selection_open} onClick={() => interaction(photo, "selection")}>{photo.selected ? "✓ Desmarcar" : "Selecionar"}</button>}
         {review.gallery.favorites_enabled ? <button type="button" className="gallery-presentation-marker" aria-pressed={photo.favorited} onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}
@@ -420,9 +428,10 @@ export default function GalleryPage() {
         <button type="button" className="primary" disabled={!review.gallery.selection_open || cart.total_cents === undefined || checkoutBusy} onClick={checkout}>{checkoutBusy ? "Preparando…" : "Continuar para o PIX"}</button>
       </aside> : null}
       {pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id && order.communication) && <section className="admin-card client-checkout-review" aria-live="polite"><div className="section-heading"><div><p className="eyebrow">Conferência do pedido</p><h2>Revise suas fotos e faça o PIX</h2></div><StatusBadge tone="warning">Aguardando pagamento</StatusBadge></div>{pendingOrder.items?.length ? <div className="client-checkout-items">{pendingOrder.items.map((item) => <figure key={item.photo_id}><img src={`/api${item.preview_url}`} alt={`Miniatura protegida de ${item.name}`} draggable={false} /><figcaption><strong>{item.name}</strong><span>{(item.unit_price_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span></figcaption></figure>)}</div> : null}<div className="client-checkout-total"><span>{pendingOrder.items?.length ?? 0} foto(s)</span><strong>{(pendingOrder.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>{pendingOrder.price_rule?.savings_cents ? <span>Economia de {(pendingOrder.price_rule.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>{pendingOrder.sales_message ? <p>{pendingOrder.sales_message}</p> : null}{pendingOrder.pix?.qr_png_data_url ? <img className="client-checkout-qr" src={pendingOrder.pix.qr_png_data_url} alt="QR Code PIX do pedido" /> : null}{pendingOrder.pix?.copy_paste ? <label className="client-checkout-pix">PIX copia e cola<textarea readOnly value={pendingOrder.pix.copy_paste} /><button className="secondary" type="button" onClick={copyPix}>{pixCopied ? "Código copiado" : "Copiar código PIX"}</button></label> : <p className="notice">O fotógrafo ainda não configurou um código PIX para esta galeria.</p>}{pendingOrder.pix?.instructions ? <p>{pendingOrder.pix.instructions}</p> : null}<p>O pagamento estará sujeito a análise e você será informada após a conferência do fotógrafo.</p><button className="primary" type="button" disabled={paymentBusy === pendingOrder.id} onClick={() => reportPayment(pendingOrder.id)}>{paymentBusy === pendingOrder.id ? "Informando…" : "Informar pagamento"}</button></section>}
-      {paymentOrders.length > 0 && <section className="admin-card" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {
+      {paymentOrders.length > 0 && <section className="admin-card client-payment-orders" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {
         const status = order.communication?.status;
-        return <article className="upload-status client-order-resume" key={order.order_id}>
+        const visualState = order.commercial_state === "purchased" || status === "confirmed" ? "purchased" : order.commercial_state === "payment_reported" || status === "pending_review" ? "payment-reported" : order.commercial_state === "cancelled" || status === "refused" ? "cancelled" : "awaiting-payment";
+        return <article aria-label={`Pedido ${order.order_id}`} className={`upload-status client-order-resume client-order-resume--${visualState}`} key={order.order_id}>
           <strong>Pedido {order.order_id.slice(0, 8)} · R$ {(order.total_cents / 100).toFixed(2).replace(".", ",")}</strong>
           <StatusBadge tone={status === "confirmed" ? "success" : status === "pending_review" ? "warning" : "neutral"}>{status === "confirmed" ? "Pagamento confirmado" : status === "refused" ? "Pagamento não localizado" : status === "pending_review" ? "Pagamento informado" : "Aguardando pagamento"}</StatusBadge>
           {order.items?.length ? <div className="client-checkout-items">{order.items.map((item) => item.preview_url ? <figure key={item.photo_id}><img src={`/api${item.preview_url}`} alt={`Miniatura protegida de ${item.name}`} draggable={false} /><figcaption>{item.name}</figcaption></figure> : null)}</div> : null}

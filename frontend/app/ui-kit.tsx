@@ -9,8 +9,8 @@ export function MarkinaButton({ children, variant = "primary", className = "", .
   return <button className={`mk-button mk-button--${variant} ${className}`} {...props}>{children}</button>;
 }
 
-export function MarkinaLink({ href, children, variant = "primary", className = "" }: { href: string; children: ReactNode; variant?: ActionVariant; className?: string }) {
-  return <Link className={`mk-button mk-button--${variant} ${className}`} href={href}>{children}</Link>;
+export function MarkinaLink({ href, children, variant = "primary", className = "", prefetch }: { href: string; children: ReactNode; variant?: ActionVariant; className?: string; prefetch?: boolean }) {
+  return <Link className={`mk-button mk-button--${variant} ${className}`} href={href} prefetch={prefetch}>{children}</Link>;
 }
 
 export function StatusBadge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "success" | "warning" | "danger" | "dark" }) {

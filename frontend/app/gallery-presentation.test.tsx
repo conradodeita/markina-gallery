@@ -14,6 +14,15 @@ const folders = [
 ];
 
 describe("apresentação editorial compartilhada", () => {
+  it("permite omitir o hero sem alterar o padrão editorial", () => {
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} showHero={false} />);
+    expect(screen.queryByText("Capa ainda não definida")).toBeNull();
+    expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeTruthy();
+
+    rerender(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
+    expect(screen.getByText("Capa ainda não definida")).toBeTruthy();
+  });
+
   it("mantém ordem DOM, proporção e todas as pastas no modo sequencial", () => {
     render(<GalleryPresentation galleryName="Evento" folders={folders} folderDisplayMode="sequential" />);
     expect(screen.getByRole("heading", { name: "Abertura" })).toBeTruthy();
