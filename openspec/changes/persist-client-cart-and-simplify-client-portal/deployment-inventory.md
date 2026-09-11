@@ -70,4 +70,4 @@ Se a aplicação falhar após a migration, retornar somente API/web/Nginx da Mar
 - Estado facial: o workflow preserva `FACIAL_PROCESSING_ENABLED=true` e `FACIAL_MAX_REFERENCE_BYTES=31457280`; esta correção não altera processamento facial.
 - Rollback: retornar somente aplicação Markina ao SHA saudável anterior, sem downgrade, restore, limpeza, remoção de volume ou mutação de dados.
 - Validação local: frontend direcionado `27 passed`, backend direcionado `1 passed`, TypeScript, Ruff e OpenSpec aprovados; ESLint sem erros, com três avisos preexistentes de `<img>`; `git diff --check` sem erro.
-- Autorização específica para push, merge e deploy desta correção: pendente.
+- Autorização específica para push, merge e deploy desta correção: recebida nesta tarefa em 2026-09-11, após apresentação do inventário e do plano zero-impact.
