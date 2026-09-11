@@ -81,3 +81,18 @@ Se a aplicação falhar após a migration, retornar somente API/web/Nginx da Mar
 - `FACIAL_PROCESSING_ENABLED=true` permaneceu persistido e os três workers faciais foram confirmados saudáveis após a publicação.
 - `/healthz`, `/api/health` e a entrada pública responderam HTTP `200`; a API retornou `{"status":"ok","service":"api"}`.
 - Nenhum dado, mídia, volume, rede, proxy, DNS, firewall, certificado ou recurso de terceiro foi removido ou alterado.
+
+## Correção administrativa candidata — 2026-09-11
+
+- Branch local: `feature/hide-client-whatsapp-failure`.
+- Base `develop`: `32d547f61c0dae8864287a8097c37414b0418e84`.
+- SHA funcional validado: `3bf701953a92476d515cfca2a068984173ee9dda`.
+- Destino: `https://markina-homolog.duckdns.org`.
+- Alteração: expõe no acervo privado administrativo favoritos, comentários ativos e estado comercial por cliente/foto; corrige o contador de selecionadas e não compradas; compacta os marcadores da cliente e oculta dela o diagnóstico técnico de WhatsApp.
+- Banco/migration: nenhuma alteração; não há escrita, backfill ou transformação de dados existentes.
+- Serviços com nova imagem: `api` e `web`; workers, filas, mídia, PostgreSQL, Redis, Evolution e recursos de terceiros permanecem preservados.
+- Portas/subdomínio: sem mudança; entrada `127.0.0.1:8080` atrás do proxy existente em `markina-homolog.duckdns.org`, com `web:3000` e `api:8000` somente na rede interna do projeto.
+- Estado facial: o workflow preserva `FACIAL_PROCESSING_ENABLED=true` e `FACIAL_MAX_REFERENCE_BYTES=31457280`; esta correção não altera o processamento facial.
+- Rollback: retornar somente a aplicação Markina ao SHA saudável `46ba11e0637dbf525712a11f78b936fe9abe08a6`, sem downgrade, restore, limpeza, remoção de volume ou mutação de dados.
+- Validação cirúrgica local: frontend direcionado `37 passed`, backend direcionado `4 passed`, TypeScript, Ruff e OpenSpec aprovados; ESLint sem erros e `git diff --check` aprovado. A suíte completa e o ensaio de escalabilidade foram reservados para solicitação posterior do proprietário.
+- Autorização específica para push, merge e deploy desta correção: recebida nesta tarefa em 2026-09-11, após apresentação do inventário e do plano zero-impact.
