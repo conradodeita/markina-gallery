@@ -9,6 +9,18 @@ O portal da cliente SHALL apresentar acesso visível ao carrinho autoritativo e 
 - **WHEN** a cliente autenticada abre a Galeria pública, a privada contextual ou sua biblioteca com seleção vigente
 - **THEN** ela vê `Carrinho (n)` e consegue retomar a conferência das fotos selecionadas
 
+#### Scenario: Galeria privada existente com carrinho vazio
+
+- **WHEN** a cliente autenticada abre a Galeria pública e o backend informa uma galeria privada autorizada, mesmo sem seleção vigente
+- **THEN** ela vê o acesso explícito `Minha galeria` e consegue consultar fotos e pedidos anteriores sem selecionar outra foto
+
+#### Scenario: Navegação não aguarda todas as prévias
+
+- **WHEN** a cliente abre uma Galeria pública com muitas fotos e o estado essencial autorizado chega antes da listagem completa de prévias
+- **THEN** a interface SHALL exibir imediatamente a navegação da galeria e o acesso `Minha galeria`, quando existente
+- **AND** a listagem de fotos SHALL carregar progressivamente sem bloquear ou ocultar esses acessos
+- **AND** uma falha isolada na listagem de fotos SHALL ser apresentada dentro da página sem transformar o acesso autorizado em uma galeria indisponível
+
 #### Scenario: Pedido com pagamento informado
 
 - **WHEN** a cliente retorna depois de comunicar o pagamento

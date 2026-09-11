@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const navigation = vi.hoisted(() => ({ mode: null as string | null }));
@@ -26,6 +26,31 @@ const review = {
 };
 
 describe("galeria privada da cliente", () => {
+  it("mostra a revisão sem aguardar a listagem complementar de pastas", async () => {
+    let finishFolders!: (value: Response) => void;
+    const foldersResponse = new Promise<Response>((resolve) => { finishFolders = resolve; });
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/folders")) return foldersResponse;
+      return Promise.resolve(new Response(JSON.stringify(
+        path.endsWith("/comments") ? { comments: [] }
+          : path.endsWith("/cart") ? { quantity: 0, items: [] }
+            : path.endsWith("/payment-communications") ? { orders: [] }
+              : path.endsWith("/reopening-requests") ? { request: null }
+                : review,
+      ), { status: 200 }));
+    }));
+
+    render(<GalleryPage />);
+
+    expect(await screen.findByRole("heading", { name: "Festa escolar", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeTruthy();
+
+    await act(async () => {
+      finishFolders(new Response(JSON.stringify({ folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }), { status: 200 }));
+    });
+    expect(await screen.findByRole("heading", { name: "Apresentação" })).toBeTruthy();
+  });
+
   it("conta estados comerciais e diferencia os pedidos sem mostrar capa vazia", async () => {
     const commercialReview = {
       ...review,

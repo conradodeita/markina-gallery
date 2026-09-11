@@ -68,6 +68,10 @@ Alternativa descartada: continuar compondo carrinho, pagamento e compras em requ
 
 `Carrinho (n)` aparece na Galeria pública, na privada contextual e no card da biblioteca quando houver seleção. A mesma superfície mostra a revisão editável e, abaixo, pedidos congelados com miniaturas, valor e estado. Depois da comunicação, o pedido deixa o carrinho e permanece em `Pagamento informado`; após confirmação, passa a `Compradas`. Um novo carrinho pode coexistir com pedidos congelados anteriores.
 
+Na Galeria pública, a navegação superior mantém `Minha galeria` sempre que a projeção autorizada devolver `private_gallery_id`, independentemente da quantidade atual do carrinho. O atalho não cria galeria, seleção nem autorização no frontend: ele apenas abre a privada já resolvida pelo backend. `Carrinho (n)` continua no resumo flutuante quando houver seleção e leva à mesma superfície em modo de revisão.
+
+O endpoint leve da Galeria pública inclui a `private_gallery_id` já autorizada, e o frontend separa seu carregamento do payload completo de fotos. Na galeria privada, a revisão SHALL ser renderizada assim que chegar, sem aguardar a listagem complementar de pastas. Falhas ou demora na carga complementar ficam contidas na área de fotos e não ocultam a navegação essencial.
+
 Estados na foto seguem prioridade `purchased` > `payment_reported` > `selected` > `available`. Resultados faciais usam os mesmos IDs e não criam outra seleção.
 
 Alternativa descartada: uma página global que soma galerias. Preço, prazo, PIX e confirmação são autoridades por Galeria pública e não podem ser combinados.
@@ -86,6 +90,8 @@ Mensagens de erro, privacidade, consentimento, expiração e confirmação finan
 - [Cliente interpretar carrinho e pedido congelado como duplicados] → separar visualmente `Carrinho` de `Pedidos`, usar estados curtos e retirar do carrinho somente os itens congelados.
 - [Rollback ler pedidos novos sem conhecer `frozen_at`] → schema aditivo permanece; pedidos congelados continuam `pending/confirmed` compatíveis, e nenhuma coluna é removida no rollback.
 - [Textos curtos omitirem orientação necessária] → manter ação inequívoca, rótulos acessíveis e mensagens detalhadas somente em erro, expiração, consentimento ou decisão financeira.
+- [Atalho privado sugerir acesso antes da primeira seleção] → renderizar `Minha galeria` somente com `private_gallery_id` fornecido pela resposta autorizada do backend.
+- [Respostas complementares chegarem fora de ordem] → cada efeito atualiza somente seu próprio estado e mantém falhas de fotos/pastas locais, sem derrubar a navegação autorizada.
 
 ## Migration Plan
 
