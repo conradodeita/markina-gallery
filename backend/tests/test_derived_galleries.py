@@ -1,4 +1,4 @@
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from time import perf_counter
 from uuid import UUID, uuid4
@@ -3110,6 +3110,11 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     client.cookies.clear()
     authenticate_client(client, "+5511555554367")
     review = client.get(f"/gallery/{gallery_id}/review").json()["gallery"]
+    review_expiry = datetime.fromisoformat(review["selection_expires_at"])
+    if review_expiry.tzinfo is None:
+        review_expiry = review_expiry.replace(tzinfo=UTC)
+    assert review_expiry == first_expiry
+    assert review["selection_open"] is True
     assert review["message"] == "Mensagem A"
     assert review["favorites_enabled"] is True
     assert review["comments_enabled"] is True
@@ -3146,6 +3151,10 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     client.cookies.clear()
     authenticate_client(client, "+5511555554367")
     review = client.get(f"/gallery/{gallery_id}/review").json()["gallery"]
+    review_expiry = datetime.fromisoformat(review["selection_expires_at"])
+    if review_expiry.tzinfo is None:
+        review_expiry = review_expiry.replace(tzinfo=UTC)
+    assert review_expiry == first_expiry
     assert review["message"] == "Mensagem B"
     assert review["favorites_enabled"] is False
     order = client.post(

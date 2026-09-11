@@ -188,7 +188,7 @@ export default function LibraryPage() {
               {journey.event_name ? <small>{journey.event_name}</small> : null}
               {journey.selection.quantity > 0 ? <div className="journey-selection-summary" aria-label="Resumo da seleção"><span><strong>{journey.selection.quantity}</strong> foto(s) selecionada(s)</span>{typeof journey.selection.total_cents === "number" ? <span><strong>{money(journey.selection.total_cents)}</strong> no total</span> : null}{typeof journey.selection.savings_cents === "number" && journey.selection.savings_cents > 0 ? <small>Economia de {money(journey.selection.savings_cents)}</small> : null}</div> : null}
               {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "purchased" ? "Comprado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : latestOrder.commercial_state === "cancelled" ? "Pagamento não localizado" : "Aguardando pagamento"}</StatusBadge> : null}
-              {journey.private_gallery?.selection_expires_at ? <small>Seleção até {new Date(journey.private_gallery.selection_expires_at).toLocaleDateString("pt-BR")}</small> : null}
+              {journey.selection.quantity > 0 && journey.private_gallery?.selection_expires_at && journey.private_gallery.gallery_status === "active" ? <small>Seleção até {new Date(journey.private_gallery.selection_expires_at).toLocaleDateString("pt-BR")}</small> : null}
               <div className="library-card-actions">
                 {primaryAction ? <MarkinaLink href={primaryAction.href} prefetch>{primaryAction.label}</MarkinaLink> : <span>Indisponível</span>}
               </div>

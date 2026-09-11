@@ -232,6 +232,48 @@ describe("galeria privada da cliente", () => {
     expect(await screen.findByText(/Solicitação enviada ao fotógrafo/)).toBeTruthy();
   });
 
+  it.each([
+    {
+      state: "seleção editável",
+      cart: { quantity: 1, total_cents: 700 },
+      orders: [],
+      deadlineVisible: true,
+    },
+    {
+      state: "pagamento informado",
+      cart: { quantity: 0 },
+      orders: [{ order_id: "order-reported", total_cents: 700, payment_status: "pending", commercial_state: "payment_reported", communication: { id: "communication-1", status: "pending_review" }, notification: null }],
+      deadlineVisible: false,
+    },
+    {
+      state: "sem seleção",
+      cart: { quantity: 0 },
+      orders: [],
+      deadlineVisible: false,
+    },
+  ])("exibe o prazo contextual no estado $state", async ({ cart, orders, deadlineVisible }) => {
+    const datedReview = {
+      ...review,
+      gallery: { ...review.gallery, selection_expires_at: "2026-09-30T23:59:59Z" },
+    };
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [] }
+          : path.endsWith("/cart") ? cart
+            : path.endsWith("/payment-communications") ? { orders }
+              : path.endsWith("/reopening-requests") ? { request: null }
+                : datedReview,
+    ), { status: 200 }))));
+
+    render(<GalleryPage />);
+    expect(await screen.findByRole("heading", { name: "Festa escolar" })).toBeTruthy();
+    if (deadlineVisible) {
+      expect(await screen.findByText(/Seleções até 30\/09\/2026/)).toBeTruthy();
+    } else {
+      await waitFor(() => expect(screen.queryByText(/Seleções até/)).toBeNull());
+    }
+  });
+
   it("permite solicitar reabertura mesmo quando a galeria expirada ainda está vazia", async () => {
     const expiredEmptyReview = {
       ...review,
