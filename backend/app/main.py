@@ -6372,8 +6372,137 @@ def admin_private_gallery_photos(
         select(PhotoAsset, PhotoFolder)
         .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
         .where(PhotoAsset.derived_gallery_id == gallery.id)
-        .order_by(PhotoFolder.position, PhotoAsset.created_at, PhotoAsset.id)
+            .order_by(PhotoFolder.position, PhotoAsset.created_at, PhotoAsset.id)
     ).all()
+    photo_ids = {
+        photo.id for _reference, photo, _folder in reference_rows
+    } | {photo.id for photo, _folder in private_rows}
+    favorites_by_photo: dict[UUID, list[dict[str, str]]] = defaultdict(list)
+    comments_by_photo: dict[UUID, list[dict[str, str]]] = defaultdict(list)
+    commercial_states_by_photo: dict[UUID, list[dict[str, str]]] = defaultdict(list)
+    if photo_ids:
+        favorite_rows = list(
+            db.execute(
+                select(PhotoFavorite.photo_asset_id, PhotoFavorite.client_id)
+                .where(
+                    PhotoFavorite.derived_gallery_id == gallery.id,
+                    PhotoFavorite.photo_asset_id.in_(photo_ids),
+                )
+                .order_by(PhotoFavorite.created_at, PhotoFavorite.id)
+            )
+        )
+        comment_rows = list(
+            db.execute(
+                select(
+                    PhotoComment.id,
+                    PhotoComment.photo_asset_id,
+                    PhotoComment.client_id,
+                    PhotoComment.body,
+                )
+                .where(
+                    PhotoComment.derived_gallery_id == gallery.id,
+                    PhotoComment.photo_asset_id.in_(photo_ids),
+                    PhotoComment.removed_at.is_(None),
+                )
+                .order_by(PhotoComment.created_at, PhotoComment.id)
+            )
+        )
+        selection_rows = list(
+            db.execute(
+                select(PhotoSelection.photo_asset_id, PhotoSelection.client_id)
+                .where(
+                    PhotoSelection.derived_gallery_id == gallery.id,
+                    PhotoSelection.photo_asset_id.in_(photo_ids),
+                )
+                .order_by(PhotoSelection.created_at, PhotoSelection.id)
+            )
+        )
+        order_state_rows = list(
+            db.execute(
+                select(
+                    SaleOrderItem.photo_asset_id_snapshot,
+                    SaleOrder.client_id,
+                    SaleOrder.payment_status,
+                    SaleOrder.frozen_at,
+                    PaymentCommunication.status,
+                )
+                .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
+                .outerjoin(
+                    PaymentCommunication,
+                    PaymentCommunication.sale_order_id == SaleOrder.id,
+                )
+                .where(
+                    SaleOrder.derived_gallery_id_snapshot == gallery.id,
+                    SaleOrderItem.photo_asset_id_snapshot.in_(photo_ids),
+                )
+                .order_by(SaleOrder.created_at, SaleOrderItem.id)
+            )
+        )
+        commercial_state_by_photo_client: dict[tuple[UUID, UUID], str] = {
+            (photo_id, client_id): "selected" for photo_id, client_id in selection_rows
+        }
+        state_priority = {
+            "selected": 1,
+            "awaiting_payment": 2,
+            "payment_reported": 3,
+            "purchased": 4,
+        }
+        for photo_id, client_id, payment_status, frozen_at, communication_status in order_state_rows:
+            if payment_status == "confirmed":
+                state = "purchased"
+            elif (
+                payment_status == "pending"
+                and frozen_at is not None
+                and communication_status in {"pending_review", "confirmed"}
+            ):
+                state = "payment_reported"
+            elif payment_status == "pending" and frozen_at is not None:
+                state = "awaiting_payment"
+            else:
+                continue
+            key = (photo_id, client_id)
+            if state_priority[state] > state_priority.get(
+                commercial_state_by_photo_client.get(key, ""), 0
+            ):
+                commercial_state_by_photo_client[key] = state
+        interaction_client_ids = {
+            client_id for _photo_id, client_id in favorite_rows
+        } | {
+            client_id for _comment_id, _photo_id, client_id, _body in comment_rows
+        } | {client_id for _photo_id, client_id in commercial_state_by_photo_client}
+        client_names = (
+            dict(
+                db.execute(
+                    select(Client.id, Client.full_name).where(Client.id.in_(interaction_client_ids))
+                ).all()
+            )
+            if interaction_client_ids
+            else {}
+        )
+        for photo_id, client_id in favorite_rows:
+            favorites_by_photo[photo_id].append(
+                {
+                    "client_id": str(client_id),
+                    "client_name": client_names.get(client_id, "Cliente"),
+                }
+            )
+        for comment_id, photo_id, client_id, body in comment_rows:
+            comments_by_photo[photo_id].append(
+                {
+                    "id": str(comment_id),
+                    "client_id": str(client_id),
+                    "client_name": client_names.get(client_id, "Cliente"),
+                    "body": body,
+                }
+            )
+        for (photo_id, client_id), state in commercial_state_by_photo_client.items():
+            commercial_states_by_photo[photo_id].append(
+                {
+                    "client_id": str(client_id),
+                    "client_name": client_names.get(client_id, "Cliente"),
+                    "state": state,
+                }
+            )
     reference_ids = [reference.id for reference, _photo, _folder in reference_rows]
     origins_by_reference: dict[UUID, list[str]] = defaultdict(list)
     if reference_ids:
@@ -6395,6 +6524,9 @@ def admin_private_gallery_photos(
             "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview",
             "origins": sorted(origins_by_reference.get(reference.id) or [reference.origin]),
             "ownership": "public_reference",
+            "favorited_by": favorites_by_photo[photo.id],
+            "comments": comments_by_photo[photo.id],
+            "commercial_states": commercial_states_by_photo[photo.id],
         }
         for reference, photo, folder in reference_rows
     ]
@@ -6407,6 +6539,9 @@ def admin_private_gallery_photos(
             "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview",
             "origins": ["private_upload"],
             "ownership": "private",
+            "favorited_by": favorites_by_photo[photo.id],
+            "comments": comments_by_photo[photo.id],
+            "commercial_states": commercial_states_by_photo[photo.id],
         }
         for photo, folder in private_rows
     )

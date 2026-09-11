@@ -82,6 +82,24 @@ A biblioteca usará `Minhas fotos` como título e removerá eyebrow/detalhes que
 
 Mensagens de erro, privacidade, consentimento, expiração e confirmação financeira não serão removidas quando necessárias para decisão ou segurança. Texto acessível invisível pode conservar contexto adicional para leitor de tela.
 
+### 7. Diagnósticos de entrega pertencem somente à operação administrativa
+
+A cliente continuará vendo o estado financeiro autoritativo (`Pagamento informado`, `Pagamento confirmado` e `Comprada`) independentemente do resultado do envio transacional. Status técnico, falha, erro, provedor e ação de retentativa da notificação WhatsApp não serão apresentados na Galeria pública, galeria privada, biblioteca ou pedido da cliente; esses dados permanecem disponíveis ao fotógrafo nas superfícies administrativas já existentes.
+
+Alternativa descartada: avisar a cliente, dentro do pedido, que a mensagem destinada a ela falhou. Isso expõe detalhe operacional sem oferecer ação útil, pode contradizer uma entrega efetivamente recebida e mistura a confirmação financeira persistida com a telemetria independente do transporte.
+
+### 8. Controles sobre a foto ocupam somente o espaço necessário
+
+O favorito será um botão circular de coração, sem texto visível, mas com `aria-label`, `title`, estado pressionado e área de toque suficiente. Estados comerciais continuam textuais para não depender apenas de cor ou símbolo, porém usam tipografia, altura e espaçamento compactos. A regra é compartilhada pelas grades pública, privada e pelos resultados faciais.
+
+### 9. A ficha administrativa agrega interações por foto e cliente
+
+O endpoint administrativo de fotos da galeria privada devolverá, em lote, quem favoritou, os comentários ativos e o estado comercial por cliente de cada foto. A resposta inclui identificador e nome da cliente para não misturar interações quando a privada possui mais de um membro. A ficha administrativa apresenta essas informações junto da prévia correspondente, distinguindo `Selecionada`, `Aguardando pagamento`, `Pagamento informado` e `Comprada`, sem conceder edição adicional e sem alterar os endpoints usados pela cliente.
+
+O agregado administrativo `selected_count` representa fotos selecionadas e ainda não compradas: une o carrinho atual aos itens de pedidos pendentes congelados e exclui fotos já confirmadas, sem duplicar a mesma foto. Assim o contador não cai para zero apenas porque `Informar pagamento` consumiu o carrinho editável.
+
+Alternativa descartada: consultar favoritos e comentários individualmente para cada foto. Isso criaria N+1 proporcional ao acervo e atrasaria uma tela já sensível ao volume.
+
 ## Risks / Trade-offs
 
 - [Rascunho e seleção divergirem durante concorrência] → mutex transacional comum, sincronização antes da resposta e revalidação obrigatória ao comunicar.
@@ -92,6 +110,10 @@ Mensagens de erro, privacidade, consentimento, expiração e confirmação finan
 - [Textos curtos omitirem orientação necessária] → manter ação inequívoca, rótulos acessíveis e mensagens detalhadas somente em erro, expiração, consentimento ou decisão financeira.
 - [Atalho privado sugerir acesso antes da primeira seleção] → renderizar `Minha galeria` somente com `private_gallery_id` fornecido pela resposta autorizada do backend.
 - [Respostas complementares chegarem fora de ordem] → cada efeito atualiza somente seu próprio estado e mantém falhas de fotos/pastas locais, sem derrubar a navegação autorizada.
+- [Falha de WhatsApp parecer falha do pagamento] → manter o diagnóstico somente no painel administrativo e derivar a interface da cliente exclusivamente do estado financeiro autoritativo.
+- [Coração sem texto perder significado] → conservar nome acessível, dica nativa e estado pressionado, com contraste e alvo mínimo adequados.
+- [Interações de membros diferentes serem confundidas] → devolver autoria por cliente e agrupar os dados por foto em consultas únicas.
+- [Carrinho consumido zerar seleção ainda não comprada] → calcular o contador administrativo pela união de seleção corrente e itens pendentes, removendo compras confirmadas.
 
 ## Migration Plan
 

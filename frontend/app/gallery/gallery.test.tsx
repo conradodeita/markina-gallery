@@ -99,6 +99,38 @@ describe("galeria privada da cliente", () => {
     expect(css).toContain(".client-order-resume--purchased");
   });
 
+  it("não expõe falha técnica do WhatsApp à cliente após confirmar o pagamento", async () => {
+    const confirmedReview = {
+      ...review,
+      photos: [{ ...review.photos[1], commercial_state: "purchased" }],
+    };
+    const confirmedOrder = {
+      order_id: "confirmed-order",
+      total_cents: 700,
+      payment_status: "confirmed",
+      commercial_state: "purchased",
+      communication: { id: "communication-1", status: "confirmed" },
+      notification: { status: "failed", last_error: "provider timeout" },
+      items: [],
+    };
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 1 }] }
+          : path.endsWith("/cart") ? { quantity: 0, items: [] }
+            : path.endsWith("/payment-communications") ? { orders: [confirmedOrder] }
+              : path.endsWith("/reopening-requests") ? { request: null }
+                : confirmedReview,
+    ), { status: 200 }))));
+
+    render(<GalleryPage />);
+
+    expect(await screen.findByText("Pagamento confirmado")).toBeTruthy();
+    expect(screen.getAllByText("Comprada").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/WhatsApp falhou/i)).toBeNull();
+    expect(screen.queryByText(/status acima continua válido/i)).toBeNull();
+    expect(screen.queryByText(/provider timeout/i)).toBeNull();
+  });
+
   it("retoma a etapa PIX do rascunho salvo após recarregar", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path.endsWith("/comments") ? { comments: [] }
@@ -147,9 +179,10 @@ describe("galeria privada da cliente", () => {
     render(<GalleryPage />);
     expect(await screen.findByRole("heading", { name: "Festa escolar", level: 1 })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Resumo da seleção" })).toBeNull();
-    expect(screen.getByText("nova")).toBeTruthy();
+    expect(screen.queryByText("nova")).toBeNull();
     expect(screen.getAllByText("Comprada").length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: "☆ Favoritar" }).length).toBe(2);
+    expect(screen.getAllByRole("button", { name: "Favoritar" }).length).toBe(2);
+    expect(screen.queryByText("Favoritar")).toBeNull();
     expect(screen.getByRole("button", { name: /Carrinho/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Compradas/ }));
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_002.jpg" })).toBeTruthy();
@@ -238,7 +271,7 @@ describe("galeria privada da cliente", () => {
     expect(await screen.findByRole("heading", { name: "Festa escolar" })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Resumo da seleção" })).toBeNull();
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" })).toBeTruthy();
-    expect(screen.getByText("nova")).toBeTruthy();
+    expect(screen.queryByText("nova")).toBeNull();
     expect(screen.getByRole("button", { name: "Selecionar" })).toBeTruthy();
   });
 
