@@ -3668,7 +3668,8 @@ def test_parent_gallery_client_summary_is_batched_and_uses_status_precedence() -
     assert rows["Cliente Expirada"]["gallery_status"] == "expired"
     assert rows["Cliente Ativa"]["gallery_status"] == "active"
     assert rows["Cliente Ativa"]["available_count"] == 2
-    assert rows["Cliente Ativa"]["selected_count"] == 2
+    # Fotos compradas deixam de compor "selecionadas e não compradas".
+    assert rows["Cliente Ativa"]["selected_count"] == 1
     assert rows["Cliente Ativa"]["purchased_count"] == 1
 
 
