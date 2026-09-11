@@ -96,3 +96,13 @@ Se a aplicação falhar após a migration, retornar somente API/web/Nginx da Mar
 - Rollback: retornar somente a aplicação Markina ao SHA saudável `46ba11e0637dbf525712a11f78b936fe9abe08a6`, sem downgrade, restore, limpeza, remoção de volume ou mutação de dados.
 - Validação cirúrgica local: frontend direcionado `37 passed`, backend direcionado `4 passed`, TypeScript, Ruff e OpenSpec aprovados; ESLint sem erros e `git diff --check` aprovado. A suíte completa e o ensaio de escalabilidade foram reservados para solicitação posterior do proprietário.
 - Autorização específica para push, merge e deploy desta correção: recebida nesta tarefa em 2026-09-11, após apresentação do inventário e do plano zero-impact.
+
+## Resultado da correção administrativa — 2026-09-11
+
+- PR `#67` integrada em `develop` pelo merge commit `575032a1e199552318f61998c7942ede78c36846`.
+- Workflow `34654521713` aprovado no Environment `homolog` e concluído com sucesso.
+- O checkout remoto avançou de `46ba11e0637dbf525712a11f78b936fe9abe08a6` para o SHA autorizado `575032a1e199552318f61998c7942ede78c36846`.
+- Alembic permaneceu em `20260910_0053 (head) -> 20260910_0053 (head)`; nenhum dado foi migrado ou transformado.
+- `FACIAL_PROCESSING_ENABLED=true` permaneceu persistido e os três workers faciais foram confirmados saudáveis após a publicação.
+- `/healthz`, `/api/health` e a entrada pública responderam HTTP `200`; a API retornou `{"status":"ok","service":"api"}`.
+- Nenhum dado, mídia, volume, rede, proxy, DNS, firewall, certificado ou recurso de terceiro foi removido ou alterado.
