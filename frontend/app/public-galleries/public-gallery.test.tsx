@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -45,6 +45,33 @@ describe("Galeria pública da cliente", () => {
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("7,00");
     expect(screen.getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
     expect(screen.getByRole("link", { name: "Carrinho (1)" }).className).toContain("selection-summary__proceed");
+  });
+
+  it("mantém acesso à galeria privada quando o carrinho está vazio", async () => {
+    let finishPhotos!: (value: Response) => void;
+    const photosResponse = new Promise<Response>((resolve) => { finishPhotos = resolve; });
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/photos")) return photosResponse;
+      if (path.endsWith("/facial-search")) return response({ state: "unavailable", manual_selection_available: true });
+      if (path.endsWith("/facial-searches/latest")) return response({ detail: "Consulta indisponível" }, 404);
+      return response({ id: "public-1", name: "Festa", event_name: null, description: null, access_mode: "standard", photos_url: "/photos", private_gallery_id: "private-1" });
+    }));
+
+    render(<PublicGalleryPage />);
+
+    const privateGalleryLink = await screen.findByRole("link", { name: "Minha galeria" });
+    expect(privateGalleryLink.getAttribute("href")).toBe("/gallery/private-1");
+    expect(screen.getByText("Carregando fotos")).toBeTruthy();
+
+    await act(async () => {
+      finishPhotos(new Response(JSON.stringify({
+          photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview", selected: false, commercial_state: "payment_reported" }],
+          private_gallery_id: "private-1",
+          cart: { quantity: 0, items: [] },
+        }), { status: 200 }));
+    });
+    expect(await screen.findByRole("img", { name: "Prévia protegida de Foto 1" })).toBeTruthy();
+    expect(screen.queryByLabelText("Resumo da seleção")).toBeNull();
   });
 
   it("não mostra grade coletiva ou não autorizada quando o backend nega", async () => {

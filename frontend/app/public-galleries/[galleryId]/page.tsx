@@ -11,7 +11,7 @@ import { GalleryPresentation, type GalleryPresentationFolder } from "../../galle
 import { SystemState } from "../../ui-kit";
 import { FacialSearchPanel } from "../facial-search-panel";
 
-type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
+type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string; private_gallery_id?: string | null };
 type CommercialState = "available" | "selected" | "awaiting_payment" | "payment_reported" | "purchased";
 type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; favorited: boolean; commercial_state?: CommercialState; previewUrl: string };
 type Cart = {
@@ -31,32 +31,51 @@ export default function PublicGalleryPage() {
   const [privateGalleryId, setPrivateGalleryId] = useState<string | null>(null);
   const [cart, setCart] = useState<Cart>({ quantity: 0, items: [] });
   const [selectingId, setSelectingId] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failedGalleryId, setFailedGalleryId] = useState<string | null>(null);
+  const [photoLoad, setPhotoLoad] = useState<{ galleryId: string; status: "loading" | "ready" | "failed" }>({ galleryId, status: "loading" });
   const [message, setMessage] = useState("");
   const [facialResult, setFacialResult] = useState<FacialSearchResult | null>(null);
 
   useEffect(() => {
-    Promise.all([
-      fetch(`/api/public-galleries/${galleryId}`, { credentials: "same-origin" }),
-      fetch(`/api/public-galleries/${galleryId}/photos`, { credentials: "same-origin" }),
-    ]).then(async ([galleryResponse, photosResponse]) => {
-      if (!galleryResponse.ok || !photosResponse.ok) throw new Error();
-      setGallery(await galleryResponse.json());
-      const result = await photosResponse.json();
-      setSelectedIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.selected).map((photo: PublicPhoto) => photo.id));
-      setFavoriteIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.favorited).map((photo: PublicPhoto) => photo.id));
-      setPrivateGalleryId(result.private_gallery_id ?? null);
-      setCart(result.cart ?? { quantity: 0, items: [] });
-      setPhotos((result.photos ?? []).map((photo: Omit<PublicPhoto, "previewUrl">) => ({
-        ...photo,
-        folder_id: photo.folder_id ?? "public-photos",
-        folder_name: photo.folder_name ?? "Fotos disponíveis",
-        folder_position: photo.folder_position ?? 0,
-        width: photo.width ?? null,
-        height: photo.height ?? null,
-        previewUrl: `/api${photo.preview_url}`,
-      })));
-    }).catch(() => setFailed(true));
+    let active = true;
+
+    fetch(`/api/public-galleries/${galleryId}`, { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json() as PublicGallery;
+        if (!active) return;
+        setGallery(result);
+        setFailedGalleryId(null);
+        setPrivateGalleryId(result.private_gallery_id ?? null);
+      })
+      .catch(() => { if (active) setFailedGalleryId(galleryId); });
+
+    fetch(`/api/public-galleries/${galleryId}/photos`, { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json();
+        if (!active) return;
+        setSelectedIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.selected).map((photo: PublicPhoto) => photo.id));
+        setFavoriteIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.favorited).map((photo: PublicPhoto) => photo.id));
+        setPrivateGalleryId(result.private_gallery_id ?? null);
+        setCart(result.cart ?? { quantity: 0, items: [] });
+        setPhotos((result.photos ?? []).map((photo: Omit<PublicPhoto, "previewUrl">) => ({
+          ...photo,
+          folder_id: photo.folder_id ?? "public-photos",
+          folder_name: photo.folder_name ?? "Fotos disponíveis",
+          folder_position: photo.folder_position ?? 0,
+          width: photo.width ?? null,
+          height: photo.height ?? null,
+          previewUrl: `/api${photo.preview_url}`,
+        })));
+        setPhotoLoad({ galleryId, status: "ready" });
+      })
+      .catch(() => {
+        if (!active) return;
+        setPhotoLoad({ galleryId, status: "failed" });
+      });
+
+    return () => { active = false; };
   }, [galleryId]);
 
   async function toggleSelection(photo: PublicPhoto, fromFacial = false) {
@@ -113,8 +132,11 @@ export default function PublicGalleryPage() {
     }
   }
 
-  if (failed) return <main className="admin-shell"><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><Link href="/library" prefetch>Voltar à biblioteca</Link></main>;
-  if (!gallery) return <SystemState tone="loading" title="Abrindo Galeria pública" detail="Confirmando seu acesso antes de carregar qualquer prévia." />;
+  if (failedGalleryId === galleryId) return <main className="admin-shell"><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><Link href="/library">Voltar à biblioteca</Link></main>;
+  if (!gallery || gallery.id !== galleryId) return <SystemState tone="loading" title="Abrindo Galeria pública" detail="Confirmando seu acesso antes de carregar qualquer prévia." />;
+
+  const photosLoading = photoLoad.galleryId !== galleryId || photoLoad.status === "loading";
+  const photosFailed = photoLoad.galleryId === galleryId && photoLoad.status === "failed";
 
   const folders = [...photos.reduce((grouped, photo) => {
     const folder = grouped.get(photo.folder_id) ?? { id: photo.folder_id, name: photo.folder_name, position: photo.folder_position, photos: [] as PublicPhoto[] };
@@ -150,10 +172,13 @@ export default function PublicGalleryPage() {
 
   return (
     <main className="admin-shell public-gallery-shell">
-      <Link href="/library" prefetch>← Sua biblioteca</Link>
+      <nav className="public-gallery-navigation" aria-label="Acessos da cliente">
+        <Link href="/library">← Minha biblioteca</Link>
+        {privateGalleryId ? <Link className="primary" href={`/gallery/${privateGalleryId}`}>Minha galeria</Link> : null}
+      </nav>
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} />
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
-      <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
+      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;
@@ -163,7 +188,7 @@ export default function PublicGalleryPage() {
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;
         return <>{frozenLabel ? <span className="gallery-presentation-marker is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker" aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "★ Favorita" : "☆ Favoritar"}</button> : null}<button type="button" className="gallery-presentation-marker gallery-presentation-marker--reject" onClick={() => { void rejectCandidate(photo); }}>Não é esta pessoa</button></>;
-      }} />
+      }} />}
       {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>

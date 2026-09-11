@@ -7937,6 +7937,11 @@ def public_gallery_for_client(
         )
     except PublicGalleryAccessDenied as exc:
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    private_gallery = _operational_gallery_for_public_client(
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=session.subject_id,
+    )
     return {
         "id": str(parent.id),
         "name": parent.name,
@@ -7955,6 +7960,7 @@ def public_gallery_for_client(
             else None
         ),
         "photos_url": f"/public-galleries/{parent.id}/photos",
+        "private_gallery_id": str(private_gallery.id) if private_gallery else None,
     }
 
 

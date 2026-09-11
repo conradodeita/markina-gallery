@@ -94,13 +94,10 @@ export default function GalleryPage() {
   const paymentKeys = useRef<Record<string, string>>({});
   const reopeningKey = useRef("");
   function load() {
-    Promise.all([
-      fetch(`/api/gallery/${galleryId}/review`, { credentials: "same-origin" }),
-      fetch(`/api/gallery/${galleryId}/folders`, { credentials: "same-origin" }),
-    ])
-      .then(async ([response, foldersResponse]) => {
-        if (!response.ok || !foldersResponse.ok) throw new Error();
-        const [result, folderResult] = await Promise.all([response.json(), foldersResponse.json()]);
+    fetch(`/api/gallery/${galleryId}/review`, { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json();
         setReview({
           ...result,
           photos: result.photos.map(
@@ -130,12 +127,18 @@ export default function GalleryPage() {
           ),
         });
         setLoadFailed(false);
-        setReleasedFolders(folderResult.folders ?? []);
       })
       .catch(() => {
         setReview(null);
         setLoadFailed(true);
       });
+    fetch(`/api/gallery/${galleryId}/folders`, { credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const result = await response.json();
+        setReleasedFolders(result.folders ?? []);
+      })
+      .catch(() => setReleasedFolders([]));
   }
   function loadComments() {
     fetch(`/api/gallery/${galleryId}/comments`, { credentials: "same-origin" })

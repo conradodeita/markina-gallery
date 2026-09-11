@@ -9,6 +9,8 @@ Hoje a seleção persiste até o checkout, mas é removida do carrinho quando um
 - Ao comunicar o pagamento, congelar atomicamente fotos, quantidade, valores, faixas, PIX e regras do pedido; novas escolhas posteriores formam um pedido complementar separado.
 - Restaurar, em qualquer novo acesso autenticado, o carrinho, sua revisão, pedidos congelados e os estados por foto: selecionada, pagamento informado e comprada.
 - Expor um atalho visível `Carrinho (n)` na jornada da galeria e uma visão curta de pedidos, sempre orientados pelo estado autorizado do backend e utilizáveis entre navegador e celular.
+- Manter na Galeria pública um acesso explícito `Minha galeria` sempre que já existir uma galeria privada autorizada, inclusive com carrinho vazio ou após a comunicação do pagamento.
+- Exibir a navegação e o estado essencial das galerias pública e privada sem bloquear a tela pela listagem completa de prévias; as fotos SHALL carregar progressivamente dentro da página.
 - Simplificar a biblioteca e a galeria da cliente, removendo textos que explicam entidades internas ou repetem regras; manter apenas título, estado essencial e próxima ação.
 - Preservar isolamento por cliente, galeria, pedido e sessão OTP, bem como histórico após expiração e os fluxos administrativos já existentes.
 

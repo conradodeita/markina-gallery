@@ -1494,6 +1494,7 @@ def test_first_public_selection_derives_once_and_keeps_origins_separate() -> Non
         }
         assert repeated.json()["cart"]["quantity"] == 1
         assert repeated.json()["cart"]["total_cents"] == 700
+        assert client.get(f"/public-galleries/{parent_id}").json()["private_gallery_id"] == str(private_id)
         assert client.post(f"/gallery/{private_id}/photos/{first_id}/favorite").status_code == 201
         library = client.get("/library").json()
         assert len(library["journeys"]) == 1
