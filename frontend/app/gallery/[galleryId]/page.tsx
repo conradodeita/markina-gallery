@@ -400,7 +400,7 @@ export default function GalleryPage() {
           {reopening?.status === "pending" ? <StatusBadge tone="warning">Reabertura solicitada</StatusBadge> : reopening?.status === "refused" ? <><StatusBadge tone="danger">Solicitação recusada</StatusBadge><button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>Solicitar reabertura da galeria</button></> : <button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>{paymentBusy === "reopening" ? "Solicitando…" : "Solicitar reabertura da galeria"}</button>}
         </section>
       )}
-      {review.gallery.selection_expires_at && review.gallery.selection_open && (
+      {review.gallery.selection_expires_at && review.gallery.selection_open && cart.quantity > 0 && (
         <p className="form-message">
           Seleções até{" "}
           {new Date(review.gallery.selection_expires_at).toLocaleDateString(

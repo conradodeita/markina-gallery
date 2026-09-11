@@ -148,6 +148,29 @@ describe("biblioteca privada da cliente", () => {
     expect(screen.queryByText("Abrir galeria privada")).toBeNull();
   });
 
+  it.each([
+    { state: "seleção editável", quantity: 1, orders: [], deadlineVisible: true },
+    { state: "pagamento informado", quantity: 0, orders: [{ order_id: "reported-1", commercial_state: "payment_reported", total_cents: 700 }], deadlineVisible: false },
+    { state: "sem seleção", quantity: 0, orders: [], deadlineVisible: false },
+  ])("mostra o prazo contextual na biblioteca no estado $state", async ({ quantity, orders, deadlineVisible }) => {
+    const datedPrivateGallery = { ...privateGallery, selection_expires_at: "2026-09-30T23:59:59Z" };
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({
+      journeys: [{
+        id: "public-deadline", name: "Galeria com prazo", event_name: "Formatura", status: "active", primary_surface: "public", browse_url: "/public-galleries/public-deadline",
+        public_gallery: publicGallery, private_gallery: datedPrivateGallery, selection: { quantity }, orders, has_prepared_photos: false,
+        actions: { continue_url: "/public-galleries/public-deadline", review_url: quantity > 0 ? "/gallery/private-1" : null, orders_url: orders.length ? "/gallery/private-1" : null, prepared_url: null, fallback_url: null },
+      }],
+    })));
+
+    render(<LibraryPage />);
+    expect(await screen.findByText("Galeria com prazo")).toBeTruthy();
+    if (deadlineVisible) {
+      expect(screen.getByText("Seleção até 30/09/2026")).toBeTruthy();
+    } else {
+      expect(screen.queryByText(/Seleção até/)).toBeNull();
+    }
+  });
+
   it("usa a privada como contingência quando a origem não está disponível", async () => {
     const preserved = { ...privateGallery, id: "private-removed", name: "Fotos preservadas", gallery_status: "origin_removed", origin_removed: true, origin: { id: "public-2", name: "Evento removido", available: false, browse_url: null } };
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({

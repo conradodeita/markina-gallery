@@ -73,6 +73,23 @@ describe("configurações administrativas de marca", () => {
     expect(await screen.findByText(/Proteção visual global salva/)).toBeTruthy();
   });
 
+  it("representa na prova todo o intervalo de tamanho aceito pelo servidor", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(branding), { status: 200 })));
+    const { container } = render(<AdminSettingsPage />);
+    const size = await screen.findByLabelText("Tamanho da marca-d’água");
+    expect(size.getAttribute("min")).toBe("10");
+    expect(size.getAttribute("max")).toBe("96");
+
+    fireEvent.change(size, { target: { value: "10" } });
+    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-mark")).every((mark) => mark.style.fontSize === "10px")).toBe(true));
+
+    fireEvent.change(size, { target: { value: "64" } });
+    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-mark")).every((mark) => mark.style.fontSize === "64px")).toBe(true));
+
+    fireEvent.change(size, { target: { value: "96" } });
+    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-mark")).every((mark) => mark.style.fontSize === "96px")).toBe(true));
+  });
+
   it("mantém os controles disponíveis e informa falha de salvamento", async () => {
     const fetchMock = vi.fn((path: string, options?: RequestInit) => Promise.resolve(
       new Response(JSON.stringify(branding), { status: path.endsWith("/protection") && options?.method === "PATCH" ? 500 : 200 }),
