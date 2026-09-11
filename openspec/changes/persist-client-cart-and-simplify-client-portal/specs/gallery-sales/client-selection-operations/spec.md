@@ -56,3 +56,19 @@ O sistema SHALL preservar pedidos pendentes criados antes desta mudança como sn
 
 - **WHEN** o deploy encontra pedido pendente existente cuja seleção já foi consumida pelo checkout anterior
 - **THEN** o pedido permanece congelado e retomável com seus itens e valores originais, sem ser convertido em carrinho editável
+
+### Requirement: Visibilidade administrativa das interações da cliente
+
+O sistema SHALL permitir ao fotógrafo visualizar, na galeria privada autorizada, as fotos favoritadas, selecionadas ainda não compradas, com pagamento pendente ou informado, compradas e os comentários ativos da cliente. Cada interação e estado SHALL permanecer vinculado à foto e à cliente correspondente, inclusive quando a galeria tiver múltiplos membros, e a consulta SHALL ser agregada sem requisição individual por foto.
+
+#### Scenario: Fotógrafo consulta favoritos e comentários
+
+- **WHEN** o fotógrafo abre uma galeria privada que contém favoritos ou comentários
+- **THEN** a ficha administrativa identifica em cada foto quem a favoritou, apresenta seus comentários ativos e distingue seu estado comercial
+- **AND** interações removidas ou pertencentes a outra galeria não são exibidas
+
+#### Scenario: Seleção entra em pedido ainda não comprado
+
+- **WHEN** uma seleção é congelada em pedido aguardando pagamento ou com pagamento informado
+- **THEN** o contador administrativo de fotos selecionadas e não compradas conserva essas fotos sem duplicidade
+- **AND** somente a confirmação do pagamento move as fotos desse contador para `Compradas`

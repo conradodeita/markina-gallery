@@ -1085,9 +1085,33 @@ def test_client_interactions_are_private_reversible_and_audited(client: TestClie
     )
     assert comment.status_code == 201
     assert client.get(f"/gallery/{gallery_id}/comments").json()["comments"][0]["body"] == "Prefiro esta."
+
+    client.cookies.clear()
+    authenticate_admin(client)
+    admin_photo = client.get(f"/admin/derived-galleries/{gallery_id}/photos").json()["photos"][0]
+    assert admin_photo["favorited_by"] == [
+        {"client_id": str(person.id), "client_name": "Cliente"}
+    ]
+    assert admin_photo["comments"] == [
+        {
+            "id": comment.json()["id"],
+            "client_id": str(person.id),
+            "client_name": "Cliente",
+            "body": "Prefiro esta.",
+        }
+    ]
+
+    client.cookies.clear()
+    authenticate_client(client, person.phone_e164)
     assert client.delete(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 204
     assert client.delete(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 204
     assert client.delete(f"/gallery/{gallery_id}/comments/{comment.json()['id']}").status_code == 204
+
+    client.cookies.clear()
+    authenticate_admin(client)
+    admin_photo = client.get(f"/admin/derived-galleries/{gallery_id}/photos").json()["photos"][0]
+    assert admin_photo["favorited_by"] == []
+    assert admin_photo["comments"] == []
     with SessionLocal() as db:
         assert db.scalar(select(AuditEvent).where(AuditEvent.event == "photo_comment.removed_by_client"))
 
@@ -3471,6 +3495,28 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
     authenticate_admin(client)
     first_communication_id = UUID(first_report.json()["id"])
     second_communication_id = UUID(second_report.json()["id"])
+    first_pending_member = client.get(
+        f"/admin/derived-galleries/{first_gallery_id}/members"
+    ).json()["members"][0]
+    second_pending_member = client.get(
+        f"/admin/derived-galleries/{second_gallery_id}/members"
+    ).json()["members"][0]
+    assert (first_pending_member["selected_count"], first_pending_member["purchased_count"]) == (
+        2,
+        0,
+    )
+    assert (
+        second_pending_member["selected_count"],
+        second_pending_member["purchased_count"],
+    ) == (1, 0)
+    first_pending_photos = client.get(
+        f"/admin/derived-galleries/{first_gallery_id}/photos"
+    ).json()["photos"]
+    assert {
+        state["state"]
+        for photo in first_pending_photos
+        for state in photo["commercial_states"]
+    } == {"payment_reported"}
     with SessionLocal() as db:
         for notification in db.scalars(
             select(PaymentNotificationOutbox).where(
@@ -3547,6 +3593,14 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
     second_card = client.get(f"/admin/parent-galleries/{second_parent_id}/clients").json()["clients"][0]
     assert (first_card["selected_count"], first_card["purchased_count"]) == (0, 2)
     assert (second_card["selected_count"], second_card["purchased_count"]) == (0, 1)
+    first_purchased_photos = client.get(
+        f"/admin/derived-galleries/{first_gallery_id}/photos"
+    ).json()["photos"]
+    assert {
+        state["state"]
+        for photo in first_purchased_photos
+        for state in photo["commercial_states"]
+    } == {"purchased"}
 
     dashboard = client.get("/admin/payment-communications").json()
     gallery_groups = {

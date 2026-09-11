@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -67,21 +67,19 @@ def build_commercial_projections(
     )
     for gallery_id, photo_id in db.execute(available_query):
         available_photo_ids[gallery_id].add(photo_id)
-    selected_counts = {
-        (gallery_id, client_id): int(count)
-        for gallery_id, client_id, count in db.execute(
+    selected_photo_ids: dict[tuple[UUID, UUID], set[UUID]] = defaultdict(set)
+    for gallery_id, client_id, photo_id in db.execute(
             select(
                 PhotoSelection.derived_gallery_id,
                 PhotoSelection.client_id,
-                func.count(func.distinct(PhotoSelection.photo_asset_id)),
+                PhotoSelection.photo_asset_id,
             )
             .where(
                 PhotoSelection.derived_gallery_id.in_(gallery_ids),
                 PhotoSelection.client_id.in_(client_ids),
             )
-            .group_by(PhotoSelection.derived_gallery_id, PhotoSelection.client_id)
-        )
-    }
+    ):
+        selected_photo_ids[(gallery_id, client_id)].add(photo_id)
     raw_order_rows = list(
         db.execute(
             select(
@@ -123,6 +121,14 @@ def build_commercial_projections(
             pending_review_order_ids.add(row.id)
         if row.payment_status == "confirmed" and row.photo_asset_id_snapshot:
             purchased_photo_ids[
+                (row.derived_gallery_id_snapshot, row.client_id)
+            ].add(row.photo_asset_id_snapshot)
+        elif (
+            row.payment_status == "pending"
+            and row.frozen_at is not None
+            and row.photo_asset_id_snapshot
+        ):
+            selected_photo_ids[
                 (row.derived_gallery_id_snapshot, row.client_id)
             ].add(row.photo_asset_id_snapshot)
     latest_reopening: dict[UUID, GalleryReopeningRequest] = {}
@@ -168,7 +174,10 @@ def build_commercial_projections(
                 gallery_id=gallery_id,
                 client_id=client_id,
                 available_count=available_count,
-                selected_count=selected_counts.get(key, 0),
+                selected_count=len(
+                    selected_photo_ids.get(key, set())
+                    - purchased_photo_ids.get(key, set())
+                ),
                 purchased_count=len(purchased_photo_ids.get(key, set())),
                 order_count=len(orders),
                 confirmed_total_cents=sum(

@@ -31,6 +31,13 @@ O portal da cliente SHALL apresentar acesso visível ao carrinho autoritativo e 
 - **WHEN** o fotógrafo confirma o pagamento
 - **THEN** as fotos do pedido aparecem para aquela cliente como `Compradas` e continuam acessíveis no histórico autorizado
 
+#### Scenario: Notificação WhatsApp falha após a confirmação
+
+- **WHEN** o pagamento está confirmado e a entrega da mensagem WhatsApp registra falha, atraso ou retentativa
+- **THEN** a cliente continua vendo `Pagamento confirmado` e suas fotos como `Compradas`
+- **AND** o portal da cliente SHALL NOT exibir status técnico, mensagem de erro, provedor ou ação de retentativa da notificação
+- **AND** o diagnóstico permanece disponível somente nas superfícies administrativas autorizadas
+
 ### Requirement: Estado comercial visível por foto
 
 O portal SHALL identificar de forma consistente cada foto da cliente como disponível, selecionada, com pagamento informado ou comprada, tanto na grade completa quanto na privada e nos resultados faciais da mesma galeria. O estado SHALL ser fornecido pelo backend e SHALL NOT ser inferido de armazenamento local do navegador.
@@ -44,6 +51,12 @@ O portal SHALL identificar de forma consistente cada foto da cliente como dispon
 
 - **WHEN** a foto pertence a pedido com pagamento comunicado ou confirmado
 - **THEN** a grade mostra respectivamente `Pagamento informado` ou `Comprada` e não a oferece para recompra naquele mesmo pedido
+
+#### Scenario: Indicadores compactos sobre a foto
+
+- **WHEN** a cliente visualiza uma foto com favorito ou estado comercial
+- **THEN** o favorito aparece como um controle de coração sem texto visível e com nome acessível
+- **AND** `Aguardando pagamento`, `Pagamento informado` e `Comprada` aparecem em selos compactos que não encobrem desnecessariamente a imagem
 
 ### Requirement: Linguagem essencial na área da cliente
 

@@ -135,7 +135,7 @@ describe("telas administrativas de galerias", () => {
   it("organiza o acervo por pasta e mantém agregados e seleção de cada cliente", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       const body = path.endsWith("/photos")
-        ? { photos: [{ id: "photo-1", name: "FOTO_1.jpg", folder_id: "folder-1", folder_name: "Cerimônia", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", origins: ["client"], ownership: "public_reference" }] }
+        ? { photos: [{ id: "photo-1", name: "FOTO_1.jpg", folder_id: "folder-1", folder_name: "Cerimônia", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", origins: ["client"], ownership: "public_reference", favorited_by: [{ client_id: "client-1", client_name: "Ana" }], comments: [{ id: "comment-1", client_id: "client-1", client_name: "Ana", body: "Quero esta em destaque." }], commercial_states: [{ client_id: "client-1", client_name: "Ana", state: "purchased" }, { client_id: "client-2", client_name: "Bia", state: "selected" }] }] }
         : path.endsWith("/members")
           ? { members: [{ membership_id: "member-1", client_id: "client-1", client_name: "Ana", phone_e164: "+5511999999999", status: "active", selected_count: 2, purchased_count: 1, order_count: 1, confirmed_total_cents: 700, payment_status: "confirmed" }, { membership_id: "member-2", client_id: "client-2", client_name: "Bia", phone_e164: "+5511888888888", status: "active", selected_count: 5, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" }] }
           : path.endsWith("/folders")
@@ -153,6 +153,11 @@ describe("telas administrativas de galerias", () => {
     expect(screen.getByRole("heading", { name: "Seleções vindas da Galeria pública" })).toBeTruthy();
     expect(screen.getByText("Cerimônia")).toBeTruthy();
     expect(screen.getByAltText("Prévia protegida de FOTO_1.jpg")).toBeTruthy();
+    expect(screen.getByText("Comprada · Ana")).toBeTruthy();
+    expect(screen.getByText("Selecionada · Bia")).toBeTruthy();
+    expect(screen.getByText("Favoritada por Ana")).toBeTruthy();
+    expect(screen.getByText("Quero esta em destaque.")).toBeTruthy();
+    expect(screen.getAllByText("Selecionadas e não compradas")).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "Abrir seleção individual" })[0].getAttribute("href")).toBe("/admin/galleries/private-1/selection?client=client-1");
     expect(screen.getByText("2", { selector: ".private-member-cards dd" })).toBeTruthy();
     expect(screen.getByText("5", { selector: ".private-member-cards dd" })).toBeTruthy();

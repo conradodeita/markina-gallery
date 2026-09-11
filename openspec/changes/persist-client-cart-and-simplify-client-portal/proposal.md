@@ -12,6 +12,9 @@ Hoje a seleção persiste até o checkout, mas é removida do carrinho quando um
 - Manter na Galeria pública um acesso explícito `Minha galeria` sempre que já existir uma galeria privada autorizada, inclusive com carrinho vazio ou após a comunicação do pagamento.
 - Exibir a navegação e o estado essencial das galerias pública e privada sem bloquear a tela pela listagem completa de prévias; as fotos SHALL carregar progressivamente dentro da página.
 - Simplificar a biblioteca e a galeria da cliente, removendo textos que explicam entidades internas ou repetem regras; manter apenas título, estado essencial e próxima ação.
+- Manter falhas, retentativas e diagnósticos da entrega WhatsApp restritos à operação administrativa; a cliente vê somente o estado comercial confirmado e suas fotos compradas.
+- Compactar os indicadores sobre as fotos da cliente, usando coração sem texto para favorito e selos comerciais menores sem perder o nome acessível.
+- Expor ao fotógrafo, na galeria privada, quais fotos foram favoritadas e os comentários ativos, com identificação da cliente responsável pela interação.
 - Preservar isolamento por cliente, galeria, pedido e sessão OTP, bem como histórico após expiração e os fluxos administrativos já existentes.
 
 ## Capabilities
@@ -29,7 +32,7 @@ Nenhuma.
 ## Impact
 
 - Persistência SQLAlchemy/Alembic de estado de rascunho e instante de congelamento em pedidos, com compatibilidade explícita para pedidos pendentes existentes.
-- Serviços de checkout, seleção, projeção comercial e comunicação de pagamento no FastAPI, além de payloads da biblioteca, Galeria pública e privada.
-- Páginas Next.js de biblioteca, Galeria pública, galeria privada, revisão/PIX e componentes compartilhados de navegação e estado das fotos.
+- Serviços de checkout, seleção, projeção comercial e comunicação de pagamento no FastAPI, além de payloads da biblioteca, Galeria pública, privada e leitura administrativa das interações.
+- Páginas Next.js de biblioteca, Galeria pública, galeria privada, revisão/PIX, ficha administrativa da privada e componentes compartilhados de navegação e estado das fotos.
 - Testes backend de concorrência, idempotência, isolamento, retomada e snapshots; testes frontend mobile/desktop, acessibilidade, textos e restauração.
-- Nenhuma alteração no reconhecimento facial, no acervo autorizado, em mídia, preços, confirmação administrativa ou integrações externas.
+- Nenhuma alteração no reconhecimento facial, no acervo autorizado, em mídia, preços, confirmação administrativa ou integrações externas; somente a exposição cliente de um diagnóstico operacional já existente é removida.

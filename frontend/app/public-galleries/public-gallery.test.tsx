@@ -164,12 +164,13 @@ describe("Galeria pública da cliente", () => {
     ));
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
     expect(screen.getByRole("link", { name: "Carrinho (1)" })).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "☆ Favoritar" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Favoritar" })[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/gallery/private-1/photos/photo-2/favorite",
       expect.objectContaining({ method: "POST", credentials: "same-origin" }),
     ));
-    expect(screen.getAllByRole("button", { name: "★ Favorita" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Remover dos favoritos" }).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Favoritar")).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "Não é esta pessoa" })[2]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/public-1/facial-searches/request-1/candidates/photo-1",
