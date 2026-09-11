@@ -34,4 +34,4 @@ Se a aplicação falhar, retornar somente a aplicação Markina ao SHA saudável
 
 ## Autorização
 
-- Push, merge e deploy desta change aguardam autorização humana específica após a apresentação deste inventário.
+- Push, merge e deploy desta change em homologação foram autorizados explicitamente pelo proprietário em 2026-09-11, após a apresentação deste inventário.

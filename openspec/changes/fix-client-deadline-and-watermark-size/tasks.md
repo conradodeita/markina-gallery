@@ -16,4 +16,4 @@
 ## 4. Validação e entrega
 
 - [x] 4.1 Executar somente testes frontend/backend focados, TypeScript, lint dos arquivos alterados, OpenSpec estrito e `git diff --check`; registrar evidências e reservar a suíte completa e escalabilidade para solicitação posterior. Evidência: frontend direcionado `3 files/38 passed`; backend direcionado `1 passed`; TypeScript aprovado; ESLint focado com `0` erros e seis avisos preexistentes de `<img>`; Ruff, OpenSpec estrito e `git diff --check` aprovados. Nenhuma suíte completa ou carga foi executada localmente.
-- [ ] 4.2 Preparar inventário zero-impact sem migration, mídia ou dados; solicitar autorização específica antes de push, merge e deploy em homologação.
+- [x] 4.2 Preparar inventário zero-impact sem migration, mídia ou dados; solicitar autorização específica antes de push, merge e deploy em homologação. Evidência: inventário documentado; autorização humana específica recebida em 2026-09-11 antes das operações remotas.
