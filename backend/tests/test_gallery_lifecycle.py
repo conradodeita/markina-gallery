@@ -3996,6 +3996,88 @@ def test_admin_order_queries_use_snapshots_after_operational_removal() -> None:
         }
 
 
+def test_client_purchase_history_starts_only_after_payment_communication() -> None:
+    owner_phone = "+5511999999809"
+    parent_ids = [uuid4() for _ in range(4)]
+    gallery_ids = [uuid4() for _ in range(4)]
+
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente fronteira comercial", phone_e164=owner_phone)
+        other = Client(full_name="Outra cliente", phone_e164="+5511999999808")
+        db.add_all((owner, other))
+        db.flush()
+
+        def add_order(
+            *,
+            position: int,
+            client_id: UUID,
+            frozen: bool,
+            status: str = "pending",
+            checkout_key: str | None = None,
+        ) -> SaleOrder:
+            order = SaleOrder(
+                derived_gallery_id=None,
+                client_id=client_id,
+                derived_gallery_id_snapshot=gallery_ids[position],
+                derived_gallery_name_snapshot=f"Galeria {position}",
+                parent_gallery_id_snapshot=parent_ids[position],
+                parent_gallery_name_snapshot=f"Evento {position}",
+                payment_status=status,
+                total_cents=(position + 1) * 700,
+                frozen_at=now() if frozen else None,
+                confirmed_at=now() if status == "confirmed" else None,
+                checkout_key=checkout_key,
+            )
+            db.add(order)
+            db.flush()
+            return order
+
+        draft = add_order(
+            position=0,
+            client_id=owner.id,
+            frozen=False,
+            checkout_key="draft-checkout",
+        )
+        awaiting = add_order(position=1, client_id=owner.id, frozen=True)
+        reported = add_order(position=2, client_id=owner.id, frozen=True)
+        purchased = add_order(
+            position=3,
+            client_id=owner.id,
+            frozen=True,
+            status="confirmed",
+        )
+        other_reported = add_order(position=0, client_id=other.id, frozen=True)
+        db.add_all(
+            (
+                PaymentCommunication(
+                    sale_order_id=reported.id,
+                    client_id=owner.id,
+                    idempotency_key="history-reported-owner",
+                ),
+                PaymentCommunication(
+                    sale_order_id=other_reported.id,
+                    client_id=other.id,
+                    idempotency_key="history-reported-other",
+                ),
+            )
+        )
+        db.commit()
+        excluded_ids = {str(draft.id), str(awaiting.id), str(other_reported.id)}
+        expected_states = {
+            str(reported.id): "payment_reported",
+            str(purchased.id): "purchased",
+        }
+
+    with TestClient(app) as client:
+        authenticate_client(client, owner_phone)
+        response = client.get("/library/purchases")
+
+    assert response.status_code == 200
+    orders = response.json()["orders"]
+    assert {order["id"]: order["commercial_state"] for order in orders} == expected_states
+    assert excluded_ids.isdisjoint({order["id"] for order in orders})
+
+
 def test_client_library_uses_isolated_historical_media_after_gallery_removal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4074,6 +4156,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
                 "payment_status": "confirmed",
                 "commercial_state": "purchased",
                 "communication_status": None,
+                "communicated_at": None,
                 "frozen_at": None,
                 "confirmed_at": response.json()["orders"][0]["confirmed_at"],
                 "total_cents": 1700,

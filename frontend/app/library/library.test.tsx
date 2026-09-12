@@ -35,6 +35,118 @@ const privateGallery = {
 };
 
 describe("biblioteca privada da cliente", () => {
+  it("agrupa carrinhos de galerias diferentes sem oferecer checkout global", async () => {
+    const journey = (id: string, name: string, quantity: number, totalCents: number) => ({
+      id,
+      name,
+      event_name: `Evento ${name}`,
+      status: "active",
+      primary_surface: "public",
+      browse_url: `/public-galleries/${id}`,
+      public_gallery: { ...publicGallery, id, name, browse_url: `/public-galleries/${id}` },
+      private_gallery: { ...privateGallery, id: `private-${id}` },
+      selection: { quantity, total_cents: totalCents, savings_cents: 0 },
+      orders: [],
+      has_prepared_photos: false,
+      actions: { continue_url: `/public-galleries/${id}`, review_url: `/gallery/private-${id}`, orders_url: null, prepared_url: null, fallback_url: null },
+    });
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
+      ? response({ orders: [] })
+      : response({ journeys: [journey("public-1", "Festa escolar", 2, 1400), journey("public-2", "Formatura", 1, 900)] })));
+
+    render(<LibraryPage />);
+
+    const cart = await screen.findByRole("region", { name: "Carrinho" });
+    expect(within(cart).getAllByRole("article")).toHaveLength(2);
+    expect(within(cart).getByLabelText("Total informativo do carrinho").textContent).toContain("3 fotos · R$ 23,00");
+    const reviewLinks = within(cart).getAllByRole("link", { name: "Revisar carrinho" });
+    expect(reviewLinks.map((link) => link.getAttribute("href"))).toEqual([
+      "/gallery/private-public-1?mode=review",
+      "/gallery/private-public-2?mode=review",
+    ]);
+    expect(screen.queryByRole("link", { name: /Finalizar todos/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Finalizar todos/i })).toBeNull();
+  });
+
+  it("contém erro de cotação no carrinho afetado e preserva os demais", async () => {
+    const journey = (id: string, name: string, selection: object) => ({
+      id, name, event_name: `Evento ${name}`, status: "active", primary_surface: "public",
+      browse_url: `/public-galleries/${id}`, public_gallery: { ...publicGallery, id, name },
+      private_gallery: { ...privateGallery, id: `private-${id}` }, selection, orders: [], has_prepared_photos: false,
+      actions: { continue_url: `/public-galleries/${id}`, review_url: `/gallery/private-${id}`, orders_url: null, prepared_url: null, fallback_url: null },
+    });
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
+      ? response({}, 500)
+      : response({ journeys: [
+        journey("valid", "Galeria válida", { quantity: 2, total_cents: 1400 }),
+        journey("invalid", "Galeria sem preço", { quantity: 1, pricing_error: "Cotação indisponível para esta galeria." }),
+      ] })));
+
+    render(<LibraryPage />);
+
+    const cart = await screen.findByRole("region", { name: "Carrinho" });
+    expect(within(cart).getByLabelText("Total informativo do carrinho").textContent).toContain("3 fotos");
+    expect(within(cart).getByLabelText("Total informativo do carrinho").textContent).not.toContain("R$");
+    const valid = within(cart).getByRole("article", { name: "Carrinho de Galeria válida" });
+    const invalid = within(cart).getByRole("article", { name: "Carrinho de Galeria sem preço" });
+    expect(valid.textContent).toContain("R$ 14,00");
+    expect(within(valid).queryByText(/Cotação indisponível/)).toBeNull();
+    expect(within(invalid).getByText("Cotação indisponível para esta galeria.")).toBeTruthy();
+    expect(within(cart).getAllByRole("link", { name: "Revisar carrinho" })).toHaveLength(2);
+    expect(await screen.findByText("Não foi possível carregar as compras")).toBeTruthy();
+    expect(within(cart).getByText("Galeria válida")).toBeTruthy();
+  });
+
+  it("separa compras comunicadas do carrinho e não usa Ver pedido nem filtros", async () => {
+    const purchase = {
+      id: "reported-order",
+      gallery_name: "Fotos da família",
+      parent_gallery_name: "Festa escolar",
+      gallery_status_label: "Galeria ativa",
+      gallery_removed: false,
+      communicated_at: "2026-09-12T12:00:00Z",
+      confirmed_at: null,
+      commercial_state: "payment_reported",
+      total_cents: 1400,
+      items: [{ photo_id: "photo-1", name: "Foto 1", preview_url: "/preview/photo-1", delivery_url: null, delivery_reference_available: false }],
+    };
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
+      ? response({ orders: [purchase] })
+      : response({ journeys: [{
+        id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active", primary_surface: "public", browse_url: "/public-galleries/public-1",
+        public_gallery: publicGallery, private_gallery: privateGallery, selection: { quantity: 0 },
+        orders: [{ order_id: "reported-order", commercial_state: "payment_reported", total_cents: 1400 }], has_prepared_photos: false,
+        actions: { continue_url: "/public-galleries/public-1", review_url: null, orders_url: "/gallery/private-1", prepared_url: null, fallback_url: null },
+      }] })));
+
+    render(<LibraryPage />);
+
+    const purchases = await screen.findByRole("region", { name: "Compras" });
+    expect(screen.getByRole("link", { name: "Ver compra" }).getAttribute("href")).toBe("/library#purchases");
+    expect(screen.queryByText("Ver pedido")).toBeNull();
+    expect(within(purchases).getByRole("article", { name: "Compra de Fotos da família" })).toBeTruthy();
+    expect(within(purchases).getByText("Pagamento informado")).toBeTruthy();
+    expect(within(purchases).getByText("Informada em 12/09/2026")).toBeTruthy();
+    expect(within(purchases).queryByRole("button", { name: /Todas|Carrinho|Aguardando pagamento|Compradas/ })).toBeNull();
+    expect(within(purchases).queryByRole("button", { name: /Selecionar|Desmarcar|Favoritar/ })).toBeNull();
+  });
+
+  it("mostra estado vazio de compras sem repetir o carrinho", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
+      ? response({ orders: [] })
+      : response({ journeys: [{
+        id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active", primary_surface: "public", browse_url: "/public-galleries/public-1",
+        public_gallery: publicGallery, private_gallery: privateGallery, selection: { quantity: 1, total_cents: 700 }, orders: [], has_prepared_photos: false,
+        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", orders_url: null, prepared_url: null, fallback_url: null },
+      }] })));
+
+    render(<LibraryPage />);
+
+    const purchases = await screen.findByRole("region", { name: "Compras" });
+    expect(within(purchases).getByText("Nenhuma compra")).toBeTruthy();
+    expect(within(purchases).queryByText(/foto selecionada/i)).toBeNull();
+  });
+
   it("libera as jornadas antes de o histórico comercial terminar", async () => {
     let resolvePurchases!: (value: Response) => void;
     const purchases = new Promise<Response>((resolve) => { resolvePurchases = resolve; });
@@ -59,9 +171,9 @@ describe("biblioteca privada da cliente", () => {
 
     expect(await screen.findByText("Galeria já disponível")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Ver fotos" })).toBeTruthy();
-    expect(screen.getByText("Carregando pedidos")).toBeTruthy();
+    expect(screen.getByText("Carregando compras")).toBeTruthy();
     resolvePurchases(new Response(JSON.stringify({ orders: [] }), { status: 200 }));
-    expect(await screen.findByText("Nenhum pedido")).toBeTruthy();
+    expect(await screen.findByText("Nenhuma compra")).toBeTruthy();
   });
 
   it("isola a falha do histórico e permite tentar novamente", async () => {
@@ -81,9 +193,9 @@ describe("biblioteca privada da cliente", () => {
     render(<LibraryPage />);
 
     expect(await screen.findByText("Galeria preservada")).toBeTruthy();
-    expect(await screen.findByText("Não foi possível carregar os pedidos")).toBeTruthy();
+    expect(await screen.findByText("Não foi possível carregar as compras")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
-    expect(await screen.findByText("Nenhum pedido")).toBeTruthy();
+    expect(await screen.findByText("Nenhuma compra")).toBeTruthy();
     expect(screen.getByText("Galeria preservada")).toBeTruthy();
     expect(historyAttempts).toBe(2);
   });
@@ -111,15 +223,17 @@ describe("biblioteca privada da cliente", () => {
     expect(screen.queryByText("Sua área privada")).toBeNull();
     expect(screen.queryByText(/Cada evento aparece uma única vez/)).toBeNull();
     expect(screen.queryByText(/compras preservadas/i)).toBeNull();
-    const section = await screen.findByRole("region", { name: "Galerias e seleções" });
+    const section = await screen.findByRole("region", { name: "Galerias" });
+    const cart = screen.getByRole("region", { name: "Carrinho" });
     expect(within(section).getAllByRole("article")).toHaveLength(1);
-    expect(within(section).getByLabelText("Resumo da seleção").textContent).toContain("2 foto(s) selecionada(s)");
-    expect(within(section).getByLabelText("Resumo da seleção").textContent).toContain("R$ 14,00");
-    expect(within(section).getByRole("link", { name: "Carrinho (2)" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(within(cart).getByRole("article", { name: "Carrinho de Festa escolar" }).textContent).toContain("2 fotos");
+    expect(within(cart).getByRole("article", { name: "Carrinho de Festa escolar" }).textContent).toContain("R$ 14,00");
+    expect(within(cart).getByRole("link", { name: "Revisar carrinho" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(within(section).getByRole("link", { name: "Carrinho (2)" }).getAttribute("href")).toBe("/library#cart");
     expect(within(section).getAllByRole("link")).toHaveLength(1);
     expect(within(section).getByText("Pagamento informado")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Galerias privadas" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Pedidos" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Compras" })).toBeTruthy();
     expect(screen.getByText("Galeria removida", { exact: false })).toBeTruthy();
   });
 
@@ -141,10 +255,12 @@ describe("biblioteca privada da cliente", () => {
     })));
     render(<LibraryPage />);
 
-    const section = await screen.findByRole("region", { name: "Galerias e seleções" });
+    const section = await screen.findByRole("region", { name: "Galerias" });
+    const cart = screen.getByRole("region", { name: "Carrinho" });
     expect(within(section).getAllByRole("article")).toHaveLength(1);
-    expect(within(section).getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(within(section).getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/library#cart");
     expect(within(section).getAllByRole("link")).toHaveLength(1);
+    expect(within(cart).getByRole("link", { name: "Revisar carrinho" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
     expect(screen.queryByText("Abrir galeria privada")).toBeNull();
   });
 
@@ -163,7 +279,7 @@ describe("biblioteca privada da cliente", () => {
     })));
 
     render(<LibraryPage />);
-    expect(await screen.findByText("Galeria com prazo")).toBeTruthy();
+    expect((await screen.findAllByText("Galeria com prazo")).length).toBeGreaterThan(0);
     if (deadlineVisible) {
       expect(screen.getByText("Seleção até 30/09/2026")).toBeTruthy();
     } else {
@@ -198,7 +314,7 @@ describe("biblioteca privada da cliente", () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({ journeys: [], public_galleries: [], private_galleries: [], galleries: [] })));
     render(<LibraryPage />);
     expect(await screen.findByText("Nenhuma galeria disponível")).toBeTruthy();
-    expect(screen.getByText("Nenhum pedido")).toBeTruthy();
+    expect(screen.getByText("Nenhuma compra")).toBeTruthy();
   });
 
   it("não inventa galerias quando a consulta falha", async () => {
@@ -215,7 +331,7 @@ describe("biblioteca privada da cliente", () => {
       gallery_status_label: "Galeria ativa",
       gallery_removed: false,
       confirmed_at: null,
-      commercial_state: "awaiting_payment",
+      commercial_state: "payment_reported",
       total_cents: names.length * 700,
       items: names.map((name, index) => ({ photo_id: `${id}-${index}`, name, preview_url: `/preview/${id}-${index}`, delivery_url: null, delivery_reference_available: false })),
     });
@@ -232,9 +348,9 @@ describe("biblioteca privada da cliente", () => {
     const action = await screen.findByRole("link", { name: "Ver fotos" });
     expect(action.className).toContain("mk-button--primary");
     expect(action.getAttribute("data-prefetch")).toBe("true");
-    const firstOrder = screen.getByRole("article", { name: "Pedido de Primeira galeria" });
+    const firstOrder = screen.getByRole("article", { name: "Compra de Primeira galeria" });
     fireEvent.click(within(firstOrder).getByRole("button", { name: "Ver fotos (2)" }));
-    const grid = within(firstOrder).getByRole("region", { name: "Fotos do pedido de Primeira galeria" });
+    const grid = within(firstOrder).getByRole("region", { name: "Fotos da compra de Primeira galeria" });
     expect(grid.className).toContain("library-order-photo-grid");
     expect(within(grid).getAllByRole("img")).toHaveLength(2);
     expect(within(grid).getByRole("img", { name: "Prévia protegida de A.jpg" })).toBeTruthy();

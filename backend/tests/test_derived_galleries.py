@@ -2551,13 +2551,26 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
         db.add_all([PriceRule(parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500), PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id)])
         db.commit()
     authenticate_client(client, owner.phone_e164)
+    library_before_checkout = client.get("/library").json()
+    assert library_before_checkout["journeys"][0]["selection"]["quantity"] == 1
+    assert client.get("/library/purchases").json() == {"orders": []}
     order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "communication-order-key-0001"}).json()
+    library_before_communication = client.get("/library").json()
+    assert library_before_communication["journeys"][0]["selection"]["quantity"] == 1
+    assert client.get("/library/purchases").json() == {"orders": []}
     first = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
     second = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
     third = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0002"})
     assert first.status_code == second.status_code == third.status_code == 201
     assert first.json()["id"] == second.json()["id"] == third.json()["id"]
     assert first.json()["notification_status"] == "queued"
+    library_after_communication = client.get("/library").json()
+    assert library_after_communication["journeys"][0]["selection"]["quantity"] == 0
+    purchase_history = client.get("/library/purchases").json()["orders"]
+    assert len(purchase_history) == 1
+    assert purchase_history[0]["id"] == order["id"]
+    assert purchase_history[0]["commercial_state"] == "payment_reported"
+    assert purchase_history[0]["communicated_at"] is not None
     with SessionLocal() as db:
         persisted_order = db.get(SaleOrder, UUID(order["id"]))
         assert persisted_order.payment_status == "pending"
@@ -3783,6 +3796,13 @@ def test_client_library_and_purchase_history_queries_remain_batched(
                     folder_id_snapshot=folder.id,
                     folder_name_snapshot=folder.name,
                     unit_price_cents=700,
+                )
+            )
+            db.add(
+                PaymentCommunication(
+                    sale_order_id=order.id,
+                    client_id=owner_id,
+                    idempotency_key=f"library-batched-payment-{position}",
                 )
             )
             db.commit()

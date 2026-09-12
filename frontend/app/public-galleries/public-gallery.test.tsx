@@ -43,7 +43,7 @@ describe("Galeria pública da cliente", () => {
     expect((screen.getByRole("button", { name: /Desmarcar/ }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("7,00");
-    expect(screen.getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
+    expect(screen.getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/library#cart");
     expect(screen.getByRole("link", { name: "Carrinho (1)" }).className).toContain("selection-summary__proceed");
   });
 
