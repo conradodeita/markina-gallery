@@ -131,11 +131,14 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [privateActionError, setPrivateActionError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [facialRefresh, setFacialRefresh] = useState(0);
+  const [detailsPollingError, setDetailsPollingError] = useState("");
+  const [detailsPollingRetry, setDetailsPollingRetry] = useState(0);
   const previewDialog = useRef<HTMLDivElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const coverUploadInput = useRef<HTMLInputElement>(null);
   const uploadForm = useRef<HTMLFormElement>(null);
   const unlinkIdempotencyKey = useRef("");
+  const loadedStep = useRef<StepId | null>(null);
 
   useEffect(() => {
     if (expandedPhoto) previewDialog.current?.focus();
@@ -152,9 +155,23 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
 
   useEffect(() => {
     if (currentStep !== "detalhes" || !details?.cover_options?.some((option) => option.status === "processing")) return;
-    const timer = window.setTimeout(() => setRefresh((value) => value + 1), 1500);
-    return () => window.clearTimeout(timer);
-  }, [currentStep, details]);
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const nextDetails = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/details`) as DetailsData;
+        if (!active) return;
+        setDetails(nextDetails);
+        setDetailsPollingError("");
+      } catch (error) {
+        if (!active) return;
+        setDetailsPollingError(error instanceof Error ? error.message : "Não foi possível atualizar o estado da capa.");
+      }
+    }, 1500);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [currentStep, details, detailsPollingRetry, sourceId]);
 
   useEffect(() => {
     if (currentStep !== "imagens" || !folders.some((folder) => folder.publication_counts?.processing)) return;
@@ -203,9 +220,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
 
   useEffect(() => {
     let active = true;
+    const isInitialStepLoad = loadedStep.current !== currentStep;
     queueMicrotask(() => {
       if (!active) return;
-      setLoading(true);
+      if (isInitialStepLoad) setLoading(true);
       setFailed(false);
     });
     const editorRequest = jsonRequest(`/api/admin/parent-galleries/${sourceId}/editor`);
@@ -227,7 +245,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         if (!active) return;
         setEditor(editorData as Editor);
         const visual = (editorData as Editor).gallery;
-        setVisualPreview({ folder_display_mode: visual.folder_display_mode ?? "individual", cover_title_font: visual.cover_title_font ?? "system-sans", cover_title_color: visual.cover_title_color ?? "#FFFFFF", cover_title_size: visual.cover_title_size ?? 32, cover_title_position: visual.cover_title_position ?? "bottom-left" });
+        setVisualPreview((current) => current ?? { folder_display_mode: visual.folder_display_mode ?? "individual", cover_title_font: visual.cover_title_font ?? "system-sans", cover_title_color: visual.cover_title_color ?? "#FFFFFF", cover_title_size: visual.cover_title_size ?? 32, cover_title_position: visual.cover_title_position ?? "bottom-left" });
         if (currentStep === "vendas") {
           const [salesData, presetData] = sectionData as [SalesData, { presets: PricingPreset[] }];
           setSales(salesData);
@@ -237,7 +255,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           setConfirmLegacyConversion(false);
           setPricingQuote(null);
         }
-        if (currentStep === "detalhes") setDetails(sectionData as DetailsData);
+        if (currentStep === "detalhes") {
+          setDetails(sectionData as DetailsData);
+          setDetailsPollingError("");
+        }
         if (currentStep === "imagens") {
           const folderData = sectionData as { folders: Folder[] };
           setFolders(folderData.folders ?? []);
@@ -252,6 +273,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           setClientOptions(optionData.clients ?? []);
           setPublicLink(linkData);
         }
+        loadedStep.current = currentStep;
       })
       .catch(() => { if (active) setFailed(true); })
       .finally(() => { if (active) setLoading(false); });
@@ -818,6 +840,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                   <input ref={coverUploadInput} type="file" accept="image/jpeg" hidden onChange={uploadCover} />
                   <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>{currentCover ? "Substituir imagem de capa" : "Enviar imagem de capa"}</MarkinaButton>
                   {currentCover ? <div className={`cover-upload-current cover-upload-current--${currentCover.status}`} role="status"><strong>{currentCover.name}</strong><small>{currentCover.status === "ready" ? "Capa pronta para apresentação" : currentCover.status === "failed" ? currentCover.error ?? "O processamento falhou. Envie novamente esta capa ou escolha outro JPEG." : "Processando a prévia protegida da capa"}</small></div> : <p className="gallery-scope-note">Nenhuma imagem de capa enviada ainda.</p>}
+                  {detailsPollingError ? <div className="cover-upload-current cover-upload-current--failed" role="alert"><small>{detailsPollingError}</small><MarkinaButton type="button" variant="secondary" onClick={() => { setDetailsPollingError(""); setDetailsPollingRetry((value) => value + 1); }}>Atualizar estado da capa</MarkinaButton></div> : null}
                   <label>Tipografia do título<select name="cover_title_font" defaultValue={details?.settings?.cover_title_font ?? editor.gallery.cover_title_font}>{details?.font_options?.map((option) => <option key={option.token} value={option.token}>{option.label} · {option.category === "handwritten" ? "Manuscrita" : option.category === "editorial" ? "Editorial" : "Sem serifa"}</option>)}</select></label>
                   <label>Cor do título<input name="cover_title_color" type="color" defaultValue={editor.gallery.cover_title_color} /></label>
                   <label>Tamanho do título<input name="cover_title_size" type="number" min={12} max={96} defaultValue={editor.gallery.cover_title_size} /></label>

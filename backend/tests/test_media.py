@@ -1,8 +1,9 @@
 from datetime import timedelta
+from math import hypot
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
+from PIL import Image, ImageChops, ImageFont
 from sqlalchemy import select
 
 from app.auth import (
@@ -164,6 +165,114 @@ def test_watermark_composes_text_once_and_keeps_security_grid_independent(
     assert rendered.size == source.size
     assert len(grid_composites) == 1
     assert len(text_composites) == 1
+
+
+def _watermark_extent(
+    source: Image.Image, rendered: Image.Image, direction: str
+) -> float:
+    bounds = ImageChops.difference(source, rendered).getbbox()
+    assert bounds
+    left, top, right, bottom = bounds
+    if direction == "horizontal":
+        return right - left
+    if direction == "vertical":
+        return bottom - top
+    return hypot(right - left, bottom - top)
+
+
+@pytest.mark.parametrize("image_size", [(1200, 800), (800, 1200), (900, 900)])
+@pytest.mark.parametrize("direction", ["horizontal", "vertical", "diagonal"])
+@pytest.mark.parametrize("coverage", [10, 74, 96])
+def test_watermark_size_tracks_directional_photo_coverage(
+    image_size, direction, coverage
+):
+    source = Image.new("RGB", image_size, color=(40, 60, 80))
+    rendered = watermark(
+        source,
+        BrandingSettings(
+            watermark_text="MARCA ÚNICA",
+            watermark_direction=direction,
+            watermark_size=coverage,
+            watermark_opacity=100,
+            watermark_position="middle-center",
+            watermark_shadow=False,
+            watermark_security_lines=False,
+        ),
+    )
+
+    margin = max(12, round(min(image_size) * 0.025))
+    inner_width = image_size[0] - (margin * 2)
+    inner_height = image_size[1] - (margin * 2)
+    axis = {
+        "horizontal": inner_width,
+        "vertical": inner_height,
+        "diagonal": hypot(inner_width, inner_height),
+    }[direction]
+    actual = _watermark_extent(source, rendered, direction)
+    target = axis * coverage / 100
+    assert actual <= target * 1.08
+    assert actual >= target * (0.58 if direction == "diagonal" else 0.88)
+
+
+@pytest.mark.parametrize("direction", ["horizontal", "vertical", "diagonal"])
+@pytest.mark.parametrize("position", ["top-left", "middle-center", "bottom-right"])
+def test_long_watermark_stays_inside_photo(monkeypatch, direction, position):
+    source = Image.new("RGB", (720, 420), color=(40, 60, 80))
+    composites: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    original_alpha_composite = Image.Image.alpha_composite
+
+    def recording_alpha_composite(self, overlay, dest=(0, 0), source=(0, 0)):
+        composites.append((overlay.size, tuple(dest)))
+        return original_alpha_composite(self, overlay, dest, source)
+
+    monkeypatch.setattr(Image.Image, "alpha_composite", recording_alpha_composite)
+    rendered = watermark(
+        source,
+        BrandingSettings(
+            watermark_text="FOTOGRAFIA PROTEGIDA POR DIREITOS AUTORAIS",
+            watermark_direction=direction,
+            watermark_size=96,
+            watermark_opacity=100,
+            watermark_position=position,
+            watermark_shadow=True,
+            watermark_security_lines=False,
+        ),
+    )
+
+    assert rendered.size == source.size
+    assert ImageChops.difference(source, rendered).getbbox() is not None
+    assert len(composites) == 1
+    (layer_width, layer_height), (anchor_x, anchor_y) = composites[0]
+    assert 0 <= anchor_x <= source.width - layer_width
+    assert 0 <= anchor_y <= source.height - layer_height
+
+
+def test_watermark_font_fallback_preserves_proportional_rendering(monkeypatch):
+    real_truetype = ImageFont.truetype
+
+    def missing_configured_font(font, *args, **kwargs):
+        if isinstance(font, str):
+            raise OSError("fonte ausente")
+        return real_truetype(font, *args, **kwargs)
+
+    monkeypatch.setattr(
+        ImageFont,
+        "truetype",
+        missing_configured_font,
+    )
+    source = Image.new("RGB", (900, 600), color=(40, 60, 80))
+    rendered = watermark(
+        source,
+        BrandingSettings(
+            watermark_text="FALLBACK",
+            watermark_direction="horizontal",
+            watermark_size=74,
+            watermark_opacity=100,
+            watermark_shadow=False,
+        ),
+    )
+
+    assert _watermark_extent(source, rendered, "horizontal") > source.width * 0.6
 
 
 def test_protection_reprocessing_does_not_rewrite_clean_analysis_preview(

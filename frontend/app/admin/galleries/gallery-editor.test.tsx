@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
@@ -10,6 +10,7 @@ import GalleryEditor, { photoBulkDeleteBatches } from "./sources/[sourceId]/edit
 import SourceGalleryDetailPage from "./sources/[sourceId]/page";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   push.mockReset();
 });
@@ -791,6 +792,69 @@ describe("editor administrativo de galeria", () => {
     expect(previewTitle.getAttribute("style")).toContain("--font-handwritten-caveat");
     expect(previewTitle.getAttribute("style")).toContain("rgb(17, 34, 51)");
     expect(screen.getByAltText("Prévia protegida da capa da galeria")).toBeTruthy();
+  });
+
+  it("atualiza a capa em segundo plano sem remontar nem apagar a edição da Etapa 03", async () => {
+    vi.useFakeTimers();
+    const processingDetails = { available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }], cover_options: [{ id: "cover-1", name: "CAPA.jpg", source: "cover_assets", status: "processing", preview_url: null, width: null, height: null, error: null }], settings: { cover_photo_id: "cover-1", cover_preview_url: null, cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
+    const readyDetails = { ...processingDetails, cover_options: [{ ...processingDetails.cover_options[0], status: "ready", preview_url: "/admin/photo-assets/cover-1/watermarked-preview", width: 1600, height: 1067 }], settings: { ...processingDetails.settings, cover_preview_url: "/admin/photo-assets/cover-1/watermarked-preview" } };
+    let detailsCalls = 0;
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      detailsCalls += 1;
+      return response(detailsCalls < 3 ? processingDetails : readyDetails);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { unmount } = render(<GalleryEditor sourceId="source-1" step="detalhes" />);
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByRole("heading", { name: "Detalhes e apresentação" })).toBeTruthy();
+    expect(screen.getByText("Processando a prévia protegida da capa")).toBeTruthy();
+    const sizeInput = screen.getByLabelText("Tamanho do título") as HTMLInputElement;
+    fireEvent.change(sizeInput, { target: { value: "74" } });
+    sizeInput.focus();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(screen.queryByText("Abrindo a galeria")).toBeNull();
+    expect(screen.getByLabelText("Tamanho do título")).toBe(sizeInput);
+    expect(sizeInput.value).toBe("74");
+    expect(document.activeElement).toBe(sizeInput);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(screen.getByText("Capa pronta para apresentação")).toBeTruthy();
+    expect(screen.getByAltText("Prévia protegida da capa da galeria")).toBeTruthy();
+    expect(sizeInput.value).toBe("74");
+    const callsAfterReady = detailsCalls;
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(detailsCalls).toBe(callsAfterReady);
+    unmount();
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    expect(detailsCalls).toBe(callsAfterReady);
+  });
+
+  it("mantém o editor após falha transitória e permite retomar a atualização da capa", async () => {
+    vi.useFakeTimers();
+    const processingDetails = { available: true, capabilities: ["cover", "title"], font_options: [], cover_options: [{ id: "cover-1", name: "CAPA.jpg", source: "cover_assets", status: "processing", preview_url: null, width: null, height: null, error: null }], settings: { cover_photo_id: "cover-1", cover_preview_url: null, cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
+    const readyDetails = { ...processingDetails, cover_options: [{ ...processingDetails.cover_options[0], status: "ready", preview_url: "/admin/photo-assets/cover-1/watermarked-preview" }], settings: { ...processingDetails.settings, cover_preview_url: "/admin/photo-assets/cover-1/watermarked-preview" } };
+    let detailsCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      detailsCalls += 1;
+      if (detailsCalls === 2) return Promise.reject(new Error("Conexão temporariamente indisponível."));
+      return response(detailsCalls === 1 ? processingDetails : readyDetails);
+    }));
+    render(<GalleryEditor sourceId="source-1" step="detalhes" />);
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(screen.queryByText("Abrindo a galeria")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Conexão temporariamente indisponível.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Atualizar estado da capa" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(screen.getByText("Capa pronta para apresentação")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("envia uma capa dedicada pelo pipeline e mantém o editor utilizável em falha", async () => {
