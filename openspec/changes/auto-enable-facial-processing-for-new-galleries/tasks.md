@@ -11,4 +11,4 @@
 ## 3. Validação e entrega
 
 - [x] 3.1 Executar testes backend focados de rollout, status e indexação, Ruff, OpenSpec estrito e `git diff --check`; revisar o diff para confirmar ausência de migration, mutação em massa e reprocessamento de mídia. Evidência: 33 testes de rollout, status, indexação e busca passaram; Ruff, OpenSpec estrito e `git diff --check` aprovados; diff sem migration, mídia, jobs retroativos ou escrita em massa.
-- [ ] 3.2 Preparar inventário de impacto zero e solicitar autorização humana específica antes de push, merge e deploy em homologação; após autorização, validar SHA, migration, workers, flags e healthchecks.
+- [ ] 3.2 Preparar inventário de impacto zero e solicitar autorização humana específica antes de push, merge e deploy em homologação; após autorização, validar SHA, migration, workers, flags e healthchecks. Inventário preparado; autorização operacional e validação remota pendentes.
