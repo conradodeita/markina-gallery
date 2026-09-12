@@ -19,5 +19,5 @@
 ## 4. Validação e operação autorizada
 
 - [x] 4.1 Executar testes backend/frontend direcionados, política de deploy/manutenção, Ruff, ESLint, TypeScript, build, OpenSpec estrito e `git diff --check`; confirmar ausência de migration, segredo e alteração em preço, PIX, WhatsApp, mídia entregue ou reconhecimento facial.
-- [ ] 4.2 Preparar e registrar inventário de impacto zero com SHA, projeto `markina-gallery`, `/opt/markina-gallery`, `127.0.0.1:8080`, subdomínio, contagens e bytes anteriores, sem PII; revisar o diff e publicar por commit, push e PR.
+- [x] 4.2 Preparar e registrar inventário de impacto zero com SHA, projeto `markina-gallery`, `/opt/markina-gallery`, `127.0.0.1:8080`, subdomínio, contagens e bytes anteriores, sem PII; revisar o diff e publicar por commit, push e PR.
 - [ ] 4.3 Após CI verde e merge autorizado, aprovar o Environment, executar o deploy e a limpeza sem backup novo pelo trailer exclusivo; verificar contagens operacionais e bytes zerados, admin/preferências preservados, serviços saudáveis, `FACIAL_PROCESSING_ENABLED=true` e Visão geral atualizada.
