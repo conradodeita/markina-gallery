@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, CSSProperties, FormEvent, useEffect, useRef, useState } from "react";
 import { SystemState } from "../../ui-kit";
 import PixPanel from "./pix-panel";
 import WhatsAppPanel from "./whatsapp-panel";
@@ -56,6 +56,117 @@ const assetDetails: Record<Asset, { label: string; accept: string; help: string;
   "app-icon": { label: "Ícone do aplicativo", accept: "image/png,image/jpeg,image/webp,image/x-icon", help: "PNG, JPEG, WebP ou ICO; até 1 MB.", url: "app_icon_url" },
   favicon: { label: "Favicon", accept: "image/png,image/x-icon", help: "PNG ou ICO; até 512 KB.", url: "favicon_url" },
 };
+
+type WatermarkPreviewCalculation = {
+  width: number;
+  height: number;
+  textWidthAt100: number;
+  textHeightAt100: number;
+  direction: string;
+  coverage: number;
+  shadow: boolean;
+};
+
+export function calculateWatermarkPreviewFontSize({
+  width,
+  height,
+  textWidthAt100,
+  textHeightAt100,
+  direction,
+  coverage,
+  shadow,
+}: WatermarkPreviewCalculation) {
+  const margin = Math.max(4, Math.round(Math.min(width, height) * 0.025));
+  const innerWidth = Math.max(1, width - (margin * 2));
+  const innerHeight = Math.max(1, height - (margin * 2));
+  const axis = direction === "horizontal"
+    ? innerWidth
+    : direction === "vertical"
+      ? innerHeight
+      : Math.hypot(innerWidth, innerHeight);
+  const naturalScale = (axis * Math.max(10, Math.min(96, coverage)) / 100) / Math.max(1, textWidthAt100);
+  const naturalFontSize = Math.max(1, 100 * naturalScale);
+  const shadowOffset = shadow ? Math.max(2, naturalFontSize * 0.025) : 0;
+  const gutter = Math.max(5, shadowOffset + 3);
+  const layerWidth = (textWidthAt100 * naturalScale) + (gutter * 2) + shadowOffset;
+  const layerHeight = (textHeightAt100 * naturalScale) + (gutter * 2) + shadowOffset;
+  const angle = direction === "vertical" ? 90 : direction === "diagonal" ? 35 : 0;
+  const angleRadians = angle * Math.PI / 180;
+  const rotatedWidth = (layerWidth * Math.abs(Math.cos(angleRadians))) + (layerHeight * Math.abs(Math.sin(angleRadians)));
+  const rotatedHeight = (layerWidth * Math.abs(Math.sin(angleRadians))) + (layerHeight * Math.abs(Math.cos(angleRadians)));
+  const containment = Math.min(1, innerWidth / Math.max(1, rotatedWidth), innerHeight / Math.max(1, rotatedHeight));
+  return Math.max(1, naturalFontSize * containment);
+}
+
+function ProtectionPreviewSurface({ surface, settings }: { surface: "dark" | "light"; settings: Branding }) {
+  const preview = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState({ fontSize: 24, margin: 5 });
+  const text = settings.watermark_text || "MARKINA • PRÉVIA";
+
+  useEffect(() => {
+    function updateLayout() {
+      const element = preview.current;
+      if (!element) return;
+      const bounds = element.getBoundingClientRect();
+      const width = bounds.width || element.clientWidth || 360;
+      const height = bounds.height || element.clientHeight || 160;
+      let textWidthAt100 = Math.max(1, text.length * 58);
+      let textHeightAt100 = 100;
+      try {
+        const context = navigator.userAgent.includes("jsdom")
+          ? null
+          : document.createElement("canvas").getContext("2d");
+        if (context) {
+          context.font = `100px ${settings.watermark_font}`;
+          const metrics = context.measureText(text);
+          textWidthAt100 = Math.max(1, metrics.width);
+          textHeightAt100 = Math.max(
+            1,
+            (metrics.actualBoundingBoxAscent || 80) + (metrics.actualBoundingBoxDescent || 20),
+          );
+        }
+      } catch {
+        // A aproximação por caracteres mantém a prova funcional sem Canvas.
+      }
+      setLayout({
+        fontSize: calculateWatermarkPreviewFontSize({
+          width,
+          height,
+          textWidthAt100,
+          textHeightAt100,
+          direction: settings.watermark_direction,
+          coverage: settings.watermark_size,
+          shadow: settings.watermark_shadow,
+        }),
+        margin: Math.max(4, Math.round(Math.min(width, height) * 0.025)),
+      });
+    }
+
+    updateLayout();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateLayout);
+    if (observer && preview.current) observer.observe(preview.current);
+    window.addEventListener("resize", updateLayout);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateLayout);
+    };
+  }, [settings.watermark_direction, settings.watermark_font, settings.watermark_shadow, settings.watermark_size, text]);
+
+  const markStyle = {
+    "--mark-margin": `${layout.margin}px`,
+    color: settings.watermark_color,
+    fontFamily: settings.watermark_font,
+    fontSize: `${layout.fontSize}px`,
+    opacity: settings.watermark_opacity / 100,
+    textShadow: settings.watermark_shadow ? "0 2px 5px #000" : "none",
+  } as CSSProperties;
+
+  return <div ref={preview} className={`protection-preview-surface is-${surface}`} data-watermark-coverage={settings.watermark_size} data-watermark-direction={settings.watermark_direction}>
+    {settings.watermark_security_lines ? <span className="protection-preview-security-lines" aria-hidden="true" style={{ opacity: settings.watermark_opacity / 200 }} /> : null}
+    <span className={`protection-preview-mark watermark-preview--${settings.watermark_direction} is-${settings.watermark_position}`} style={markStyle}>{text}</span>
+    <small>{surface === "dark" ? "Fundo escuro" : "Fundo claro"}</small>
+  </div>;
+}
 
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Branding | null>(null);
@@ -244,7 +355,7 @@ export default function AdminSettingsPage() {
               <legend>Aparência</legend>
               <p>A prova ao lado ajuda a conferir legibilidade em fundos opostos.</p>
               <label>Cor da marca-d’água<span className="protection-color-control"><input name="watermark_color" type="color" defaultValue={settings.watermark_color} /><code>{protectionPreview.watermark_color.toUpperCase()}</code></span></label>
-              <label>Tamanho da marca-d’água<input name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /></label>
+              <label>Cobertura da marca-d’água (%)<input aria-label="Cobertura da marca-d’água (%)" name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /><small>Percentual aproximado do eixo da foto; o texto é reduzido apenas se necessário para permanecer inteiro.</small></label>
               <label>Direção<select name="watermark_direction" defaultValue={settings.watermark_direction}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="diagonal">Diagonal</option></select></label>
               <label>Transparência — {protectionPreview.watermark_opacity}%<input name="watermark_opacity" type="range" min={10} max={100} step={1} defaultValue={settings.watermark_opacity} /></label>
               <label className="protection-toggle"><input name="watermark_shadow" type="checkbox" defaultChecked={settings.watermark_shadow} /> Aplicar sombra ao texto</label>
@@ -263,9 +374,9 @@ export default function AdminSettingsPage() {
               <p>Superfícies neutras para avaliar leitura. Elas não simulam uma fotografia.</p>
             </div>
             <div className="protection-preview-surfaces">
-              {(["dark", "light"] as const).map((surface) => <div className={`protection-preview-surface is-${surface}`} key={surface}>{protectionPreview.watermark_security_lines ? <span className="protection-preview-security-lines" aria-hidden="true" style={{ opacity: protectionPreview.watermark_opacity / 200 }} /> : null}<span className={`protection-preview-mark watermark-preview--${protectionPreview.watermark_direction} is-${protectionPreview.watermark_position}`} style={{ color: protectionPreview.watermark_color, fontFamily: protectionPreview.watermark_font, fontSize: `${protectionPreview.watermark_size}px`, opacity: protectionPreview.watermark_opacity / 100, textShadow: protectionPreview.watermark_shadow ? "0 2px 5px #000" : "none" }}>{protectionPreview.watermark_text || "MARKINA • PRÉVIA"}</span><small>{surface === "dark" ? "Fundo escuro" : "Fundo claro"}</small></div>)}
+              {(["dark", "light"] as const).map((surface) => <ProtectionPreviewSurface surface={surface} settings={protectionPreview} key={surface} />)}
             </div>
-            <p className="protection-settings-note">A marca será repetida sobre cada prévia protegida depois do salvamento e do processamento seguro.</p>
+            <p className="protection-settings-note">A identificação aparecerá uma única vez em cada prévia protegida gerada pelo processamento seguro.</p>
           </aside>
         </form>
       </section>

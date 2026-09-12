@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 
-import { ClientCartItems, ClientCartLink } from "../../client-cart";
+import { ClientCartLink } from "../../client-cart";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { MarkinaLink, StatusBadge, SystemState } from "../../ui-kit";
@@ -148,13 +148,13 @@ export default function GalleryPage() {
       })
       .catch(() => setComments([]));
   }
-  function loadCart() {
+  function loadCart(restoreDraft = true) {
     fetch(`/api/gallery/${galleryId}/cart`, { credentials: "same-origin" })
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const result = await response.json();
         setCart(typeof result.quantity === "number" ? result : { quantity: 0 });
-        if (result.draft_order_id) {
+        if (restoreDraft && result.draft_order_id) {
           const detailResponse = await fetch(`/api/gallery/${galleryId}/orders/${result.draft_order_id}`, { credentials: "same-origin" });
           if (detailResponse.ok) setPendingOrder(await detailResponse.json());
         }
@@ -206,14 +206,16 @@ export default function GalleryPage() {
         : "Não foi possível salvar esta alteração.",
     );
     if (response.ok) {
-      checkoutKey.current = "";
-      setPendingOrder(null);
+      if (kind === "selection") {
+        checkoutKey.current = "";
+        setPendingOrder(null);
+      }
       if (response.headers.get("X-Markina-Gallery-Closed") === "true") {
         setClosedGallery({ publicGalleryUrl: response.headers.get("X-Markina-Public-Gallery-Url") });
         return;
       }
       load();
-      loadCart();
+      loadCart(kind !== "selection");
     }
   }
   async function checkout() {
@@ -267,22 +269,6 @@ export default function GalleryPage() {
       setPixCopied(true);
     } catch {
       setMessage("Não foi possível copiar automaticamente. Selecione o código PIX abaixo.");
-    }
-  }
-  async function removeFromCart(photoId: string) {
-    const response = await fetch(`/api/gallery/${galleryId}/photos/${photoId}/selection`, {
-      method: "DELETE",
-      credentials: "same-origin",
-    });
-    setMessage(response.ok ? "Foto removida do carrinho." : "Não foi possível remover esta foto do carrinho.");
-    if (response.ok) {
-      setPendingOrder(null);
-      if (response.headers.get("X-Markina-Gallery-Closed") === "true") {
-        setClosedGallery({ publicGalleryUrl: response.headers.get("X-Markina-Public-Gallery-Url") });
-        return;
-      }
-      load();
-      loadCart();
     }
   }
   async function addComment(event: FormEvent<HTMLFormElement>, photoId: string) {
@@ -366,6 +352,32 @@ export default function GalleryPage() {
     { value: "purchased", label: "Compradas" },
   ];
   const presentationFolders = releasedFolders.map((folder) => ({ id: folder.id, name: folder.name, photos: visiblePhotos.filter((photo) => photo.folderId === folder.id) })).filter((folder) => folder.photos.length);
+  const activePendingOrder = pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id && order.communication) ? pendingOrder : null;
+  const selectionOpen = review.gallery.selection_open;
+  const favoritesEnabled = review.gallery.favorites_enabled;
+  const checkoutPhotos = (activePendingOrder?.items ?? []).map((item) => {
+    const currentPhoto = review.photos.find((photo) => photo.id === item.photo_id);
+    return currentPhoto
+      ? { ...currentPhoto, name: item.name, previewUrl: `/api${item.preview_url}` }
+      : {
+          id: item.photo_id,
+          name: item.name,
+          previewUrl: `/api${item.preview_url}`,
+          folderId: "checkout",
+          selected: true,
+          favorited: false,
+          purchaseState: "selected",
+          commercialState: "selected" as const,
+          width: null,
+          height: null,
+        };
+  });
+  function renderPhotoMarkers(photo: ReviewPhoto) {
+    return <>
+      {!["available", "selected"].includes(photo.commercialState) ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{photo.commercialState === "purchased" ? "Comprada" : photo.commercialState === "payment_reported" ? "Pagamento informado" : "Aguardando pagamento"}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={photo.selected} disabled={!selectionOpen} onClick={() => interaction(photo, "selection")}>{photo.selected ? "✓ Desmarcar" : "Selecionar"}</button>}
+      {favoritesEnabled ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={photo.favorited ? "Remover dos favoritos" : "Favoritar"} title={photo.favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={photo.favorited} onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "♥" : "♡"}</button> : null}
+    </>;
+  }
   function renderPhotoComments(photo: ReviewPhoto) {
     const photoComments = comments.filter((comment) => comment.photo_id === photo.id);
     return (
@@ -392,7 +404,7 @@ export default function GalleryPage() {
   }
   return (
     <main className="admin-shell">
-      <ClientCartLink count={cart.quantity} href="?mode=review" />
+      {!activePendingOrder ? <ClientCartLink count={cart.quantity} href="?mode=review" /> : null}
       {!review.gallery.selection_open && (
         <section className="admin-card gallery-reopening" aria-live="polite">
           <h2>Solicitar novo prazo para seleção das fotos</h2>
@@ -400,7 +412,7 @@ export default function GalleryPage() {
           {reopening?.status === "pending" ? <StatusBadge tone="warning">Reabertura solicitada</StatusBadge> : reopening?.status === "refused" ? <><StatusBadge tone="danger">Solicitação recusada</StatusBadge><button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>Solicitar reabertura da galeria</button></> : <button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>{paymentBusy === "reopening" ? "Solicitando…" : "Solicitar reabertura da galeria"}</button>}
         </section>
       )}
-      {review.gallery.selection_expires_at && review.gallery.selection_open && cart.quantity > 0 && (
+      {!activePendingOrder && review.gallery.selection_expires_at && review.gallery.selection_open && cart.quantity > 0 && (
         <p className="form-message">
           Seleções até{" "}
           {new Date(review.gallery.selection_expires_at).toLocaleDateString(
@@ -408,7 +420,7 @@ export default function GalleryPage() {
           )}
         </p>
       )}
-      <nav className="gallery-photo-filters" aria-label="Filtrar fotos">
+      {!activePendingOrder ? <><nav className="gallery-photo-filters" aria-label="Filtrar fotos">
         {filterOptions.map(({ value, label }) => (
           <button key={value} type="button" className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>
             {label}
@@ -417,19 +429,15 @@ export default function GalleryPage() {
         ))}
       </nav>
       {!visiblePhotos.length && <p className="notice">Nenhuma foto nesta categoria.</p>}
-      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: selectionReviewMode ? "Fotos selecionadas" : "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} folderDisplayMode={review.gallery.folder_display_mode ?? "individual"} titleStyle={{ color: review.gallery.cover_title_color, fontFamily: galleryFontFamily(review.gallery.cover_title_font), fontSize: review.gallery.cover_title_size, position: review.gallery.cover_title_position }} emptyDetail={selectionReviewMode ? "Nenhuma foto permanece selecionada. Volte à galeria pública para escolher suas fotos." : "Nenhuma foto desta categoria está disponível neste momento."} showHero={false} showCopyrightProtectionDialog renderExpandedPhotoContent={review.gallery.comments_enabled ? renderPhotoComments : undefined} renderPhotoMarkers={(photo) => <>
-        {!["available", "selected"].includes(photo.commercialState) ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{photo.commercialState === "purchased" ? "Comprada" : photo.commercialState === "payment_reported" ? "Pagamento informado" : "Aguardando pagamento"}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={photo.selected} disabled={!review.gallery.selection_open} onClick={() => interaction(photo, "selection")}>{photo.selected ? "✓ Desmarcar" : "Selecionar"}</button>}
-        {review.gallery.favorites_enabled ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={photo.favorited ? "Remover dos favoritos" : "Favoritar"} title={photo.favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={photo.favorited} onClick={() => interaction(photo, "favorite")}>{photo.favorited ? "♥" : "♡"}</button> : null}
-      </>} />
+      <GalleryPresentation galleryName={review.gallery.name} context={review.gallery.message ? <p>{review.gallery.message}</p> : null} folders={(presentationFolders.length ? presentationFolders : [{ id: "authorized-photos", name: selectionReviewMode ? "Fotos selecionadas" : "Fotos liberadas", photos: visiblePhotos }]) as GalleryPresentationFolder<ReviewPhoto>[]} folderDisplayMode={review.gallery.folder_display_mode ?? "individual"} titleStyle={{ color: review.gallery.cover_title_color, fontFamily: galleryFontFamily(review.gallery.cover_title_font), fontSize: review.gallery.cover_title_size, position: review.gallery.cover_title_position }} emptyDetail={selectionReviewMode ? "Nenhuma foto permanece selecionada. Volte à galeria pública para escolher suas fotos." : "Nenhuma foto desta categoria está disponível neste momento."} showHero={false} showCopyrightProtectionDialog renderExpandedPhotoContent={review.gallery.comments_enabled ? renderPhotoComments : undefined} renderPhotoMarkers={renderPhotoMarkers} />
       {cart.quantity > 0 && review.gallery.selection_open ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
-        {cart.items?.length ? <details open={selectionReviewMode}><summary>Revisar seleção</summary><ClientCartItems items={cart.items.map((item) => ({ id: item.id, name: item.name, previewUrl: item.preview_url ? `/api${item.preview_url}` : null }))} onRemove={removeFromCart} /></details> : null}
         {cart.parcels?.length ? <details><summary>Ver cálculo por faixas</summary><ul>{cart.parcels.map((parcel) => <li key={`${parcel.minimum_quantity}-${parcel.maximum_quantity ?? "mais"}`}>{parcel.quantity} × {(parcel.unit_price_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} = {(parcel.subtotal_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</li>)}</ul></details> : null}
         {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
         <button type="button" className="primary" disabled={!review.gallery.selection_open || cart.total_cents === undefined || checkoutBusy} onClick={checkout}>{checkoutBusy ? "Preparando…" : "Continuar para o PIX"}</button>
-      </aside> : null}
-      {pendingOrder && !paymentOrders.some((order) => order.order_id === pendingOrder.id && order.communication) && <section className="admin-card client-checkout-review" aria-live="polite"><div className="section-heading"><div><p className="eyebrow">Conferência do pedido</p><h2>Revise suas fotos e faça o PIX</h2></div><StatusBadge tone="warning">Aguardando pagamento</StatusBadge></div>{pendingOrder.items?.length ? <div className="client-checkout-items">{pendingOrder.items.map((item) => <figure key={item.photo_id}><img src={`/api${item.preview_url}`} alt={`Miniatura protegida de ${item.name}`} draggable={false} /><figcaption><strong>{item.name}</strong><span>{(item.unit_price_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span></figcaption></figure>)}</div> : null}<div className="client-checkout-total"><span>{pendingOrder.items?.length ?? 0} foto(s)</span><strong>{(pendingOrder.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>{pendingOrder.price_rule?.savings_cents ? <span>Economia de {(pendingOrder.price_rule.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>{pendingOrder.sales_message ? <p>{pendingOrder.sales_message}</p> : null}{pendingOrder.pix?.qr_png_data_url ? <img className="client-checkout-qr" src={pendingOrder.pix.qr_png_data_url} alt="QR Code PIX do pedido" /> : null}{pendingOrder.pix?.copy_paste ? <label className="client-checkout-pix">PIX copia e cola<textarea readOnly value={pendingOrder.pix.copy_paste} /><button className="secondary" type="button" onClick={copyPix}>{pixCopied ? "Código copiado" : "Copiar código PIX"}</button></label> : <p className="notice">O fotógrafo ainda não configurou um código PIX para esta galeria.</p>}{pendingOrder.pix?.instructions ? <p>{pendingOrder.pix.instructions}</p> : null}<p>O pagamento estará sujeito a análise e você será informada após a conferência do fotógrafo.</p><button className="primary" type="button" disabled={paymentBusy === pendingOrder.id} onClick={() => reportPayment(pendingOrder.id)}>{paymentBusy === pendingOrder.id ? "Informando…" : "Informar pagamento"}</button></section>}
+      </aside> : null}</> : null}
+      {activePendingOrder ? <section className="admin-card client-checkout-review" aria-live="polite"><GalleryPresentation galleryName="Revise suas fotos e faça o PIX" eyebrow="Conferência do pedido" modeLabel={<StatusBadge tone="warning">Aguardando pagamento</StatusBadge>} folders={[{ id: "checkout", name: "Fotos do pedido", photos: checkoutPhotos }]} folderDisplayMode="sequential" showHero={false} showCopyrightProtectionDialog renderExpandedPhotoContent={review.gallery.comments_enabled ? renderPhotoComments : undefined} renderPhotoMarkers={renderPhotoMarkers} /><div className="client-checkout-total"><span>{activePendingOrder.items?.length ?? 0} foto(s)</span><strong>{(activePendingOrder.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>{activePendingOrder.price_rule?.savings_cents ? <span>Economia de {(activePendingOrder.price_rule.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>{activePendingOrder.sales_message ? <p>{activePendingOrder.sales_message}</p> : null}{activePendingOrder.pix?.qr_png_data_url ? <img className="client-checkout-qr" src={activePendingOrder.pix.qr_png_data_url} alt="QR Code PIX do pedido" /> : null}{activePendingOrder.pix?.copy_paste ? <label className="client-checkout-pix">PIX copia e cola<textarea readOnly value={activePendingOrder.pix.copy_paste} /><button className="secondary" type="button" onClick={copyPix}>{pixCopied ? "Código copiado" : "Copiar código PIX"}</button></label> : <p className="notice">O fotógrafo ainda não configurou um código PIX para esta galeria.</p>}{activePendingOrder.pix?.instructions ? <p>{activePendingOrder.pix.instructions}</p> : null}<p>O pagamento estará sujeito a análise e você será informada após a conferência do fotógrafo.</p><button className="primary" type="button" disabled={paymentBusy === activePendingOrder.id} onClick={() => reportPayment(activePendingOrder.id)}>{paymentBusy === activePendingOrder.id ? "Informando…" : "Informar pagamento"}</button></section> : null}
       {paymentOrders.length > 0 && <section className="admin-card client-payment-orders" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {
         const status = order.communication?.status;
         const visualState = order.commercial_state === "purchased" || status === "confirmed" ? "purchased" : order.commercial_state === "payment_reported" || status === "pending_review" ? "payment-reported" : order.commercial_state === "cancelled" || status === "refused" ? "cancelled" : "awaiting-payment";

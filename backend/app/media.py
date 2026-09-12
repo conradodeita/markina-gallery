@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from math import cos, hypot, radians, sin
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -47,6 +48,89 @@ def safe_derivative_path(derivative: MediaDerivative) -> Path:
     return candidate
 
 
+def _watermark_font(font_file: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype(font_file, size=size)
+    except OSError:
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
+
+
+def _watermark_text_metrics(
+    text: str,
+    *,
+    font_file: str,
+    size: int,
+    shadow: bool,
+) -> tuple[ImageFont.FreeTypeFont | ImageFont.ImageFont, tuple[int, int, int, int], tuple[int, int], int]:
+    font = _watermark_font(font_file, size)
+    probe = Image.new("RGBA", (1, 1))
+    left, top, right, bottom = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font)
+    shadow_offset = max(2, round(size * 0.025)) if shadow else 0
+    gutter = max(5, shadow_offset + 3)
+    layer_size = (
+        max(1, right - left + (gutter * 2) + shadow_offset),
+        max(1, bottom - top + (gutter * 2) + shadow_offset),
+    )
+    return font, (left, top, right, bottom), layer_size, gutter
+
+
+def _rotated_size(size: tuple[int, int], angle: int) -> tuple[int, int]:
+    if not angle:
+        return size
+    angle_radians = radians(abs(angle))
+    width, height = size
+    return (
+        round((width * abs(cos(angle_radians))) + (height * abs(sin(angle_radians)))) + 2,
+        round((width * abs(sin(angle_radians))) + (height * abs(cos(angle_radians)))) + 2,
+    )
+
+
+def _watermark_font_size(
+    image_size: tuple[int, int],
+    *,
+    text: str,
+    font_file: str,
+    coverage: int,
+    direction: str,
+    angle: int,
+    shadow: bool,
+    margin: int,
+) -> int:
+    """Resolve a fonte pela cobertura do eixo e contém a camada rotacionada."""
+    inner_width = max(1, image_size[0] - (margin * 2))
+    inner_height = max(1, image_size[1] - (margin * 2))
+    axis_length = {
+        "horizontal": inner_width,
+        "vertical": inner_height,
+        "diagonal": hypot(inner_width, inner_height),
+    }.get(direction, hypot(inner_width, inner_height))
+    target_length = axis_length * coverage / 100
+    low, high, best = 1, min(4096, max(image_size) * 4), 1
+    while low <= high:
+        candidate = (low + high) // 2
+        _, (left, _, right, _), layer_size, _ = _watermark_text_metrics(
+            text,
+            font_file=font_file,
+            size=candidate,
+            shadow=shadow,
+        )
+        text_length = max(1, right - left)
+        rotated_width, rotated_height = _rotated_size(layer_size, angle)
+        if (
+            text_length <= target_length
+            and rotated_width <= inner_width
+            and rotated_height <= inner_height
+        ):
+            best = candidate
+            low = candidate + 1
+        else:
+            high = candidate - 1
+    return best
+
+
 def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> Image.Image:
     """Incorpora uma marca textual e a grade opcional sem alterar a foto."""
     marked = image.convert("RGBA")
@@ -58,7 +142,7 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
     except (ValueError, IndexError):
         rgb = (255, 255, 255)
     angle = {"horizontal": 0, "vertical": 90, "diagonal": 35}.get(direction, 35)
-    size = max(10, min(96, (settings.watermark_size if settings else None) or 24))
+    coverage = max(10, min(96, (settings.watermark_size if settings else None) or 24))
     opacity = max(
         10, min(100, (settings.watermark_opacity if settings else None) or 42)
     )
@@ -74,19 +158,30 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
         "DejaVuSans": "DejaVuSans.ttf",
         "DejaVuSerif": "DejaVuSerif.ttf",
     }.get(font_name, "DejaVuSans.ttf")
-    try:
-        font = ImageFont.truetype(font_file, size=size)
-    except OSError:
-        font = ImageFont.load_default()
-    probe = Image.new("RGBA", (1, 1))
-    probe_draw = ImageDraw.Draw(probe)
-    left, top, right, bottom = probe_draw.textbbox((0, 0), text, font=font, stroke_width=1)
+    margin = max(12, round(min(marked.size) * 0.025))
+    font_size = _watermark_font_size(
+        marked.size,
+        text=text,
+        font_file=font_file,
+        coverage=coverage,
+        direction=direction,
+        angle=angle,
+        shadow=shadow,
+        margin=margin,
+    )
+    font, (left, top, _, _), layer_size, gutter = _watermark_text_metrics(
+        text,
+        font_file=font_file,
+        size=font_size,
+        shadow=shadow,
+    )
+    shadow_offset = max(2, round(font_size * 0.025)) if shadow else 0
     if security_lines:
         grid = Image.new("RGBA", marked.size, (0, 0, 0, 0))
         grid_draw = ImageDraw.Draw(grid)
-        spacing = max(90, size * 5)
+        spacing = max(90, coverage * 5)
         line_alpha = max(24, round(alpha * 0.42))
-        line_width = max(1, size // 18)
+        line_width = max(1, coverage // 18)
         for offset in range(-marked.height, marked.width + marked.height, spacing):
             grid_draw.line(
                 (offset, 0, offset + marked.height, marked.height),
@@ -100,30 +195,29 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
             )
         marked.alpha_composite(grid)
 
-    layer_size = (max(1, right - left + 12), max(1, bottom - top + 12))
     layer = Image.new("RGBA", layer_size, (0, 0, 0, 0))
     layer_draw = ImageDraw.Draw(layer)
     if shadow:
         layer_draw.text(
-            (7 - left, 7 - top),
+            (gutter + shadow_offset - left, gutter + shadow_offset - top),
             text,
             font=font,
             fill=(0, 0, 0, min(190, alpha)),
         )
-    layer_draw.text((5 - left, 5 - top), text, font=font, fill=(*rgb, alpha))
+    layer_draw.text((gutter - left, gutter - top), text, font=font, fill=(*rgb, alpha))
     if angle:
         layer = layer.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
 
     horizontal, vertical = position.split("-", maxsplit=1)
     raw_anchor_x = {
-        "left": 12,
+        "left": margin,
         "center": (marked.width - layer.width) // 2,
-        "right": marked.width - layer.width - 12,
+        "right": marked.width - layer.width - margin,
     }.get(vertical, (marked.width - layer.width) // 2)
     raw_anchor_y = {
-        "top": 20,
+        "top": margin,
         "middle": (marked.height - layer.height) // 2,
-        "bottom": marked.height - layer.height - 20,
+        "bottom": marked.height - layer.height - margin,
     }.get(horizontal, (marked.height - layer.height) // 2)
     anchor_x = min(max(0, raw_anchor_x), max(0, marked.width - layer.width))
     anchor_y = min(max(0, raw_anchor_y), max(0, marked.height - layer.height))

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import AdminSettingsPage from "./page";
+import AdminSettingsPage, { calculateWatermarkPreviewFontSize } from "./page";
 
 const branding = {
   login_title: "Sua galeria, do seu jeito.",
@@ -73,21 +73,52 @@ describe("configurações administrativas de marca", () => {
     expect(await screen.findByText(/Proteção visual global salva/)).toBeTruthy();
   });
 
-  it("representa na prova todo o intervalo de tamanho aceito pelo servidor", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(branding), { status: 200 })));
+  it("representa na prova a cobertura percentual aceita pelo servidor", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      void path;
+      void options;
+      return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<AdminSettingsPage />);
-    const size = await screen.findByLabelText("Tamanho da marca-d’água");
+    const size = await screen.findByLabelText("Cobertura da marca-d’água (%)");
     expect(size.getAttribute("min")).toBe("10");
     expect(size.getAttribute("max")).toBe("96");
+    expect(screen.getByText(/Percentual aproximado do eixo da foto/i)).toBeTruthy();
 
     fireEvent.change(size, { target: { value: "10" } });
-    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-mark")).every((mark) => mark.style.fontSize === "10px")).toBe(true));
+    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-surface")).every((surface) => surface.dataset.watermarkCoverage === "10")).toBe(true));
 
-    fireEvent.change(size, { target: { value: "64" } });
-    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-mark")).every((mark) => mark.style.fontSize === "64px")).toBe(true));
+    fireEvent.change(size, { target: { value: "74" } });
+    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-surface")).every((surface) => surface.dataset.watermarkCoverage === "74")).toBe(true));
 
     fireEvent.change(size, { target: { value: "96" } });
-    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-mark")).every((mark) => mark.style.fontSize === "96px")).toBe(true));
+    await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-surface")).every((surface) => surface.dataset.watermarkCoverage === "96")).toBe(true));
+
+    fireEvent.change(size, { target: { value: "74" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/branding/protection", expect.objectContaining({ method: "PATCH" })));
+    const request = fetchMock.mock.calls.find(([path, options]) => path === "/api/admin/branding/protection" && options?.method === "PATCH")?.[1];
+    expect(JSON.parse(String(request?.body)).watermark_size).toBe(74);
+  });
+
+  it.each(["horizontal", "vertical", "diagonal"])("dimensiona %s por cobertura e redimensionamento sem tratar o valor como pixels", (direction) => {
+    const base = {
+      width: 400,
+      height: 260,
+      textWidthAt100: 620,
+      textHeightAt100: 100,
+      direction,
+      shadow: true,
+    };
+    const small = calculateWatermarkPreviewFontSize({ ...base, coverage: 10 });
+    const configured = calculateWatermarkPreviewFontSize({ ...base, coverage: 74 });
+    const maximum = calculateWatermarkPreviewFontSize({ ...base, coverage: 96 });
+    const resized = calculateWatermarkPreviewFontSize({ ...base, width: 800, height: 520, coverage: 74 });
+
+    expect(configured).toBeGreaterThan(small);
+    expect(maximum).toBeGreaterThanOrEqual(configured);
+    expect(resized).toBeGreaterThan(configured * 1.8);
   });
 
   it("mantém os controles disponíveis e informa falha de salvamento", async () => {
