@@ -20,7 +20,7 @@ from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
@@ -7375,10 +7375,13 @@ def client_purchase_history(
             select(SaleOrder)
             .where(
                 SaleOrder.client_id == session.subject_id,
-                ~(
-                    (SaleOrder.payment_status == "pending")
-                    & SaleOrder.frozen_at.is_(None)
-                    & SaleOrder.checkout_key.is_not(None)
+                or_(
+                    SaleOrder.payment_status == "confirmed",
+                    SaleOrder.id.in_(
+                        select(PaymentCommunication.sale_order_id).where(
+                            PaymentCommunication.client_id == session.subject_id
+                        )
+                    ),
                 ),
             )
             .order_by(SaleOrder.created_at.desc())
@@ -7478,6 +7481,11 @@ def client_purchase_history(
                 ),
                 "communication_status": (
                     communications_by_order[order.id].status
+                    if order.id in communications_by_order
+                    else None
+                ),
+                "communicated_at": (
+                    communications_by_order[order.id].created_at.isoformat()
                     if order.id in communications_by_order
                     else None
                 ),

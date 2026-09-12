@@ -89,9 +89,17 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .lifecycle-actions { display:flex; flex-wrap:wrap; gap:10px; }
 @media (max-width:560px) { .lifecycle-inventory { grid-template-columns:1fr; }.lifecycle-dialog { padding:20px; }.lifecycle-actions .mk-button { width:100%; } }
 .library-shell { display:grid; gap:28px; }
-.library-section { display:grid; gap:16px; }
+.library-section { display:grid; gap:16px; scroll-margin-top:96px; }
 .library-section .section-heading h2,.library-history .section-heading h2 { margin-bottom:0; }
 .library-card-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+.library-cart-overview { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 18px; padding:14px 16px; border:1px solid #cfd8d1; border-radius:14px; background:#f4f8f5; }
+.library-cart-overview strong { font-size:1.05rem; }
+.library-cart-overview small { color:#4f5c52; }
+.library-cart-card { border-left:5px solid #287a43; }
+.library-cart-card__amounts { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:12px; border-radius:12px; background:#f2f2f2; }
+.library-cart-card__amounts span { color:#444; font-size:.88rem; }
+.library-cart-card__amounts strong { font-size:1rem; }
+.library-cart-card__error { padding:10px 12px; border-radius:10px; background:#fff1ef; color:#8c2f2a !important; }
 .library-card { display:grid; align-content:start; gap:10px; min-width:0; padding:20px; border:1px solid #d8d8d8; border-radius:16px; background:#fff; color:#171717; text-decoration:none; box-shadow:0 8px 22px #0000000a; }
 .library-card:hover { border-color:#999; }
 .library-card:focus-visible,.library-card-actions a:focus-visible { outline:3px solid #111; outline-offset:3px; }
@@ -111,7 +119,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .library-card-actions { display:grid; gap:8px; padding-top:8px; border-top:1px solid #e0e0e0; }
 .library-card-actions .mk-button--primary { color:#fff; }
 .library-card-actions span { color:#555; font-size:.8rem; line-height:1.45; }
-.library-history { display:grid; gap:12px; }
+.library-history { display:grid; gap:12px; scroll-margin-top:96px; }
 .library-order { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:16px; padding:18px; border:1px solid #ddd; border-left:5px solid #8b928c; border-radius:14px; background:#fff; }
 .library-order--awaiting-payment { border-left-color:#a66b00; background:#fffbf0; }
 .library-order--payment-reported { border-left-color:#2d638f; background:#f3f8fc; }

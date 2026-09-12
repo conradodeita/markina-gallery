@@ -258,6 +258,8 @@ export default function GalleryPage() {
     setMessage(response.ok ? "O pagamento está em análise." : "Não foi possível comunicar o pagamento.");
     if (response.ok) {
       setPendingOrder(null);
+      load();
+      loadCart(false);
       loadPaymentOrders();
     }
     setPaymentBusy("");
@@ -404,7 +406,7 @@ export default function GalleryPage() {
   }
   return (
     <main className="admin-shell">
-      {!activePendingOrder ? <ClientCartLink count={cart.quantity} href="?mode=review" /> : null}
+      {!activePendingOrder ? <ClientCartLink count={cart.quantity} href="/library#cart" /> : null}
       {!review.gallery.selection_open && (
         <section className="admin-card gallery-reopening" aria-live="polite">
           <h2>Solicitar novo prazo para seleção das fotos</h2>

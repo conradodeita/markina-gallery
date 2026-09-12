@@ -193,7 +193,7 @@ export default function PublicGalleryPage() {
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
         {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
-        {privateGalleryId ? <ClientCartLink className="primary selection-summary__proceed" count={cart.quantity} href={`/gallery/${privateGalleryId}?mode=review`} /> : null}
+        {privateGalleryId ? <ClientCartLink className="primary selection-summary__proceed" count={cart.quantity} href="/library#cart" /> : null}
       </aside> : null}
     </main>
   );
