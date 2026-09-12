@@ -24,7 +24,7 @@ O roadmap consolidou que o fotógrafo não prepara nem ativa política técnica 
 
 ### 1. Resolver disponibilidade por precedência, sem criar rollout implícito no banco
 
-A resolução SHALL seguir esta ordem: kill switch/calibração/galeria ativa; depois rollout individual, quando existir; por fim disponibilidade `general` quando não existir registro. Rollout explícito somente permite execução se estiver `active`, em etapa ativa e com versões coerentes; qualquer outro estado bloqueia.
+A resolução SHALL seguir esta ordem: kill switch/calibração/galeria ativa; depois rollout individual, quando existir; por fim disponibilidade `general` quando não existir registro em ambiente algum. Rollout explícito somente permite execução se estiver no ambiente coerente, `active`, em etapa ativa e com versões compatíveis; qualquer outro estado ou registro pertencente a outro ambiente bloqueia.
 
 Isso evita escrita em endpoint GET, concorrência de criação, escolha artificial de aprovador e backfill operacional. A alternativa de criar automaticamente uma linha `active` ao salvar cada galeria não corrige as galerias já existentes e introduz uma aprovação fictícia. A alternativa de uma migration de dados foi rejeitada porque a disponibilidade depende de configuração e calibração do ambiente em runtime.
 

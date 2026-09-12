@@ -238,15 +238,24 @@ def rollout_is_active(
         return False
     if not calibration_is_approved(db, settings):
         return False
+    parent = db.get(ParentGallery, parent_gallery_id)
+    if parent is None or not parent.active or parent.lifecycle_status != "active":
+        return False
     rollout = read_rollout(
         db,
         environment=settings.environment,
         parent_gallery_id=parent_gallery_id,
         for_update=for_update,
     )
+    if rollout is None:
+        rollout_in_another_environment = db.scalar(
+            select(FacialRollout.id)
+            .where(FacialRollout.parent_gallery_id == parent_gallery_id)
+            .limit(1)
+        )
+        return rollout_in_another_environment is None
     return bool(
-        rollout
-        and rollout.status == "active"
+        rollout.status == "active"
         and rollout.stage in ACTIVE_STAGES
         and _versions_match(rollout, settings)
     )
@@ -259,9 +268,15 @@ def rollout_status_payload(
 ) -> dict[str, object]:
     """Expõe ao painel somente disponibilidade e estado operacional."""
 
+    if rollout is None:
+        return {
+            "status": "active" if available else "unavailable",
+            "stage": "general" if available else None,
+            "available": available,
+        }
     return {
-        "status": rollout.status if rollout else "unavailable",
-        "stage": rollout.stage if rollout else None,
+        "status": rollout.status,
+        "stage": rollout.stage,
         "available": available,
     }
 

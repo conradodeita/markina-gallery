@@ -32,3 +32,8 @@ O sistema SHALL manter `FACIAL_PROCESSING_ENABLED` como kill switch técnico ind
 
 - **WHEN** o kill switch estiver desligado, a galeria estiver inativa ou a calibração obrigatória de produção não estiver aprovada
 - **THEN** o subsistema facial permanece indisponível enquanto upload, navegação e seleção manual continuam saudáveis
+
+#### Scenario: Rollout pertence a outro ambiente
+
+- **WHEN** a galeria possui rollout persistido em ambiente diferente do runtime atual
+- **THEN** o sistema falha fechado e não aplica disponibilidade geral por ausência no ambiente atual
