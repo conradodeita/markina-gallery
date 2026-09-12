@@ -9,32 +9,42 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 from pathlib import Path
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    AdminSecurityChallenge,
+    AdminUser,
     AuthChallenge,
     AuthSession,
+    BrandingSettings,
     Client,
     DerivedGallery,
     DerivedGalleryMembership,
     GalleryLifecycleOperation,
+    GlobalPixSettings,
     ParentGallery,
     ParentGalleryRegistration,
     PaymentCommunication,
+    PaymentMessageTemplate,
     PhotoAsset,
+    PhotoFolder,
     PhotoSelection,
+    ProgressivePricingPreset,
     Role,
     SaleOrder,
     SessionLocal,
+    WhatsAppChannelSettings,
     WhatsAppDelivery,
     WhatsAppDeliveryAttempt,
 )
 from app.media import derivatives_root, source_root
 
 CONFIRMATION = "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
+WITHOUT_BACKUP_CONFIRMATION = "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS_WITHOUT_BACKUP"
 ALLOWED_ENVIRONMENTS = {"homolog", "homologation"}
 
 
@@ -54,10 +64,13 @@ def _count(db: Session, model, *criteria) -> int:
 
 def _media_inventory(root: Path) -> dict[str, int]:
     resolved = root.resolve()
-    files = [path for path in resolved.rglob("*") if path.is_file() or path.is_symlink()]
+    files = [] if not resolved.exists() else [path for path in resolved.rglob("*")]
+    regular_files = [
+        path for path in files if stat.S_ISREG(path.lstat().st_mode)
+    ]
     return {
-        "files": len(files),
-        "bytes": sum(path.stat().st_size for path in files if path.is_file()),
+        "files": len(regular_files),
+        "bytes": sum(path.lstat().st_size for path in regular_files),
     }
 
 
@@ -71,6 +84,7 @@ def inventory(db: Session) -> dict[str, object]:
             "public_registrations": _count(db, ParentGalleryRegistration),
             "private_memberships": _count(db, DerivedGalleryMembership),
             "photos": _count(db, PhotoAsset),
+            "folders": _count(db, PhotoFolder),
             "selections": _count(db, PhotoSelection),
             "orders": _count(db, SaleOrder),
             "payment_communications": _count(db, PaymentCommunication),
@@ -80,6 +94,16 @@ def inventory(db: Session) -> dict[str, object]:
             ),
             "whatsapp_deliveries": _count(db, WhatsAppDelivery),
             "lifecycle_operations": _count(db, GalleryLifecycleOperation),
+        },
+        "preserved": {
+            "admin_accounts": _count(db, AdminUser),
+            "admin_sessions": _count(db, AuthSession, AuthSession.role == Role.ADMIN.value),
+            "admin_security_challenges": _count(db, AdminSecurityChallenge),
+            "branding_settings": _count(db, BrandingSettings),
+            "global_pix_settings": _count(db, GlobalPixSettings),
+            "payment_message_templates": _count(db, PaymentMessageTemplate),
+            "pricing_presets": _count(db, ProgressivePricingPreset),
+            "whatsapp_channel_settings": _count(db, WhatsAppChannelSettings),
         },
         "media": {
             "source": _media_inventory(source_root()),
@@ -110,7 +134,7 @@ def _clear_media_root(root: Path) -> None:
 
 def execute(db: Session, confirmation: str) -> dict[str, object]:
     require_homolog_environment()
-    if confirmation != CONFIRMATION:
+    if confirmation not in {CONFIRMATION, WITHOUT_BACKUP_CONFIRMATION}:
         raise RuntimeError("Confirmação literal inválida; nenhuma alteração foi aplicada.")
     if db.bind is None or db.bind.dialect.name != "postgresql":
         raise RuntimeError("A limpeza homologada exige o PostgreSQL exclusivo da Markina.")

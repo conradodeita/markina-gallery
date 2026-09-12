@@ -14,6 +14,11 @@ import {
 type Summary = {
   environment: string;
   version: string;
+  storage: {
+    photo_count: number;
+    bytes: number | null;
+    available: boolean;
+  };
   counts: {
     clients: number;
     parent_galleries: number;
@@ -29,6 +34,17 @@ type Summary = {
     selection_expires_at?: string | null;
   }>;
 };
+
+function formatStorage(bytes: number | null, available: boolean) {
+  if (!available || bytes === null) return "Indisponível";
+  const gibibyte = 1024 ** 3;
+  const unit = bytes >= gibibyte ? "GB" : "MB";
+  const divisor = unit === "GB" ? gibibyte : 1024 ** 2;
+  const value = bytes === 0 ? 0 : bytes / divisor;
+  return `${new Intl.NumberFormat("pt-BR", {
+    maximumFractionDigits: 1,
+  }).format(value)} ${unit}`;
+}
 
 export default function AdminPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -111,6 +127,14 @@ export default function AdminPage() {
           value={summary.counts.folders_released ?? 0}
           detail="visíveis a clientes autorizadas"
           tone="success"
+        />
+        <MetricCard
+          label="Armazenamento de fotos"
+          value={formatStorage(summary.storage.bytes, summary.storage.available)}
+          detail={`${summary.storage.photo_count} ${
+            summary.storage.photo_count === 1 ? "foto" : "fotos"
+          }`}
+          tone={summary.storage.available ? "neutral" : "warning"}
         />
       </section>
       <section className="dashboard-columns">
