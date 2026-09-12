@@ -12,4 +12,4 @@
 ## 3. Validação e entrega
 
 - [x] 3.1 Executar testes direcionados do editor de galeria, ESLint dos arquivos alterados, typecheck e OpenSpec estrito; revisar o diff para confirmar ausência de alteração em API, worker, banco ou mídia. Evidência: 48 testes passaram; ESLint sem erros, `tsc --noEmit`, OpenSpec estrito e `git diff --check` aprovaram; backend, banco e worker não foram alterados nesta change.
-- [ ] 3.2 Preparar e apresentar inventário de impacto zero, executar o push, merge e deploy em homologação já autorizados pelo usuário e validar manualmente a Etapa 03 com capa em processamento sem piscar nem perder edição.
+- [ ] 3.2 Preparar e apresentar inventário de impacto zero, executar o push, merge e deploy em homologação já autorizados pelo usuário e validar manualmente a Etapa 03 com capa em processamento sem piscar nem perder edição. Evidência parcial: inventário apresentado, PR `#70` mergeado em `develop` no SHA `af2b0c00fb5762a4d43f8cddb233edd0b68c618b` e deploy `34665380268` aprovado em homologação; pipeline completo aprovado. Permanece pendente a conferência humana durante um processamento real de capa na Etapa 03.
