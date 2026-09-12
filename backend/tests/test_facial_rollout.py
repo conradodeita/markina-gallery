@@ -106,6 +106,74 @@ def test_prepare_and_activate_require_matching_enabled_environment() -> None:
     assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is True
 
 
+def test_missing_rollout_uses_general_availability_only_for_eligible_gallery() -> None:
+    db, gallery, _admin = _fixture()
+
+    assert rollout_is_active(
+        db,
+        settings=_settings(),
+        parent_gallery_id=gallery.id,
+    ) is True
+    assert rollout_is_active(
+        db,
+        settings=_settings(enabled=False),
+        parent_gallery_id=gallery.id,
+    ) is False
+    assert rollout_is_active(
+        db,
+        settings=_settings(environment="production"),
+        parent_gallery_id=gallery.id,
+    ) is False
+
+    gallery.active = False
+    db.commit()
+    assert rollout_is_active(
+        db,
+        settings=_settings(),
+        parent_gallery_id=gallery.id,
+    ) is False
+
+
+def test_explicit_non_active_rollout_overrides_general_availability() -> None:
+    db, gallery, admin = _fixture()
+    settings = _settings()
+    rollout = prepare_rollout(
+        db,
+        environment="test",
+        parent_gallery_id=gallery.id,
+        draft=draft_from_settings(settings),
+    )
+    assert rollout.status == "prepared"
+    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+
+    activate_rollout(
+        db,
+        environment="test",
+        parent_gallery_id=gallery.id,
+        actor_admin_id=admin.id,
+        approval_reference="explicit-general-override",
+        stage="general",
+        settings=settings,
+    )
+    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is True
+
+    suspend_rollout(
+        db,
+        environment="test",
+        parent_gallery_id=gallery.id,
+        actor_admin_id=admin.id,
+    )
+    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+
+    revoke_rollout(
+        db,
+        environment="test",
+        parent_gallery_id=gallery.id,
+        actor_admin_id=admin.id,
+    )
+    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+
+
 def test_transitions_are_strict_and_revocation_is_idempotent() -> None:
     db, gallery, admin = _fixture()
     settings = _settings()
@@ -278,4 +346,9 @@ def test_admin_payload_exposes_only_operational_rollout_state() -> None:
         "status": "unavailable",
         "stage": None,
         "available": False,
+    }
+    assert rollout_status_payload(None, available=True) == {
+        "status": "active",
+        "stage": "general",
+        "available": True,
     }
