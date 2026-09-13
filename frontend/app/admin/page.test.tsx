@@ -40,6 +40,12 @@ const summary = {
       access_enabled: true,
       selection_expires_at: null,
     },
+    {
+      id: "gallery-2",
+      name: "Ensaio bloqueado",
+      access_enabled: false,
+      selection_expires_at: "2026-09-30T23:59:59Z",
+    },
   ],
 };
 
@@ -65,7 +71,15 @@ describe("painel operacional", () => {
     expect(screen.getByText("Ritual de publicação")).toBeTruthy();
     expect(screen.getByText(/Vincule clientes e publique/)).toBeTruthy();
     expect(screen.queryByText(/responsável/i)).toBeNull();
-    expect(screen.getByText("Festa da escola")).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Festa da escola" }).getAttribute("href"),
+    ).toBe("/admin/galleries/gallery-1");
+    expect(
+      screen.getByRole("link", { name: "Ensaio bloqueado" }).getAttribute("href"),
+    ).toBe("/admin/galleries/gallery-2");
+    expect(screen.getByText("Ativa")).toBeTruthy();
+    expect(screen.getByText("Bloqueada")).toBeTruthy();
+    expect(screen.getByText("Prazo configurado")).toBeTruthy();
   });
 
   it.each([

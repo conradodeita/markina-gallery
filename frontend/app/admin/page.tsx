@@ -193,7 +193,12 @@ export default function AdminPage() {
               {summary.recent_galleries.map((gallery) => (
                 <div key={gallery.id}>
                   <div>
-                    <strong>{gallery.name}</strong>
+                    <MarkinaLink
+                      href={`/admin/galleries/${gallery.id}`}
+                      variant="quiet"
+                    >
+                      {gallery.name}
+                    </MarkinaLink>
                     <small>
                       {gallery.selection_expires_at
                         ? "Prazo configurado"
