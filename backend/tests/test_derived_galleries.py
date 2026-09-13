@@ -1501,8 +1501,22 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
             total_cents=800,
             confirmed_at=now(),
         )
-        db.add_all([first_order, second_order])
+        reported_order = SaleOrder(
+            derived_gallery_id=first_gallery.id,
+            client_id=first_client.id,
+            payment_status="pending",
+            total_cents=900,
+            frozen_at=now(),
+        )
+        db.add_all([first_order, second_order, reported_order])
         db.flush()
+        db.add(
+            PaymentCommunication(
+                sale_order_id=reported_order.id,
+                client_id=first_client.id,
+                idempotency_key="statistics-reported-order",
+            )
+        )
         db.add_all(
             [
                 SaleOrderItem(
@@ -2800,6 +2814,10 @@ def test_admin_lists_and_refuses_payment_communication_without_confirming_order(
     assert owner.phone_e164 not in listed.text
     assert client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "refused"}).json()["status"] == "refused"
     assert client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "confirmed"}).json()["status"] == "refused"
+    refused_summary = client.get("/admin/payment-communications").json()["summary"]
+    assert refused_summary["selected_cents"] == 0
+    assert refused_summary["reported_cents"] == 0
+    assert refused_summary["confirmed_cents"] == 0
     with SessionLocal() as db:
         assert db.get(SaleOrder, order_id).payment_status == "cancelled"
         outboxes = list(db.scalars(select(PaymentNotificationOutbox)))
@@ -2836,6 +2854,38 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         )
         db.add(gallery)
         db.flush()
+        folder = PhotoFolder(
+            parent_gallery_id=parent.id,
+            name="Seleção atual",
+            status="released",
+            released_at=reference - timedelta(minutes=20),
+        )
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="selecionada.jpg",
+            storage_key="dashboard/selecionada.jpg",
+        )
+        db.add(photo)
+        db.flush()
+        db.add_all(
+            [
+                PhotoSelection(
+                    derived_gallery_id=gallery.id,
+                    photo_asset_id=photo.id,
+                    client_id=ana.id,
+                    created_at=reference - timedelta(minutes=20),
+                ),
+                PriceRule(
+                    parent_gallery_id=parent.id,
+                    minimum_quantity=1,
+                    maximum_quantity=None,
+                    unit_price_cents=700,
+                ),
+            ]
+        )
         reported = SaleOrder(
             derived_gallery_id=gallery.id,
             client_id=ana.id,
@@ -2865,7 +2915,15 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
             total_cents=1500,
             created_at=reference,
         )
-        db.add_all([reported, confirmed, historical])
+        editable_checkout = SaleOrder(
+            derived_gallery_id=gallery.id,
+            client_id=ana.id,
+            payment_status="pending",
+            total_cents=700,
+            checkout_key="dashboard-editable-checkout",
+            created_at=reference - timedelta(minutes=15),
+        )
+        db.add_all([reported, confirmed, historical, editable_checkout])
         db.flush()
         communication = PaymentCommunication(
             sale_order_id=reported.id,
@@ -2905,10 +2963,17 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
     payload = first_page.json()
     assert payload["summary"] == {
         "clients": 2,
-        "orders": 3,
-        "total_cents": 3500,
+        "orders": 4,
+        "total_cents": 1200,
+        "selected_carts": 1,
+        "selected_cents": 700,
+        "selected_pricing_unavailable": 0,
+        "reported_orders": 1,
+        "reported_cents": 1200,
+        "confirmed_orders": 1,
+        "confirmed_cents": 800,
         "financial_statuses": {
-            "awaiting_payment": 1,
+            "awaiting_payment": 2,
             "confirmed": 1,
             "reported": 1,
         },
@@ -2922,9 +2987,9 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         "removed": True,
     }
     assert payload["page"]["next_cursor"]
-    # O template global acrescenta uma consulta constante; o limite continua
-    # independente da quantidade de clientes, pedidos, itens e comunicações.
-    assert statement_count <= 8
+    # Template e regras de preço acrescentam consultas constantes; o limite
+    # continua independente da quantidade de clientes, pedidos, itens e comunicações.
+    assert statement_count <= 9
 
     second_page = client.get(
         "/admin/payment-communications",
@@ -2933,7 +2998,16 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
     assert second_page.status_code == 200
     second_payload = second_page.json()
     assert second_payload["groups"][0]["client"]["name"] == "Ana Pagamentos"
-    assert len(second_payload["groups"][0]["orders"]) == 2
+    assert len(second_payload["groups"][0]["orders"]) == 3
+    assert second_payload["groups"][0]["totals"] == {
+        "orders": 3,
+        "total_cents": 1200,
+        "reported_orders": 1,
+        "reported_cents": 1200,
+        "confirmed_orders": 1,
+        "confirmed_cents": 800,
+    }
+    assert second_payload["selections_without_order"][0]["total_cents"] == 700
     assert second_payload["communications"][0]["id"] == str(communication_id)
     assert second_payload["communications"][0]["photographer_notification"]["last_error"] == "Falha temporária de entrega."
     assert "Falha temporária sanitizada" not in second_page.text
@@ -3401,6 +3475,10 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     assert private_member["selected_count"] == 2
     assert private_selection["selection_count"] == 2
     assert public_card["purchased_count"] == private_member["purchased_count"] == 0
+    selected_summary = client.get("/admin/payment-communications").json()["summary"]
+    assert selected_summary["selected_cents"] == 1_000
+    assert selected_summary["reported_cents"] == 0
+    assert selected_summary["confirmed_cents"] == 0
 
     client.cookies.clear()
     authenticate_client(client, owner_phone)
@@ -3418,10 +3496,18 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     client.cookies.clear()
     authenticate_admin(client)
     communication_id = UUID(reported.json()["id"])
+    reported_summary = client.get("/admin/payment-communications").json()["summary"]
+    assert reported_summary["selected_cents"] == 0
+    assert reported_summary["reported_cents"] == 1_000
+    assert reported_summary["confirmed_cents"] == 0
     assert client.post(
         f"/admin/payment-communications/{communication_id}/decision",
         json={"decision": "confirmed"},
     ).status_code == 200
+    confirmed_summary = client.get("/admin/payment-communications").json()["summary"]
+    assert confirmed_summary["selected_cents"] == 0
+    assert confirmed_summary["reported_cents"] == 0
+    assert confirmed_summary["confirmed_cents"] == 1_000
     public_confirmed = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()[
         "clients"
     ][0]
@@ -3435,6 +3521,10 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
         json={"idempotency_key": "counter-correction-0001"},
     )
     assert corrected.status_code == 200
+    corrected_summary = client.get("/admin/payment-communications").json()["summary"]
+    assert corrected_summary["selected_cents"] == 0
+    assert corrected_summary["reported_cents"] == 1_000
+    assert corrected_summary["confirmed_cents"] == 0
     public_corrected = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()[
         "clients"
     ][0]
@@ -3605,6 +3695,10 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
         f"/admin/payment-communications/{first_communication_id}/decision",
         json={"decision": "confirmed"},
     ).status_code == 200
+    mixed_summary = client.get("/admin/payment-communications").json()["summary"]
+    assert mixed_summary["selected_cents"] == 0
+    assert mixed_summary["reported_cents"] == 700
+    assert mixed_summary["confirmed_cents"] == 1_000
     assert process_next_payment_notification() is True
     with SessionLocal() as db:
         first_order_row = db.get(SaleOrder, UUID(first_order.json()["id"]))
@@ -3634,6 +3728,10 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
         json={"idempotency_key": "two-gallery-correction-a"},
     )
     assert corrected.status_code == 200
+    corrected_summary = client.get("/admin/payment-communications").json()["summary"]
+    assert corrected_summary["selected_cents"] == 0
+    assert corrected_summary["reported_cents"] == 1_000
+    assert corrected_summary["confirmed_cents"] == 700
     with SessionLocal() as db:
         assert db.get(SaleOrder, UUID(first_order.json()["id"])).payment_status == "pending"
         assert db.get(SaleOrder, UUID(second_order.json()["id"])).payment_status == "confirmed"

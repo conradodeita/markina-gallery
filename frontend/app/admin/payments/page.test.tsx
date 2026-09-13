@@ -22,7 +22,20 @@ const communication = {
 
 function dashboard(name = "Ana", nextCursor: string | null = null) {
   return {
-    summary: { clients: 1, orders: 1, total_cents: 1200, financial_statuses: { reported: 1 }, failed_messages: 1 },
+    summary: {
+      clients: 1,
+      orders: 2,
+      total_cents: 1200,
+      selected_carts: 1,
+      selected_cents: 700,
+      selected_pricing_unavailable: 0,
+      reported_orders: 1,
+      reported_cents: 1200,
+      confirmed_orders: 1,
+      confirmed_cents: 800,
+      financial_statuses: { reported: 1, confirmed: 1 },
+      failed_messages: 1,
+    },
     facets: {
       parent_galleries: [{ id: "gallery-public-1", name: "Formatura", count: 1 }],
       financial_statuses: { reported: 1 },
@@ -30,7 +43,7 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
     },
     groups: [{
       client: { id: `client-${name}`, name },
-      totals: { orders: 1, total_cents: 1200 },
+      totals: { orders: 2, total_cents: 1200, reported_orders: 1, reported_cents: 1200, confirmed_orders: 1, confirmed_cents: 800 },
       orders: [{
         id: `${name.toLowerCase()}-order-12345678`,
         parent_gallery: { id: "gallery-public-1", name: "Formatura", removed: false },
@@ -51,7 +64,7 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
 }
 
 const emptyDashboard = {
-  summary: { clients: 0, orders: 0, total_cents: 0, financial_statuses: {}, failed_messages: 0 },
+  summary: { clients: 0, orders: 0, total_cents: 0, selected_carts: 0, selected_cents: 0, selected_pricing_unavailable: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0, confirmed_cents: 0, financial_statuses: {}, failed_messages: 0 },
   facets: { parent_galleries: [], financial_statuses: {}, delivery_statuses: {} },
   groups: [],
   page: { next_cursor: null, limit: 12 },
@@ -67,6 +80,14 @@ describe("controle operacional de pagamentos", () => {
     render(<AdminPaymentsPage />);
 
     expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+    expect(screen.getByText("Valor das fotos selecionadas")).toBeTruthy();
+    expect(screen.getByText("Valor dos pedidos")).toBeTruthy();
+    expect(screen.getByText("Receita confirmada")).toBeTruthy();
+    expect(screen.getByText("1 carrinho(s) sem pagamento comunicado")).toBeTruthy();
+    expect(screen.getByText("1 pagamento(s) comunicado(s)")).toBeTruthy();
+    expect(screen.getByText("1 depósito(s) confirmado(s)")).toBeTruthy();
+    expect(screen.getByText(/7,00/)).toBeTruthy();
+    expect(screen.getAllByText(/8,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/12,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pagamento comunicado").length).toBeGreaterThan(0);
     expect(screen.getByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeTruthy();

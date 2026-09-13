@@ -78,3 +78,27 @@ O sistema SHALL projetar nos cards da Galeria pública e privada o estado comerc
 - **WHEN** uma confirmação é corrigida
 - **THEN** os cards deixam de contar as fotos como compradas e voltam a mostrar `Pagamento comunicado`
 
+### Requirement: Valores mutuamente exclusivos do funil financeiro
+
+O sistema SHALL calcular no backend e apresentar separadamente `Valor das fotos selecionadas`, `Valor dos pedidos` e `Receita confirmada`. O primeiro SHALL representar a cotação vigente das seleções ainda no carrinho e sem comunicação de pagamento; o segundo SHALL somar somente pedidos com pagamento comunicado aguardando decisão administrativa; o terceiro SHALL somar somente pedidos cujo depósito foi confirmado pelo administrador. Um mesmo valor SHALL NOT participar simultaneamente de mais de um estágio.
+
+#### Scenario: Cliente apenas seleciona ou abre o PIX
+
+- **WHEN** existem fotos no carrinho e a cliente ainda não comunicou o pagamento, mesmo que tenha aberto o checkout ou o QR Code
+- **THEN** a cotação aparece somente em `Valor das fotos selecionadas` e não aumenta `Valor dos pedidos` nem `Receita confirmada`
+
+#### Scenario: Cliente comunica o pagamento
+
+- **WHEN** a cliente comunica o pagamento e o pedido é congelado para revisão
+- **THEN** o valor deixa o estágio de fotos selecionadas, passa a `Valor dos pedidos` e não aumenta `Receita confirmada`
+
+#### Scenario: Administrador confirma o depósito
+
+- **WHEN** o administrador confirma o pagamento comunicado
+- **THEN** o valor deixa `Valor dos pedidos` e passa a `Receita confirmada`
+
+#### Scenario: Administrador não localiza ou corrige o pagamento
+
+- **WHEN** o pagamento é marcado como não localizado ou uma confirmação é corrigida
+- **THEN** o valor acompanha o estado corrente sem permanecer contado como receita; uma correção para revisão volta a compor `Valor dos pedidos`
+

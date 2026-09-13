@@ -11,6 +11,7 @@ O fluxo administrativo atual mistura acervo público e privado, apresenta contad
 - Manter a confirmação de pagamento disponível somente para pedido cujo pagamento foi comunicado pela cliente; a confirmação financeira será persistida independentemente da entrega WhatsApp.
 - Permitir correção administrativa auditável de uma confirmação equivocada, retornando o pedido a `Pagamento comunicado — aguardando revisão`, ajustando compras e estatísticas e sem enfileirar mensagem para a cliente.
 - Centralizar Vendas e Pagamentos em uma única área por cliente, pedido e Galeria pública, mantendo pedidos de galerias diferentes separados e reunindo seleção sem pedido, aguardando pagamento, pagamento comunicado, confirmado e falha de mensagem.
+- Separar os valores do funil financeiro sem dupla contagem: `Valor das fotos selecionadas` representa o carrinho ainda não comunicado, `Valor dos pedidos` representa pagamentos comunicados aguardando decisão e `Receita confirmada` representa somente depósitos confirmados pelo administrador.
 - Expor nos cards da Galeria pública e privada os estados comerciais reais, a comunicação do pagamento e a ação contextual de confirmação; mostrar prévia do template global de confirmação e atalho de edição com aviso de efeito global.
 - Quando o prazo expirar, congelar novas seleções e checkout, preservar histórico e permitir à cliente solicitar reabertura; o pedido aparece no painel e nos cards, notifica o fotógrafo por WhatsApp e permite definir nova data para toda a galeria privada.
 
