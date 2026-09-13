@@ -54,6 +54,12 @@ Alternativa descartada: executar SQL manual por SSH ou remover o backup do modo 
 
 A change será integrada por PR e publicada pelo Environment protegido. O deploy saudável ocorre primeiro; a manutenção roda depois usando o trailer autorizado. O estado final será conferido pelo log agregado, pelos healthchecks externos e pela Visão geral administrativa após autenticação humana.
 
+Como a retomada da API pode recriar o container e alterar seu endereço na rede
+Compose, a manutenção recarregará também o Nginx exclusivo da Markina depois de
+religar os serviços. Além da saúde individual dos containers, a rotina exigirá
+resposta bem-sucedida de `127.0.0.1:8080/api/health`; isso impede declarar sucesso
+quando o proxy ainda mantém um upstream obsoleto.
+
 ## Risks / Trade-offs
 
 - [Varredura física atrasar a Visão geral] → cache curto, uma única projeção e falha isolada sem bloquear o painel.

@@ -86,7 +86,8 @@ compose run --rm --no-deps -e APP_ENV=homolog api python -m app.homolog_cleanup 
 compose exec -T redis redis-cli FLUSHDB >/dev/null
 restore_services
 trap - EXIT
-services_to_check=(web "${paused_services[@]}")
+compose restart nginx >/dev/null
+services_to_check=(nginx web "${paused_services[@]}")
 for service in "${services_to_check[@]}"; do
   container="$(compose ps -q "$service")"
   [[ -n "$container" ]] || fail "serviço Markina ausente após limpeza: $service"
@@ -98,6 +99,9 @@ for service in "${services_to_check[@]}"; do
   done
   [[ "$status" == "healthy" ]] || fail "serviço Markina não ficou saudável: $service ($status)"
 done
+curl --fail --silent --show-error --max-time 15 \
+  http://127.0.0.1:8080/api/health >/dev/null || \
+  fail "rota HTTP da Markina não ficou saudável após a manutenção"
 post_inventory="$(compose run --rm --no-deps -e APP_ENV=homolog api \
   python -m app.homolog_cleanup --mode inventory)"
 printf 'inventário posterior: %s\n' "$post_inventory"
