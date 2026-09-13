@@ -29,5 +29,5 @@
 
 ## 5. Publicação autorizada
 
-- [ ] 5.1 Registrar inventário e publicar commit/PR focados; acompanhar os gates obrigatórios existentes, sem desativar proteções nem incluir outros trabalhos.
-- [ ] 5.2 Após confirmação do inventário, integrar em develop e publicar pelo pipeline de homologação; verificar SHA, migration 0054, serviços/healthchecks e configuração desligada sem iniciar worker ou agendar fotos reais.
+- [x] 5.1 Registrar inventário e publicar commit/PR focados; acompanhar os gates obrigatórios existentes, sem desativar proteções nem incluir outros trabalhos. Evidência: commit `7075b287`, PR #81; backend, frontend/build, OpenSpec e gitleaks aprovados nos runs do PR e pós-merge.
+- [x] 5.2 Após confirmação do inventário, integrar em develop e publicar pelo pipeline de homologação; verificar SHA, migration 0054, serviços/healthchecks e configuração desligada sem iniciar worker ou agendar fotos reais. Evidência: merge `d2b52ca2`, run `34773809694` e deployment `6424802756` verdes; head `20260913_0054`, `enabled=false`, geração 1, intensidade 50, zero jobs, worker opcional ausente, saúde interna/externa 200 e terceiros preservados.
