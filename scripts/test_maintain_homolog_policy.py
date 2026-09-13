@@ -28,6 +28,12 @@ def main() -> None:
     require("pg_dump -Fc", "backup lógico", SCRIPT)
     require("paused_services=(api worker)", "pausa restrita", SCRIPT)
     require('compose stop "${paused_services[@]}"', "pausa somente serviços selecionados", SCRIPT)
+    require("compose restart nginx", "recarga do proxy após recriar API", SCRIPT)
+    require(
+        "http://127.0.0.1:8080/api/health",
+        "healthcheck HTTP após manutenção",
+        SCRIPT,
+    )
     require("redis-cli FLUSHDB", "fila exclusiva limpa", SCRIPT)
     require('before["preserved"] != after["preserved"]', "preservação verificada", SCRIPT)
     require("environment: homolog", "Environment protegido", WORKFLOW)

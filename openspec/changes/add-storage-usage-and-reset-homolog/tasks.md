@@ -15,6 +15,7 @@
 - [x] 3.1 Estender `maintain-homolog-data.sh` com inventário imediatamente anterior e modo `--without-backup` condicionado ao token `DELETE_HOMOLOG_GALLERIES_AND_CLIENTS_WITHOUT_BACKUP`, preservando o modo padrão com dump; verificar a política estrutural e sintaxe shell.
 - [x] 3.2 Estender o pipeline protegido com trailer exato distinto para a limpeza sem backup e passagem conjunta de modo, flag e confirmação; verificar que commits comuns continuam somente no inventário e que o trailer legado mantém backup.
 - [x] 3.3 Validar a limpeza em PostgreSQL descartável com dados representativos, comprovando zero galerias, pastas, clientes, fotos e dependências, preservação de admin/sessão/fatores/preferências e ausência de acesso fora das raízes Markina.
+- [x] 3.4 Recarregar o Nginx exclusivo da Markina após a recriação da API e exigir healthcheck HTTP por `127.0.0.1:8080/api/health`, impedindo falso sucesso com containers saudáveis e upstream obsoleto.
 
 ## 4. Validação e operação autorizada
 
