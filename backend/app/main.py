@@ -222,6 +222,7 @@ from app.gallery_lifecycle import (
     retry_failed_operation,
     transition_operation,
 )
+from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
 from app.gallery_visuals import (
     TITLE_FONT_OPTIONS,
     normalize_title_font,
@@ -9157,14 +9158,6 @@ def list_payment_communications(
         .join(DerivedGallery, DerivedGallery.id == PhotoSelection.derived_gallery_id)
         .join(Client, Client.id == PhotoSelection.client_id)
         .outerjoin(ParentGallery, ParentGallery.id == DerivedGallery.parent_gallery_id)
-        .where(
-            ~select(SaleOrder.id)
-            .where(
-                SaleOrder.derived_gallery_id == PhotoSelection.derived_gallery_id,
-                SaleOrder.client_id == PhotoSelection.client_id,
-            )
-            .exists()
-        )
         .order_by(PhotoSelection.created_at.desc())
     )
     if normalized_query:
@@ -9179,10 +9172,15 @@ def list_payment_communications(
         selection_query = selection_query.where(PhotoSelection.created_at >= created_from)
     if created_to:
         selection_query = selection_query.where(PhotoSelection.created_at <= created_to)
-    selection_rows = list(db.execute(selection_query))
+    include_open_selections = (
+        financial_status in (None, "awaiting_payment") and delivery_status is None
+    )
+    selection_rows = list(db.execute(selection_query)) if include_open_selections else []
     selection_groups: dict[tuple[UUID, UUID], dict[str, object]] = {}
+    selection_parents: dict[tuple[UUID, UUID], ParentGallery | None] = {}
     for selection, photo, folder, gallery, client, parent in selection_rows:
         key = (gallery.id, client.id)
+        selection_parents[key] = parent
         group = selection_groups.setdefault(
             key,
             {
@@ -9202,6 +9200,40 @@ def list_payment_communications(
             str(folder.id), {"id": str(folder.id), "name": folder.name, "items": []}
         )
         folder_group["items"].append({"id": str(photo.id), "name": photo.display_name or photo.filename})
+    selection_parent_ids = {
+        parent.id for parent in selection_parents.values() if parent is not None
+    }
+    pricing_rules = (
+        list(
+            db.scalars(
+                select(PriceRule)
+                .where(PriceRule.parent_gallery_id.in_(selection_parent_ids))
+                .order_by(PriceRule.parent_gallery_id, PriceRule.minimum_quantity)
+            )
+        )
+        if selection_parent_ids
+        else []
+    )
+    pricing_rules_by_parent: dict[UUID, list[PriceRule]] = defaultdict(list)
+    for rule in pricing_rules:
+        pricing_rules_by_parent[rule.parent_gallery_id].append(rule)
+    for key, group in selection_groups.items():
+        parent = selection_parents[key]
+        try:
+            if parent is None:
+                raise GalleryPricingError("Galeria pública não disponível.")
+            quote = quote_parent_gallery(
+                db,
+                gallery=parent,
+                quantity=group["selected_count"],
+                rules=pricing_rules_by_parent[parent.id],
+            )
+        except GalleryPricingError:
+            group["total_cents"] = None
+            group["pricing_available"] = False
+        else:
+            group["total_cents"] = quote.quote.total_cents
+            group["pricing_available"] = True
     configured_templates = {
         template.kind: template.body
         for template in db.scalars(select(PaymentMessageTemplate))
@@ -9304,14 +9336,29 @@ def list_payment_communications(
             client_id,
             {
                 "client": {"id": str(client_id), "name": client_name},
-                "totals": {"orders": 0, "total_cents": 0},
+                "totals": {
+                    "orders": 0,
+                    "total_cents": 0,
+                    "reported_orders": 0,
+                    "reported_cents": 0,
+                    "confirmed_orders": 0,
+                    "confirmed_cents": 0,
+                },
                 "orders": [],
                 "_sort_created_at": sort_created_at,
             },
         )
         group["orders"].append(order_payload)
         group["totals"]["orders"] += 1
-        group["totals"]["total_cents"] += order_payload["total_cents"]
+        if order_payload["financial_status"] == "reported":
+            group["totals"]["reported_orders"] += 1
+            group["totals"]["reported_cents"] += order_payload["total_cents"]
+        elif order_payload["financial_status"] == "confirmed":
+            group["totals"]["confirmed_orders"] += 1
+            group["totals"]["confirmed_cents"] += order_payload["total_cents"]
+        # Compatibilidade temporária: `total_cents` passa a representar somente
+        # pedidos cujo pagamento foi comunicado e ainda aguarda conferência.
+        group["totals"]["total_cents"] = group["totals"]["reported_cents"]
         group["_sort_created_at"] = max(group["_sort_created_at"], sort_created_at)
 
     all_groups = sorted(
@@ -9345,14 +9392,32 @@ def list_payment_communications(
     financial_counts: dict[str, int] = defaultdict(int)
     delivery_counts: dict[str, int] = defaultdict(int)
     parent_counts: dict[tuple[str, str], int] = defaultdict(int)
-    total_cents = 0
+    reported_orders = 0
+    reported_cents = 0
+    confirmed_orders = 0
+    confirmed_cents = 0
     for order_payload in prepared_orders:
         financial_counts[order_payload["financial_status"]] += 1
-        total_cents += order_payload["total_cents"]
+        if order_payload["financial_status"] == "reported":
+            reported_orders += 1
+            reported_cents += order_payload["total_cents"]
+        elif order_payload["financial_status"] == "confirmed":
+            confirmed_orders += 1
+            confirmed_cents += order_payload["total_cents"]
         for state in order_payload["delivery_statuses"]:
             delivery_counts[state] += 1
         parent_gallery = order_payload["parent_gallery"]
         parent_counts[(parent_gallery["id"], parent_gallery["name"])] += 1
+
+    selected_carts = len(selection_groups)
+    selected_cents = sum(
+        item["total_cents"]
+        for item in selection_groups.values()
+        if item["total_cents"] is not None
+    )
+    selected_pricing_unavailable = sum(
+        1 for item in selection_groups.values() if item["total_cents"] is None
+    )
 
     page_communication_ids = {
         communication["id"]
@@ -9371,9 +9436,18 @@ def list_payment_communications(
             for item in selection_groups.values()
         ],
         "summary": {
-            "clients": len(grouped),
+            "clients": len(
+                set(grouped) | {client_id for _gallery_id, client_id in selection_groups}
+            ),
             "orders": len(prepared_orders),
-            "total_cents": total_cents,
+            "total_cents": reported_cents,
+            "selected_carts": selected_carts,
+            "selected_cents": selected_cents,
+            "selected_pricing_unavailable": selected_pricing_unavailable,
+            "reported_orders": reported_orders,
+            "reported_cents": reported_cents,
+            "confirmed_orders": confirmed_orders,
+            "confirmed_cents": confirmed_cents,
             "financial_statuses": dict(financial_counts),
             "failed_messages": delivery_counts.get("failed", 0),
         },

@@ -721,7 +721,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
   .notification-card > footer .mk-button { width:100%; }
 }
 
-.payment-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin:28px 0; }
+.payment-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin:28px 0; }
 .payment-summary .mk-card { margin:0; }
 .payment-filters { margin-block:20px 28px; padding:0; overflow:hidden; }
 .payment-filters > summary { padding:20px 24px; cursor:pointer; font-weight:850; }

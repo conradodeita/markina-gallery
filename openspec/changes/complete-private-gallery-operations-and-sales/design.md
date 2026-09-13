@@ -68,9 +68,13 @@ O backend terá uma consulta/projeção compartilhada por `parent_gallery_id`, `
 - compradas: fotos distintas em pedidos confirmados daquela cliente e galeria;
 - estado: seleção sem pedido, aguardando pagamento, comunicado, confirmado, não localizado, expirado ou reabertura solicitada.
 
+Na área financeira, os valores serão projetados em três conjuntos mutuamente exclusivos. Seleções persistidas ainda não comunicadas formam o valor atual do carrinho pela cotação vigente, inclusive quando já existe rascunho de checkout editável. Pedidos congelados cuja comunicação está em `pending_review` formam `Valor dos pedidos`. Somente pedidos em `payment_status=confirmed`, após decisão administrativa, formam `Receita confirmada`. Pedido recusado/cancelado não entra em nenhum dos três valores correntes e permanece disponível em seu estado histórico próprio.
+
 Os endpoints da etapa Clientes, da ficha privada e da área financeira consumirão a mesma autoridade. Testes reproduzirão seleção real pelas rotas pública, privada e facial antes de consultar os dois cards. O frontend recarregará ao voltar ao foco e após mutações locais; não manterá contador derivado em armazenamento do browser.
 
 Alternativa descartada: corrigir cada `COUNT` isoladamente. Isso manteria divergência entre telas e não cobriria transições posteriores.
+
+Alternativa descartada: somar todo registro de `SaleOrder` como pedido financeiro. O checkout cria rascunho antes da comunicação e esse valor ainda é intenção editável, não receita nem pagamento comunicado.
 
 ### 4. `/admin/payments` torna-se a área canônica de Vendas e pagamentos
 

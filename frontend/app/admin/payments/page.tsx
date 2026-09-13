@@ -46,14 +46,34 @@ type Order = {
 };
 type ClientGroup = {
   client: { id: string; name: string };
-  totals: { orders: number; total_cents: number };
+  totals: {
+    orders: number;
+    total_cents: number;
+    reported_orders: number;
+    reported_cents: number;
+    confirmed_orders: number;
+    confirmed_cents: number;
+  };
   orders: Order[];
 };
 type Dashboard = {
   templates: Record<"confirmed" | "refused", string>;
   templates_are_global: boolean;
-  selections_without_order?: Array<{ client: { id: string; name: string }; gallery: { id: string; name: string }; parent_gallery: { id: string; name: string }; selected_count: number; created_at: string; folders: Array<{ id: string; name: string; items: Array<{ id: string; name: string }> }> }>;
-  summary: { clients: number; orders: number; total_cents: number; financial_statuses: Record<string, number>; failed_messages: number };
+  selections_without_order?: Array<{ client: { id: string; name: string }; gallery: { id: string; name: string }; parent_gallery: { id: string; name: string }; selected_count: number; total_cents: number | null; pricing_available: boolean; created_at: string; folders: Array<{ id: string; name: string; items: Array<{ id: string; name: string }> }> }>;
+  summary: {
+    clients: number;
+    orders: number;
+    total_cents: number;
+    selected_carts: number;
+    selected_cents: number;
+    selected_pricing_unavailable: number;
+    reported_orders: number;
+    reported_cents: number;
+    confirmed_orders: number;
+    confirmed_cents: number;
+    financial_statuses: Record<string, number>;
+    failed_messages: number;
+  };
   facets: {
     parent_galleries: Array<{ id: string; name: string; count: number }>;
     financial_statuses: Record<string, number>;
@@ -231,9 +251,10 @@ export default function AdminPaymentsPage() {
     <p className="intro">A comunicação da cliente não confirma o PIX. Revise cada pedido e registre uma única decisão; o histórico comercial permanece mesmo quando a galeria é removida.</p>
 
     <section aria-label="Resumo de pagamentos" className="payment-summary">
-      <MetricCard label="Clientes no resultado" value={dashboard.summary.clients} detail={`${dashboard.summary.orders} pedido(s)`} />
-      <MetricCard label="Valor dos pedidos" value={money(dashboard.summary.total_cents)} detail="Soma do filtro atual" />
-      <MetricCard label="Aguardando revisão" value={dashboard.summary.financial_statuses.reported ?? 0} detail="Pagamentos comunicados" tone="warning" />
+      <MetricCard label="Clientes no resultado" value={dashboard.summary.clients} detail="Com atividade no filtro atual" />
+      <MetricCard label="Valor das fotos selecionadas" value={money(dashboard.summary.selected_cents)} detail={`${dashboard.summary.selected_carts} carrinho(s) sem pagamento comunicado${dashboard.summary.selected_pricing_unavailable ? ` · ${dashboard.summary.selected_pricing_unavailable} sem preço disponível` : ""}`} />
+      <MetricCard label="Valor dos pedidos" value={money(dashboard.summary.reported_cents)} detail={`${dashboard.summary.reported_orders} pagamento(s) comunicado(s)`} tone="warning" />
+      <MetricCard label="Receita confirmada" value={money(dashboard.summary.confirmed_cents)} detail={`${dashboard.summary.confirmed_orders} depósito(s) confirmado(s)`} tone="success" />
       <MetricCard label="Falhas de mensagem" value={dashboard.summary.failed_messages} detail="Entregas que exigem atenção" tone={dashboard.summary.failed_messages ? "danger" : "success"} />
     </section>
 
@@ -241,7 +262,7 @@ export default function AdminPaymentsPage() {
 
     {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
 
-    {dashboard.selections_without_order?.length ? <section className="admin-card"><div className="section-heading"><div><h2>Seleções sem pedido</h2><p>Clientes que já escolheram fotos, mas ainda não avançaram para o pedido.</p></div><StatusBadge>{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral">Seleção em aberto</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><strong>{selection.selected_count} foto(s)</strong></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
+    {dashboard.selections_without_order?.length ? <section className="admin-card"><div className="section-heading"><div><h2>Seleções em aberto</h2><p>Fotos que continuam no carrinho e ainda não tiveram pagamento comunicado.</p></div><StatusBadge>{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral">No carrinho</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><div className="payment-client-total"><strong>{selection.total_cents === null ? "Preço indisponível" : money(selection.total_cents)}</strong><span>{selection.selected_count} foto(s)</span></div></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
 
     <details className="admin-card payment-filters" open={hasFilters || undefined}>
       <summary>Filtros {hasFilters ? "ativos" : ""}</summary>
@@ -262,7 +283,7 @@ export default function AdminPaymentsPage() {
 
     <div className="payment-client-groups">
       {dashboard.groups.map((group) => <section className="admin-card payment-client-card" key={group.client.id}>
-        <header><div><p className="eyebrow">Cliente</p><h2>{group.client.name}</h2></div><div className="payment-client-total"><strong>{money(group.totals.total_cents)}</strong><span>{group.totals.orders} pedido(s)</span></div></header>
+        <header><div><p className="eyebrow">Cliente</p><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
           {group.orders.map((order) => <OrderCard key={order.id} order={order} busyAction={busyAction} onDecide={decide} onCorrect={correct} onRetry={retry} />)}
         </div>
