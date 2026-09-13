@@ -11,7 +11,7 @@
 
 ## 3. Validação cirúrgica
 
-- [x] 3.1 Executar somente os testes direcionados do diálogo facial, lint e TypeScript aplicáveis, corrigindo regressões causadas pela change sem rodar a suíte completa. Evidência: 10 testes de `facial-search-panel.test.tsx`, ESLint dos dois arquivos do componente e `tsc --noEmit` aprovados; suíte completa não executada conforme orientação humana.
+- [x] 3.1 Executar somente os testes direcionados do diálogo facial, lint e TypeScript aplicáveis, corrigindo regressões causadas pela change sem rodar a suíte completa. Evidência: 20 testes direcionados de `facial-search-panel.test.tsx` e `public-gallery.test.tsx`, ESLint dos três arquivos afetados e `tsc --noEmit` aprovados; suíte completa local não executada conforme orientação humana.
 - [x] 3.2 Validar a change com OpenSpec estrito, executar `git diff --check` e revisar que não houve alteração de API, banco, retenção ou pipeline facial. Evidência: OpenSpec estrito e `git diff --check` aprovados; diff funcional restrito ao componente, seu teste e CSS, sem backend, migration ou configuração operacional.
 
 ## 4. Entrega em homologação
