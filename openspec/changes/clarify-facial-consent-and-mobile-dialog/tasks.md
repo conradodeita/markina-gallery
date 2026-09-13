@@ -6,8 +6,8 @@
 
 ## 2. Experiência mobile
 
-- [ ] 2.1 Ajustar os estilos compartilhados do diálogo facial para largura e altura dinâmicas, rolagem interna e ações alcançáveis em mobile; verificar estruturalmente os estilos e inspecionar viewport mobile.
-- [ ] 2.2 Confirmar que mensagens de erro, campos e ações permanecem legíveis sem corte ou sobreposição em viewport mobile reduzida.
+- [x] 2.1 Ajustar os estilos compartilhados do diálogo facial para largura e altura dinâmicas, rolagem interna e ações alcançáveis em mobile; verificar estruturalmente os estilos e inspecionar viewport mobile. Evidência: inspeção em viewport de 500 × 844 confirmou margens laterais de 8 px, diálogo rolável e ações no fluxo ao final; teste estrutural verifica `100dvh`, largura dinâmica e ações estáticas no breakpoint mobile.
+- [x] 2.2 Confirmar que mensagens de erro, campos e ações permanecem legíveis sem corte ou sobreposição em viewport mobile reduzida. Evidência: inspeção visual do topo e do final do diálogo confirmou campos, avisos e os dois botões alcançáveis por rolagem, sem barra de ações sobreposta ao conteúdo.
 
 ## 3. Validação cirúrgica
 
