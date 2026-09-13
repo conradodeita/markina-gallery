@@ -127,14 +127,14 @@ describe("Galeria pública da cliente", () => {
     render(<PublicGalleryPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
-    expect(screen.getByText(/Autorizo o uso temporário desta foto exclusivamente/)).toBeTruthy();
-    expect(screen.getByText(/foto de referência é eliminada automaticamente/)).toBeTruthy();
+    expect(screen.getByText(/Autorizo, de forma livre, informada e específica/)).toBeTruthy();
+    expect(screen.getByText(/Não há cadastro biométrico permanente/)).toBeTruthy();
     const file = new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Confirmo que sou pai, mãe ou responsável/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo o uso temporário/ }));
-    fireEvent.submit(screen.getByRole("button", { name: "Concordar e procurar" }).closest("form")!);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Declaro que sou pai, mãe ou responsável legal/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo, de forma livre, informada e específica/ }));
+    fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/public-1/facial-searches",
@@ -226,10 +226,10 @@ describe("Galeria pública da cliente", () => {
     render(<PublicGalleryPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
-    const dialog = screen.getByRole("dialog", { name: "Encontre suas fotos" });
+    const dialog = screen.getByRole("dialog", { name: "Busca facial nesta galeria" });
     expect(document.activeElement).toBe(dialog);
     expect(dialog.getAttribute("aria-describedby")).toContain("facial-consent-purpose");
     fireEvent.keyDown(dialog, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Encontre suas fotos" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Busca facial nesta galeria" })).toBeNull();
   });
 });

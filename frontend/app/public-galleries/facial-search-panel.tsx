@@ -185,6 +185,8 @@ export function FacialSearchPanel({
   const progressTotal = result?.status === "waiting_index" ? result.progress.index.total : result?.progress.comparison.total ?? 0;
   const progressDone = result?.status === "waiting_index" ? result.progress.index.ready : result?.progress.comparison.done ?? 0;
   const progressValue = progressTotal ? Math.round(progressDone / progressTotal * 100) : 0;
+  const referenceRetentionMinutes = Math.ceil((availability.reference_retention_seconds ?? 900) / 60);
+  const candidateRetentionHours = Math.ceil((availability.candidate_retention_seconds ?? 86400) / 3600);
   return (
     <section className="facial-search-panel" aria-labelledby="facial-search-title">
       <div><p className="eyebrow">Encontre mais rápido</p><h2 id="facial-search-title">Procurar por reconhecimento facial</h2><p>Use uma foto nítida como filtro desta galeria. O resultado mostra possibilidades; você decide o que selecionar.</p></div>
@@ -214,20 +216,25 @@ export function FacialSearchPanel({
             onKeyDown={(event) => { if (event.key === "Escape") closeDialog(); }}
           >
             <header className="facial-consent-header">
-              <p className="eyebrow">Busca protegida</p>
-              <h2 id="facial-consent-title">Encontre suas fotos</h2>
-              <p id="facial-consent-purpose">Escolha uma foto nítida, com somente uma pessoa. Ela será usada apenas para procurar possibilidades nesta galeria.</p>
+              <p className="eyebrow">Consentimento específico</p>
+              <h2 id="facial-consent-title">Busca facial nesta galeria</h2>
+              <p id="facial-consent-purpose">Antes de enviar, entenda como a foto será usada para procurar possíveis correspondências.</p>
             </header>
             <div className="facial-consent-privacy" id="facial-consent-limits">
-              <strong>Uso temporário e privado</strong>
-              <p>A foto e a representação temporária serão eliminadas ao concluir ou em até {Math.ceil((availability.reference_retention_seconds ?? 900) / 60)} minutos. Os resultados expiram em até {Math.ceil((availability.candidate_retention_seconds ?? 86400) / 3600)} horas.</p>
-              <small>O sistema não confirma identidade, não seleciona e não compra fotos automaticamente.</small>
+              <strong>Uso temporário e restrito</strong>
+              <p>A foto escolhida e a representação biométrica facial extraída dela serão usadas somente para procurar possíveis correspondências nesta galeria.</p>
+              <p>Não há cadastro biométrico permanente. Esses dados serão eliminados após o processamento ou, no máximo, em {referenceRetentionMinutes} minutos.</p>
+              <small>Os resultados expiram em até {candidateRetentionHours} horas. São apenas sugestões, não confirmam identidade e podem conter correspondências incorretas.</small>
             </div>
             <form onSubmit={submit}>
               <section className="facial-consent-step" aria-labelledby="facial-reference-source-title">
                 <div className="facial-consent-step-heading">
                   <span aria-hidden="true">1</span>
-                  <div><h3 id="facial-reference-source-title">Escolha a foto</h3><p>Use uma JPEG de até 30 MB, frontal, bem iluminada e com o rosto inteiro.</p></div>
+                  <div>
+                    <h3 id="facial-reference-source-title">Escolha a foto</h3>
+                    <p>Prefira uma JPEG de até 30 MB semelhante a foto de documento: frontal, nítida, bem iluminada, com o rosto inteiro e somente uma pessoa.</p>
+                    <small>Use apenas uma foto do rosto. Não fotografe nem envie documento de identidade.</small>
+                  </div>
                 </div>
                 <input
                   ref={libraryInput}
@@ -258,10 +265,10 @@ export function FacialSearchPanel({
                 <label className="gallery-toggle"><input type="radio" name="facial-subject" value="adult" checked={subjectDeclaration === "adult"} onChange={() => { setSubjectDeclaration("adult"); setGuardianConfirmed(false); }} required /> Pessoa adulta</label>
                 <label className="gallery-toggle"><input type="radio" name="facial-subject" value="minor" checked={subjectDeclaration === "minor"} disabled={!availability.minor_search_available} onChange={() => setSubjectDeclaration("minor")} required /> Criança ou adolescente</label>
               </fieldset>
-              {subjectDeclaration === "minor" ? <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={guardianConfirmed} onChange={(event) => setGuardianConfirmed(event.target.checked)} required /> Confirmo que sou pai, mãe ou responsável e autorizo esta busca nesta galeria.</label> : null}
-              <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> Autorizo o uso temporário desta foto exclusivamente para procurar possíveis correspondências nesta galeria e declaro ter autorização para enviá-la. Li o aviso {availability.legal_notice_version}.</label>
-              <p className="field-hint">Depois do processamento, a foto de referência é eliminada automaticamente. Você também poderá usar “Excluir busca” para remover os resultados temporários.{!availability.minor_search_available ? " A busca de criança ainda não está disponível neste ambiente." : ""}</p>
-              <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!selectedFile || !consented || !subjectDeclaration || (subjectDeclaration === "minor" && !guardianConfirmed) || busy}>{busy ? "Enviando…" : "Concordar e procurar"}</MarkinaButton></div>
+              {subjectDeclaration === "minor" ? <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={guardianConfirmed} onChange={(event) => setGuardianConfirmed(event.target.checked)} required /> Declaro que sou pai, mãe ou responsável legal pela criança ou adolescente que aparece na foto e possuo autorização para enviá-la.</label> : null}
+              <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> Autorizo, de forma livre, informada e específica, o tratamento temporário desta foto e dos dados biométricos extraídos exclusivamente para procurar possíveis correspondências nesta galeria. Li e compreendi as informações acima.</label>
+              <p className="field-hint">A busca é opcional. Você pode cancelar ou continuar procurando e selecionando as fotos manualmente.{availability.legal_notice_version ? ` Aviso ${availability.legal_notice_version}.` : ""}{!availability.minor_search_available ? " A busca de criança ainda não está disponível neste ambiente." : ""}</p>
+              <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!selectedFile || !consented || !subjectDeclaration || (subjectDeclaration === "minor" && !guardianConfirmed) || busy}>{busy ? "Enviando…" : "Autorizar e procurar fotos"}</MarkinaButton></div>
             </form>
           </section>
         </div>
