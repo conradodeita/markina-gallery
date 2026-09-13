@@ -7,7 +7,9 @@ import smtplib
 import ssl
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from email.message import EmailMessage
+from email.utils import format_datetime, parseaddr
 from hashlib import sha256
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
@@ -84,11 +86,15 @@ class SmtpEmailProvider(EmailProvider):
         text_body: str,
         idempotency_key: str,
     ) -> EmailDeliveryResult:
+        message_id_domain = _sender_domain(self.from_address)
         message = EmailMessage()
         message["From"] = self.from_address
         message["To"] = recipient
         message["Subject"] = subject
-        message["Message-ID"] = f"<{sha256(idempotency_key.encode()).hexdigest()}@markina.local>"
+        message["Date"] = format_datetime(datetime.now(UTC))
+        message["Message-ID"] = (
+            f"<{sha256(idempotency_key.encode()).hexdigest()}@{message_id_domain}>"
+        )
         message.set_content(text_body)
         context = ssl.create_default_context()
         accepted = False
@@ -98,7 +104,11 @@ class SmtpEmailProvider(EmailProvider):
                     self.host, self.port, timeout=self.timeout_seconds, context=context
                 ) as client:
                     client.login(self.username, self.password)
-                    client.send_message(message)
+                    refused = client.send_message(message)
+                    if refused:
+                        raise EmailDeliveryError(
+                            "Servidor de e-mail recusou o destinatário.", transient=False
+                        )
                     accepted = True
             else:
                 with smtplib.SMTP(self.host, self.port, timeout=self.timeout_seconds) as client:
@@ -106,8 +116,16 @@ class SmtpEmailProvider(EmailProvider):
                     client.starttls(context=context)
                     client.ehlo()
                     client.login(self.username, self.password)
-                    client.send_message(message)
+                    refused = client.send_message(message)
+                    if refused:
+                        raise EmailDeliveryError(
+                            "Servidor de e-mail recusou o destinatário.", transient=False
+                        )
                     accepted = True
+        except smtplib.SMTPRecipientsRefused:
+            raise EmailDeliveryError(
+                "Servidor de e-mail recusou o destinatário.", transient=False
+            ) from None
         except smtplib.SMTPResponseException as exc:
             transient = 400 <= exc.smtp_code < 500
             raise EmailDeliveryError(
@@ -126,6 +144,18 @@ class SmtpEmailProvider(EmailProvider):
         return EmailDeliveryResult(
             external_message_id=message["Message-ID"].strip("<>"), provider_status="accepted"
         )
+
+
+def _sender_domain(from_address: str) -> str:
+    address = parseaddr(from_address)[1]
+    _, separator, domain = address.rpartition("@")
+    normalized = domain.rstrip(".").lower()
+    if not separator or not normalized or "." not in normalized or normalized.endswith(".local"):
+        raise EmailConfigurationError("Remetente SMTP inválido para entrega externa.")
+    try:
+        return normalized.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise EmailConfigurationError("Remetente SMTP inválido para entrega externa.") from exc
 
 
 def email_provider_name() -> str:
@@ -149,6 +179,7 @@ def email_provider_from_environment() -> EmailProvider:
     }
     if not all(values.values()):
         raise EmailConfigurationError("A configuração SMTP está incompleta para este ambiente.")
+    _sender_domain(values["from_address"])
     try:
         port = int(os.getenv("SMTP_PORT", "587"))
         timeout = float(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
