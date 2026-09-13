@@ -287,6 +287,7 @@ from app.public_gallery_access import (
     require_public_gallery_browsing,
     safe_internal_return,
 )
+from app.storage_metrics import measure_photo_storage
 from app.whatsapp_channel import (
     channel_payload,
     channel_settings,
@@ -2223,9 +2224,15 @@ def admin_validation_summary(
     for job in jobs:
         job_states[job.status] += 1
     galleries = list(db.scalars(select(DerivedGallery).order_by(DerivedGallery.created_at.desc())))
+    storage = measure_photo_storage()
     return {
         "environment": getenv("APP_ENV", "development"),
         "version": getenv("APP_VERSION", "local"),
+        "storage": {
+            "photo_count": int(db.scalar(select(func.count()).select_from(PhotoAsset)) or 0),
+            "bytes": storage.bytes,
+            "available": storage.available,
+        },
         "counts": {
             "clients": len(list(db.scalars(select(Client.id)))),
             "parent_galleries": len(

@@ -944,16 +944,69 @@ def test_admin_client_deletion_reports_concurrent_dependency(
     assert "nova dependência" in denied.json()["detail"]
 
 
-def test_admin_validation_summary_is_authorized_and_has_no_client_phone(client: TestClient):
+def test_admin_validation_summary_is_authorized_and_has_aggregate_storage(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    source = tmp_path / "source"
+    derivatives = tmp_path / "derivatives"
+    history = tmp_path / "history"
+    for root in (source, derivatives, history):
+        root.mkdir()
+    (source / "original.jpg").write_bytes(b"o" * 7)
+    (derivatives / "preview.jpg").write_bytes(b"p" * 13)
+    (history / "confirmed.jpg").write_bytes(b"h" * 19)
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives))
+    monkeypatch.setenv("MEDIA_HISTORY_ROOT", str(history))
+    from app.storage_metrics import clear_storage_usage_cache
+
+    clear_storage_usage_cache()
     with SessionLocal() as db:
         db.add(Client(full_name="Cliente do resumo", phone_e164="+5511999999999"))
         db.commit()
     assert client.get("/admin/validation-summary").status_code == 403
     authenticate_admin(client)
+    parent_id = UUID(
+        client.post("/admin/parent-galleries", json={"name": "Galeria resumo"}).json()["id"]
+    )
+    create_folder_photo(client, parent_id)
+    create_folder_photo(
+        client,
+        parent_id,
+        folder_name="Rodada 2",
+        filename="IMG_0002.jpg",
+        storage_key="events/one/img-0002.jpg",
+    )
     response = client.get("/admin/validation-summary")
     assert response.status_code == 200
     assert response.json()["counts"]["clients"] == 1
+    assert response.json()["storage"] == {
+        "photo_count": 2,
+        "bytes": 39,
+        "available": True,
+    }
     assert "phone" not in response.text
+    assert str(tmp_path) not in response.text
+
+
+def test_admin_validation_summary_keeps_other_metrics_when_storage_is_unavailable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.storage_metrics import PhotoStorageMeasurement
+
+    authenticate_admin(client)
+    monkeypatch.setattr(
+        "app.main.measure_photo_storage",
+        lambda: PhotoStorageMeasurement(bytes=None, available=False),
+    )
+    response = client.get("/admin/validation-summary")
+    assert response.status_code == 200
+    assert response.json()["storage"] == {
+        "photo_count": 0,
+        "bytes": None,
+        "available": False,
+    }
+    assert "counts" in response.json()
 
 
 def test_parent_gallery_editor_is_backend_driven_and_contextual(client: TestClient) -> None:
