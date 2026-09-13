@@ -12,6 +12,7 @@ import {
 } from "../../../../clients/client-controls";
 import { ClientGalleryCard, type ClientGalleryRow } from "../../../client-gallery-card";
 import { FacialPolicyPanel } from "../../../facial-policy-panel";
+import PreviewAdjustmentPanel from "../../../preview-adjustment-panel";
 import { GlobalPixSummary, type GlobalPix } from "../../../../settings/pix-panel";
 import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurrency, type PriceTier } from "../../../pricing-rules";
 
@@ -861,6 +862,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           <div className="section-heading"><div><p className="eyebrow">Etapa 4</p><h2>Imagens e pastas</h2></div><StatusBadge>{folders.length} pasta(s)</StatusBadge></div>
           <p className="gallery-scope-note">Crie pastas e revise os JPEGs. Cada foto fica disponível automaticamente assim que sua prévia protegida termina de processar.</p>
           <FacialPolicyPanel galleryId={sourceId} refreshToken={facialRefresh} />
+          <PreviewAdjustmentPanel key={sourceId} galleryId={sourceId} />
           <fieldset className="gallery-organization-panel">
             <legend>Organização das pastas</legend>
             <label>Exibição das pastas<select aria-label="Exibição das pastas" value={visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode} onChange={saveFolderOrganization}><option value="individual">Pastas lado a lado</option><option value="sequential">Sequência cronológica</option></select></label>

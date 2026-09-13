@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
+vi.mock("./preview-adjustment-panel", () => ({ default: ({ galleryId }: { galleryId: string }) => <div data-testid="gallery-preview-adjustment" data-gallery-id={galleryId} /> }));
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), useParams: () => ({ sourceId: "source-1" }) }));
 
@@ -44,6 +45,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
+    expect(screen.getByTestId("gallery-preview-adjustment").getAttribute("data-gallery-id")).toBe("source-1");
     expect(screen.getAllByRole("link", { name: /Ajustes|Vendas|Detalhes|Imagens|Clientes/ })).toHaveLength(5);
     expect(screen.getByRole("link", { name: /Imagens/ }).getAttribute("aria-current")).toBe("step");
     fireEvent.change(screen.getByLabelText("Nome da nova pasta"), { target: { value: "Apresentação" } });

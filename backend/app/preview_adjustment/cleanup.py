@@ -6,9 +6,9 @@ from uuid import UUID
 
 from sqlalchemy import delete, func, select
 
-from app.auth import PreviewAdjustment, SessionLocal
+from app.auth import GalleryPreviewSettings, PreviewAdjustment, SessionLocal
 from app.media import derivatives_root
-from app.preview_adjustment.service import result_path, settings
+from app.preview_adjustment.service import result_path
 
 
 def photo_files(photo_id: UUID):
@@ -42,7 +42,7 @@ def inventory():
 
 
 def cleanup(db, *, execute: bool = False, worker_stopped: bool = False):
-    config = settings(db, lock=True)
+    configs = list(db.scalars(select(GalleryPreviewSettings).with_for_update()))
     files = inventory()
     report = {
         "files": len(files),
@@ -51,7 +51,7 @@ def cleanup(db, *, execute: bool = False, worker_stopped: bool = False):
         "deleted": False,
     }
     if execute:
-        if (config and config.enabled) or not worker_stopped:
+        if any(config.enabled for config in configs) or not worker_stopped:
             raise ValueError("Desligue o módulo e pare o worker antes da limpeza.")
         for path in files:
             path.unlink(missing_ok=True)

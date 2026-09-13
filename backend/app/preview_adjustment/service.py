@@ -15,16 +15,21 @@ from sqlalchemy.orm import Session
 from app.auth import (
     BrandingSettings,
     DerivedGallery,
+    GalleryPreviewSettings,
     MediaDerivative,
     ParentGallery,
     PhotoAsset,
     PhotoFolder,
     PreviewAdjustment,
-    PreviewAdjustmentSettings,
     now,
 )
 from app.media import derivatives_root, safe_derivative_path, watermark
-from app.preview_adjustment.engine import ENGINE_VERSION, AdjustmentEngine, RawTherapeeEngine
+from app.preview_adjustment.engine import (
+    ENGINE_VERSION,
+    AdjustmentEngine,
+    RawTherapeeEngine,
+    compensate_exposure,
+)
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
@@ -42,26 +47,51 @@ PROTECTION_FIELDS = (
 )
 
 
-def settings(db: Session, *, lock: bool = False) -> PreviewAdjustmentSettings | None:
-    query = select(PreviewAdjustmentSettings).where(PreviewAdjustmentSettings.id == 1)
+def settings(db: Session, gallery_id: UUID, *, lock: bool = False) -> GalleryPreviewSettings | None:
+    query = select(GalleryPreviewSettings).where(
+        GalleryPreviewSettings.parent_gallery_id == gallery_id
+    )
     if lock:
         query = query.with_for_update()
     return db.scalar(query.execution_options(populate_existing=True))
 
 
-def configure(db: Session, enabled: bool, strength: int) -> PreviewAdjustmentSettings:
-    config = settings(db, lock=True)
+def configure(
+    db: Session, gallery_id: UUID, enabled: bool, strength: int, exposure_tenths: int = 0
+) -> GalleryPreviewSettings:
+    # Serializa inclusive a primeira criação da configuração.
+    gallery = db.scalar(
+        select(ParentGallery).where(ParentGallery.id == gallery_id).with_for_update()
+    )
+    if not gallery:
+        raise ValueError("Galeria não encontrada.")
+    config = settings(db, gallery_id, lock=True)
     if config is None:
-        config = PreviewAdjustmentSettings(id=1, enabled=False, generation=1, strength=50)
+        config = GalleryPreviewSettings(
+            parent_gallery_id=gallery_id,
+            enabled=False,
+            generation=1,
+            strength=50,
+            exposure_tenths=0,
+        )
         db.add(config)
         db.flush()
-    if (config.enabled, config.strength) != (enabled, strength):
-        config.enabled, config.strength = enabled, strength
+    if (config.enabled, config.strength, config.exposure_tenths) != (
+        enabled,
+        strength,
+        exposure_tenths,
+    ):
+        config.enabled, config.strength, config.exposure_tenths = enabled, strength, exposure_tenths
         config.generation += 1
         config.updated_at = now()
         db.execute(
             update(PreviewAdjustment)
-            .where(PreviewAdjustment.status.in_(("queued", "processing")))
+            .where(
+                PreviewAdjustment.status.in_(("queued", "processing")),
+                PreviewAdjustment.photo_asset_id.in_(
+                    select(PhotoAsset.id).where(PhotoAsset.parent_gallery_id == gallery_id)
+                ),
+            )
             .values(status="cancelled", claim_token=None, updated_at=now())
         )
     return config
@@ -110,7 +140,7 @@ def photo_active(db: Session, photo: PhotoAsset | None) -> bool:
 
 def enqueue(db: Session, photo_id: UUID, *, retry: bool = False) -> bool:
     photo = db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo_id).with_for_update())
-    config = settings(db, lock=True)
+    config = settings(db, photo.parent_gallery_id, lock=True) if photo else None
     folder = db.get(PhotoFolder, photo.folder_id) if photo else None
     if (
         not config
@@ -178,7 +208,8 @@ def existing_result(row: PreviewAdjustment) -> Path | None:
 
 
 def adjusted_path(db: Session, photo_id: UUID) -> Path | None:
-    config = settings(db)
+    photo = db.get(PhotoAsset, photo_id)
+    config = settings(db, photo.parent_gallery_id) if photo else None
     if not config or not config.enabled:
         return None
     row = db.get(PreviewAdjustment, photo_id, populate_existing=True)
@@ -204,19 +235,37 @@ def presentation_path(db: Session, derivative: MediaDerivative) -> Path:
 def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool:
     claim, photo_id = str(uuid4()), None
     with session_factory() as db:
-        config = settings(db, lock=True)
+        stale = now() - timedelta(seconds=LEASE_SECONDS)
+        eligible = or_(
+            PreviewAdjustment.status == "queued",
+            (PreviewAdjustment.status == "processing") & (PreviewAdjustment.updated_at < stale),
+        )
+        candidate = db.execute(
+            select(PreviewAdjustment.photo_asset_id, PhotoAsset.parent_gallery_id)
+            .join(PhotoAsset)
+            .join(
+                GalleryPreviewSettings,
+                GalleryPreviewSettings.parent_gallery_id == PhotoAsset.parent_gallery_id,
+            )
+            .where(
+                eligible,
+                GalleryPreviewSettings.enabled.is_(True),
+                PreviewAdjustment.generation == GalleryPreviewSettings.generation,
+            )
+            .order_by(PreviewAdjustment.updated_at, PreviewAdjustment.photo_asset_id)
+            .limit(1)
+        ).first()
+        if not candidate:
+            return False
+        config = settings(db, candidate.parent_gallery_id, lock=True)
         if not config or not config.enabled:
             return False
-        stale = now() - timedelta(seconds=LEASE_SECONDS)
         row = db.scalar(
             select(PreviewAdjustment)
             .where(
+                PreviewAdjustment.photo_asset_id == candidate.photo_asset_id,
                 PreviewAdjustment.generation == config.generation,
-                or_(
-                    PreviewAdjustment.status == "queued",
-                    (PreviewAdjustment.status == "processing")
-                    & (PreviewAdjustment.updated_at < stale),
-                ),
+                eligible,
             )
             .order_by(PreviewAdjustment.updated_at)
             .limit(1)
@@ -236,6 +285,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
             return True
         photo_id, generation, fingerprint = row.photo_asset_id, row.generation, row.fingerprint
         strength = config.strength
+        exposure_tenths = config.exposure_tenths
         branding = (
             BrandingSettings(**{key: getattr(source[1], key) for key in PROTECTION_FIELDS})
             if source[1]
@@ -260,7 +310,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
         adjusted = (engine or RawTherapeeEngine()).render(image, strength)
         if adjusted.size != image.size:
             raise ValueError("Dimensões inválidas.")
-        protected = watermark(adjusted, branding)
+        protected = watermark(compensate_exposure(adjusted, exposure_tenths), branding)
         # Nunca manter lock de banco durante o subprocesso.
         with session_factory() as db:
             parent_id = db.scalar(
@@ -272,7 +322,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                     select(ParentGallery).where(ParentGallery.id == parent_id).with_for_update()
                 )
             photo = db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo_id).with_for_update())
-            config = settings(db, lock=True)
+            config = settings(db, photo.parent_gallery_id, lock=True) if photo else None
             row = db.get(PreviewAdjustment, photo_id, populate_existing=True)
             source = inputs(db, photo_id) if photo else None
             if (

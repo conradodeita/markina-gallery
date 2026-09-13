@@ -1427,7 +1427,7 @@ class MediaJob(Base):
 
 
 class PreviewAdjustmentSettings(Base):
-    """Chave global do módulo opcional; ausência equivale a desligado."""
+    """Configuração legada; preservada desligada após migração por galeria."""
 
     __tablename__ = "preview_adjustment_settings"
     __table_args__ = (
@@ -1439,6 +1439,25 @@ class PreviewAdjustmentSettings(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     generation: Mapped[int] = mapped_column(Integer, default=1)
     strength: Mapped[int] = mapped_column(Integer, default=50)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class GalleryPreviewSettings(Base):
+    """Controles do módulo isolados pela galeria de origem."""
+
+    __tablename__ = "gallery_preview_settings"
+    __table_args__ = (
+        CheckConstraint("generation >= 1"),
+        CheckConstraint("strength BETWEEN 10 AND 75"),
+        CheckConstraint("exposure_tenths BETWEEN -20 AND 20"),
+    )
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="CASCADE"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    strength: Mapped[int] = mapped_column(Integer, default=50)
+    exposure_tenths: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 

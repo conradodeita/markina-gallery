@@ -21,6 +21,8 @@
 
 ## Continuidade
 
+- Evolução autorizada em `gallery-preview-exposure-and-installable-ui`: o controle global/Configurações é supersedido por controle e exposição por galeria na etapa 04. Preservar as demais garantias desta change; não reimplementar a UX global. A avaliação estética de 4.2 permanece humana e não é considerada aceita automaticamente pela evolução.
+
 - Implementação na branch `codex/optional-preview-auto-adjustment`. Em 13/09/2026, o proprietário autorizou especificamente push, merge e deploy em homologação mantendo o módulo desligado. Inventário somente-leitura conferido e apresentado; confirmação pós-inventário recebida conforme DEPLOY.md, incluindo não iniciar o worker.
 - Parte técnica de 4.2 aprovada com RawTherapee 5.9 em contêiner descartável, sem rede, amostras sintéticas 640×420, 0,5 CPU/768 MiB: 1,211 s subexposta, 0,791 s equilibrada, 0,735 s baixo contraste. Entrada intacta e resultado visualmente inspecionado. O smoke identificou a necessidade de `-a` para aceitar PNG, incorporada ao adaptador e ao teste de contrato.
 - Repetição na imagem final, sem montar o código do adaptador: 1,340 s / 0,913 s / 0,637 s; sucesso nos três casos. Docker image ID manifest `sha256:09672b786f1fab18d8ad9170dfd672c95d4598289b22916839d90b87b20efa0e`. Sem serviço remoto modificado.
