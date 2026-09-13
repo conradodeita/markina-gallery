@@ -51,3 +51,15 @@
 ## Autorização
 
 O proprietário autorizou explicitamente merge e deploy desta entrega durante a execução da change. O inventário foi apresentado antes de qualquer ação remota de homologação. Revisão humana, sincronização das specs principais e arquivamento permanecem posteriores à validação em homologação.
+
+## Atualização incremental do funil financeiro — 2026-09-12
+
+- Commit funcional validado: `a2904c2af7ef52cc2f067c3ba125cbebb906042d`; o alvo remoto será o merge commit em `develop` que o contiver.
+- Escopo: projeção e interface de `Valor das fotos selecionadas`, `Valor dos pedidos` comunicados e `Receita confirmada`, sem dupla contagem.
+- Schema: nenhuma migration nova; o head esperado permanece `20260909_0052_private_gallery_operations_sales`.
+- Dados e mídia: nenhuma limpeza, backfill, alteração de foto ou operação destrutiva.
+- Serviços afetados pelo código: `api` e `web`; o workflow preserva volumes e recria somente os serviços Markina previstos pelo script aprovado.
+- Estado facial: `FACIAL_PROCESSING_ENABLED=true` e workers faciais saudáveis continuam obrigatórios, sem nova operação de rollout.
+- Entrada e isolamento: `https://markina-homolog.duckdns.org`, bind `127.0.0.1:8080`, projeto Compose `markina-gallery`; nenhum recurso de terceiros será alterado.
+- Rollback: como não há mudança de schema, restaurar somente a aplicação ao SHA saudável anterior `962ec11` caso os healthchecks ou a projeção financeira falhem; banco e volumes permanecem intactos.
+- Autorização: o proprietário autorizou push, merge e deploy em homologação em 2026-09-12, após receber o inventário e o plano de impacto zero.
