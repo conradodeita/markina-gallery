@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -122,6 +125,8 @@ describe("jornada mobile e privacidade da referência", () => {
           consent_version: "consent-v1",
           legal_notice_version: "notice-v1",
           max_reference_bytes: 31_457_280,
+          reference_retention_seconds: 900,
+          candidate_retention_seconds: 86_400,
         });
       }
       if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
@@ -132,6 +137,13 @@ describe("jornada mobile e privacidade da referência", () => {
     render(<EmptyHarness />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    expect(screen.getByRole("heading", { name: "Busca facial nesta galeria" })).toBeTruthy();
+    expect(screen.getByText(/Não há cadastro biométrico permanente/)).toBeTruthy();
+    expect(screen.getByText(/no máximo, em 15 minutos/)).toBeTruthy();
+    expect(screen.getByText(/Os resultados expiram em até 24 horas/)).toBeTruthy();
+    expect(screen.getByText(/não confirmam identidade/)).toBeTruthy();
+    expect(screen.getByText(/semelhante a foto de documento/)).toBeTruthy();
+    expect(screen.getByText(/Não fotografe nem envie documento de identidade/)).toBeTruthy();
     const libraryInput = screen.getByLabelText("Escolher foto JPEG da galeria do celular") as HTMLInputElement;
     const cameraInput = screen.getByLabelText("Tirar foto JPEG com a câmera") as HTMLInputElement;
     expect(libraryInput.accept).toBe("image/jpeg");
@@ -146,14 +158,14 @@ describe("jornada mobile e privacidade da referência", () => {
     fireEvent.click(screen.getByRole("button", { name: "Usar câmera" }));
     expect(libraryClick).toHaveBeenCalledOnce();
     expect(cameraClick).toHaveBeenCalledOnce();
-    const submitButton = screen.getByRole("button", { name: "Concordar e procurar" }) as HTMLButtonElement;
+    const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
     const reference = new File(["private-reference-bytes"], "referencia.jpg", { type: "image/jpeg" });
     Object.defineProperty(reference, "size", { value: 31_457_280 });
     fireEvent.change(libraryInput, { target: { files: [reference] } });
     expect(screen.getByText("Foto selecionada e pronta para envio.")).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo o uso temporário/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo, de forma livre, informada e específica/ }));
     expect(submitButton.disabled).toBe(false);
     fireEvent.submit(submitButton.closest("form")!);
 
@@ -193,8 +205,71 @@ describe("jornada mobile e privacidade da referência", () => {
 
     expect(screen.getByRole("alert").textContent).toBe("Escolha uma foto JPEG de até 30 MB.");
     expect(screen.queryByText("Foto selecionada e pronta para envio.")).toBeNull();
-    expect((screen.getByRole("button", { name: "Concordar e procurar" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement).disabled).toBe(true);
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("exige representação e consentimento específicos antes de enviar referência infantil", async () => {
+    const created = { ...queued, id: "minor-request" };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required",
+        manual_selection_available: true,
+        minor_search_available: true,
+        minor_representation_reference: "opaque-representation",
+        consent_version: "consent-v2",
+        legal_notice_version: "notice-v2",
+      });
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches") && init?.method === "POST") return response(created, 202);
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmptyHarness />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    const reference = new File(["minor-reference"], "referencia.jpg", { type: "image/jpeg" });
+    fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), { target: { files: [reference] } });
+    fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
+
+    const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
+    const guardian = screen.getByRole("checkbox", { name: /Declaro que sou pai, mãe ou responsável legal/ });
+    const consent = screen.getByRole("checkbox", { name: /Autorizo, de forma livre, informada e específica/ });
+    expect((guardian as HTMLInputElement).checked).toBe(false);
+    expect((consent as HTMLInputElement).checked).toBe(false);
+    expect(submitButton.disabled).toBe(true);
+
+    fireEvent.click(consent);
+    expect(submitButton.disabled).toBe(true);
+    fireEvent.click(guardian);
+    expect(submitButton.disabled).toBe(false);
+    fireEvent.submit(submitButton.closest("form")!);
+
+    await waitFor(() => expect(screen.getByTestId("search-state").textContent).toBe("queued"));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/gallery-1/facial-searches",
+      expect.objectContaining({
+        method: "POST",
+        body: reference,
+        headers: expect.objectContaining({
+          "x-facial-consent-version": "consent-v2",
+          "x-facial-subject-declaration": "minor",
+          "x-facial-representation-reference": "opaque-representation",
+        }),
+      }),
+    );
+  });
+
+  it("mantém o diálogo rolável e alcançável na viewport mobile", () => {
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    const dialogRule = css.match(/\.facial-consent-dialog\s*\{[^}]+\}/)?.[0] ?? "";
+    const mobileRule = Array.from(css.matchAll(/@media \(max-width:700px\)\s*\{[^\n]+/g))
+      .find(([rule]) => rule.includes(".facial-consent-dialog"))?.[0] ?? "";
+    expect(dialogRule).toMatch(/max-height:calc\(100dvh\s*-\s*32px\)/);
+    expect(dialogRule).toMatch(/overflow-y:auto/);
+    expect(dialogRule).toMatch(/overscroll-behavior:contain/);
+    expect(mobileRule).toMatch(/max-height:calc\(100dvh\s*-\s*8px\)/);
+    expect(mobileRule).toMatch(/\.facial-consent-actions\s*\{[^}]*grid-template-columns:1fr/);
   });
 
   it.each([
