@@ -2,7 +2,9 @@
 
 import re
 from datetime import timedelta
+from email.utils import parsedate_to_datetime
 from hashlib import sha256
+from typing import ClassVar
 from uuid import UUID, uuid4
 
 import pyotp
@@ -37,6 +39,7 @@ from app.email_delivery import (
     EmailConfigurationError,
     EmailDeliveryError,
     SandboxEmailProvider,
+    SmtpEmailProvider,
     email_channel_payload,
     email_provider_from_environment,
     enqueue_email,
@@ -285,6 +288,85 @@ def test_email_sandbox_has_no_external_effect_and_smtp_is_fail_closed(monkeypatc
         "origin": None,
         "last_error": "Configuração transacional indisponível.",
     }
+
+
+class FakeSmtpClient:
+    refused_recipients: ClassVar[dict[str, tuple[int, bytes]]] = {}
+    sent_messages: ClassVar[list] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        del args, kwargs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        del exc_type, exc_value, traceback
+
+    def ehlo(self) -> None:
+        return None
+
+    def starttls(self, *, context) -> None:
+        del context
+
+    def login(self, username, password) -> None:
+        del username, password
+
+    def send_message(self, message):
+        self.sent_messages.append(message)
+        return self.refused_recipients
+
+
+def test_smtp_message_has_deliverable_headers_without_recipient_pii(monkeypatch) -> None:
+    FakeSmtpClient.refused_recipients = {}
+    FakeSmtpClient.sent_messages = []
+    monkeypatch.setattr("app.email_delivery.smtplib.SMTP", FakeSmtpClient)
+    provider = SmtpEmailProvider(
+        host="smtp.example.com",
+        port=587,
+        username="sender@example.com",
+        password="secret",
+        from_address="Markina <sender@example.com>",
+    )
+
+    result = provider.send(
+        recipient="recipient@external.test",
+        subject="Mensagem transacional",
+        text_body="Conteúdo sintético.",
+        idempotency_key="email:test-deliverable-headers",
+    )
+
+    message = FakeSmtpClient.sent_messages[0]
+    assert parsedate_to_datetime(message["Date"]).tzinfo is not None
+    assert message["Message-ID"].endswith("@example.com>")
+    assert "recipient" not in message["Message-ID"]
+    assert result.external_message_id == message["Message-ID"].strip("<>")
+
+
+def test_smtp_refused_recipient_is_not_reported_as_accepted(monkeypatch) -> None:
+    FakeSmtpClient.refused_recipients = {
+        "recipient@external.test": (550, b"recipient rejected")
+    }
+    FakeSmtpClient.sent_messages = []
+    monkeypatch.setattr("app.email_delivery.smtplib.SMTP", FakeSmtpClient)
+    provider = SmtpEmailProvider(
+        host="smtp.example.com",
+        port=587,
+        username="sender@example.com",
+        password="secret",
+        from_address="sender@example.com",
+    )
+
+    with pytest.raises(EmailDeliveryError, match="recusou o destinatário") as error:
+        provider.send(
+            recipient="recipient@external.test",
+            subject="Mensagem transacional",
+            text_body="Conteúdo sintético.",
+            idempotency_key="email:test-refused-recipient",
+        )
+
+    assert error.value.transient is False
+    assert error.value.ambiguous is False
 
 
 def test_sensitive_link_and_email_enqueue_are_safe_and_idempotent(monkeypatch) -> None:

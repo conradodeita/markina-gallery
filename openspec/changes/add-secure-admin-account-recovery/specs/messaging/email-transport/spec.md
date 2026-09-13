@@ -37,6 +37,16 @@ O sistema SHALL oferecer provider sandbox sem efeito externo e provider SMTP tra
 - **WHEN** o ambiente possui configuração completa, remetente autorizado e TLS válido
 - **THEN** o worker entrega pelo provider SMTP e registra somente identificador externo, estado, tentativa e diagnóstico sanitizado
 
+#### Scenario: Mensagem SMTP é composta para entrega externa
+
+- **WHEN** o provider SMTP compõe uma mensagem transacional
+- **THEN** a mensagem contém `Date` válido e `Message-ID` globalmente identificável sob o domínio do remetente autorizado, sem incluir segredo ou dado do destinatário no identificador
+
+#### Scenario: SMTP recusa o destinatário
+
+- **WHEN** o servidor SMTP informa que o destinatário foi recusado
+- **THEN** o provider não registra a tentativa como aceita e devolve falha terminal sanitizada
+
 #### Scenario: Configuração real incompleta ou insegura
 
 - **WHEN** faltam credenciais, remetente, TLS obrigatório ou origem pública permitida para compor links
