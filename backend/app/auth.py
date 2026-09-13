@@ -1426,6 +1426,45 @@ class MediaJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
+class PreviewAdjustmentSettings(Base):
+    """Chave global do módulo opcional; ausência equivale a desligado."""
+
+    __tablename__ = "preview_adjustment_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1"),
+        CheckConstraint("generation >= 1"),
+        CheckConstraint("strength BETWEEN 10 AND 75"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    strength: Mapped[int] = mapped_column(Integer, default=50)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PreviewAdjustment(Base):
+    """Fila e resultado substituíveis, sem alterar derivados convencionais."""
+
+    __tablename__ = "preview_adjustment"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'processing', 'ready', 'failed', 'cancelled')"),
+        CheckConstraint("attempts >= 0"),
+        Index("ix_preview_adjustment_queue", "status", "updated_at"),
+    )
+    photo_asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("photo_asset.id", ondelete="CASCADE"), primary_key=True
+    )
+    generation: Mapped[int] = mapped_column(Integer)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    relative_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class GalleryFacialPolicy(Base):
     """Gate versionado de processamento facial por Galeria pública."""
 

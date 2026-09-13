@@ -322,6 +322,9 @@ def generate_derivatives(
                 derivative_path=safe_derivative_path(facial_analysis_preview),
             )
         db.commit()
+        from app.preview_adjustment.service import enqueue_after_derivatives
+
+        enqueue_after_derivatives(db, photo.id)
         return derivatives
     except Exception:
         job.status = "failed"

@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AdminSettingsPage, { calculateWatermarkPreviewFontSize } from "./page";
 
+vi.mock("./preview-adjustment-panel", () => ({ default: () => null }));
+
 const branding = {
   login_title: "Sua galeria, do seu jeito.",
   login_intro: "Entre para acessar fotos.",

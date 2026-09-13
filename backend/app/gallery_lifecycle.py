@@ -366,6 +366,15 @@ def gallery_operational_storage_manifest(
             .order_by(MediaDerivative.id)
         )
     ]
+    from app.media import derivatives_root
+    from app.preview_adjustment.cleanup import photo_files
+
+    for source in sources:
+        for path in photo_files(UUID(source["photo_id"])):
+            derivatives.append({
+                "derivative_id": source["photo_id"],
+                "relative_path": path.relative_to(derivatives_root()).as_posix(),
+            })
     return {"sources": sources, "derivatives": derivatives}
 
 

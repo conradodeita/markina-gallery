@@ -256,6 +256,8 @@ from app.messaging import (
 from app.parent_registration import link_client_to_parent
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template, validate_template
 from app.pix import PixCodeError, pix_qr_data_url
+from app.preview_adjustment.api import register_routes as register_preview_adjustment_routes
+from app.preview_adjustment.service import presentation_path
 from app.pricing import (
     PriceTier,
     PricingRuleError,
@@ -3675,7 +3677,8 @@ def delete_folder_photo_asset(
 ) -> Response:
     """Exclui foto após aplicar a política comercial comum."""
     require_admin(request)
-    folder, photo = db.get(PhotoFolder, folder_id), db.get(PhotoAsset, photo_id)
+    folder = db.get(PhotoFolder, folder_id)
+    photo = db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo_id).with_for_update())
     if (
         not folder
         or not photo
@@ -3695,7 +3698,9 @@ def delete_folder_photo_asset(
         parent_gallery_id=folder.parent_gallery_id,
         photo_asset_id=photo.id,
     )
-    paths_to_remove = []
+    from app.preview_adjustment.cleanup import photo_files
+
+    paths_to_remove = photo_files(photo.id)
     try:
         paths_to_remove.append(safe_source_path(photo))
     except ValueError:
@@ -4377,6 +4382,7 @@ def delete_parent_gallery(
             )
         return lifecycle_operation_payload(existing)
 
+    db.scalar(select(ParentGallery).where(ParentGallery.id == parent_gallery_id).with_for_update())
     gallery = _parent_gallery_or_404(db, parent_gallery_id)
     if gallery.lifecycle_status == "deleting":
         raise HTTPException(
@@ -5068,7 +5074,7 @@ def admin_watermarked_photo_preview(
     if not derivative:
         raise HTTPException(status_code=404, detail="Prévia com marca d’água indisponível.")
     try:
-        path = safe_derivative_path(derivative)
+        path = presentation_path(db, derivative)
     except ValueError as exc:
         raise HTTPException(
             status_code=404, detail="Prévia com marca d’água indisponível."
@@ -7839,7 +7845,7 @@ def client_photo_preview(
     if not derivative:
         raise HTTPException(status_code=404, detail="Prévia indisponível.")
     try:
-        path = safe_derivative_path(derivative)
+        path = presentation_path(db, derivative)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Prévia indisponível.") from exc
     viewed = db.scalar(
@@ -8547,7 +8553,7 @@ def public_gallery_photo_preview(
     if not derivative:
         raise HTTPException(status_code=404, detail="Prévia indisponível.")
     try:
-        path = safe_derivative_path(derivative)
+        path = presentation_path(db, derivative)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Prévia indisponível.") from exc
     audit(db, "media_preview.public_gallery_viewed", str(parent_gallery_id))
@@ -9851,3 +9857,9 @@ def remove_comment_as_admin(
     audit(db, "photo_comment.removed_by_admin", str(comment.id))
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+register_preview_adjustment_routes(
+    app, db_session=db_session, require_admin=require_admin,
+    preview_response=protected_preview_response,
+)

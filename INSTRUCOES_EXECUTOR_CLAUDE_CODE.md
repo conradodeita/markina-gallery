@@ -84,7 +84,7 @@ O export do Google Stitch em `docs/frontend-reference/stitch-export/` é somente
 - Não expor uma grade pública de fotografias escolares de evento coletivo.
 - Não servir prévias diretamente do Google Drive.
 - Não automatizar criação/compartilhamento de álbuns no Google Photos; o fotógrafo cria o link manualmente.
-- Não armazenar RAWs, nem tentar editar fotos no sistema.
+- Não armazenar RAWs nem realizar edição final no sistema. O módulo opcional de ajuste de prévias, aprovado em `add-optional-preview-auto-adjustment`, atua somente na vitrine e preserva originais, prévias convencionais e entrada facial.
 - Não copiar código, design ou componentes de serviços concorrentes.
 
 ## 3. Infraestrutura e arquitetura
