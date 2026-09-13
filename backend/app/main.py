@@ -2181,7 +2181,9 @@ async def upload_branding_asset(
 
 
 @app.get("/branding/{asset}")
-def public_branding_asset(asset: str, db: Session = Depends(db_session)) -> FileResponse:
+def public_branding_asset(
+    asset: str, size: int | None = Query(default=None), db: Session = Depends(db_session)
+) -> Response:
     if asset not in BRANDING_ASSETS:
         raise HTTPException(status_code=404, detail="Ativo de marca não encontrado.")
     settings = db.scalar(select(BrandingSettings).limit(1))
@@ -2211,8 +2213,28 @@ def public_branding_asset(asset: str, db: Session = Depends(db_session)) -> File
     }.get(suffix)
     if not media_type:
         raise HTTPException(status_code=404, detail="Ativo de marca indisponível.")
+    if size is not None:
+        if asset != "app-icon" or size not in {180, 192, 512}:
+            raise HTTPException(status_code=422, detail="Tamanho de ícone não permitido.")
+        try:
+            with Image.open(path) as source:
+                image = source.convert("RGBA")
+                scale = min(size / image.width, size / image.height)
+                image = image.resize(
+                    (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+                canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+                canvas.alpha_composite(image, ((size - image.width) // 2, (size - image.height) // 2))
+                output = BytesIO()
+                canvas.save(output, format="PNG")
+            return Response(
+                output.getvalue(), media_type="image/png", headers={"Cache-Control": "no-cache"}
+            )
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="Ícone indisponível.") from exc
     return FileResponse(
-        path, media_type=media_type, headers={"Cache-Control": "public, max-age=300"}
+        path, media_type=media_type, headers={"Cache-Control": "no-cache"}
     )
 
 

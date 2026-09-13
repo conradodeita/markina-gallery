@@ -12,7 +12,15 @@ O frontend SHALL oferecer manifesto e ícones válidos e a ação “Instalar ap
 - **WHEN** um usuário em iPhone abre a opção de instalação
 - **THEN** vê instruções curtas de adicionar à tela de início e pode fechá-las
 
-### Requirement: Offline sem retenção privada
+### Requirement: Ícones oficiais de Configurações
+
+O favicon e o ícone do aplicativo SHALL utilizar as artes enviadas em Configurações, sem substituição por arte criada pelo executor. O app-icon SHALL ser entregue também em PNG 180/192/512 preservando proporção e arquivo de origem. Arquivos de marca SHALL revalidar após mudança, e uploads SHALL apresentar prévia e falha de envio de forma explícita.
+
+#### Scenario: Upload de arte oficial
+- **WHEN** o admin envia um ícone de aplicativo e um favicon válidos
+- **THEN** Configurações mostra as prévias e manifesto/metadata apontam para as respectivas artes, inclusive após substituição
+
+### Requirement: Navegação offline privada
 
 O PWA SHALL manter autenticação e autorização existentes e SHALL NOT armazenar respostas privadas, fotos ou tokens em cache de aplicação. Sem conexão, SHALL apresentar somente um aviso neutro para reconectar.
 

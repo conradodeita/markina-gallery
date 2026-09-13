@@ -11,7 +11,9 @@ O mesmo PWA atende fotógrafo e cliente. A instalação não cria outra conta, n
 
 O service worker `/markina-sw.js` não usa CacheStorage nem persiste fotos, respostas de API, páginas autenticadas ou tokens. Requisições existentes continuam usando autorização/cache privado do backend. Uma navegação documental sem rede recebe somente uma página neutra de reconexão; não há acervo offline. Push e notificações não foram incluídos nesta change.
 
-HTTPS é necessário em homologação/produção. Manifesto em `/manifest.webmanifest`, ícones PNG em `/app-icons/180`, `/app-icons/192` e `/app-icons/512`. Identidade preto/amarelo, superfícies cinza/bege, compartilhada com a interface. A versão do worker é verificada sem cache HTTP; atualizações não precisam apagar cache privado porque ele não é criado.
+HTTPS é necessário em homologação/produção. Manifesto em `/manifest.webmanifest`. Os ícones são os arquivos oficiais enviados em Configurações → Identidade visual: `/api/branding/favicon` para o navegador e `/api/branding/app-icon?size=180`, `?size=192` e `?size=512` para Apple/PWA. Os tamanhos PNG preservam proporção com margem transparente quando necessário; a arte original não é alterada. Não existe ícone substituto desenhado pelo sistema. Sem upload, a rota retorna 404 e a instalação pode não ser oferecida. Recomenda-se arte quadrada de pelo menos 512 px para boa definição.
+
+Configurações mostra prévias, estado de envio e erro recuperável. Os arquivos de marca revalidam cache HTTP; trocar o favicon atualiza a referência na página aberta. Aplicativos já instalados podem depender do ciclo de atualização do navegador/SO para refletir nova arte. Identidade preto/amarelo, fundo cinza claro e bege em botões secundários. A versão do worker é verificada sem cache HTTP; atualizações não precisam apagar cache privado porque ele não é criado.
 
 ## Verificação
 

@@ -77,7 +77,7 @@ export function AuthEntry({
     if (!branding.app_icon_url) return;
     let icon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (!icon) { icon = document.createElement("link"); icon.rel = "apple-touch-icon"; document.head.appendChild(icon); }
-    icon.href = `/api${branding.app_icon_url}`;
+    icon.href = `/api${branding.app_icon_url}?size=180`;
   }, [branding.app_icon_url]);
   useEffect(() => {
     if (!invitation.accessToken) return;

@@ -1,7 +1,9 @@
 :root {
-  --mk-canvas: #f7f5ef;
+  --mk-canvas: #f3f4f5;
   --mk-surface: #ffffff;
-  --mk-surface-subtle: #f0ece2;
+  --mk-surface-subtle: #eceeef;
+  --mk-secondary: #eee5d3;
+  --mk-secondary-hover: #e4d8c0;
   --mk-ink: #24221d;
   --mk-ink-muted: #666052;
   --mk-border: #ded7c7;
@@ -12,7 +14,7 @@
   --mk-action-hover: #e5b12d;
   --mk-action-ink: #24221d;
   --mk-info: #665f51;
-  --mk-info-soft: #f2f0ea;
+  --mk-info-soft: #f0f1f2;
   --mk-warning-soft: #fff6dc;
   --mk-success: #247146;
   --mk-warning: #875d00;

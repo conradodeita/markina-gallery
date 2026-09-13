@@ -7,3 +7,7 @@ O site SHALL usar tokens e componentes compartilhados na identidade preta/amarel
 #### Scenario: Administração e cliente responsivos
 - **WHEN** o usuário navega no desktop ou mobile
 - **THEN** distingue ações e seções por contraste e espaçamento consistentes, sem limitar a largura útil ou introduzir overflow horizontal
+
+#### Scenario: Fundo e ações secundárias
+- **WHEN** as páginas administrativas e do cliente são exibidas
+- **THEN** o fundo principal SHALL ser cinza claro neutro, com bege reservado a botões secundários e amarelo nos destaques

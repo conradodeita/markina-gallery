@@ -10,6 +10,11 @@ it("publica identidade neutra sem links privados e ícones adequados", () => {
   expect(value.scope).toBe("/");
   expect(value.display).toBe("standalone");
   expect(value.icons?.map((icon) => icon.sizes)).toEqual(["192x192", "512x512"]);
+  expect(value.icons?.map((icon) => icon.src)).toEqual(["/api/branding/app-icon?size=192", "/api/branding/app-icon?size=512"]);
+  const layout = readFileSync(join(process.cwd(), "app/layout.tsx"), "utf8");
+  expect(layout).toContain('apple: "/api/branding/app-icon?size=180"');
+  expect(layout).toContain('icon: "/api/branding/favicon"');
+  expect(value.background_color).toBe("#f3f4f5");
 });
 
 it("não intercepta API/fotos e responde offline sem armazenar dados privados", async () => {

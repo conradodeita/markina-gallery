@@ -1,6 +1,6 @@
 # Validação e continuidade
 
-Branch: `codex/gallery-preview-exposure-and-installable-ui`. Implementação autorizada pelo proprietário; nenhuma operação remota executada nesta evolução.
+Branch: `codex/gallery-preview-exposure-and-installable-ui`. Implementação autorizada pelo proprietário; nenhuma alteração remota executada nesta evolução.
 
 ## Evidências locais
 
@@ -11,7 +11,17 @@ Branch: `codex/gallery-preview-exposure-and-installable-ui`. Implementação aut
 - Não foi executada suíte completa local nem teste de carga. Suítes obrigatórias do CI permanecem intactas.
 - Lint ampliado aos arquivos de integração: zero erros; sete avisos preexistentes de imagens `<img>` e parâmetros não usados nos testes do editor. Servidor local de QA parado ao concluir; arquivos sintéticos e banco temporário não integram o commit.
 
-## Operação
+## Refinamento: cinza claro e artes oficiais
+
+- Fundo compartilhado e offline em `#f3f4f5`; bege restrito a botões secundários, mantendo amarelo para ações principais e destaques. Removidas as rotas de arte gerada desta change: as referências anteriores a esses PNGs documentam a primeira iteração e são substituídas pelos uploads oficiais.
+- Manifesto usa `/api/branding/app-icon?size=192` e `?size=512`; metadata e entrada usam `?size=180` para Apple e `/api/branding/favicon` para navegador. A API preserva o arquivo original e gera PNG quadrado em memória com proporção intacta, sem recortar. Assets revalidam HTTP; Configurações apresenta prévia, envio e erro recuperável.
+- Backend: `pytest tests/test_derived_galleries.py -k 'branding or uploaded_app_icon'`: 3 aprovados, 68 desmarcados; valida autorização, armazenamento, PNGs 180/192/512, transparência, cores preservadas, rejeição de tamanho não permitido e troca do favicon. Ruff em `app/main.py` aprovado.
+- Frontend: `npm test -- app/admin/settings/page.test.tsx app/pwa-contract.test.ts app/auth-entry.test.tsx app/install-app.test.tsx`: 31 aprovados. ESLint direcionado sem erros, apenas dois avisos preexistentes de `<img>` de logo. Build Next.js e TypeScript aprovados após os ajustes finais.
+- Chromium com API e imagens sintéticas: Configurações em 390/1440 px mostra ambos os ícones carregados e sem overflow; corrigido o tamanho mínimo intrínseco do campo de arquivo/grid que extrapolava no mobile. Dashboard, etapa 04 e biblioteca também conferidos em 390/768/1440 px. Capturas e scripts de QA permanecem fora do Git.
+- Checagem somente leitura em homologação: `/api/branding` informa app-icon e favicon configurados; ambos os arquivos retornam HTTP 200, PNG. Nenhum upload remoto foi feito e as artes existentes não foram substituídas. Isso não valida a instalação da nova versão no servidor.
+- Sem suíte completa, push, merge, migration remota ou deploy. Instalação real e aprovação estética continuam dependentes da avaliação humana após publicação.
+
+## Publicação coordenada
 
 A API e o worker mudam de configuração global para configuração por galeria. Antes de qualquer publicação, inventariar somente Markina, apresentar subdomínio/portas e plano sem impacto em terceiros. Parar exclusivamente `preview-adjustment-worker` antigo antes da migration e publicar/reconstruir o worker no mesmo SHA da API. O pipeline base não atualiza automaticamente esse worker; não declarar paridade sem verificar ambos. Galerias existentes preservam flag/intensidade/geração com exposição zero. A migration não agenda fotos.
 

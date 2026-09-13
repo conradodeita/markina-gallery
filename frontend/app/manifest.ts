@@ -9,11 +9,11 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: "#f7f5ef",
+    background_color: "#f3f4f5",
     theme_color: "#f2c343",
     lang: "pt-BR",
     icons: [192, 512].map((size) => ({
-      src: `/app-icons/${size}`, sizes: `${size}x${size}`, type: "image/png", purpose: "any",
+      src: `/api/branding/app-icon?size=${size}`, sizes: `${size}x${size}`, type: "image/png", purpose: "any",
     })),
   };
 }

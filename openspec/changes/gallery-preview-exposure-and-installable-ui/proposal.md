@@ -24,4 +24,6 @@ Nenhuma spec consolidada tem seu contrato substituído; autorização de mídia 
 
 ## Impact
 
+Refinamento do proprietário: fundo principal cinza claro, bege apenas em botões secundários; aplicativo e favicon usam exclusivamente as artes enviadas em Configurações, sem ícone redesenhado pelo executor.
+
 Backend do módulo, migration aditiva, worker opcional, etapa 04, Configurações e estilos compartilhados; frontend PWA sem serviços externos. Presets Lightroom, edição final, cache offline de fotos, push e mudanças financeiras ficam fora do escopo. Deploy requer inventário e autorização operacional; worker deve ser atualizado junto da API.

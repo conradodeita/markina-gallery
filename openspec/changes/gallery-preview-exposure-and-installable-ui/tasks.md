@@ -8,5 +8,7 @@
 - [x] 2.2 Implementar manifesto, ícones, botão contextual e worker offline sem cache privado; testar instalação, recusa e privacidade. Evidência: seis testes exclusivos aprovados; Chromium verifica manifesto standalone, PNGs reais 180/192/512, ServiceWorker ativo, CacheStorage vazio e navegação offline neutra. Instrução iOS abre/fecha somente ao clicar.
 
 ## 3. Integração e entrega
+
+- [x] 3.3 Refinar fundo cinza claro e bege em botões; conectar ícones do upload administrativo ao manifesto/metadata e remover arte gerada. Evidência: 3 testes backend e 31 frontend aprovados; dimensões PNG, preservação da arte, envio/troca/falha e entrada Apple verificados. Configurações em 390/1440 px sem overflow após corrigir grid/input. Build, lint e OpenSpec aprovados; detalhes em validation.md. Sem publicação remota.
 - [x] 3.1 Executar validações direcionadas, migration temporária, lint/typecheck/build e inspeção visual; revisar diff e documentar operação/reversão. Evidências e limites em validation.md; testes direcionados, cadeia 0055 temporária, build final, Ruff/ESLint/typecheck/OpenSpec aprovados. Sem suíte completa local ou operação remota.
 - [x] 3.2 Apresentar resultado e registrar pendências humanas de avaliação estética/instalação real. Resultado e instruções registrados em validation.md e nos manuais; estética em fotos reais e instalação nos dispositivos permanecem revisão humana, não prova automática. Sem sincronização/arquivamento ou declaração de deploy.
