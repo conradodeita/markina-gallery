@@ -268,7 +268,9 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(dialogRule).toMatch(/max-height:calc\(100dvh\s*-\s*32px\)/);
     expect(dialogRule).toMatch(/overflow-y:auto/);
     expect(dialogRule).toMatch(/overscroll-behavior:contain/);
+    expect(mobileRule).toMatch(/width:calc\(100vw\s*-\s*16px\)/);
     expect(mobileRule).toMatch(/max-height:calc\(100dvh\s*-\s*8px\)/);
+    expect(mobileRule).toMatch(/\.facial-consent-actions\s*\{[^}]*position:static/);
     expect(mobileRule).toMatch(/\.facial-consent-actions\s*\{[^}]*grid-template-columns:1fr/);
   });
 

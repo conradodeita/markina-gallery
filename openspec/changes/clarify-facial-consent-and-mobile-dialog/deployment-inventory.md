@@ -3,8 +3,9 @@
 ## Estado candidato
 
 - Change: `clarify-facial-consent-and-mobile-dialog`.
-- Branch planejada: `feature/clarify-facial-consent-mobile-dialog`.
-- Base saudável atualmente publicada: `78134395021b579a7e7df7a0597ce50d94b802c0`.
+- Branch inicial integrada: `feature/clarify-facial-consent-mobile-dialog` (PR #78).
+- Correção responsiva candidata: `feature/fix-facial-consent-mobile-overflow`.
+- Base saudável atualmente publicada: `af07823e2dc47a34c5781837c19afbf5884b7030`.
 - Destino: `https://markina-homolog.duckdns.org`.
 - Alteração funcional: somente texto, marcação acessível e CSS responsivo do diálogo de consentimento facial da cliente.
 - Banco/migration: nenhuma alteração de schema, migration, backfill ou dados.
@@ -23,14 +24,14 @@
 
 - Não executar `docker compose down`, prune, remoção de volume, restore, downgrade nem manutenção destrutiva.
 - Publicar somente o SHA integrado em `develop` pelo workflow CI existente.
-- Validação local cirúrgica: 10 testes do componente facial, ESLint direcionado, TypeScript, OpenSpec estrito e `git diff --check` aprovados; suíte completa não executada por decisão humana explícita.
+- Validação local cirúrgica: 20 testes direcionados do componente e da galeria pública, ESLint direcionado, TypeScript, OpenSpec estrito e `git diff --check` aprovados; suíte completa não executada por decisão humana explícita.
 - Os gates obrigatórios do CI continuam ativos antes do merge e deploy.
 - Após a publicação, confirmar SHA, migration inalterada em `20260910_0053 (head)`, serviços Markina saudáveis, flag facial preservada e HTTP `200` em `/healthz` e `/api/health`.
 - Validar o diálogo em viewport mobile autenticada sem enviar nova referência facial.
 
 ## Rollback
 
-Se houver regressão, retornar somente os componentes da Markina Gallery ao SHA saudável `78134395021b579a7e7df7a0597ce50d94b802c0`. Não executar downgrade, restore ou mutação de dados; repetir healthchecks e registrar o resultado.
+Se houver regressão, retornar somente os componentes da Markina Gallery ao SHA saudável `af07823e2dc47a34c5781837c19afbf5884b7030`. Não executar downgrade, restore ou mutação de dados; repetir healthchecks e registrar o resultado.
 
 ## Autorização
 
