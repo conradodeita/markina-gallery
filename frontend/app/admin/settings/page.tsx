@@ -5,6 +5,7 @@ import { SystemState } from "../../ui-kit";
 import PixPanel from "./pix-panel";
 import WhatsAppPanel from "./whatsapp-panel";
 import SecurityPanel from "./security-panel";
+import PreviewAdjustmentPanel from "./preview-adjustment-panel";
 
 type Branding = {
   login_title: string;
@@ -380,6 +381,7 @@ export default function AdminSettingsPage() {
           </aside>
         </form>
       </section>
+      <PreviewAdjustmentPanel />
       <section className="admin-card" aria-labelledby="payment-messages-title">
         <h2 id="payment-messages-title">Mensagens de pagamento</h2>
         <p className="intro">Use somente texto simples e as variáveis controladas <code>{"{{cliente}}"}</code>, <code>{"{{pedido}}"}</code> e <code>{"{{galeria}}"}</code>. URLs, HTML e dados bancários não são aceitos.</p>

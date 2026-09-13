@@ -1,0 +1,31 @@
+# Override opcional: usar junto de -p markina-gallery -f docker/docker-compose.yml.
+services:
+  preview-adjustment-worker:
+    profiles: ["preview-adjustment"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.preview-adjustment
+    command: ["python", "-m", "app.preview_adjustment.worker"]
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+      OMP_NUM_THREADS: "1"
+    volumes:
+      - media-derivatives:/var/lib/markina/derivatives
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 768m
+    cpus: 0.5
+    pids_limit: 64
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.preview_adjustment.worker' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [internal]

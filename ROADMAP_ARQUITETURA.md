@@ -94,6 +94,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Importação retomável e idempotente: hash por arquivo, fila, progresso, relatório de duplicados/falhas e retentativas.
 - Proteção de prévias: limite de resolução, remoção de EXIF/GPS, marca d’água configurável, grade diagonal, linhas configuráveis, marca individual dinâmica e aviso de direitos autorais.
 - Declarar na interface que a proteção desencoraja cópia, mas não impede capturas de tela de forma absoluta.
+- Ajuste automático opcional das prévias: módulo independente, desligado por padrão, motor substituível e resultados separados. Aplicar proteção depois do ajuste; preservar originais, prévias convencionais e análise facial. Desligamento retorna à prévia convencional na próxima requisição; prever higienização exclusiva conforme `add-optional-preview-auto-adjustment`. Edição final continua externa.
 
 ## Fase 6 — WhatsApp e comunicação
 
