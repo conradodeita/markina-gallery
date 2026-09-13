@@ -10,5 +10,5 @@
 
 ## 3. Entrega controlada
 
-- [ ] 3.1 Preparar branch e commit focados, registrar inventário de impacto zero e publicar por PR com os gates obrigatórios do CI aprovados.
+- [x] 3.1 Preparar branch e commit focados, registrar inventário de impacto zero e publicar por PR com os gates obrigatórios do CI aprovados. Evidência: commit `5224b90`, PR #80 e inventário focados; backend, frontend/build, OpenSpec e gitleaks aprovados no run `34759298535`.
 - [ ] 3.2 Após autorização humana explícita, integrar e publicar em homologação; verificar SHA entregue, HTTP `200` nos healthchecks e navegação do nome recente até a ficha privada correspondente.
