@@ -57,3 +57,27 @@ mutação. Diferenças desde o inventário acima serão preservadas no log do de
 Os dados de teste removidos não terão backup novo nem restauração fornecida por
 esta execução. Rollback de código não recupera galerias, clientes ou mídia
 apagados. Essa consequência foi explicitamente aceita pelo proprietário.
+
+### Evidência da execução autorizada
+
+- Publicação destrutiva: merge `d8664a3f0b2e23fbeb9387184454a279d264f415`,
+  execução GitHub Actions `34726883948`, concluída com sucesso pelo trailer
+  exclusivo `Homolog-Cleanup: galleries-and-clients-without-backup` e sem criar
+  backup novo.
+- Inventário imediatamente anterior: 3 galerias públicas, 2 galerias privadas,
+  8 pastas, 1 cliente, 825 fotos, 6 seleções e 3 pedidos; 825 arquivos de origem
+  (535.013.335 bytes), 2.475 derivados (721.177.772 bytes) e histórico vazio.
+- Inventário posterior: todas as contagens operacionais ficaram em zero e as
+  raízes `source`, `derivatives` e `history` ficaram com zero arquivo e zero byte.
+- Contagens preservadas antes/depois: 1 conta admin, 39 sessões admin, 2 desafios
+  de segurança admin, 1 configuração de marca, 1 configuração PIX global,
+  0 templates de pagamento, 2 presets de preço e 1 configuração WhatsApp.
+- Correção operacional: merge
+  `b56c049a52b75c7f53b8f9c833b4894e2f0cde1c`, execução GitHub Actions
+  `34727732372`, para recarregar o Nginx Markina após a recriação da API e exigir
+  o healthcheck HTTP externo ao Compose nas próximas manutenções.
+- Verificação final em 2026-09-13: inventário novamente zerado, contagens
+  preservadas inalteradas, todos os serviços configurados saudáveis,
+  `FACIAL_PROCESSING_ENABLED=true`, `/api/health` com HTTP 200 e `/admin` com
+  HTTP 200. O build publicado contém o card `Armazenamento de fotos` e seus
+  contratos backend/frontend passaram no CI.
