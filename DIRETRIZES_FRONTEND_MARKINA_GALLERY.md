@@ -1,12 +1,12 @@
-# Markina Gallery — Diretrizes de Frontend e UX
+# Pick-your-Pic — Diretrizes de Frontend e UX
 
-Este documento orienta o Claude Code a desenhar e implementar o frontend completo da Markina Gallery. Ele é uma diretriz de produto e experiência, não um catálogo de templates nem uma autorização para transformar o sistema em um CMS genérico.
+Este documento orienta o Claude Code a desenhar e implementar o frontend completo da Pick-your-Pic. Ele é uma diretriz de produto e experiência, não um catálogo de templates nem uma autorização para transformar o sistema em um CMS genérico.
 
 O protótipo visual aprovado está em [`docs/frontend-reference/stitch-export/`](docs/frontend-reference/stitch-export/). Ele é apenas referência visual/funcional: o código exportado não pode ser copiado diretamente. A implementação deve seguir a arquitetura oficial, as specs OpenSpec e as regras deste documento.
 
 ## 1. Definição do produto
 
-A Markina Gallery é uma plataforma operacional de fotografia com duas superfícies:
+A Pick-your-Pic é uma plataforma operacional de fotografia com duas superfícies:
 
 1. **Área administrativa do fotógrafo**: CRM, eventos, galerias, fotos, clientes, seleções, pedidos, pagamentos, entregas, mensagens, armazenamento e pendências.
 2. **Área do cliente/responsável**: acesso à galeria autorizada, filtro facial temporário quando aplicável, seleção privada, carrinho, checkout, pedido e entregas.
@@ -41,7 +41,7 @@ Não implementar:
 - configurações que permitam quebrar contraste, acessibilidade ou hierarquia de navegação;
 - visual diferente e arbitrário para cada cliente.
 
-O frontend deve parecer um produto coeso da Markina Gallery. A personalização altera identidade e organização da galeria, não a estrutura fundamental da aplicação.
+O frontend deve parecer um produto coeso da Pick-your-Pic. A personalização altera identidade e organização da galeria, não a estrutura fundamental da aplicação.
 
 ## 4. Direção visual
 

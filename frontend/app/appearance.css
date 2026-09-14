@@ -40,3 +40,9 @@
 .gallery-presentation-marker--favorite { background:#202328; color:#fff; }
 .gallery-presentation-marker--favorite[aria-pressed="true"] { color:#ffaaa3; }
 .task-steps b { background:var(--mk-action); color:var(--mk-action-ink); }
+.product-logo { display:inline-flex; align-items:center; max-width:100%; min-width:0; }
+.product-logo img { display:block; width:auto; max-width:170px; height:54px; object-fit:contain; padding:4px 8px; border-radius:8px; background:#fff; }
+.product-logo .product-name { color:var(--mk-ink); font-size:1rem; font-weight:800; letter-spacing:-.025em; text-transform:none; white-space:nowrap; }
+.product-logo--entry { margin-bottom:16px; }
+.product-logo--entry img { width:auto; max-width:100%; height:auto; max-height:100px; }
+@media(max-width:440px) { .product-logo img { max-width:145px; height:46px; }.product-logo--entry img { max-width:100%; height:auto; max-height:100px; } }

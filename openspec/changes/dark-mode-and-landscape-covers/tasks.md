@@ -1,6 +1,6 @@
 ## 1. Capa limpa e horizontal
 
-- [x] 1.1 Validar JPEG horizontal após orientação EXIF antes de escrita/seleção/enqueue, inclusive seleção legada; testar horizontal, vertical, quadrado, EXIF e preservação da capa anterior/fotos comuns. Evidência: casos direcionados de orientação aprovados no pytest; execução conjunta de capas teve 14 aprovados e um fixture legado sem dimensões, em correção.
+- [x] 1.1 Validar JPEG horizontal após orientação EXIF antes de escrita/seleção/enqueue, inclusive seleção legada; testar horizontal, vertical, quadrado, EXIF e preservação da capa anterior/fotos comuns. Evidência: execução final com 18 testes direcionados aprovados, incluindo o fixture legado corrigido com dimensões válidas.
 - [x] 1.2 Entregar derivado limpo somente nos contextos de capa autorizados; testar capas existentes, ausência do derivado, acesso indevido e manutenção da proteção da mesma foto no acervo. Evidência: cenários privados (com/sem derivado) aprovados; público autenticado/capability, ausência de arquivo e mesma foto protegida aprovados; 2 cenários administrativos legados aprovados.
 - [x] 1.3 Atualizar orientação/mensagens da etapa 03 e layout de capa integral responsiva; validar erros de upload, título e proporção com testes direcionados e inspeção visual mobile/desktop. Evidência: testes do editor incluem rejeição 422 sem trocar capa e retry; apresentação compartilhada preserva proteção do acervo. QA local nas quatro larguras confirmou proporção 1600:900 e object-fit contain.
 

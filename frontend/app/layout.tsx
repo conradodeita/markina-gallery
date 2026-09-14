@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from "./product-brand";
 import type { Metadata, Viewport } from "next";
 import { InstallApp } from "./install-app";
 import { ThemeControl } from "./theme-control";
@@ -10,8 +11,8 @@ import "./visual-hierarchy.css";
 import "./appearance.css";
 
 export const metadata: Metadata = {
-  title: "Markina Gallery",
-  appleWebApp: { capable: true, title: "Markina", statusBarStyle: "default" },
+  title: PRODUCT_NAME,
+  appleWebApp: { capable: true, title: PRODUCT_NAME, statusBarStyle: "default" },
   icons: { apple: "/api/branding/app-icon?size=180", icon: "/api/branding/favicon" },
   description:
     "Plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos",

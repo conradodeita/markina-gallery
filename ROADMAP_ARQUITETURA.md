@@ -1,4 +1,4 @@
-# Markina Gallery — Roadmap Arquitetural
+# Pick-your-Pic — Roadmap Arquitetural
 
 > Direção detalhada de interface e UX: [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md).
 

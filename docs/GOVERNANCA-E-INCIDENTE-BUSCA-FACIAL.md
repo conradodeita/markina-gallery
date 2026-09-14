@@ -1,6 +1,6 @@
 # Governança, RIPD e incidente da busca facial
 
-Este documento é o registro operacional mínimo do tratamento biométrico da Markina Gallery. Ele não substitui parecer jurídico. Produção MUST permanecer bloqueada enquanto as aprovações humanas e jurídicas aplicáveis, a calibração representativa e o teste de capacidade ARM estiverem pendentes.
+Este documento é o registro operacional mínimo do tratamento biométrico da Pick-your-Pic. Ele não substitui parecer jurídico. Produção MUST permanecer bloqueada enquanto as aprovações humanas e jurídicas aplicáveis, a calibração representativa e o teste de capacidade ARM estiverem pendentes.
 
 ## RIPD — registro e aprovação
 
@@ -47,7 +47,7 @@ Trate como crítico qualquer suspeita de acesso indevido, chave comprometida, cr
 1. Delimite ambiente e escopo sem copiar imagem, referência, embedding, score ou PII para o registro comum.
 2. Bloqueie novas admissões: suspenda a allowlist afetada; para risco sistêmico, desligue o kill switch do ambiente pelo processo operacional autorizado.
 3. Mantenha o worker `maintenance` quando seguro, cancele requests abertos e execute o purge prioritário do escopo.
-4. Isole somente containers, credenciais, chaves e volumes da Markina Gallery afetados. Não altere proxy, firewall, DNS, certificados nem recursos de terceiros sem nova autorização específica.
+4. Isole somente containers, credenciais, chaves e volumes da Pick-your-Pic afetados. Não altere proxy, firewall, DNS, certificados nem recursos de terceiros sem nova autorização específica.
 5. Para chave comprometida, retire o key-id de novas gravações, introduza chave exclusiva do ambiente por canal seguro e planeje purge/reprocessamento; nunca imprima material criptográfico.
 6. Preserve SHA, horários UTC, IDs técnicos necessários em repositório restrito, contagens agregadas, decisões e cadeia de aprovação. Não preserve payload biométrico “para investigação” além da retenção autorizada.
 7. O controlador avalia obrigações de comunicação, registra decisão e prazo e coordena titulares/autoridades quando aplicável.

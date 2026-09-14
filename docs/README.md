@@ -1,4 +1,7 @@
-# docs — Documentação da Markina Gallery
+# docs — Documentação da Pick-your-Pic
+
+- `IDENTIDADE-PICK-YOUR-PIC.md` — marca atual, uploads oficiais e identificadores técnicos preservados
+- `APARENCIA_E_CAPAS.md` — temas claro/escuro e capa horizontal sem proteção visual
 
 - `DECISOES-TECNICAS.md` — decisões técnicas e limitações conhecidas
 - `CHECKLIST-DEPLOY-ROLLBACK.md` — checklist de deploy e rollback por ambiente

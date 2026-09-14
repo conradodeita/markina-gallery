@@ -1,6 +1,6 @@
 # Operação de recuperação e segurança da conta administrativa
 
-Este runbook cobre somente a Markina Gallery. Ele não autoriza alteração de credenciais, DNS, proxy, firewall, containers ou volumes de terceiros.
+Este runbook cobre somente a Pick-your-Pic. Ele não autoriza alteração de credenciais, DNS, proxy, firewall, containers ou volumes de terceiros.
 
 ## Fluxos e contratos
 
@@ -77,4 +77,4 @@ Não use dados reais de clientes nos testes. DNS e credenciais externas exigem a
 
 O deploy executa a migration aditiva `20260831_0032_admin_account_recovery`, sem remover nem alterar credenciais existentes. Antes de publicar: backup vigente, `alembic current`, inventário de containers/volumes/porta/subdomínio e validações completas.
 
-Rollback de aplicação: retorne ao SHA saudável anterior usando somente `-p markina-gallery -f docker/docker-compose.yml`. A migration pode permanecer aplicada por ser aditiva e compatível; não execute downgrade em homologação sem nova autorização explícita. Se SMTP causar impacto, altere externamente `EMAIL_PROVIDER=sandbox` e recrie apenas `api` e `worker` da Markina Gallery após aprovação operacional.
+Rollback de aplicação: retorne ao SHA saudável anterior usando somente `-p markina-gallery -f docker/docker-compose.yml`. A migration pode permanecer aplicada por ser aditiva e compatível; não execute downgrade em homologação sem nova autorização explícita. Se SMTP causar impacto, altere externamente `EMAIL_PROVIDER=sandbox` e recrie apenas `api` e `worker` da Pick-your-Pic após aprovação operacional.

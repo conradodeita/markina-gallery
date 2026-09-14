@@ -1,4 +1,4 @@
-"""Processamento local de derivados privados da Markina Gallery."""
+"""Processamento local de derivados privados do Pick-your-Pic."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import BrandingSettings, MediaDerivative, MediaJob, PhotoAsset, PhotoFolder, now
+from app.product_brand import DEFAULT_WATERMARK_TEXT
 
 VARIANTS = {
     "thumbnail": (480, False),
@@ -134,7 +135,7 @@ def _watermark_font_size(
 def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> Image.Image:
     """Incorpora uma marca textual e a grade opcional sem alterar a foto."""
     marked = image.convert("RGBA")
-    text = (settings.watermark_text if settings else None) or os.getenv("MEDIA_WATERMARK_TEXT", "MARKINA • PRÉVIA")
+    text = (settings.watermark_text if settings else None) or os.getenv("MEDIA_WATERMARK_TEXT", DEFAULT_WATERMARK_TEXT)
     direction = (settings.watermark_direction if settings else None) or "diagonal"
     color = (settings.watermark_color if settings else None) or "#FFFFFF"
     try:

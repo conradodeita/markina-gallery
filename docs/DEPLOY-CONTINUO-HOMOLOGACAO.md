@@ -1,4 +1,4 @@
-# Entrega contínua em homologação — Markina Gallery
+# Entrega contínua em homologação — Pick-your-Pic
 
 O workflow `CI` publica em homologação somente após um push integrado em `develop` concluir os jobs `backend`, `frontend`, `openspec` e `gitleaks`. O job `deploy-homolog` usa o GitHub Environment `homolog`; configure nele revisores obrigatórios antes de habilitar a primeira publicação.
 

@@ -1,8 +1,8 @@
-# Markina Gallery — Especificação de Execução para Claude Code
+# Pick-your-Pic — Especificação de Execução para Claude Code
 
 ## 1. Mandato e resultado esperado
 
-Implemente a **Markina Gallery**, plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. O produto deve priorizar:
+Implemente a **Pick-your-Pic**, plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. O produto deve priorizar:
 
 - poucos passos e navegação mobile-first para responsáveis;
 - administração operacional rápida para um fotógrafo;
@@ -75,7 +75,7 @@ O próximo executor deve conseguir retomar o trabalho lendo apenas o repositóri
 
 ### Limite de personalização visual
 
-Markina Gallery não é um CMS completo de páginas. O fotógrafo pode configurar identidade simples e opções controladas por galeria — cor, tipografia do nome, capa e layouts suportados — mas não terá construtor de páginas, editor livre de HTML/CSS ou coleção de templates de website. Consulte `DIRETRIZES_FRONTEND_MARKINA_GALLERY.md` para a direção completa do frontend e `docs/frontend-reference/README.md` para o uso do protótipo visual.
+Pick-your-Pic não é um CMS completo de páginas. O fotógrafo pode configurar identidade simples e opções controladas por galeria — cor, tipografia do nome, capa e layouts suportados — mas não terá construtor de páginas, editor livre de HTML/CSS ou coleção de templates de website. Consulte `DIRETRIZES_FRONTEND_MARKINA_GALLERY.md` para a direção completa do frontend e `docs/frontend-reference/README.md` para o uso do protótipo visual.
 
 O export do Google Stitch em `docs/frontend-reference/stitch-export/` é somente referência visual e funcional. **Não copiar diretamente seu código, componentes, mocks, dados, dependências ou estrutura para a aplicação oficial.** Reconstruir o frontend no stack oficial e conectá-lo às APIs, autenticação, permissões, regras de negócio e specs OpenSpec vigentes.
 

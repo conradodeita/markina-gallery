@@ -1,7 +1,8 @@
+import { PRODUCT_NAME } from "./product-brand";
 import Link from "next/link";
 
 export function ValidationHeader({ role, version }: { role: string; version?: string }) {
-  return <header className="validation-header"><div><p className="eyebrow">Markina Gallery · Homologação</p><p className="validation-role">{role}</p></div><span className="environment-badge">versão {version ?? "carregando"}</span></header>;
+  return <header className="validation-header"><div><p className="eyebrow">{PRODUCT_NAME} · Homologação</p><p className="validation-role">{role}</p></div><span className="environment-badge">versão {version ?? "carregando"}</span></header>;
 }
 
 export function StateCard({ title, value, detail, href }: { title: string; value: string | number; detail: string; href?: string }) {

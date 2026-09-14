@@ -1,10 +1,11 @@
+import { PRODUCT_NAME } from "./product-brand";
 import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "Markina Gallery",
-    short_name: "Markina",
+    name: PRODUCT_NAME,
+    short_name: PRODUCT_NAME,
     description: "Suas fotos e a central do fotógrafo.",
     start_url: "/",
     scope: "/",

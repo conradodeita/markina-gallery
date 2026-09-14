@@ -1,5 +1,8 @@
 "use client";
 
+import { PRODUCT_NAME } from "../../product-brand";
+
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -60,7 +63,7 @@ export default function GalleriesPage() {
     <main className="admin-shell">
       <div className="section-heading gallery-list-heading">
         <div>
-          <p className="eyebrow">Markina Gallery · Fotógrafo</p>
+          <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
           <h1>Galerias</h1>
           <p className="intro">
             Cada pasta nasce dentro de uma Galeria pública. Cada cliente recebe

@@ -1,4 +1,4 @@
-"""API de autenticação unificada da Markina Gallery."""
+"""API de autenticação unificada do Pick-your-Pic."""
 
 from __future__ import annotations
 
@@ -283,6 +283,7 @@ from app.private_membership import (
     unblock_private_membership,
     unlink_private_membership,
 )
+from app.product_brand import PRODUCT_NAME
 from app.public_gallery_access import (
     PublicGalleryAccessDenied,
     active_capability_by_id,
@@ -300,7 +301,7 @@ from app.whatsapp_channel import (
 )
 from app.whatsapp_webhook import process_whatsapp_webhook
 
-app = FastAPI(title="Markina Gallery API", version="0.2.0")
+app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
 
 
 @app.on_event("startup")
@@ -1030,7 +1031,7 @@ def statistics_txt(entries: list[dict[str, str]]) -> PlainTextResponse:
     content = "".join(f"{entry['id']}\t{entry['filename']}\n" for entry in entries)
     return PlainTextResponse(
         content,
-        headers={"Content-Disposition": 'attachment; filename="markina-gallery-lista.txt"'},
+        headers={"Content-Disposition": 'attachment; filename="pick-your-pic-lista.txt"'},
     )
 
 

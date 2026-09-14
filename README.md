@@ -1,8 +1,10 @@
-# Markina Gallery
+# Pick-your-Pic
+
+Nome atual do produto. Os identificadores técnicos `markina-gallery`, domínio, repositório, cookies e comandos operacionais permanecem inalterados. Veja [identidade e arte oficial](docs/IDENTIDADE-PICK-YOUR-PIC.md).
 
 Plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. Experiência mobile-first para responsáveis, painel administrativo rápido para um único fotógrafo, galerias privadas importadas do DigiKam e eventos coletivos com liberação individual de resultados.
 
-> **Status: fundação (scaffolding).** Nenhuma funcionalidade de negócio, autenticação, CRUD ou regra da Markina Gallery foi implementada ainda — apenas estrutura, Compose, CI, health checks e documentação.
+> **Status:** aplicação em evolução e validação em homologação. Consulte as changes ativas para distinguir implementação local, revisão humana e publicação.
 
 ## Documentos do proprietário
 
@@ -42,7 +44,7 @@ curl http://localhost:8080/               # Next.js
 Única porta publicada no host: Nginx em `${MARKINA_GALLERY_PORT:-8080}`. `db` e `redis` nunca publicam portas; os volumes de banco, Redis e mídia são exclusivos do projeto; rede `markina-gallery_internal`. Veja também [prévia protegida de mídia](docs/MIDIA-PREVIAS-PROTEGIDAS.md).
 
 Verificar saúde: `docker compose -p markina-gallery -f docker/docker-compose.yml ps`
-Parar somente a Markina Gallery: `docker compose -p markina-gallery -f docker/docker-compose.yml down`
+Parar somente a Pick-your-Pic: `docker compose -p markina-gallery -f docker/docker-compose.yml down`
 
 > ⚠️ **Máquinas/servidores compartilhados:** outros projetos Docker podem estar em execução. Nunca rode
 > `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`, nunca rode prunes, e nunca altere

@@ -591,6 +591,8 @@ def test_public_recovery_is_neutral_and_resets_without_creating_session(
             select(EmailDelivery).where(EmailDelivery.kind == "password_recovery")
         )
         raw_token = raw_token_from_delivery(delivery)
+        payload = decrypt_sensitive_payload(delivery.encrypted_payload, context=f"email-delivery:{delivery.id}:{delivery.idempotency_key}")
+        assert payload["subject"] == "Redefinição de senha · Pick-your-Pic"
         item = db.scalar(
             select(AdminActionToken).where(AdminActionToken.purpose == "password_reset")
         )
@@ -798,14 +800,19 @@ def test_account_settings_change_password_and_email_with_session_bound_otp(
             select(EmailDelivery).where(EmailDelivery.kind == "email_verification")
         )
         raw_token = raw_token_from_delivery(verification)
+        payload = decrypt_sensitive_payload(verification.encrypted_payload, context=f"email-delivery:{verification.id}:{verification.idempotency_key}")
+        assert payload["subject"] == "Confirme o novo e-mail · Pick-your-Pic"
         assert db.scalar(select(AdminUser)).email == "admin@markina.test"
     confirmed = client.post("/auth/admin/email/confirm", json={"token": raw_token})
     assert confirmed.status_code == 200
     with SessionLocal() as db:
         assert db.scalar(select(AdminUser)).email == "novo@markina.test"
-        assert db.scalar(
+        notice = db.scalar(
             select(EmailDelivery).where(EmailDelivery.kind == "security_notice")
         )
+        assert notice
+        notice_payload = decrypt_sensitive_payload(notice.encrypted_payload, context=f"email-delivery:{notice.id}:{notice.idempotency_key}")
+        assert "Pick-your-Pic" in notice_payload["text_body"]
     assert client.get("/admin/security/summary").status_code == 403
     login_admin(
         client,

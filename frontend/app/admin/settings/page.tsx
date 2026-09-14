@@ -1,5 +1,8 @@
 "use client";
 
+import { PRODUCT_NAME, DEFAULT_WATERMARK_TEXT } from "../../product-brand";
+
+
 import { ChangeEvent, CSSProperties, FormEvent, useEffect, useRef, useState } from "react";
 import { SystemState } from "../../ui-kit";
 import PixPanel from "./pix-panel";
@@ -34,7 +37,7 @@ const fallback: Branding = {
   logo_url: null,
   app_icon_url: null,
   favicon_url: null,
-  watermark_text: "MARKINA • PRÉVIA",
+  watermark_text: DEFAULT_WATERMARK_TEXT,
   watermark_font: "sans-serif",
   watermark_color: "#FFFFFF",
   watermark_size: 24,
@@ -101,7 +104,7 @@ export function calculateWatermarkPreviewFontSize({
 function ProtectionPreviewSurface({ surface, settings }: { surface: "dark" | "light"; settings: Branding }) {
   const preview = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState({ fontSize: 24, margin: 5 });
-  const text = settings.watermark_text || "MARKINA • PRÉVIA";
+  const text = settings.watermark_text || DEFAULT_WATERMARK_TEXT;
 
   useEffect(() => {
     function updateLayout() {
@@ -314,7 +317,7 @@ export default function AdminSettingsPage() {
 
   return (
     <main className="admin-shell">
-      <p className="eyebrow">Markina Gallery · Fotógrafo</p>
+      <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
       <h1>Configurações</h1>
       <p className="intro">Personalize a mensagem que clientes e fotógrafos encontram antes de entrar. Os textos são simples, sem HTML ou scripts.</p>
       <WhatsAppPanel />

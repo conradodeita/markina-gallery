@@ -39,6 +39,7 @@ from app.messaging import (
     configured_photographer_phone,
     whatsapp_provider_name,
 )
+from app.product_brand import PRODUCT_NAME
 from app.whatsapp_delivery import encrypt_otp, otp_encryption_key
 
 
@@ -248,7 +249,7 @@ def issue_password_reset_email(db: Session, challenge: AdminSecurityChallenge) -
         source_type="admin_action_token",
         source_id=str(token.id),
         recipient=admin.email,
-        subject="Redefinição de senha da Markina Gallery",
+        subject=f"Redefinição de senha · {PRODUCT_NAME}",
         text_body=(
             "Foi solicitada uma redefinição de senha. Abra o link de uso único, "
             f"válido por 15 minutos: {link}\n\nSe não foi você, ignore esta mensagem."
@@ -317,7 +318,7 @@ def issue_email_verification(db: Session, admin: AdminUser, new_email: str) -> N
         source_type="admin_action_token",
         source_id=str(token.id),
         recipient=normalized,
-        subject="Confirme o novo e-mail da Markina Gallery",
+        subject=f"Confirme o novo e-mail · {PRODUCT_NAME}",
         text_body=f"Confirme o novo endereço pelo link de uso único: {link}",
         idempotency_key=f"email:verify-admin-email:{token.id}",
         expires_at=token.expires_at,
@@ -337,7 +338,7 @@ def queue_previous_email_notice(
         recipient=previous_email,
         subject="O e-mail administrativo foi alterado",
         text_body=(
-            "O endereço de acesso administrativo da Markina Gallery foi alterado. "
+            f"O endereço de acesso administrativo de {PRODUCT_NAME} foi alterado. "
             "Se você não reconhece esta ação, interrompa o acesso ao ambiente e revise as credenciais."
         ),
         idempotency_key=f"email:previous-address-notice:{action_token_id}",

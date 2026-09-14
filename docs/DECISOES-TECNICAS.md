@@ -1,4 +1,6 @@
-# Decisões técnicas e limitações conhecidas — Markina Gallery
+# Decisões técnicas e limitações conhecidas — Pick-your-Pic
+
+Decisão vigente de marca (2026-09-13): produto Pick-your-Pic; infraestrutura continua `markina-gallery`. A decisão datada de 2026-08-22 abaixo é preservada como histórico, supersedida apenas quanto ao nome público. Ver IDENTIDADE-PICK-YOUR-PIC.md.
 
 Documento vivo; revisar a cada mudança. Fonte completa das decisões: `openspec/changes/<id>/design.md` de cada mudança.
 
@@ -7,7 +9,7 @@ Documento vivo; revisar a cada mudança. Fonte completa das decisões: `openspec
 1. **OpenSpec como processo obrigatório** (schema `spec-driven`), artefatos em português com cabeçalhos e SHALL/MUST em inglês. `openspec/specs/` reflete apenas comportamento implementado; cada domínio ganha delta spec junto da mudança que o implementa.
 2. **Monorepo único**: `frontend/` (Next.js App Router + TS), `backend/` (FastAPI), `docker/`, `scripts/`, `docs/`, `.github/workflows/`, `openspec/`.
 3. **Docker Compose com serviços isolados**: `nginx` (entrada única), `web`, `api`, `db` (PostgreSQL 17), `redis` (Redis 7), `worker`. Rede interna `markina-gallery_internal`; `db`/`redis` sem portas públicas; healthchecks em todos os serviços.
-4. **Isolamento de máquinas compartilhadas**: projeto Compose exclusivo `markina-gallery`; volumes `markina-gallery_pgdata`/`markina-gallery_redisdata`; única porta publicada no host = Nginx em `${MARKINA_GALLERY_PORT:-8080}`. **Porta 3000 do host já é usada pelo projeto `firefly_telegram` desta máquina — a Markina Gallery não publica 3000/8000/5432/6379 no host.** Em conflito, muda-se a porta da Markina Gallery, nunca a do outro projeto. Proibidos prunes e `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`.
+4. **Isolamento de máquinas compartilhadas**: projeto Compose exclusivo `markina-gallery`; volumes `markina-gallery_pgdata`/`markina-gallery_redisdata`; única porta publicada no host = Nginx em `${MARKINA_GALLERY_PORT:-8080}`. **Porta 3000 do host já é usada pelo projeto `firefly_telegram` desta máquina — a Pick-your-Pic não publica 3000/8000/5432/6379 no host.** Em conflito, muda-se a porta da Pick-your-Pic, nunca a do outro projeto. Proibidos prunes e `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`.
 5. **Ambientes separados**: `local`, `homolog`, `prod` com banco, segredos e integrações totalmente distintos (`.env.local`/`.env.homolog`/`.env.prod`).
 6. **Segredos fora do Git**: `.env*` ignorado (exceto `.env.example`); gitleaks local e na CI; GitHub Secrets apenas na CI.
 7. **CI no GitHub Actions**: lint, testes, build, validação OpenSpec (`--strict`) e gitleaks em pull requests.

@@ -1,6 +1,6 @@
-# Checklist de deploy e rollback — Markina Gallery
+# Checklist de deploy e rollback — Pick-your-Pic
 
-Limitado à Markina Gallery. Nunca afeta containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de outros projetos.
+Limitado à Pick-your-Pic. Nunca afeta containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de outros projetos.
 
 ## 0. Gate obrigatório (antes de qualquer ação em homologação/produção)
 
@@ -11,8 +11,8 @@ Limitado à Markina Gallery. Nunca afeta containers, imagens, redes, volumes, pr
 
 ## 1. Preparação (uma vez por servidor)
 
-- [ ] Diretório próprio da Markina Gallery criado (ex.: `/opt/markina-gallery`)
-- [ ] Usuário/serviço próprio da Markina Gallery, quando aplicável
+- [ ] Diretório próprio da Pick-your-Pic criado (ex.: `/opt/markina-gallery`)
+- [ ] Usuário/serviço próprio da Pick-your-Pic, quando aplicável
 - [ ] `docker/.env.<ambiente>` criado fora do Git, com permissões restritas e segredos fortes gerados (`secrets.token_urlsafe`)
 - [ ] Subdomínio próprio apontado no proxy reverso existente, sem alterar rotas de outros projetos
 - [ ] Diretórios próprios de backups e logs criados
@@ -40,7 +40,7 @@ Limitado à Markina Gallery. Nunca afeta containers, imagens, redes, volumes, pr
 - [ ] Allowlist e etapa `dark|canary|limited|general` aprovadas; operação protegida confirmada explicitamente
 - [ ] Fluxo infantil permanece desligado até representação, consentimento e aprovação jurídica/humana vigentes
 
-## 3. Rollback (somente a Markina Gallery)
+## 3. Rollback (somente a Pick-your-Pic)
 
 - [ ] Identificar versão anterior saudável (imagem/tag ou commit)
 - [ ] `docker compose -p markina-gallery -f docker/docker-compose.yml up -d` com a versão anterior

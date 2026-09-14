@@ -1,5 +1,8 @@
 "use client";
 
+import { PRODUCT_NAME } from "../../product-brand";
+
+
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 
@@ -13,5 +16,5 @@ export default function AdminPreviewsPage() {
   function openPreview(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setActiveId(photoId.trim()); }
   if (authorized === null) return <main className="admin-shell">Carregando área administrativa…</main>;
   if (!authorized) return <main className="admin-shell"><h1>Acesso restrito</h1><Link href="/">Voltar para entrada</Link></main>;
-  return <main className="admin-shell"><p className="eyebrow">Markina Gallery · Fotógrafo</p><h1>Conferência de prévias</h1><p className="intro">A prévia administrativa não possui marca-d&apos;água e tem resolução limitada; o original não é disponibilizado.</p><form className="auth-form" onSubmit={openPreview}><label>Identificador da foto<input value={photoId} onChange={(event) => setPhotoId(event.target.value)} placeholder="UUID da foto" required /></label><button className="primary">Abrir prévia</button></form>{activeId && <ProtectedPhotoViewer label="Prévia administrativa" photos={[{ id: activeId, name: `Foto ${activeId}`, previewUrl: `/api/admin/photo-assets/${activeId}/preview` }]} />}</main>;
+  return <main className="admin-shell"><p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p><h1>Conferência de prévias</h1><p className="intro">A prévia administrativa não possui marca-d&apos;água e tem resolução limitada; o original não é disponibilizado.</p><form className="auth-form" onSubmit={openPreview}><label>Identificador da foto<input value={photoId} onChange={(event) => setPhotoId(event.target.value)} placeholder="UUID da foto" required /></label><button className="primary">Abrir prévia</button></form>{activeId && <ProtectedPhotoViewer label="Prévia administrativa" photos={[{ id: activeId, name: `Foto ${activeId}`, previewUrl: `/api/admin/photo-assets/${activeId}/preview` }]} />}</main>;
 }

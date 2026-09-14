@@ -5,8 +5,8 @@ context: |
   All artifacts must be written in pt.
   Keep OpenSpec structural headings and SHALL/MUST keywords in English.
 
-  # Markina Gallery — contexto do projeto
-  Marca: produto = Markina Gallery (alinhado à marca Markina Photographer); repositório, projeto Docker Compose e prefixos (containers, redes, volumes, serviços) = markina-gallery; o change-id bootstrap-photocrm-foundation permanece como identificador de auditoria.
+  # Pick-your-Pic — contexto do projeto
+  Marca: produto = Pick-your-Pic (rebrand aprovado em 2026-09-13); repositório, projeto Docker Compose e prefixos (containers, redes, volumes, serviços) = markina-gallery; o change-id bootstrap-photocrm-foundation permanece como identificador de auditoria.
   Produto: plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos.
   Mandato: INSTRUCOES_EXECUTOR_CLAUDE_CODE.md (fonte operacional) e ROADMAP_ARQUITETURA.md (decisões de segurança e privacidade obrigatórias).
   Stack: Next.js (App Router, TypeScript, Tailwind), FastAPI (SQLAlchemy 2, Alembic, Pydantic), PostgreSQL, Redis + worker de filas, Nginx, Docker Compose, Google Drive (cópia/arquivo frio/backups), adaptadores WhatsApp (Evolution API inicial), e-mail SMTP e pagamentos (PIX manual; Infinity Pay pós-MVP).
