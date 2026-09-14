@@ -121,7 +121,7 @@ services:
       MEDIA_SOURCE_ROOT: /var/lib/markina/source
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
       MEDIA_HISTORY_ROOT: /var/lib/markina/history
-      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-Pick-your-Pic • PRÉVIA}
     volumes:
       - media-source:/var/lib/markina/source
       - media-derivatives:/var/lib/markina/derivatives
@@ -304,7 +304,7 @@ services:
       MEDIA_SOURCE_ROOT: /var/lib/markina/source
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
       MEDIA_HISTORY_ROOT: /var/lib/markina/history
-      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-Pick-your-Pic • PRÉVIA}
       WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
       WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
