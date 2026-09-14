@@ -23,31 +23,40 @@ from app.preview_adjustment.service import adjusted_path, configure, enqueue, se
 class ConfigurationInput(BaseModel):
     enabled: bool
     strength: int = Field(default=50, ge=10, le=75)
+    exposure_tenths: int = Field(default=0, ge=-20, le=20, strict=True)
 
 
 def register_routes(app, *, db_session, require_admin, preview_response):
     database_dependency = Depends(db_session)
 
-    @app.get("/admin/preview-adjustment")
-    def configuration(request: Request, db: Session = database_dependency):
+    @app.get("/admin/preview-adjustment/galleries/{gallery_id}/configuration")
+    def configuration(gallery_id: UUID, request: Request, db: Session = database_dependency):
         require_admin(request)
-        config = settings(db)
+        if not db.get(ParentGallery, gallery_id):
+            raise HTTPException(404, "Galeria não encontrada.")
+        config = settings(db, gallery_id)
         return {
             "enabled": bool(config and config.enabled),
             "strength": config.strength if config else 50,
             "generation": config.generation if config else 1,
+            "exposure_tenths": config.exposure_tenths if config else 0,
             "engine": ENGINE_VERSION,
         }
 
-    @app.patch("/admin/preview-adjustment")
+    @app.patch("/admin/preview-adjustment/galleries/{gallery_id}/configuration")
     def save_configuration(
-        payload: ConfigurationInput, request: Request, db: Session = database_dependency
+        gallery_id: UUID,
+        payload: ConfigurationInput,
+        request: Request,
+        db: Session = database_dependency,
     ):
         require_admin(request)
-        configure(db, payload.enabled, payload.strength)
-        audit(db, "preview_adjustment.configured", f"enabled:{payload.enabled}")
+        if not db.get(ParentGallery, gallery_id):
+            raise HTTPException(404, "Galeria não encontrada.")
+        configure(db, gallery_id, payload.enabled, payload.strength, payload.exposure_tenths)
+        audit(db, "preview_adjustment.configured", str(gallery_id))
         db.commit()
-        return configuration(request, db)
+        return configuration(gallery_id, request, db)
 
     @app.get("/admin/preview-adjustment/galleries")
     def galleries(
@@ -77,7 +86,7 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         require_admin(request)
         if not db.get(ParentGallery, gallery_id):
             raise HTTPException(404, "Galeria não encontrada.")
-        config = settings(db)
+        config = settings(db, gallery_id)
         query = (
             select(PreviewAdjustment.status, func.count())
             .join(PhotoAsset)
@@ -120,7 +129,7 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         gallery = db.get(ParentGallery, gallery_id)
         if not gallery or not gallery.active or gallery.lifecycle_status != "active":
             raise HTTPException(409, "Galeria indisponível para processamento.")
-        config = settings(db)
+        config = settings(db, gallery_id)
         if not config or not config.enabled:
             raise HTTPException(409, "Ative o ajuste de prévias primeiro.")
         query = (

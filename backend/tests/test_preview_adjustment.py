@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Base,
+    GalleryPreviewSettings,
     ParentGallery,
     PhotoAsset,
     PhotoFolder,
@@ -105,7 +106,7 @@ def prepared(database):
         path = safe_source_path(photo)
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (320, 180), (45, 65, 85)).save(path)
-        configure(db, True, 50)
+        configure(db, photo.parent_gallery_id, True, 50)
         db.commit()
         generate_derivatives(db, photo)
         return factory, photo.id
@@ -116,6 +117,108 @@ class BrightEngine:
         from PIL import ImageEnhance
 
         return ImageEnhance.Brightness(image).enhance(1.3)
+
+
+def test_gallery_configuration_isolation_defaults_and_constraints(prepared):
+    from app.preview_adjustment.cleanup import cleanup
+    from app.preview_adjustment.service import configure, settings
+
+    factory, photo_id = prepared
+    with factory() as db:
+        a = db.get(PhotoAsset, photo_id).parent_gallery_id
+        other = make_photo(db)
+        b = other.parent_gallery_id
+        assert settings(db, b) is None
+        config_a = settings(db, a)
+        generation = config_a.generation
+        config_b = configure(db, b, True, 75, 10)
+        db.commit()
+        assert settings(db, a).generation == generation
+        assert db.get(PreviewAdjustment, photo_id).status == "queued"
+        configure(db, a, False, 50)
+        db.commit()
+        assert settings(db, b).enabled
+        assert settings(db, b).exposure_tenths == 10
+        with pytest.raises(ValueError):
+            cleanup(db, execute=True, worker_stopped=True)
+        config_b.exposure_tenths = 21
+        with pytest.raises(IntegrityError):
+            db.commit()
+
+
+def test_gallery_settings_migration_preserves_existing_configuration(database):
+    import importlib
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    with Session(database) as db:
+        photo = make_photo(db)
+        parent_id = photo.parent_gallery_id
+        db.add(PreviewAdjustmentSettings(enabled=True, strength=75, generation=7))
+        db.commit()
+    GalleryPreviewSettings.__table__.drop(database)
+    migration = importlib.import_module("migrations.versions.20260913_0055_gallery_preview_settings")
+    with database.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+        migration.upgrade()
+    with Session(database) as db:
+        row = db.get(GalleryPreviewSettings, parent_id)
+        assert (row.enabled, row.strength, row.generation, row.exposure_tenths) == (True, 75, 7, 0)
+        assert db.get(PreviewAdjustmentSettings, 1).enabled is False
+
+
+def test_exposure_reprocessing_always_uses_clean_source(prepared):
+    from app.preview_adjustment.service import adjusted_path, configure, enqueue, process_one
+
+    factory, photo_id = prepared
+    inputs, results = [], []
+
+    class RecordingEngine(BrightEngine):
+        def render(self, image, strength):
+            inputs.append(image.tobytes())
+            return super().render(image, strength)
+
+    for exposure in (10, 0, 10):
+        with factory() as db:
+            configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, True, 50, exposure)
+            assert enqueue(db, photo_id, retry=True)
+            db.commit()
+        assert process_one(factory, RecordingEngine())
+        with factory() as db:
+            results.append(adjusted_path(db, photo_id).read_bytes())
+    assert inputs[0] == inputs[1] == inputs[2]
+    assert results[0] == results[2] != results[1]
+
+
+def test_worker_uses_each_gallery_configuration_independently(prepared):
+    from PIL import Image
+
+    from app.media import generate_derivatives, safe_source_path
+    from app.preview_adjustment.service import configure, process_one
+
+    factory, first_id = prepared
+    with factory() as db:
+        second = make_photo(db)
+        path = safe_source_path(second)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (40, 30), (100, 100, 100)).save(path)
+        configure(db, second.parent_gallery_id, True, 75, -10)
+        db.commit()
+        generate_derivatives(db, second)
+        second_id = second.id
+        configure(db, db.get(PhotoAsset, first_id).parent_gallery_id, False, 50)
+        db.commit()
+
+    class GalleryEngine(BrightEngine):
+        def render(self, image, strength):
+            assert strength == 75
+            return super().render(image, strength)
+
+    assert process_one(factory, GalleryEngine())
+    assert not process_one(factory, GalleryEngine())
+    with factory() as db:
+        assert db.get(PreviewAdjustment, second_id).status == "ready"
+        assert db.get(PreviewAdjustment, first_id).status == "cancelled"
 
 
 def test_job_idempotency_fallback_and_byte_preservation(prepared):
@@ -147,14 +250,14 @@ def test_job_idempotency_fallback_and_byte_preservation(prepared):
         for row in db.scalars(select(MediaDerivative)):
             assert safe_derivative_path(row).read_bytes() == originals[row.variant]
         assert not enqueue(db, photo_id, retry=True)
-        configure(db, False, 50)
+        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
         db.commit()
         row = db.scalar(select(MediaDerivative).where(MediaDerivative.variant == "client_preview"))
         assert presentation_path(db, row).read_bytes() == originals["client_preview"]
         assert path.is_file()
 
 
-@pytest.mark.parametrize("mutation", ["disable", "source", "protection", "delete", "gallery"])
+@pytest.mark.parametrize("mutation", ["disable", "exposure", "source", "protection", "delete", "gallery"])
 def test_inflight_result_cannot_override_changed_state(prepared, mutation):
     from sqlalchemy import select
 
@@ -167,7 +270,9 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
         def render(self, image, strength):
             with factory() as db:
                 if mutation == "disable":
-                    configure(db, False, 50)
+                    configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
+                elif mutation == "exposure":
+                    configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, True, 50, 10)
                 elif mutation == "source":
                     db.scalar(
                         select(MediaDerivative).where(MediaDerivative.variant == "admin_preview")
@@ -240,7 +345,7 @@ def test_cleanup_is_scoped_and_requires_disable(prepared):
         assert cleanup(db)["files"] == 1
         with pytest.raises(ValueError):
             cleanup(db, execute=True, worker_stopped=True)
-        configure(db, False, 50)
+        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
         db.commit()
         with pytest.raises(ValueError):
             cleanup(db, execute=True)
@@ -283,12 +388,15 @@ def test_admin_api_auth_comparison_and_immediate_disable(api_client):
 
     client, factory, photo_id = api_client
     root = "/admin/preview-adjustment"
-    assert client.get(root).status_code == 403
+    with factory() as db:
+        config_url = f"{root}/galleries/{db.get(PhotoAsset, photo_id).parent_gallery_id}/configuration"
+    assert client.get(config_url).status_code == 403
     client.cookies.set("markina_session", "adjustment-client")
-    assert client.patch(root, json={"enabled": True}).status_code == 403
+    assert client.patch(config_url, json={"enabled": True}).status_code == 403
     assert client.get(f"{root}/photos/{photo_id}/before").status_code == 403
     client.cookies.set("markina_session", "adjustment-admin")
-    assert client.patch(root, json={"enabled": True, "strength": 200}).status_code == 422
+    assert client.patch(config_url, json={"enabled": True, "strength": 200}).status_code == 422
+    assert client.patch(config_url, json={"enabled": True, "exposure_tenths": 21}).status_code == 422
     assert client.get(f"{root}/photos/{photo_id}/after").status_code == 404
     before = client.get(f"{root}/photos/{photo_id}/before")
     assert before.status_code == 200 and "no-store" in before.headers["cache-control"]
@@ -298,7 +406,7 @@ def test_admin_api_auth_comparison_and_immediate_disable(api_client):
     assert (
         client.get(f"/admin/photo-assets/{photo_id}/watermarked-preview").content == after.content
     )
-    assert client.patch(root, json={"enabled": False, "strength": 50}).status_code == 200
+    assert client.patch(config_url, json={"enabled": False, "strength": 50}).status_code == 200
     assert client.get(f"{root}/photos/{photo_id}/after").status_code == 404
     assert (
         client.get(f"/admin/photo-assets/{photo_id}/watermarked-preview").content == before.content
@@ -376,7 +484,7 @@ def test_client_private_delivery_keeps_authorization_and_fallback(api_client):
     assert result.headers["cache-control"] == "private, no-store"
     with factory() as db:
         assert result.content == adjusted_path(db, photo_id).read_bytes()
-        configure(db, False, 50)
+        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
         db.commit()
     assert client.get(endpoint).content == conventional.content
     assert client.get(f"/gallery/{uuid4()}/photos/{photo_id}/preview").status_code == 403
@@ -393,7 +501,7 @@ def test_optional_table_failure_does_not_break_conventional_import(prepared):
     with factory() as db:
         db.execute(delete(PreviewAdjustment))
         db.commit()
-        PreviewAdjustmentSettings.__table__.drop(db.get_bind())
+        GalleryPreviewSettings.__table__.drop(db.get_bind())
         derivatives = generate_derivatives(db, db.get(PhotoAsset, photo_id))
         assert len(derivatives) == 3
         assert db.scalar(select(MediaJob)).status == "completed"
@@ -446,7 +554,7 @@ def test_public_delivery_requires_registration_and_released_folder(api_client):
     assert after.status_code == 200 and after.content != before.content
     assert after.headers["cache-control"] == "private, no-store"
     with factory() as db:
-        configure(db, False, 50)
+        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
         db.commit()
     assert client.get(endpoint).content == before.content
 

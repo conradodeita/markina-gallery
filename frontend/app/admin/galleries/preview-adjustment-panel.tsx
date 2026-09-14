@@ -3,8 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import styles from "./preview-adjustment-panel.module.css";
 
-type Configuration = { enabled: boolean; strength: number; generation: number };
-type Gallery = { id: string; name: string };
+type Configuration = { enabled: boolean; strength: number; generation: number; exposure_tenths: number };
 type Photo = { id: string; filename: string };
 type Progress = {
   counts: { queued: number; processing: number; ready: number; failed: number; cancelled: number };
@@ -18,13 +17,11 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json();
 }
 
-export default function PreviewAdjustmentPanel() {
+export default function PreviewAdjustmentPanel({ galleryId: gallery }: { galleryId: string }) {
   const [config, setConfig] = useState<Configuration | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [strength, setStrength] = useState(50);
-  const [galleries, setGalleries] = useState<Gallery[]>([]);
-  const [search, setSearch] = useState("");
-  const [gallery, setGallery] = useState("");
+  const [exposure, setExposure] = useState(0);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [photo, setPhoto] = useState("");
   const [message, setMessage] = useState("");
@@ -34,23 +31,14 @@ export default function PreviewAdjustmentPanel() {
   const currentGallery = useRef("");
 
   useEffect(() => {
+    currentGallery.current = gallery;
     const controller = new AbortController();
-    api<Configuration>("", { signal: controller.signal }).then((value) => {
-      setConfig(value); setEnabled(value.enabled); setStrength(value.strength);
+    api<Configuration>(`/galleries/${gallery}/configuration`, { signal: controller.signal }).then((value) => {
+      if (controller.signal.aborted) return;
+      setConfig(value); setEnabled(value.enabled); setStrength(value.strength); setExposure(value.exposure_tenths);
     }).catch(() => { if (!controller.signal.aborted) setMessage("Ajuste de prévias indisponível."); });
     return () => { controller.abort(); queueAbort.current?.abort(); };
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      api<Gallery[]>(`/galleries?search=${encodeURIComponent(search)}`, { signal: controller.signal })
-        .then(setGalleries).catch(() => {
-          if (!controller.signal.aborted) setMessage("Não foi possível carregar as galerias.");
-        });
-    }, 250);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [search]);
+  }, [gallery]);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!gallery) return;
@@ -59,7 +47,7 @@ export default function PreviewAdjustmentPanel() {
   }, [gallery]);
 
   useEffect(() => {
-    if (!gallery) return;
+    if (!gallery || !config) return;
     const controller = new AbortController();
     api<Progress>(`/galleries/${gallery}`, { signal: controller.signal })
       .then((result) => { if (!controller.signal.aborted) setProgress(result); })
@@ -71,13 +59,13 @@ export default function PreviewAdjustmentPanel() {
 
   const pending = (progress?.counts.queued ?? 0) + (progress?.counts.processing ?? 0);
   useEffect(() => {
-    if (!config?.enabled || !pending || !gallery) return;
+    if (!config?.enabled || !gallery) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       refresh(controller.signal).catch(() => {
         if (!controller.signal.aborted) setMessage("Não foi possível atualizar. Use Atualizar progresso.");
       });
-    }, 5000);
+    }, pending ? 5000 : 15000);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [config?.enabled, pending, gallery, progress, refresh]);
 
@@ -86,9 +74,9 @@ export default function PreviewAdjustmentPanel() {
     setSaving(true);
     queueAbort.current?.abort();
     try {
-      const value = await api<Configuration>("", {
+      const value = await api<Configuration>(`/galleries/${gallery}/configuration`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, strength }),
+        body: JSON.stringify({ enabled, strength, exposure_tenths: exposure }),
       });
       setConfig(value); setPhoto("");
       setMessage(value.enabled
@@ -138,6 +126,7 @@ export default function PreviewAdjustmentPanel() {
     </div>
     {config ? <>
       <form className={styles.controls} onSubmit={save}>
+        <fieldset className={styles.fields} disabled={saving || queuing}>
         <label className={styles.toggle}>
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
           Melhorar prévias automaticamente
@@ -146,22 +135,24 @@ export default function PreviewAdjustmentPanel() {
           <input type="range" min={10} max={75} step={5} value={strength}
             onChange={(event) => setStrength(Number(event.target.value))} />
         </label>
-        <button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar ajuste de prévias"}</button>
+        <label>Exposição: {(exposure / 10).toFixed(1)} EV
+          <input type="range" min={-20} max={20} step={1} value={exposure}
+            onChange={(event) => setExposure(Number(event.target.value))} />
+          <small>− escurecer · 0 neutro · + clarear</small>
+        </label>
+        <button className="primary" disabled={saving || queuing}>{saving ? "Salvando…" : "Salvar ajuste de prévias"}</button>
+        </fieldset>
       </form>
-      <p>{config.enabled ? "Ativo para novas fotos." : "Desligado — prévias convencionais."} Ao mudar a intensidade, processe novamente as fotos desejadas.</p>
+      <p>{config.enabled ? "Ativo para novas fotos desta galeria." : "Desligado — prévias convencionais."} Salve e processe novamente para atualizar as fotos existentes.</p>
+      <p>A exposição é aplicada depois do ajuste automático. Valores altos podem perder detalhes nas áreas claras.</p>
       <div className={styles.controls}>
-        <label>Buscar galeria<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome da galeria" /></label>
-        <label>Galeria para avaliação<select value={gallery} disabled={queuing} onChange={(event) => {
-          currentGallery.current = event.target.value;
-          setGallery(event.target.value); setProgress(null); setPhoto("");
-        }}><option value="">Escolha uma galeria</option>
-          {galleries.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select></label>
-        <button type="button" className="secondary" disabled={!config.enabled || !gallery || queuing || saving}
+        <button type="button" className="secondary" disabled={!config.enabled || !gallery || queuing || saving || config.enabled !== enabled || config.strength !== strength || config.exposure_tenths !== exposure}
           onClick={enqueueGallery}>{queuing ? "Adicionando à fila…" : "Processar galeria / tentar falhas"}</button>
         <button type="button" className="secondary" disabled={!gallery}
           onClick={() => refresh().catch(() => setMessage("Não foi possível atualizar o progresso."))}>Atualizar progresso</button>
       </div>
+      {config.enabled !== enabled || config.strength !== strength || config.exposure_tenths !== exposure
+        ? <p role="status">Salve os ajustes antes de processar.</p> : null}
       {progress ? <>
         <p role="status">{progress.counts.ready} prontas · {progress.counts.queued} na fila · {progress.counts.processing} processando · {progress.counts.failed} falhas</p>
         <p>Se o ajuste falhar, o cliente continua vendo a prévia convencional.</p>

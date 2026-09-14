@@ -25,7 +25,7 @@ describe("entrada com identidade configurável", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ login_title: "Entrada", login_intro: "Intro", login_helper: "Ajuda", logo_url: null, favicon_url: "/branding/favicon", app_icon_url: "/branding/app-icon" }), { status: 200 })));
     render(<AuthEntry />);
     await waitFor(() => expect(document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href).toContain("/api/branding/favicon"));
-    expect(document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.href).toContain("/api/branding/app-icon");
+    expect(document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.href).toContain("/api/branding/app-icon?size=180");
   });
 
   it("apresenta +55 e envia DDD, nono dígito e celular em E.164", async () => {

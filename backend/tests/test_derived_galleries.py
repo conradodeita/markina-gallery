@@ -447,6 +447,29 @@ def test_branding_assets_require_admin_and_validate_storage(client: TestClient, 
     assert client.put("/admin/branding/logo", content=branding_image_bytes(size=(8, 8)), headers={"content-type": "image/png"}).status_code == 422
 
 
+def test_uploaded_app_icon_sizes_preserve_art_and_update(client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("BRANDING_ASSETS_ROOT", str(tmp_path / "branding"))
+    authenticate_admin(client)
+    image = branding_image_bytes(size=(128, 64))
+    assert client.put("/admin/branding/app-icon", content=image, headers={"content-type": "image/png"}).status_code == 200
+    for size in (180, 192, 512):
+        response = client.get(f"/branding/app-icon?size={size}")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-cache"
+        with Image.open(BytesIO(response.content)) as rendered:
+            assert rendered.size == (size, size)
+            assert rendered.getpixel((0, 0))[3] == 0
+            assert rendered.getpixel((size // 2, size // 2)) == (40, 80, 60, 255)
+    assert client.get("/branding/app-icon").content == image
+    assert client.get("/branding/app-icon?size=9999").status_code == 422
+    changed = branding_image_bytes(size=(32, 32))
+    client.put("/admin/branding/favicon", content=image, headers={"content-type": "image/png"})
+    client.put("/admin/branding/favicon", content=changed, headers={"content-type": "image/png"})
+    response = client.get("/branding/favicon")
+    assert response.content == changed
+    assert response.headers["cache-control"] == "no-cache"
+
+
 def test_global_visual_protection_requeues_existing_derivatives(client: TestClient) -> None:
     assert client.patch("/admin/branding/protection", json={
         "watermark_text": "NÃO AUTORIZADA", "watermark_font": "serif", "watermark_color": "#112233", "watermark_size": 30, "watermark_direction": "horizontal",

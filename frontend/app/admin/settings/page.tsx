@@ -5,7 +5,6 @@ import { SystemState } from "../../ui-kit";
 import PixPanel from "./pix-panel";
 import WhatsAppPanel from "./whatsapp-panel";
 import SecurityPanel from "./security-panel";
-import PreviewAdjustmentPanel from "./preview-adjustment-panel";
 
 type Branding = {
   login_title: string;
@@ -173,6 +172,8 @@ export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Branding | null>(null);
   const [protectionPreview, setProtectionPreview] = useState(fallback);
   const [message, setMessage] = useState("");
+  const [assetVersion, setAssetVersion] = useState(0);
+  const [uploading, setUploading] = useState<Asset | null>(null);
   const [paymentTemplates, setPaymentTemplates] = useState<PaymentTemplates | null>(null);
 
   useEffect(() => {
@@ -235,22 +236,35 @@ export default function AdminSettingsPage() {
   }
 
   async function upload(asset: Asset, event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file || !settings) return;
     setMessage("");
-    const response = await fetch(`/api/admin/branding/${asset}`, {
-      method: "PUT",
-      credentials: "same-origin",
-      headers: { "Content-Type": file.type },
-      body: file,
-    });
-    if (!response.ok) {
+    setUploading(asset);
+    try {
+      const response = await fetch(`/api/admin/branding/${asset}`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!response.ok) throw new Error();
+      const payload = await response.json();
+      setSettings((current) => current ? { ...current, ...payload } : current);
+      const version = assetVersion + 1;
+      setAssetVersion(version);
+      if (asset === "favicon") {
+        document.querySelectorAll<HTMLLinkElement>('link[rel="icon"]').forEach((link) => {
+          link.href = `/api/branding/favicon?v=${version}`;
+        });
+      }
+      setMessage(`${assetDetails[asset].label} atualizado.`);
+    } catch {
       setMessage(`Não foi possível enviar ${assetDetails[asset].label.toLowerCase()}.`);
-      return;
+    } finally {
+      setUploading(null);
+      input.value = "";
     }
-    setSettings({ ...settings, ...(await response.json()) });
-    setMessage(`${assetDetails[asset].label} atualizado.`);
-    event.target.value = "";
   }
 
   async function saveProtection(event: FormEvent<HTMLFormElement>) {
@@ -312,7 +326,7 @@ export default function AdminSettingsPage() {
         <label>Orientação auxiliar<input name="login_helper" defaultValue={settings.login_helper} maxLength={240} required /></label>
         <div className="auth-preview" aria-live="polite">
           <p className="eyebrow">Prévia</p>
-          {settings.logo_url ? <img className="auth-brand-logo" src={`/api${settings.logo_url}`} alt="Logo configurado" /> : null}
+          {settings.logo_url ? <img className="auth-brand-logo" src={`/api${settings.logo_url}?v=${assetVersion}`} alt="Logo configurado" /> : null}
           <h2>{settings.login_title}</h2>
           <p>{settings.login_intro}</p>
           <small>{settings.login_helper}</small>
@@ -329,8 +343,10 @@ export default function AdminSettingsPage() {
             return <label key={asset} className="gallery-settings-asset">
               <span>{detail.label}</span>
               <small>{detail.help}</small>
-              <input aria-label={`Enviar ${detail.label}`} type="file" accept={detail.accept} onChange={(event) => upload(asset, event)} />
-              {configuredUrl ? <span className="asset-status">Configurado</span> : <span className="asset-status">Usando fallback Markina</span>}
+              <input aria-label={`Enviar ${detail.label}`} type="file" accept={detail.accept} disabled={uploading !== null} onChange={(event) => upload(asset, event)} />
+              {/* eslint-disable-next-line @next/next/no-img-element -- Ativo de marca validado no upload, atualizado sem cache de transformação. */}
+              {configuredUrl ? <img className="branding-asset-preview" src={`/api${configuredUrl}?v=${assetVersion}`} alt={`${detail.label} configurado`} /> : null}
+              {uploading === asset ? <span className="asset-status">Enviando…</span> : configuredUrl ? <span className="asset-status">Configurado</span> : <span className="asset-status">Ainda não configurado</span>}
             </label>;
           })}
         </div>
@@ -381,7 +397,6 @@ export default function AdminSettingsPage() {
           </aside>
         </form>
       </section>
-      <PreviewAdjustmentPanel />
       <section className="admin-card" aria-labelledby="payment-messages-title">
         <h2 id="payment-messages-title">Mensagens de pagamento</h2>
         <p className="intro">Use somente texto simples e as variáveis controladas <code>{"{{cliente}}"}</code>, <code>{"{{pedido}}"}</code> e <code>{"{{galeria}}"}</code>. URLs, HTML e dados bancários não são aceitos.</p>

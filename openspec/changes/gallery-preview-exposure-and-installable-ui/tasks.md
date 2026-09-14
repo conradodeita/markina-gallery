@@ -1,0 +1,14 @@
+## 1. Configuração por galeria
+- [x] 1.1 Implementar migration, configuração isolada, geração/locks e atualização da limpeza; validar constraints, preservação e isolamento. Evidência: 19 testes do módulo aprovados (60,94 s), incluindo cópia da configuração na migration, constraints, isolamento, autorização, fallback e limpeza.
+- [x] 1.2 Aplicar exposição após correção automática e antes da proteção; validar zero, sinais, limites, entrada intacta e re-run não cumulativo. Evidência: 9 testes focados aprovados (26,30 s), incluindo troca em execução e sequência +1/0/+1 EV com fontes idênticas e resultados reproduzíveis.
+- [x] 1.3 Mover painel para etapa 04, remover controles globais e testar salvamento, progresso e processamento somente com valores salvos. Evidência: 25 testes painel/Configurações/layout aprovados, incluindo exposição na URL da galeria, bloqueio de valores não salvos, paginação e comparação. Corrigida corrida entre carregamento da configuração e mensagem de progresso.
+
+## 2. Interface e instalação
+- [x] 2.1 Revisar tokens/componentes compartilhados e validar hierarquia, contraste e responsividade. Paleta final preto/amarelo/cinza/bege aplicada após orientação do proprietário; 18 testes PWA/layout/contraste revalidados. Inspeção final em 390/768/1440 px sem overflow, com botões amarelos e texto escuro; ícone e cores do PWA alinhados.
+- [x] 2.2 Implementar manifesto, ícones, botão contextual e worker offline sem cache privado; testar instalação, recusa e privacidade. Evidência: seis testes exclusivos aprovados; Chromium verifica manifesto standalone, PNGs reais 180/192/512, ServiceWorker ativo, CacheStorage vazio e navegação offline neutra. Instrução iOS abre/fecha somente ao clicar.
+
+## 3. Integração e entrega
+
+- [x] 3.3 Refinar fundo cinza claro e bege em botões; conectar ícones do upload administrativo ao manifesto/metadata e remover arte gerada. Evidência: 3 testes backend e 31 frontend aprovados; dimensões PNG, preservação da arte, envio/troca/falha e entrada Apple verificados. Configurações em 390/1440 px sem overflow após corrigir grid/input. Build, lint e OpenSpec aprovados; detalhes em validation.md. Sem publicação remota.
+- [x] 3.1 Executar validações direcionadas, migration temporária, lint/typecheck/build e inspeção visual; revisar diff e documentar operação/reversão. Evidências e limites em validation.md; testes direcionados, cadeia 0055 temporária, build final, Ruff/ESLint/typecheck/OpenSpec aprovados. Sem suíte completa local ou operação remota.
+- [x] 3.2 Apresentar resultado e registrar pendências humanas de avaliação estética/instalação real. Resultado e instruções registrados em validation.md e nos manuais; estética em fotos reais e instalação nos dispositivos permanecem revisão humana, não prova automática. Sem sincronização/arquivamento ou declaração de deploy.

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AdminSettingsPage, { calculateWatermarkPreviewFontSize } from "./page";
 
-vi.mock("./preview-adjustment-panel", () => ({ default: () => null }));
 
 const branding = {
   login_title: "Sua galeria, do seu jeito.",
@@ -37,12 +36,38 @@ describe("configurações administrativas de marca", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminSettingsPage />);
 
-    expect((await screen.findAllByText("Usando fallback Markina")).length).toBe(3);
+    expect((await screen.findAllByText("Ainda não configurado")).length).toBe(3);
     const logo = new File(["logo"], "logo.png", { type: "image/png" });
     fireEvent.change(screen.getByLabelText("Enviar Logo principal"), { target: { files: [logo] } });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/branding/logo", expect.objectContaining({ method: "PUT", body: logo })));
     expect(await screen.findByText("Logo principal atualizado.")).toBeTruthy();
+  });
+
+  it.each([["Ícone do aplicativo", "app-icon"], ["Favicon", "favicon"]])("envia e mostra a arte de %s", async (label, asset) => {
+    const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => new Response(JSON.stringify(
+      init?.method === "PUT" ? { ...branding, [`${asset.replace("-", "_")}_url`]: `/branding/${asset}` } : branding,
+    ), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminSettingsPage />);
+    const input = await screen.findByLabelText(`Enviar ${label}`);
+    const file = new File(["arte oficial"], "icone.png", { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+    await screen.findByText(`${label} atualizado.`);
+    expect(fetchMock).toHaveBeenCalledWith(`/api/admin/branding/${asset}`, expect.objectContaining({ method: "PUT", body: file }));
+    expect(screen.getByAltText(`${label} configurado`).getAttribute("src")).toMatch(new RegExp(`/api/branding/${asset}\\?v=\\d+`));
+  });
+
+  it("informa falha de rede do upload e permite tentar novamente", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_path: string, init?: RequestInit) => {
+      if (init?.method === "PUT") throw new Error("offline");
+      return new Response(JSON.stringify(branding), { status: 200 });
+    }));
+    render(<AdminSettingsPage />);
+    const input = await screen.findByLabelText("Enviar Favicon");
+    fireEvent.change(input, { target: { files: [new File(["arte"], "icon.png", { type: "image/png" })] } });
+    await screen.findByText("Não foi possível enviar favicon.");
+    expect((input as HTMLInputElement).disabled).toBe(false);
   });
 
   it("informa indisponibilidade quando a configuração não carrega", async () => {
