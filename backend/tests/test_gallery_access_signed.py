@@ -785,16 +785,16 @@ def test_membership_notification_outbox_is_idempotent_and_sanitizes_external_fai
         db.flush()
         first, first_created = enqueue_membership_notification(
             db,
-            event_key=f"private_created:{private.id}",
-            event_type="private_created",
+            event_key=f"member_joined:{private.id}",
+            event_type="member_joined",
             parent=parent,
             gallery=private,
             client=client,
         )
         repeated, repeated_created = enqueue_membership_notification(
             db,
-            event_key=f"private_created:{private.id}",
-            event_type="private_created",
+            event_key=f"member_joined:{private.id}",
+            event_type="member_joined",
             parent=parent,
             gallery=private,
             client=client,

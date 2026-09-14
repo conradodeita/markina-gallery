@@ -92,3 +92,9 @@ def test_notification_upgrade_preserves_history_and_baselines(tmp_path):
                         "(parent_gallery_id, client_id, kind, baseline, created_at) "
                         "VALUES (:parent, :client, 'first_access', 0, :now)"),
                    {"parent": parent, "client": client, "now": instant})
+    # O ciclo antigo termina em 0055; o schema novo preenchido não admite downgrade.
+    with pytest.raises(AssertionError, match="Rollback deve preservar dados"):
+        alembic(url, "downgrade", "20260913_0055")
+    with engine.connect() as db:
+        assert db.scalar(text("SELECT count(*) FROM push_subscription")) == 1
+        assert db.scalar(text("SELECT count(*) FROM notification_milestone")) == 2

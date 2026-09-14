@@ -2835,6 +2835,7 @@ def test_admin_confirms_payment_communication_once(client: TestClient):
 
 
 def test_admin_lists_and_refuses_payment_communication_without_confirming_order(client: TestClient, monkeypatch):
+    from app.auth import NotificationDelivery
     with SessionLocal() as db:
         owner = Client(full_name="Cliente Recusa", phone_e164="+5511555554400")
         db.add(owner)
@@ -2868,6 +2869,8 @@ def test_admin_lists_and_refuses_payment_communication_without_confirming_order(
         outbox_id = outboxes[0].id
         outboxes[0].status = "failed"
         outboxes[0].attempts = 1
+        delivery = db.scalar(select(NotificationDelivery).where(NotificationDelivery.channel == "whatsapp"))
+        delivery.status, delivery.attempts = "failed", 1
         db.commit()
     monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "2")
     assert client.post(f"/admin/payment-notifications/{outbox_id}/retry").json()["status"] == "queued"

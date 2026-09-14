@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import literal, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -84,6 +84,19 @@ def setting_for(db: Session, event_type: str) -> NotificationSetting:
         if setting is None:
             raise
     return setting
+
+
+def payment_template_bodies(db: Session) -> dict[str, str]:
+    """Leitura única, sem writes no dashboard nem consultas por template ausente."""
+    rows = db.execute(select(
+        PaymentMessageTemplate.kind, PaymentMessageTemplate.body, literal(0).label("priority"),
+    ).union_all(select(
+        NotificationSetting.event_type, NotificationSetting.whatsapp_body, literal(1),
+    ).where(NotificationSetting.event_type.in_(["payment_confirmed", "payment_refused"]))))
+    result = dict(DEFAULT_PAYMENT_TEMPLATES)
+    for kind, body, _ in sorted(rows, key=lambda row: row.priority):
+        result[kind.removeprefix("payment_")] = body
+    return result
 
 
 def setting_payload(setting: NotificationSetting) -> dict:

@@ -260,6 +260,7 @@ from app.notification_delivery import retry_payment_projection
 from app.notification_events import record_gallery_milestone, record_payment_event
 from app.notification_settings import (
     notification_savepoint,
+    payment_template_bodies,
     save_setting,
     setting_for,
     setting_payload,
@@ -9275,8 +9276,7 @@ def list_payment_templates(
     request: Request, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     require_admin(request)
-    configured = {kind: setting_for(db, f"payment_{kind}").whatsapp_body
-                  for kind in DEFAULT_PAYMENT_TEMPLATES}
+    configured = payment_template_bodies(db)
     return {
         "templates": {
             kind: configured.get(kind, default)
@@ -9492,8 +9492,7 @@ def list_payment_communications(
         else:
             group["total_cents"] = quote.quote.total_cents
             group["pricing_available"] = True
-    configured_templates = {kind: setting_for(db, f"payment_{kind}").whatsapp_body
-                            for kind in DEFAULT_PAYMENT_TEMPLATES}
+    configured_templates = payment_template_bodies(db)
 
     max_attempts = payment_notification_max_attempts()
     prepared_orders: list[dict[str, object]] = []

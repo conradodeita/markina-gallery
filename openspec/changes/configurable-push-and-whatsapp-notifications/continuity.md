@@ -43,6 +43,15 @@ Leitura de proposal/design/deltas/tasks, mandato, roadmap, diretrizes, auth e ac
 
 ## Próximo passo humano obrigatório
 
+### PR e reconciliação de CI — 14/09/2026
+
+- PR #84 aberto contra `develop`: https://github.com/conradodeita/markina-gallery/pull/84 . Commit inicial publicado `2e840d6`; o commit anterior de documentação de rebrand foi excluído desta branch antes do primeiro push, sem force push e sem alterar sua branch original.
+- Primeiro CI `34888333629`: frontend/OpenSpec/gitleaks aprovados; backend 597 passed, 3 skipped, 7 failed. Não ignorar checks obrigatórios nem confundir essa suíte remota do CI com execução local completa.
+- Correção: painel financeiro lê templates centrais + fallback legado em **uma consulta**, sem inicialização de configurações no GET. Mantida a asserção de orçamento de consultas, sem relaxar seu limite.
+- Testes legados de retry atualizados para refletir falha também em `NotificationDelivery`, pois outbox financeira é somente projeção; teste de falha externa de membros usa `member_joined`, já que `private_created` deixou de enviar externamente pela decisão aprovada.
+- Ciclos de downgrade legados agora têm limite superior explícito 0055. A proteção de 0056 não foi removida: teste próprio verifica upgrade, baseline e recusa de downgrade preenchido preservando inscrição/marcos.
+- Evidências cirúrgicas: sete casos que falharam no CI = **7 passed/90 deselected**; configuração + migration de notificações = **9 passed**; Ruff e diff check aprovados. Sem alteração de homologação; merge aguarda CI verde e plano da dependência de branding confirmado.
+
 Atualização operacional 14/09/2026: proprietário autorizou push, merge e deploy após o job. Inventário somente leitura: servidor em `23bdee9bb7b3c1f946693f08c48741dee28188f1`, checkout limpo, serviços próprios saudáveis, nginx próprio em `127.0.0.1:8080`, domínio `markina-homolog.duckdns.org`. Outros projetos e proxy compartilhado intocados. Plano de preservação de branding + publicação com transportes novos desligados apresentado para confirmação pós-inventário; PR pode avançar independentemente. Autorização não inclui criação/alteração de chaves nem envio real neste momento.
 
 1. Autorizar publicação/etapa operacional e a sequência com a dependência `persist-branding-assets-across-deploys`. Antes de qualquer deploy/configuração remota, atualizar inventário, porta/subdomínio e apresentar plano de impacto zero para confirmação; não usar inventário antigo como evidência atual.
