@@ -25,3 +25,7 @@ Inventário e plano confirmados; publicação ainda não concluída. Não declar
 ## Revisão final
 
 Três defaults de `MEDIA_WATERMARK_TEXT` nos dois arquivos Compose ainda usavam a marca antiga. Alinhados à constante de produto, preservando nome da variável, projeto e precedência do ambiente real. Teste de contrato adicionado: `product-brand.test.tsx`, 3 testes aprovados. Nenhum `.env` real editado.
+
+Push concluído e PR #83 aberto. CI inicial `34841042762` identificou um contrato textual antigo do PWA que exigia InstallApp imediatamente adjacente a children, incompatível com a toolbar de aparência aprovada. Atualizado para verificar instalação única na toolbar compartilhada e ausência de duplicação nos shells, preservando asserções de manifesto, offline privado e contraste. Sem alteração de comportamento para contornar testes.
+
+Validação da correção: 13 testes aprovados em pwa-contract, install-app, theme-control e product-brand, com um worker local. Demais gates permanecem obrigatórios no CI.
