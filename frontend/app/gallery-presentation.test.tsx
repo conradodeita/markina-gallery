@@ -14,6 +14,14 @@ const folders = [
 ];
 
 describe("apresentação editorial compartilhada", () => {
+  it("exibe a capa limpa com título sem retirar proteção das fotos comuns", () => {
+    render(<GalleryPresentation galleryName="Evento" coverUrl="/cover-preview" folders={folders.slice(0, 1)} titleStyle={{ fontSize:74, color:"#ffcc00" }} />);
+    const cover = screen.getByRole("img", { name:"Capa de Evento" });
+    expect(cover.closest(".gallery-protected-media")).toBeNull();
+    expect(fireEvent.contextMenu(cover)).toBe(true);
+    expect(screen.getByRole("img", { name:"Prévia protegida de Horizontal.jpg" }).closest(".gallery-protected-media")).toBeTruthy();
+    expect(document.querySelector(".gallery-presentation-title")?.getAttribute("style")).toContain("4cqi");
+  });
   it("permite omitir o hero sem alterar o padrão editorial", () => {
     const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} showHero={false} />);
     expect(screen.queryByText("Capa ainda não definida")).toBeNull();

@@ -837,10 +837,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <div className="gallery-customization-panels">
                 <fieldset className="gallery-customization-panel">
                   <legend>Capa e título</legend>
-                  <p>Envie do seu dispositivo o JPEG que será usado exclusivamente como capa. As fotos das pastas não são carregadas nesta etapa.</p>
+                  <p>Envie do seu dispositivo um JPEG horizontal (largura maior que a altura), sem marca-d’água nem grade, para usar como capa. As fotos das pastas não são carregadas nesta etapa.</p>
                   <input ref={coverUploadInput} type="file" accept="image/jpeg" hidden onChange={uploadCover} />
                   <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>{currentCover ? "Substituir imagem de capa" : "Enviar imagem de capa"}</MarkinaButton>
-                  {currentCover ? <div className={`cover-upload-current cover-upload-current--${currentCover.status}`} role="status"><strong>{currentCover.name}</strong><small>{currentCover.status === "ready" ? "Capa pronta para apresentação" : currentCover.status === "failed" ? currentCover.error ?? "O processamento falhou. Envie novamente esta capa ou escolha outro JPEG." : "Processando a prévia protegida da capa"}</small></div> : <p className="gallery-scope-note">Nenhuma imagem de capa enviada ainda.</p>}
+                  {currentCover ? <div className={`cover-upload-current cover-upload-current--${currentCover.status}`} role="status"><strong>{currentCover.name}</strong><small>{currentCover.status === "ready" ? "Capa pronta para apresentação" : currentCover.status === "failed" ? currentCover.error ?? "O processamento falhou. Envie novamente esta capa ou escolha outro JPEG." : "Processando a capa"}</small></div> : <p className="gallery-scope-note">Nenhuma imagem de capa enviada ainda.</p>}
                   {detailsPollingError ? <div className="cover-upload-current cover-upload-current--failed" role="alert"><small>{detailsPollingError}</small><MarkinaButton type="button" variant="secondary" onClick={() => { setDetailsPollingError(""); setDetailsPollingRetry((value) => value + 1); }}>Atualizar estado da capa</MarkinaButton></div> : null}
                   <label>Tipografia do título<select name="cover_title_font" defaultValue={details?.settings?.cover_title_font ?? editor.gallery.cover_title_font}>{details?.font_options?.map((option) => <option key={option.token} value={option.token}>{option.label} · {option.category === "handwritten" ? "Manuscrita" : option.category === "editorial" ? "Editorial" : "Sem serifa"}</option>)}</select></label>
                   <label>Cor do título<input name="cover_title_color" type="color" defaultValue={editor.gallery.cover_title_color} /></label>
@@ -849,8 +849,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                 </fieldset>
               </div>
               <aside className="gallery-customization-preview" aria-live="polite">
-                <p className="eyebrow">Prévia protegida</p>
-                {coverPreviewUrl ? <div className="gallery-customization-preview-image"><img src={`/api${coverPreviewUrl}`} alt="Prévia protegida da capa da galeria" /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: titleFontFamily, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Envie uma capa para visualizar o título</strong><span>O JPEG será protegido e continuará fora das pastas de conteúdo.</span></div>}
+                <p className="eyebrow">Prévia da capa</p>
+                {coverPreviewUrl ? <div className="gallery-customization-preview-image"><img src={`/api${coverPreviewUrl}`} alt="Prévia da capa da galeria" /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: titleFontFamily, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Envie uma capa para visualizar o título</strong><span>A capa ficará sem marca-d’água e continuará fora das pastas de conteúdo.</span></div>}
               </aside>
             </div>
           </form>

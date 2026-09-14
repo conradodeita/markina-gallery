@@ -158,7 +158,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   const heroTitleStyle = {
     color: titleStyle?.color,
     fontFamily: titleStyle?.fontFamily,
-    fontSize: titleStyle?.fontSize ? `${titleStyle.fontSize}px` : undefined,
+    fontSize: titleStyle?.fontSize ? `clamp(12px, 4cqi, ${titleStyle.fontSize}px)` : undefined,
   };
   const renderPhoto = (photo: TPhoto, markers = renderPhotoMarkers) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
     <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => openExpanded(photo)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
@@ -179,7 +179,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
 
       <p className="gallery-protection-notice" role="status" aria-live="polite"><span aria-hidden="true">◈</span>{protectionMessage}</p>
 
-      {showHero ? <div className="gallery-presentation-hero gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
+      {showHero ? <div className="gallery-presentation-hero">
         {coverUrl ? <img src={coverUrl} alt={`Capa de ${galleryName}`} draggable={false} /> : <div className="gallery-presentation-hero-empty" role="status">Capa ainda não definida</div>}
         <div className={`gallery-presentation-title title-${titleStyle?.position ?? "bottom-left"}`} style={heroTitleStyle}>
           <span>Apresentação</span>

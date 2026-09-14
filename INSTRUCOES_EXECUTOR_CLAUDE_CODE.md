@@ -235,6 +235,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Aplicar marca d’água textual configurável e, quando habilitado, grade diagonal/linhas com espessura, cor, espaçamento, opacidade e rotação configuráveis.
 - Oferecer marca dinâmica com nome/telefone parcial/código do cliente, quando autenticado.
 - Aplicar proteção à imagem que é servida, não apenas camada CSS.
+- Exceção autorizada: somente a capa vigente da galeria é apresentada sem marca-d’água nem grade, via derivado limpo limitado e rotas autenticadas/autorizadas. A mesma foto no acervo continua protegida. Novas capas exigem JPEG horizontal após orientação EXIF; capas antigas permanecem até substituição. Nunca servir o original como fallback.
 - Informar que não é tecnicamente possível impedir captura de tela de forma absoluta; mostrar aviso configurável de direitos autorais.
 
 ### Administração

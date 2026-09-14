@@ -1,10 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import { InstallApp } from "./install-app";
+import { ThemeControl } from "./theme-control";
+import { themeBootstrap } from "./theme";
 import "./local-fonts.css";
 import "./design-tokens.css";
 import "./design-system.css";
 import "./globals.css";
 import "./visual-hierarchy.css";
+import "./appearance.css";
 
 export const metadata: Metadata = {
   title: "Markina Gallery",
@@ -20,8 +23,9 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="pt-BR">
-      <body><InstallApp />{children}</body>
+    <html lang="pt-BR" suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{ __html: themeBootstrap }} /></head>
+      <body><div className="appearance-toolbar"><ThemeControl /><InstallApp /></div>{children}</body>
     </html>
   );
 }

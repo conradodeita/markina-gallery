@@ -1,0 +1,14 @@
+# Validação local — 14/09/2026
+
+- Backend: 18 testes direcionados aprovados, 125 desmarcados, nos arquivos test_gallery_workflow_remediation.py, test_derived_galleries.py e test_gallery_lifecycle.py, filtro `cover or synthetic_gallery_flow_keeps_the_second_folder or complete_administrative_gallery_flow or public_access_modes_require_session`. DATABASE_URL apontou um SQLite temporário exclusivo, nunca banco do projeto. Inclui EXIF, rejeição sem escrita/job/troca de capa, fotos comuns, capas antigas verticais, ausência de derivado/arquivo, autorização e preservação da prévia protegida da mesma foto.
+- Frontend: 43 testes aprovados em theme-control, gallery-presentation, gallery/gallery e public-galleries/public-gallery; 53 em gallery-editor + theme-control, incluindo mensagem 422 sem trocar capa; 3 de install-app também aprovados na execução anterior. Usado `--maxWorkers=1` após limite de inicialização dos workers locais; a falha ocorreu antes de rodar casos, não foi ignorada.
+- Build Next.js e TypeScript aprovados. ESLint sem erros, 25 avisos preexistentes (imagens sem next/image, navegação e variáveis de testes); não foi executada suíte completa.
+- OpenSpec estrito válido e git diff --check sem falhas.
+- QA Chrome headless local, dados sintéticos com APIs interceptadas: 48 combinações (entrada, dashboard, editor etapa 03, biblioteca, galeria e carrinho × dois temas × 360/390/768/1440), sem overflow/erro JS; PIX, consentimento e visualizador em todas as larguras. Fotografias sem filtro; proporção de capa 1600:900 preservada com contain; QR com suporte branco explícito. Capturas inspecionadas localmente em .codex-tmp/theme-qa (não versionadas).
+- Medição dirigida de contraste das páginas carregadas não apontou violações nos textos amostrados após corrigir indicadores de etapa, links de carrinho e ações. Não é certificação formal de acessibilidade; títulos sobre fotos e arte personalizada dependem da escolha do fotógrafo. Inspeção corrigiu também resumo flutuante sem contraste e modal sob o rodapé.
+- Bootstrap aplica tema antes da pintura; persistência, mudança do sistema, armazenamento indisponível e sincronização entre abas cobertos. Sem filtros globais, cache offline privado ou alteração de sessão.
+- Mandato/roadmap e docs/APARENCIA_E_CAPAS.md registram a exceção contextual de capa. Specs principais não sincronizadas e change não arquivada: aguardam revisão humana.
+
+## Publicação
+
+Nenhum push, merge, deploy, migration, backfill ou operação em dados reais foi executado nesta change. A base PR #82 ainda carrega migration 0055 e requer coordenação com o worker opcional no deploy. Plano anterior preservado em c49118d na branch codex/gallery-preview-exposure-and-installable-ui. A publicação requer inventário atualizado e confirmação operacional, não inferida da autorização de implementação.

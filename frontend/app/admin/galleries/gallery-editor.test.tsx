@@ -793,7 +793,7 @@ describe("editor administrativo de galeria", () => {
     const previewTitle = screen.getByText("Festa escolar", { selector: ".gallery-customization-preview-image strong" });
     expect(previewTitle.getAttribute("style")).toContain("--font-handwritten-caveat");
     expect(previewTitle.getAttribute("style")).toContain("rgb(17, 34, 51)");
-    expect(screen.getByAltText("Prévia protegida da capa da galeria")).toBeTruthy();
+    expect(screen.getByAltText("Prévia da capa da galeria")).toBeTruthy();
   });
 
   it("atualiza a capa em segundo plano sem remontar nem apagar a edição da Etapa 03", async () => {
@@ -811,7 +811,7 @@ describe("editor administrativo de galeria", () => {
 
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     expect(screen.getByRole("heading", { name: "Detalhes e apresentação" })).toBeTruthy();
-    expect(screen.getByText("Processando a prévia protegida da capa")).toBeTruthy();
+    expect(screen.getByText("Processando a capa")).toBeTruthy();
     const sizeInput = screen.getByLabelText("Tamanho do título") as HTMLInputElement;
     fireEvent.change(sizeInput, { target: { value: "74" } });
     sizeInput.focus();
@@ -824,7 +824,7 @@ describe("editor administrativo de galeria", () => {
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(screen.getByText("Capa pronta para apresentação")).toBeTruthy();
-    expect(screen.getByAltText("Prévia protegida da capa da galeria")).toBeTruthy();
+    expect(screen.getByAltText("Prévia da capa da galeria")).toBeTruthy();
     expect(sizeInput.value).toBe("74");
     const callsAfterReady = detailsCalls;
 
@@ -886,6 +886,22 @@ describe("editor administrativo de galeria", () => {
     ));
     expect(await screen.findByText(/Capa definida e enviada para processamento/)).toBeTruthy();
     expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/cover") && init?.method === "PUT")).toBe(false);
+  });
+
+  it("explica a rejeição de capa vertical sem trocar a prévia atual", async () => {
+    const details = { available:true, capabilities:["cover","title"], font_options:[], cover_options:[{id:"cover-old",name:"Anterior.jpg",status:"ready",preview_url:"/cover-old/preview"}], settings:{cover_photo_id:"cover-old",cover_preview_url:"/cover-old/preview"} };
+    vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) => {
+      if(path.endsWith("/editor")) return response(editor);
+      if(path.endsWith("/cover-photos")) return response({upload_url:"/admin/photo-assets/attempt/source"},201);
+      if(init?.method === "PUT") return response({detail:"Envie uma capa horizontal, com largura maior que a altura."},422);
+      return response(details);
+    }));
+    const {container} = render(<GalleryEditor sourceId="source-1" step="detalhes" />);
+    const preview = await screen.findByAltText("Prévia da capa da galeria");
+    fireEvent.change(container.querySelector('input[type="file"]')!,{target:{files:[new File(["portrait"],"Vertical.jpg",{type:"image/jpeg"})]}});
+    expect(await screen.findByText("Envie uma capa horizontal, com largura maior que a altura.")).toBeTruthy();
+    expect(preview.getAttribute("src")).toBe("/api/cover-old/preview");
+    expect(screen.getByRole("button",{name:"Substituir imagem de capa"})).toBeTruthy();
   });
 
   it("mantém Imagens focada em pastas e upload", async () => {
@@ -989,7 +1005,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<SourceGalleryDetailPage />);
     expect(await screen.findByRole("heading", { name: "Evento completo" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Capa protegida da galeria" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/preview");
+    expect(screen.getByRole("link", { name: "Capa da galeria" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/preview");
     expect(screen.getByText("ativo")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Abrir pasta Lote inicial" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens?folder=folder-1");
     expect(screen.getByRole("article", { name: "Cliente Ana Resumo" })).toBeTruthy();

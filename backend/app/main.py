@@ -18,7 +18,7 @@ from uuid import UUID
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -2587,11 +2587,20 @@ def _cover_preview_url(db: Session, gallery: ParentGallery) -> str | None:
     ready = db.scalar(
         select(MediaDerivative.id).where(
             MediaDerivative.photo_asset_id == cover.id,
-            MediaDerivative.variant == "client_preview",
+            MediaDerivative.variant == "admin_preview",
             MediaDerivative.status == "ready",
         )
     )
-    return f"/admin/photo-assets/{cover.id}/watermarked-preview" if ready else None
+    return f"/admin/photo-assets/{cover.id}/preview" if ready else None
+
+
+def _cover_derivative(db: Session, photo_id: UUID) -> MediaDerivative | None:
+    """Somente após resolver a capa da galeria e autorizar o acesso a ela."""
+    return db.scalar(select(MediaDerivative).where(
+        MediaDerivative.photo_asset_id == photo_id,
+        MediaDerivative.variant == "admin_preview",
+        MediaDerivative.status == "ready",
+    ))
 
 
 def _client_preview_derivative(db: Session, photo_id: UUID) -> MediaDerivative | None:
@@ -2844,6 +2853,12 @@ def set_parent_gallery_cover(
     photo = db.get(PhotoAsset, payload.photo_id)
     if not photo or photo.parent_gallery_id != gallery.id:
         raise HTTPException(status_code=422, detail="A capa precisa pertencer a esta galeria.")
+    dimensions = _client_preview_derivative(db, photo.id)
+    if gallery.cover_photo_id != photo.id and (
+        not dimensions or not dimensions.width or not dimensions.height
+        or dimensions.width <= dimensions.height
+    ):
+        raise HTTPException(status_code=422, detail="Envie uma capa horizontal, com largura maior que a altura.")
     if not db.scalar(
         select(MediaDerivative.id).where(
             MediaDerivative.photo_asset_id == photo.id,
@@ -2929,7 +2944,7 @@ def parent_gallery_details(
     if cover and cover.parent_gallery_id != gallery.id:
         cover = None
     cover_folder = db.get(PhotoFolder, cover.folder_id) if cover else None
-    cover_derivative = _client_preview_derivative(db, cover.id) if cover else None
+    cover_derivative = _cover_derivative(db, cover.id) if cover else None
     cover_job = (
         db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == cover.id)) if cover else None
     )
@@ -2947,7 +2962,7 @@ def parent_gallery_details(
                 "name": cover.display_name or cover.filename,
                 "source": cover_folder.purpose if cover_folder else "cover_assets",
                 "status": cover_status,
-                "preview_url": f"/admin/photo-assets/{cover.id}/watermarked-preview"
+                "preview_url": f"/admin/photo-assets/{cover.id}/preview"
                 if cover_derivative
                 else None,
                 "width": cover_derivative.width if cover_derivative else None,
@@ -5022,6 +5037,19 @@ async def import_photo_source(
     ) or (folder.purpose == "cover_assets" and folder.status == "preparing")
     if not accepts_upload:
         raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
+    if folder.purpose == "cover_assets":
+        try:
+            with Image.open(BytesIO(body)) as image:
+                visual = ImageOps.exif_transpose(image)
+                visual.load()
+                horizontal = visual.width > visual.height
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
+        if not horizontal:
+            raise HTTPException(
+                status_code=422,
+                detail="Envie uma capa horizontal, com largura maior que a altura.",
+            )
     destination = safe_source_path(photo)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(body)
@@ -7740,7 +7768,7 @@ def gallery_review(
     if not parent:
         raise HTTPException(status_code=403, detail="Acesso negado.")
     cover = _gallery_cover_photo(db, parent)
-    cover_ready = bool(cover and _client_preview_derivative(db, cover.id))
+    cover_ready = bool(cover and _cover_derivative(db, cover.id))
     selections = set(
         db.scalars(
             select(PhotoSelection.photo_asset_id).where(
@@ -7837,7 +7865,7 @@ def client_gallery_cover_preview(
     )
     parent = db.get(ParentGallery, gallery.parent_gallery_id)
     cover = _gallery_cover_photo(db, parent) if parent else None
-    derivative = _client_preview_derivative(db, cover.id) if cover else None
+    derivative = _cover_derivative(db, cover.id) if cover else None
     if not cover or not derivative:
         raise HTTPException(status_code=404, detail="Capa indisponível.")
     try:
@@ -8526,7 +8554,7 @@ def public_gallery_cover_preview(
     except PublicGalleryAccessDenied as exc:
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
     cover = _gallery_cover_photo(db, parent)
-    derivative = _client_preview_derivative(db, cover.id) if cover else None
+    derivative = _cover_derivative(db, cover.id) if cover else None
     if not cover or not derivative:
         raise HTTPException(status_code=404, detail="Capa indisponível.")
     try:

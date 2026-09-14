@@ -1,6 +1,6 @@
 # Continuidade
 
-Planejamento completo e validado. A implementação ainda não foi iniciada: nenhuma tarefa de código ou teste foi marcada como concluída. A solicitação adicional de rebrand chegou durante o inventário inicial de capas.
+Implementação local concluída e validada em 14/09/2026. Todas as tarefas locais reconciliadas; evidências em validation.md. Tema compartilhado, capas limpas autorizadas e validação horizontal implementados. Não houve operação remota. O rebrand autorizado pode seguir agora.
 
 O pedido de rebrand está registrado separadamente em `rebrand-pick-your-pic`. Ordem: aplicar e validar modo escuro/capas, depois rebrand, respeitando os requisitos próprios. Não misturar aprovação de proposta, implantação e validação humana.
 

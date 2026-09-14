@@ -98,6 +98,7 @@ def ready_photo(
         )
     )
     db.flush()
+    db.add(MediaDerivative(photo_asset_id=photo.id, variant="admin_preview", relative_path=f"{photo.id}/admin_preview.jpg", status="ready", width=1200, height=800))
     return photo
 
 
@@ -537,6 +538,44 @@ def test_dedicated_cover_upload_reuses_technical_folder_and_media_pipeline(
     )
 
 
+@pytest.mark.parametrize("size,orientation,accepted", [
+    ((120, 80), 1, True), ((80, 120), 1, False), ((80, 80), 1, False),
+    ((120, 80), 6, False), ((80, 120), 6, True),
+])
+def test_cover_orientation_preserves_current_on_rejection(client, monkeypatch, tmp_path, size, orientation, accepted):
+    from app.media import safe_source_path
+
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Orientação")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
+        db.add(folder)
+        db.flush()
+        old = ready_photo(db, parent=parent, folder=folder)
+        parent.cover_photo_id = old.id
+        new = PhotoAsset(parent_gallery_id=parent.id, folder_id=folder.id, filename="nova.jpg", storage_key="covers/new.jpg")
+        db.add(new)
+        db.commit()
+        parent_id, old_id, new_id = parent.id, old.id, new.id
+        target = safe_source_path(new)
+    image = Image.new("RGB", size)
+    exif = Image.Exif()
+    exif[274] = orientation
+    output = BytesIO()
+    image.save(output, format="JPEG", exif=exif)
+    response = client.put(f"/admin/photo-assets/{new_id}/source", content=output.getvalue(), headers={"content-type": "image/jpeg"})
+    assert response.status_code == (202 if accepted else 422)
+    with SessionLocal() as db:
+        assert db.get(ParentGallery, parent_id).cover_photo_id == (new_id if accepted else old_id)
+        assert bool(db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == new_id))) == accepted
+    assert target.exists() == accepted
+    if not accepted:
+        assert "horizontal" in response.json()["detail"]
+
+
 def test_details_returns_only_the_configured_legacy_cover_without_cataloging_content(
     client: TestClient,
 ) -> None:
@@ -565,12 +604,35 @@ def test_details_returns_only_the_configured_legacy_cover_without_cataloging_con
             "name": "capa-legada.jpg",
             "source": "content",
             "status": "ready",
-            "preview_url": f"/admin/photo-assets/{legacy_cover_id}/watermarked-preview",
+            "preview_url": f"/admin/photo-assets/{legacy_cover_id}/preview",
             "width": 1200,
             "height": 800,
             "error": None,
         }
     ]
+
+
+def test_portrait_content_upload_allowed_but_new_cover_selection_rejected(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Conteúdo vertical")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos", purpose="content")
+        db.add(folder)
+        db.flush()
+        photo = ready_photo(db, parent=parent, folder=folder)
+        derivative = db.scalar(select(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id))
+        derivative.width, derivative.height = 800, 1200
+        db.commit()
+        photo_id, parent_id = photo.id, parent.id
+    output = BytesIO()
+    Image.new("RGB", (80, 120)).save(output, format="JPEG")
+    assert client.put(f"/admin/photo-assets/{photo_id}/source", content=output.getvalue(), headers={"content-type": "image/jpeg"}).status_code == 202
+    rejected = client.put(f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(photo_id)})
+    assert rejected.status_code == 422
+    assert "horizontal" in rejected.json()["detail"]
 
 
 def test_latest_accepted_cover_upload_wins_and_failed_cover_remains_recoverable(
