@@ -1,5 +1,8 @@
 "use client";
 
+import { PRODUCT_NAME } from "../../product-brand";
+
+
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
@@ -121,7 +124,7 @@ export default function StatisticsPage() {
     );
   return (
     <main className="admin-shell">
-      <p className="eyebrow">Markina Gallery · Fotógrafo</p>
+      <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
       <h1>Estatísticas</h1>
       <p className="intro">
         Acompanhe conversão e receita confirmada. Pedidos pendentes não entram

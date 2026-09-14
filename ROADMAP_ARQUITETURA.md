@@ -1,4 +1,4 @@
-# Markina Gallery — Roadmap Arquitetural
+# Pick-your-Pic — Roadmap Arquitetural
 
 > Direção detalhada de interface e UX: [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md).
 
@@ -93,6 +93,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Arquivamento restaura fotos do Google Drive somente quando o fotógrafo reativar o evento.
 - Importação retomável e idempotente: hash por arquivo, fila, progresso, relatório de duplicados/falhas e retentativas.
 - Proteção de prévias: limite de resolução, remoção de EXIF/GPS, marca d’água configurável, grade diagonal, linhas configuráveis, marca individual dinâmica e aviso de direitos autorais.
+- Exceção de capa aprovada: capa vigente sem marca-d’água/grade, mantendo título, autenticação, autorização, prévia limitada e remoção de metadados; fotos de conteúdo permanecem protegidas. Novas capas devem ser horizontais após EXIF, sem recorte automático; capas antigas são preservadas até substituição.
 - Declarar na interface que a proteção desencoraja cópia, mas não impede capturas de tela de forma absoluta.
 - Ajuste automático opcional das prévias: módulo independente, desligado por padrão, motor substituível e resultados separados. Aplicar proteção depois do ajuste; preservar originais, prévias convencionais e análise facial. Desligamento retorna à prévia convencional na próxima requisição; prever higienização exclusiva conforme `add-optional-preview-auto-adjustment`. Edição final continua externa.
 

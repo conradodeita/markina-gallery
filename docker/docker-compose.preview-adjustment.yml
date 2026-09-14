@@ -11,7 +11,7 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
-      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-MARKINA • PRÉVIA}
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-Pick-your-Pic • PRÉVIA}
       OMP_NUM_THREADS: "1"
     volumes:
       - media-derivatives:/var/lib/markina/derivatives

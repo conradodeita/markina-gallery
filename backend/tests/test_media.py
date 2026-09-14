@@ -93,6 +93,24 @@ def test_generates_idempotent_protected_derivatives_without_exif(tmp_path, monke
         assert not rendered.getexif()
 
 
+def test_rebrand_defaults_preserve_custom_watermark(monkeypatch):
+    from app.product_brand import DEFAULT_WATERMARK_TEXT
+    monkeypatch.delenv("MEDIA_WATERMARK_TEXT", raising=False)
+    with SessionLocal() as db:
+        settings = BrandingSettings(watermark_text="Fotógrafo • texto personalizado")
+        gallery = ParentGallery(name="Evento de teste")
+        db.add_all([settings, gallery])
+        db.commit()
+        assert gallery.watermark_text == DEFAULT_WATERMARK_TEXT == "Pick-your-Pic • PRÉVIA"
+        assert settings.watermark_text == "Fotógrafo • texto personalizado"
+        assert app.title == "Pick-your-Pic API"
+        image = Image.new("RGB", (600,400), "gray")
+        # A renderização personalizada não depende do default do ambiente.
+        expected = watermark(image, settings)
+        monkeypatch.setenv("MEDIA_WATERMARK_TEXT", "outro default")
+        assert watermark(image, settings).tobytes() == expected.tobytes()
+
+
 def test_watermark_direction_does_not_rotate_photo():
     source = Image.new("RGB", (320, 180), color=(40, 60, 80))
     settings = BrandingSettings(watermark_direction="diagonal", watermark_font="serif")

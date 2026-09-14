@@ -17,6 +17,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from app.product_brand import PRODUCT_NAME
+
 
 class WhatsAppConfigurationError(RuntimeError):
     """Configuração incompleta ou pertencente a outro ambiente."""
@@ -66,7 +68,7 @@ class WhatsAppProvider(ABC):
     ) -> WhatsAppDeliveryResult:
         return self.send_transactional(
             phone_e164,
-            f"Seu código de acesso Markina Gallery é {code}.",
+            f"Seu código de acesso {PRODUCT_NAME} é {code}.",
             idempotency_key=idempotency_key,
         )
 

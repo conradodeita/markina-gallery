@@ -1,4 +1,4 @@
-"""Autenticação e autorização da Markina Gallery.
+"""Autenticação e autorização do Pick-your-Pic.
 
 O módulo mantém autorização no servidor; o browser recebe apenas um cookie opaco.
 """
@@ -40,6 +40,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from app.messaging import WhatsAppConfigurationError, whatsapp_provider_name
+from app.product_brand import DEFAULT_WATERMARK_TEXT
 from app.whatsapp_delivery import encrypt_otp, otp_encryption_key
 
 
@@ -114,7 +115,7 @@ class BrandingSettings(Base):
     logo_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     app_icon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     favicon_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    watermark_text: Mapped[str] = mapped_column(String(120), default="MARKINA • PRÉVIA")
+    watermark_text: Mapped[str] = mapped_column(String(120), default=DEFAULT_WATERMARK_TEXT)
     watermark_font: Mapped[str] = mapped_column(String(80), default="sans-serif")
     watermark_color: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     watermark_size: Mapped[int] = mapped_column(Integer, default=24)
@@ -340,7 +341,7 @@ class ParentGallery(Base):
     name: Mapped[str] = mapped_column(String(200))
     event_name: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    watermark_text: Mapped[str] = mapped_column(String(120), default="MARKINA • PRÉVIA")
+    watermark_text: Mapped[str] = mapped_column(String(120), default=DEFAULT_WATERMARK_TEXT)
     watermark_font: Mapped[str] = mapped_column(String(80), default="sans-serif")
     watermark_color: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     watermark_size: Mapped[int] = mapped_column(Integer, default=24)

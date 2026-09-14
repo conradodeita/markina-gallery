@@ -1,4 +1,4 @@
-# Aplicativo instalável — Markina Gallery
+# Aplicativo instalável — Pick-your-Pic
 
 O mesmo PWA atende fotógrafo e cliente. A instalação não cria outra conta, não muda permissões e não substitui login/OTP. Ao abrir pelo ícone, a entrada é a página inicial neutra `/`.
 

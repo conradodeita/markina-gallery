@@ -1,6 +1,6 @@
 # Operação do WhatsApp com Evolution API
 
-Este runbook cobre o canal transacional da Markina Gallery em homologação. A integração usa Evolution API 2.3.7 com Baileys; ela não é a API oficial da Meta. O canal envia apenas OTP e mensagens transacionais já especificadas. Inbox, chatbot, campanhas e comandos recebidos permanecem fora do escopo.
+Este runbook cobre o canal transacional da Pick-your-Pic em homologação. A integração usa Evolution API 2.3.7 com Baileys; ela não é a API oficial da Meta. O canal envia apenas OTP e mensagens transacionais já especificadas. Inbox, chatbot, campanhas e comandos recebidos permanecem fora do escopo.
 
 ## Imagens e isolamento verificados
 

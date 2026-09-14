@@ -1,4 +1,4 @@
-# Instruções para executores — Markina Gallery
+# Instruções para executores — Pick-your-Pic
 
 ## Fonte de verdade e leitura inicial
 

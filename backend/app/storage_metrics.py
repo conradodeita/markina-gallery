@@ -1,4 +1,4 @@
-"""Medição agregada e segura das raízes fotográficas da Markina Gallery."""
+"""Medição agregada e segura das raízes fotográficas do Pick-your-Pic."""
 
 from __future__ import annotations
 

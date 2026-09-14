@@ -2640,6 +2640,8 @@ def test_public_access_modes_require_session_and_backend_authority(
         db.flush()
         standard.cover_photo_id = photo.id
         derivative_key = f"{photo.id}/client_preview.jpg"
+        clean_key = f"{photo.id}/admin_preview.jpg"
+        db.add(MediaDerivative(photo_asset_id=photo.id, variant="admin_preview", relative_path=clean_key, status="ready", width=2000, height=1125))
         db.add(
             MediaDerivative(
                 photo_asset_id=photo.id,
@@ -2671,11 +2673,15 @@ def test_public_access_modes_require_session_and_backend_authority(
     preview = derivative_root / derivative_key
     preview.parent.mkdir(parents=True, exist_ok=True)
     preview.write_bytes(b"preview-publica-protegida")
+    clean_preview = derivative_root / clean_key
+    clean_preview.write_bytes(b"capa-publica-limpa")
 
     with TestClient(app) as client:
         preview_url = f"/public-galleries/{standard_id}/photos/{photo_id}/preview"
         assert client.get(preview_url).status_code == 403
+        assert client.get(f"/public-galleries/{standard_id}/cover-preview").status_code == 403
         authenticate_client(client, owner_phone)
+        assert client.get(f"/public-galleries/{standard_id}/cover-preview").status_code == 403
         standard_access = client.post(
             "/public-gallery/access",
             json={
@@ -2699,7 +2705,12 @@ def test_public_access_modes_require_session_and_backend_authority(
         assert public_photo["id"] == str(photo_id)
         assert public_photo["folder_name"] == "Lote"
         assert (public_photo["width"], public_photo["height"]) == (1600, 900)
-        assert client.get(f"/public-galleries/{standard_id}/cover-preview").content == b"preview-publica-protegida"
+        clean_response = client.get(f"/public-galleries/{standard_id}/cover-preview")
+        assert clean_response.content == b"capa-publica-limpa"
+        assert clean_response.headers["cache-control"] == "private, no-store"
+        assert client.get(f"/admin/photo-assets/{photo_id}/preview").status_code == 403
+        clean_preview.unlink()
+        assert client.get(f"/public-galleries/{standard_id}/cover-preview").status_code == 404
         protected = client.get(preview_url)
         assert protected.status_code == 200
         assert protected.content == b"preview-publica-protegida"

@@ -1845,6 +1845,9 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
         ).json()["id"]
     )
     mark_photo_ready(photo_id)
+    with SessionLocal() as db:
+        db.add(MediaDerivative(photo_asset_id=photo_id, variant="admin_preview", relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=1200, height=800))
+        db.commit()
     released = client.post(
         f"/admin/photo-folders/{first_folder_id}/release", json={"gallery_ids": []}
     )
@@ -1917,8 +1920,9 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
     assert [photo["id"] for photo in review.json()["photos"]] == [str(photo_id)]
 
 
+@pytest.mark.parametrize("clean_ready", [True, False])
 def test_private_gallery_serves_dedicated_cover_without_exposing_it_as_content(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path, clean_ready
 ) -> None:
     derivative_root = tmp_path / "derivatives"
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivative_root))
@@ -1985,18 +1989,29 @@ def test_private_gallery_serves_dedicated_cover_without_exposing_it_as_content(
                     height=900,
                 )
             )
+        if clean_ready:
+            clean_path = f"{cover.id}/admin_preview.jpg"
+            (derivative_root / clean_path).write_bytes(b"capa-limpa")
+            db.add(MediaDerivative(photo_asset_id=cover.id, variant="admin_preview", relative_path=clean_path, status="ready", width=900, height=1600))
         db.commit()
         gallery_id = gallery.id
         cover_id = cover.id
+        content_id = content.id
+
+    assert client.get(f"/gallery/{gallery_id}/cover-preview").status_code in {401, 403}
 
     authenticate_client(client, "+5511555554123")
     review = client.get(f"/gallery/{gallery_id}/review")
     assert review.status_code == 200
-    assert review.json()["gallery"]["cover_preview_url"] == f"/gallery/{gallery_id}/cover-preview"
+    assert review.json()["gallery"]["cover_preview_url"] == (f"/gallery/{gallery_id}/cover-preview" if clean_ready else None)
     assert review.json()["gallery"]["folder_display_mode"] == "sequential"
     assert review.json()["gallery"]["cover_title_font"] == "handwritten-caveat"
     assert [photo["name"] for photo in review.json()["photos"]] == ["conteudo.jpg"]
-    assert client.get(f"/gallery/{gallery_id}/cover-preview").status_code == 200
+    response = client.get(f"/gallery/{gallery_id}/cover-preview")
+    assert response.status_code == (200 if clean_ready else 404)
+    if clean_ready:
+        assert response.content == b"capa-limpa"
+    assert client.get(f"/gallery/{gallery_id}/photos/{content_id}/preview").content == b"preview-protegida"
     assert client.get(f"/gallery/{gallery_id}/photos/{cover_id}/preview").status_code in {403, 404}
 
 
@@ -2067,7 +2082,10 @@ def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestC
                     variant="client_preview",
                     relative_path=f"{photo_id}/client_preview.jpg",
                     status="ready",
+                    width=1200,
+                    height=800,
                 ),
+                MediaDerivative(photo_asset_id=photo_id, variant="admin_preview", relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=1200, height=800),
             ]
         )
         db.commit()
@@ -2084,14 +2102,14 @@ def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestC
         "is_cover": False,
         "available": False,
         "publication_state": "ready_to_publish",
-        "width": None,
-        "height": None,
+        "width": 1200,
+        "height": 800,
     }
     assert client.put(
         f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(photo_id)}
     ).status_code == 200
     summary = client.get(f"/admin/parent-galleries/{parent_id}/summary").json()
-    assert summary["cover_preview_url"] == f"/admin/photo-assets/{photo_id}/watermarked-preview"
+    assert summary["cover_preview_url"] == f"/admin/photo-assets/{photo_id}/preview"
 
     assert client.delete(f"/admin/photo-folders/{folder_id}/photos/{photo_id}").status_code == 204
     assert not source.exists()
@@ -2343,10 +2361,11 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     second_folder, removable_photo = create_folder_photo(
         client, parent_id, folder_name="Lote complementar", filename="REMOVER.jpg", storage_key="evento/remover.jpg"
     )
-    # A capa só pode ser escolhida quando o derivado protegido está pronto.
+    # A capa só pode ser escolhida com dimensões horizontais verificadas.
     with SessionLocal() as db:
         db.add(MediaJob(photo_asset_id=cover_photo, status="completed"))
-        db.add(MediaDerivative(photo_asset_id=cover_photo, variant="client_preview", relative_path=f"{cover_photo}/preview.jpg", status="ready"))
+        db.add(MediaDerivative(photo_asset_id=cover_photo, variant="client_preview", relative_path=f"{cover_photo}/preview.jpg", status="ready", width=1200, height=800))
+        db.add(MediaDerivative(photo_asset_id=cover_photo, variant="admin_preview", relative_path=f"{cover_photo}/admin_preview.jpg", status="ready", width=1200, height=800))
         db.commit()
     assert client.put(f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(cover_photo)}).status_code == 200
     first_folder = client.get(f"/admin/parent-galleries/{parent_id}/folders").json()["folders"][0]["id"]
@@ -2367,7 +2386,7 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     summary = client.get(f"/admin/parent-galleries/{parent_id}/summary")
     assert summary.status_code == 200
     assert summary.json()["counts"] == {"folders": 2, "photos": 2, "clients": 1}
-    assert summary.json()["cover_preview_url"] == f"/admin/photo-assets/{cover_photo}/watermarked-preview"
+    assert summary.json()["cover_preview_url"] == f"/admin/photo-assets/{cover_photo}/preview"
     assert summary.json()["clients"][0]["name"] == "Cliente Fluxo"
     assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{removable_photo}").status_code == 204
     assert client.get(f"/admin/parent-galleries/{parent_id}/summary").json()["counts"]["photos"] == 1

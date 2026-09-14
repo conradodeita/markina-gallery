@@ -1,5 +1,8 @@
 "use client";
 
+import { BrandLogo } from "./brand-logo";
+
+
 import { FormEvent, useEffect, useState } from "react";
 
 type Context = "client" | "admin";
@@ -275,8 +278,7 @@ export function AuthEntry({
   return (
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="entry-title">
-        {branding.logo_url ? <img className="auth-brand-logo" src={`/api${branding.logo_url}`} alt="Marca Markina Gallery" /> : null}
-        <p className="eyebrow">Markina Gallery</p>
+        <BrandLogo src={branding.logo_url} className="product-logo--entry" />
         <h1 id="entry-title">{branding.login_title}</h1>
         <p className="intro">{branding.login_intro}</p>
         <p className="auth-helper">{branding.login_helper}</p>

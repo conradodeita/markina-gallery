@@ -63,6 +63,7 @@ from app.messaging import (
     whatsapp_provider_from_environment,
 )
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template
+from app.product_brand import PRODUCT_NAME
 from app.whatsapp_channel import require_ready_channel
 from app.whatsapp_delivery import (
     apply_delivery_status,
@@ -166,7 +167,7 @@ def delivery_message(db: Session, delivery: WhatsAppDelivery) -> str:
         if not delivery.encrypted_payload:
             raise WhatsAppConfigurationError("Payload OTP indisponível.")
         return (
-            "Seu código de acesso Markina Gallery é "
+            f"Seu código de acesso {PRODUCT_NAME} é "
             f"{decrypt_otp(delivery.encrypted_payload, key=otp_encryption_key(), context=delivery.idempotency_key)}."
         )
     if delivery.kind == "payment":

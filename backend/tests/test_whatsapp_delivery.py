@@ -300,7 +300,7 @@ def test_worker_sends_queued_otp_and_erases_ciphertext(monkeypatch, capsys) -> N
         db.commit()
         delivery_id = delivery.id
     assert process_next_whatsapp_delivery() is True
-    assert sent_messages == [(phone, "Seu código de acesso Markina Gallery é 654321.", "otp-worker-1")]
+    assert sent_messages == [(phone, "Seu código de acesso Pick-your-Pic é 654321.", "otp-worker-1")]
     with SessionLocal() as db:
         delivered = db.get(WhatsAppDelivery, delivery_id)
         assert delivered.status == "accepted"

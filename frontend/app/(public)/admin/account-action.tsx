@@ -1,5 +1,8 @@
 "use client";
 
+import { PRODUCT_NAME } from "../../product-brand";
+
+
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 
@@ -84,7 +87,7 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
   return (
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="account-action-title">
-        <p className="eyebrow">Markina Gallery · Fotógrafo</p>
+        <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
         <h1 id="account-action-title">
           {kind === "password" ? "Crie uma nova senha" : "Confirme o novo e-mail"}
         </h1>
