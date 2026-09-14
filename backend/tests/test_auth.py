@@ -16,6 +16,7 @@ from app.auth import (
     ClientPhone,
     DerivedGallery,
     GalleryMembershipNotificationOutbox,
+    NotificationEvent,
     ParentGallery,
     ParentGalleryRegistration,
     SessionLocal,
@@ -358,6 +359,12 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
             f"client_logged_in:{second}",
         }
         assert all(item.external_status == "skipped" for item in login_notifications)
+        first_accesses = list(db.scalars(select(NotificationEvent).where(
+            NotificationEvent.event_type == "first_access",
+            NotificationEvent.parent_gallery_id == parent_id,
+            NotificationEvent.client_id == registered.id,
+        )))
+        assert len(first_accesses) == 1  # dois OTPs auditados, um aviso externo
 
 
 def test_disabled_gallery_link_cannot_create_client_after_otp(client):

@@ -16,6 +16,7 @@ type Folder = { id: string; name: string; status: string; photo_count: number };
 type Member = { membership_id: string; client_id: string; client_name: string; phone_e164: string | null; status: "active" | "blocked" | "unlinked"; available_count?: number; selected_count: number; purchased_count: number; order_count: number; confirmed_total_cents: number; commercial_status?: string; payment_status?: string; reopening_status: string | null };
 type Facial = { state: string; progress: { ready: number; total: number }; queued: number; processing: number; failed: number; coverage: { photos_with_faces: number; total: number; percent: number; detected_faces: number } };
 type UploadState = { phase: "idle" | "uploading" | "success" | "error"; current: number; total: number; filename?: string };
+type UploadBatch = { id: string; status: string; count: number; assets: { id: string; storage_key: string; status: string }[] };
 
 async function requestJson(path: string, init?: RequestInit) {
   const response = await fetch(path, { credentials: "same-origin", ...init });
@@ -59,20 +60,24 @@ export default function GalleryDetailPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [upload, setUpload] = useState<UploadState>({ phase: "idle", current: 0, total: 0 });
+  const [openBatches, setOpenBatches] = useState<UploadBatch[]>([]);
+  const [resumeBatchId, setResumeBatchId] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
   const load = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     try {
-      const [detailData, photoData, folderData, memberData, facialData] = await Promise.all([
+      const [detailData, photoData, folderData, memberData, facialData, batchData] = await Promise.all([
         requestJson(`/api/admin/derived-galleries/${galleryId}`), requestJson(`/api/admin/derived-galleries/${galleryId}/photos`),
         requestJson(`/api/admin/derived-galleries/${galleryId}/folders`), requestJson(`/api/admin/derived-galleries/${galleryId}/members`),
         requestJson(`/api/admin/derived-galleries/${galleryId}/facial-index`),
+        requestJson(`/api/admin/derived-galleries/${galleryId}/upload-batches`),
       ]);
       const loadedPhotos = photoData.photos ?? [];
       const inferredFolders = [...new Map(loadedPhotos.filter((photo: PrivatePhoto) => photo.ownership === "private").map((photo: PrivatePhoto) => [photo.folder_id, { id: photo.folder_id, name: photo.folder_name, status: "released", photo_count: loadedPhotos.filter((item: PrivatePhoto) => item.folder_id === photo.folder_id).length }])).values()];
       setDetail(detailData); setPhotos(loadedPhotos); setFolders(folderData.folders ?? inferredFolders); setMembers(memberData.members ?? []); setFacial(facialData?.progress ? facialData : null); setFailed(false);
+      setOpenBatches(batchData.batches ?? []);
     } catch { setFailed(true); } finally { if (showLoading) setLoading(false); }
   }, [galleryId]);
 
@@ -91,16 +96,47 @@ export default function GalleryDetailPage() {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const folderId = String(data.get("folder") ?? ""); const input = form.elements.namedItem("jpeg") as HTMLInputElement; const files = Array.from(input.files ?? []);
     if (!folderId || !files.length || busy) return;
     setBusy(true); setUpload({ phase: "uploading", current: 0, total: files.length });
+    let batch: UploadBatch;
+    try {
+      batch = openBatches.find((item) => item.id === resumeBatchId) ?? await requestJson(`/api/admin/derived-galleries/${galleryId}/upload-batches`, { method: "POST" });
+      setResumeBatchId(batch.id);
+      setOpenBatches((current) => current.some((item) => item.id === batch.id) ? current : [...current, batch]);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível iniciar o lote.");
+      setBusy(false); setUpload({ phase: "error", current: 0, total: files.length }); return;
+    }
     for (const [index, file] of files.entries()) {
       setUpload({ phase: "uploading", current: index + 1, total: files.length, filename: file.name });
       try {
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-        const photo = await requestJson(`/api/admin/photo-folders/${folderId}/photos`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filename: file.name, storage_key: `private/${galleryId}/${folderId}/${Date.now()}-${index}-${safeName}` }) });
+        const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+        const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const storageKey = `private/${galleryId}/${folderId}/${fingerprint}.jpg`;
+        const previous = batch.assets.find((asset) => asset.storage_key === storageKey);
+        if (previous && previous.status !== "not_imported") continue;
+        const photo = previous ?? await requestJson(`/api/admin/photo-folders/${folderId}/photos`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filename: file.name, storage_key: storageKey, upload_batch_id: batch.id }) });
+        if ("duplicate" in photo && photo.duplicate === "true") continue;
         await requestJson(`/api/admin/photo-assets/${photo.id}/source`, { method: "PUT", headers: { "Content-Type": "image/jpeg" }, body: file });
-      } catch (error) { setUpload({ phase: "error", current: index, total: files.length, filename: file.name }); setMessage(error instanceof Error ? error.message : `Falha ao enviar ${file.name}.`); setBusy(false); return; }
+      } catch (error) { setUpload({ phase: "error", current: index, total: files.length, filename: file.name }); setMessage(error instanceof Error ? error.message : `Falha ao enviar ${file.name}.`); setBusy(false); await load(false); return; }
     }
-    await requestJson(`/api/admin/photo-folders/${folderId}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    try {
+      await requestJson(`/api/admin/derived-galleries/${galleryId}/upload-batches/${batch.id}/close`, { method: "POST" });
+      setResumeBatchId("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível encerrar o lote. Retome abaixo.");
+      setBusy(false); await load(false); return;
+    }
     setUpload({ phase: "success", current: files.length, total: files.length }); setMessage(`${files.length} foto(s) enviada(s). As prévias e o reconhecimento serão atualizados automaticamente.`); form.reset(); setBusy(false); await load(false);
+  }
+
+  async function closePartialBatch(batch: UploadBatch) {
+    setBusy(true);
+    try {
+      await requestJson(`/api/admin/derived-galleries/${galleryId}/upload-batches/${batch.id}/close`, { method: "POST" });
+      if (resumeBatchId === batch.id) setResumeBatchId("");
+      setMessage("Lote encerrado. O aviso considerará somente novas fotos disponíveis.");
+      await load(false);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível encerrar o lote."); }
+    finally { setBusy(false); }
   }
 
   async function removePhoto(photo: PrivatePhoto) {
@@ -129,8 +165,9 @@ export default function GalleryDetailPage() {
     {photos.some((photo) => photo.ownership === "public_reference") ? <section className="admin-card"><div className="section-heading"><div><h2>Seleções vindas da Galeria pública</h2><p>Estas fotos entram automaticamente quando a cliente as seleciona. O fotógrafo não as adiciona manualmente por esta tela.</p></div><StatusBadge>{photos.filter((photo) => photo.ownership === "public_reference").length} foto(s)</StatusBadge></div><div className="private-photo-grid">{photos.filter((photo) => photo.ownership === "public_reference").map((photo) => <figure key={photo.id}><img src={`/api${photo.preview_url}`} alt={`Prévia protegida de ${photo.name}`} /><figcaption><strong>{photo.name}</strong><small>{photo.folder_name}</small><AdminPhotoInteractions photo={photo} /></figcaption></figure>)}</div></section> : null}
     <section className="admin-card"><div className="section-heading"><div><h2>Uploads próprios da galeria privada</h2><p>Crie uma pasta e carregue novos JPEGs do dispositivo. Nenhuma foto pública pode ser adicionada manualmente aqui.</p></div></div><form className="auth-form" onSubmit={createFolder}><label>Nome da nova pasta<input name="name" maxLength={200} required /></label><MarkinaButton disabled={busy}>Criar pasta</MarkinaButton></form>{folders.length ? <><form className="auth-form" onSubmit={uploadPhotos}><label>Pasta<select name="folder" required defaultValue=""><option value="" disabled>Escolha a pasta</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</select></label><label>JPEGs do dispositivo<input name="jpeg" type="file" accept="image/jpeg,.jpg,.jpeg" multiple required /></label><MarkinaButton disabled={busy}>{upload.phase === "uploading" ? `Enviando ${upload.current} de ${upload.total}…` : "Carregar fotos"}</MarkinaButton></form>{upload.phase !== "idle" ? <p className={upload.phase === "error" ? "form-message form-message--error" : "form-message"} role="status">{upload.phase === "uploading" ? `${Math.round(upload.current * 100 / upload.total)}% · ${upload.filename ?? ""}` : upload.phase === "success" ? "Upload concluído; processamento em segundo plano iniciado." : `Falha em ${upload.filename ?? "um arquivo"}.`}</p> : null}<div className="private-folder-list">{folders.map((folder) => <article key={folder.id}><header><strong>{folder.name}</strong><StatusBadge>{folder.photo_count} foto(s)</StatusBadge></header>{(photosByFolder.get(folder.id) ?? []).length ? <div className="private-photo-grid">{(photosByFolder.get(folder.id) ?? []).map((photo) => <figure key={photo.id}><img src={`/api${photo.preview_url}`} alt={`Prévia protegida de ${photo.name}`} /><figcaption><strong>{photo.name}</strong><small>Upload exclusivo</small><AdminPhotoInteractions photo={photo} /><MarkinaButton type="button" variant="quiet" disabled={busy} onClick={() => removePhoto(photo)}>Remover</MarkinaButton></figcaption></figure>)}</div> : <p>Pasta vazia.</p>}</article>)}</div></> : <SystemState title="Crie a primeira pasta" detail="Depois, selecione-a para carregar JPEGs diretamente do dispositivo." />}</section>
 
-    <section className="admin-card"><h2>Ajustes da galeria privada</h2><form className="auth-form" onSubmit={saveName}><label>Nome<input name="name" defaultValue={detail.name} required /></label><MarkinaButton disabled={busy}>Salvar nome</MarkinaButton></form><p>Preço, prazo e regras comerciais são herdados da Galeria pública. O PIX e a mensagem global ficam em Configurações e Vendas e pagamentos.</p></section>
+    <section className="admin-card"><h2>Ajustes da galeria privada</h2><form className="auth-form" onSubmit={saveName}><label>Nome<input name="name" defaultValue={detail.name} required /></label><MarkinaButton disabled={busy}>Salvar nome</MarkinaButton></form><p>Preço, prazo e regras comerciais são herdados da Galeria pública. O PIX fica em Configurações; as mensagens globais, em Notificações.</p></section>
     {deleteConfirmOpen ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="delete-private-title" aria-modal="true" className="mk-dialog" role="dialog"><h2 id="delete-private-title">Excluir “{detail.name}”?</h2><p>O cadastro e o histórico comercial serão preservados. Mídia exclusiva exige as proteções de exclusão vigentes.</p>{deleteError ? <p className="form-message form-message--error" role="alert">{deleteError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton variant="secondary" disabled={busy} onClick={() => { setDeleteConfirmOpen(false); setDeleteError(""); }}>Cancelar</MarkinaButton><MarkinaButton className="mk-button--danger" disabled={busy} onClick={removeGallery}>{busy ? "Excluindo…" : "Confirmar exclusão"}</MarkinaButton></div></section></div> : null}
+    {openBatches.length ? <section className="admin-card" aria-label="Uploads interrompidos"><h2>Lotes ainda abertos</h2><p>Retome selecionando os mesmos arquivos ou encerre com as fotos já enviadas.</p>{openBatches.map((batch) => <article key={batch.id}><p>{batch.count} foto(s) registradas · lote {batch.id.slice(0, 8)}</p><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => { setResumeBatchId(batch.id); setMessage("Lote selecionado. Escolha a pasta e os arquivos para retomar o upload."); }}>{resumeBatchId === batch.id ? "Selecionado para retomar" : "Retomar lote"}</MarkinaButton><MarkinaButton type="button" variant="quiet" disabled={busy} onClick={() => closePartialBatch(batch)}>Encerrar com as fotos enviadas</MarkinaButton></article>)}</section> : null}
     {message ? <p className="form-message" role="status">{message}</p> : null}
   </main>;
 }

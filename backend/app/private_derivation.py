@@ -24,6 +24,7 @@ from app.checkout import (
     lock_client_commerce,
     synchronize_editable_draft,
 )
+from app.notification_events import record_gallery_milestone
 from app.parent_registration import link_client_to_parent
 from app.private_membership import ensure_private_membership
 
@@ -206,6 +207,8 @@ def derive_client_selection(
     )
     if selection_created:
         synchronize_editable_draft(db, gallery=gallery, client_id=client.id)
+        record_gallery_milestone(db, kind="first_selection", parent_gallery_id=parent.id,
+                                 client_id=client.id, gallery=gallery)
     return PrivateDerivationResult(
         gallery=gallery,
         gallery_created=gallery_created,

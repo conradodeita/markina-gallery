@@ -36,7 +36,7 @@ def enqueue_membership_notification(
     )
     if existing:
         return existing, False
-    external_enabled = event_type != "client_logged_in" and (
+    external_enabled = event_type not in {"client_logged_in", "private_created"} and (
         os.getenv("GALLERY_NOTIFICATION_EXTERNAL_ENABLED", "false").strip().lower()
         == "true"
     )

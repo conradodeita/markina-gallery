@@ -2079,6 +2079,143 @@ class AuthChallenge(Base):
     client_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
+class NotificationSetting(Base):
+    __tablename__ = "notification_setting"
+    event_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    push_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    whatsapp_disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    push_disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    whatsapp_body: Mapped[str] = mapped_column(String(500))
+    push_title: Mapped[str] = mapped_column(String(60))
+    push_body: Mapped[str] = mapped_column(String(140))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (CheckConstraint("version >= 1"),)
+
+
+class NotificationMilestone(Base):
+    """Marco canônico persistente, independente de seleção/carrinho atuais."""
+    __tablename__ = "notification_milestone"
+    parent_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="CASCADE"), primary_key=True
+    )
+    client_id: Mapped[UUID] = mapped_column(
+        ForeignKey("client.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(24), primary_key=True)
+    baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (CheckConstraint("kind IN ('first_access', 'first_selection')"),)
+
+
+class PushSubscription(Base):
+    """Endpoint e chaves exclusivamente cifrados; fingerprint não reversível."""
+    __tablename__ = "push_subscription"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    endpoint_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    installation_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    encrypted_subscription: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(16))
+    subject_id: Mapped[UUID] = mapped_column(index=True)
+    session_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("auth_session.id", ondelete="SET NULL"), nullable=True
+    )
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'client')"),
+        CheckConstraint("generation >= 1"),
+        Index("ix_push_subscription_owner_active", "role", "subject_id", "active"),
+    )
+
+
+class NotificationEvent(Base):
+    __tablename__ = "notification_event"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    event_key: Mapped[str] = mapped_column(String(192), unique=True)
+    event_type: Mapped[str] = mapped_column(ForeignKey("notification_setting.event_type"))
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="CASCADE"), nullable=True
+    )
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True
+    )
+    client_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("client.id", ondelete="CASCADE"), nullable=True
+    )
+    sale_order_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("sale_order.id", ondelete="CASCADE"), nullable=True
+    )
+    template_version: Mapped[int] = mapped_column(Integer)
+    push_title: Mapped[str] = mapped_column(String(60))
+    push_body: Mapped[str] = mapped_column(String(140))
+    whatsapp_body: Mapped[str] = mapped_column(String(500))
+    target_path: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_delivery"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("notification_event.id", ondelete="CASCADE"), index=True
+    )
+    channel: Mapped[str] = mapped_column(String(16))
+    recipient_role: Mapped[str] = mapped_column(String(16))
+    recipient_id: Mapped[UUID] = mapped_column(index=True)
+    device_key: Mapped[str] = mapped_column(String(64), default="whatsapp")
+    subscription_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("push_subscription.id", ondelete="CASCADE"), nullable=True
+    )
+    subscription_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_token: Mapped[UUID | None] = mapped_column(nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        UniqueConstraint("event_id", "channel", "recipient_role", "recipient_id", "device_key"),
+        CheckConstraint("channel IN ('push', 'whatsapp')"),
+        CheckConstraint("recipient_role IN ('admin', 'client')"),
+        CheckConstraint("attempts >= 0"),
+        CheckConstraint("status IN ('queued', 'processing', 'accepted', 'failed', "
+                        "'unknown', 'expired', 'cancelled')"),
+        Index("ix_notification_delivery_ready", "channel", "status", "next_attempt_at"),
+    )
+
+
+class PrivateUploadBatch(Base):
+    __tablename__ = "private_upload_batch"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    derived_gallery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), index=True
+    )
+    actor_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    recipient_ids: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (CheckConstraint("status IN ('open', 'closed', 'completed')"),)
+
+
+class PrivateUploadBatchAsset(Base):
+    __tablename__ = "private_upload_batch_asset"
+    batch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("private_upload_batch.id", ondelete="CASCADE"), primary_key=True
+    )
+    photo_asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("photo_asset.id", ondelete="CASCADE"), primary_key=True, unique=True
+    )
+
+
 class AuthSession(Base):
     __tablename__ = "auth_session"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -2445,6 +2582,13 @@ def current_session(request: Request, required_role: Role | None = None) -> Auth
 
 
 def revoke_subject_sessions(db: Session, role: str, subject_id: UUID) -> None:
+    for subscription in db.scalars(select(PushSubscription).where(
+        PushSubscription.role == role, PushSubscription.subject_id == subject_id,
+        PushSubscription.active,
+    )):
+        subscription.active = False
+        subscription.generation += 1
+        subscription.updated_at = now()
     for session in db.scalars(
         select(AuthSession).where(
             AuthSession.role == role,

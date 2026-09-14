@@ -129,7 +129,7 @@ describe("telas administrativas de galerias", () => {
     expect(window.confirm).toHaveBeenCalledWith(
       "Bloquear o acesso desta galeria privada para todos os membros?",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it("organiza o acervo por pasta e mantém agregados e seleção de cada cliente", async () => {
@@ -225,7 +225,10 @@ describe("telas administrativas de galerias", () => {
   });
 
   it("carrega JPEGs do dispositivo somente em pasta própria da privada", async () => {
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/upload-batches")) return Promise.resolve(new Response(JSON.stringify(init?.method === "POST" ? { id: "batch-1", count: 0, assets: [] } : { batches: [] }), { status: 200 }));
+      if (path.endsWith("/close")) return Promise.resolve(new Response(JSON.stringify({ status: "closed" }), { status: 200 }));
       if (path.endsWith("/photos") && !init?.method) return Promise.resolve(new Response(JSON.stringify({ photos: [] }), { status: 200 }));
       if (path.endsWith("/folders") && !init?.method) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-private", name: "Uploads", status: "preparing", photo_count: 0 }] }), { status: 200 }));
       if (path.endsWith("/members")) return Promise.resolve(new Response(JSON.stringify({ members: [] }), { status: 200 }));
@@ -239,6 +242,7 @@ describe("telas administrativas de galerias", () => {
     await screen.findByRole("heading", { name: "Família" });
     fireEvent.change(screen.getByLabelText("Pasta"), { target: { value: "folder-private" } });
     const file = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], "nova.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([0xff]).buffer });
     fireEvent.change(screen.getByLabelText("JPEGs do dispositivo"), { target: { files: [file] } });
     fireEvent.submit(screen.getByLabelText("JPEGs do dispositivo").closest("form")!);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -247,5 +251,27 @@ describe("telas administrativas de galerias", () => {
     ));
     const registration = fetchMock.mock.calls.find(([path, init]) => path === "/api/admin/photo-folders/folder-private/photos" && init?.method === "POST");
     expect(String(registration?.[1]?.body)).toContain("private/private-1/folder-private/");
+    expect(JSON.parse(String(registration?.[1]?.body)).upload_batch_id).toBe("batch-1");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/derived-galleries/private-1/upload-batches/batch-1/close", expect.objectContaining({ method: "POST" })));
+  });
+
+  it("recupera lote aberto após reload e permite encerramento parcial", async () => {
+    const batch = { id: "batch-open", count: 2, status: "open", assets: [] };
+    let closed = false;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/batch-open/close") && init?.method === "POST") { closed = true; return Promise.resolve(new Response(JSON.stringify({ status: "closed" }))); }
+      const payload = path.endsWith("/upload-batches") ? { batches: closed ? [] : [batch] }
+        : path.endsWith("/folders") ? { folders: [] } : path.endsWith("/members") ? { members: [] }
+        : path.endsWith("/photos") ? { photos: [] }
+        : { id: "private-1", parent_gallery_id: "public-1", name: "Família", frozen: false, blocked: false };
+      return Promise.resolve(new Response(JSON.stringify(payload)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar lote" }));
+    expect(screen.getByRole("button", { name: "Selecionado para retomar" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar com as fotos enviadas" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Lotes ainda abertos" })).toBeNull());
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/derived-galleries/private-1/upload-batches/batch-open/close", expect.objectContaining({ method: "POST" }));
   });
 });

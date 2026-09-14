@@ -1,79 +1,54 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import NotificationsPage, { NotificationSetting } from "./page";
 
-vi.mock("next/link", () => ({ default: ({ children, href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...props}>{children}</a> }));
+const settings: NotificationSetting[] = ["first_access", "first_selection", "private_photos_ready", "payment_reported", "payment_confirmed", "payment_refused"].map((event_type) => ({
+  event_type, label: event_type, recipient: event_type === "private_photos_ready" || ["payment_confirmed", "payment_refused"].includes(event_type) ? "client" : "admin",
+  allowed_variables: ["cliente", "galeria"], version: 1, push_enabled: true, whatsapp_enabled: true,
+  push_title: "Aviso", push_body: "Olá {{cliente}}", whatsapp_body: "Mensagem {{galeria}}",
+}));
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-import NotificationsPage from "./page";
+it("exibe seis eventos, prévias e dois interruptores sem a caixa de entrada antiga", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings })));
+  vi.stubGlobal("fetch", fetch);
+  render(<NotificationsPage />);
+  await screen.findByRole("form", { name: "first_access" });
+  expect(screen.getAllByRole("form")).toHaveLength(6);
+  expect(screen.getAllByRole("checkbox")).toHaveLength(12);
+  expect(screen.getAllByText("Olá Cliente")).toHaveLength(6);
+  expect(screen.queryByLabelText("Leitura")).toBeNull();
+  expect(screen.queryByText("Marcar como lida")).toBeNull();
+  expect(screen.getByText(/As alterações são globais/)).toBeTruthy();
+});
 
-const notification = {
-  id: "notice-1",
-  event_type: "member_joined",
-  admin_status: "unread",
-  external_status: "skipped",
-  parent_gallery_id: "parent-1",
-  derived_gallery_id: "private-1",
-  client_id: "client-1",
-  parent_name: "Formatura 2026",
-  derived_name: "Família Silva",
-  client_name: "Maria Silva",
-  phone_e164: "+5511999999999",
-  total_cents: 39000,
-  created_at: "2026-09-01T12:00:00Z",
-};
+it("salva somente o evento escolhido com versão e canais independentes", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings[0], version: 2, push_enabled: false })));
+  vi.stubGlobal("fetch", fetch);
+  render(<NotificationsPage />);
+  const form = within(await screen.findByRole("form", { name: "first_access" }));
+  fireEvent.click(form.getByLabelText("Enviar notificação Push"));
+  fireEvent.change(form.getByLabelText(/Mensagem do WhatsApp/), { target: { value: "Novo texto {{cliente}}" } });
+  fireEvent.click(form.getByRole("button", { name: "Salvar evento" }));
+  expect(await form.findByText("Configuração global salva.")).toBeTruthy();
+  expect(fetch).toHaveBeenLastCalledWith("/api/admin/notification-settings/first_access", expect.objectContaining({ method: "PUT", body: JSON.stringify({ version: 1, whatsapp_enabled: true, push_enabled: false, whatsapp_body: "Novo texto {{cliente}}", push_title: "Aviso", push_body: "Olá {{cliente}}" }) }));
+});
 
-describe("notificações administrativas", () => {
-  beforeEach(() => vi.restoreAllMocks());
+it("preserva rascunho em erro e explica conflito de versão", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "A configuração mudou. Atualize a página antes de salvar." }), { status: 422 })));
+  render(<NotificationsPage />);
+  const form = within(await screen.findByRole("form", { name: "first_access" }));
+  fireEvent.change(form.getByLabelText(/Título do push/), { target: { value: "Rascunho" } });
+  fireEvent.click(form.getByRole("button", { name: "Salvar evento" }));
+  expect(await form.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Atualize"));
+  expect(form.getByLabelText(/Título do push/)).toHaveProperty("value", "Rascunho");
+});
 
-  it("deduplica eventos, omite dados comerciais e permite marcar como lida", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ notifications: [notification, notification] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: notification.id, status: "read" }), { status: 200 }));
-
-    render(<NotificationsPage />);
-
-    expect(await screen.findByText("Maria Silva")).toBeTruthy();
-    expect(screen.getAllByText("Nova cliente na privada", { selector: "strong" })).toHaveLength(1);
-    expect(screen.queryByText("+5511999999999")).toBeNull();
-    expect(screen.queryByText("R$ 390,00")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Marcar como lida" }));
-    await waitFor(() => expect(screen.getByText("Notificação marcada como lida.")).toBeTruthy());
-    expect(fetchMock).toHaveBeenLastCalledWith("/api/admin/notifications/notice-1/read", { method: "POST", credentials: "same-origin" });
-    expect(screen.queryByRole("button", { name: "Marcar como lida" })).toBeNull();
-  });
-
-  it("aplica filtros básicos na consulta", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ notifications: [] }), { status: 200 }));
-    render(<NotificationsPage />);
-    await screen.findByText("Nenhuma notificação neste filtro");
-
-    fireEvent.change(screen.getByLabelText("Leitura"), { target: { value: "unread" } });
-    fireEvent.change(screen.getByLabelText("Evento"), { target: { value: "member_blocked" } });
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/notifications?admin_status=unread&event_type=member_blocked",
-      { credentials: "same-origin" },
-    ));
-  });
-
-  it("identifica o acesso OTP sem expor telefone ou código", async () => {
-    const loginNotification = {
-      ...notification,
-      id: "login-1",
-      event_type: "client_logged_in",
-      derived_gallery_id: null,
-      derived_name: null,
-      otp: "123456",
-    };
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ notifications: [loginNotification] }), { status: 200 }),
-    );
-
-    render(<NotificationsPage />);
-
-    expect(await screen.findByText("Cliente acessou a galeria")).toBeTruthy();
-    expect(screen.getByText("O login por OTP foi concluído e o acesso autorizado.")).toBeTruthy();
-    expect(screen.queryByText("123456")).toBeNull();
-    expect(screen.queryByText("+5511999999999")).toBeNull();
-  });
+it("permite recuperar falha na carga sem enviar alterações", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new Error()).mockResolvedValueOnce(new Response(JSON.stringify({ settings }))));
+  render(<NotificationsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Tentar novamente" }));
+  await screen.findByRole("form", { name: "first_access" });
 });

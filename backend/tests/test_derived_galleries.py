@@ -3580,6 +3580,7 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pedidos, decisões e falhas de mensagem não atravessam a fronteira da Galeria pública."""
+    from app.auth import NotificationDelivery, NotificationEvent
     from app.messaging import WhatsAppDeliveryError
     from app.worker import process_next_payment_notification
 
@@ -3590,6 +3591,7 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
 
     monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "1")
     monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: FailingProvider())
+    monkeypatch.setattr("app.notification_delivery.whatsapp_provider_from_environment", lambda: FailingProvider())
     authenticate_admin(client)
     owner_id = UUID(
         client.post(
@@ -3731,6 +3733,13 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
             )
         ):
             notification.status = "sent"
+        # Agora o registro financeiro é projeção: simular aceite também na fila real.
+        for delivery in db.scalars(select(NotificationDelivery).where(
+            NotificationDelivery.event_id.in_(select(NotificationEvent.id).where(
+                NotificationEvent.event_type == "payment_reported")),
+            NotificationDelivery.channel == "whatsapp",
+        )):
+            delivery.status = "accepted"
         db.commit()
 
     assert client.post(

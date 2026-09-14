@@ -1,6 +1,47 @@
 /* Sem CacheStorage: nenhum HTML privado, foto, token ou resposta de API é persistido. */
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
+function allowedPushPath(path) {
+  return typeof path === "string" && /^\/(?:admin(?:\/payments|\/galleries\/[0-9a-f-]{36}|\/galleries\/sources\/[0-9a-f-]{36}\/edit\/imagens)?|library|gallery\/[0-9a-f-]{36}|public-galleries\/[0-9a-f-]{36})$/.test(path);
+}
+
+self.addEventListener("push", (event) => {
+  let payload;
+  try { payload = event.data?.json(); } catch { return; }
+  if (!payload || typeof payload.id !== "string" || !/^[0-9a-f-]{36}$/.test(payload.id)
+    || typeof payload.title !== "string" || !payload.title || payload.title.length > 60
+    || typeof payload.body !== "string" || !payload.body || payload.body.length > 140
+    || !allowedPushPath(payload.path)) return;
+  event.waitUntil(self.registration.showNotification(payload.title, {
+    body: payload.body, tag: `pick-event-${payload.id}`, renotify: false,
+    icon: "/api/branding/app-icon?size=192", badge: "/api/branding/app-icon?size=192",
+    data: { path: payload.path },
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const path = event.notification.data?.path;
+  if (!allowedPushPath(path)) return;
+  event.waitUntil((async () => {
+    const destination = new URL(path, self.location.origin).href;
+    const tabs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const existing = tabs.find((tab) => new URL(tab.url).origin === self.location.origin);
+    if (existing) {
+      await existing.navigate(destination);
+      await existing.focus();
+    } else { await self.clients.openWindow(destination); }
+  })());
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type !== "CLEAR_PUSH_NOTIFICATIONS") return;
+  if (!event.source?.url || new URL(event.source.url).origin !== self.location.origin) return;
+  event.waitUntil(self.registration.getNotifications().then((notifications) => {
+    notifications.forEach((notification) => notification.close());
+  }));
+});
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);

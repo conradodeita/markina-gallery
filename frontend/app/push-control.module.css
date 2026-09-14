@@ -1,0 +1,10 @@
+.control { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
+.button { min-height:44px; padding:9px 13px; border:1px solid var(--mk-border); border-radius:12px; background:var(--mk-surface-subtle); color:var(--mk-ink); font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; }
+.button:focus-visible { outline:3px solid var(--mk-focus); outline-offset:3px; }
+.button:disabled { opacity:.65; cursor:wait; }
+.message { max-width:36ch; color:var(--mk-ink-muted); font-size:.8rem; overflow-wrap:anywhere; }
+.actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+.adminHeader { flex-wrap:wrap; }
+.adminHeader nav { min-width:min(100%,420px); }
+@media(max-width:1100px) { .adminHeader nav { order:3; width:100%; flex-basis:100%; } .adminHeader .actions { margin-inline-start:auto; } }
+@media(max-width:600px) { .actions { width:100%; justify-content:flex-start; } }
