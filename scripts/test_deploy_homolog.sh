@@ -324,6 +324,17 @@ set -e
 grep -Fq 'banco não foi restaurado' "$output"
 
 python3 "$SCRIPT_DIR/test_deploy_homolog_policy.py"
+# The optional worker lives in its own Compose file/profile, not the base file.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    docker() { printf "%s\n" "$*"; }
+    PREVIEW_WORKER_ACTIVE=1
+    compose config --services
+    PREVIEW_WORKER_ACTIVE=0
+    compose config --services
+  ' >"$output" 2>&1
+[[ "$(grep -c -- '-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment' "$output")" -eq 1 ]]
 # A failed preservation must never allow recreation, even through the ERR rollback.
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '

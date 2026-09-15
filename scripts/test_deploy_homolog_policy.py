@@ -149,6 +149,8 @@ def main() -> int:
     require("BRANDING_ASSETS_ROOT: /var/lib/markina/branding", "raiz persistente de marca", COMPOSE)
     assert COMPOSE.count("- branding-assets:/var/lib/markina/branding") == 1
     require("python3 scripts/preserve_branding.py preserve", "preservação antes da migration", SCRIPT)
+    require('extra+=(-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment)',
+            "override/profile do worker de prévias já ativo", SCRIPT)
     require('extra=(-f "$STATE_DIR/branding.compose.yml")', "persistência no rollback", SCRIPT)
     require('recriação bloqueada: branding ainda não preservado', "gate de preservação", SCRIPT)
     if COMPOSE.count("- media-history:/var/lib/markina/history") != 2:
