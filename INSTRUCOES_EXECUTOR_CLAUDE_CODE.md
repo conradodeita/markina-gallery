@@ -257,6 +257,10 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 
 ## 9. Integrações por adaptadores
 
+- Change `configurable-push-and-whatsapp-notifications`: central administrativa de seis eventos com templates globais, prévias e interruptores separados para WhatsApp/push. Migração preserva templates de pagamento e auditoria, sem inbox duplicada nem replay. Primeiro acesso/seleção são marcos por cliente/galeria, não por OTP nem pela simples criação administrativa da privada. Novas fotos privadas avisam somente após encerramento durável do lote com prévias protegidas disponíveis.
+- Push usa inscrição cifrada por identidade/instalação, adesão por clique, VAPID exclusivamente externo e serviço HTTPS com destinos de provedores validados. Logout/troca de conta revogam; expiração natural de sessão não interrompe avisos, mas clique revalida acesso. Pagamentos não dependem do sucesso da mensagem; correção silenciosa não envia em nenhum canal. Nunca confundir aceite do provedor com leitura.
+- Gates de implantação/segredos e validação Android/iPhone permanecem humanos. Consulte `docs/transactional-notifications.md`; transporte desabilitado por padrão, sem alterar `.env` automaticamente.
+
 - `WhatsAppProvider`: OTP, mensagens transacionais, lembretes, status e erro. Inicialmente Evolution API; não acoplar regras de negócio ao fornecedor.
 - `PaymentProvider`: PIX manual no MVP; Infinity Pay posterior com criação de cobrança, webhook assinado e reconciliação.
 - `DriveStorageProvider`: upload resumível, checksum, retentativa exponencial, restauração e deleção controlada.

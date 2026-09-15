@@ -103,7 +103,8 @@ def exercise_cart_migration(database_url: str) -> None:
             native_uuid=native_uuid,
         )
 
-    alembic(database_url, "upgrade", "head")
+    # Exercitar o ciclo do carrinho antes da migration de notificações sem downgrade destrutivo.
+    alembic(database_url, "upgrade", "20260913_0055")
     assert "frozen_at" in {
         column["name"] for column in inspect(engine).get_columns("sale_order")
     }
@@ -141,7 +142,7 @@ def exercise_cart_migration(database_url: str) -> None:
     assert "frozen_at" not in {
         column["name"] for column in inspect(engine).get_columns("sale_order")
     }
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", "20260913_0055")
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT count(*) FROM sale_order WHERE frozen_at IS NULL")

@@ -78,7 +78,6 @@ from app.auth import (
     ParentGalleryRegistration,
     PaymentCommunication,
     PaymentConfirmationCorrection,
-    PaymentMessageTemplate,
     PaymentNotificationOutbox,
     PhotoAsset,
     PhotoComment,
@@ -88,8 +87,11 @@ from app.auth import (
     PhotoSelection,
     PhotoView,
     PriceRule,
+    PrivateUploadBatch,
+    PrivateUploadBatchAsset,
     ProgressivePricingPreset,
     ProgressivePricingTier,
+    PushSubscription,
     Role,
     SaleOrder,
     SaleOrderItem,
@@ -253,8 +255,18 @@ from app.messaging import (
     payment_notification_max_attempts,
     whatsapp_provider_from_environment,
 )
+from app.notification_contract import DEFINITIONS as NOTIFICATION_DEFINITIONS
+from app.notification_delivery import retry_payment_projection
+from app.notification_events import record_gallery_milestone, record_payment_event
+from app.notification_settings import (
+    notification_savepoint,
+    payment_template_bodies,
+    save_setting,
+    setting_for,
+    setting_payload,
+)
 from app.parent_registration import link_client_to_parent
-from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template, validate_template
+from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
 from app.pix import PixCodeError, pix_qr_data_url
 from app.preview_adjustment.api import register_routes as register_preview_adjustment_routes
 from app.preview_adjustment.service import presentation_path
@@ -283,6 +295,7 @@ from app.private_membership import (
     unblock_private_membership,
     unlink_private_membership,
 )
+from app.private_upload_batches import batch_for, batch_payload, close_batch, create_batch
 from app.product_brand import PRODUCT_NAME
 from app.public_gallery_access import (
     PublicGalleryAccessDenied,
@@ -290,6 +303,20 @@ from app.public_gallery_access import (
     apply_public_gallery_access,
     require_public_gallery_browsing,
     safe_internal_return,
+)
+from app.push_subscriptions import (
+    INSTALLATION_COOKIE,
+    detach_previous_identity,
+    installation_key,
+    push_enabled,
+    revoke_installation,
+    subscribe,
+)
+from app.push_subscriptions import (
+    cipher as push_cipher,
+)
+from app.push_subscriptions import (
+    fingerprint as push_fingerprint,
 )
 from app.storage_metrics import measure_photo_storage
 from app.whatsapp_channel import (
@@ -454,6 +481,7 @@ class PhotoAssetInput(BaseModel):
     filename: str = Field(min_length=1, max_length=512)
     display_name: str | None = Field(default=None, max_length=512)
     storage_key: str = Field(min_length=1, max_length=1_024)
+    upload_batch_id: UUID | None = None
 
 
 class PhotoFolderInput(BaseModel):
@@ -1286,7 +1314,8 @@ def client_resend(
 
 @app.post("/auth/client/verify")
 def client_verify(
-    payload: ChallengeVerification, response: Response, db: Session = Depends(db_session)
+    payload: ChallengeVerification, response: Response, request: Request,
+    db: Session = Depends(db_session)
 ) -> dict[str, str]:
     challenge = consume_challenge(db, payload.challenge_id, "client_otp", payload.code)
     phone = challenge.subject
@@ -1534,10 +1563,17 @@ def client_verify(
             "client.gallery_login_notified",
             f"client_id:{client.id};gallery_id:{parent_context.id}",
         )
+        record_gallery_milestone(
+            db, kind="first_access", parent_gallery_id=parent_context.id, client_id=client.id,
+            gallery=destination_gallery if capability and capability.scope in {
+                "private_invite", "private_client_invite", "private_gallery_link"
+            } else None,
+        )
     else:
         destination = _client_journey_destination(db, client.id)
     minimize_client_challenge_pii(db, challenge)
     create_session(db, response, Role.CLIENT, client.id)
+    detach_previous_identity(db, request, "client", client.id)
     audit(db, "client.redirected", str(client.id))
     db.commit()
     return {"destination": destination}
@@ -1590,6 +1626,7 @@ def admin_totp(
     challenge.used_at = now()
     audit(db, "admin_totp.validated", challenge.subject)
     create_session(db, response, Role.ADMIN, admin.id)
+    detach_previous_identity(db, request, "admin", admin.id)
     audit(db, "admin.redirected", str(admin.id))
     db.commit()
     return {"destination": "/admin"}
@@ -1782,9 +1819,17 @@ def logout(request: Request, response: Response) -> Response:
     with SessionLocal() as db:
         stored = db.get(type(session), session.id)
         stored.revoked_at = now()
+        raw_installation = request.cookies.get(INSTALLATION_COOKIE)
+        if raw_installation:
+            revoke_installation(db, push_fingerprint(raw_installation), session)
+        for subscription in db.scalars(select(PushSubscription).where(
+            PushSubscription.session_id == session.id, PushSubscription.active)):
+            subscription.active = False
+            subscription.generation += 1
         audit(db, "session.revoked", str(session.subject_id))
         db.commit()
     response.delete_cookie("markina_session", path="/")
+    response.status_code = 204
     return response
 
 
@@ -1795,6 +1840,7 @@ def revoke_all(request: Request, response: Response) -> Response:
         revoke_subject_sessions(db, session.role, session.subject_id)
         db.commit()
     response.delete_cookie("markina_session", path="/")
+    response.status_code = 204
     return response
 
 
@@ -3842,15 +3888,31 @@ def register_folder_photo_asset(
         parent = require_parent_gallery_mutable(db, folder.parent_gallery_id)
         if not parent.active:
             raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas fotos.")
+    if payload.upload_batch_id:
+        if not folder.derived_gallery_id:
+            raise HTTPException(status_code=422, detail="Lote exclusivo para galeria privada.")
+        try:
+            batch_for(db, payload.upload_batch_id, folder.derived_gallery_id, open_only=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    existing = db.scalar(select(PhotoAsset).where(PhotoAsset.storage_key == payload.storage_key))
+    if existing:
+        if existing.folder_id != folder.id or existing.derived_gallery_id != folder.derived_gallery_id:
+            raise HTTPException(status_code=409, detail="Arquivo já cadastrado em outro escopo.")
+        existing_batch = db.scalar(select(PrivateUploadBatchAsset.batch_id).where(
+            PrivateUploadBatchAsset.photo_asset_id == existing.id))
+        return {"id": str(existing.id), "duplicate": "false" if existing_batch == payload.upload_batch_id else "true"}
     asset = PhotoAsset(
         parent_gallery_id=folder.parent_gallery_id,
         derived_gallery_id=folder.derived_gallery_id,
         folder_id=folder.id,
         available=False,
-        **payload.model_dump(),
+        **payload.model_dump(exclude={"upload_batch_id"}),
     )
     db.add(asset)
     db.flush()
+    if payload.upload_batch_id:
+        db.add(PrivateUploadBatchAsset(batch_id=payload.upload_batch_id, photo_asset_id=asset.id))
     audit(db, "photo_asset.registered_in_folder", str(asset.id))
     db.commit()
     return {"id": str(asset.id)}
@@ -5052,6 +5114,16 @@ async def import_photo_source(
                 detail="Envie uma capa horizontal, com largura maior que a altura.",
             )
     destination = safe_source_path(photo)
+    batch_asset = db.scalar(select(PrivateUploadBatchAsset).where(
+        PrivateUploadBatchAsset.photo_asset_id == photo.id))
+    if batch_asset:
+        try:
+            batch_for(db, batch_asset.batch_id, photo.derived_gallery_id, open_only=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        existing_job = db.scalar(select(MediaJob.id).where(MediaJob.photo_asset_id == photo.id))
+        if existing_job:
+            return {"status": "queued"}  # retomada idempotente não sobrescreve/reprocessa
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(body)
     if folder.purpose == "cover_assets":
@@ -6348,6 +6420,47 @@ def read_admin_gallery_membership_notification(
     return {"id": str(notification.id), "status": notification.admin_status}
 
 
+@app.get("/admin/derived-galleries/{gallery_id}/upload-batches")
+def list_private_upload_batches(gallery_id: UUID, request: Request,
+                                db: Session = Depends(db_session)) -> dict:
+    require_admin(request)
+    require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True)
+    batches = db.scalars(select(PrivateUploadBatch).where(
+        PrivateUploadBatch.derived_gallery_id == gallery_id,
+        PrivateUploadBatch.status == "open",
+    ).order_by(PrivateUploadBatch.created_at))
+    return {"batches": [batch_payload(db, batch) for batch in batches]}
+
+
+@app.post("/admin/derived-galleries/{gallery_id}/upload-batches", status_code=201)
+def begin_private_upload_batch(gallery_id: UUID, request: Request,
+                               db: Session = Depends(db_session)) -> dict:
+    session = require_admin(request)
+    require_same_origin(request)
+    gallery = require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True)
+    if not gallery.access_enabled:
+        raise HTTPException(status_code=409, detail="A galeria privada está bloqueada.")
+    batch = create_batch(db, gallery, session.subject_id)
+    audit(db, "private_upload_batch.created", str(batch.id))
+    db.commit()
+    return batch_payload(db, batch)
+
+
+@app.post("/admin/derived-galleries/{gallery_id}/upload-batches/{batch_id}/close")
+def finish_private_upload_batch(gallery_id: UUID, batch_id: UUID, request: Request,
+                                db: Session = Depends(db_session)) -> dict:
+    require_admin(request)
+    require_same_origin(request)
+    require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True)
+    try:
+        batch = close_batch(db, batch_id, gallery_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(db, "private_upload_batch.closed", str(batch.id))
+    db.commit()
+    return batch_payload(db, batch)
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/folders")
 def admin_private_gallery_folders(
     gallery_id: UUID, request: Request, db: Session = Depends(db_session)
@@ -7629,7 +7742,10 @@ def client_historical_delivery(
 def gallery_area(gallery_id: UUID, request: Request) -> dict[str, str]:
     session = current_session(request, Role.CLIENT)
     with SessionLocal() as db:
-        derived_gallery_for_client(db, gallery_id, session.subject_id, allow_deleted_origin=True)
+        gallery = derived_gallery_for_client(db, gallery_id, session.subject_id, allow_deleted_origin=True)
+        record_gallery_milestone(db, kind="first_access", parent_gallery_id=gallery.parent_gallery_id,
+                                 client_id=session.subject_id, gallery=gallery)
+        db.commit()
     return {"status": "authorized"}
 
 
@@ -7741,6 +7857,9 @@ def gallery_review(
     gallery = derived_gallery_for_client(
         db, gallery_id, session.subject_id, allow_deleted_origin=True
     )
+    record_gallery_milestone(db, kind="first_access", parent_gallery_id=gallery.parent_gallery_id,
+                             client_id=session.subject_id, gallery=gallery)
+    db.commit()
     referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
         DerivedGalleryPhoto.derived_gallery_id == gallery_id
     )
@@ -7954,18 +8073,27 @@ def select_photo(
             )
         )
         if not selection:
-            db.add(
-                PhotoSelection(
-                    derived_gallery_id=gallery.id,
-                    client_id=session.subject_id,
-                    photo_asset_id=photo_id,
-                )
-            )
+            try:
+                with notification_savepoint(db):
+                    db.add(PhotoSelection(derived_gallery_id=gallery.id,
+                                          client_id=session.subject_id, photo_asset_id=photo_id))
+                    db.flush()
+            except IntegrityError:
+                if not db.scalar(select(PhotoSelection.id).where(
+                    PhotoSelection.derived_gallery_id == gallery.id,
+                    PhotoSelection.client_id == session.subject_id,
+                    PhotoSelection.photo_asset_id == photo_id,
+                )):
+                    raise
+                return {"status": "selected"}
             audit(db, "photo_selection.created", str(gallery_id))
             db.flush()
             synchronize_editable_draft(
                 db, gallery=gallery, client_id=session.subject_id
             )
+            record_gallery_milestone(db, kind="first_selection",
+                                     parent_gallery_id=gallery.parent_gallery_id,
+                                     client_id=session.subject_id, gallery=gallery)
             db.commit()
         return {"status": "selected"}
     try:
@@ -8118,6 +8246,9 @@ def access_public_gallery_with_session(
         db.commit()
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
     audit(db, "public_gallery.accessed", str(result.parent.id))
+    if result.state == "authorized":
+        record_gallery_milestone(db, kind="first_access", parent_gallery_id=result.parent.id,
+                                 client_id=session.subject_id)
     if capability.scope == "parent_invite":
         consume_gallery_capability(capability)
         audit(db, "parent_gallery.invite_verified", str(capability.id))
@@ -8145,6 +8276,9 @@ def public_gallery_for_client(
         )
     except PublicGalleryAccessDenied as exc:
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    record_gallery_milestone(db, kind="first_access", parent_gallery_id=parent.id,
+                             client_id=session.subject_id)
+    db.commit()
     private_gallery = _operational_gallery_for_public_client(
         db,
         parent_gallery_id=parent_gallery_id,
@@ -8868,17 +9002,10 @@ def communicate_payment(
     except WhatsAppConfigurationError:
         photographer_phone = None
     if photographer_phone:
-        db.add(
-            PaymentNotificationOutbox(
-                payment_communication_id=communication.id,
-                recipient_phone=photographer_phone,
-                template_kind="photographer_reported",
-                idempotency_key=f"payment-reported:{communication.id}",
-            )
-        )
         notification_state = "queued"
     else:
         audit(db, "payment.notification_configuration_required", str(communication.id))
+    record_payment_event(db, communication=communication, order=order, event_type="payment_reported")
     audit(db, "payment.communication_reported", str(order.id))
     try:
         db.commit()
@@ -8931,18 +9058,6 @@ def decide_payment_communication(
         order.payment_status = "cancelled"
     client = db.get(Client, communication.client_id)
     if client and client.id == order.client_id:
-        template = db.scalar(
-            select(PaymentMessageTemplate).where(
-                PaymentMessageTemplate.kind == payload.decision
-            )
-        )
-        rendered_message = render_template(
-            template.body if template else DEFAULT_PAYMENT_TEMPLATES[payload.decision],
-            cliente=order.client_name_snapshot or client.full_name,
-            pedido=str(order.id)[:8],
-            galeria=order.derived_gallery_name_snapshot,
-        )
-        order.payment_message_snapshot = rendered_message
         decision_revision = (
             db.scalar(
                 select(func.count(PaymentConfirmationCorrection.id)).where(
@@ -8951,17 +9066,11 @@ def decide_payment_communication(
             )
             or 0
         )
-        db.add(
-            PaymentNotificationOutbox(
-                payment_communication_id=communication.id,
-                recipient_phone=client.phone_e164,
-                template_kind=payload.decision,
-                rendered_body_snapshot=rendered_message,
-                idempotency_key=(
-                    f"payment-decision:{communication.id}:{payload.decision}:{decision_revision}"
-                ),
-            )
-        )
+        event = record_payment_event(db, communication=communication, order=order,
+                                     event_type=f"payment_{payload.decision}",
+                                     decision_revision=decision_revision)
+        if event:
+            order.payment_message_snapshot = event.whatsapp_body
     audit(db, f"payment.communication_{payload.decision}", str(communication.id))
     db.commit()
     return {"status": communication.status}
@@ -9047,6 +9156,104 @@ def correct_payment_confirmation(
     return {"id": str(correction.id), "status": "pending_review"}
 
 
+class PushSubscriptionInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    subscription: dict
+
+
+@app.get("/push/subscription")
+def push_subscription_state(request: Request, response: Response,
+                            db: Session = Depends(db_session)) -> dict:
+    from app.web_push import push_configuration_ready
+    session = current_session(request)
+    installation = installation_key(request, response)
+    subscription = db.scalar(select(PushSubscription).where(
+        PushSubscription.installation_fingerprint == installation,
+        PushSubscription.role == session.role, PushSubscription.subject_id == session.subject_id,
+        PushSubscription.active))
+    available = push_enabled() and push_configuration_ready()
+    try:
+        push_cipher()
+    except ValueError:
+        available = False
+    public_key = getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "") if available else ""
+    response.headers["Cache-Control"] = "no-store"
+    return {"available": available and bool(public_key), "active": bool(subscription),
+            "public_key": public_key, "identity": f"{session.role}:{session.subject_id}"}
+
+
+@app.post("/push/subscription", status_code=201)
+def register_push_subscription(payload: PushSubscriptionInput, request: Request, response: Response,
+                                db: Session = Depends(db_session)) -> dict:
+    from app.web_push import push_configuration_ready
+    session = current_session(request)
+    if not request.headers.get("origin"):
+        raise HTTPException(status_code=403, detail="Origem da operação não autorizada.")
+    require_same_origin(request)
+    enforce_rate_limit(db, "push.subscribe", str(session.subject_id),
+                       request.client.host if request.client else "unknown")
+    db.commit()  # falhas de validação também contam no limite
+    if not push_enabled() or not push_configuration_ready():
+        raise HTTPException(status_code=409, detail="Notificações push ainda não disponíveis.")
+    try:
+        subscribe(db, session, installation_key(request, response), payload.subscription)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A inscrição mudou. Tente novamente.") from None
+    audit(db, "push.subscribed", str(session.subject_id))
+    db.commit()
+    return {"active": True}
+
+
+@app.delete("/push/subscription", status_code=204)
+def unregister_push_subscription(request: Request, response: Response,
+                                  db: Session = Depends(db_session)) -> Response:
+    session = current_session(request)
+    if not request.headers.get("origin"):
+        raise HTTPException(status_code=403, detail="Origem da operação não autorizada.")
+    require_same_origin(request)
+    raw = request.cookies.get(INSTALLATION_COOKIE)
+    if raw:
+        revoke_installation(db, push_fingerprint(raw), session)
+    db.commit()
+    response.status_code = 204
+    return response
+
+
+class NotificationSettingInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    version: int = Field(ge=1)
+    whatsapp_enabled: bool
+    push_enabled: bool
+    whatsapp_body: str = Field(min_length=1, max_length=500)
+    push_title: str = Field(min_length=1, max_length=60)
+    push_body: str = Field(min_length=1, max_length=140)
+
+
+@app.get("/admin/notification-settings")
+def list_notification_settings(request: Request, db: Session = Depends(db_session)) -> dict:
+    require_admin(request)
+    settings = [setting_payload(setting_for(db, kind)) for kind in NOTIFICATION_DEFINITIONS]
+    db.commit()
+    return {"settings": settings}
+
+
+@app.put("/admin/notification-settings/{event_type}")
+def update_notification_setting(event_type: str, payload: NotificationSettingInput,
+                                request: Request, db: Session = Depends(db_session)) -> dict:
+    session = require_admin(request)
+    require_same_origin(request)
+    try:
+        setting = save_setting(db, event_type, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audit(db, "notification.setting_updated", f"{session.subject_id}:{event_type}:{setting.version}")
+    db.commit()
+    return setting_payload(setting)
+
+
 @app.put("/admin/payment-message-templates/{kind}")
 def save_payment_template(
     kind: Literal["confirmed", "refused"],
@@ -9059,11 +9266,7 @@ def save_payment_template(
         body = validate_template(payload.body)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    template = db.scalar(select(PaymentMessageTemplate).where(PaymentMessageTemplate.kind == kind))
-    if template:
-        template.body = body
-    else:
-        db.add(PaymentMessageTemplate(kind=kind, body=body))
+    save_setting(db, f"payment_{kind}", {"whatsapp_body": body})
     db.commit()
     return {"kind": kind, "body": body}
 
@@ -9073,9 +9276,7 @@ def list_payment_templates(
     request: Request, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     require_admin(request)
-    configured = {
-        template.kind: template.body for template in db.scalars(select(PaymentMessageTemplate))
-    }
+    configured = payment_template_bodies(db)
     return {
         "templates": {
             kind: configured.get(kind, default)
@@ -9291,10 +9492,7 @@ def list_payment_communications(
         else:
             group["total_cents"] = quote.quote.total_cents
             group["pricing_available"] = True
-    configured_templates = {
-        template.kind: template.body
-        for template in db.scalars(select(PaymentMessageTemplate))
-    }
+    configured_templates = payment_template_bodies(db)
 
     max_attempts = payment_notification_max_attempts()
     prepared_orders: list[dict[str, object]] = []
@@ -9647,6 +9845,10 @@ def retry_payment_notification(
         raise HTTPException(status_code=404, detail="Notificação não encontrada.")
     if outbox.status != "failed" or outbox.attempts >= payment_notification_max_attempts():
         raise HTTPException(status_code=409, detail="Notificação indisponível para reenvio.")
+    try:
+        retry_payment_projection(db, outbox)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     outbox.status = "queued"
     outbox.last_error = None
     outbox.updated_at = now()

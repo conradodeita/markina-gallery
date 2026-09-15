@@ -1,5 +1,8 @@
 """Verifica preservação de dados ao atualizar uma base anterior à mudança."""
 
+# Ciclos de downgrade legados param em 0055: 0056 preserva marcos preenchidos.
+# Upgrade até head e recusa segura de downgrade são cobertos no teste próprio de notificações.
+
 import json
 import os
 import sys
@@ -39,7 +42,7 @@ def test_upgrade_preserves_existing_client_and_confirmed_order(tmp_path: Path):
         connection.execute(text("INSERT INTO parent_gallery (id, name, active, created_at) VALUES (:id, :name, :active, :created_at)"), {"id": parent_id.hex, "name": "Evento legado", "active": True, "created_at": timestamp})
         connection.execute(text("INSERT INTO derived_gallery (id, parent_gallery_id, client_id, name, access_enabled, favorites_enabled, comments_enabled, created_at) VALUES (:id, :parent, :client, :name, :access, :favorites, :comments, :created_at)"), {"id": gallery_id.hex, "parent": parent_id.hex, "client": client_id.hex, "name": "Galeria legado", "access": True, "favorites": False, "comments": False, "created_at": timestamp})
         connection.execute(text("INSERT INTO sale_order (id, derived_gallery_id, client_id, payment_status, total_cents, confirmed_at, created_at) VALUES (:id, :gallery, :client, 'confirmed', 2500, :confirmed_at, :created_at)"), {"id": order_id.hex, "gallery": gallery_id.hex, "client": client_id.hex, "confirmed_at": timestamp, "created_at": timestamp})
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", "20260913_0055")
     with engine.connect() as connection:
         phone = connection.execute(text("SELECT phone_e164, active FROM client_phone WHERE client_id = :client"), {"client": client_id.hex}).one()
         snapshot = connection.execute(text("SELECT client_name_snapshot, client_phone_snapshot FROM sale_order WHERE id = :id"), {"id": order_id.hex}).one()
@@ -178,7 +181,7 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
             },
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", "20260913_0055")
     inspector = inspect(engine)
     with engine.connect() as connection:
         folder_id = connection.execute(
@@ -216,7 +219,7 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
         for foreign_key in inspector.get_foreign_keys("photo_asset")
     )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", "20260913_0055")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT COUNT(*) FROM photo_folder")).scalar_one() == 1
 
@@ -431,7 +434,7 @@ def test_shared_private_membership_migration_backfills_legacy_owners(tmp_path: P
                 },
             )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", "20260913_0055")
     inspector = inspect(engine)
     with engine.connect() as connection:
         memberships = connection.execute(

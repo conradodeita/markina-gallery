@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => <a href={href} {...props}>{children}</a> }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ galleryId: "public-1" }) }));
+vi.mock("../push-control", () => ({ PushControl: () => null, LogoutButton: () => null }));
 
 import PublicGalleryPage from "./[galleryId]/page";
 

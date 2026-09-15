@@ -324,6 +324,37 @@ set -e
 grep -Fq 'banco não foi restaurado' "$output"
 
 python3 "$SCRIPT_DIR/test_deploy_homolog_policy.py"
+# A failed preservation must never allow recreation, even through the ERR rollback.
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    BRANDING_REQUIRED=1
+    BRANDING_PRESERVED=0
+    compose() { echo "UNEXPECTED-RECREATION"; }
+    start_application_services
+  ' >"$output" 2>&1; then
+  echo "branding não preservado permitiu recriação" >&2
+  exit 1
+fi
+grep -Fq 'recriação bloqueada' "$output"
+if grep -Fq 'UNEXPECTED-RECREATION' "$output"; then exit 1; fi
+set +e
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    BRANDING_REQUIRED=1
+    BRANDING_PRESERVED=0
+    SHA_SWITCHED=1
+    PREVIOUS_SHA=1111111111111111111111111111111111111111
+    git() { :; }
+    compose() { echo "UNEXPECTED-RECREATION"; }
+    rollback_code_if_safe 31
+  ' >"$output" 2>&1
+branding_status=$?
+set -e
+[[ "$branding_status" -eq 31 ]]
+grep -Fq 'containers antigos mantidos' "$output"
+if grep -Fq 'UNEXPECTED-RECREATION' "$output"; then exit 1; fi
 python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
 python3 "$SCRIPT_DIR/test_facial_production_policy.py"
 python3 "$SCRIPT_DIR/test_facial_rollout_homolog_policy.py"

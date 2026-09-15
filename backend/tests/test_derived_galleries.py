@@ -470,6 +470,39 @@ def test_uploaded_app_icon_sizes_preserve_art_and_update(client: TestClient, mon
     assert response.headers["cache-control"] == "no-cache"
 
 
+def test_persistent_branding_new_client_keeps_hashes_preferences_and_missing_fallback(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    from hashlib import sha256
+
+    root = tmp_path / "persistent-branding"
+    monkeypatch.setenv("BRANDING_ASSETS_ROOT", str(root))
+    authenticate_admin(client)
+    client.patch("/admin/branding", json={
+        "login_title": "Preferência preservada", "login_intro": "Introdução", "login_helper": "Ajuda",
+    })
+    expected = {}
+    for asset in ("logo", "app-icon", "favicon"):
+        body = branding_image_bytes(size=(96, 64))
+        response = client.put(f"/admin/branding/{asset}", content=body,
+                              headers={"content-type": "image/png"})
+        assert response.status_code == 200
+        expected[asset] = sha256(body).hexdigest()
+    with TestClient(app) as fresh_client:
+        for asset, hashed in expected.items():
+            response = fresh_client.get(f"/branding/{asset}")
+            assert response.status_code == 200
+            assert sha256(response.content).hexdigest() == hashed
+        assert fresh_client.get("/branding").json()["login_title"] == "Preferência preservada"
+        (root / "favicon.png").unlink()
+        assert fresh_client.get("/branding/favicon").status_code == 404
+        assert fresh_client.get("/branding/logo").status_code == 200
+    with SessionLocal() as db:
+        settings = db.scalar(select(BrandingSettings))
+        assert settings.favicon_key == "favicon.png"
+        assert settings.login_title == "Preferência preservada"
+
+
 def test_global_visual_protection_requeues_existing_derivatives(client: TestClient) -> None:
     assert client.patch("/admin/branding/protection", json={
         "watermark_text": "NÃO AUTORIZADA", "watermark_font": "serif", "watermark_color": "#112233", "watermark_size": 30, "watermark_direction": "horizontal",
@@ -2835,6 +2868,7 @@ def test_admin_confirms_payment_communication_once(client: TestClient):
 
 
 def test_admin_lists_and_refuses_payment_communication_without_confirming_order(client: TestClient, monkeypatch):
+    from app.auth import NotificationDelivery
     with SessionLocal() as db:
         owner = Client(full_name="Cliente Recusa", phone_e164="+5511555554400")
         db.add(owner)
@@ -2868,6 +2902,8 @@ def test_admin_lists_and_refuses_payment_communication_without_confirming_order(
         outbox_id = outboxes[0].id
         outboxes[0].status = "failed"
         outboxes[0].attempts = 1
+        delivery = db.scalar(select(NotificationDelivery).where(NotificationDelivery.channel == "whatsapp"))
+        delivery.status, delivery.attempts = "failed", 1
         db.commit()
     monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "2")
     assert client.post(f"/admin/payment-notifications/{outbox_id}/retry").json()["status"] == "queued"
@@ -3580,6 +3616,7 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pedidos, decisões e falhas de mensagem não atravessam a fronteira da Galeria pública."""
+    from app.auth import NotificationDelivery, NotificationEvent
     from app.messaging import WhatsAppDeliveryError
     from app.worker import process_next_payment_notification
 
@@ -3590,6 +3627,7 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
 
     monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "1")
     monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: FailingProvider())
+    monkeypatch.setattr("app.notification_delivery.whatsapp_provider_from_environment", lambda: FailingProvider())
     authenticate_admin(client)
     owner_id = UUID(
         client.post(
@@ -3731,6 +3769,13 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
             )
         ):
             notification.status = "sent"
+        # Agora o registro financeiro é projeção: simular aceite também na fila real.
+        for delivery in db.scalars(select(NotificationDelivery).where(
+            NotificationDelivery.event_id.in_(select(NotificationEvent.id).where(
+                NotificationEvent.event_type == "payment_reported")),
+            NotificationDelivery.channel == "whatsapp",
+        )):
+            delivery.status = "accepted"
         db.commit()
 
     assert client.post(

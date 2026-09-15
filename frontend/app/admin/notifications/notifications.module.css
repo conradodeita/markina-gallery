@@ -1,0 +1,22 @@
+.notice { padding:20px; margin:24px 0; border:1px solid var(--mk-border); border-inline-start:5px solid var(--mk-action); border-radius:12px; background:var(--mk-surface-subtle); color:var(--mk-ink); }
+.notice p { margin:8px 0 0; max-width:100ch; line-height:1.55; color:var(--mk-ink-muted); }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,450px),1fr)); gap:24px; align-items:start; }
+.card { min-width:0; display:grid; gap:18px; padding:clamp(16px,2vw,28px); border:1px solid var(--mk-border); border-radius:20px; background:var(--mk-surface); color:var(--mk-ink); scroll-margin-top:24px; }
+.card h2 { margin:8px 0 0; font-size:1.3rem; }
+.recipient { background:var(--mk-action); color:var(--mk-action-ink); border-radius:20px; padding:5px 10px; font-size:.75rem; font-weight:750; }
+.variables { display:flex; flex-wrap:wrap; gap:8px; color:var(--mk-ink-muted); font-size:.82rem; margin:0; }
+.card fieldset { display:grid; min-width:0; gap:16px; border:0; margin:0; padding:0; }
+.card legend { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.card label { display:flex; flex-wrap:wrap; justify-content:space-between; gap:7px; font-size:.87rem; font-weight:650; }
+.card label > span { font-size:.75rem; color:var(--mk-ink-muted); font-weight:400; }
+.card input:not([type=checkbox]),.card textarea { width:100%; min-width:0; padding:12px; border:1px solid var(--mk-border); border-radius:10px; background:var(--mk-surface); color:var(--mk-ink); font:inherit; }
+.card textarea { resize:vertical; }
+.card .toggle { justify-content:flex-start; align-items:center; min-height:44px; padding:10px; border-radius:10px; background:var(--mk-surface-subtle); }
+.toggle input { width:20px; height:20px; accent-color:var(--mk-brand); }
+.fields { display:grid; gap:14px; }
+.preview { min-width:0; padding:16px; border:1px solid var(--mk-border); border-radius:12px; background:var(--mk-surface-subtle); overflow-wrap:anywhere; white-space:pre-wrap; }
+.preview small { display:block; font-size:.66rem; color:var(--mk-ink-muted); letter-spacing:.08em; margin-bottom:8px; }
+.preview p { margin:5px 0 0; line-height:1.5; font-size:.9rem; }
+.card footer { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.card footer p { font-size:.85rem; margin:0; overflow-wrap:anywhere; }
+.card :is(input,textarea,button):focus-visible { outline:3px solid var(--mk-focus); outline-offset:3px; }

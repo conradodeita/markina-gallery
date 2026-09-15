@@ -159,24 +159,12 @@ describe("configurações administrativas de marca", () => {
     expect(await screen.findByText("Não foi possível salvar a proteção visual.")).toBeTruthy();
   });
 
-  it("salva templates de pagamento com variáveis controladas", async () => {
-    const templates = { confirmed: "Olá {{cliente}}, pedido {{pedido}} confirmado.", refused: "Olá {{cliente}}, revise o pedido {{pedido}}." };
-    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
-      if (path.endsWith("/payment-message-templates")) return Promise.resolve(new Response(JSON.stringify({ templates }), { status: 200 }));
-      if (path.includes("/payment-message-templates/") && options?.method === "PUT") {
-        return Promise.resolve(new Response(JSON.stringify({ kind: "confirmed", body: templates.confirmed }), { status: 200 }));
-      }
-      return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
-    });
+  it("não duplica o editor de mensagens nem consulta os templates antigos", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(branding))));
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminSettingsPage />);
-    const confirmation = await screen.findByLabelText("Confirmação");
-    fireEvent.change(confirmation, { target: { value: "Olá {{cliente}}, pedido {{pedido}} confirmado." } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar confirmação" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/payment-message-templates/confirmed",
-      expect.objectContaining({ method: "PUT" }),
-    ));
-    expect(await screen.findByText("Mensagem transacional salva.")).toBeTruthy();
+    await screen.findByLabelText("Direção");
+    expect(screen.queryByText("Mensagens de pagamento")).toBeNull();
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("payment-message-templates"))).toBe(false);
   });
 });

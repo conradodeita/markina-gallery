@@ -56,6 +56,7 @@ def main() -> int:
     require(
         'git switch --detach "$DEPLOY_SHA"\n'
         '  SHA_SWITCHED=1\n'
+        '  prepare_branding_transition\n'
         '  apply_target_migrations "$previous_revision"',
         "migration executada somente após a seleção explícita do SHA",
         SCRIPT,
@@ -145,6 +146,11 @@ def main() -> int:
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)
     require("  media-history:", "volume histórico persistente", COMPOSE)
+    require("BRANDING_ASSETS_ROOT: /var/lib/markina/branding", "raiz persistente de marca", COMPOSE)
+    assert COMPOSE.count("- branding-assets:/var/lib/markina/branding") == 1
+    require("python3 scripts/preserve_branding.py preserve", "preservação antes da migration", SCRIPT)
+    require('extra=(-f "$STATE_DIR/branding.compose.yml")', "persistência no rollback", SCRIPT)
+    require('recriação bloqueada: branding ainda não preservado', "gate de preservação", SCRIPT)
     if COMPOSE.count("- media-history:/var/lib/markina/history") != 2:
         raise AssertionError("a mídia histórica deve ser compartilhada somente por API e worker")
 

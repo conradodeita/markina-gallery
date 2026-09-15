@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ClientCartLink } from "../../client-cart";
+import { PushControl, LogoutButton } from "../../push-control";
 import { facialSearchApi, type FacialSearchResult } from "../../facial-search-client";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
@@ -175,6 +176,7 @@ export default function PublicGalleryPage() {
       <nav className="public-gallery-navigation" aria-label="Acessos da cliente">
         <Link href="/library">← Minha biblioteca</Link>
         {privateGalleryId ? <Link className="primary" href={`/gallery/${privateGalleryId}`}>Minha galeria</Link> : null}
+        <PushControl /><LogoutButton />
       </nav>
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} />
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}

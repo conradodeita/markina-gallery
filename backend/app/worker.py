@@ -23,8 +23,8 @@ from app.auth import (
     GalleryReopeningRequest,
     MediaDerivative,
     MediaJob,
+    NotificationEvent,
     PaymentCommunication,
-    PaymentMessageTemplate,
     PaymentNotificationOutbox,
     PhotoAsset,
     SaleOrder,
@@ -62,7 +62,10 @@ from app.messaging import (
     payment_notification_max_attempts,
     whatsapp_provider_from_environment,
 )
+from app.notification_delivery import process_next_notification
+from app.notification_settings import setting_for
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template
+from app.private_upload_batches import process_ready_batches
 from app.product_brand import PRODUCT_NAME
 from app.whatsapp_channel import require_ready_channel
 from app.whatsapp_delivery import (
@@ -105,10 +108,7 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
         raise WhatsAppConfigurationError("Destino da cliente não autorizado.")
     if item.rendered_body_snapshot:
         return item.rendered_body_snapshot
-    template = db.scalar(
-        select(PaymentMessageTemplate).where(PaymentMessageTemplate.kind == item.template_kind)
-    )
-    body = template.body if template else DEFAULT_PAYMENT_TEMPLATES[item.template_kind]
+    body = setting_for(db, f"payment_{item.template_kind}").whatsapp_body
     return render_template(
         body,
         cliente=order.client_name_snapshot or client.full_name,
@@ -549,7 +549,10 @@ def materialize_next_payment_notification() -> bool:
     with SessionLocal() as db:
         item = db.scalar(
             select(PaymentNotificationOutbox)
-            .where(PaymentNotificationOutbox.status == "queued")
+            .where(PaymentNotificationOutbox.status == "queued",
+                   ~select(NotificationEvent.id).where(
+                       NotificationEvent.event_key == PaymentNotificationOutbox.idempotency_key
+                   ).exists())
             .order_by(PaymentNotificationOutbox.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -570,6 +573,8 @@ def materialize_next_payment_notification() -> bool:
 
 
 def process_next_payment_notification() -> bool:
+    if process_next_notification("whatsapp"):
+        return True
     materialized = materialize_next_payment_notification()
     processed = process_next_whatsapp_delivery(kind="payment")
     return materialized or processed
@@ -686,6 +691,11 @@ def reconcile_next_unknown_delivery() -> bool:
 def main() -> None:
     print("markina-gallery-worker: pronto para filas privadas", flush=True)
     while True:
+        # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
+        with SessionLocal() as batch_db:
+            process_ready_batches(batch_db)
+        process_next_notification("push")
+        process_next_notification("whatsapp")
         if not (
             process_next_gallery_lifecycle_operation()
             or process_next_media_job()

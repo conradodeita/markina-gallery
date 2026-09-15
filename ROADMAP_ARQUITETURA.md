@@ -99,6 +99,10 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 
 ## Fase 6 — WhatsApp e comunicação
 
+- Evolução aprovada em `configurable-push-and-whatsapp-notifications`: central `/admin/notifications` com seis eventos e dois canais independentes (WhatsApp/push); substitui inbox read/unread e editor de pagamentos em Configurações. Histórico e auditoria permanecem.
+- Avisos ao fotógrafo: primeiro acesso e primeira seleção por cliente/galeria canônica; pagamento informado. Avisos ao cliente: lote de novas prévias privadas pronto; pagamento confirmado ou recusado. Correções financeiras são silenciosas; falha de transporte não desfaz o negócio.
+- Web Push exige adesão explícita por dispositivo, inscrição cifrada, VAPID externo, destino interno autenticado e worker sem cache privado. Lotes, marcos e entregas são duráveis/idempotentes; ligar canais não reproduz histórico. Operação real depende de configuração e aceite de homologação, não apenas dos testes locais.
+
 - Mensagens configuráveis para OTP, convite, pagamento, edição, entrega, carrinho abandonado e expiração.
 - Separar mensagens transacionais de lembretes comerciais e registrar opt-out destes últimos.
 - Fila com retentativas, status de envio e reenvio manual pelo fotógrafo.
@@ -117,7 +121,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Nenhuma grade anônima de fotos escolares e nenhuma busca entre eventos. Revisão do fotógrafo permanece obrigatória se um desenho futuro pretender liberar conteúdo antes invisível ou ampliar o escopo autorizado.
 - Feedback “não é esta pessoa” remove resultado e cria tarefa silenciosa para o fotógrafo; não treinar o modelo automaticamente sem revisão humana.
 - Incluir foto/excluir foto da indexação em massa antes da liberação do evento.
-- Registrar consentimento versionado da cliente, busca, revogação, exclusão e operação administrativa; cada login OTP em contexto de galeria também gera notificação idempotente de acesso ao fotógrafo sem transportar o OTP.
+- Registrar consentimento versionado da cliente, busca, revogação, exclusão e operação administrativa; cada login OTP continua auditado. Na change `configurable-push-and-whatsapp-notifications`, somente o primeiro acesso autorizado por cliente/galeria canônica produz aviso externo, sem transportar OTP e sem replay de vínculos históricos.
 - Apagar foto de referência e embedding temporário conforme retenção configurada; oferecer exclusão de dados biométricos.
 - Validar desempenho, licença comercial, compatibilidade ARM, precisão facial e qualidade técnica com 500–1.000 JPEGs em homologação privada. O lote pode ser sintético ou conter dados reais de adultos e menores quando for enviado pelo administrador/fotógrafo e possuir autorização explícita por execução, origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Essa medição não autoriza produção; OFIQ ou qualquer modelo adicional exige validação separada de código, pesos e dependências.
 

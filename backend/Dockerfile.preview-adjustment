@@ -5,7 +5,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends rawtherapee procps fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY requirements.txt ./
+COPY requirements.txt requirements-push.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 CMD ["python", "-m", "app.preview_adjustment.worker"]

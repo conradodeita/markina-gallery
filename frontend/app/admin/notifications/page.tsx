@@ -1,71 +1,76 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { MarkinaButton, PageHeading, SystemState } from "../../ui-kit";
+import styles from "./notifications.module.css";
 
-import { MarkinaButton, PageHeading, StatusBadge, SurfaceCard, SystemState } from "../../ui-kit";
-
-type EventType = "private_created" | "member_joined" | "member_blocked" | "member_unblocked" | "member_unlinked" | "client_logged_in";
-type Notification = { id: string; event_type: EventType; admin_status: "unread" | "read"; external_status: string; parent_gallery_id: string | null; derived_gallery_id: string | null; client_id: string | null; parent_name: string | null; derived_name: string | null; client_name: string | null; created_at: string };
-
-const eventLabels: Record<EventType, { title: string; detail: string; tone: "success" | "warning" | "dark" | "neutral" }> = {
-  private_created: { title: "Nova galeria privada", detail: "Um novo acervo privado foi criado.", tone: "success" },
-  member_joined: { title: "Nova cliente na privada", detail: "Uma cliente passou a compartilhar o acervo.", tone: "success" },
-  member_blocked: { title: "Cliente bloqueada", detail: "O acesso operacional desta cliente foi bloqueado.", tone: "dark" },
-  member_unblocked: { title: "Cliente desbloqueada", detail: "O acesso operacional desta cliente foi restaurado.", tone: "success" },
-  member_unlinked: { title: "Cliente desvinculada", detail: "O vínculo terminou sem apagar cadastro ou histórico.", tone: "warning" },
-  client_logged_in: { title: "Cliente acessou a galeria", detail: "O login por OTP foi concluído e o acesso autorizado.", tone: "neutral" },
+export type NotificationSetting = {
+  event_type: string; label: string; recipient: "admin" | "client"; allowed_variables: string[];
+  whatsapp_enabled: boolean; push_enabled: boolean; whatsapp_body: string;
+  push_title: string; push_body: string; version: number;
 };
 
-export default function NotificationsPage() {
-  const [notifications, setNotifications] = useState<Notification[] | null>(null);
-  const [adminStatus, setAdminStatus] = useState("");
-  const [eventType, setEventType] = useState("");
+function preview(text: string) {
+  const values: Record<string, string> = { cliente: "Cliente", galeria: "Galeria", pedido: "1234abcd" };
+  return text.replace(/\{\{(\w+)\}\}/g, (match, key) => values[key] ?? match);
+}
+
+function EventCard({ initial }: { initial: NotificationSetting }) {
+  const [item, setItem] = useState(initial);
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [busyId, setBusyId] = useState("");
-
-  const load = useCallback(async () => {
-    setNotifications(null);
-    const search = new URLSearchParams();
-    if (adminStatus) search.set("admin_status", adminStatus);
-    if (eventType) search.set("event_type", eventType);
-    const response = await fetch(`/api/admin/notifications${search.size ? `?${search}` : ""}`, { credentials: "same-origin" });
-    if (!response.ok) throw new Error();
-    const rows = (await response.json()).notifications as Notification[];
-    setNotifications([...new Map(rows.map((item) => [item.id, item])).values()]);
-  }, [adminStatus, eventType]);
-
-  useEffect(() => {
-    let active = true;
-    queueMicrotask(() => {
-      if (!active) return;
-      load().catch(() => {
-        if (!active) return;
-        setNotifications([]);
-        setMessage("Não foi possível carregar as notificações.");
+  const [error, setError] = useState(false);
+  async function save(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setMessage(""); setError(false);
+    try {
+      const response = await fetch(`/api/admin/notification-settings/${item.event_type}`, {
+        method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: item.version, whatsapp_enabled: item.whatsapp_enabled,
+          push_enabled: item.push_enabled, whatsapp_body: item.whatsapp_body, push_title: item.push_title, push_body: item.push_body }),
       });
-    });
-    return () => { active = false; };
-  }, [load]);
-
-  async function markRead(notification: Notification) {
-    if (busyId || notification.admin_status === "read") return;
-    setBusyId(notification.id);
-    const response = await fetch(`/api/admin/notifications/${notification.id}/read`, { method: "POST", credentials: "same-origin" });
-    if (response.ok) {
-      setNotifications((current) => current?.map((item) => item.id === notification.id ? { ...item, admin_status: "read" } : item) ?? current);
-      setMessage("Notificação marcada como lida.");
-    } else setMessage("Não foi possível marcar a notificação como lida.");
-    setBusyId("");
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Revise o texto e as variáveis permitidas.");
+      setItem(data); setMessage("Configuração global salva.");
+    } catch (cause) {
+      setError(true); setMessage(cause instanceof Error && cause.message !== "Failed to fetch" ? cause.message : "Não foi possível salvar. Tente novamente.");
+    } finally { setBusy(false); }
   }
+  return <form className={styles.card} onSubmit={save} aria-labelledby={`event-${item.event_type}`} id={item.event_type}>
+    <header><span className={styles.recipient}>{item.recipient === "admin" ? "Para o fotógrafo" : "Para o cliente"}</span><h2 id={`event-${item.event_type}`}>{item.label}</h2></header>
+    <p className={styles.variables}>Variáveis: {item.allowed_variables.map((variable) => <code key={variable}>{`{{${variable}}}`}</code>)}</p>
+    <fieldset disabled={busy}><legend>Canais e mensagens</legend>
+      <label className={styles.toggle}><input type="checkbox" checked={item.push_enabled} onChange={(event) => setItem({ ...item, push_enabled: event.target.checked })} />Enviar notificação Push</label>
+      <div className={styles.fields}>
+        <label>Título do push <span>{item.push_title.length}/60</span><input required maxLength={60} value={item.push_title} onChange={(event) => setItem({ ...item, push_title: event.target.value })} /></label>
+        <label>Mensagem do push <span>{item.push_body.length}/140</span><textarea required maxLength={140} rows={3} value={item.push_body} onChange={(event) => setItem({ ...item, push_body: event.target.value.replace(/[\r\n]/g, " ") })} /></label>
+      </div>
+      <aside className={styles.preview} aria-label="Prévia do push"><small>PRÉVIA · PUSH</small><strong>{preview(item.push_title)}</strong><p>{preview(item.push_body)}</p></aside>
+      <label className={styles.toggle}><input type="checkbox" checked={item.whatsapp_enabled} onChange={(event) => setItem({ ...item, whatsapp_enabled: event.target.checked })} />Enviar WhatsApp</label>
+      <label>Mensagem do WhatsApp <span>{item.whatsapp_body.length}/500</span><textarea required maxLength={500} rows={4} value={item.whatsapp_body} onChange={(event) => setItem({ ...item, whatsapp_body: event.target.value })} /></label>
+      <aside className={styles.preview} aria-label="Prévia do WhatsApp"><small>PRÉVIA · WHATSAPP</small><p>{preview(item.whatsapp_body)}</p></aside>
+    </fieldset>
+    <footer><MarkinaButton type="submit" disabled={busy}>{busy ? "Salvando…" : "Salvar evento"}</MarkinaButton>{message && <p role={error ? "alert" : "status"}>{message}</p>}</footer>
+  </form>;
+}
 
-  return <div className="admin-shell admin-notifications-page">
-    <PageHeading eyebrow="Eventos de acesso" title="Notificações" detail="Acompanhe logins de clientes, novas galerias privadas e mudanças de vínculos sem misturar esses eventos com pagamentos." />
-    <section className="notification-filters" aria-label="Filtros de notificações"><label>Leitura<select value={adminStatus} onChange={(event) => setAdminStatus(event.target.value)}><option value="">Todas</option><option value="unread">Não lidas</option><option value="read">Lidas</option></select></label><label>Evento<select value={eventType} onChange={(event) => setEventType(event.target.value)}><option value="">Todos</option>{Object.entries(eventLabels).map(([value, label]) => <option value={value} key={value}>{label.title}</option>)}</select></label></section>
-    {message ? <p className="form-message" role="status">{message}</p> : null}
-    {notifications === null ? <SystemState tone="loading" title="Carregando notificações" detail="Consultando eventos de galerias e clientes." /> : notifications.length ? <section className="notification-cards" aria-label="Notificações encontradas">{notifications.map((notification) => {
-      const label = eventLabels[notification.event_type];
-      return <SurfaceCard className={notification.admin_status === "unread" ? "notification-card is-unread" : "notification-card"} key={notification.id}><header><div><strong>{label.title}</strong><small>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(notification.created_at))}</small></div><StatusBadge tone={label.tone}>{notification.admin_status === "unread" ? "Não lida" : "Lida"}</StatusBadge></header><p>{label.detail}</p><dl><div><dt>Galeria pública</dt><dd>{notification.parent_name ?? "Indisponível"}</dd></div>{notification.derived_name ? <div><dt>Galeria privada</dt><dd>{notification.derived_name}</dd></div> : null}{notification.client_name ? <div><dt>Cliente</dt><dd>{notification.client_name}</dd></div> : null}</dl><footer>{notification.derived_gallery_id ? <Link href={`/admin/galleries/${notification.derived_gallery_id}`}>Abrir galeria</Link> : notification.parent_gallery_id ? <Link href={`/admin/galleries/sources/${notification.parent_gallery_id}`}>Abrir galeria</Link> : null}{notification.admin_status === "unread" ? <MarkinaButton type="button" variant="secondary" disabled={Boolean(busyId)} onClick={() => markRead(notification)}>{busyId === notification.id ? "Marcando…" : "Marcar como lida"}</MarkinaButton> : null}</footer></SurfaceCard>;
-    })}</section> : <SystemState title="Nenhuma notificação neste filtro" detail="Novos acessos, galerias privadas e mudanças de vínculos aparecerão aqui." />}
+export default function NotificationsPage() {
+  const [settings, setSettings] = useState<NotificationSetting[] | null>(null);
+  const [error, setError] = useState(false);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let current = true;
+    fetch("/api/admin/notification-settings", { credentials: "same-origin", cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!Array.isArray(data.settings) || !data.settings.length) throw new Error();
+        if (current) { setSettings(data.settings); setError(false); }
+      }).catch(() => { if (current) setError(true); });
+    return () => { current = false; };
+  }, [reload]);
+  return <div className="admin-shell">
+    <PageHeading eyebrow="Comunicação" title="Notificações" detail="Escolha os canais e personalize os avisos automáticos." />
+    <div className={styles.notice}><strong>As alterações são globais e afetam todos os clientes.</strong><p>Os textos podem aparecer na tela bloqueada. Evite dados sensíveis. Ligar um canal vale para novos eventos, sem reenviar o histórico. O push depende da ativação no dispositivo e da configuração do servidor.</p></div>
+    {error ? <><SystemState tone="error" title="Não foi possível carregar as mensagens" detail="Tente novamente sem alterar suas configurações." /><MarkinaButton type="button" onClick={() => { setError(false); setReload((value) => value + 1); }}>Tentar novamente</MarkinaButton></> : settings ? <section className={styles.grid} aria-label="Configuração dos eventos">{settings.map((item) => <EventCard key={`${reload}-${item.event_type}`} initial={item} />)}</section> : <SystemState tone="loading" title="Carregando mensagens" detail="Consultando configurações dos canais." />}
   </div>;
 }
