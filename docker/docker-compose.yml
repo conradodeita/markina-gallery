@@ -125,10 +125,12 @@ services:
       SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
       SMTP_IMPLICIT_TLS: ${SMTP_IMPLICIT_TLS:-false}
       MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      BRANDING_ASSETS_ROOT: /var/lib/markina/branding
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
       MEDIA_HISTORY_ROOT: /var/lib/markina/history
       MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-Pick-your-Pic • PRÉVIA}
     volumes:
+      - branding-assets:/var/lib/markina/branding
       - media-source:/var/lib/markina/source
       - media-derivatives:/var/lib/markina/derivatives
       - media-history:/var/lib/markina/history
@@ -463,6 +465,7 @@ services:
       - internal
 
 volumes:
+  branding-assets:
   pgdata:
   redisdata:
   media-source:

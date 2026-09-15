@@ -23,6 +23,9 @@ SCHEMA_ROLLBACK_UNSAFE=0
 SHA_SWITCHED=0
 FACIAL_ENV_CHANGED=0
 FACIAL_DEPLOY_ENABLED="false"
+BRANDING_REQUIRED=0
+BRANDING_PRESERVED=0
+PREVIEW_WORKER_ACTIVE=0
 readonly FACIAL_SERVICES=("face-search-worker" "face-index-worker" "face-maintenance-worker")
 
 usage() {
@@ -35,7 +38,25 @@ fail() {
 }
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+  local extra=()
+  # Also retain persistence when rolling back to a Compose predating this volume.
+  if [[ -f "$STATE_DIR/branding.compose.yml" ]]; then
+    extra=(-f "$STATE_DIR/branding.compose.yml")
+  fi
+  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${extra[@]}" "$@"
+}
+
+prepare_branding_transition() {
+  # Build while the old API is still serving. Preservation stops only that API.
+  compose build api web worker migrate
+  if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
+    compose build "${FACIAL_SERVICES[@]}"
+  fi
+  if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
+    compose build preview-adjustment-worker
+  fi
+  python3 scripts/preserve_branding.py preserve
+  BRANDING_PRESERVED=1
 }
 
 verify_clean_checkout() {
@@ -462,6 +483,9 @@ report_container_state() {
 wait_for_health() {
   local service container status attempt
   local services=(api web worker nginx)
+  if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
+    services+=(preview-adjustment-worker)
+  fi
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     services+=("${FACIAL_SERVICES[@]}")
   fi
@@ -488,7 +512,14 @@ wait_for_health() {
 }
 
 start_application_services() {
+  [[ "$BRANDING_REQUIRED" -eq 0 || "$BRANDING_PRESERVED" -eq 1 ]] || {
+    fail "recriação bloqueada: branding ainda não preservado"
+    return 1
+  }
   compose up -d --build --no-deps api web worker
+  if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
+    compose up -d --build --no-deps preview-adjustment-worker
+  fi
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"
   fi
@@ -522,6 +553,17 @@ start_whatsapp_infrastructure_if_active() {
 rollback_code_if_safe() {
   local exit_code="$1"
   trap - ERR
+  if [[ "$BRANDING_REQUIRED" -eq 1 && "$BRANDING_PRESERVED" -ne 1 ]]; then
+    # The old API retains the only possible legacy copy; never recreate it here.
+    if [[ "$SHA_SWITCHED" -eq 1 && -n "$PREVIOUS_SHA" ]]; then
+      git switch --detach "$PREVIOUS_SHA"
+    fi
+    if [[ "$FACIAL_ENV_CHANGED" -eq 1 ]]; then
+      set_facial_enabled "$PREVIOUS_FACIAL_ENABLED"
+    fi
+    echo "publicação interrompida antes da preservação; containers antigos mantidos" >&2
+    exit "$exit_code"
+  fi
   if [[ "$FACIAL_ENV_CHANGED" -eq 1 ]]; then
     set_facial_enabled "$PREVIOUS_FACIAL_ENABLED"
     FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
@@ -533,6 +575,9 @@ rollback_code_if_safe() {
     echo "falha antes de mudança de schema; restaurando somente código Markina para $PREVIOUS_SHA" >&2
     git switch --detach "$PREVIOUS_SHA"
     compose up -d --build --no-deps api web worker
+    if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
+      compose up -d --build --no-deps preview-adjustment-worker
+    fi
     if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
       compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"
     fi
@@ -554,6 +599,7 @@ rollback_code_if_safe() {
 
 main() {
   parse_arguments "$@"
+  BRANDING_REQUIRED=1
   trap 'rollback_code_if_safe $?' ERR
   verify_target
 
@@ -568,8 +614,12 @@ main() {
 
   local previous_revision
   previous_revision="$(current_revision)"
+  if [[ -n "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" --filter 'label=com.docker.compose.service=preview-adjustment-worker')" ]]; then
+    PREVIEW_WORKER_ACTIVE=1
+  fi
   git switch --detach "$DEPLOY_SHA"
   SHA_SWITCHED=1
+  prepare_branding_transition
   apply_target_migrations "$previous_revision"
 
   start_whatsapp_infrastructure_if_active

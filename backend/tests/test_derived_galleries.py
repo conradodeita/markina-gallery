@@ -470,6 +470,39 @@ def test_uploaded_app_icon_sizes_preserve_art_and_update(client: TestClient, mon
     assert response.headers["cache-control"] == "no-cache"
 
 
+def test_persistent_branding_new_client_keeps_hashes_preferences_and_missing_fallback(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    from hashlib import sha256
+
+    root = tmp_path / "persistent-branding"
+    monkeypatch.setenv("BRANDING_ASSETS_ROOT", str(root))
+    authenticate_admin(client)
+    client.patch("/admin/branding", json={
+        "login_title": "Preferência preservada", "login_intro": "Introdução", "login_helper": "Ajuda",
+    })
+    expected = {}
+    for asset in ("logo", "app-icon", "favicon"):
+        body = branding_image_bytes(size=(96, 64))
+        response = client.put(f"/admin/branding/{asset}", content=body,
+                              headers={"content-type": "image/png"})
+        assert response.status_code == 200
+        expected[asset] = sha256(body).hexdigest()
+    with TestClient(app) as fresh_client:
+        for asset, hashed in expected.items():
+            response = fresh_client.get(f"/branding/{asset}")
+            assert response.status_code == 200
+            assert sha256(response.content).hexdigest() == hashed
+        assert fresh_client.get("/branding").json()["login_title"] == "Preferência preservada"
+        (root / "favicon.png").unlink()
+        assert fresh_client.get("/branding/favicon").status_code == 404
+        assert fresh_client.get("/branding/logo").status_code == 200
+    with SessionLocal() as db:
+        settings = db.scalar(select(BrandingSettings))
+        assert settings.favicon_key == "favicon.png"
+        assert settings.login_title == "Preferência preservada"
+
+
 def test_global_visual_protection_requeues_existing_derivatives(client: TestClient) -> None:
     assert client.patch("/admin/branding/protection", json={
         "watermark_text": "NÃO AUTORIZADA", "watermark_font": "serif", "watermark_color": "#112233", "watermark_size": 30, "watermark_direction": "horizontal",
