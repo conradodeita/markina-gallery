@@ -43,3 +43,29 @@ da publicação efetiva; confirmar novamente apenas se escopo/impacto mudar.
 4.2 depende do proprietário reenviar os três ativos individuais ainda ausentes. Não
 substituir por prancha/sintéticos nem declarar arte real validada antes do reenvio.
 Sem sync/archive até revisão humana. Preservar `.codex-tmp/` fora dos commits.
+
+## Publicação em andamento
+
+- Commit separado `196af2de2ae5b2016ade117f25a31c808fa7fc8c` publicado no PR #84.
+- CI `34912180601` success: backend **605 passed, 3 skipped**, helper **11 passed/1
+  skipped** (fixture Docker executada localmente), políticas shell aprovadas;
+  frontend/build/OpenSpec/gitleaks verdes. Não houve suíte completa local.
+- PR #84 mergeado com autorização em 15/09/2026 00:18 UTC, SHA
+  `8adf34cd9cf0ba49f94d8fb498ba21b8c3f2fdf9` em `develop`.
+- CI/deploy do merge: `34912646640`, em andamento. Não declarar deploy concluído antes
+  de verificar health, mount, fonte executada e terceiros.
+- Inventário imediatamente anterior ao merge: mesmo SHA remoto 23bdee9, checkout limpo,
+  130 GB livres, todos os serviços próprios saudáveis. Terceiros para comparação:
+  firefly_bot `9335f5e9077e`, firefly_api `f06f36a5ed33`, firefly_frontend `6ea8a742b093`,
+  firefly_db `768223c11835`, nginx-proxy-manager `66c25ca56d8c`, portainer `e49166611a66`.
+
+### Correção focada de entrega
+
+Primeiro deploy de `8adf34cd` falhou no prebuild: `no such service:
+preview-adjustment-worker`. Causa: serviço definido em override/profile próprios, não no
+Compose base. Nenhuma migration, pausa/preservação de branding ou recriação ocorreu;
+guard restaurou somente checkout anterior `23bdee9b`, containers antigos saudáveis.
+Correção na mesma task 4.1: incluir arquivo/profile opcional na função Compose apenas
+quando o worker já estava ativo; vale para build, subida, health e rollback. Teste
+regressivo confirma que o override aparece uma vez com worker ativo e não no caminho
+inativo. Não habilita módulo novo, não altera segredo/porta e não amplia o plano aprovado.

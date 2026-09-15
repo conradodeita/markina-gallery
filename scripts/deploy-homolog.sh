@@ -43,6 +43,9 @@ compose() {
   if [[ -f "$STATE_DIR/branding.compose.yml" ]]; then
     extra=(-f "$STATE_DIR/branding.compose.yml")
   fi
+  if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
+    extra+=(-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment)
+  fi
   docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${extra[@]}" "$@"
 }
 
