@@ -1,5 +1,6 @@
 """Focused safety and real-container regression for branding persistence."""
 
+import base64
 import importlib.util
 import io
 import json
@@ -154,6 +155,39 @@ class BrandingTransferTest(unittest.TestCase):
         self.assertLess(operations.index("stop"), operations.index("cp"))
         self.assertLess(operations.index("cp"), operations.index("run"))
 
+    def test_transfer_uses_stdin_without_host_mount_or_added_capabilities(self):
+        self.backup.chmod(0o700)
+        for path in self.backup.iterdir():
+            path.chmod(0o600)
+        with patch.object(branding, "docker") as run:
+            branding.restore_volume(self.backup, "fixture-image")
+        args = run.call_args.args
+        self.assertIn("ALL", args)
+        self.assertIn("--read-only", args)
+        self.assertNotIn("--cap-add", args)
+        self.assertFalse(any("type=bind" in arg for arg in args))
+        payload = json.loads(run.call_args.kwargs["input_data"])
+        self.assertEqual(payload["manifest"], self.manifest)
+        self.assertEqual(set(payload["files"]), set(self.files))
+
+    def test_receiver_validates_payload_and_hash_before_publication(self):
+        payload = {"manifest": self.manifest, "files": {
+            key: base64.b64encode(body).decode() for key, body in self.files.items()
+        }}
+        for corrupt in (True, False):
+            candidate = json.loads(json.dumps(payload))
+            if corrupt:
+                candidate["files"]["logo.png"] = base64.b64encode(b"wrong").decode()
+            with patch.object(branding.sys, "stdin") as stdin:
+                stdin.buffer = io.BytesIO(json.dumps(candidate).encode())
+                if corrupt:
+                    with self.assertRaisesRegex(ValueError, "integrity"):
+                        branding.receive_backup(self.destination)
+                    self.assertFalse(self.destination.exists())
+                else:
+                    branding.receive_backup(self.destination)
+        self.assertEqual((self.destination / "logo.png").read_bytes(), b"logo")
+
     def test_any_copy_failure_restarts_old_api_and_does_not_enable_recreation(self):
         for kwargs in ({"copy_failure": True}, {"restore_failure": True}):
             with self.subTest(kwargs=kwargs), self.assertRaises(RuntimeError):
@@ -175,16 +209,11 @@ class BrandingTransferTest(unittest.TestCase):
             self.manifest["files"][key] = branding.digest(png)
         self.write_manifest()
         volume = "pick-branding-test-" + uuid4().hex
-        script = Path(branding.__file__).resolve()
         branding.docker("volume", "create", "--label", "pick.branding.fixture=true", volume)
         try:
             for _ in range(2):
                 # --rm removes each isolated container; the same volume survives both runs.
-                branding.docker("run", "--rm", "--network", "none", "--read-only",
-                    "--mount", f"type=bind,source={script},target=/transfer.py,readonly",
-                    "--mount", f"type=bind,source={self.backup},target=/backup,readonly",
-                    "--mount", f"type=volume,source={volume},target=/branding",
-                    "python:3.12-slim", "python", "/transfer.py", "restore", "/backup", "/branding")
+                branding.restore_volume(self.backup, "python:3.12-slim", volume)
             result = branding.docker("run", "--rm", "--network", "none", "--read-only",
                 "--mount", f"type=volume,source={volume},target=/branding,readonly",
                 "python:3.12-slim", "python", "-c",

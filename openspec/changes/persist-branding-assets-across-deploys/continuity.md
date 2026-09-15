@@ -69,3 +69,28 @@ Correção na mesma task 4.1: incluir arquivo/profile opcional na função Compo
 quando o worker já estava ativo; vale para build, subida, health e rollback. Teste
 regressivo confirma que o override aparece uma vez com worker ativo e não no caminho
 inativo. Não habilita módulo novo, não altera segredo/porta e não amplia o plano aprovado.
+
+### CI #260 — correção de permissões da transferência
+
+PR #85 mergeado em `8ff67be1255483f08998cbac07ab1cde31e37f86`. No run
+`34913774759`, backend/frontend/OpenSpec/gitleaks passaram, mas o deploy falhou no helper
+de transferência. O backup foi criado com os três ativos reais (logo, favicon, app-icon),
+diretório 0700/arquivos 0600 de ubuntu; o helper root com `cap-drop ALL` não pode ler o
+bind privado de outro UID. API antiga reiniciada e saudável; checkout voltou a 23bdee9b.
+Não houve migration nem recriação da aplicação. Não afirmar que os ativos precisam de
+reenvio se a próxima preservação os recuperar: o inventário atual confirmou os três bytes.
+
+Correção focada: proprietário lê backup, transmite manifesto/bytes por stdin ao helper;
+sem bind do host, chmod permissivo ou capabilities adicionais. Staging em tmpfs 32 MB,
+mesmas validações de tamanho/nome/hash e publicação sem sobrescrita. Fixture de recriação
+real agora chama exatamente o launcher endurecido do deploy (antes usava binds sem
+cap-drop, lacuna corrigida). Testes de recepção íntegra/corrompida e contrato sem binds.
+
+Evidências: helper Linux **13 passed/1 skipped** (fixture Docker aninhada não executada);
+fixture real no host aprovada com launcher de produção, três PNGs e hashes conservados
+entre duas recriações. Ruff, OpenSpec estrito e diff check aprovados. Sem suíte completa
+local, sem nova operação remota de escrita. A task 4.1 continua pendente do deploy verde.
+
+Instrução nova do proprietário: **após push/início do Actions, encerrar o turno e aguardar
+que ele confira verde/vermelho**. Não monitorar/pollar CI, não fazer merge/deploy nessa
+espera. Retomar somente após nova mensagem. Não criar automação de acompanhamento.
