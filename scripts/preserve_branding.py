@@ -1,12 +1,14 @@
 """Conservative branding backup/transfer. No secrets, SQL writes or source deletion."""
 
 import argparse
+import base64
 import hashlib
 import io
 import json
 import os
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
@@ -131,6 +133,42 @@ def extract_asset(archive, key):
         return source.extractfile(entry).read()
 
 
+def receive_backup(destination):
+    """Receive only validated branding bytes, never mount private host directories."""
+    payload = json.loads(sys.stdin.buffer.read(24 * 1024 * 1024 + 1))
+    manifest = payload["manifest"]
+    if set(payload["files"]) != set(manifest["files"]):
+        raise ValueError("backup entries mismatch")
+    with tempfile.TemporaryDirectory(prefix="branding-receive-") as directory:
+        backup = Path(directory)
+        for key, encoded in payload["files"].items():
+            key_valid(key)
+            body = base64.b64decode(encoded, validate=True)
+            if not 0 < len(body) <= ALLOWED[key]:
+                raise ValueError("invalid branding size")
+            (backup / key).write_bytes(body)
+        (backup / "manifest.json").write_text(json.dumps(manifest))
+        transfer(backup, destination)
+
+
+def restore_volume(backup, image, volume=VOLUME):
+    manifest = json.loads((backup / "manifest.json").read_text())
+    files = {}
+    for key, expected in manifest["files"].items():
+        body = read_asset(backup / key, key)
+        if digest(body) != expected:
+            raise ValueError("backup integrity failure")
+        files[key] = base64.b64encode(body).decode("ascii")
+    # The host owner reads its 0700/0600 backup. Bytes go through stdin, not argv,
+    # logs, permissive chmod or a bind mount inaccessible to root with cap-drop ALL.
+    docker("run", "--rm", "-i", "--network", "none", "--read-only", "--cap-drop", "ALL",
+           "--security-opt", "no-new-privileges", "--entrypoint", "python",
+           "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m,mode=1777",
+           "--mount", f"type=volume,source={volume},target={ROOT}",
+           image, "-c", Path(__file__).read_text(), "receive", ROOT,
+           input_data=json.dumps({"manifest": manifest, "files": files}).encode())
+
+
 def preserve():
     if Path.cwd().resolve() != Path("/opt/markina-gallery"):
         raise ValueError("unexpected checkout")
@@ -189,13 +227,7 @@ def preserve():
                 stream.write(body)
             manifest["files"][key] = digest(body)
         (backup / "manifest.json").write_text(json.dumps(manifest, indent=2))
-        script = Path(__file__).resolve()
-        docker("run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
-               "--security-opt", "no-new-privileges", "--entrypoint", "python",
-               "--mount", f"type=bind,source={script},target=/preserve_branding.py,readonly",
-               "--mount", f"type=bind,source={backup},target=/backup,readonly",
-               "--mount", f"type=volume,source={VOLUME},target={ROOT}",
-               info["Image"], "/preserve_branding.py", "restore", "/backup", ROOT)
+        restore_volume(backup, info["Image"])
         override = STATE / "branding.compose.yml"
         if override.is_symlink():
             raise ValueError("override symlink refused")
@@ -218,12 +250,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("preserve")
+    receive = sub.add_parser("receive")
+    receive.add_argument("destination", type=Path)
     restore = sub.add_parser("restore")
     restore.add_argument("backup", type=Path)
     restore.add_argument("destination", type=Path)
     args = parser.parse_args()
     if args.command == "preserve":
         preserve()
+    elif args.command == "receive":
+        receive_backup(args.destination)
     else:
         transfer(args.backup, args.destination)
 

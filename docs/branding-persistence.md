@@ -19,7 +19,10 @@ O deploy exige autorização/inventário conforme o procedimento do projeto. O s
    por nome/tamanho. Não extrai árvores, links simbólicos, fotos ou segredos.
 5. Salva bytes e SHA-256 em diretório `branding-*` restrito dentro de
    `/var/lib/markina-gallery/backups`. A configuração do banco não é alterada.
-6. Transfere para o volume usando publicação atômica sem sobrescrita e verifica hashes.
+6. O usuário proprietário lê seu backup restrito e envia somente manifesto/bytes por
+   stdin ao helper, sem montar diretórios privados do host nem ampliar capabilities.
+   O helper usa tmpfs limitado e conserva `cap-drop ALL`, rede desativada e raiz somente
+   leitura. Transfere para o volume usando publicação atômica sem sobrescrita e verifica hashes.
    Destino igual permite repetição; divergência, symlink, falha de cópia ou integridade
    abortam antes de recriar a API. Na falha de preservação, a API antiga é reiniciada.
 7. Mantém override próprio em `/var/lib/markina-gallery/deploy-state/branding.compose.yml`
@@ -42,9 +45,12 @@ de ausências, sem dados pessoais. Escolha e inspecione **um caminho exato de ba
 nunca use glob para restaurar nem importe um dump para recuperar apenas ícones.
 
 Com autorização para restauração e API sem uploads concorrentes, use a mesma imagem
-da API e o helper `scripts/preserve_branding.py restore <backup> <destino>`, montando
-o backup somente leitura e o volume exclusivo como destino. Execute com rede desativada,
-filesystem raiz somente leitura e apenas o volume gravável, como no helper de deploy.
+da API e a função `restore_volume` do helper `scripts/preserve_branding.py`, que lê o
+backup como seu proprietário e o transmite por stdin, montando somente o volume de
+destino. Não montar backup 0700 de outro UID em container root com capabilities removidas:
+root sem DAC_OVERRIDE não pode lê-lo. Execute com rede desativada, raiz somente leitura,
+tmpfs limitado e apenas o volume persistente gravável, como no helper de deploy.
+Para diretórios locais isolados, permanece `restore <backup> <destino>`.
 O helper verifica todos os hashes antes de copiar, recusa symlinks e não sobrescreve
 arquivos divergentes. Para verificar sem tocar homologação, restaure primeiro em um
 diretório/volume **novo e isolado**. Não remover conflitos automaticamente: registrar os
