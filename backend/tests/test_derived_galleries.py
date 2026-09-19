@@ -2247,6 +2247,8 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
             "gallery_status": "pending_registration",
             "commercial_status": "no_order",
             "reopening_status": None,
+            "financial_orders": [],
+            "selection_expires_at": None,
         }
     ]
 

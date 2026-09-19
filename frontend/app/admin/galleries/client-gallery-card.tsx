@@ -2,6 +2,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { StatusBadge } from "../../ui-kit";
+import { FinancialOrderShortcuts, type FinancialOrder } from "../payments/payment-actions";
+import { SelectionDeadline } from "../../selection-deadline";
 
 export type ClientGalleryRow = {
   client_id: string;
@@ -17,6 +19,8 @@ export type ClientGalleryRow = {
   gallery_status: "pending_registration" | "no_selection" | "blocked" | "expired" | "active";
   commercial_status?: "pending_review" | "awaiting_payment" | "paid" | "overdue" | "cancelled" | "no_order";
   reopening_status?: "pending" | "approved" | "refused" | null;
+  financial_orders?: FinancialOrder[];
+  selection_expires_at?: string | null;
 };
 
 const galleryStatus = {
@@ -36,7 +40,7 @@ const commercialStatus = {
   no_order: { label: "Sem pedido", tone: "neutral" },
 } as const;
 
-export function ClientGalleryCard({ person, actions }: { person: ClientGalleryRow; actions?: ReactNode }) {
+export function ClientGalleryCard({ person, actions, onRefresh = () => {} }: { person: ClientGalleryRow; actions?: ReactNode; onRefresh?: () => void | Promise<void> }) {
   const access = galleryStatus[person.gallery_status];
   const commercial = commercialStatus[person.commercial_status ?? "no_order"];
   return <article aria-label={`Cliente ${person.name}`} className={`gallery-linked-client gallery-linked-client--${person.gallery_status}`}>
@@ -55,9 +59,11 @@ export function ClientGalleryCard({ person, actions }: { person: ClientGalleryRo
       <div><dt>Fotos selecionadas</dt><dd>{person.selected_count}</dd></div>
       <div><dt>Fotos compradas</dt><dd>{person.purchased_count}</dd></div>
     </dl>
+    <SelectionDeadline expiresAt={person.selection_expires_at} />
     {person.gallery_status === "pending_registration" ? <p className="gallery-client-pending">O vínculo já existe. No primeiro acesso pelo link, a cliente ainda precisa validar este WhatsApp com o código OTP.</p> : null}
     {person.reopening_status === "pending" ? <p className="gallery-client-pending">A cliente solicitou reabertura. Decida em Vendas e pagamentos.</p> : null}
     {person.derived_gallery_id ? <Link className="gallery-client-open" href={`/admin/galleries/${person.derived_gallery_id}`}>Abrir galeria privada</Link> : <p className="gallery-client-pending">Crie uma galeria privada vazia e carregue nela as fotos do dispositivo.</p>}
     {actions ? <div className="gallery-client-card-actions">{actions}</div> : null}
+    <FinancialOrderShortcuts orders={person.financial_orders} clientName={person.name} onRefresh={onRefresh} />
   </article>;
 }

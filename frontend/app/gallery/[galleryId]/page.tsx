@@ -7,6 +7,7 @@ import { ClientCartLink } from "../../client-cart";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { MarkinaLink, StatusBadge, SystemState } from "../../ui-kit";
+import { SelectionDeadline } from "../../selection-deadline";
 
 type ReviewPhoto = {
   id: string;
@@ -414,14 +415,7 @@ export default function GalleryPage() {
           {reopening?.status === "pending" ? <StatusBadge tone="warning">Reabertura solicitada</StatusBadge> : reopening?.status === "refused" ? <><StatusBadge tone="danger">Solicitação recusada</StatusBadge><button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>Solicitar reabertura da galeria</button></> : <button className="primary" type="button" disabled={paymentBusy === "reopening"} onClick={requestReopening}>{paymentBusy === "reopening" ? "Solicitando…" : "Solicitar reabertura da galeria"}</button>}
         </section>
       )}
-      {!activePendingOrder && review.gallery.selection_expires_at && review.gallery.selection_open && cart.quantity > 0 && (
-        <p className="form-message">
-          Seleções até{" "}
-          {new Date(review.gallery.selection_expires_at).toLocaleDateString(
-            "pt-BR",
-          )}
-        </p>
-      )}
+      <SelectionDeadline expiresAt={review.gallery.selection_expires_at} onRevalidate={() => { load(); loadCart(false); loadReopening(); }} />
       {!activePendingOrder ? <><nav className="gallery-photo-filters" aria-label="Filtrar fotos">
         {filterOptions.map(({ value, label }) => (
           <button key={value} type="button" className={filter === value ? "selected" : ""} aria-pressed={filter === value} onClick={() => setFilter(value)}>

@@ -13,6 +13,7 @@ vi.mock("next/navigation", () => ({
 import GalleryPage from "./[galleryId]/page";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   navigation.mode = null;
 });
@@ -243,13 +244,13 @@ describe("galeria privada da cliente", () => {
       state: "pagamento informado",
       cart: { quantity: 0 },
       orders: [{ order_id: "order-reported", total_cents: 700, payment_status: "pending", commercial_state: "payment_reported", communication: { id: "communication-1", status: "pending_review" }, notification: null }],
-      deadlineVisible: false,
+      deadlineVisible: true,
     },
     {
       state: "sem seleção",
       cart: { quantity: 0 },
       orders: [],
-      deadlineVisible: false,
+      deadlineVisible: true,
     },
   ])("exibe o prazo contextual no estado $state", async ({ cart, orders, deadlineVisible }) => {
     const datedReview = {
@@ -268,10 +269,33 @@ describe("galeria privada da cliente", () => {
     render(<GalleryPage />);
     expect(await screen.findByRole("heading", { name: "Festa escolar" })).toBeTruthy();
     if (deadlineVisible) {
-      expect(await screen.findByText(/Seleções até 30\/09\/2026/)).toBeTruthy();
+      expect((await screen.findByLabelText("Prazo para novas seleções")).textContent).toContain("30/09/2026");
     } else {
       await waitFor(() => expect(screen.queryByText(/Seleções até/)).toBeNull());
     }
+  });
+
+  it("revalida o vencimento com a página aberta sem alterar pedidos confirmados", async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.parse("2026-09-19T12:00:00Z");
+    vi.setSystemTime(startedAt);
+    const deadline = startedAt + 60000;
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/comments") ? { comments: [] }
+        : path.endsWith("/folders") ? { folders: [] }
+          : path.endsWith("/cart") ? { quantity: 0 }
+            : path.endsWith("/payment-communications") ? { orders: [{ order_id: "preserved", total_cents: 700, payment_status: "confirmed", commercial_state: "purchased", communication: { id: "communication", status: "confirmed" }, notification: null }] }
+              : path.endsWith("/reopening-requests") ? { request: null }
+                : { ...review, gallery: { ...review.gallery, selection_expires_at: new Date(deadline).toISOString(), selection_open: Date.now() < deadline } },
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    await act(async () => { render(<GalleryPage />); });
+    expect(screen.getByText("1min para selecionar")).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(60000); });
+    expect(screen.getByText("Prazo de seleção expirado")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Solicitar reabertura da galeria" })).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/review"))).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/payment-communications"))).toHaveLength(1);
   });
 
   it("permite solicitar reabertura mesmo quando a galeria expirada ainda está vazia", async () => {

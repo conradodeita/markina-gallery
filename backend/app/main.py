@@ -146,7 +146,7 @@ from app.client_lifecycle import (
     list_client_directory,
     remove_facial_reference_files,
 )
-from app.commercial_projection import build_commercial_projections
+from app.commercial_projection import build_commercial_projections, payment_capabilities
 from app.commercial_removal import (
     CommercialRemovalBlocked,
     CommercialRemovalPreparationFailed,
@@ -4782,6 +4782,9 @@ def parent_gallery_clients(
                 "gallery_status": gallery_status,
                 "commercial_status": commercial_status,
                 "reopening_status": projection.reopening_status if projection else None,
+                "financial_orders": projection.financial_orders if projection else [],
+                "selection_expires_at": gallery.selection_expires_at.isoformat()
+                if gallery and gallery.selection_expires_at else None,
             }
         )
     return {
@@ -6128,6 +6131,9 @@ def private_gallery_members(
                 "available_count": projection.available_count,
                 "commercial_status": projection.commercial_status,
                 "reopening_status": projection.reopening_status,
+                "financial_orders": projection.financial_orders,
+                "selection_expires_at": gallery.selection_expires_at.isoformat()
+                if gallery.selection_expires_at else None,
             }
             for membership, client in rows
             for projection in [projections[(gallery.id, membership.client_id)]]
@@ -8140,6 +8146,8 @@ def select_photo_from_public_gallery(
         "gallery_created": result.gallery_created,
         "reference_created": result.reference_created,
         "selection_created": result.selection_created,
+        "selection_expires_at": result.gallery.selection_expires_at.isoformat()
+        if result.gallery.selection_expires_at else None,
         "cart": _client_cart_payload(db, result.gallery, session.subject_id),
     }
 
@@ -8303,6 +8311,8 @@ def public_gallery_for_client(
         ),
         "photos_url": f"/public-galleries/{parent.id}/photos",
         "private_gallery_id": str(private_gallery.id) if private_gallery else None,
+        "selection_expires_at": private_gallery.selection_expires_at.isoformat()
+        if private_gallery and private_gallery.selection_expires_at else None,
     }
 
 
@@ -8551,6 +8561,8 @@ def select_public_gallery_facial_candidate(
         "gallery_created": result.gallery_created,
         "reference_created": result.reference_created,
         "selection_created": result.selection_created,
+        "selection_expires_at": result.gallery.selection_expires_at.isoformat()
+        if result.gallery.selection_expires_at else None,
         "cart": _client_cart_payload(db, result.gallery, session.subject_id),
     }
 
@@ -9782,8 +9794,7 @@ def _admin_payment_communication_payload(
         "total_cents": order.total_cents,
         "created_at": item.created_at.isoformat(),
         "decided_at": item.decided_at.isoformat() if item.decided_at else None,
-        "can_decide": item.status == "pending_review" and order.payment_status == "pending",
-        "can_correct": item.status == "confirmed" and order.payment_status == "confirmed",
+        **payment_capabilities(item.status, order.payment_status),
         "corrections": [
             {
                 "id": str(correction.id),

@@ -142,6 +142,18 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const loadedStep = useRef<StepId | null>(null);
 
   useEffect(() => {
+    if (currentStep !== "clientes") return;
+    let active = true;
+    const refreshClients = () => {
+      void jsonRequest(`/api/admin/parent-galleries/${sourceId}/clients`)
+        .then((result) => { if (active) setLinkedClients(result.clients ?? []); })
+        .catch(() => { if (active) setMessage("Não foi possível atualizar os pagamentos. Tente novamente."); });
+    };
+    window.addEventListener("focus", refreshClients);
+    return () => { active = false; window.removeEventListener("focus", refreshClients); };
+  }, [currentStep, sourceId]);
+
+  useEffect(() => {
     if (expandedPhoto) previewDialog.current?.focus();
   }, [expandedPhoto]);
 
@@ -894,7 +906,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               {unlinkTarget && (unlinkOperation || (unlinkError && !unlinkPreview)) ? <section className={`unlink-progress${unlinkError || unlinkOperation?.status === "failed" ? " unlink-progress--error" : ""}`} aria-label={`Desvinculação de ${unlinkTarget.name}`} aria-live="polite"><div><strong>{unlinkOperation?.progress.label ?? "Não foi possível desvincular"}</strong>{unlinkOperation ? <span>{unlinkOperation.progress.percent}%</span> : null}</div>{unlinkOperation ? <progress value={unlinkOperation.progress.percent} max={100} /> : null}<p>{unlinkError || unlinkOperation?.last_error || (unlinkOperation?.status === "completed" ? "Cliente desvinculada. Cadastro e histórico foram preservados." : unlinkOperation?.status === "cancelled" ? "Desvinculação cancelada antes da remoção física." : "A desvinculação continua em segundo plano.")}</p><div>{unlinkOperation?.actions.can_cancel ? <MarkinaButton type="button" variant="secondary" disabled={unlinkBusy} onClick={() => unlinkOperationAction("cancel")}>Cancelar desvinculação</MarkinaButton> : null}{unlinkOperation?.actions.can_retry ? <MarkinaButton type="button" disabled={unlinkBusy} onClick={() => unlinkOperationAction("retry")}>Retomar desvinculação</MarkinaButton> : null}{!unlinkOperation?.actions.should_poll ? <MarkinaButton type="button" variant="secondary" onClick={() => { setUnlinkOperation(null); setUnlinkTarget(null); setUnlinkError(""); }}>Fechar</MarkinaButton> : null}</div></section> : null}
               {linkedClients.length ? (
                 <div className="gallery-linked-clients" aria-label="Lista de clientes vinculadas">
-                  {linkedClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} actions={<><MarkinaButton type="button" variant="secondary" onClick={() => { setPrivateTarget(person); setPrivateActionError(""); }}>Criar galeria privada</MarkinaButton><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></>} />)}
+                  {linkedClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} onRefresh={() => setRefresh((value) => value + 1)} actions={<><MarkinaButton type="button" variant="secondary" onClick={() => { setPrivateTarget(person); setPrivateActionError(""); }}>Criar galeria privada</MarkinaButton><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></>} />)}
                 </div>
               ) : <SystemState title="Nenhuma cliente vinculada" detail="Use a busca ou o novo cadastro para criar o primeiro vínculo." />}
             </section>

@@ -35,6 +35,24 @@ function response(value: object, status = 200) {
 }
 
 describe("editor administrativo de galeria", () => {
+  it("decide no card do editor e revalida a mesma compra após refoco", async () => {
+    let confirmed = false;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/decision") && init?.method === "POST") { confirmed = true; return response({ status: "confirmed" }); }
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [{ client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: confirmed ? 0 : 1, purchased_count: confirmed ? 1 : 0, gallery_status: "active", commercial_status: confirmed ? "paid" : "pending_review", financial_orders: [{ id: "communication-1", order_id: "order-1", gallery_name: "Festa escolar", quantity: 1, total_cents: 700, created_at: "2026-09-19T12:00:00Z", status: confirmed ? "confirmed" : "pending_review", can_decide: !confirmed, can_correct: confirmed }] }] });
+      return response({ clients: [], members: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar pagamento" }));
+    expect(await screen.findByRole("button", { name: "Corrigir confirmação" })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/payment-communications/communication-1/decision", expect.objectContaining({ body: JSON.stringify({ decision: "confirmed" }) }));
+    confirmed = false;
+    fireEvent.focus(window);
+    expect(await screen.findByRole("button", { name: "Confirmar pagamento" })).toBeTruthy();
+  });
   it("mantém a sequência de cinco etapas e cria pasta somente na galeria atual", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (init?.method === "POST") return response({ id: "folder-1", status: "preparing", position: 0 }, 201);

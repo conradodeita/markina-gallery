@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { MarkinaLink, PageHeading, StatusBadge, SystemState } from "../ui-kit";
 import { EmptyState } from "../validation-ui";
+import { PurchasePreview } from "../purchase-preview";
+import { SelectionDeadline } from "../selection-deadline";
 
 type PublicGallery = {
   id: string;
@@ -88,7 +90,7 @@ function LibraryOrderCard({ order }: { order: Order }) {
   const [open, setOpen] = useState(false);
   const [expandedPhoto, setExpandedPhoto] = useState<Order["items"][number] | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
-  const photos = order.items.filter((item) => item.preview_url);
+  const photos = order.items;
   const state = orderState(order).replaceAll("_", "-");
   const activityAt = order.confirmed_at ?? order.communicated_at;
   const activityLabel = order.confirmed_at ? "Confirmada" : "Informada";
@@ -105,7 +107,7 @@ function LibraryOrderCard({ order }: { order: Order }) {
       {open ? <div className="library-order-photo-grid" id={gridId} role="region" aria-label={`Fotos da compra de ${order.gallery_name}`}>
         {photos.map((photo) => <figure key={photo.photo_id}>
           <button type="button" aria-label={`Ampliar prévia protegida de ${photo.name}`} onClick={() => setExpandedPhoto(photo)} onContextMenu={(event) => event.preventDefault()}>
-            <img src={photo.preview_url!} alt={`Prévia protegida de ${photo.name}`} loading="lazy" draggable={false} />
+            <PurchasePreview path={photo.preview_url} name={photo.name} />
           </button>
           <figcaption>{photo.name}</figcaption>
         </figure>)}
@@ -113,7 +115,7 @@ function LibraryOrderCard({ order }: { order: Order }) {
       {expandedPhoto ? <div className="library-photo-dialog-backdrop" role="presentation" onMouseDown={() => setExpandedPhoto(null)}>
         <div ref={dialog} className="library-photo-dialog" role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhoto(null); }}>
           <button type="button" className="library-photo-dialog-close" onClick={() => setExpandedPhoto(null)}>Fechar</button>
-          <img src={expandedPhoto.preview_url!} alt={`Prévia protegida ampliada de ${expandedPhoto.name}`} draggable={false} onContextMenu={(event) => event.preventDefault()} />
+          <PurchasePreview key={expandedPhoto.photo_id} path={expandedPhoto.preview_url} name={expandedPhoto.name} expanded />
           <strong>{expandedPhoto.name}</strong>
         </div>
       </div> : null}
@@ -127,6 +129,12 @@ export default function LibraryPage() {
   const [journeysFailed, setJourneysFailed] = useState(false);
   const [ordersFailed, setOrdersFailed] = useState(false);
   const [ordersRequest, setOrdersRequest] = useState(0);
+  const [libraryRequest, setLibraryRequest] = useState(0);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revalidateLibrary = useCallback(() => {
+    if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => setLibraryRequest((value) => value + 1), 50);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -143,7 +151,12 @@ export default function LibraryPage() {
         setJourneys([]);
       });
     return () => controller.abort();
-  }, []);
+  }, [libraryRequest]);
+
+  useEffect(() => {
+    window.addEventListener("focus", revalidateLibrary);
+    return () => { window.removeEventListener("focus", revalidateLibrary); if (refreshTimer.current !== null) clearTimeout(refreshTimer.current); };
+  }, [revalidateLibrary]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -189,7 +202,7 @@ export default function LibraryPage() {
               {typeof journey.selection.total_cents === "number" && !journey.selection.pricing_error ? <strong>{money(journey.selection.total_cents)}</strong> : null}
             </div>
             {journey.selection.pricing_error ? <small className="library-cart-card__error">{journey.selection.pricing_error}</small> : null}
-            {journey.private_gallery?.selection_expires_at && journey.private_gallery.gallery_status === "active" ? <small>Seleção até {new Date(journey.private_gallery.selection_expires_at).toLocaleDateString("pt-BR")}</small> : null}
+            <SelectionDeadline expiresAt={journey.private_gallery?.selection_expires_at} />
             <div className="library-card-actions"><MarkinaLink href={`${journey.actions.review_url}?mode=review`} prefetch>Revisar carrinho</MarkinaLink></div>
           </article>)}</div>
         </> : <EmptyState title="Carrinho vazio" detail="" />}
@@ -216,6 +229,7 @@ export default function LibraryPage() {
               <header><StatusBadge tone={status.tone}>{status.label}</StatusBadge></header>
               <strong>{journey.name}</strong>
               {journey.event_name ? <small>{journey.event_name}</small> : null}
+              <SelectionDeadline expiresAt={journey.private_gallery?.selection_expires_at} onRevalidate={revalidateLibrary} />
               {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "purchased" ? "Pagamento confirmado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : "Pagamento não localizado"}</StatusBadge> : null}
               <div className="library-card-actions">
                 {primaryAction ? <MarkinaLink href={primaryAction.href} prefetch>{primaryAction.label}</MarkinaLink> : <span>Indisponível</span>}

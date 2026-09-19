@@ -72,6 +72,7 @@ const emptyDashboard = {
 
 describe("controle operacional de pagamentos", () => {
   it("agrupa por cliente, mostra resumo e preserva decisão e retry autorizados", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchMock = vi.fn((_path: string, options?: RequestInit) => {
       if (options?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "confirmed" }), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify(dashboard()), { status: 200 }));

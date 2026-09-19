@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from uuid import UUID
 
 from sqlalchemy import select
@@ -33,9 +33,18 @@ class CommercialProjection:
     confirmed_total_cents: int = 0
     commercial_status: str = "no_order"
     reopening_status: str | None = None
+    financial_orders: list[dict[str, object]] = field(default_factory=list)
 
     def payload(self) -> dict[str, object]:
         return asdict(self)
+
+
+def payment_capabilities(communication_status: str | None, payment_status: str) -> dict[str, bool]:
+    """Mesmos gates para Vendas e pagamentos e atalhos, nunca pelo agregado da cliente."""
+    return {
+        "can_decide": communication_status == "pending_review" and payment_status == "pending",
+        "can_correct": communication_status == "confirmed" and payment_status == "confirmed",
+    }
 
 
 def build_commercial_projections(
@@ -91,7 +100,12 @@ def build_commercial_projections(
                 SaleOrder.frozen_at,
                 SaleOrder.checkout_key,
                 SaleOrder.total_cents,
+                SaleOrder.created_at,
+                SaleOrder.derived_gallery_name_snapshot,
+                PaymentCommunication.id.label("communication_id"),
+                PaymentCommunication.created_at.label("communicated_at"),
                 PaymentCommunication.status.label("communication_status"),
+                SaleOrderItem.id.label("item_id"),
                 SaleOrderItem.photo_asset_id_snapshot,
             )
             .outerjoin(
@@ -104,11 +118,13 @@ def build_commercial_projections(
                 | (SaleOrder.parent_gallery_id_snapshot.in_(parent_gallery_ids)),
                 SaleOrder.client_id.in_(client_ids),
             )
+            .order_by(PaymentCommunication.created_at.desc(), PaymentCommunication.id.desc())
         )
     )
     order_rows = {}
     purchased_photo_ids: dict[tuple[UUID, UUID], set[UUID]] = defaultdict(set)
     pending_review_order_ids: set[UUID] = set()
+    item_ids_by_order: dict[UUID, set[UUID]] = defaultdict(set)
     for row in raw_order_rows:
         if (
             row.payment_status == "pending"
@@ -116,7 +132,9 @@ def build_commercial_projections(
             and row.checkout_key is not None
         ):
             continue
-        order_rows[row.id] = row
+        order_rows.setdefault(row.id, row)
+        if row.item_id:
+            item_ids_by_order[row.id].add(row.item_id)
         if row.communication_status == "pending_review":
             pending_review_order_ids.add(row.id)
         if row.payment_status == "confirmed" and row.photo_asset_id_snapshot:
@@ -185,5 +203,27 @@ def build_commercial_projections(
                 ),
                 commercial_status=commercial_status,
                 reopening_status=reopening.status if reopening else None,
+                financial_orders=[
+                    {
+                        "order_id": str(row.id),
+                        "id": str(row.communication_id),
+                        "gallery_name": row.derived_gallery_name_snapshot,
+                        "total_cents": row.total_cents,
+                        "quantity": len(item_ids_by_order[row.id]),
+                        "created_at": row.communicated_at.isoformat(),
+                        "status": row.communication_status,
+                        **payment_capabilities(row.communication_status, row.payment_status),
+                    }
+                    for row in sorted(
+                        orders,
+                        key=lambda row: (
+                            row.communication_status == "pending_review",
+                            row.created_at,
+                            str(row.id),
+                        ),
+                        reverse=True,
+                    )
+                    if row.communication_id
+                ],
             )
     return projections

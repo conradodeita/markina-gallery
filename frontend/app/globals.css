@@ -3,6 +3,17 @@
   box-sizing: border-box;
 }
 
+.selection-deadline { display:flex; flex-wrap:wrap; align-items:center; gap:.35rem .8rem; margin:.7rem 0; padding:.6rem .8rem; border-left:3px solid var(--accent); border-radius:6px; background:var(--mk-surface-subtle); font-size:.85rem; color:var(--ink); }
+.selection-deadline time { color:var(--muted); }
+.selection-deadline--expired { border-left-color:var(--mk-danger); }
+.financial-order-shortcuts { display:grid; gap:1rem; margin-top:1rem; }
+.financial-order-shortcut { display:grid; gap:.5rem; padding:.8rem; border:1px solid var(--line); border-radius:10px; background:var(--mk-surface-subtle); overflow-wrap:anywhere; }
+.financial-order-shortcut--pending_review { border-left:4px solid var(--mk-warning); }
+.financial-order-shortcut time { font-size:.8rem; color:var(--muted); }
+.financial-order-shortcut .dashboard-actions { flex-wrap:wrap; }
+.financial-order-shortcut .mk-button { white-space:normal; }
+.purchase-preview-unavailable { display:grid; place-items:center; width:100%; min-height:140px; padding:1rem; color:var(--muted); background:var(--mk-surface-subtle); }
+
 :where(main,section,article,aside,header,footer,div,form,fieldset) { min-width:0; }
 img,video,canvas,svg { max-width:100%; }
 
