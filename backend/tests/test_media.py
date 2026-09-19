@@ -1,4 +1,5 @@
 from datetime import timedelta
+from io import BytesIO
 from math import hypot
 
 import pytest
@@ -562,13 +563,15 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
     client_file = derivatives_root / str(photo_id) / "client_preview.jpg"
     admin_file = derivatives_root / str(photo_id) / "admin_preview.jpg"
     client_file.parent.mkdir(parents=True)
-    client_file.write_bytes(b"watermarked-client-preview")
+    Image.new("RGB", (32, 24), "yellow").save(client_file)
     admin_file.write_bytes(b"admin-conference-preview")
     with TestClient(app) as client:
         client.cookies.set("markina_session", owner_token)
         response = client.get(f"/gallery/{gallery_id}/photos/{photo_id}/preview")
         assert response.status_code == 200
-        assert response.content == b"watermarked-client-preview"
+        with Image.open(BytesIO(response.content)) as decoded:
+            decoded.load()
+            assert decoded.size == (32, 24)
         assert response.headers["cache-control"] == "private, no-store"
         assert response.headers["content-disposition"].startswith("inline")
         assert client.get(f"/admin/photo-assets/{photo_id}/preview").status_code == 403

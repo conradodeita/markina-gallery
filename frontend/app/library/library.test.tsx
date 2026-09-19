@@ -35,6 +35,18 @@ const privateGallery = {
 };
 
 describe("biblioteca privada da cliente", () => {
+  it("preserva itens e contagem quando a prévia está ausente ou falha", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [{
+      id: "order-missing", gallery_name: "Evento", parent_gallery_name: "Evento", confirmed_at: null, total_cents: 1400,
+      items: [{ photo_id: "missing", name: "Ausente.jpg", preview_url: null }, { photo_id: "failed", name: "Falha.jpg", preview_url: "/library/history/items/failed/preview" }],
+    }] }) : response({ journeys: [] })));
+    render(<LibraryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ver fotos (2)" }));
+    expect(screen.getByText("Ausente.jpg")).toBeTruthy();
+    fireEvent.error(screen.getByRole("img", { name: "Prévia protegida de Falha.jpg" }));
+    expect(screen.getAllByText("Prévia indisponível")).toHaveLength(2);
+    expect(screen.getByText(/2 foto\(s\)/)).toBeTruthy();
+  });
   it("agrupa carrinhos de galerias diferentes sem oferecer checkout global", async () => {
     const journey = (id: string, name: string, quantity: number, totalCents: number) => ({
       id,
@@ -266,8 +278,8 @@ describe("biblioteca privada da cliente", () => {
 
   it.each([
     { state: "seleção editável", quantity: 1, orders: [], deadlineVisible: true },
-    { state: "pagamento informado", quantity: 0, orders: [{ order_id: "reported-1", commercial_state: "payment_reported", total_cents: 700 }], deadlineVisible: false },
-    { state: "sem seleção", quantity: 0, orders: [], deadlineVisible: false },
+    { state: "pagamento informado", quantity: 0, orders: [{ order_id: "reported-1", commercial_state: "payment_reported", total_cents: 700 }], deadlineVisible: true },
+    { state: "sem seleção", quantity: 0, orders: [], deadlineVisible: true },
   ])("mostra o prazo contextual na biblioteca no estado $state", async ({ quantity, orders, deadlineVisible }) => {
     const datedPrivateGallery = { ...privateGallery, selection_expires_at: "2026-09-30T23:59:59Z" };
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({
@@ -281,7 +293,8 @@ describe("biblioteca privada da cliente", () => {
     render(<LibraryPage />);
     expect((await screen.findAllByText("Galeria com prazo")).length).toBeGreaterThan(0);
     if (deadlineVisible) {
-      expect(screen.getByText("Seleção até 30/09/2026")).toBeTruthy();
+      expect(screen.getAllByLabelText("Prazo para novas seleções").length).toBeGreaterThan(0);
+      expect(within(screen.getByRole("region", { name: "Galerias" })).getByLabelText("Prazo para novas seleções").textContent).toContain("30/09/2026");
     } else {
       expect(screen.queryByText(/Seleção até/)).toBeNull();
     }
@@ -333,7 +346,7 @@ describe("biblioteca privada da cliente", () => {
       confirmed_at: null,
       commercial_state: "payment_reported",
       total_cents: names.length * 700,
-      items: names.map((name, index) => ({ photo_id: `${id}-${index}`, name, preview_url: `/preview/${id}-${index}`, delivery_url: null, delivery_reference_available: false })),
+      items: names.map((name, index) => ({ photo_id: `${id}-${index}`, name, preview_url: `/gallery/gallery-1/photos/${id}-${index}/preview`, delivery_url: null, delivery_reference_available: false })),
     });
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
       ? response({ orders: [order("order-1", "Primeira galeria", ["A.jpg", "B.jpg"]), order("order-2", "Segunda galeria", ["C.jpg"])] })
@@ -354,9 +367,11 @@ describe("biblioteca privada da cliente", () => {
     expect(grid.className).toContain("library-order-photo-grid");
     expect(within(grid).getAllByRole("img")).toHaveLength(2);
     expect(within(grid).getByRole("img", { name: "Prévia protegida de A.jpg" })).toBeTruthy();
+    expect(within(grid).getByRole("img", { name: "Prévia protegida de A.jpg" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/order-1-0/preview");
     expect(screen.queryByRole("img", { name: "Prévia protegida de C.jpg" })).toBeNull();
     fireEvent.click(within(grid).getByRole("button", { name: "Ampliar prévia protegida de A.jpg" }));
     expect(screen.getByRole("dialog", { name: "Prévia ampliada de A.jpg" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Prévia protegida ampliada de A.jpg" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/order-1-0/preview");
     expect(screen.queryByRole("button", { name: "Anterior" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Próxima" })).toBeNull();
 

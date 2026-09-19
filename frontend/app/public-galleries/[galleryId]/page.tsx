@@ -11,8 +11,9 @@ import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { SystemState } from "../../ui-kit";
 import { FacialSearchPanel } from "../facial-search-panel";
+import { SelectionDeadline } from "../../selection-deadline";
 
-type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string; private_gallery_id?: string | null };
+type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string; private_gallery_id?: string | null; selection_expires_at?: string | null };
 type CommercialState = "available" | "selected" | "awaiting_payment" | "payment_reported" | "purchased";
 type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; favorited: boolean; commercial_state?: CommercialState; previewUrl: string };
 type Cart = {
@@ -36,6 +37,7 @@ export default function PublicGalleryPage() {
   const [photoLoad, setPhotoLoad] = useState<{ galleryId: string; status: "loading" | "ready" | "failed" }>({ galleryId, status: "loading" });
   const [message, setMessage] = useState("");
   const [facialResult, setFacialResult] = useState<FacialSearchResult | null>(null);
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -51,6 +53,11 @@ export default function PublicGalleryPage() {
       })
       .catch(() => { if (active) setFailedGalleryId(galleryId); });
 
+    return () => { active = false; };
+  }, [galleryId, refresh]);
+
+  useEffect(() => {
+    let active = true;
     fetch(`/api/public-galleries/${galleryId}/photos`, { credentials: "same-origin" })
       .then(async (response) => {
         if (!response.ok) throw new Error();
@@ -99,6 +106,9 @@ export default function PublicGalleryPage() {
         ? current.filter((id) => id !== photo.id)
         : current.includes(photo.id) ? current : [...current, photo.id]);
       setPrivateGalleryId(payload.private_gallery_id ?? null);
+      if (payload.gallery_closed || "selection_expires_at" in payload) {
+        setGallery((current) => current ? { ...current, selection_expires_at: payload.gallery_closed ? null : payload.selection_expires_at } : current);
+      }
       setCart(payload.cart ?? { quantity: selected ? Math.max(0, cart.quantity - 1) : cart.quantity + 1, items: [] });
       setMessage(selected
         ? "A foto foi removida da sua seleção."
@@ -180,6 +190,7 @@ export default function PublicGalleryPage() {
       </nav>
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} />
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
+      <SelectionDeadline expiresAt={gallery.selection_expires_at} onRevalidate={() => setRefresh((value) => value + 1)} />
       {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);

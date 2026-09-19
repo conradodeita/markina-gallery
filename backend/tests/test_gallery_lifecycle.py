@@ -2,6 +2,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from subprocess import run
 from uuid import UUID, uuid4
@@ -10,6 +11,7 @@ import pyotp
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine, event, func, inspect, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
@@ -4099,7 +4101,9 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
     private_id = uuid4()
     parent_id = uuid4()
     photo_id = uuid4()
-    preview = b"preview-historica-protegida"
+    preview_buffer = BytesIO()
+    Image.new("RGB", (32, 24), "yellow").save(preview_buffer, format="JPEG")
+    preview = preview_buffer.getvalue()
     delivery = b"arquivo-historico-entregue"
 
     with SessionLocal() as db:
@@ -4186,6 +4190,9 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
         preview_response = client.get(f"/library/history/items/{item_id}/preview")
         assert preview_response.status_code == 200
         assert preview_response.content == preview
+        with Image.open(BytesIO(preview_response.content)) as decoded:
+            decoded.load()
+            assert decoded.size == (32, 24)
         assert preview_response.headers["cache-control"] == "private, no-store"
         delivery_response = client.get(f"/library/history/items/{item_id}/delivery")
         assert delivery_response.status_code == 200
@@ -4197,6 +4204,13 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
         assert client.get("/library/purchases").json() == {"orders": []}
         assert client.get(f"/library/history/items/{item_id}/preview").status_code == 403
         assert client.get(f"/library/history/items/{item_id}/delivery").status_code == 403
+
+        client.cookies.clear()
+        assert client.get(f"/library/history/items/{item_id}/preview").status_code == 403
+        authenticate_client(client, owner_phone)
+        (history_root / preview_key).unlink()
+        assert client.get(f"/library/history/items/{item_id}/preview").status_code == 404
+        assert len(client.get("/library/purchases").json()["orders"]) == 1
 
 
 def test_commercial_retention_requires_explicit_policy_and_preserves_accounting(

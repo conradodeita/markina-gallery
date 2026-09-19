@@ -3,6 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
+import { PaymentActions } from "./payment-actions";
 
 type Delivery = {
   id: string;
@@ -172,19 +173,11 @@ export default function AdminPaymentsPage() {
   }, []);
   const loadReopenings = useCallback(() => fetch("/api/admin/gallery-reopening-requests", { credentials: "same-origin" }).then(async (response) => { if (!response.ok) throw new Error(); setReopenings((await response.json()).requests ?? []); }).catch(() => setReopenings([])), []);
   useEffect(() => { void loadReopenings(); }, [loadReopenings]);
-
-  async function decide(id: string, decision: "confirmed" | "refused") {
-    setBusyAction(`decision:${id}`);
-    const response = await fetch(`/api/admin/payment-communications/${id}/decision`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
-    });
-    setMessage(response.ok ? "Decisão registrada. A resposta foi encaminhada à caixa de saída." : "Não foi possível registrar a decisão.");
-    if (response.ok) await load(filters);
-    setBusyAction("");
-  }
+  useEffect(() => {
+    const refresh = () => { void load(filters); };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [filters, load]);
 
   async function retry(notificationId: string) {
     setBusyAction(`retry:${notificationId}`);
@@ -195,13 +188,6 @@ export default function AdminPaymentsPage() {
     setMessage(response.ok ? "Notificação reenfileirada." : "O limite de tentativas não permite novo envio.");
     if (response.ok) await load(filters);
     setBusyAction("");
-  }
-  async function correct(id: string) {
-    if (!window.confirm("Corrigir esta confirmação e devolver o pagamento para revisão? Nenhuma mensagem será enviada à cliente.")) return;
-    setBusyAction(`correction:${id}`);
-    const response = await fetch(`/api/admin/payment-communications/${id}/correction`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) });
-    setMessage(response.ok ? "Confirmação corrigida. O pagamento voltou para revisão sem enviar nova mensagem." : "Não foi possível corrigir a confirmação.");
-    if (response.ok) await load(filters); setBusyAction("");
   }
   async function decideReopening(item: Reopening, decision: "approved" | "refused") {
     let selection_expires_at: string | null = null;
@@ -285,7 +271,7 @@ export default function AdminPaymentsPage() {
       {dashboard.groups.map((group) => <section className="admin-card payment-client-card" key={group.client.id}>
         <header><div><p className="eyebrow">Cliente</p><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
-          {group.orders.map((order) => <OrderCard key={order.id} order={order} busyAction={busyAction} onDecide={decide} onCorrect={correct} onRetry={retry} />)}
+          {group.orders.map((order) => <OrderCard key={order.id} order={order} busyAction={busyAction} onRefresh={() => load(filters)} onRetry={retry} />)}
         </div>
       </section>)}
     </div>
@@ -295,7 +281,7 @@ export default function AdminPaymentsPage() {
   </main>;
 }
 
-function OrderCard({ order, busyAction, onDecide, onCorrect, onRetry }: { order: Order; busyAction: string; onDecide: (id: string, decision: "confirmed" | "refused") => Promise<void>; onCorrect: (id: string) => Promise<void>; onRetry: (id: string) => Promise<void> }) {
+function OrderCard({ order, busyAction, onRefresh, onRetry }: { order: Order; busyAction: string; onRefresh: () => Promise<void>; onRetry: (id: string) => Promise<void> }) {
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
@@ -306,8 +292,7 @@ function OrderCard({ order, busyAction, onDecide, onCorrect, onRetry }: { order:
       {order.folders?.length ? <div>{order.folders.map((folder) => <section key={folder.id ?? folder.name}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name} · {money(item.unit_price_cents)}</li>)}</ul></section>)}</div> : null}
       {!communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
-        {communication.can_decide ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `decision:${communication.id}`} onClick={() => void onDecide(communication.id, "confirmed")}>Confirmar pagamento</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `decision:${communication.id}`} onClick={() => void onDecide(communication.id, "refused")}>Pagamento não localizado</MarkinaButton></div> : null}
-        {communication.can_correct ? <MarkinaButton variant="secondary" disabled={busyAction === `correction:${communication.id}`} onClick={() => void onCorrect(communication.id)}>Corrigir confirmação</MarkinaButton> : null}
+        <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
         {order.payment_message_snapshot ? <details><summary>Mensagem enviada nesta confirmação</summary><p>{order.payment_message_snapshot}</p></details> : null}
         <DeliveryState label="Aviso ao fotógrafo" delivery={communication.photographer_notification} busyAction={busyAction} onRetry={onRetry} />
         {communication.status !== "pending_review" ? <DeliveryState label="Resposta à cliente" delivery={communication.client_notification} busyAction={busyAction} onRetry={onRetry} /> : null}
