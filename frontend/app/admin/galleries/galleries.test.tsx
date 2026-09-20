@@ -275,3 +275,24 @@ describe("telas administrativas de galerias", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/derived-galleries/private-1/upload-batches/batch-open/close", expect.objectContaining({ method: "POST" }));
   });
 });
+
+
+it("exclui pasta própria privada com confirmação e atualiza a lista", async () => {
+  let deleted = false;
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (init?.method === "DELETE") { deleted = true; return Promise.resolve(new Response(null, { status: 204 })); }
+    const data = path.endsWith("/folders") ? { folders: deleted ? [] : [{ id: "own-folder", name: "Pasta exclusiva", status: "released", photo_count: 2 }] }
+      : path.endsWith("/photos") ? { photos: [] } : path.endsWith("/members") ? { members: [] }
+      : { id: "private-1", parent_gallery_id: "source-1", name: "Família", frozen: false, blocked: false };
+    return Promise.resolve(new Response(JSON.stringify(data), { status: 200 }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<GalleryDetailPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Excluir pasta Pasta exclusiva" }));
+  expect(deleted).toBe(false);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Excluir pasta Pasta exclusiva" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Excluir pasta Pasta exclusiva" })).toBeNull());
+  expect(fetchMock).toHaveBeenCalledWith("/api/admin/photo-folders/own-folder", expect.objectContaining({ method: "DELETE" }));
+});

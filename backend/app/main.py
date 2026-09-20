@@ -3674,7 +3674,7 @@ def delete_photo_folder(
     folder_id: UUID, request: Request, db: Session = Depends(db_session)
 ) -> Response:
     require_admin(request)
-    folder = db.get(PhotoFolder, folder_id)
+    folder = db.scalar(select(PhotoFolder).where(PhotoFolder.id == folder_id).with_for_update())
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
     if folder.derived_gallery_id:
@@ -3683,15 +3683,22 @@ def delete_photo_folder(
         )
     else:
         require_parent_gallery_mutable(db, folder.parent_gallery_id)
-    if folder.status == "released" or db.scalar(
-        select(PhotoAsset.id).where(PhotoAsset.folder_id == folder.id)
-    ):
-        raise HTTPException(
-            status_code=409, detail="Apenas pasta vazia em preparação pode ser excluída."
+    photos = list(db.scalars(select(PhotoAsset).where(
+        PhotoAsset.folder_id == folder.id
+    ).order_by(PhotoAsset.id).with_for_update()))
+    # Preflight comercial integral: nenhuma foto é removida se outra bloquear.
+    for photo in photos:
+        enforce_commercial_removal_or_409(
+            db, parent_gallery_id=folder.parent_gallery_id, photo_asset_id=photo.id
         )
+    paths_to_remove: list[Path] = []
+    for photo in photos:
+        paths_to_remove.extend(_delete_photo_records(db, photo))
+    db.flush()
     audit(db, "photo_folder.deleted", str(folder.id))
     db.delete(folder)
     db.commit()
+    _remove_photo_files(paths_to_remove)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -3782,6 +3789,14 @@ def delete_folder_photo_asset(
         parent_gallery_id=folder.parent_gallery_id,
         photo_asset_id=photo.id,
     )
+    paths_to_remove = _delete_photo_records(db, photo)
+    db.commit()
+    _remove_photo_files(paths_to_remove)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _delete_photo_records(db: Session, photo: PhotoAsset) -> list[Path]:
+    """Remove registros na transação do chamador; arquivos só após commit."""
     from app.preview_adjustment.cleanup import photo_files
 
     paths_to_remove = photo_files(photo.id)
@@ -3816,15 +3831,17 @@ def delete_folder_photo_asset(
         photo_asset_id=photo.id,
     )
     db.delete(photo)
-    audit(db, "photo_asset.deleted", str(photo_id))
-    db.commit()
+    audit(db, "photo_asset.deleted", str(photo.id))
+    return paths_to_remove
+
+
+def _remove_photo_files(paths_to_remove: list[Path]) -> None:
     for path in paths_to_remove:
         try:
             path.unlink(missing_ok=True)
         except OSError:
             # A limpeza física é idempotente. Uma nova rotina de mídia poderá remover o resíduo seguro.
             continue
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.delete("/admin/photo-folders/{folder_id}/photos")
@@ -3867,7 +3884,7 @@ def register_folder_photo_asset(
 ) -> dict[str, str]:
     """Registra uma nova foto administrativa em pasta de conteúdo."""
     require_admin(request)
-    folder = db.get(PhotoFolder, folder_id)
+    folder = db.scalar(select(PhotoFolder).where(PhotoFolder.id == folder_id).with_for_update())
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
     if folder.status not in {"preparing", "released"}:
