@@ -9188,6 +9188,7 @@ def correct_payment_confirmation(
 class PushSubscriptionInput(BaseModel):
     model_config = {"extra": "forbid"}
     subscription: dict
+    expected_identity: str | None = Field(default=None, max_length=80)
 
 
 @app.get("/push/subscription")
@@ -9219,6 +9220,8 @@ def register_push_subscription(payload: PushSubscriptionInput, request: Request,
     if not request.headers.get("origin"):
         raise HTTPException(status_code=403, detail="Origem da operação não autorizada.")
     require_same_origin(request)
+    if payload.expected_identity is not None and payload.expected_identity != f"{session.role}:{session.subject_id}":
+        raise HTTPException(status_code=409, detail="A conta mudou. Atualize a página e tente novamente.")
     enforce_rate_limit(db, "push.subscribe", str(session.subject_id),
                        request.client.host if request.client else "unknown")
     db.commit()  # falhas de validação também contam no limite
@@ -9243,6 +9246,9 @@ def unregister_push_subscription(request: Request, response: Response,
     if not request.headers.get("origin"):
         raise HTTPException(status_code=403, detail="Origem da operação não autorizada.")
     require_same_origin(request)
+    expected_identity = request.headers.get("x-push-identity")
+    if expected_identity is not None and expected_identity != f"{session.role}:{session.subject_id}":
+        raise HTTPException(status_code=409, detail="A conta mudou. Atualize a página e tente novamente.")
     raw = request.cookies.get(INSTALLATION_COOKIE)
     if raw:
         revoke_installation(db, push_fingerprint(raw), session)

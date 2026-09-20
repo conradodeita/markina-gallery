@@ -8,3 +8,11 @@
 .adminHeader nav { min-width:min(100%,420px); }
 @media(max-width:1100px) { .adminHeader nav { order:3; width:100%; flex-basis:100%; } .adminHeader .actions { margin-inline-start:auto; } }
 @media(max-width:600px) { .actions { width:100%; justify-content:flex-start; } }
+
+.invitation { width:min(440px, calc(100vw - 32px)); max-height:calc(100dvh - 40px); overflow:auto; padding:24px; margin:auto; border:1px solid var(--mk-border); border-radius:20px; color:var(--mk-ink); background:var(--mk-surface, #fff); box-shadow:0 16px 60px #0003; }
+.invitation::backdrop { background:#0007; }
+.invitation h2 { margin:8px 0 12px; font-size:1.45rem; line-height:1.25; }
+.invitation p { line-height:1.5; }
+.invitation .eyebrow { font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--mk-ink-muted); }
+.invitation .hint { font-size:.82rem; color:var(--mk-ink-muted); margin-bottom:24px; }
+.invitation .activate { background:var(--mk-ink); color:var(--mk-surface, #fff); }

@@ -135,3 +135,19 @@ def test_device_limit_and_natural_session_expiry(monkeypatch):
             subscribe(db, session, "three", subscription("https://fcm.googleapis.com/fcm/send/three"))
         session.expires_at = now() - timedelta(minutes=1)
         assert first.active  # fechar a página ou expirar cookie não cancela adesão
+
+
+def test_expected_identity_rejects_stale_activation_and_deactivation():
+    browser, _, _ = setup_private()
+    path = "/push/subscription"
+    identity = browser.get(path).json()["identity"]
+    payload = {"subscription": subscription(), "expected_identity": "client:outdated"}
+    headers = {"origin": "http://testserver"}
+    assert browser.post(path, json=payload, headers=headers).status_code == 409
+    assert browser.get(path).json()["active"] is False
+    payload["expected_identity"] = identity
+    assert browser.post(path, json=payload, headers=headers).status_code == 201
+    assert browser.delete(path, headers={**headers, "x-push-identity": "client:outdated"}).status_code == 409
+    assert browser.get(path).json()["active"] is True
+    assert browser.delete(path, headers={**headers, "x-push-identity": identity}).status_code == 204
+    assert browser.get(path).json()["active"] is False

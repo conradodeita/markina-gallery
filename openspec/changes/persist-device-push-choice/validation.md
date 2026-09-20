@@ -1,0 +1,9 @@
+# Validação e continuidade — 2026-09-20
+
+- Frontend completo: `npm test -- --maxWorkers=2`, **307 passed / 41 arquivos**, 191,51s. Inclui memória por admin/cliente, logout/login, inscrição ausente, reaproveitamento, permissão revogada, identidade trocada durante inscrição, falha de rede, logout concorrente, storage indisponível, preferências entre abas, convite/dispensa/Escape e worker.
+- A primeira execução ampla sem limite de workers pressionou RAM de 8 GB e teve timeout em teste não relacionado. Interrompida somente essa execução e repetida com dois workers; suíte inteira passou. Sem alterações em processos de terceiros.
+- Backend focado push: **22 passed**, 6,90s. Integração `test_push_subscriptions.py test_web_push.py test_notification_delivery.py test_private_upload_batches.py test_gallery_lifecycle.py -k "not migration and not backfill and not transition and not phone and not capability"`: **76 passed**, 496,52s. A suíte de exclusão revisada passou separadamente, 11 testes.
+- `tsc --noEmit`, ESLint dos arquivos push (zero erros/avisos), Ruff, build Next, OpenSpec strict e diff check passaram. Sem dependência nova nem migration deste job. Backend e UI usam campo expected_identity aditivo; versões antigas continuam aceitas, servidor define dono pela sessão.
+- Referências de browser estão no design. Adesão é por origem/conta/dispositivo; não restaura autorização após apagar dados, revogar permissão ou mudar de dispositivo. Erro de reparo automático oferece ação manual, sem loop de prompts.
+- Pendente 3.2: validação humana em aparelho real e homologação autenticada, incluindo permissões do sistema operacional e entrega pelo provedor. Os testes automatizados usam PushManager/Notification simulados; não comprovam entrega real.
+- Proprietário autorizou push/merge/deploy após conclusão do job; inventário e sequência em deployment.md. Nenhum envio real de push, exclusão de pasta real ou ajuste de segredo realizado no job local.

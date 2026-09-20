@@ -1,18 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import styles from "./push-control.module.css";
 
-type SubscriptionState = { available: boolean; active: boolean; public_key: string; identity: string };
-
-export async function clearDeviceNotifications() {
-  if (!("serviceWorker" in navigator)) return;
-  const registration = await navigator.serviceWorker.getRegistration("/");
-  registration?.active?.postMessage({ type: "CLEAR_PUSH_NOTIFICATIONS" });
-  const subscription = await registration?.pushManager?.getSubscription();
-  await subscription?.unsubscribe();
-}
+import {
+  cancelPushWork, clearDeviceNotifications, fetchPushState, PUSH_CHOICE_PREFIX, PUSH_LOGOUT_EVENT,
+  pushSupportMessage, pushWorkIsCurrent, readPushChoice, reconcileDevicePush,
+  registerDevicePush, rememberPushChoice, withPushDevice, type PushState,
+} from "./push-device";
+export { clearDeviceNotifications } from "./push-device";
 
 export function LogoutButton() {
   const [busy, setBusy] = useState(false);
@@ -20,10 +17,13 @@ export function LogoutButton() {
   const router = useRouter();
   async function logout() {
     setBusy(true); setError("");
+    cancelPushWork();
     try {
-      const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
-      if (!response.ok) throw new Error();
-      await clearDeviceNotifications().catch(() => {}); // A revogação no servidor já terminou.
+      await withPushDevice(async () => {
+        const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+        if (!response.ok) throw new Error();
+        await clearDeviceNotifications().catch(() => {}); // A revogação no servidor já terminou.
+      });
       router.replace("/"); router.refresh();
     } catch { setError("Não foi possível sair. Tente novamente."); }
     finally { setBusy(false); }
@@ -33,71 +33,114 @@ export function LogoutButton() {
 
 export function PushControl() {
   const pathname = usePathname();
-  const [loaded, setLoaded] = useState<{ path: string; data: SubscriptionState } | null>(null);
+  const [loaded, setLoaded] = useState<{ path: string; data: PushState } | null>(null);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const version = useRef(0);
   const [message, setMessage] = useState("");
+  const [dismissedIdentity, setDismissedIdentity] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
-    fetch("/api/push/subscription", { credentials: "same-origin", cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const data = await response.json();
-        if (current) { setLoaded({ path: pathname, data }); setMessage(""); }
-      }).catch(() => { if (current) setLoaded(null); });
-    return () => { current = false; };
+    const refresh = () => {
+      if (busyRef.current) return;
+      const iteration = ++version.current;
+      const deviceCurrent = pushWorkIsCurrent();
+      const isCurrent = () => current && version.current === iteration && deviceCurrent();
+      void withPushDevice(() => reconcileDevicePush(isCurrent)).then((data) => {
+        if (!isCurrent()) return;
+        setLoaded({ path: pathname, data });
+        setMessage(!data.active && readPushChoice(data.identity) === "enabled"
+          ? "Sua escolha está salva. Use Ativar notificações para concluir a conexão neste dispositivo." : "");
+      }).catch(() => { if (isCurrent()) setLoaded(null); });
+    };
+    const stop = () => { version.current += 1; setLoaded(null); };
+    const storage = (event: StorageEvent) => { if (event.key?.startsWith(PUSH_CHOICE_PREFIX)) refresh(); };
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("storage", storage);
+    window.addEventListener(PUSH_LOGOUT_EVENT, stop);
+    return () => { current = false; version.current += 1; window.removeEventListener("focus", refresh); window.removeEventListener("storage", storage); window.removeEventListener(PUSH_LOGOUT_EVENT, stop); };
   }, [pathname]);
 
   const state = loaded?.path === pathname ? loaded.data : null;
   async function toggle() {
-    if (!state || busy) return;
+    if (!state || busyRef.current) return;
     setMessage("");
     if (!state.active) {
-      const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-      const installed = window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone;
-      if (ios && !installed) { setMessage("Adicione o aplicativo à Tela de Início e abra por lá para ativar os avisos."); return; }
-      if (!window.isSecureContext || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-        setMessage("Este navegador não oferece notificações push."); return;
-      }
+      const unsupported = pushSupportMessage();
+      if (unsupported) { setMessage(unsupported); return; }
     }
-    setBusy(true);
+    busyRef.current = true; setBusy(true);
+    const iteration = ++version.current;
+    const deviceCurrent = pushWorkIsCurrent();
+    const isCurrent = () => version.current === iteration && deviceCurrent();
     try {
       if (state.active) {
-        const response = await fetch("/api/push/subscription", { method: "DELETE", credentials: "same-origin" });
-        if (!response.ok) throw new Error();
-        await clearDeviceNotifications().catch(() => {});
-        setLoaded({ path: pathname, data: { ...state, active: false } });
-        setMessage("Notificações desativadas neste dispositivo.");
-      } else {
-        // Solicitação nativa no gesto explícito, antes de qualquer chamada de rede.
-        const permission = await Notification.requestPermission();
-        if (permission !== "granted") { setMessage(permission === "denied" ? "Notificações bloqueadas. Libere nas permissões do navegador." : "Você pode ativar as notificações quando quiser."); return; }
-        await navigator.serviceWorker.register("/markina-sw.js", { scope: "/", updateViaCache: "none" });
-        const registration = await navigator.serviceWorker.ready;
-        const previous = await registration.pushManager.getSubscription();
-        if (previous) await previous.unsubscribe();
-        const publicKey = Uint8Array.from(atob(state.public_key.replace(/-/g, "+").replace(/_/g, "/")), (character) => character.charCodeAt(0));
-        const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: publicKey });
-        const identity = await fetch("/api/push/subscription", { credentials: "same-origin", cache: "no-store" });
-        if (!identity.ok || (await identity.json()).identity !== state.identity) {
-          await subscription.unsubscribe(); throw new Error();
+        await withPushDevice(async () => {
+          const latest = await fetchPushState();
+          if (!isCurrent() || latest.identity !== state.identity) throw new Error();
+          const response = await fetch("/api/push/subscription", { method: "DELETE", credentials: "same-origin", headers: { "X-Push-Identity": state.identity } });
+          if (!response.ok) throw new Error();
+          rememberPushChoice(state.identity, "disabled");
+          await clearDeviceNotifications().catch(() => {});
+        });
+        if (isCurrent()) {
+          setLoaded({ path: pathname, data: { ...state, active: false } });
+          setMessage("Notificações desativadas neste dispositivo.");
         }
-        const response = await fetch("/api/push/subscription", {
-          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: subscription.toJSON() }),
-        }).catch(async () => { await subscription.unsubscribe().catch(() => {}); throw new Error(); });
-        if (!response.ok) { await subscription.unsubscribe().catch(() => {}); throw new Error(); }
-        setLoaded({ path: pathname, data: { ...state, active: true } });
-        setMessage("Notificações ativadas neste dispositivo.");
+      } else {
+        if (readPushChoice(state.identity) !== "enabled") rememberPushChoice(state.identity, "dismissed");
+        // Quando necessária, a permissão nativa é solicitada no gesto, antes da rede.
+        const permission = Notification.permission === "granted" ? "granted" : Notification.permission === "denied" ? "denied" : await Notification.requestPermission();
+        if (permission !== "granted") {
+          rememberPushChoice(state.identity, "dismissed");
+          setMessage(permission === "denied" ? "Notificações bloqueadas. Libere nas permissões do navegador." : "Você pode ativar as notificações quando quiser.");
+          return;
+        }
+        const data = await withPushDevice(() => registerDevicePush(state, isCurrent));
+        if (isCurrent()) {
+          setLoaded({ path: pathname, data });
+          setMessage("Notificações ativadas. Sua escolha está salva neste dispositivo.");
+        }
       }
-    } catch { setMessage("Não foi possível atualizar as notificações. Tente novamente."); }
-    finally { setBusy(false); }
+    } catch { if (isCurrent()) setMessage("Não foi possível atualizar as notificações. Tente novamente."); }
+    finally { busyRef.current = false; setBusy(false); }
   }
 
   if (!state || (!state.available && !state.active)) return null;
+  const invite = !busy && !state.active && state.identity !== dismissedIdentity && readPushChoice(state.identity) === null && !pushSupportMessage() && Notification.permission !== "denied";
+  function dismissInvitation() {
+    if (!state) return;
+    rememberPushChoice(state.identity, "dismissed");
+    setDismissedIdentity(state.identity);
+  }
   return <div className={styles.control}>
     <button type="button" className={styles.button} disabled={busy} onClick={toggle} aria-label={state.active ? "Desativar notificações neste dispositivo" : "Ativar notificações"}>
       <span aria-hidden="true">{state.active ? "●" : "○"}</span> {busy ? "Aguarde…" : state.active ? "Notificações ativadas" : "Ativar notificações"}
     </button>
     {message && <span className={styles.message} role="status">{message}</span>}
+    {invite && <PushInvitation onActivate={toggle} onDismiss={dismissInvitation} />}
   </div>;
+}
+
+
+function PushInvitation({ onActivate, onDismiss }: { onActivate: () => void; onDismiss: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const id = useId();
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    element.showModal();
+    return () => { element.close(); };
+  }, []);
+  return <dialog ref={dialog} className={styles.invitation} aria-labelledby={`${id}-title`} aria-describedby={`${id}-detail`} onCancel={(event) => { event.preventDefault(); onDismiss(); }}>
+    <p className={styles.eyebrow}>Avisos no seu dispositivo</p>
+    <h2 id={`${id}-title`}>Quer receber notificações?</h2>
+    <p id={`${id}-detail`}>Receba avisos sobre novidades nas galerias e atualizações de pedidos. Sua escolha fica salva para esta conta neste navegador ou aplicativo.</p>
+    <p className={styles.hint}>Você pode desativar quando quiser. Em outro dispositivo ou após limpar os dados do navegador, será necessário ativar novamente.</p>
+    <div className={styles.actions}>
+      <button type="button" className={styles.button} onClick={onDismiss}>Agora não</button>
+      <button type="button" className={`${styles.button} ${styles.activate}`} onClick={onActivate}>Ativar avisos</button>
+    </div>
+  </dialog>;
 }
