@@ -44,8 +44,10 @@ def process_claimed_cleanup_job(
         max_pixels=settings.max_reference_pixels,
     )
     removed = 0
-    if request.reference_deleted_at is None and _utc(request.expires_at) <= current:
-        _delete_reference(request, store)
+    if (request.reference_deleted_at is None or request.reference_region_id is not None) and _utc(request.expires_at) <= current:
+        if request.reference_deleted_at is None:
+            _delete_reference(request, store)
+        request.reference_region_id = None
         removed += 1
         if request.status not in {
             "ready",

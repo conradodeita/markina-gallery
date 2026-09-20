@@ -114,6 +114,29 @@ describe("polling da busca facial", () => {
 });
 
 describe("jornada mobile e privacidade da referência", () => {
+  it("exige consentimento e envia o UUID da região sem arquivo ou recorte", async () => {
+    const created = { ...queued, reference_deleted: true };
+    const onResult = vi.fn();
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({ state:"consent_required",
+        manual_selection_available:true, minor_search_available:false, consent_version:"consent-v1" });
+      if (path.endsWith("/face-region-searches") && init?.method === "POST") return response(created, 202);
+      return response({detail:"not found"},404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FacialSearchPanel galleryId="gallery-1" regionId="region-opaque" result={null} onResult={onResult} />);
+    const submit = await screen.findByRole("button", {name:"Autorizar e procurar fotos"});
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    fireEvent.click(screen.getByRole("radio", {name:"Pessoa adulta"}));
+    fireEvent.click(screen.getByRole("checkbox", {name:/Autorizo, de forma livre/}));
+    fireEvent.submit(submit.closest("form")!);
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(created));
+    expect(fetchMock).toHaveBeenCalledWith("/api/public-galleries/gallery-1/face-region-searches",
+      expect.objectContaining({method:"POST", body:JSON.stringify({face_region_id:"region-opaque",
+        consent_version:"consent-v1",subject_declaration:"adult"})}));
+  });
+
   it("oferece fototeca e câmera separadas, envia JPEG e persiste somente o identificador opaco", async () => {
     const created = { ...queued, id: "opaque-request-2" };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
@@ -289,7 +312,7 @@ describe("jornada mobile e privacidade da referência", () => {
 
     expect(await screen.findByText(title)).toBeTruthy();
     expect(screen.getByText(guidance)).toBeTruthy();
-    expect(screen.getByText("Foto de referência eliminada")).toBeTruthy();
+    expect(screen.getByText("Sem imagem temporária nesta busca")).toBeTruthy();
     expect(document.querySelector("img[src^='data:'], img[src^='blob:']")).toBeNull();
     expect(document.body.textContent).not.toContain("private-reference-bytes");
   });

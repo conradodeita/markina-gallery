@@ -18,6 +18,8 @@ from app.auth import (
     FacialSearchNotificationOutbox,
     FacialSearchRequest,
     GalleryFacialPolicy,
+    MediaJob,
+    PhotoAnalysis,
     PhotoAsset,
     PhotoFaceEmbedding,
     now,
@@ -130,7 +132,8 @@ def facial_cleanup_proof(
     references = count(
         FacialSearchRequest,
         (FacialSearchRequest.parent_gallery_id == parent_gallery_id)
-        & (FacialSearchRequest.reference_locator_ciphertext.is_not(None)),
+        & ((FacialSearchRequest.reference_locator_ciphertext.is_not(None))
+           | (FacialSearchRequest.reference_region_id.is_not(None))),
     )
     notifications = count(
         FacialSearchNotificationOutbox,
@@ -153,6 +156,14 @@ def reconcile_invalid_facial_records(db: Session) -> FacialPurgeReport:
         GalleryFacialPolicy.status == "active"
     )
     valid_photo_ids = select(PhotoAsset.id).where(PhotoAsset.available.is_(True))
+    valid_index_photo_ids = select(PhotoAsset.id).where(
+        PhotoAsset.available.is_(True) | select(PhotoAnalysis.photo_asset_id).where(
+            PhotoAnalysis.photo_asset_id == PhotoAsset.id,
+            PhotoAnalysis.state.in_(("pending", "ready")),
+            PhotoAnalysis.deleted_at.is_(None), PhotoAnalysis.expires_at > now(),
+            select(MediaJob.id).where(MediaJob.photo_asset_id == PhotoAsset.id,
+                MediaJob.status.in_(("queued", "processing"))).correlate(PhotoAsset).exists(),
+        ).exists())
     embeddings = _delete_count(
         db,
         PhotoFaceEmbedding,
@@ -161,7 +172,7 @@ def reconcile_invalid_facial_records(db: Session) -> FacialPurgeReport:
     embeddings += _delete_count(
         db,
         PhotoFaceEmbedding,
-        PhotoFaceEmbedding.photo_asset_id.not_in(valid_photo_ids),
+        PhotoFaceEmbedding.photo_asset_id.not_in(valid_index_photo_ids),
     )
     candidates = _delete_count(
         db,
@@ -221,6 +232,12 @@ def purge_photo_records(
     photo_asset_id: UUID,
     exclude_job_id: UUID | None = None,
 ) -> FacialPurgeReport:
+    db.execute(update(FacialSearchRequest).where(
+        FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+        FacialSearchRequest.reference_region_id.in_(select(PhotoFaceEmbedding.id).where(
+            PhotoFaceEmbedding.photo_asset_id == photo_asset_id,
+            PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id)),
+    ).values(reference_region_id=None, status="cancelled", completed_at=now()))
     candidates = _delete_count(
         db,
         FacialSearchCandidate,
@@ -312,6 +329,9 @@ def purge_gallery_records(
         .execution_options(synchronize_session=False)
     )
     requests = request_result.rowcount or 0
+    db.execute(update(FacialSearchRequest).where(
+        FacialSearchRequest.parent_gallery_id == parent_gallery_id
+    ).values(reference_region_id=None))
     db.execute(
         update(FacialSearchRequest)
         .where(
@@ -363,6 +383,10 @@ def _cancel_and_detach_jobs(
         .execution_options(synchronize_session=False)
     )
     changed = result.rowcount or 0
+    db.execute(update(PhotoAnalysis).where(
+        PhotoAnalysis.photo_asset_id.in_(select(FacialJob.photo_asset_id).where(*all_criteria)),
+        PhotoAnalysis.state.in_(("pending", "receiving")),
+    ).values(state="failed"))
     db.execute(
         update(FacialJob)
         .where(*all_criteria)

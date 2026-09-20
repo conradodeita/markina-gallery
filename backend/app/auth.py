@@ -23,6 +23,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -1746,6 +1747,32 @@ class FacialLegalRepresentation(Base):
     )
 
 
+class PhotoAnalysis(Base):
+    """Lifecycle da fonte temporária; ausência da linha identifica o legado."""
+
+    __tablename__ = "photo_analysis"
+    __table_args__ = (
+        CheckConstraint("state IN ('receiving', 'pending', 'ready', 'failed', 'reupload_required')",
+                        name="ck_photo_analysis_state"),
+        CheckConstraint("width > 0 AND height > 0 AND source_bytes >= 0",
+                        name="ck_photo_analysis_dimensions"),
+    )
+    photo_asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("photo_asset.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_fingerprint: Mapped[str] = mapped_column(String(64))
+    source_bytes: Mapped[int] = mapped_column(Integer)
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    pipeline_version: Mapped[str] = mapped_column(String(80), default="highres-v1")
+    state: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class PhotoFaceEmbedding(Base):
     """Envelope cifrado de uma face indexada e sua qualidade técnica."""
 
@@ -1766,6 +1793,14 @@ class PhotoFaceEmbedding(Base):
             name="uq_face_embedding_versioned_photo_face",
         ),
         CheckConstraint("face_ordinal >= 0", name="ck_face_embedding_ordinal"),
+        CheckConstraint(
+            "(bbox_x IS NULL AND bbox_y IS NULL AND bbox_width IS NULL AND bbox_height IS NULL)"
+            " OR (bbox_x IS NOT NULL AND bbox_y IS NOT NULL"
+            " AND bbox_width IS NOT NULL AND bbox_height IS NOT NULL"
+            " AND bbox_x >= 0 AND bbox_y >= 0 AND bbox_width > 0 AND bbox_height > 0"
+            " AND bbox_x + bbox_width <= 1 AND bbox_y + bbox_height <= 1)",
+            name="ck_face_region_bounds",
+        ),
         CheckConstraint(
             "quality_band IN ('best', 'other')", name="ck_face_embedding_quality_band"
         ),
@@ -1792,6 +1827,15 @@ class PhotoFaceEmbedding(Base):
     )
     photo_asset_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     face_ordinal: Mapped[int] = mapped_column(Integer)
+    model_id: Mapped[str] = mapped_column(String(80), default="opencv-yunet-sface")
+    embedding_dimension: Mapped[int] = mapped_column(Integer, default=128)
+    pipeline_version: Mapped[str] = mapped_column(String(80), default="legacy-preview-v1")
+    detection_pass: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    detection_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_width: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_height: Mapped[float | None] = mapped_column(Float, nullable=True)
     model_version: Mapped[str] = mapped_column(String(120))
     quality_version: Mapped[str] = mapped_column(String(120))
     preview_fingerprint: Mapped[str] = mapped_column(String(64))
@@ -1809,6 +1853,8 @@ class FacialSearchRequest(Base):
     """Consulta durável; a referência fica em armazenamento temporário cifrado."""
 
     __tablename__ = "facial_search_request"
+    # Sem FK: reindexação pode remover a região; o worker falha fechado pelo UUID obsoleto.
+    reference_region_id: Mapped[UUID | None] = mapped_column(nullable=True)
     __table_args__ = (
         UniqueConstraint(
             "id", "parent_gallery_id", "client_id", name="uq_facial_search_scope"
@@ -1916,6 +1962,7 @@ class FacialSearchCandidate(Base):
     """Foto autorizada e ordenada, sem persistir similaridade ou identidade."""
 
     __tablename__ = "facial_search_candidate"
+    match_class: Mapped[str] = mapped_column(String(16), default="matched")
     __table_args__ = (
         ForeignKeyConstraint(
             ["search_request_id", "parent_gallery_id", "client_id"],

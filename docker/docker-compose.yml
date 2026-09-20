@@ -19,6 +19,13 @@ x-facial-environment: &facial-environment
   FACIAL_REFERENCE_ROOT: ${FACIAL_REFERENCE_ROOT:-/var/lib/markina/facial-references}
   FACIAL_REDIS_URL: ${FACIAL_REDIS_URL:-redis://redis:6379/0}
   FACIAL_MODEL_VERSION: ${FACIAL_MODEL_VERSION:-yunet-2023mar+sface-2021dec}
+  FACIAL_HIGHRES_ENABLED: ${FACIAL_HIGHRES_ENABLED:-false}
+  FACIAL_SOURCE_MAX_FILES: ${FACIAL_SOURCE_MAX_FILES:-64}
+  FACIAL_SOURCE_MAX_BYTES: ${FACIAL_SOURCE_MAX_BYTES:-2000000000}
+  FACIAL_SOURCE_TTL_SECONDS: ${FACIAL_SOURCE_TTL_SECONDS:-86400}
+  FACIAL_DETECTION_CONFIG_JSON: ${FACIAL_DETECTION_CONFIG_JSON:-}
+  FACIAL_AMBIGUOUS_THRESHOLD_MILLI: ${FACIAL_AMBIGUOUS_THRESHOLD_MILLI:-}
+  FACIAL_OVERLAY_AUTO_THRESHOLD: ${FACIAL_OVERLAY_AUTO_THRESHOLD:-4}
   FACIAL_QUALITY_VERSION: ${FACIAL_QUALITY_VERSION:-opencv-technical-v1}
   FACIAL_CALIBRATION_VERSION: ${FACIAL_CALIBRATION_VERSION:-}
   FACIAL_LEGAL_NOTICE_VERSION: ${FACIAL_LEGAL_NOTICE_VERSION:-}
@@ -412,10 +419,12 @@ services:
       <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
       FACIAL_WORKER_CLASS: index
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
     volumes:
       - media-derivatives:/var/lib/markina/derivatives:ro
+      - media-source:/var/lib/markina/source:ro
       - facial-references:/var/lib/markina/facial-references
     depends_on:
       migrate:

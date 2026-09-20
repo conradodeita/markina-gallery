@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import FacialJob
+from app.auth import FacialJob, GalleryFacialPolicy
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher
 from app.facial.engine import replace_photo_index
@@ -39,7 +40,22 @@ def process_claimed_index_job(
         settings=settings,
         parent_gallery_id=job.parent_gallery_id,
     ):
+        from app.facial.lifecycle import analysis_for
+        analysis = analysis_for(db, job.photo_asset_id, lock=True)
+        if analysis:
+            analysis.state = "failed"
         return repository.cancel(db, claim)
+    # Mantém lease/fonte serializados durante análise; outro consumidor usa SKIP LOCKED.
+    repository._leased(db, claim)
+    from app.facial.lifecycle import analysis_for, source_job_key
+    analysis = analysis_for(db, job.photo_asset_id, lock=True)
+    policy = db.scalar(select(GalleryFacialPolicy).where(
+        GalleryFacialPolicy.parent_gallery_id == job.parent_gallery_id))
+    if analysis and policy and job.idempotency_key != source_job_key(job.photo_asset_id, analysis, policy):
+        return repository.cancel(db, claim)  # um reupload já possui outra geração durável
+    if job.attempts > 3:
+        return repository.fail(db, claim, TimeoutError("Orçamento de tentativas excedido."),
+                               max_attempts=3, retry_delay_seconds=5)
     indexed = replace_photo_index(
         db,
         photo_id=job.photo_asset_id,
@@ -48,6 +64,8 @@ def process_claimed_index_job(
         cipher=cipher,
         settings=settings,
     )
+    if analysis:
+        analysis.metrics = {**analysis.metrics, "attempts": job.attempts}
     repository.progress(
         db,
         claim,

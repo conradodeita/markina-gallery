@@ -130,6 +130,7 @@ def create_search_request(
     settings: FacialSettings,
     reference_store: FacialReferenceStore | None = None,
     repository: FacialJobRepository | None = None,
+    reference_region_id: UUID | None = None,
 ) -> FacialSearchRequest:
     policy = read_policy(db, parent_gallery_id)
     if (
@@ -164,6 +165,10 @@ def create_search_request(
     elif representation_reference:
         raise FacialSearchError("Representação não é aplicável a uma consulta adulta.")
     require_search_capacity(db, settings)
+    if reference_region_id:
+        from app.facial.regions import authorized_region
+        authorized_region(db, gallery_id=parent_gallery_id, client_id=client_id,
+                          region_id=reference_region_id, settings=settings)
 
     request_id = uuid4()
     snapshot = _build_snapshot(
@@ -178,6 +183,8 @@ def create_search_request(
     snapshot_pending = any(item.status == "pending" for item in snapshot)
     item = FacialSearchRequest(
         id=request_id,
+        reference_region_id=reference_region_id,
+        reference_deleted_at=now() if reference_region_id else None,
         parent_gallery_id=parent_gallery_id,
         client_id=client_id,
         policy_id=policy.id,
@@ -204,16 +211,17 @@ def create_search_request(
         max_bytes=settings.max_reference_bytes,
         max_pixels=settings.max_reference_pixels,
     )
-    stored = store.store(
+    stored = None if reference_region_id else store.store(
         request_id=item.id,
         gallery_id=parent_gallery_id,
         model_version=item.model_version,
         data_version=item.consent_version,
         payload=payload,
     )
-    item.reference_locator_ciphertext = stored.locator.ciphertext
-    item.reference_locator_nonce = stored.locator.nonce
-    item.reference_key_id = stored.locator.key_id
+    if stored:
+        item.reference_locator_ciphertext = stored.locator.ciphertext
+        item.reference_locator_nonce = stored.locator.nonce
+        item.reference_key_id = stored.locator.key_id
     try:
         _retire_prior_searches(
             db,
@@ -255,13 +263,14 @@ def create_search_request(
         )
         db.flush()
     except Exception:
-        store.delete(
-            request_id=item.id,
-            gallery_id=parent_gallery_id,
-            model_version=item.model_version,
-            data_version=item.consent_version,
-            locator=stored.locator,
-        )
+        if stored:
+            store.delete(
+                request_id=item.id,
+                gallery_id=parent_gallery_id,
+                model_version=item.model_version,
+                data_version=item.consent_version,
+                locator=stored.locator,
+            )
         raise
     return item
 
@@ -367,6 +376,7 @@ def _retire_prior_searches(
             prior.reference_key_id = None
             prior.reference_deleted_at = now()
         prior.status = "cancelled"
+        prior.reference_region_id = None
         prior.completed_at = prior.completed_at or now()
         prior.updated_at = now()
         db.execute(
@@ -536,6 +546,7 @@ def cancel_search_request(
         item.reference_key_id = None
         item.reference_deleted_at = now()
     item.status = "cancelled"
+    item.reference_region_id = None
     item.completed_at = item.completed_at or now()
     item.updated_at = now()
     db.execute(
@@ -652,6 +663,7 @@ def search_result_payload(
             "photo_id": str(candidate.photo_asset_id),
             "rank": candidate.rank,
             "quality_band": candidate.quality_band,
+            "match_class": candidate.match_class,
         }
         for candidate in candidates
     ]
