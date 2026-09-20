@@ -1711,7 +1711,7 @@ def test_facial_result_api_creates_no_commercial_state_until_explicit_selection(
         )
         assert result.status_code == 200
         assert result.json()["candidates"] == [
-            {"photo_id": str(photo_id), "rank": 1, "quality_band": "best"}
+            {"photo_id": str(photo_id), "rank": 1, "quality_band": "best", "match_class": "matched"}
         ]
         assert commercial_counts() == (0, 0, 0, 0, 0)
 

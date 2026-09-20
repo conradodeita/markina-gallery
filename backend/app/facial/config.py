@@ -109,6 +109,7 @@ class FacialSettings:
     search_queue_max_depth: int = 500
     search_queue_max_age_seconds: int = 300
     search_retry_after_seconds: int = 15
+    ambiguous_threshold_milli: int | None = None
 
     @property
     def active_key(self) -> bytes:
@@ -145,6 +146,10 @@ def facial_settings_from_environment(
         minor_policy_version=_text("FACIAL_MINOR_POLICY_VERSION"),
         similarity_threshold_milli=_integer(
             "FACIAL_SIMILARITY_THRESHOLD_MILLI", 750, minimum=0, maximum=1000
+        ),
+        ambiguous_threshold_milli=(
+            _integer("FACIAL_AMBIGUOUS_THRESHOLD_MILLI", 750, minimum=0, maximum=1000)
+            if _text("FACIAL_AMBIGUOUS_THRESHOLD_MILLI") else None
         ),
         active_key_id=_text("FACIAL_AEAD_ACTIVE_KEY_ID"),
         aead_keys=_keys(),
@@ -188,6 +193,8 @@ def facial_settings_from_environment(
     )
     if not settings.queue_name or len(settings.queue_name) > 120:
         raise FacialConfigurationError("FACIAL_QUEUE_NAME é inválida.")
+    if settings.ambiguous_threshold_milli is not None and settings.ambiguous_threshold_milli > settings.similarity_threshold_milli:
+        raise FacialConfigurationError("Faixa ambígua não pode ultrapassar o limiar de correspondência.")
     if settings.enabled:
         _validate_enabled(settings, verify_runtime_assets=verify_runtime_assets)
     return settings

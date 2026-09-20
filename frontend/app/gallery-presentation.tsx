@@ -36,8 +36,10 @@ type GalleryPresentationProps<TPhoto extends GalleryPresentationPhoto> = {
   renderPhotoDetails?: (photo: TPhoto) => ReactNode;
   renderPhotoMarkers?: (photo: TPhoto) => ReactNode;
   featuredGroups?: Array<{ id: string; title: string; detail: string; photos: TPhoto[] }>;
+  separateFeaturedPhotos?: boolean;
   renderFeaturedPhotoMarkers?: (photo: TPhoto) => ReactNode;
   renderExpandedPhotoContent?: (photo: TPhoto) => ReactNode;
+  renderExpandedMedia?: (photo: TPhoto, close: () => void) => ReactNode;
   onExpandedPhotoChange?: (photo: TPhoto | null) => void;
   showCopyrightProtectionDialog?: boolean;
   showHero?: boolean;
@@ -70,8 +72,10 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   renderPhotoDetails,
   renderPhotoMarkers,
   featuredGroups = [],
+  separateFeaturedPhotos = false,
   renderFeaturedPhotoMarkers,
   renderExpandedPhotoContent,
+  renderExpandedMedia,
   onExpandedPhotoChange,
   showCopyrightProtectionDialog = false,
   showHero = true,
@@ -86,7 +90,9 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   const touchStartX = useRef<number | null>(null);
   const photos = useMemo(() => availableFolders.flatMap((folder) => folder.photos), [availableFolders]);
   const activeFolder = availableFolders.find((folder) => folder.id === activeFolderId) ?? availableFolders[0];
-  const visibleFolders = folderDisplayMode === "sequential" ? availableFolders : activeFolder ? [activeFolder] : [];
+  const featuredIds = new Set(featuredGroups.flatMap((group) => group.photos.map((photo) => photo.id)));
+  const visibleFolders = (folderDisplayMode === "sequential" ? availableFolders : activeFolder ? [activeFolder] : [])
+    .map((folder) => separateFeaturedPhotos ? { ...folder, photos: folder.photos.filter((photo) => !featuredIds.has(photo.id)) } : folder);
   const expandedIndex = photos.findIndex((photo) => photo.id === expandedPhotoId);
   const expandedPhoto = expandedIndex >= 0 ? photos[expandedIndex] : null;
 
@@ -161,8 +167,10 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
     fontSize: titleStyle?.fontSize ? `clamp(12px, 4cqi, ${titleStyle.fontSize}px)` : undefined,
   };
   const renderPhoto = (photo: TPhoto, markers = renderPhotoMarkers) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
+    <div className="gallery-presentation-photo-frame">
     <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => openExpanded(photo)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
     {markers ? <div className="gallery-presentation-photo-markers">{markers(photo)}</div> : null}
+    </div>
     <div className="gallery-presentation-photo-details"><strong>{photo.name}</strong>{renderPhotoDetails?.(photo)}</div>
   </article>;
 
@@ -187,7 +195,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
         </div>
       </div> : null}
 
-      {featuredGroups.some((group) => group.photos.length) ? <section className="gallery-featured-results" aria-labelledby="gallery-featured-title"><header><p className="eyebrow">Filtro da sua busca</p><h2 id="gallery-featured-title">Possibilidades encontradas</h2><p>Confira os resultados e selecione apenas as fotos que desejar. O acervo completo continua abaixo.</p></header>{featuredGroups.filter((group) => group.photos.length).map((group) => <section key={group.id} aria-labelledby={`featured-${group.id}`}><div className="gallery-presentation-collection-heading"><div><h3 id={`featured-${group.id}`}>{group.title}</h3><p>{group.detail}</p></div><span>{group.photos.length} foto{group.photos.length === 1 ? "" : "s"}</span></div><div className="gallery-presentation-grid">{group.photos.map((photo) => renderPhoto(photo, renderFeaturedPhotoMarkers ?? renderPhotoMarkers))}</div></section>)}</section> : null}
+      {featuredGroups.some((group) => group.photos.length) ? <section className="gallery-featured-results" aria-labelledby="gallery-featured-title"><header><p className="eyebrow">Filtro da sua busca</p><h2 id="gallery-featured-title">Possibilidades encontradas</h2><p>Confira os resultados e selecione apenas as fotos que desejar. {separateFeaturedPhotos ? "As outras fotos continuam abaixo." : "O acervo completo continua abaixo."}</p></header>{featuredGroups.filter((group) => group.photos.length).map((group) => <section key={group.id} aria-labelledby={`featured-${group.id}`}><div className="gallery-presentation-collection-heading"><div><h3 id={`featured-${group.id}`}>{group.title}</h3><p>{group.detail}</p></div><span>{group.photos.length} foto{group.photos.length === 1 ? "" : "s"}</span></div><div className="gallery-presentation-grid">{group.photos.map((photo) => renderPhoto(photo, renderFeaturedPhotoMarkers ?? renderPhotoMarkers))}</div></section>)}</section> : null}
 
       {folderDisplayMode === "individual" && availableFolders.length > 1 ? (
         <section className="gallery-presentation-folder-section" aria-labelledby="gallery-folders-title">
@@ -200,7 +208,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
 
       {visibleFolders.length ? visibleFolders.map((folder) => (
         <section className="gallery-presentation-collection" aria-labelledby={`folder-${folder.id}`} key={folder.id}>
-          <div className="gallery-presentation-collection-heading"><div><p className="eyebrow">Fotos protegidas</p><h2 id={`folder-${folder.id}`}>{folder.name}</h2></div><span>{folder.photos.length} foto{folder.photos.length === 1 ? "" : "s"}</span></div>
+          <div className="gallery-presentation-collection-heading"><div><p className="eyebrow">{separateFeaturedPhotos ? "Outras fotos" : "Fotos protegidas"}</p><h2 id={`folder-${folder.id}`}>{folder.name}</h2></div><span>{folder.photos.length} foto{folder.photos.length === 1 ? "" : "s"}</span></div>
           <div className="gallery-presentation-grid">
             {folder.photos.map((photo) => renderPhoto(photo))}
           </div>
@@ -235,9 +243,10 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
               <span>Prévia protegida</span>
               <button type="button" className="gallery-presentation-close" onClick={closeExpanded}>Fechar</button>
             </div>
-            <div className="gallery-presentation-dialog-media gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
+            {renderExpandedMedia ? <div onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>{renderExpandedMedia(expandedPhoto, closeExpanded)}</div> : <div className="gallery-presentation-dialog-media gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
               <img src={expandedPhoto.previewUrl} alt={`Prévia protegida ampliada de ${expandedPhoto.name}`} draggable={false} width={expandedPhoto.width ?? undefined} height={expandedPhoto.height ?? undefined} />
-            </div>
+            </div>}
+            {renderPhotoMarkers ? <div className="gallery-presentation-dialog-selection" aria-label="Selecionar fotografia">{renderPhotoMarkers(expandedPhoto)}</div> : null}
             {renderExpandedPhotoContent ? <div className="gallery-presentation-dialog-context">{renderExpandedPhotoContent(expandedPhoto)}</div> : null}
             <div className="gallery-presentation-dialog-footer">
               <strong>{expandedPhoto.name}</strong>

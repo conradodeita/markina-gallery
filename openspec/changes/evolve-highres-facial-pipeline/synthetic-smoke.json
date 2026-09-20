@@ -1,0 +1,571 @@
+{
+  "host": {
+    "architecture": "AMD64",
+    "cpu_count": 8,
+    "opencv_threads": 1
+  },
+  "synthetic": true,
+  "config": {
+    "global_side": 1600,
+    "multiscale_side": 2400,
+    "tile_side": 1024,
+    "overlap": 0.25,
+    "nms_iou": 0.4,
+    "max_tiles": 64,
+    "max_candidates": 2048,
+    "max_faces": 256,
+    "confidence": 0.75,
+    "difficult_confidence": 0.85,
+    "group_count": 4,
+    "small_face_fraction": 0.06,
+    "large_face_fraction": 0.18
+  },
+  "corpus_sha256": "c599c33488180547eea50f3b276f0fc0db9f47a5442c018629579444c666d32e",
+  "timing_scope": "legacy: derived JPEG + detector + embeddings; highres: oriented source + detector + embeddings; excludes DB and presentation",
+  "models_sha256": "f02f392c16b92977640f0f050a2fe61c836741d7bf876e58752b92f9fa4305dc",
+  "runs": {
+    "legacy": {
+      "detection": {
+        "validation:synthetic_no_face": {
+          "ground_truth": 0,
+          "detected_truth": 0,
+          "false_detections": 0,
+          "duplicates": 0,
+          "photos": 3,
+          "recall": null
+        }
+      },
+      "retrieval": {},
+      "seconds": 2.4071780999656767,
+      "cpu_seconds": 2.203125,
+      "peak_rss_bytes": 422068224,
+      "photos_per_minute": 74.77635327546665,
+      "megapixels_per_second": 14.523229502835077,
+      "latency_p50_p95": [
+        0.7102092000422999,
+        1.3507422599999699
+      ],
+      "photos": [
+        {
+          "sample": 0,
+          "seconds": 0.2743614999926649,
+          "gallery_as_query_diagnostic": "no_face"
+        },
+        {
+          "sample": 1,
+          "seconds": 1.4219125999952666,
+          "gallery_as_query_diagnostic": "no_face"
+        },
+        {
+          "sample": 2,
+          "seconds": 0.7102092000422999,
+          "gallery_as_query_diagnostic": "no_face"
+        }
+      ]
+    },
+    "highres": {
+      "detection": {
+        "validation:synthetic_no_face": {
+          "ground_truth": 0,
+          "detected_truth": 0,
+          "false_detections": 0,
+          "duplicates": 0,
+          "photos": 3,
+          "recall": null
+        }
+      },
+      "retrieval": {},
+      "seconds": 16.4248161999858,
+      "cpu_seconds": 15.09375,
+      "peak_rss_bytes": 539598848,
+      "photos_per_minute": 10.95902674394345,
+      "megapixels_per_second": 2.1284865276014613,
+      "latency_p50_p95": [
+        4.468167599989101,
+        10.94354924998479
+      ],
+      "photos": [
+        {
+          "sample": 0,
+          "seconds": 0.2929551999550313,
+          "gallery_as_query_diagnostic": "no_face",
+          "width": 1200,
+          "height": 800,
+          "megapixels": 0.96,
+          "elapsed_ms": 292,
+          "passes": [
+            {
+              "pass": "global",
+              "width": 1200,
+              "height": 800,
+              "scale": 1.0
+            }
+          ],
+          "reasons": [],
+          "tiles": 0,
+          "budget_exhausted": false,
+          "raw_detections": 0,
+          "deduplicated": 0,
+          "embedding_successes": 0,
+          "embedding_failures": 0,
+          "config": {
+            "global_side": 1600,
+            "multiscale_side": 2400,
+            "tile_side": 1024,
+            "overlap": 0.25,
+            "nms_iou": 0.4,
+            "max_tiles": 64,
+            "max_candidates": 2048,
+            "max_faces": 256,
+            "confidence": 0.75,
+            "difficult_confidence": 0.85,
+            "group_count": 4,
+            "small_face_fraction": 0.06,
+            "large_face_fraction": 0.18
+          },
+          "model": "opencv-yunet-sface",
+          "model_version": "yunet-2023mar+sface-2021dec"
+        },
+        {
+          "sample": 1,
+          "seconds": 11.66303609998431,
+          "gallery_as_query_diagnostic": "no_face",
+          "width": 6000,
+          "height": 4000,
+          "megapixels": 24.0,
+          "elapsed_ms": 11641,
+          "passes": [
+            {
+              "pass": "global",
+              "width": 1600,
+              "height": 1066,
+              "scale": 0.26666666666666666
+            },
+            {
+              "pass": "multiscale",
+              "width": 2400,
+              "height": 1600,
+              "scale": 0.4
+            },
+            {
+              "pass": "tile:0",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:1",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:2",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:3",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:4",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:5",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:6",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:7",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:8",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:9",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:10",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:11",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:12",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:13",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:14",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:15",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:16",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:17",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:18",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:19",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:20",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:21",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:22",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:23",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:24",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:25",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:26",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:27",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:28",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:29",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:30",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:31",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:32",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:33",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:34",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:35",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:36",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:37",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:38",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:39",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            }
+          ],
+          "reasons": [
+            "global_empty",
+            "resolution"
+          ],
+          "tiles": 40,
+          "budget_exhausted": false,
+          "raw_detections": 0,
+          "deduplicated": 0,
+          "embedding_successes": 0,
+          "embedding_failures": 0,
+          "config": {
+            "global_side": 1600,
+            "multiscale_side": 2400,
+            "tile_side": 1024,
+            "overlap": 0.25,
+            "nms_iou": 0.4,
+            "max_tiles": 64,
+            "max_candidates": 2048,
+            "max_faces": 256,
+            "confidence": 0.75,
+            "difficult_confidence": 0.85,
+            "group_count": 4,
+            "small_face_fraction": 0.06,
+            "large_face_fraction": 0.18
+          },
+          "model": "opencv-yunet-sface",
+          "model_version": "yunet-2023mar+sface-2021dec"
+        },
+        {
+          "sample": 2,
+          "seconds": 4.468167599989101,
+          "gallery_as_query_diagnostic": "no_face",
+          "width": 2500,
+          "height": 4000,
+          "megapixels": 10.0,
+          "elapsed_ms": 4461,
+          "passes": [
+            {
+              "pass": "global",
+              "width": 1000,
+              "height": 1600,
+              "scale": 0.4
+            },
+            {
+              "pass": "multiscale",
+              "width": 1500,
+              "height": 2400,
+              "scale": 0.6
+            },
+            {
+              "pass": "tile:0",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:1",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:2",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:3",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:4",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:5",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:6",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:7",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:8",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:9",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:10",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:11",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:12",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:13",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            },
+            {
+              "pass": "tile:14",
+              "width": 1024,
+              "height": 1024,
+              "scale": 1.0
+            }
+          ],
+          "reasons": [
+            "global_empty",
+            "resolution"
+          ],
+          "tiles": 15,
+          "budget_exhausted": false,
+          "raw_detections": 0,
+          "deduplicated": 0,
+          "embedding_successes": 0,
+          "embedding_failures": 0,
+          "config": {
+            "global_side": 1600,
+            "multiscale_side": 2400,
+            "tile_side": 1024,
+            "overlap": 0.25,
+            "nms_iou": 0.4,
+            "max_tiles": 64,
+            "max_candidates": 2048,
+            "max_faces": 256,
+            "confidence": 0.75,
+            "difficult_confidence": 0.85,
+            "group_count": 4,
+            "small_face_fraction": 0.06,
+            "large_face_fraction": 0.18
+          },
+          "model": "opencv-yunet-sface",
+          "model_version": "yunet-2023mar+sface-2021dec"
+        }
+      ]
+    }
+  },
+  "execution_note": "Pipelines em processos Windows distintos; outros testes locais ativos. Smoke sem rostos; n\u00e3o representa recall nem tuning ARM.",
+  "numpy": {
+    "regions": 8000,
+    "dimension": 128,
+    "matrix_bytes": 4096000,
+    "p50_ms": 0.7227000023704022,
+    "p95_ms": 3.1426900008227663,
+    "includes_database_decryption": false
+  }
+}

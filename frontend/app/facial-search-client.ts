@@ -31,7 +31,10 @@ export type FacialCandidate = {
   photo_id: string;
   rank: number;
   quality_band: "best" | "other";
+  match_class?: "matched" | "ambiguous";
 };
+
+export type FaceRegion = { id: string; x: number; y: number; width: number; height: number };
 
 export type FacialSearchResult = {
   id: string;
@@ -98,6 +101,15 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const facialSearchApi = {
+  regions: (galleryId: string, photoId: string) =>
+    jsonRequest<{ regions: FaceRegion[]; auto_threshold: number }>(`/api/public-galleries/${galleryId}/photos/${photoId}/face-regions`),
+  createFromRegion: (galleryId: string, regionId: string, consentVersion: string,
+    subjectDeclaration: "adult" | "minor", representationReference?: string) =>
+    jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/face-region-searches`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ face_region_id: regionId, consent_version: consentVersion,
+        subject_declaration: subjectDeclaration, representation_reference: representationReference }),
+    }),
   availability: (galleryId: string) =>
     jsonRequest<FacialSearchAvailability>(`/api/public-galleries/${galleryId}/facial-search`),
   create: (

@@ -142,24 +142,24 @@ def process_claimed_search_job(
 
         request.status = "validating_reference"
         db.commit()
-        payload = store.load(
-            request_id=request.id,
-            gallery_id=request.parent_gallery_id,
-            model_version=request.model_version,
-            data_version=request.consent_version,
-            locator=_reference_locator(request),
-        )
-        analysis = analyze_query(provider.observe_bytes(payload))
-        if analysis.status != "ready" or analysis.observation is None:
-            _finish_request(
-                db,
-                request,
-                status=analysis.status,
-                store=store,
-                cipher=cipher,
-                settings=settings,
+        if request.reference_region_id:
+            from app.facial.regions import authorized_region, region_embedding
+            region = authorized_region(db, gallery_id=request.parent_gallery_id, client_id=request.client_id,
+                                       region_id=request.reference_region_id, settings=settings)
+            query_embedding = region_embedding(region, cipher, settings)
+        else:
+            payload = store.load(
+                request_id=request.id,
+                gallery_id=request.parent_gallery_id,
+                model_version=request.model_version,
+                data_version=request.consent_version,
+                locator=_reference_locator(request),
             )
-            return repository.complete(db, claim)
+            analysis = analyze_query(provider.observe_bytes(payload))
+            if analysis.status != "ready" or analysis.observation is None:
+                _finish_request(db, request, status=analysis.status, store=store, cipher=cipher, settings=settings)
+                return repository.complete(db, claim)
+            query_embedding = analysis.observation.embedding
 
         request.status = "searching"
         db.commit()
@@ -171,11 +171,12 @@ def process_claimed_search_job(
         matches = search_gallery_index(
             db,
             gallery_id=request.parent_gallery_id,
-            query_embedding=analysis.observation.embedding,
+            query_embedding=query_embedding,
             cipher=cipher,
             settings=settings,
             threshold_milli=settings.similarity_threshold_milli,
             allowed_fingerprints=fingerprints,
+            ambiguous_threshold_milli=settings.ambiguous_threshold_milli,
         )
         request.compare_done = request.compare_total
         request.status = "ranking"
@@ -197,6 +198,7 @@ def process_claimed_search_job(
                 photo_asset_id=match.photo_id,
                 rank=rank,
                 quality_band=match.quality_band,
+                match_class=match.match_class,
                 expires_at=candidate_expiry,
             )
             for rank, match in enumerate(matches, start=1)
@@ -260,6 +262,19 @@ def process_claimed_search_job(
 def _request_is_authorized(
     db: Session, request: FacialSearchRequest, settings: FacialSettings
 ) -> bool:
+    if request.consent_version != settings.consent_version:
+        return False
+    if request.subject_declaration == "minor":
+        from app.facial.representation import (
+            FacialLegalRepresentationError,
+            require_valid_legal_representation,
+        )
+        try:
+            require_valid_legal_representation(db, representation_reference=request.representation_reference,
+                client_id=request.client_id, parent_gallery_id=request.parent_gallery_id,
+                terms_version=settings.minor_policy_version)
+        except FacialLegalRepresentationError:
+            return False
     gallery = db.get(ParentGallery, request.parent_gallery_id)
     registration = db.scalar(
         select(ParentGalleryRegistration.id).where(
@@ -407,6 +422,7 @@ def _finish_request(
 ) -> None:
     _delete_reference(request, store)
     request.status = status
+    request.reference_region_id = None
     request.completed_at = now()
     request.updated_at = now()
     db.add(

@@ -204,19 +204,40 @@ def _record_attempt(
 def process_next_media_job() -> bool:
     """Reserva e executa um job pendente, retornando se havia trabalho."""
     with SessionLocal() as db:
+        from app.auth import PhotoAnalysis
+        from app.facial.lifecycle import media_can_proceed
+
+        # Só jobs do lifecycle novo: retentativa limitada e recuperação de crash.
+        recoverable = list(db.scalars(select(MediaJob).join(PhotoAnalysis,
+            PhotoAnalysis.photo_asset_id == MediaJob.photo_asset_id).where(
+                MediaJob.kind == "generate_derivatives",
+                or_((MediaJob.status == "processing") & (MediaJob.updated_at < now() - timedelta(minutes=10)),
+                    (MediaJob.status == "failed") & (MediaJob.updated_at < now() - timedelta(seconds=30))),
+                MediaJob.attempts < 3,
+                PhotoAnalysis.state.in_(("ready", "failed")),
+            ).with_for_update(of=MediaJob, skip_locked=True).limit(64)))
+        for stale in recoverable:
+            stale.status = "queued"
+        db.flush()
         job = db.scalar(
             select(MediaJob)
             .where(MediaJob.kind == "generate_derivatives", MediaJob.status == "queued")
+            .where(~select(PhotoAnalysis.photo_asset_id).where(
+                PhotoAnalysis.photo_asset_id == MediaJob.photo_asset_id,
+                PhotoAnalysis.state.in_(("pending", "receiving")),
+            ).exists())
             .order_by(MediaJob.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
         if not job:
+            db.commit()
             return False
         job.status = "processing"
         job.attempts += 1
         job.updated_at = now()
         db.commit()
+        db.refresh(job, with_for_update=True)
 
         photo = db.get(PhotoAsset, job.photo_asset_id)
         if not photo:
@@ -225,6 +246,10 @@ def process_next_media_job() -> bool:
             job.updated_at = now()
             db.commit()
             return True
+        if not media_can_proceed(db, photo.id):
+            job.status = "queued"
+            db.commit()
+            return False
         derivatives = {
             item.variant: item
             for item in db.scalars(
@@ -694,6 +719,7 @@ def main() -> None:
         # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
         with SessionLocal() as batch_db:
             process_ready_batches(batch_db)
+        process_highres_cleanup()
         process_next_notification("push")
         process_next_notification("whatsapp")
         if not (
@@ -709,6 +735,20 @@ def main() -> None:
             or process_admin_security_cleanup()
         ):
             time.sleep(2)
+
+
+_last_highres_cleanup = 0.0
+
+
+def process_highres_cleanup() -> bool:
+    global _last_highres_cleanup
+    instant = time.monotonic()
+    if instant - _last_highres_cleanup < 30:
+        return False
+    _last_highres_cleanup = instant
+    from app.facial.lifecycle import cleanup_sources
+    with SessionLocal() as db:
+        return cleanup_sources(db) > 0
 
 
 _last_otp_privacy_cleanup = 0.0

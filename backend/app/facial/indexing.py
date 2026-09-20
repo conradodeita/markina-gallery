@@ -102,6 +102,11 @@ def enqueue_photo_index_if_eligible(
 ) -> FacialJob | None:
     """Enfileira um único evento; jamais torna a prévia dependente da face."""
 
+    from app.facial.lifecycle import analysis_for
+
+    if analysis_for(db, photo.id):
+        return None  # opt-in persistido: nunca reescaneia prévia, mesmo após rollback da flag
+
     try:
         active = settings or facial_settings_from_environment(
             verify_runtime_assets=False

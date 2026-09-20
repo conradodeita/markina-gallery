@@ -247,8 +247,26 @@ class FacialJobRepository:
         item.lease_token = None
         item.lease_expires_at = None
         current = now()
+        if item.kind == "index" and item.photo_asset_id:
+            from app.facial.analysis_metrics import safe_attempt_metrics
+            from app.facial.lifecycle import analysis_for
+            from app.facial.provider import FacialProviderError
+
+            analysis = analysis_for(db, item.photo_asset_id, lock=True)
+            if analysis:
+                metrics = safe_attempt_metrics(error.metrics) if isinstance(error, FacialProviderError) else {}
+                analysis.metrics = {**metrics, "attempts": item.attempts,
+                                    "last_error": item.last_error_category,
+                                    "quality_version": item.quality_version}
         if item.attempts >= max_attempts:
             item.status = "failed"
+            if item.kind == "index" and item.photo_asset_id:
+                from app.facial.lifecycle import analysis_for
+                analysis = analysis_for(db, item.photo_asset_id, lock=True)
+                if analysis:
+                    analysis.state = "failed"
+                    analysis.metrics = {**analysis.metrics, "final_error": item.last_error_category,
+                                        "attempts": item.attempts}
         else:
             item.status = "queued"
             item.available_at = current + timedelta(seconds=retry_delay_seconds)

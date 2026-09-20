@@ -40,6 +40,7 @@ class SearchMatch:
     photo_id: UUID
     quality_band: str
     similarity: float = field(repr=False)
+    match_class: str = "matched"
 
 
 def replace_photo_index(
@@ -54,7 +55,12 @@ def replace_photo_index(
     """Substitui todas as faces da foto em uma única transação/savepoint."""
 
     photo = db.get(PhotoAsset, photo_id)
-    if not photo or not photo.available:
+    from app.facial.detection import normalized_box
+    from app.facial.lifecycle import analysis_for
+    from app.media import safe_source_path
+
+    analysis = analysis_for(db, photo_id, lock=True)
+    if not photo or (not photo.available and not analysis):
         raise FacialEngineError("Foto não está elegível para indexação facial.")
     policy = db.scalar(
         select(GalleryFacialPolicy).where(
@@ -71,7 +77,7 @@ def replace_photo_index(
             MediaDerivative.status == "ready",
         )
     )
-    if not derivative or not derivative.relative_path:
+    if not analysis and (not derivative or not derivative.relative_path):
         raise FacialEngineError("Prévia facial não está pronta.")
     protected_preview_ready = db.scalar(
         select(MediaDerivative.id).where(
@@ -80,16 +86,23 @@ def replace_photo_index(
             MediaDerivative.status == "ready",
         )
     )
-    if protected_preview_ready is None:
+    if not analysis and protected_preview_ready is None:
         raise FacialEngineError("Prévia protegida não está pronta.")
-    root = derivatives_root.resolve()
-    path = (root / derivative.relative_path).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise FacialEngineError("Caminho de prévia facial inválido.") from exc
+    if analysis:
+        if analysis.deleted_at:
+            raise FacialEngineError("Reenvie o JPEG original para reindexar esta foto.")
+        path = safe_source_path(photo)
+    else:
+        root = derivatives_root.resolve()
+        path = (root / derivative.relative_path).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise FacialEngineError("Caminho de prévia facial inválido.") from exc
     fingerprint = preview_fingerprint(path)
-    observations = provider.observe_path(path)
+    if analysis and fingerprint != analysis.source_fingerprint:
+        raise FacialEngineError("A fonte facial foi alterada.")
+    observations = provider.observe_highres_path(path) if analysis else provider.observe_path(path)
     largest_face_area = max(
         (face.box[2] * face.box[3] for face in observations), default=0
     )
@@ -98,8 +111,8 @@ def replace_photo_index(
         try:
             assessment = assess_face_quality(
                 face,
-                image_width=derivative.width or 1,
-                image_height=derivative.height or 1,
+                image_width=face.image_width or (analysis.width if analysis else derivative.width) or 1,
+                image_height=face.image_height or (analysis.height if analysis else derivative.height) or 1,
                 largest_face_area=largest_face_area,
             )
         except FacialQualityError:
@@ -124,6 +137,13 @@ def replace_photo_index(
                 quality_version=policy.quality_version,
             ),
         )
+        geometry = {}
+        if analysis:
+            try:
+                box = normalized_box(face.box, analysis.width, analysis.height)
+            except ValueError:
+                continue
+            geometry = dict(zip(("bbox_x", "bbox_y", "bbox_width", "bbox_height"), box, strict=True))
         records.append(
             PhotoFaceEmbedding(
                 parent_gallery_id=photo.parent_gallery_id,
@@ -137,6 +157,12 @@ def replace_photo_index(
                 payload_ciphertext=envelope.ciphertext,
                 payload_nonce=envelope.nonce,
                 key_id=envelope.key_id,
+                model_id=getattr(provider, "model_id", "opencv-yunet-sface"),
+                embedding_dimension=getattr(provider, "embedding_dimension", 128),
+                pipeline_version=analysis.pipeline_version if analysis else "legacy-preview-v1",
+                detection_pass=face.detection_pass,
+                detection_confidence=face.detection_confidence,
+                **geometry,
             )
         )
     with db.begin_nested():
@@ -147,6 +173,12 @@ def replace_photo_index(
             )
         )
         db.add_all(records)
+        if analysis:
+            analysis.state = "ready"
+            analysis.metrics = {**getattr(provider, "last_metrics", {}),
+                                "faces_accepted": len(records), "faces_rejected": len(observations)-len(records),
+                                "quality_version": policy.quality_version,
+                                "rejection_reason": "invalid_geometry" if len(records)<len(observations) else None}
         db.flush()
     return len(records)
 
@@ -160,6 +192,7 @@ def search_gallery_index(
     settings: FacialSettings,
     threshold_milli: int,
     allowed_fingerprints: dict[UUID, str] | None = None,
+    ambiguous_threshold_milli: int | None = None,
 ) -> list[SearchMatch]:
     """Compara em memória somente embeddings autorizados da mesma galeria."""
 
@@ -177,6 +210,8 @@ def search_gallery_index(
             .where(
                 PhotoFaceEmbedding.parent_gallery_id == gallery_id,
                 PhotoFaceEmbedding.model_version == settings.model_version,
+                PhotoFaceEmbedding.model_id == "opencv-yunet-sface",
+                PhotoFaceEmbedding.embedding_dimension == EXPECTED_EMBEDDING_DIMENSIONS,
                 PhotoFaceEmbedding.quality_version == settings.quality_version,
                 PhotoAsset.parent_gallery_id == gallery_id,
                 PhotoAsset.derived_gallery_id.is_(None),
@@ -224,16 +259,21 @@ def search_gallery_index(
             raise FacialEngineError("Índice facial inválido.") from exc
         matrix.append(embedding)
         usable_rows.append(row)
+    if not usable_rows:
+        return []
     vectors = np.asarray(matrix, dtype=np.float32)
     query = np.asarray(normalized_query, dtype=np.float32)
     if vectors.shape != (len(usable_rows), EXPECTED_EMBEDDING_DIMENSIONS):
         raise FacialEngineError("Dimensão do índice facial inválida.")
     similarities = vectors @ query
     threshold = threshold_milli / 1000
+    ambiguous = threshold if ambiguous_threshold_milli is None else ambiguous_threshold_milli / 1000
+    if not 0 <= ambiguous <= threshold <= 1:
+        raise FacialEngineError("Faixas de similaridade inválidas.")
     best_by_photo: dict[UUID, SearchMatch] = {}
     for row, similarity_value in zip(usable_rows, similarities, strict=True):
         similarity = float(similarity_value)
-        if similarity < threshold:
+        if similarity < ambiguous:
             continue
         current = best_by_photo.get(row.photo_asset_id)
         if current is None or similarity > current.similarity:
@@ -241,10 +281,12 @@ def search_gallery_index(
                 photo_id=row.photo_asset_id,
                 quality_band=row.quality_band,
                 similarity=similarity,
+                match_class="matched" if similarity >= threshold else "ambiguous",
             )
     return sorted(
         best_by_photo.values(),
         key=lambda match: (
+            0 if match.match_class == "matched" else 1,
             0 if match.quality_band == "best" else 1,
             -match.similarity,
             str(match.photo_id),

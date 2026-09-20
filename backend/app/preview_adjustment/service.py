@@ -139,6 +139,9 @@ def photo_active(db: Session, photo: PhotoAsset | None) -> bool:
 
 
 def enqueue(db: Session, photo_id: UUID, *, retry: bool = False) -> bool:
+    from app.facial.lifecycle import media_can_proceed
+    if not media_can_proceed(db, photo_id):
+        return False
     photo = db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo_id).with_for_update())
     config = settings(db, photo.parent_gallery_id, lock=True) if photo else None
     folder = db.get(PhotoFolder, photo.folder_id) if photo else None
@@ -300,13 +303,15 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
             return True
         row.status, row.claim_token, row.updated_at = "processing", claim, now()
         row.attempts += 1
+        from app.facial.lifecycle import analysis_for
+        highres = analysis_for(db, photo_id) is not None
         db.commit()
 
     started, output = monotonic(), None
     try:
         with Image.open(input_path) as opened:
             image = opened.convert("RGB")
-            image.thumbnail((1600, 3200), Image.Resampling.LANCZOS)
+            image.thumbnail((1980, 1980) if highres else (1600, 3200), Image.Resampling.LANCZOS)
         adjusted = (engine or RawTherapeeEngine()).render(image, strength)
         if adjusted.size != image.size:
             raise ValueError("Dimensões inválidas.")
@@ -342,12 +347,18 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                 return True
             output = result_path(photo_id, claim)
             output.parent.mkdir(parents=True, exist_ok=True)
-            protected.save(output, format="JPEG", quality=85, optimize=True, exif=b"")
+            if highres:
+                from app.media import save_presentation_jpeg
+                save_presentation_jpeg(protected, output)
+            else:
+                protected.save(output, format="JPEG", quality=85, optimize=True, exif=b"")
             previous = existing_result(row)
             row.relative_path = output.relative_to(derivatives_root()).as_posix()
             row.status, row.last_error = "ready", None
             row.elapsed_ms, row.updated_at = int((monotonic() - started) * 1000), now()
             db.commit()
+            # O worker de mídia possui o volume da fonte e reconcilia o descarte.
+            # Este worker opcional conhece somente derivados, nunca o original.
             if previous and previous != output:
                 try:
                     previous.unlink(missing_ok=True)
