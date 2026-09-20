@@ -2191,6 +2191,10 @@ def test_photo_deletion_rejects_other_folder_and_confirmed_purchase(client: Test
     blocked = client.delete(f"/admin/photo-folders/{first_folder}/photos/{first_photo}")
     assert blocked.status_code == 409
     assert "histórico confirmado" in blocked.json()["detail"]
+    assert client.delete(f"/admin/photo-folders/{first_folder}").status_code == 409
+    with SessionLocal() as db:
+        assert db.get(PhotoFolder, first_folder) is not None
+        assert db.get(PhotoAsset, first_photo) is not None
     assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{second_photo}").status_code == 204
 
 
@@ -4385,3 +4389,151 @@ def test_private_upload_reuses_media_pipeline_without_entering_public_facial_sco
     assert client.post(
         f"/gallery/{gallery_id}/photos/{private_photo_id}/selection"
     ).status_code == 201
+
+
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("released", [False, True])
+def test_delete_content_folder_cleans_only_its_photos(client, tmp_path, monkeypatch, private, released):
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    monkeypatch.setenv("MEDIA_HISTORY_ROOT", str(tmp_path / "history"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento de exclusão")
+        owner = Client(full_name="Cliente", phone_e164="+5511998765432")
+        db.add_all([parent, owner]); db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=owner.id, name="Privada")
+        db.add(gallery); db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, derived_gallery_id=gallery.id if private else None,
+                             name="Remover", status="released" if released else "preparing")
+        other = PhotoFolder(parent_gallery_id=parent.id, name="Preservar", position=2)
+        db.add_all([folder, other]); db.flush()
+        photos = [PhotoAsset(parent_gallery_id=parent.id, derived_gallery_id=folder.derived_gallery_id,
+                             folder_id=folder.id, filename=f"{i}.jpg", storage_key=f"remove/{i}.jpg") for i in range(2)]
+        survivor = PhotoAsset(parent_gallery_id=parent.id, folder_id=other.id, filename="keep.jpg", storage_key="keep.jpg")
+        db.add_all([*photos, survivor]); db.flush()
+        for photo in photos:
+            db.add(MediaJob(photo_asset_id=photo.id, status="queued"))
+            db.add(MediaDerivative(photo_asset_id=photo.id, variant="client_preview", relative_path=f"{photo.id}/client_preview.jpg", status="ready", width=10, height=10))
+            db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id))
+            source = tmp_path / "source" / photo.storage_key
+            source.parent.mkdir(parents=True, exist_ok=True); source.write_bytes(b"synthetic")
+            preview = tmp_path / "derivatives" / str(photo.id) / "client_preview.jpg"
+            preview.parent.mkdir(parents=True, exist_ok=True); preview.write_bytes(b"preview")
+        if not private:
+            parent.cover_photo_id = photos[0].id
+            if released:
+                order = SaleOrder(derived_gallery_id=gallery.id, client_id=owner.id,
+                                  payment_status="confirmed", total_cents=1000, confirmed_at=now())
+                db.add(order); db.flush()
+                db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photos[0].id,
+                                    filename_snapshot=photos[0].filename, unit_price_cents=1000))
+        else:
+            parent.lifecycle_status = "deleted"
+        db.commit()
+        folder_id, other_id, photo_ids, survivor_id, parent_id = folder.id, other.id, [p.id for p in photos], survivor.id, parent.id
+    response = client.delete(f"/admin/photo-folders/{folder_id}")
+    assert response.status_code == 204, response.text
+    with SessionLocal() as db:
+        assert db.get(PhotoFolder, folder_id) is None
+        assert all(db.get(PhotoAsset, identifier) is None for identifier in photo_ids)
+        assert db.get(PhotoFolder, other_id) is not None
+        assert db.get(PhotoAsset, survivor_id) is not None
+        assert db.get(ParentGallery, parent_id).cover_photo_id is None
+        assert db.scalar(select(MediaJob)) is None
+        assert db.scalar(select(DerivedGalleryPhoto)) is None
+        assert db.scalar(select(AuditEvent).where(AuditEvent.event == "photo_folder.deleted")) is not None
+    assert not any((tmp_path / "source" / "remove").glob("*.jpg"))
+    assert not any((tmp_path / "derivatives").rglob("*.jpg"))
+    if not private and released:
+        from app.auth import CommercialHistoryMedia
+        from app.historical_media import historical_media_path
+        with SessionLocal() as db:
+            item = db.scalar(select(SaleOrderItem))
+            assert item.photo_asset_id is None
+            assert db.scalar(select(SaleOrder)).payment_status == "confirmed"
+            manifest = db.scalar(select(CommercialHistoryMedia))
+            assert historical_media_path(manifest.preview_storage_key).read_bytes() == b"preview"
+            assert historical_media_path(manifest.delivery_storage_key).read_bytes() == b"synthetic"
+    assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 404
+
+
+def test_folder_deletion_rolls_back_all_photos_when_commercial_preflight_blocks(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path))
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Bloqueio integral"}).json()["id"])
+    folder_id, first = create_folder_photo(client, parent_id, storage_key="first.jpg")
+    second = UUID(client.post(f"/admin/photo-folders/{folder_id}/photos", json={"filename": "second.jpg", "storage_key": "second.jpg"}).json()["id"])
+    (tmp_path / "first.jpg").write_bytes(b"preserve")
+    with SessionLocal() as db:
+        owner = Client(full_name="Revisão", phone_e164="+5511987654321")
+        db.add(owner); db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent_id, client_id=owner.id, name="Privada")
+        db.add(gallery); db.flush()
+        # Ordenação faz a primeira compra ser preparada antes de encontrar o bloqueio.
+        for index, photo_id in enumerate(sorted([first, second])):
+            order = SaleOrder(derived_gallery_id=gallery.id, client_id=owner.id,
+                              payment_status="pending", total_cents=1000)
+            db.add(order); db.flush()
+            db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photo_id,
+                                filename_snapshot="synthetic.jpg", unit_price_cents=1000))
+            if index == 1:
+                db.add(PaymentCommunication(sale_order_id=order.id, client_id=owner.id,
+                                           idempotency_key="folder-review"))
+        db.commit()
+    response = client.delete(f"/admin/photo-folders/{folder_id}")
+    assert response.status_code == 409
+    assert "pagamento comunicado" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(PhotoFolder, folder_id) is not None
+        assert db.get(PhotoAsset, first) is not None
+        assert db.get(PhotoAsset, second) is not None
+        assert all(order.payment_status == "pending" for order in db.scalars(select(SaleOrder)))
+        assert db.scalar(select(AuditEvent).where(AuditEvent.event == "photo_folder.deleted")) is None
+    assert (tmp_path / "first.jpg").read_bytes() == b"preserve"
+
+
+@pytest.mark.parametrize("status", ["preparing", "released"])
+def test_delete_empty_folder(client, status):
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Pasta vazia")
+        db.add(parent); db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Vazia", status=status)
+        db.add(folder); db.commit(); folder_id = folder.id
+    assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 204
+    with SessionLocal() as db:
+        assert db.get(PhotoFolder, folder_id) is None
+
+
+def test_folder_deletion_requires_admin_and_rejects_cover_assets(client):
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Capa")
+        db.add(parent); db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
+        db.add(folder); db.commit(); folder_id = folder.id
+    assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 404
+    client.cookies.clear()
+    assert client.delete(f"/admin/photo-folders/{folder_id}").status_code in {401, 403}
+
+
+
+def test_folder_deletion_removes_temporary_highres_analysis(client, monkeypatch, tmp_path):
+    from app.auth import PhotoAnalysis
+
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path))
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "High-res temporário"}).json()["id"])
+    folder_id, photo_id = create_folder_photo(client, parent_id, storage_key="highres.jpg")
+    (tmp_path / "highres.jpg").write_bytes(b"synthetic")
+    with SessionLocal() as db:
+        db.add(PhotoAnalysis(photo_asset_id=photo_id, source_fingerprint="a" * 64,
+                             source_bytes=9, width=4000, height=3000,
+                             expires_at=now() + timedelta(hours=1)))
+        db.commit()
+    assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 204
+    with SessionLocal() as db:
+        assert db.get(PhotoAnalysis, photo_id) is None
+        assert db.get(PhotoAsset, photo_id) is None
+    assert not (tmp_path / "highres.jpg").exists()

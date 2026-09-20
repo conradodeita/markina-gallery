@@ -120,6 +120,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const [folderDeleteBusy, setFolderDeleteBusy] = useState(false);
   const [uploadState, setUploadState] = useState<{ phase: "idle" | "uploading" | "success" | "error"; current: number; total: number; filename?: string }>({ phase: "idle", current: 0, total: 0 });
   const [failed, setFailed] = useState(false);
   const [visualPreview, setVisualPreview] = useState<VisualPreview | null>(null);
@@ -347,6 +348,19 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível abrir a pasta.");
     }
+  }
+
+  async function deleteFolder(folder: Folder) {
+    if (folderDeleteBusy || !window.confirm(`Excluir a pasta “${folder.name}” e suas ${folder.photo_count} foto(s)? As fotos serão removidas também das galerias que as utilizam. Compras confirmadas permanecem no histórico. Esta ação não pode ser desfeita.`)) return;
+    setFolderDeleteBusy(true);
+    try {
+      await jsonRequest(`/api/admin/photo-folders/${folder.id}`, { method: "DELETE" });
+      if (openFolderId === folder.id) { setOpenFolderId(""); setPhotos([]); setSelectedPhotoIds([]); setExpandedPhoto(null); }
+      setFolders((current) => current.filter((item) => item.id !== folder.id));
+      setMessage("Pasta e fotos excluídas.");
+      setRefresh((value) => value + 1);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível excluir a pasta."); }
+    finally { setFolderDeleteBusy(false); }
   }
 
   async function deletePhoto(photo: Photo) {
@@ -879,7 +893,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <p>{(visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode) === "sequential" ? "A galeria percorre todas as pastas em sequência cronológica." : "A cliente escolhe uma pasta por vez para navegar."}</p>
           </fieldset>
           <form className="gallery-inline-form" onSubmit={createFolder}><label>Nome da nova pasta<input name="name" required placeholder="Ex.: Apresentação da manhã" /></label><MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton></form>
-          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Disponível" : "Preparando prévias"}</small><FolderPublicationSummary folder={folder} /></button>{folder.status === "preparing" ? <div className="gallery-folder-actions"><button type="button" className="link-button" onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button>{folder.photo_count === 0 ? <button type="button" className="link-button" onClick={() => { if (window.confirm("Excluir esta pasta vazia?")) mutate(`/api/admin/photo-folders/${folder.id}`, "DELETE"); }}>Excluir</button> : null}</div> : null}</article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
+          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" aria-label={`Abrir pasta ${folder.name}`} disabled={folderDeleteBusy} onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.status === "released" ? "Disponível" : "Preparando prévias"}</small><FolderPublicationSummary folder={folder} /></button><div className="gallery-folder-actions">{folder.status === "preparing" ? <button type="button" className="link-button" disabled={folderDeleteBusy} onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button> : null}<button type="button" className="link-button danger-action" disabled={folderDeleteBusy || bulkDeleteBusy || uploadState.phase === "uploading"} onClick={() => deleteFolder(folder)} aria-label={`Excluir pasta ${folder.name}`}>{folderDeleteBusy ? "Excluindo…" : "Excluir pasta"}</button></div></article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
           {selectedFolder ? (
             <div className="gallery-folder-workspace">
               <div className="section-heading"><div><p className="eyebrow">Pasta selecionada</p><h3>{selectedFolder.name}</h3></div><StatusBadge tone={selectedFolder.status === "released" ? "success" : "warning"}>{selectedFolder.status === "released" ? "Disponível" : "Preparando prévias"}</StatusBadge></div>

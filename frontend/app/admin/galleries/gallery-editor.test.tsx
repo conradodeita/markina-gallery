@@ -632,7 +632,7 @@ describe("editor administrativo de galeria", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Apresentação/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta Apresentação" }));
     const expand = await screen.findByRole("button", { name: "Ampliar FOTO_001.jpg" });
     fireEvent.click(expand);
     const dialog = await screen.findByRole("dialog", { name: "Prévia ampliada de FOTO_001.jpg" });
@@ -656,7 +656,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("confirm", vi.fn(() => true));
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Apresentação/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta Apresentação" }));
     fireEvent.click(await screen.findByRole("button", { name: "Excluir" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/photo-folders/folder-1/photos/photo-1",
@@ -705,7 +705,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("confirm", confirm);
 
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Lote grande/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta Lote grande" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Selecionar todas" }));
     fireEvent.click(screen.getByRole("button", { name: "Excluir selecionadas" }));
 
@@ -746,7 +746,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("confirm", confirm);
 
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Lote parcial/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta Lote parcial" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Selecionar todas" }));
     fireEvent.click(screen.getByRole("button", { name: "Excluir selecionadas" }));
 
@@ -979,7 +979,7 @@ describe("editor administrativo de galeria", () => {
     expect(within(folderCard).getByText("1 aguardando liberação automática")).toBeTruthy();
     expect(within(folderCard).getByText("1 preparando prévia")).toBeTruthy();
     expect(within(folderCard).getByText("1 falhas")).toBeTruthy();
-    fireEvent.click(within(folderCard).getByRole("button"));
+    fireEvent.click(within(folderCard).getByRole("button", { name: "Abrir pasta Rodada incremental" }));
     expect(await screen.findByText("Aguardando liberação automática")).toBeTruthy();
     expect(screen.getByText("Falha sanitizada")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Publicar/ })).toBeNull();
@@ -1115,4 +1115,32 @@ describe("editor administrativo de galeria", () => {
     expect(await screen.findByRole("heading", { name: "Cancelada" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fechar acompanhamento" })).toBeTruthy();
   });
+});
+
+
+it("exclui pasta liberada com conteúdo após confirmação e preserva a tela em caso de bloqueio", async () => {
+  let deleted = false;
+  let blocked = true;
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.endsWith("/folder-full") && init?.method === "DELETE") {
+      if (blocked) return response({ detail: "Há pagamento comunicado aguardando decisão administrativa." }, 409);
+      deleted = true; return response({}, 204);
+    }
+    if (path.endsWith("/folders")) return response({ folders: deleted ? [] : [{ id: "folder-full", name: "Festa completa", status: "released", photo_count: 12, position: 0 }] });
+    return response({ clients: [] });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Excluir pasta Festa completa" }));
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Excluir pasta Festa completa" }));
+  expect(await screen.findByText("Há pagamento comunicado aguardando decisão administrativa.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Excluir pasta Festa completa" })).toBeTruthy();
+  blocked = false;
+  fireEvent.click(screen.getByRole("button", { name: "Excluir pasta Festa completa" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Excluir pasta Festa completa" })).toBeNull());
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("12 foto(s)"));
 });
