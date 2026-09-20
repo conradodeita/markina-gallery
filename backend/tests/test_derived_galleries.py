@@ -4429,7 +4429,7 @@ def test_delete_content_folder_cleans_only_its_photos(client, tmp_path, monkeypa
                 db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photos[0].id,
                                     filename_snapshot=photos[0].filename, unit_price_cents=1000))
         else:
-            parent.deleted_at = now()
+            parent.lifecycle_status = "deleted"
         db.commit()
         folder_id, other_id, photo_ids, survivor_id, parent_id = folder.id, other.id, [p.id for p in photos], survivor.id, parent.id
     response = client.delete(f"/admin/photo-folders/{folder_id}")
@@ -4459,30 +4459,51 @@ def test_delete_content_folder_cleans_only_its_photos(client, tmp_path, monkeypa
 
 
 def test_folder_deletion_rolls_back_all_photos_when_commercial_preflight_blocks(client, monkeypatch, tmp_path):
-    from fastapi import HTTPException
-
-    from app import main
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path))
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Bloqueio integral"}).json()["id"])
     folder_id, first = create_folder_photo(client, parent_id, storage_key="first.jpg")
     second = UUID(client.post(f"/admin/photo-folders/{folder_id}/photos", json={"filename": "second.jpg", "storage_key": "second.jpg"}).json()["id"])
     (tmp_path / "first.jpg").write_bytes(b"preserve")
-    calls = []
-    def policy(db, **kwargs):
-        calls.append(kwargs["photo_asset_id"])
-        if len(calls) == 2:
-            raise HTTPException(status_code=409, detail="Há pagamento comunicado aguardando decisão administrativa.")
-    monkeypatch.setattr(main, "enforce_commercial_removal_or_409", policy)
+    with SessionLocal() as db:
+        owner = Client(full_name="Revisão", phone_e164="+5511987654321")
+        db.add(owner); db.flush()
+        gallery = DerivedGallery(parent_gallery_id=parent_id, client_id=owner.id, name="Privada")
+        db.add(gallery); db.flush()
+        # Ordenação faz a primeira compra ser preparada antes de encontrar o bloqueio.
+        for index, photo_id in enumerate(sorted([first, second])):
+            order = SaleOrder(derived_gallery_id=gallery.id, client_id=owner.id,
+                              payment_status="pending", total_cents=1000)
+            db.add(order); db.flush()
+            db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photo_id,
+                                filename_snapshot="synthetic.jpg", unit_price_cents=1000))
+            if index == 1:
+                db.add(PaymentCommunication(sale_order_id=order.id, client_id=owner.id,
+                                           idempotency_key="folder-review"))
+        db.commit()
     response = client.delete(f"/admin/photo-folders/{folder_id}")
     assert response.status_code == 409
-    assert len(calls) == 2
+    assert "pagamento comunicado" in response.json()["detail"]
     with SessionLocal() as db:
         assert db.get(PhotoFolder, folder_id) is not None
         assert db.get(PhotoAsset, first) is not None
         assert db.get(PhotoAsset, second) is not None
+        assert all(order.payment_status == "pending" for order in db.scalars(select(SaleOrder)))
         assert db.scalar(select(AuditEvent).where(AuditEvent.event == "photo_folder.deleted")) is None
     assert (tmp_path / "first.jpg").read_bytes() == b"preserve"
+
+
+@pytest.mark.parametrize("status", ["preparing", "released"])
+def test_delete_empty_folder(client, status):
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Pasta vazia")
+        db.add(parent); db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Vazia", status=status)
+        db.add(folder); db.commit(); folder_id = folder.id
+    assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 204
+    with SessionLocal() as db:
+        assert db.get(PhotoFolder, folder_id) is None
 
 
 def test_folder_deletion_requires_admin_and_rejects_cover_assets(client):
