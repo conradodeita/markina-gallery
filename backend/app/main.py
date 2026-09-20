@@ -3254,8 +3254,11 @@ def admin_parent_gallery_facial_index(
         )
     except FacialStatusError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    from app.facial.analysis_metrics import gallery_analysis_metrics
+
     return {
         "state": report.state,
+        "analysis": gallery_analysis_metrics(db, parent_gallery_id=parent_gallery_id),
         "rollout": rollout_status_payload(
             rollout,
             available=processing_enabled,
@@ -5075,8 +5078,9 @@ async def import_photo_source(
     require_admin(request)
     if not (request.headers.get("content-type") or "").lower().startswith("image/jpeg"):
         raise HTTPException(status_code=415, detail="Envie uma imagem JPEG.")
-    body = await request.body()
-    if not body or len(body) > 25 * 1024 * 1024:
+    body = await read_bounded_body(request, max_bytes=25 * 1024 * 1024,
+                                   error_detail="A imagem excede o limite permitido.")
+    if not body:
         raise HTTPException(status_code=413, detail="A imagem excede o limite permitido.")
     try:
         with Image.open(BytesIO(body)) as image:
@@ -5125,10 +5129,39 @@ async def import_photo_source(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         existing_job = db.scalar(select(MediaJob.id).where(MediaJob.photo_asset_id == photo.id))
-        if existing_job:
+        if existing_job and request.headers.get("x-facial-reindex") != "true":
             return {"status": "queued"}  # retomada idempotente não sobrescreve/reprocessa
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(body)
+    from app.facial.lifecycle import (
+        SourceCapacityError,
+        admit_source,
+        analysis_for,
+        finalize_source,
+        write_source,
+    )
+
+    # O mesmo lock protege reenvio e processamento. Fontes legadas não aderem retroativamente.
+    db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo.id).with_for_update())
+    try:
+        analysis = admit_source(db, photo, body, reindex=request.headers.get("x-facial-reindex") == "true") if folder.purpose == "content" else None
+        if analysis and analysis.state != "receiving":
+            return {"status": "queued"}  # replay não recria fonte já descartada
+        if analysis:
+            # Reserva durável antes do arquivo: crash deixa linha rastreável pelo TTL.
+            db.commit()
+            analysis = analysis_for(db, photo.id, lock=True)
+            if analysis is None:
+                raise HTTPException(status_code=409, detail="Foto indisponível para processamento.")
+            if analysis.state != "receiving":
+                return {"status": "queued"}
+        write_source(destination, body)
+        if analysis:
+            finalize_source(db, photo)
+    except SourceCapacityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "15"}) from exc
+    except (ValueError, FacialConfigurationError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Imagem ou processamento indisponível.") from exc
     if folder.purpose == "cover_assets":
         gallery = db.get(ParentGallery, photo.parent_gallery_id)
         if gallery:
@@ -5152,6 +5185,29 @@ def photo_media_status(
     if not job:
         return {"status": "not_imported"}
     return {"status": job.status}
+
+
+@app.get("/admin/photo-assets/{photo_id}/facial-analysis")
+def admin_photo_facial_analysis(
+    photo_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    if not db.get(PhotoAsset, photo_id):
+        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    from app.facial.lifecycle import analysis_for
+
+    row = analysis_for(db, photo_id)
+    if not row:
+        return {"pipeline": "legacy-preview-v1"}
+    # Lista explícita: nenhuma caixa, vetor, caminho ou conteúdo da imagem.
+    allowed = {"width", "height", "megapixels", "elapsed_ms", "passes", "reasons", "tiles",
+               "budget_exhausted", "raw_detections", "deduplicated", "embedding_successes",
+               "embedding_failures", "detection_failures", "faces_accepted", "faces_rejected", "rejection_reason", "config", "model", "model_version", "quality_version",
+               "final_error", "attempts", "last_error", "cleanup_error"}
+    return {"pipeline": row.pipeline_version, "state": row.state,
+            "source_bytes": row.source_bytes, "width": row.width, "height": row.height,
+            "expires_at": row.expires_at.isoformat(), "source_deleted": row.deleted_at is not None,
+            "metrics": {key: value for key, value in row.metrics.items() if key in allowed}}
 
 
 @app.get("/admin/photo-assets/{photo_id}/preview")
@@ -8345,6 +8401,57 @@ def public_gallery_facial_search_availability(
         client_id=session.subject_id,
         settings=settings,
     )
+
+
+@app.get("/public-galleries/{parent_gallery_id}/photos/{photo_id}/face-regions")
+def public_photo_face_regions(parent_gallery_id: UUID, photo_id: UUID, request: Request,
+                              db: Session = Depends(db_session)):
+    from app.facial.config import _integer
+    from app.facial.regions import photo_regions
+    session = current_session(request, Role.CLIENT)
+    try:
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        regions = photo_regions(db, gallery_id=parent_gallery_id, client_id=session.subject_id,
+                                photo_id=photo_id, settings=settings)
+        return {"regions": regions, "auto_threshold": _integer("FACIAL_OVERLAY_AUTO_THRESHOLD", 4, minimum=0, maximum=20)}
+    except PublicGalleryAccessDenied as exc:
+        raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    except FacialConfigurationError:
+        return {"regions": [], "auto_threshold": 4}
+
+
+class FaceRegionSearchInput(BaseModel):
+    face_region_id: UUID
+    consent_version: str = Field(max_length=120)
+    subject_declaration: Literal["adult", "minor"]
+    representation_reference: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/public-galleries/{parent_gallery_id}/face-region-searches", status_code=202)
+def public_face_region_search(parent_gallery_id: UUID, payload: FaceRegionSearchInput,
+                              request: Request, db: Session = Depends(db_session)):
+    require_same_origin(request)
+    session = current_session(request, Role.CLIENT)
+    try:
+        require_public_gallery_browsing(db, parent_gallery_id=parent_gallery_id, client_id=session.subject_id)
+        enforce_facial_search_rate_limit(db, client_id=session.subject_id, parent_gallery_id=parent_gallery_id,
+                                        ip_address=request.client.host if request.client else "unknown")
+        settings = facial_settings_from_environment(verify_runtime_assets=False)
+        item = create_search_request(db, parent_gallery_id=parent_gallery_id, client_id=session.subject_id,
+            consent_version=payload.consent_version, subject_declaration=payload.subject_declaration,
+            representation_reference=payload.representation_reference, payload=b"", settings=settings,
+            reference_region_id=payload.face_region_id)
+        db.commit()
+        return search_request_payload(item)
+    except PublicGalleryAccessDenied as exc:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
+    except FacialSearchCapacityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": str(exc.retry_after_seconds)}) from exc
+    except (FacialConfigurationError, FacialSearchError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post(

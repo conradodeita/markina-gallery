@@ -238,6 +238,9 @@ def enqueue_derivatives(db: Session, photo: PhotoAsset) -> MediaJob:
     elif job.status in {"completed", "failed"}:
         job.status = "queued"
         job.last_error = None
+        from app.auth import PhotoAnalysis
+        if db.get(PhotoAnalysis, photo.id):
+            job.attempts = 0  # orçamento da nova geração/reenvio, não de toda a vida da foto
     return job
 
 
@@ -249,12 +252,24 @@ def generate_derivatives(
     variants: set[str] | None = None,
 ) -> list[MediaDerivative]:
     """Gera variantes JPEG sem EXIF; segura para reexecução da mesma foto."""
+    from app.facial.lifecycle import analysis_for, cleanup_source, media_can_proceed
+
+    if not media_can_proceed(db, photo.id):
+        raise ValueError("Análise facial ainda em processamento.")
+    analysis = analysis_for(db, photo.id, lock=True)
     job = job or enqueue_derivatives(db, photo)
     if job.status != "processing":
         job.status = "processing"
         job.attempts += 1
         job.updated_at = now()
     source = safe_source_path(photo)
+    if analysis and analysis.deleted_at:
+        clean = db.scalar(select(MediaDerivative).where(
+            MediaDerivative.photo_asset_id == photo.id,
+            MediaDerivative.variant == "admin_preview", MediaDerivative.status == "ready"))
+        if clean:
+            source = safe_derivative_path(clean)
+            variants = {"client_preview", "thumbnail"} if variants is None else variants - {"admin_preview"}
     if not source.is_file():
         job.status = "failed"
         job.last_error = "Arquivo de origem indisponível."
@@ -274,13 +289,20 @@ def generate_derivatives(
                 if variant not in selected_variants:
                     continue
                 rendered = original.copy()
-                rendered.thumbnail((max_width, max_width * 2), Image.Resampling.LANCZOS)
+                if analysis:
+                    edge = 480 if variant == "thumbnail" else 1980
+                    rendered.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+                else:
+                    rendered.thumbnail((max_width, max_width * 2), Image.Resampling.LANCZOS)
                 if protected:
                     rendered = watermark(rendered, settings)
                 destination = derivatives_root() / str(photo.id) / f"{variant}.jpg"
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 temporary = destination.with_suffix(".tmp")
-                rendered.save(temporary, format="JPEG", quality=85, optimize=True)
+                if analysis:
+                    save_presentation_jpeg(rendered, temporary)
+                else:
+                    rendered.save(temporary, format="JPEG", quality=85, optimize=True)
                 temporary.replace(destination)
                 derivative = db.scalar(
                     select(MediaDerivative).where(
@@ -326,6 +348,11 @@ def generate_derivatives(
         from app.preview_adjustment.service import enqueue_after_derivatives
 
         enqueue_after_derivatives(db, photo.id)
+        try:
+            cleanup_source(db, photo.id)
+            db.commit()
+        except (OSError, ValueError):
+            db.rollback()  # artefatos já concluídos; a manutenção retenta o descarte
         return derivatives
     except Exception:
         job.status = "failed"
@@ -333,3 +360,15 @@ def generate_derivatives(
         job.updated_at = now()
         db.commit()
         raise
+
+
+def save_presentation_jpeg(image: Image.Image, destination: Path, *, target_bytes=250_000):
+    """Alvo flexível: nunca reduzir abaixo de quality=75 para caber em 250 KB."""
+    from io import BytesIO
+    for quality in (90, 85, 80, 75):
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=quality, optimize=True, exif=b"")
+        payload = output.getvalue()
+        if len(payload) <= target_bytes:
+            break
+    destination.write_bytes(payload)

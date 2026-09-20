@@ -1,4 +1,5 @@
 "use client";
+import { jpegStorageKey, uploadJpeg } from "../../../../../upload-jpeg";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -643,22 +644,18 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     setUploadState({ phase: "uploading", current: 0, total: files.length });
     for (const [index, file] of files.entries()) {
       setUploadState({ phase: "uploading", current: index + 1, total: files.length, filename: file.name });
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
       try {
+        const storageKey = await jpegStorageKey(sourceId, folderId, file);
         const photo = await jsonRequest(`/api/admin/photo-folders/${folderId}/photos`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             filename: file.name,
-            storage_key: `${sourceId}/${folderId}/${Date.now()}-${index}-${safeName}`,
+            storage_key: storageKey,
           }),
         });
         if (index === 0) setFacialRefresh((value) => value + 1);
-        await jsonRequest(`/api/admin/photo-assets/${photo.id}/source`, {
-          method: "PUT",
-          headers: { "content-type": "image/jpeg" },
-          body: file,
-        });
+        await uploadJpeg(`/api/admin/photo-assets/${photo.id}/source`, file, () => setMessage("Aguardando o processamento liberar espaço para continuar o envio."));
       } catch (error) {
         setUploadState({ phase: "error", current: index, total: files.length, filename: file.name });
         setMessage(error instanceof Error ? error.message : `Falha ao enviar ${file.name}.`);

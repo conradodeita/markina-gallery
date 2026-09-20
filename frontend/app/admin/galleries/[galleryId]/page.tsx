@@ -1,4 +1,5 @@
 "use client";
+import { uploadJpeg } from "../../../upload-jpeg";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -117,7 +118,7 @@ export default function GalleryDetailPage() {
         if (previous && previous.status !== "not_imported") continue;
         const photo = previous ?? await requestJson(`/api/admin/photo-folders/${folderId}/photos`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filename: file.name, storage_key: storageKey, upload_batch_id: batch.id }) });
         if ("duplicate" in photo && photo.duplicate === "true") continue;
-        await requestJson(`/api/admin/photo-assets/${photo.id}/source`, { method: "PUT", headers: { "Content-Type": "image/jpeg" }, body: file });
+        await uploadJpeg(`/api/admin/photo-assets/${photo.id}/source`, file, () => setMessage("Aguardando o processamento liberar espaço para continuar o envio."));
       } catch (error) { setUpload({ phase: "error", current: index, total: files.length, filename: file.name }); setMessage(error instanceof Error ? error.message : `Falha ao enviar ${file.name}.`); setBusy(false); await load(false); return; }
     }
     try {

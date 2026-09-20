@@ -11,6 +11,7 @@ import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { SystemState } from "../../ui-kit";
 import { FacialSearchPanel } from "../facial-search-panel";
+import { FaceRegionViewer } from "../../face-region-viewer";
 import { SelectionDeadline } from "../../selection-deadline";
 
 type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string; private_gallery_id?: string | null; selection_expires_at?: string | null };
@@ -37,6 +38,7 @@ export default function PublicGalleryPage() {
   const [photoLoad, setPhotoLoad] = useState<{ galleryId: string; status: "loading" | "ready" | "failed" }>({ galleryId, status: "loading" });
   const [message, setMessage] = useState("");
   const [facialResult, setFacialResult] = useState<FacialSearchResult | null>(null);
+  const [referenceRegion, setReferenceRegion] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
@@ -166,8 +168,8 @@ export default function PublicGalleryPage() {
     .filter((photo) => candidateByPhoto.has(photo.id))
     .sort((left, right) => (candidateByPhoto.get(left.id)?.rank ?? 0) - (candidateByPhoto.get(right.id)?.rank ?? 0));
   const featuredGroups = [
-    { id: "best", title: "Melhores resultados encontrados", detail: "Fotos tecnicamente mais nítidas e bem enquadradas aparecem primeiro.", photos: candidatePhotos.filter((photo) => candidateByPhoto.get(photo.id)?.quality_band === "best") },
-    { id: "other", title: "Outros resultados encontrados", detail: "Outras possibilidades continuam disponíveis para sua decisão.", photos: candidatePhotos.filter((photo) => candidateByPhoto.get(photo.id)?.quality_band === "other") },
+    { id: "matched", title: "Correspondências", detail: "Confira a pessoa procurada antes de selecionar.", photos: candidatePhotos.filter((photo) => candidateByPhoto.get(photo.id)?.match_class !== "ambiguous") },
+    { id: "ambiguous", title: "Possíveis correspondências", detail: "Confira estas possibilidades com atenção.", photos: candidatePhotos.filter((photo) => candidateByPhoto.get(photo.id)?.match_class === "ambiguous") },
   ];
 
   async function rejectCandidate(photo: PublicPhoto) {
@@ -188,10 +190,10 @@ export default function PublicGalleryPage() {
         {privateGalleryId ? <Link className="primary" href={`/gallery/${privateGalleryId}`}>Minha galeria</Link> : null}
         <PushControl /><LogoutButton />
       </nav>
-      <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} />
+      <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} regionId={referenceRegion} onRegionClear={() => setReferenceRegion(null)} />
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
       <SelectionDeadline expiresAt={gallery.selection_expires_at} onRevalidate={() => setRefresh((value) => value + 1)} />
-      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} featuredGroups={featuredGroups} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
+      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} renderExpandedMedia={(photo, close) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { close(); setReferenceRegion(id); }} />} featuredGroups={featuredGroups} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;

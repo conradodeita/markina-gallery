@@ -12,6 +12,7 @@ from app.auth import (
     FacialJob,
     GalleryFacialPolicy,
     MediaDerivative,
+    PhotoAnalysis,
     PhotoAsset,
     PhotoFaceEmbedding,
     PhotoFolder,
@@ -94,6 +95,9 @@ def gallery_index_status(
             .order_by(PhotoAsset.id)
         )
     )
+    highres_ids = list(db.scalars(select(PhotoAnalysis.photo_asset_id)
+                                 .where(PhotoAnalysis.photo_asset_id.in_(photo_ids))))
+    eligible_photo_ids = list(set(eligible_photo_ids) | set(highres_ids))
     latest: dict[UUID, FacialJob] = {}
     if eligible_photo_ids and policy:
         for job in db.scalars(
@@ -208,6 +212,8 @@ def retry_failed_index_jobs(
     for job in jobs:
         if job.status != "failed":
             continue
+        if not _prepare_highres_retry(db, job):
+            raise FacialStatusError("O JPEG temporário expirou. Reenvie o original para reindexar.")
         job.status = "queued"
         job.attempts = 0
         job.available_at = now()
@@ -252,6 +258,8 @@ def retry_all_failed_index_jobs(
     for job in latest.values():
         if job.status != "failed":
             continue
+        if not _prepare_highres_retry(db, job):
+            continue
         job.status = "queued"
         job.attempts = 0
         job.available_at = now()
@@ -262,6 +270,19 @@ def retry_all_failed_index_jobs(
         changed += 1
     db.flush()
     return changed
+
+
+def _prepare_highres_retry(db, job):
+    from app.auth import expired
+    from app.facial.lifecycle import analysis_for
+    row = analysis_for(db, job.photo_asset_id, lock=True)
+    if not row:
+        return True
+    if row.deleted_at or expired(row.expires_at):
+        job.last_error_category = "source_reupload_required"
+        return False
+    row.state = "pending"
+    return True
 
 
 def _aggregate_state(
