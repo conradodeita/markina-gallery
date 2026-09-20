@@ -8,3 +8,5 @@
 - Pendente 3.2: revisão humana e teste autenticado em homologação após CI e deploy autorizado. Não houve deploy, migration nem exclusão de pasta real. A sincronização/arquivo exige revisão humana conforme AGENTS.md.
 
 Revisão final fortaleceu o teste de bloqueio com pedidos e PaymentCommunication reais (sem mock), confirmou rollback do cancelamento de outra compra, usou lifecycle_status=deleted persistido na origem privada e incluiu pastas vazias em ambos os estados. Suíte completa frontend conjunta: 307 aprovados.
+
+Integração após merge da PR facial #88 (develop 3eb45e4): 86 testes frontend afetados passaram; 12 testes backend de exclusão/identidade passaram em 133,66s; teste adicional de remoção de PhotoAnalysis e fonte high-res passou em 27,64s. OpenSpec completo: 54 itens válidos. Preservada a limpeza facial e CASCADE do lifecycle temporário.

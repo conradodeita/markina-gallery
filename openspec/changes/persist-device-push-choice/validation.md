@@ -7,3 +7,5 @@
 - Referências de browser estão no design. Adesão é por origem/conta/dispositivo; não restaura autorização após apagar dados, revogar permissão ou mudar de dispositivo. Erro de reparo automático oferece ação manual, sem loop de prompts.
 - Pendente 3.2: validação humana em aparelho real e homologação autenticada, incluindo permissões do sistema operacional e entrega pelo provedor. Os testes automatizados usam PushManager/Notification simulados; não comprovam entrega real.
 - Proprietário autorizou push/merge/deploy após conclusão do job; inventário e sequência em deployment.md. Nenhum envio real de push, exclusão de pasta real ou ajuste de segredo realizado no job local.
+
+Integração após merge da PR facial #88 (develop 3eb45e4): 86 testes frontend afetados passaram; 12 testes backend de exclusão/identidade passaram em 133,66s; teste adicional de remoção de PhotoAnalysis e fonte high-res passou em 27,64s. OpenSpec completo: 54 itens válidos. Preservada a limpeza facial e CASCADE do lifecycle temporário.

@@ -4516,3 +4516,24 @@ def test_folder_deletion_requires_admin_and_rejects_cover_assets(client):
     assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 404
     client.cookies.clear()
     assert client.delete(f"/admin/photo-folders/{folder_id}").status_code in {401, 403}
+
+
+
+def test_folder_deletion_removes_temporary_highres_analysis(client, monkeypatch, tmp_path):
+    from app.auth import PhotoAnalysis
+
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path))
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "High-res temporário"}).json()["id"])
+    folder_id, photo_id = create_folder_photo(client, parent_id, storage_key="highres.jpg")
+    (tmp_path / "highres.jpg").write_bytes(b"synthetic")
+    with SessionLocal() as db:
+        db.add(PhotoAnalysis(photo_asset_id=photo_id, source_fingerprint="a" * 64,
+                             source_bytes=9, width=4000, height=3000,
+                             expires_at=now() + timedelta(hours=1)))
+        db.commit()
+    assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 204
+    with SessionLocal() as db:
+        assert db.get(PhotoAnalysis, photo_id) is None
+        assert db.get(PhotoAsset, photo_id) is None
+    assert not (tmp_path / "highres.jpg").exists()
