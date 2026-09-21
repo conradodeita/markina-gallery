@@ -28,3 +28,11 @@ Decisão aprovada pelo proprietário e implementação solicitada. Base local/re
 Branch `codex/delete-gallery-assets-preserve-history`, base `fff7a742`. Não sincronizar nem arquivar antes do aceite humano. Publicação/retomada operacional descritas em `homologacao.md`; nenhuma mudança no servidor ocorreu durante implementação. Quando o PR estiver publicado e só faltar CI, interromper e aguardar o usuário, sem polling do Actions.
 
 Revisão final: 35 arquivos relacionados selecionados explicitamente; documentos preexistentes de outras changes e .codex-tmp excluídos do commit. Descrição do PR preparada com escopo, evidências e limitações de homologação.
+
+## Correção do CI #272
+
+- [x] 4.3 Reconciliar o teste de manifesto de ajuste de prévias com a exclusão integral aprovada, executar regressão do módulo e reenviar o PR.
+
+Execução `35579081718` no commit `df1f8d5`: backend com 678 testes aprovados, 11 skips e uma falha em `test_lifecycle_manifest_includes_adjustment_and_preserves_private_reference`. A expectativa antiga removia todos os arquivos do manifesto quando havia referência privada; isso contradiz a política aprovada de exclusão da origem. Atualizar o teste para exigir original, prévias convencionais e ajustada no escopo, mesmo com referência privada. Nenhuma alteração na lógica de produto é necessária. Frontend, OpenSpec e gitleaks passaram nessa execução.
+
+Validação da correção: `python -m pytest backend/tests/test_preview_adjustment.py -q --tb=short` — 22 aprovados em 179,36 s. Ruff completo de app/tests, OpenSpec estrito da change e diff check aprovados. Somente teste e este registro foram alterados; não há mudança adicional de código de produção. Atualização enviada ao PR #91; aguardar retorno humano sobre o próximo CI, sem polling ou deploy.

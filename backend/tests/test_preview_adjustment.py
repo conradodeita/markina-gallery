@@ -559,7 +559,7 @@ def test_public_delivery_requires_registration_and_released_folder(api_client):
     assert client.get(endpoint).content == before.content
 
 
-def test_lifecycle_manifest_includes_adjustment_and_preserves_private_reference(prepared):
+def test_lifecycle_manifest_includes_adjustment_even_with_private_reference(prepared):
     from app.auth import Client, DerivedGallery, DerivedGalleryPhoto
     from app.gallery_lifecycle import gallery_operational_storage_manifest
     from app.media import derivatives_root
@@ -578,11 +578,23 @@ def test_lifecycle_manifest_includes_adjustment_and_preserves_private_reference(
         gallery = DerivedGallery(
             parent_gallery_id=photo.parent_gallery_id,
             client_id=owner.id,
-            name="Preservada",
+            name="Privada dependente da origem",
         )
         db.add(gallery)
         db.flush()
         db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo_id))
         db.commit()
         manifest = gallery_operational_storage_manifest(db, photo.parent_gallery_id)
-        assert manifest == {"sources": [], "derivatives": []}
+        # Excluir a origem remove também o acervo das privadas dependentes.
+        # A referência não pode retirar o original nem as prévias do manifesto.
+        assert manifest["sources"] == [
+            {"photo_id": str(photo_id), "storage_key": photo.storage_key}
+        ]
+        paths = {item["relative_path"] for item in manifest["derivatives"]}
+        assert {
+            relative,
+            f"{photo_id}/thumbnail.jpg",
+            f"{photo_id}/client_preview.jpg",
+            f"{photo_id}/admin_preview.jpg",
+        } <= paths
+        assert manifest["history"] == []
