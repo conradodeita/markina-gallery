@@ -2,14 +2,12 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
-from app.auth import PaymentCommunication, PaymentNotificationOutbox, SaleOrder
 from tests.test_private_gallery_operations_sales_migration import alembic
 
 
@@ -36,21 +34,29 @@ def test_notification_upgrade_preserves_history_and_baselines(tmp_path):
         db.execute(text("INSERT INTO audit_event (id, event, subject, created_at) "
                         "VALUES (:id, 'client.login', :client, :now)"),
                    {"id": uuid4().hex, "client": client, "now": instant})
-    with Session(engine) as db:
-        order = SaleOrder(client_id=UUID(client), derived_gallery_id_snapshot=uuid4(),
-                          derived_gallery_name_snapshot="Histórico", parent_gallery_id_snapshot=UUID(parent),
-                          parent_gallery_name_snapshot="Evento", total_cents=4000)
-        db.add(order)
-        db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=UUID(client),
-                                             idempotency_key="legacy", status="confirmed")
-        db.add(communication)
-        db.flush()
-        db.add(PaymentNotificationOutbox(payment_communication_id=communication.id,
-                                         recipient_phone="+5511999999999", template_kind="confirmed",
-                                         idempotency_key="old-decision", status="sent", attempts=1,
-                                         rendered_body_snapshot="Mensagem histórica"))
-        db.commit()
+        # A massa anterior ao upgrade usa somente o contrato da revisão 0055.
+        # Modelos ORM atuais podem conter colunas introduzidas depois dessa revisão.
+        order_id, communication_id = uuid4().hex, uuid4().hex
+        assert "payment_group_id" not in {
+            column["name"] for column in inspect(db).get_columns("sale_order")
+        }
+        db.execute(text("INSERT INTO sale_order "
+                        "(id, client_id, derived_gallery_id_snapshot, derived_gallery_name_snapshot, "
+                        "parent_gallery_id_snapshot, parent_gallery_name_snapshot, payment_status, "
+                        "total_cents, created_at) VALUES "
+                        "(:id, :client, :gallery, 'Histórico', :parent, 'Evento', 'pending', 4000, :now)"),
+                   {"id": order_id, "client": client, "gallery": uuid4().hex,
+                    "parent": parent, "now": instant})
+        db.execute(text("INSERT INTO payment_communication "
+                        "(id, sale_order_id, client_id, idempotency_key, status, created_at) "
+                        "VALUES (:id, :order, :client, 'legacy', 'confirmed', :now)"),
+                   {"id": communication_id, "order": order_id, "client": client, "now": instant})
+        db.execute(text("INSERT INTO payment_notification_outbox "
+                        "(id, payment_communication_id, recipient_phone, template_kind, "
+                        "idempotency_key, status, attempts, rendered_body_snapshot, created_at, updated_at) "
+                        "VALUES (:id, :communication, '+5511999999999', 'confirmed', "
+                        "'old-decision', 'sent', 1, 'Mensagem histórica', :now, :now)"),
+                   {"id": uuid4().hex, "communication": communication_id, "now": instant})
     alembic(url, "upgrade", "head")
     alembic(url, "upgrade", "head")  # repetir upgrade não cria eventos
     with engine.connect() as db:
@@ -68,6 +74,11 @@ def test_notification_upgrade_preserves_history_and_baselines(tmp_path):
                                      "FROM payment_notification_outbox")).one()
         assert tuple(historical) == ("sent", 1, "Mensagem histórica")
         assert db.scalar(text("SELECT total_cents FROM sale_order")) == 4000
+        assert db.execute(text("SELECT id, sale_order_id, client_id, status, payment_group_id "
+                               "FROM payment_communication")).one() == (
+            communication_id, order_id, client, "confirmed", None
+        )
+        assert db.scalar(text("SELECT payment_group_id FROM sale_order")) is None
     columns = {c["name"] for c in inspect(engine).get_columns("push_subscription")}
     assert "encrypted_subscription" in columns
     assert not columns.intersection({"endpoint", "p256dh", "auth", "private_key"})

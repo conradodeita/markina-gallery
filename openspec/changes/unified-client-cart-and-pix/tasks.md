@@ -63,3 +63,11 @@ Pendências humanas: 4.6 apenas para leitor de tela real e aceite mobile autenti
 Fechamento de remoção: `test_empty_cart_discards_only_unreported_group` e proteção dos endpoints legados com prazo expirado passaram em PostgreSQL (**2 passaram**, `unified-empty-cart.log`). A remoção de todo o carrinho descarta apenas rascunhos e grupo não comunicado; pagamentos antigos continuam protegidos. Última alteração de código backend validada por esses testes; a formatação Ruff dos arquivos novos não altera comportamento.
 
 Entrega preparada: 43 arquivos relacionados selecionados explicitamente, `git diff --cached --check` sem erro. Documentos preexistentes de outras changes, `.codex-tmp`, DBs, imagens e logs ficaram fora do staging. Publicar PR para `develop`, sem merge/deploy automático nesta change; parar quando apenas CI estiver pendente. Revisão humana e publicação/aceite remoto continuam pendentes nas tarefas 4.6, 5.4 e 5.5.
+
+## Correção do CI do PR #90
+
+O proprietário informou falha no backend. Run `35549331694`, SHA `72d21fecb829b83f4280101b9abeaece3f491ae9`: frontend/OpenSpec/gitleaks aprovados; backend teve **668 passaram, 10 skips e 1 falha** em `test_notification_upgrade_preserves_history_and_baselines`. A preparação do banco na revisão 0055 usava modelos ORM atuais, cujo INSERT passou a exigir `payment_group_id`, coluna criada somente na 0058.
+
+Correção limitada à fixture histórica: INSERTs explícitos pelo contrato 0055 para pedido/comunicação/outbox, sem depender de modelos atuais. Preservados upgrade repetido, baselines, concorrência, privacidade e proteção contra downgrade; acrescentada verificação de identidade/status da comunicação e ausência de agrupamento retroativo após upgrade. Não alterado código de produção ou migrations. Validação dirigida em execução; publicar a correção somente após aprovação local e depois aguardar novo resultado do CI sem polling.
+
+Validação da correção: `.venv/Scripts/python.exe -m pytest tests/test_transactional_notification_migration.py tests/test_unified_pix_migration.py -q --tb=short` → **2 passaram** em 76,76 s, somente avisos de depreciação SQLite; `ruff check backend/app backend/tests` passou. A falha do CI foi resolvida no teste dirigido; resultado da nova execução remota ainda será informado pelo proprietário.
