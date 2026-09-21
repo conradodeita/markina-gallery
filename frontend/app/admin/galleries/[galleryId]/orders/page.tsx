@@ -8,6 +8,7 @@ type Order = {
   id: string;
   payment_status: "pending" | "confirmed" | "cancelled";
   total_cents: number;
+  payment_group?: { id: string; total_cents: number } | null;
   client_name: string | null;
   created_at: string;
   price_rule: { minimum_quantity: number; maximum_quantity: number | null; unit_price_cents: number } | null;
@@ -41,6 +42,7 @@ export default function GalleryOrdersPage() {
     {orders.map((order) => <section className="admin-card" key={order.id}>
       <p className="eyebrow">{order.payment_status === "pending" ? "Pendente de confirmação" : order.payment_status === "confirmed" ? "Confirmado" : "Cancelado"}</p>
       <h2>{order.client_name ?? "Cliente"} · R$ {(order.total_cents / 100).toFixed(2).replace(".", ",")}</h2>
+      {order.payment_group ? <p>Subtotal desta galeria. Integra o PIX único {order.payment_group.id.slice(0, 8)} de R$ {(order.payment_group.total_cents / 100).toFixed(2).replace(".", ",")}.</p> : null}
       <p>Criado em {new Date(order.created_at).toLocaleString("pt-BR")}</p>
       {order.price_rule && <p>Faixa congelada: {order.price_rule.minimum_quantity}–{order.price_rule.maximum_quantity ?? "sem limite"} fotos · R$ {(order.price_rule.unit_price_cents / 100).toFixed(2).replace(".", ",")} por foto.</p>}
       {order.sales_message && <p>Mensagem comercial: {order.sales_message}</p>}

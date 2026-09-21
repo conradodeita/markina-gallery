@@ -342,7 +342,7 @@ describe("galeria privada da cliente", () => {
   });
 
   it("abre a revisão somente com fotos selecionadas e sem a capa editorial", async () => {
-    navigation.mode = "review";
+    navigation.mode = "legacy-review";
     const selectedReview = {
       ...review,
       photos: [
@@ -368,7 +368,7 @@ describe("galeria privada da cliente", () => {
     expect(summary.textContent).toContain("1 foto");
     expect(summary.textContent?.replaceAll("\u00a0", " ")).toContain("R$ 7,00");
     expect(within(summary).getByText("Ver cálculo por faixas")).toBeTruthy();
-    expect(within(summary).getByRole("button", { name: "Continuar para o PIX" })).toBeTruthy();
+    expect(await within(summary).findByRole("link", { name: "Carrinho (1)" })).toBeTruthy();
     expect(within(summary).queryByText("Revisar seleção")).toBeNull();
     expect(within(summary).queryByRole("list", { name: "Fotos no carrinho" })).toBeNull();
 
@@ -473,59 +473,33 @@ describe("galeria privada da cliente", () => {
     expect(screen.getByText(/conta correta/i)).toBeTruthy();
   });
 
-  it("troca a galeria e o rodapé por uma única conferência interativa com PIX", async () => {
-    const checkoutReview = {
-      ...review,
-      photos: [
-        { ...review.photos[0], selected: true, commercial_state: "selected" },
-        { ...review.photos[0], id: "person-2", name: "IMG_003.jpg", selected: true, commercial_state: "selected" },
-      ],
-    };
-    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
-      if (path.endsWith("/photos/new-1/favorite") && options?.method === "POST") return Promise.resolve(new Response(null, { status: 201 }));
-      if (path.endsWith("/photos/new-1/selection") && options?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
-      if (path.endsWith("/cart")) return Promise.resolve(new Response(JSON.stringify({ quantity: 2, total_cents: 1300, base_total_cents: 1400, savings_cents: 100, items: [{ id: "new-1", name: "IMG_001.jpg" }, { id: "person-2", name: "IMG_003.jpg" }], parcels: [{ minimum_quantity: 1, maximum_quantity: 1, quantity: 1, unit_price_cents: 700, subtotal_cents: 700 }, { minimum_quantity: 2, maximum_quantity: null, quantity: 1, unit_price_cents: 600, subtotal_cents: 600 }] }), { status: 200 }));
-      if (path.endsWith("/checkout")) return Promise.resolve(new Response(JSON.stringify({ id: "order-1", total_cents: 1300, payment_status: "pending" }), { status: 201 }));
-      if (path.endsWith("/orders/order-1")) return Promise.resolve(new Response(JSON.stringify({ id: "order-1", total_cents: 1300, price_rule: { savings_cents: 100 }, sales_message: "Use o nome da cliente", pix: { copy_paste: "PIX-CODE", qr_png_data_url: "data:image/png;base64,AAAA", instructions: "Pagamento em análise.", confirmation: "manual" }, items: [{ photo_id: "new-1", name: "IMG_001.jpg", unit_price_cents: 700, preview_url: "/gallery/gallery-1/photos/new-1/preview" }, { photo_id: "person-2", name: "IMG_003.jpg", unit_price_cents: 600, preview_url: "/gallery/gallery-1/photos/person-2/preview" }] }), { status: 200 }));
-      if (path.endsWith("/folders")) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-1", name: "Apresentação", position: 0, photo_count: 2 }] }), { status: 200 }));
-      if (path.endsWith("/comments")) return Promise.resolve(new Response(JSON.stringify({ comments: [] }), { status: 200 }));
-      void options;
-      return Promise.resolve(new Response(JSON.stringify(checkoutReview), { status: 200 }));
-    });
+  it("abre o carrinho global pelo rodapé sem criar checkout por galeria", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/cart") ? { quantity: path === "/api/library/cart" ? 6 : 2, total_cents: 1400 }
+        : path.endsWith("/folders") ? { folders: [] }
+          : path.endsWith("/comments") ? { comments: [] }
+            : { ...review, photos: [{ ...review.photos[0], selected: true }] },
+    ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryPage />);
-    const footer = await screen.findByRole("complementary", { name: "Resumo da seleção" });
-    const footerText = footer.textContent?.replaceAll("\u00a0", " ") ?? "";
-    expect(footer.textContent).toContain("2 fotos");
-    expect(footerText).toContain("R$ 13,00");
-    expect(footerText).toContain("Você economiza R$ 1,00");
-    fireEvent.click(screen.getByRole("button", { name: "Continuar para o PIX" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/gallery/gallery-1/checkout", expect.objectContaining({ method: "POST" })));
-    expect(await screen.findByRole("heading", { name: /revise suas fotos e faça o pix/i })).toBeTruthy();
-    expect(screen.queryByRole("complementary", { name: "Resumo da seleção" })).toBeNull();
-    expect(screen.queryByRole("navigation", { name: "Filtrar fotos" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Carrinho (2)" })).toBeNull();
-    expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/new-1/preview");
-    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de IMG_001.jpg" }));
-    expect(screen.getByRole("dialog", { name: "Prévia ampliada de IMG_001.jpg" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Favoritar" })[0]);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/gallery/gallery-1/photos/new-1/favorite",
-      expect.objectContaining({ method: "POST" }),
-    ));
-    expect(screen.getByRole("heading", { name: /revise suas fotos e faça o pix/i })).toBeTruthy();
-    expect(screen.getByRole("img", { name: "QR Code PIX do pedido" }).getAttribute("src")).toContain("data:image/png;base64,");
-    expect(screen.getByDisplayValue("PIX-CODE")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Informar pagamento" })).toBeTruthy();
+    const link = await screen.findByRole("link", { name: "Carrinho (6)" });
+    expect(link.getAttribute("href")).toBe("/library/cart");
+    expect(screen.queryByRole("button", { name: "Continuar para o PIX" })).toBeNull();
+    expect(fetchMock.mock.calls.some(([path]) => path.endsWith("/checkout"))).toBe(false);
+  });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "✓ Desmarcar" })[0]);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/gallery/gallery-1/photos/new-1/selection",
-      expect.objectContaining({ method: "DELETE" }),
-    ));
-    expect(screen.queryByRole("heading", { name: /revise suas fotos e faça o pix/i })).toBeNull();
-    expect(await screen.findByRole("complementary", { name: "Resumo da seleção" })).toBeTruthy();
+  it("não exibe PIX parcial ao retomar um rascunho agrupado", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/cart") ? { quantity: 1, draft_order_id: "grouped-order" }
+        : path.endsWith("/orders/grouped-order") ? { id: "grouped-order", payment_group_id: "group", total_cents: 700, pix: null }
+          : path.endsWith("/folders") ? { folders: [] }
+            : path.endsWith("/comments") ? { comments: [] }
+              : { ...review, photos: [{ ...review.photos[0], selected: true }] },
+    ), { status: 200 }))));
+    render(<GalleryPage />);
+    expect(await screen.findByRole("link", { name: "Carrinho (1)" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Informar pagamento" })).toBeNull();
+    expect(screen.queryByText("PIX copia e cola")).toBeNull();
   });
 
   it("remove uma foto diretamente do carrinho privado", async () => {

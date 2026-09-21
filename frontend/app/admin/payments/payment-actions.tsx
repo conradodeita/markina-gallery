@@ -13,6 +13,7 @@ export type FinancialOrder = {
   status: "pending_review" | "confirmed" | "refused";
   can_decide: boolean;
   can_correct: boolean;
+  payment_group?: { id: string; total_cents: number; galleries: Array<{ order_id: string; name: string; total_cents: number }> } | null;
 };
 
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -26,14 +27,16 @@ export function PaymentActions({ order, clientName, onRefresh }: { order: Financ
   async function act(action: "confirmed" | "refused" | "correction") {
     if (locked.current || (action === "correction" ? !order.can_correct : !order.can_decide)) return;
     const label = action === "confirmed" ? "Confirmar pagamento" : action === "refused" ? "Pagamento não localizado" : "Corrigir confirmação";
-    const context = `${clientName} · ${order.gallery_name}\nPedido ${order.order_id} · ${order.quantity === undefined ? "" : `${order.quantity} foto(s) · `}${money(order.total_cents)}`;
+    const context = order.payment_group
+      ? `${clientName}\nPIX único · ${money(order.payment_group.total_cents)}\n${order.payment_group.galleries.map((gallery) => `${gallery.name}: ${money(gallery.total_cents)}`).join("\n")}\nA decisão será aplicada a todos esses pedidos.`
+      : `${clientName} · ${order.gallery_name}\nPedido ${order.order_id} · ${order.quantity === undefined ? "" : `${order.quantity} foto(s) · `}${money(order.total_cents)}`;
     if (!window.confirm(`${label}?\n${context}${action === "correction" ? "\nO pagamento voltará para revisão. Nenhuma mensagem será enviada à cliente." : ""}`)) return;
     locked.current = true; setBusy(true); setMessage("");
     try {
       if (action === "correction") correctionKey.current ??= crypto.randomUUID();
       const response = await fetch(`/api/admin/payment-communications/${order.id}/${action === "correction" ? "correction" : "decision"}`, {
         method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action === "correction" ? { idempotency_key: correctionKey.current } : { decision: action }),
+        body: JSON.stringify({ ...(action === "correction" ? { idempotency_key: correctionKey.current } : { decision: action }), ...(order.payment_group ? { payment_group_id: order.payment_group.id } : {}) }),
       });
       const result = await response.json().catch(() => null);
       const expectedStatus = action === "correction" ? "pending_review" : action;
@@ -47,6 +50,7 @@ export function PaymentActions({ order, clientName, onRefresh }: { order: Financ
   }
 
   return <div className="payment-shortcut-actions">
+    {order.payment_group ? <p>Este pedido integra um PIX único de {money(order.payment_group.total_cents)} · {order.payment_group.galleries.map((gallery) => gallery.name).join(", ")}</p> : null}
     <div className="dashboard-actions">
       {order.can_decide ? <><MarkinaButton type="button" disabled={busy} onClick={() => void act("confirmed")}>Confirmar pagamento</MarkinaButton><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void act("refused")}>Pagamento não localizado</MarkinaButton></> : null}
       {order.can_correct ? <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void act("correction")}>Corrigir confirmação</MarkinaButton> : null}

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/link", () => ({ default: ({ children, href, prefetch, ...props }: { children: React.ReactNode; href: string; prefetch?: boolean }) => <a href={href} data-prefetch={prefetch === true ? "true" : undefined} {...props}>{children}</a> }));
 
 import LibraryPage from "./page";
+import PurchasesPage from "./purchases/page";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -34,248 +35,61 @@ const privateGallery = {
   folders: [{ id: "folder-1", name: "Apresentação" }],
 };
 
-describe("biblioteca privada da cliente", () => {
+describe("biblioteca e compras da cliente", () => {
   it("preserva itens e contagem quando a prévia está ausente ou falha", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [{
       id: "order-missing", gallery_name: "Evento", parent_gallery_name: "Evento", confirmed_at: null, total_cents: 1400,
       items: [{ photo_id: "missing", name: "Ausente.jpg", preview_url: null }, { photo_id: "failed", name: "Falha.jpg", preview_url: "/library/history/items/failed/preview" }],
     }] }) : response({ journeys: [] })));
-    render(<LibraryPage />);
+    render(<PurchasesPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Ver fotos (2)" }));
     expect(screen.getByText("Ausente.jpg")).toBeTruthy();
     fireEvent.error(screen.getByRole("img", { name: "Prévia protegida de Falha.jpg" }));
     expect(screen.getAllByText("Prévia indisponível")).toHaveLength(2);
     expect(screen.getByText(/2 foto\(s\)/)).toBeTruthy();
   });
-  it("agrupa carrinhos de galerias diferentes sem oferecer checkout global", async () => {
-    const journey = (id: string, name: string, quantity: number, totalCents: number) => ({
-      id,
-      name,
-      event_name: `Evento ${name}`,
-      status: "active",
-      primary_surface: "public",
-      browse_url: `/public-galleries/${id}`,
-      public_gallery: { ...publicGallery, id, name, browse_url: `/public-galleries/${id}` },
-      private_gallery: { ...privateGallery, id: `private-${id}` },
-      selection: { quantity, total_cents: totalCents, savings_cents: 0 },
-      orders: [],
-      has_prepared_photos: false,
-      actions: { continue_url: `/public-galleries/${id}`, review_url: `/gallery/private-${id}`, orders_url: null, prepared_url: null, fallback_url: null },
-    });
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
-      ? response({ orders: [] })
-      : response({ journeys: [journey("public-1", "Festa escolar", 2, 1400), journey("public-2", "Formatura", 1, 900)] })));
 
+  it("mostra um único card por galeria, mesmo quando há seleção e compra", async () => {
+    const fetcher = vi.fn((path: string) => response({ journeys: [1, 2].map((id) => ({
+      id: String(id), name: `Galeria ${id}`, event_name: "Evento", status: "active",
+      browse_url: `/public-galleries/${id}`, private_gallery: privateGallery,
+      selection: { quantity: 2, total_cents: 1400 }, orders: [{ commercial_state: "purchased" }],
+      actions: { continue_url: `/public-galleries/${id}` },
+    })) }));
+    vi.stubGlobal("fetch", fetcher);
     render(<LibraryPage />);
-
-    const cart = await screen.findByRole("region", { name: "Carrinho" });
-    expect(within(cart).getAllByRole("article")).toHaveLength(2);
-    expect(within(cart).getByLabelText("Total informativo do carrinho").textContent).toContain("3 fotos · R$ 23,00");
-    const reviewLinks = within(cart).getAllByRole("link", { name: "Revisar carrinho" });
-    expect(reviewLinks.map((link) => link.getAttribute("href"))).toEqual([
-      "/gallery/private-public-1?mode=review",
-      "/gallery/private-public-2?mode=review",
-    ]);
-    expect(screen.queryByRole("link", { name: /Finalizar todos/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Finalizar todos/i })).toBeNull();
+    const galleries = await screen.findByRole("region", { name: "Galerias" });
+    expect(within(galleries).getAllByRole("article")).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "Ver fotos" }).map((item) => item.getAttribute("href"))).toEqual(["/public-galleries/1", "/public-galleries/2"]);
+    expect(screen.queryByText("Revisar carrinho")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Carrinho" })).toBeNull();
+    expect(fetcher.mock.calls.every(([path]) => path === "/api/library")).toBe(true);
   });
 
-  it("contém erro de cotação no carrinho afetado e preserva os demais", async () => {
-    const journey = (id: string, name: string, selection: object) => ({
-      id, name, event_name: `Evento ${name}`, status: "active", primary_surface: "public",
-      browse_url: `/public-galleries/${id}`, public_gallery: { ...publicGallery, id, name },
-      private_gallery: { ...privateGallery, id: `private-${id}` }, selection, orders: [], has_prepared_photos: false,
-      actions: { continue_url: `/public-galleries/${id}`, review_url: `/gallery/private-${id}`, orders_url: null, prepared_url: null, fallback_url: null },
-    });
+  it("mantém falha do histórico independente e permite repetir", async () => {
+    let attempts = 0;
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
-      ? response({}, 500)
-      : response({ journeys: [
-        journey("valid", "Galeria válida", { quantity: 2, total_cents: 1400 }),
-        journey("invalid", "Galeria sem preço", { quantity: 1, pricing_error: "Cotação indisponível para esta galeria." }),
-      ] })));
-
-    render(<LibraryPage />);
-
-    const cart = await screen.findByRole("region", { name: "Carrinho" });
-    expect(within(cart).getByLabelText("Total informativo do carrinho").textContent).toContain("3 fotos");
-    expect(within(cart).getByLabelText("Total informativo do carrinho").textContent).not.toContain("R$");
-    const valid = within(cart).getByRole("article", { name: "Carrinho de Galeria válida" });
-    const invalid = within(cart).getByRole("article", { name: "Carrinho de Galeria sem preço" });
-    expect(valid.textContent).toContain("R$ 14,00");
-    expect(within(valid).queryByText(/Cotação indisponível/)).toBeNull();
-    expect(within(invalid).getByText("Cotação indisponível para esta galeria.")).toBeTruthy();
-    expect(within(cart).getAllByRole("link", { name: "Revisar carrinho" })).toHaveLength(2);
+      ? (++attempts === 1 ? response({}, 500) : response({ orders: [], payment_groups: [] }))
+      : response({ journeys: [] })));
+    render(<><LibraryPage /><PurchasesPage /></>);
     expect(await screen.findByText("Não foi possível carregar as compras")).toBeTruthy();
-    expect(within(cart).getByText("Galeria válida")).toBeTruthy();
-  });
-
-  it("separa compras comunicadas do carrinho e não usa Ver pedido nem filtros", async () => {
-    const purchase = {
-      id: "reported-order",
-      gallery_name: "Fotos da família",
-      parent_gallery_name: "Festa escolar",
-      gallery_status_label: "Galeria ativa",
-      gallery_removed: false,
-      communicated_at: "2026-09-12T12:00:00Z",
-      confirmed_at: null,
-      commercial_state: "payment_reported",
-      total_cents: 1400,
-      items: [{ photo_id: "photo-1", name: "Foto 1", preview_url: "/preview/photo-1", delivery_url: null, delivery_reference_available: false }],
-    };
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
-      ? response({ orders: [purchase] })
-      : response({ journeys: [{
-        id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active", primary_surface: "public", browse_url: "/public-galleries/public-1",
-        public_gallery: publicGallery, private_gallery: privateGallery, selection: { quantity: 0 },
-        orders: [{ order_id: "reported-order", commercial_state: "payment_reported", total_cents: 1400 }], has_prepared_photos: false,
-        actions: { continue_url: "/public-galleries/public-1", review_url: null, orders_url: "/gallery/private-1", prepared_url: null, fallback_url: null },
-      }] })));
-
-    render(<LibraryPage />);
-
-    const purchases = await screen.findByRole("region", { name: "Compras" });
-    expect(screen.getByRole("link", { name: "Ver compra" }).getAttribute("href")).toBe("/library#purchases");
-    expect(screen.queryByText("Ver pedido")).toBeNull();
-    expect(within(purchases).getByRole("article", { name: "Compra de Fotos da família" })).toBeTruthy();
-    expect(within(purchases).getByText("Pagamento informado")).toBeTruthy();
-    expect(within(purchases).getByText("Informada em 12/09/2026")).toBeTruthy();
-    expect(within(purchases).queryByRole("button", { name: /Todas|Carrinho|Aguardando pagamento|Compradas/ })).toBeNull();
-    expect(within(purchases).queryByRole("button", { name: /Selecionar|Desmarcar|Favoritar/ })).toBeNull();
-  });
-
-  it("mostra estado vazio de compras sem repetir o carrinho", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases")
-      ? response({ orders: [] })
-      : response({ journeys: [{
-        id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active", primary_surface: "public", browse_url: "/public-galleries/public-1",
-        public_gallery: publicGallery, private_gallery: privateGallery, selection: { quantity: 1, total_cents: 700 }, orders: [], has_prepared_photos: false,
-        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", orders_url: null, prepared_url: null, fallback_url: null },
-      }] })));
-
-    render(<LibraryPage />);
-
-    const purchases = await screen.findByRole("region", { name: "Compras" });
-    expect(within(purchases).getByText("Nenhuma compra")).toBeTruthy();
-    expect(within(purchases).queryByText(/foto selecionada/i)).toBeNull();
-  });
-
-  it("libera as jornadas antes de o histórico comercial terminar", async () => {
-    let resolvePurchases!: (value: Response) => void;
-    const purchases = new Promise<Response>((resolve) => { resolvePurchases = resolve; });
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? purchases : response({
-      journeys: [{
-        id: "public-progressive",
-        name: "Galeria já disponível",
-        event_name: "Evento",
-        status: "active",
-        primary_surface: "public",
-        browse_url: "/public-galleries/public-progressive",
-        public_gallery: publicGallery,
-        private_gallery: null,
-        selection: { quantity: 0 },
-        orders: [],
-        has_prepared_photos: false,
-        actions: { continue_url: "/public-galleries/public-progressive", review_url: null, orders_url: null, prepared_url: null, fallback_url: null },
-      }],
-    })));
-
-    render(<LibraryPage />);
-
-    expect(await screen.findByText("Galeria já disponível")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Ver fotos" })).toBeTruthy();
-    expect(screen.getByText("Carregando compras")).toBeTruthy();
-    resolvePurchases(new Response(JSON.stringify({ orders: [] }), { status: 200 }));
-    expect(await screen.findByText("Nenhuma compra")).toBeTruthy();
-  });
-
-  it("isola a falha do histórico e permite tentar novamente", async () => {
-    let historyAttempts = 0;
-    vi.stubGlobal("fetch", vi.fn((path: string) => {
-      if (path.endsWith("/purchases")) {
-        historyAttempts += 1;
-        return historyAttempts === 1 ? response({}, 500) : response({ orders: [] });
-      }
-      return response({ journeys: [{
-        id: "public-retry", name: "Galeria preservada", event_name: "Evento", status: "active", primary_surface: "public", browse_url: "/public-galleries/public-retry",
-        public_gallery: publicGallery, private_gallery: null, selection: { quantity: 0 }, orders: [], has_prepared_photos: false,
-        actions: { continue_url: "/public-galleries/public-retry", review_url: null, orders_url: null, prepared_url: null, fallback_url: null },
-      }] });
-    }));
-
-    render(<LibraryPage />);
-
-    expect(await screen.findByText("Galeria preservada")).toBeTruthy();
-    expect(await screen.findByText("Não foi possível carregar as compras")).toBeTruthy();
+    expect(screen.getByText("Nenhuma galeria disponível")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
-    expect(await screen.findByText("Nenhuma compra")).toBeTruthy();
-    expect(screen.getByText("Galeria preservada")).toBeTruthy();
-    expect(historyAttempts).toBe(2);
+    expect(await screen.findByText("Nenhuma compra.")).toBeTruthy();
   });
 
-  it("agrupa origem, seleção e conteúdo preparado em uma única jornada", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [{ id: "order-1", gallery_name: "Fotos da família", parent_gallery_name: "Festa escolar", gallery_status_label: "Galeria removida", gallery_removed: true, confirmed_at: "2026-08-31T12:00:00Z", total_cents: 2500, items: [{ photo_id: "photo-1", name: "Foto 1", preview_url: "/library/history/items/item-1/preview", delivery_url: null, delivery_reference_available: true }] }] }) : response({
-      journeys: [{
-        id: "public-1",
-        name: "Festa escolar",
-        event_name: "Formatura",
-        status: "active",
-        primary_surface: "public",
-        browse_url: "/public-galleries/public-1",
-        public_gallery: publicGallery,
-        private_gallery: privateGallery,
-        selection: { quantity: 2, total_cents: 1400, savings_cents: 100 },
-        orders: [{ order_id: "reported-1", commercial_state: "payment_reported", total_cents: 2500 }],
-        has_prepared_photos: true,
-        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", orders_url: "/gallery/private-1", prepared_url: "/gallery/private-1", fallback_url: null },
-      }],
-    })));
-    render(<LibraryPage />);
-
-    expect(await screen.findByRole("heading", { name: "Minhas fotos", level: 1 })).toBeTruthy();
-    expect(screen.queryByText("Sua área privada")).toBeNull();
-    expect(screen.queryByText(/Cada evento aparece uma única vez/)).toBeNull();
-    expect(screen.queryByText(/compras preservadas/i)).toBeNull();
-    const section = await screen.findByRole("region", { name: "Galerias" });
-    const cart = screen.getByRole("region", { name: "Carrinho" });
-    expect(within(section).getAllByRole("article")).toHaveLength(1);
-    expect(within(cart).getByRole("article", { name: "Carrinho de Festa escolar" }).textContent).toContain("2 fotos");
-    expect(within(cart).getByRole("article", { name: "Carrinho de Festa escolar" }).textContent).toContain("R$ 14,00");
-    expect(within(cart).getByRole("link", { name: "Revisar carrinho" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
-    expect(within(section).getByRole("link", { name: "Carrinho (2)" }).getAttribute("href")).toBe("/library#cart");
-    expect(within(section).getAllByRole("link")).toHaveLength(1);
-    expect(within(section).getByText("Pagamento informado")).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Galerias privadas" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Compras" })).toBeTruthy();
-    expect(screen.getByText("Galeria removida", { exact: false })).toBeTruthy();
+  it("mostra um PIX com suas duas galerias e mantém pedido legado separado", async () => {
+    const order = (id: string) => ({ id, gallery_name: `Galeria ${id}`, parent_gallery_name: `Evento ${id}`,
+      commercial_state: "payment_reported", confirmed_at: null, total_cents: 700, items: [] });
+    vi.stubGlobal("fetch", vi.fn(() => response({ orders: [order("antiga")], payment_groups: [{
+      id: "grupo-1", total_cents: 1400, orders: [order("1"), order("2")],
+    }] })));
+    render(<PurchasesPage />);
+    expect(await screen.findByRole("region", { name: "Compra grupo-1" })).toBeTruthy();
+    expect(screen.getByText(/PIX único/).textContent).toContain("14,00");
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    expect(screen.getAllByText("Pagamento informado")).toHaveLength(3);
   });
-
-  it("mantém a pública como retorno cotidiano sem duplicar a privada automática", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({
-      journeys: [{
-        id: "public-1",
-        name: "Festa escolar",
-        event_name: "Formatura",
-        status: "active",
-        primary_surface: "public",
-        browse_url: "/public-galleries/public-1",
-        public_gallery: publicGallery,
-        private_gallery: privateGallery,
-        selection: { quantity: 1, total_cents: 700, savings_cents: 0 },
-        has_prepared_photos: false,
-        actions: { continue_url: "/public-galleries/public-1", review_url: "/gallery/private-1", prepared_url: null, fallback_url: null },
-      }],
-    })));
-    render(<LibraryPage />);
-
-    const section = await screen.findByRole("region", { name: "Galerias" });
-    const cart = screen.getByRole("region", { name: "Carrinho" });
-    expect(within(section).getAllByRole("article")).toHaveLength(1);
-    expect(within(section).getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/library#cart");
-    expect(within(section).getAllByRole("link")).toHaveLength(1);
-    expect(within(cart).getByRole("link", { name: "Revisar carrinho" }).getAttribute("href")).toBe("/gallery/private-1?mode=review");
-    expect(screen.queryByText("Abrir galeria privada")).toBeNull();
-  });
-
   it.each([
     { state: "seleção editável", quantity: 1, orders: [], deadlineVisible: true },
     { state: "pagamento informado", quantity: 0, orders: [{ order_id: "reported-1", commercial_state: "payment_reported", total_cents: 700 }], deadlineVisible: true },
@@ -327,7 +141,6 @@ describe("biblioteca privada da cliente", () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({ journeys: [], public_galleries: [], private_galleries: [], galleries: [] })));
     render(<LibraryPage />);
     expect(await screen.findByText("Nenhuma galeria disponível")).toBeTruthy();
-    expect(screen.getByText("Nenhuma compra")).toBeTruthy();
   });
 
   it("não inventa galerias quando a consulta falha", async () => {
@@ -356,7 +169,7 @@ describe("biblioteca privada da cliente", () => {
         actions: { continue_url: "/public-galleries/public-1", review_url: null, orders_url: null, prepared_url: null, fallback_url: null },
       }] })));
 
-    render(<LibraryPage />);
+    render(<><LibraryPage /><PurchasesPage /></>);
 
     const action = await screen.findByRole("link", { name: "Ver fotos" });
     expect(action.className).toContain("mk-button--primary");
@@ -374,6 +187,12 @@ describe("biblioteca privada da cliente", () => {
     expect(screen.getByRole("img", { name: "Prévia protegida ampliada de A.jpg" }).getAttribute("src")).toBe("/api/gallery/gallery-1/photos/order-1-0/preview");
     expect(screen.queryByRole("button", { name: "Anterior" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Próxima" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Fechar" }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Fechar" }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(within(grid).getByRole("button", { name: "Ampliar prévia protegida de A.jpg" }));
 
     const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
     expect(css).toMatch(/\.library-order-photo-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,minmax\(0,1fr\)\)/);

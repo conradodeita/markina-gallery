@@ -656,12 +656,40 @@ class PhotoComment(Base):
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PaymentGroup(Base):
+    """Um PIX da cliente, com pedidos operacionais independentes por galeria."""
+
+    __tablename__ = "payment_group"
+    __table_args__ = (
+        UniqueConstraint("id", "client_id", name="uq_payment_group_owner"),
+        CheckConstraint("state IN ('draft', 'reported', 'confirmed', 'refused')",
+                        name="ck_payment_group_state"),
+        CheckConstraint("total_cents >= 0", name="ck_payment_group_total"),
+        Index("uq_payment_group_draft", "client_id", unique=True,
+              sqlite_where=text("state = 'draft'"),
+              postgresql_where=text("state = 'draft'")),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    state: Mapped[str] = mapped_column(String(16), default="draft")
+    revision: Mapped[str] = mapped_column(String(64))
+    total_cents: Mapped[int] = mapped_column(Integer)
+    pix_copy_paste_snapshot: Mapped[str] = mapped_column(Text)
+    pix_instructions_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pix_configuration_snapshot: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class SaleOrder(Base):
     __tablename__ = "sale_order"
     __table_args__ = (
         CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled')"),
         CheckConstraint("total_cents >= 0"),
         UniqueConstraint("derived_gallery_id", "client_id", "checkout_key"),
+        ForeignKeyConstraint(["payment_group_id", "client_id"],
+                             ["payment_group.id", "payment_group.client_id"],
+                             name="fk_sale_order_payment_group_owner"),
         Index(
             "ix_sale_order_parent_payment_status",
             "parent_gallery_id_snapshot",
@@ -717,6 +745,7 @@ class SaleOrder(Base):
         DateTime(timezone=True), nullable=True
     )
     checkout_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payment_group_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -1035,11 +1064,15 @@ class PaymentCommunication(Base):
     __table_args__ = (
         UniqueConstraint("sale_order_id", "idempotency_key"),
         CheckConstraint("status IN ('pending_review', 'confirmed', 'refused')"),
+        ForeignKeyConstraint(["payment_group_id", "client_id"],
+                             ["payment_group.id", "payment_group.client_id"],
+                             name="fk_payment_communication_group_owner"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     sale_order_id: Mapped[UUID] = mapped_column(ForeignKey("sale_order.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     idempotency_key: Mapped[str] = mapped_column(String(128))
+    payment_group_id: Mapped[UUID | None] = mapped_column(nullable=True, unique=True)
     status: Mapped[str] = mapped_column(String(20), default="pending_review", index=True)
     decided_by_admin_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("admin_user.id"), nullable=True

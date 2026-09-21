@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 
+import { notifyCartChanged } from "../../client-navigation";
 import { ClientCartLink } from "../../client-cart";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
@@ -37,6 +38,7 @@ type Cart = {
 };
 type PendingOrder = {
   id: string;
+  payment_group_id?: string | null;
   total_cents: number;
   price_rule?: { savings_cents?: number; parcels?: Cart["parcels"] };
   sales_message?: string | null;
@@ -76,7 +78,10 @@ type Review = {
 export default function GalleryPage() {
   const { galleryId } = useParams<{ galleryId: string }>();
   const searchParams = useSearchParams();
-  const selectionReviewMode = searchParams.get("mode") === "review";
+  const selectionReviewMode = searchParams.get("mode") === "legacy-review";
+  useEffect(() => {
+    if (searchParams.get("mode") === "review") window.location.replace("/library/cart");
+  }, [searchParams]);
   const [review, setReview] = useState<Review | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -88,7 +93,6 @@ export default function GalleryPage() {
   const [message, setMessage] = useState("");
   const [closedGallery, setClosedGallery] = useState<{ publicGalleryUrl: string | null } | null>(null);
   const [filter, setFilter] = useState<CommercialFilter>("all");
-  const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [paymentBusy, setPaymentBusy] = useState("");
   const [pixCopied, setPixCopied] = useState(false);
   const checkoutKey = useRef("");
@@ -157,7 +161,10 @@ export default function GalleryPage() {
         setCart(typeof result.quantity === "number" ? result : { quantity: 0 });
         if (restoreDraft && result.draft_order_id) {
           const detailResponse = await fetch(`/api/gallery/${galleryId}/orders/${result.draft_order_id}`, { credentials: "same-origin" });
-          if (detailResponse.ok) setPendingOrder(await detailResponse.json());
+          if (detailResponse.ok) {
+            const detail: PendingOrder = await detailResponse.json();
+            setPendingOrder(detail.payment_group_id ? null : detail);
+          }
         }
       })
       .catch(() => setCart({ quantity: 0 }));
@@ -208,6 +215,7 @@ export default function GalleryPage() {
     );
     if (response.ok) {
       if (kind === "selection") {
+        notifyCartChanged();
         checkoutKey.current = "";
         setPendingOrder(null);
       }
@@ -217,33 +225,6 @@ export default function GalleryPage() {
       }
       load();
       loadCart(kind !== "selection");
-    }
-  }
-  async function checkout() {
-    if (checkoutBusy || !cart.quantity) return;
-    setCheckoutBusy(true);
-    checkoutKey.current ||= globalThis.crypto?.randomUUID?.() ?? `checkout-${Date.now()}-${galleryId}`;
-    try {
-      const response = await fetch(`/api/gallery/${galleryId}/checkout`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idempotency_key: checkoutKey.current }),
-      });
-      if (!response.ok) throw new Error();
-      const order = await response.json();
-      const detailResponse = await fetch(`/api/gallery/${galleryId}/orders/${order.id}`, { credentials: "same-origin" });
-      const detail = detailResponse.ok ? await detailResponse.json() : order;
-      setPendingOrder(detail);
-      setPixCopied(false);
-      setMessage("Confira as fotos e os dados do PIX antes de informar o pagamento.");
-      load();
-      loadCart();
-      loadPaymentOrders();
-    } catch {
-      setMessage("Não foi possível finalizar o pedido. Revise sua seleção e tente novamente.");
-    } finally {
-      setCheckoutBusy(false);
     }
   }
   async function reportPayment(orderId: string) {
@@ -407,7 +388,6 @@ export default function GalleryPage() {
   }
   return (
     <main className="admin-shell">
-      {!activePendingOrder ? <ClientCartLink count={cart.quantity} href="/library#cart" /> : null}
       {!review.gallery.selection_open && (
         <section className="admin-card gallery-reopening" aria-live="polite">
           <h2>Solicitar novo prazo para seleção das fotos</h2>
@@ -431,7 +411,7 @@ export default function GalleryPage() {
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
         {cart.parcels?.length ? <details><summary>Ver cálculo por faixas</summary><ul>{cart.parcels.map((parcel) => <li key={`${parcel.minimum_quantity}-${parcel.maximum_quantity ?? "mais"}`}>{parcel.quantity} × {(parcel.unit_price_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} = {(parcel.subtotal_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</li>)}</ul></details> : null}
         {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
-        <button type="button" className="primary" disabled={!review.gallery.selection_open || cart.total_cents === undefined || checkoutBusy} onClick={checkout}>{checkoutBusy ? "Preparando…" : "Continuar para o PIX"}</button>
+        <ClientCartLink className="primary" count={cart.quantity} />
       </aside> : null}</> : null}
       {activePendingOrder ? <section className="admin-card client-checkout-review" aria-live="polite"><GalleryPresentation galleryName="Revise suas fotos e faça o PIX" eyebrow="Conferência do pedido" modeLabel={<StatusBadge tone="warning">Aguardando pagamento</StatusBadge>} folders={[{ id: "checkout", name: "Fotos do pedido", photos: checkoutPhotos }]} folderDisplayMode="sequential" showHero={false} showCopyrightProtectionDialog renderExpandedPhotoContent={review.gallery.comments_enabled ? renderPhotoComments : undefined} renderPhotoMarkers={renderPhotoMarkers} /><div className="client-checkout-total"><span>{activePendingOrder.items?.length ?? 0} foto(s)</span><strong>{(activePendingOrder.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>{activePendingOrder.price_rule?.savings_cents ? <span>Economia de {(activePendingOrder.price_rule.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>{activePendingOrder.sales_message ? <p>{activePendingOrder.sales_message}</p> : null}{activePendingOrder.pix?.qr_png_data_url ? <img className="client-checkout-qr" src={activePendingOrder.pix.qr_png_data_url} alt="QR Code PIX do pedido" /> : null}{activePendingOrder.pix?.copy_paste ? <label className="client-checkout-pix">PIX copia e cola<textarea readOnly value={activePendingOrder.pix.copy_paste} /><button className="secondary" type="button" onClick={copyPix}>{pixCopied ? "Código copiado" : "Copiar código PIX"}</button></label> : <p className="notice">O fotógrafo ainda não configurou um código PIX para esta galeria.</p>}{activePendingOrder.pix?.instructions ? <p>{activePendingOrder.pix.instructions}</p> : null}<p>O pagamento estará sujeito a análise e você será informada após a conferência do fotógrafo.</p><button className="primary" type="button" disabled={paymentBusy === activePendingOrder.id} onClick={() => reportPayment(activePendingOrder.id)}>{paymentBusy === activePendingOrder.id ? "Informando…" : "Informar pagamento"}</button></section> : null}
       {paymentOrders.length > 0 && <section className="admin-card client-payment-orders" aria-live="polite"><h2>Acompanhamento do pagamento</h2>{paymentOrders.map((order) => {

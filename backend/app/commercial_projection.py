@@ -20,6 +20,7 @@ from app.auth import (
     SaleOrderItem,
     expired,
 )
+from app.unified_checkout import communication_join, payment_scopes
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ def build_commercial_projections(
                 SaleOrder.parent_gallery_id_snapshot,
                 SaleOrder.client_id,
                 SaleOrder.payment_status,
+                SaleOrder.payment_group_id,
                 SaleOrder.frozen_at,
                 SaleOrder.checkout_key,
                 SaleOrder.total_cents,
@@ -110,7 +112,7 @@ def build_commercial_projections(
             )
             .outerjoin(
                 PaymentCommunication,
-                PaymentCommunication.sale_order_id == SaleOrder.id,
+                communication_join(),
             )
             .outerjoin(SaleOrderItem, SaleOrderItem.sale_order_id == SaleOrder.id)
             .where(
@@ -122,6 +124,7 @@ def build_commercial_projections(
         )
     )
     order_rows = {}
+    scopes = payment_scopes(db, {row.payment_group_id for row in raw_order_rows if row.payment_group_id})
     purchased_photo_ids: dict[tuple[UUID, UUID], set[UUID]] = defaultdict(set)
     pending_review_order_ids: set[UUID] = set()
     item_ids_by_order: dict[UUID, set[UUID]] = defaultdict(set)
@@ -212,6 +215,7 @@ def build_commercial_projections(
                         "quantity": len(item_ids_by_order[row.id]),
                         "created_at": row.communicated_at.isoformat(),
                         "status": row.communication_status,
+                        "payment_group": scopes.get(row.payment_group_id),
                         **payment_capabilities(row.communication_status, row.payment_status),
                     }
                     for row in sorted(

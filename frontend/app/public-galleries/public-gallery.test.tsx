@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -46,8 +46,8 @@ describe("Galeria pública da cliente", () => {
     expect((screen.getByRole("button", { name: /Desmarcar/ }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("7,00");
-    expect(screen.getByRole("link", { name: "Carrinho (1)" }).getAttribute("href")).toBe("/library#cart");
-    expect(screen.getByRole("link", { name: "Carrinho (1)" }).className).toContain("selection-summary__proceed");
+    expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ }).getAttribute("href")).toBe("/library/cart");
+    expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ }).className).toContain("selection-summary__proceed");
   });
 
   it("mantém acesso à galeria privada quando o carrinho está vazio", async () => {
@@ -166,7 +166,7 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({ method: "POST" }),
     ));
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
-    expect(screen.getByRole("link", { name: "Carrinho (1)" })).toBeTruthy();
+    expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ })).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Favoritar" })[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/gallery/private-1/photos/photo-2/favorite",

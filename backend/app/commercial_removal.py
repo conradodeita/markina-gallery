@@ -12,6 +12,7 @@ from app.historical_media import (
     HistoricalMediaConflict,
     prepare_confirmed_historical_media,
 )
+from app.unified_checkout import communications_for_orders
 
 
 class CommercialRemovalBlocked(RuntimeError):
@@ -71,6 +72,11 @@ def apply_commercial_removal_policy(
         photo_asset_id=photo_asset_id,
     )
     orders = list(db.scalars(query))
+    grouped_communications = communications_for_orders(db, orders)
+    if any(item.status == "pending_review" for item in grouped_communications.values()):
+        raise CommercialRemovalBlocked(
+            "Há pagamento comunicado aguardando decisão administrativa."
+        )
     order_ids = [order.id for order in orders]
     pending_review_order_ids = (
         set(

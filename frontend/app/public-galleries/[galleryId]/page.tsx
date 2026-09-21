@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ClientNavigation, notifyCartChanged } from "../../client-navigation";
 import { ClientCartLink } from "../../client-cart";
 import { PushControl, LogoutButton } from "../../push-control";
 import { facialSearchApi, type FacialSearchResult } from "../../facial-search-client";
@@ -111,6 +112,7 @@ export default function PublicGalleryPage() {
       if (payload.gallery_closed || "selection_expires_at" in payload) {
         setGallery((current) => current ? { ...current, selection_expires_at: payload.gallery_closed ? null : payload.selection_expires_at } : current);
       }
+      notifyCartChanged();
       setCart(payload.cart ?? { quantity: selected ? Math.max(0, cart.quantity - 1) : cart.quantity + 1, items: [] });
       setMessage(selected
         ? "A foto foi removida da sua seleção."
@@ -190,6 +192,7 @@ export default function PublicGalleryPage() {
         {privateGalleryId ? <Link className="primary" href={`/gallery/${privateGalleryId}`}>Minha galeria</Link> : null}
         <PushControl /><LogoutButton />
       </nav>
+      <ClientNavigation />
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} regionId={referenceRegion} onRegionClear={() => setReferenceRegion(null)} />
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
       <SelectionDeadline expiresAt={gallery.selection_expires_at} onRevalidate={() => setRefresh((value) => value + 1)} />
@@ -208,7 +211,7 @@ export default function PublicGalleryPage() {
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents !== undefined ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div>
         {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
-        {privateGalleryId ? <ClientCartLink className="primary selection-summary__proceed" count={cart.quantity} href="/library#cart" /> : null}
+        {privateGalleryId ? <ClientCartLink className="primary selection-summary__proceed" count={cart.quantity} href="/library/cart" /> : null}
       </aside> : null}
     </main>
   );
