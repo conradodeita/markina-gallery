@@ -92,19 +92,7 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
     private_ids = select(DerivedGallery.id).where(
         DerivedGallery.parent_gallery_id == parent_gallery_id
     )
-    retained_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
-        DerivedGalleryPhoto.derived_gallery_id.in_(private_ids)
-    )
-    retained_folder_ids = select(PhotoAsset.folder_id).where(
-        PhotoAsset.parent_gallery_id == parent_gallery_id,
-        PhotoAsset.derived_gallery_id.is_(None),
-        PhotoAsset.id.in_(retained_photo_ids),
-    )
-    removable_photo_ids = select(PhotoAsset.id).where(
-        PhotoAsset.parent_gallery_id == parent_gallery_id,
-        PhotoAsset.derived_gallery_id.is_(None),
-        PhotoAsset.id.not_in(retained_photo_ids),
-    )
+    removable_photo_ids = select(PhotoAsset.id).where(PhotoAsset.parent_gallery_id == parent_gallery_id)
 
     def count(model, *criteria) -> int:
         return db.scalar(select(func.count()).select_from(model).where(*criteria)) or 0
@@ -117,10 +105,6 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
             .group_by(SaleOrder.payment_status)
         )
     }
-    membership_count = count(
-        DerivedGalleryMembership,
-        DerivedGalleryMembership.parent_gallery_id == parent_gallery_id,
-    )
     client_count = db.scalar(
         select(func.count()).select_from(
             select(DerivedGalleryMembership.client_id)
@@ -135,90 +119,22 @@ def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID) -> dict:
     ) or 0
     return {
         "remove": {
-            "folders": count(
-                PhotoFolder,
-                PhotoFolder.parent_gallery_id == parent_gallery_id,
-                PhotoFolder.derived_gallery_id.is_(None),
-                PhotoFolder.id.not_in(retained_folder_ids),
-            ),
-            "photos": count(
-                PhotoAsset,
-                PhotoAsset.parent_gallery_id == parent_gallery_id,
-                PhotoAsset.derived_gallery_id.is_(None),
-                PhotoAsset.id.not_in(retained_photo_ids),
-            ),
-            "media_derivatives": count(
-                MediaDerivative,
-                MediaDerivative.photo_asset_id.in_(removable_photo_ids),
-            ),
-            "registrations": count(
-                ParentGalleryRegistration,
-                ParentGalleryRegistration.parent_gallery_id == parent_gallery_id,
-            ),
-            "access_capabilities": count(
-                GalleryAccessCapability,
-                GalleryAccessCapability.parent_gallery_id == parent_gallery_id,
-            ),
+            "folders": count(PhotoFolder, PhotoFolder.parent_gallery_id == parent_gallery_id),
+            "photos": count(PhotoAsset, PhotoAsset.parent_gallery_id == parent_gallery_id),
+            "private_galleries": count(DerivedGallery, DerivedGallery.parent_gallery_id == parent_gallery_id),
+            "media_derivatives": count(MediaDerivative, MediaDerivative.photo_asset_id.in_(removable_photo_ids)),
+            "registrations": count(ParentGalleryRegistration, ParentGalleryRegistration.parent_gallery_id == parent_gallery_id),
+            "access_capabilities": count(GalleryAccessCapability, GalleryAccessCapability.parent_gallery_id == parent_gallery_id),
         },
         "preserve": {
-            "clients": client_count,
-            "memberships": membership_count,
-            "private_galleries": count(
-                DerivedGallery,
-                DerivedGallery.parent_gallery_id == parent_gallery_id,
-            ),
-            "photos_referenced_by_private": count(
-                PhotoAsset,
-                PhotoAsset.parent_gallery_id == parent_gallery_id,
-                PhotoAsset.derived_gallery_id.is_(None),
-                PhotoAsset.id.in_(retained_photo_ids),
-            ),
-            "folders_with_private_photos": count(
-                PhotoFolder,
-                PhotoFolder.parent_gallery_id == parent_gallery_id,
-                PhotoFolder.derived_gallery_id.is_(None),
-                PhotoFolder.id.in_(retained_folder_ids),
-            ),
-            "available_references": count(
-                DerivedGalleryPhoto,
-                DerivedGalleryPhoto.derived_gallery_id.in_(private_ids),
-            ),
-            "selections": count(
-                PhotoSelection, PhotoSelection.derived_gallery_id.in_(private_ids)
-            ),
-            "favorites": count(
-                PhotoFavorite, PhotoFavorite.derived_gallery_id.in_(private_ids)
-            ),
-            "comments": count(
-                PhotoComment, PhotoComment.derived_gallery_id.in_(private_ids)
-            ),
+            "clients": client_count, "orders": sum(order_counts.values()),
+            "orders_by_status": order_counts,
+            "order_items": count(SaleOrderItem, SaleOrderItem.sale_order_id.in_(select(SaleOrder.id).where(
+                SaleOrder.parent_gallery_id_snapshot == parent_gallery_id))),
+            "selections": count(PhotoSelection, PhotoSelection.derived_gallery_id.in_(private_ids)),
+            "favorites": count(PhotoFavorite, PhotoFavorite.derived_gallery_id.in_(private_ids)),
+            "comments": count(PhotoComment, PhotoComment.derived_gallery_id.in_(private_ids)),
             "views": count(PhotoView, PhotoView.derived_gallery_id.in_(private_ids)),
-            "orders": sum(order_counts.values()),
-            "orders_by_status": {
-                status: order_counts.get(status, 0)
-                for status in ("pending", "confirmed", "cancelled")
-            },
-            "order_items": count(
-                SaleOrderItem,
-                SaleOrderItem.sale_order_id.in_(
-                    select(SaleOrder.id).where(
-                        SaleOrder.parent_gallery_id_snapshot == parent_gallery_id
-                    )
-                ),
-            ),
-            "historical_media": count(
-                CommercialHistoryMedia,
-                CommercialHistoryMedia.sale_order_item_id.in_(
-                    select(SaleOrderItem.id).where(
-                        SaleOrderItem.sale_order_id.in_(
-                            select(SaleOrder.id).where(
-                                SaleOrder.parent_gallery_id_snapshot
-                                == parent_gallery_id
-                            )
-                        )
-                    )
-                ),
-            ),
         },
     }
 
@@ -333,18 +249,7 @@ def gallery_operational_storage_manifest(
 ) -> dict[str, list[dict[str, str]]]:
     """Congela somente chaves operacionais validadas por UUID, sem mídia histórica."""
 
-    retained_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
-        DerivedGalleryPhoto.derived_gallery_id.in_(
-            select(DerivedGallery.id).where(
-                DerivedGallery.parent_gallery_id == parent_gallery_id
-            )
-        )
-    )
-    removable_photo_ids = select(PhotoAsset.id).where(
-        PhotoAsset.parent_gallery_id == parent_gallery_id,
-        PhotoAsset.derived_gallery_id.is_(None),
-        PhotoAsset.id.not_in(retained_photo_ids),
-    )
+    removable_photo_ids = select(PhotoAsset.id).where(PhotoAsset.parent_gallery_id == parent_gallery_id)
     sources = [
         {"photo_id": str(photo_id), "storage_key": storage_key}
         for photo_id, storage_key in db.execute(
@@ -375,7 +280,14 @@ def gallery_operational_storage_manifest(
                 "derivative_id": source["photo_id"],
                 "relative_path": path.relative_to(derivatives_root()).as_posix(),
             })
-    return {"sources": sources, "derivatives": derivatives}
+    history = []
+    for media in db.scalars(select(CommercialHistoryMedia).where(CommercialHistoryMedia.sale_order_item_id.in_(
+        select(SaleOrderItem.id).where(SaleOrderItem.sale_order_id.in_(select(SaleOrder.id).where(
+            SaleOrder.parent_gallery_id_snapshot == parent_gallery_id)))))):
+        for key in (media.preview_storage_key, media.delivery_storage_key):
+            if key:
+                history.append({"relative_path": key})
+    return {"sources": sources, "derivatives": derivatives, "history": history}
 
 
 def claim_next_operation(
@@ -410,8 +322,13 @@ def claim_next_operation(
 
 
 def retry_failed_operation(db: Session, operation: GalleryLifecycleOperation) -> None:
-    """Reagenda falha sem apagar o progresso já confirmado."""
+    """Reagenda falha; operações públicas legadas recompõem o escopo aprovado."""
 
+    if operation.operation_type == "delete_parent_gallery" and (operation.manifest or {}).get("history_policy") != "text-only-v1":
+        manifest = dict(operation.manifest or {})
+        manifest["completed_steps"] = []
+        manifest["operational_storage"] = gallery_operational_storage_manifest(db, operation.target_parent_gallery_id)
+        operation.manifest = manifest
     transition_operation(operation, "queued")
     operation.lease_token = None
     operation.lease_expires_at = None

@@ -5,6 +5,8 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
 import { PaymentActions } from "./payment-actions";
 
+import { RemovedMovements, type RemovedMovement } from "../../removed-movements";
+
 type Delivery = {
   id: string;
   status: "queued" | "processing" | "sent" | "failed";
@@ -32,6 +34,7 @@ type Communication = {
 
 type FinancialStatus = "awaiting_payment" | "reported" | "confirmed" | "not_found" | "overdue";
 type Order = {
+  assets_removed?: boolean;
   id: string;
   parent_gallery: { id: string; name: string; removed: boolean };
   gallery: { id: string; name: string; removed: boolean };
@@ -58,6 +61,7 @@ type ClientGroup = {
   orders: Order[];
 };
 type Dashboard = {
+  removed_movements?: RemovedMovement[];
   templates: Record<"confirmed" | "refused", string>;
   templates_are_global: boolean;
   selections_without_order?: Array<{ client: { id: string; name: string }; gallery: { id: string; name: string }; parent_gallery: { id: string; name: string }; selected_count: number; total_cents: number | null; pricing_available: boolean; created_at: string; folders: Array<{ id: string; name: string; items: Array<{ id: string; name: string }> }> }>;
@@ -248,6 +252,7 @@ export default function AdminPaymentsPage() {
 
     {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
 
+    <RemovedMovements items={dashboard.removed_movements ?? []} admin />
     {dashboard.selections_without_order?.length ? <section className="admin-card"><div className="section-heading"><div><h2>Seleções em aberto</h2><p>Fotos que continuam no carrinho e ainda não tiveram pagamento comunicado.</p></div><StatusBadge>{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral">No carrinho</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><div className="payment-client-total"><strong>{selection.total_cents === null ? "Preço indisponível" : money(selection.total_cents)}</strong><span>{selection.selected_count} foto(s)</span></div></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
 
     <details className="admin-card payment-filters" open={hasFilters || undefined}>
@@ -285,6 +290,7 @@ function OrderCard({ order, busyAction, onRefresh, onRetry }: { order: Order; bu
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
+    {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
     <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.parent_gallery.name} · pedido {order.id.slice(0, 8)}</p></div><strong>{money(order.total_cents)}</strong></div>
     <details>
       <summary>Ver pedido e mensagens</summary>

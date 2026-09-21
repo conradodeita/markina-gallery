@@ -12,7 +12,8 @@ export type ClientDirectoryItem = {
   aggregates?: {
     public_galleries: number;
     private_galleries: number;
-    orders: number;
+    removed_movements: "movimento(s) histórico(s) de acervo removido",
+  orders: number;
   };
   deletion_eligible?: boolean;
 };

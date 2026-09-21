@@ -20,7 +20,7 @@ from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, PlainTextResponse
@@ -46,6 +46,15 @@ from app.admin_security import (
     consume_admin_action_token,
     invalidate_admin_security_material,
 )
+from app.asset_removal import (
+    delete_private_records,
+    enqueue_file_cleanup,
+    historical_paths,
+    lock_removal_clients,
+    preserve_asset_history,
+    process_file_cleanup,
+    removed_movements_payload,
+)
 from app.auth import (
     AdminActionToken,
     AdminPasswordInput,
@@ -66,7 +75,6 @@ from app.auth import (
     DerivedGalleryPhotoOrigin,
     EmailDelivery,
     FacialJob,
-    GalleryAccess,
     GalleryAccessCapability,
     GalleryLifecycleOperation,
     GalleryMembershipNotificationOutbox,
@@ -3690,6 +3698,9 @@ def delete_photo_folder(
     folder_id: UUID, request: Request, db: Session = Depends(db_session)
 ) -> Response:
     require_admin(request)
+    context = db.get(PhotoFolder, folder_id)
+    if context:
+        lock_removal_clients(db, context.parent_gallery_id)
     folder = db.scalar(select(PhotoFolder).where(PhotoFolder.id == folder_id).with_for_update())
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
@@ -3702,20 +3713,17 @@ def delete_photo_folder(
     photos = list(db.scalars(select(PhotoAsset).where(
         PhotoAsset.folder_id == folder.id
     ).order_by(PhotoAsset.id).with_for_update()))
-    # Preflight comercial integral: nenhuma foto é removida se outra bloquear.
-    for photo in photos:
-        enforce_commercial_removal_or_409(
-            db, parent_gallery_id=folder.parent_gallery_id, photo_asset_id=photo.id
-        )
+    preserve_asset_history(db, folder.parent_gallery_id, photo_ids=[photo.id for photo in photos])
     paths_to_remove: list[Path] = []
     for photo in photos:
         paths_to_remove.extend(_delete_photo_records(db, photo))
     db.flush()
     audit(db, "photo_folder.deleted", str(folder.id))
     db.delete(folder)
+    cleanup = enqueue_file_cleanup(db, paths_to_remove)
     db.commit()
-    _remove_photo_files(paths_to_remove)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    process_file_cleanup(db, cleanup)
+    return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"X-Asset-Cleanup": cleanup.status})
 
 
 @app.get("/admin/photo-folders/{folder_id}/photos")
@@ -3732,20 +3740,6 @@ def admin_photo_folder_photos(
             .where(PhotoAsset.folder_id == folder.id)
             .order_by(PhotoAsset.filename)
         )
-    )
-    confirmed_photo_ids = (
-        set(
-            db.scalars(
-                select(SaleOrderItem.photo_asset_id)
-                .join(SaleOrder)
-                .where(
-                    SaleOrderItem.photo_asset_id.in_([photo.id for photo in photos]),
-                    SaleOrder.payment_status == "confirmed",
-                )
-            )
-        )
-        if photos
-        else set()
     )
     parent = db.get(ParentGallery, folder.parent_gallery_id)
     rows = []
@@ -3765,7 +3759,7 @@ def admin_photo_folder_photos(
                 "width": derivative.width if derivative else None,
                 "height": derivative.height if derivative else None,
                 "error": job.last_error if job else None,
-                "can_delete": photo.id not in confirmed_photo_ids,
+                "can_delete": True,
                 "is_cover": bool(parent and parent.cover_photo_id == photo.id),
             }
         )
@@ -3785,6 +3779,8 @@ def delete_folder_photo_asset(
     """Exclui foto após aplicar a política comercial comum."""
     require_admin(request)
     folder = db.get(PhotoFolder, folder_id)
+    if folder:
+        lock_removal_clients(db, folder.parent_gallery_id)
     photo = db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo_id).with_for_update())
     if (
         not folder
@@ -3800,22 +3796,19 @@ def delete_folder_photo_asset(
         )
     else:
         require_parent_gallery_mutable(db, folder.parent_gallery_id)
-    enforce_commercial_removal_or_409(
-        db,
-        parent_gallery_id=folder.parent_gallery_id,
-        photo_asset_id=photo.id,
-    )
+    preserve_asset_history(db, folder.parent_gallery_id, photo_ids=[photo.id])
     paths_to_remove = _delete_photo_records(db, photo)
+    cleanup = enqueue_file_cleanup(db, paths_to_remove)
     db.commit()
-    _remove_photo_files(paths_to_remove)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    process_file_cleanup(db, cleanup)
+    return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"X-Asset-Cleanup": cleanup.status})
 
 
 def _delete_photo_records(db: Session, photo: PhotoAsset) -> list[Path]:
     """Remove registros na transação do chamador; arquivos só após commit."""
     from app.preview_adjustment.cleanup import photo_files
 
-    paths_to_remove = photo_files(photo.id)
+    paths_to_remove = photo_files(photo.id) + historical_paths(db, [photo.id])
     try:
         paths_to_remove.append(safe_source_path(photo))
     except ValueError:
@@ -3836,6 +3829,10 @@ def _delete_photo_records(db: Session, photo: PhotoAsset) -> list[Path]:
     db.execute(delete(PhotoFavorite).where(PhotoFavorite.photo_asset_id == photo.id))
     db.execute(delete(PhotoView).where(PhotoView.photo_asset_id == photo.id))
     db.execute(delete(PhotoSelection).where(PhotoSelection.photo_asset_id == photo.id))
+    db.execute(delete(DerivedGalleryPhotoOrigin).where(
+        DerivedGalleryPhotoOrigin.derived_gallery_photo_id.in_(select(DerivedGalleryPhoto.id).where(
+            DerivedGalleryPhoto.photo_asset_id == photo.id))))
+    db.execute(update(SaleOrderItem).where(SaleOrderItem.photo_asset_id == photo.id).values(photo_asset_id=None))
     db.execute(delete(DerivedGalleryPhoto).where(DerivedGalleryPhoto.photo_asset_id == photo.id))
     db.execute(delete(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id))
     db.execute(delete(MediaJob).where(MediaJob.photo_asset_id == photo.id))
@@ -4422,8 +4419,8 @@ def parent_gallery_deletion_inventory(
         "consequences": {
             "public_gallery_removed": True,
             "public_access_revoked": True,
-            "private_galleries_preserved": True,
-            "private_referenced_photos_preserved": True,
+            "private_galleries_preserved": False,
+            "private_referenced_photos_preserved": False,
             "clients_preserved": True,
             "commercial_history_preserved": True,
             "restoration_available_after_start": False,
@@ -4515,6 +4512,7 @@ def delete_parent_gallery(
             )
         return lifecycle_operation_payload(existing)
 
+    lock_removal_clients(db, parent_gallery_id)
     db.scalar(select(ParentGallery).where(ParentGallery.id == parent_gallery_id).with_for_update())
     gallery = _parent_gallery_or_404(db, parent_gallery_id)
     if gallery.lifecycle_status == "deleting":
@@ -6916,7 +6914,12 @@ def delete_derived_gallery(
     gallery = db.get(DerivedGallery, gallery_id)
     if not gallery:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
-    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    lock_removal_clients(db, gallery.parent_gallery_id)
+    gallery = db.scalar(select(DerivedGallery).where(DerivedGallery.id == gallery_id)
+                        .execution_options(populate_existing=True))
+    if not gallery:
+        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    parent = db.get(ParentGallery, gallery.parent_gallery_id, populate_existing=True)
     if not parent:
         raise HTTPException(status_code=404, detail="Galeria pública de origem não encontrada.")
     if parent.lifecycle_status == "deleting":
@@ -6924,55 +6927,19 @@ def delete_derived_gallery(
             status_code=status.HTTP_409_CONFLICT,
             detail="A Galeria pública está em exclusão. Aguarde a conclusão antes de excluir a privada.",
         )
-    member_client_ids = set(
-        db.scalars(
-            select(DerivedGalleryMembership.client_id).where(
-                DerivedGalleryMembership.derived_gallery_id == gallery.id
-            )
-        )
-    )
-    if not member_client_ids:
-        member_client_ids.add(gallery.client_id)
-    for client_id in member_client_ids:
-        enforce_commercial_removal_or_409(
-            db,
-            parent_gallery_id=gallery.parent_gallery_id,
-            client_id=client_id,
-            derived_gallery_id=gallery.id,
-        )
-    for model in (PhotoComment, PhotoFavorite, PhotoView, PhotoSelection):
-        db.execute(delete(model).where(model.derived_gallery_id == gallery.id))
-    reference_ids = list(
-        db.scalars(
-            select(DerivedGalleryPhoto.id).where(
-                DerivedGalleryPhoto.derived_gallery_id == gallery.id
-            )
-        )
-    )
-    if reference_ids:
-        db.execute(
-            delete(DerivedGalleryPhotoOrigin).where(
-                DerivedGalleryPhotoOrigin.derived_gallery_photo_id.in_(reference_ids)
-            )
-        )
-    db.execute(
-        delete(DerivedGalleryPhoto).where(DerivedGalleryPhoto.derived_gallery_id == gallery.id)
-    )
-    db.execute(delete(GalleryAccess).where(GalleryAccess.gallery_id == gallery.id))
-    db.execute(
-        delete(GalleryAccessCapability).where(
-            GalleryAccessCapability.derived_gallery_id == gallery.id
-        )
-    )
-    db.execute(
-        delete(DerivedGalleryMembership).where(
-            DerivedGalleryMembership.derived_gallery_id == gallery.id
-        )
-    )
+    preserve_asset_history(db, gallery.parent_gallery_id, gallery_ids=[gallery.id])
+    paths = historical_paths(db, gallery_ids=[gallery.id])
+    for photo in list(db.scalars(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == gallery.id)
+                                 .order_by(PhotoAsset.id).with_for_update())):
+        paths.extend(_delete_photo_records(db, photo))
+    db.flush()
+    delete_private_records(db, [gallery.id])
+    cleanup = enqueue_file_cleanup(db, paths)
     audit(db, "derived_gallery.deleted", str(gallery.id))
-    db.delete(gallery)
     db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    process_file_cleanup(db, cleanup)
+    return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"X-Asset-Cleanup": cleanup.status})
+
 
 
 def gallery_operational_status(db: Session, gallery: DerivedGallery) -> dict[str, object]:
@@ -7724,6 +7691,7 @@ def client_purchase_history(
                 SaleOrder.client_id == session.subject_id,
                 or_(
                     SaleOrder.payment_status == "confirmed",
+                    SaleOrder.assets_removed_at.is_not(None),
                     SaleOrder.payment_group_id.in_(
                         select(PaymentCommunication.payment_group_id).where(
                             PaymentCommunication.client_id == session.subject_id)),
@@ -7809,6 +7777,7 @@ def client_purchase_history(
                 "parent_gallery_name": order.parent_gallery_name_snapshot,
                 "gallery_status_label": "Galeria ativa" if gallery else "Galeria removida",
                 "gallery_removed": gallery is None,
+                "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 "commercial_state": (
                     "purchased"
@@ -7845,7 +7814,8 @@ def client_purchase_history(
         group["total_cents"] = sum(item["total_cents"] for item in group["orders"])
         group["commercial_state"] = group["orders"][0]["commercial_state"]
     return {"orders": [item for item in result if not item["payment_group_id"]],
-            "payment_groups": list(groups.values())}
+            "payment_groups": list(groups.values()),
+            "removed_movements": removed_movements_payload(db, client_id=session.subject_id)}
 
 
 def _historical_item_for_client(
@@ -9800,6 +9770,7 @@ def list_payment_communications(
                 },
                 "total_cents": order.total_cents,
                 "financial_status": financial_state,
+                "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 "created_at": order.created_at.isoformat(),
                 "selection_expires_at": (
@@ -9956,6 +9927,8 @@ def list_payment_communications(
             "financial_statuses": dict(financial_counts),
             "delivery_statuses": dict(delivery_counts),
         },
+        "removed_movements": removed_movements_payload(db, parent_gallery_id=parent_gallery_id,
+            query=query, created_from=created_from, created_to=created_to) if not financial_status and not delivery_status else [],
         "groups": page_groups,
         "page": {"next_cursor": next_cursor, "limit": limit},
         "communications": [
@@ -10131,6 +10104,8 @@ def client_pending_order(
     )
     if not order:
         raise HTTPException(status_code=403, detail="Acesso negado.")
+    if order.assets_removed_at:
+        raise HTTPException(status_code=409, detail="O acervo deste pedido foi removido. Consulte seu histórico em Compras.")
     if order.payment_status != "pending":
         raise HTTPException(status_code=409, detail="Este pedido não está pendente de confirmação.")
     if order.payment_group_id:

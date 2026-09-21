@@ -8,6 +8,7 @@ export type Order = {
   parent_gallery_name: string;
   gallery_status_label: string;
   gallery_removed: boolean;
+  assets_removed?: boolean;
   communicated_at?: string | null;
   confirmed_at: string | null;
   commercial_state?: "awaiting_payment" | "payment_reported" | "purchased" | "cancelled";
@@ -52,12 +53,13 @@ export function LibraryOrderCard({ order }: { order: Order }) {
   return (
     <article aria-label={`Compra de ${order.gallery_name}`} className={`library-order library-order--${state}`}>
       <div className="library-order-summary"><strong>{order.gallery_name}</strong><small>{order.parent_gallery_name}{order.gallery_removed ? " · Galeria removida" : ""}</small><span>{order.items.length} foto(s) · {money(order.total_cents)}</span><StatusBadge tone={order.commercial_state === "purchased" || !order.commercial_state ? "success" : order.commercial_state === "payment_reported" ? "warning" : "neutral"}>{orderLabel(order)}</StatusBadge>{activityAt ? <time dateTime={activityAt}>{activityLabel} em {new Date(activityAt).toLocaleDateString("pt-BR")}</time> : null}</div>
+      {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Este registro permanece no seu histórico.</p> : null}
       <button className="secondary" type="button" aria-expanded={open} aria-controls={gridId} onClick={() => setOpen((current) => !current)} disabled={!photos.length}>{open ? "Ocultar fotos" : `Ver fotos (${photos.length})`}</button>
       {open ? <div className="library-order-photo-grid" id={gridId} role="region" aria-label={`Fotos da compra de ${order.gallery_name}`}>
         {photos.map((photo) => <figure key={photo.photo_id}>
-          <button type="button" aria-label={`Ampliar prévia protegida de ${photo.name}`} onClick={(event) => { previewTrigger.current = event.currentTarget; setExpandedPhoto(photo); }} onContextMenu={(event) => event.preventDefault()}>
+          {photo.preview_url ? <button type="button" aria-label={`Ampliar prévia protegida de ${photo.name}`} onClick={(event) => { previewTrigger.current = event.currentTarget; setExpandedPhoto(photo); }} onContextMenu={(event) => event.preventDefault()}>
             <PurchasePreview path={photo.preview_url} name={photo.name} />
-          </button>
+          </button> : <span>Imagem removida</span>}
           <figcaption>{photo.name}</figcaption>
         </figure>)}
       </div> : null}

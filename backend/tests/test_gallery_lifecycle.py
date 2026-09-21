@@ -232,7 +232,7 @@ def test_lifecycle_worker_resumes_after_failure_in_each_stage(
             target_parent_gallery_id=uuid4(),
             actor_admin_id=uuid4(),
             idempotency_key=f"resume-{failed_stage}",
-            manifest={},
+            manifest={"history_policy": "text-only-v1"},
         )
         db.add(operation)
         db.commit()
@@ -392,8 +392,8 @@ def test_parent_gallery_deletion_endpoint_is_idempotent_and_returns_inventory() 
         assert preview.json()["consequences"] == {
             "public_gallery_removed": True,
             "public_access_revoked": True,
-            "private_galleries_preserved": True,
-            "private_referenced_photos_preserved": True,
+            "private_galleries_preserved": False,
+            "private_referenced_photos_preserved": False,
             "clients_preserved": True,
             "commercial_history_preserved": True,
             "restoration_available_after_start": False,
@@ -419,35 +419,11 @@ def test_parent_gallery_deletion_endpoint_is_idempotent_and_returns_inventory() 
             "should_poll": True,
             "poll_after_ms": 1000,
         }
-        assert payload["inventory"] == {
-            "remove": {
-                "folders": 0,
-                "photos": 0,
-                "media_derivatives": 0,
-                "registrations": 1,
-                "access_capabilities": 0,
-            },
-            "preserve": {
-                "clients": 1,
-                "memberships": 1,
-                "private_galleries": 1,
-                "photos_referenced_by_private": 1,
-                "folders_with_private_photos": 1,
-                "available_references": 1,
-                "selections": 1,
-                "favorites": 0,
-                "comments": 0,
-                "views": 0,
-                "orders": 1,
-                "orders_by_status": {
-                    "pending": 0,
-                    "confirmed": 1,
-                    "cancelled": 0,
-                },
-                "order_items": 1,
-                "historical_media": 1,
-            },
-        }
+        assert payload["inventory"]["remove"]["photos"] == 1
+        assert payload["inventory"]["remove"]["folders"] == 1
+        assert payload["inventory"]["remove"]["private_galleries"] == 1
+        assert payload["inventory"]["preserve"]["orders"] == 1
+        assert payload["inventory"]["preserve"]["selections"] == 1
         assert preview.json()["inventory"] == payload["inventory"]
         repeated = client.delete(
             f"/admin/parent-galleries/{parent_id}",
@@ -581,7 +557,7 @@ def test_lifecycle_contract_exposes_failure_progress_and_retry_action() -> None:
         retried = client.post(f"/admin/gallery-lifecycle-operations/{operation_id}/retry")
         assert retried.status_code == 200
         assert retried.json()["status"] == "queued"
-        assert retried.json()["completed_steps"] == ["preparing_history"]
+        assert retried.json()["completed_steps"] == []
         assert retried.json()["actions"]["can_retry"] is False
         assert retried.json()["actions"]["should_poll"] is True
         assert (
@@ -590,7 +566,7 @@ def test_lifecycle_contract_exposes_failure_progress_and_retry_action() -> None:
         )
 
 
-def test_record_cleanup_removes_public_origin_and_preserves_private_graph() -> None:
+def test_record_cleanup_removes_entire_acervo_and_preserves_history() -> None:
     with SessionLocal() as db:
         owner = Client(full_name="Cliente preservada", phone_e164="+5511999999840")
         parent = ParentGallery(name="Galeria pública descartável")
@@ -763,48 +739,29 @@ def test_record_cleanup_removes_public_origin_and_preserves_private_graph() -> N
         assert retained_parent.lifecycle_status == "deleted"
         assert retained_parent.active is False
         assert retained_parent.cover_photo_id is None
-        assert db.get(DerivedGallery, private_id) is not None
-        assert db.get(PhotoFolder, folder_id) is not None
-        assert db.get(PhotoAsset, photo_id) is not None
+        assert db.get(DerivedGallery, private_id) is None
+        assert db.get(PhotoFolder, folder_id) is None
+        assert db.get(PhotoAsset, photo_id) is None
         assert db.get(PhotoAsset, unused_photo_id) is None
-        for model in (
-            DerivedGalleryPhoto,
-            PhotoSelection,
-            PhotoFavorite,
-            PhotoView,
-            PhotoComment,
-            PriceRule,
-            PixCheckoutSettings,
-            GalleryAccess,
-            MediaDerivative,
-            MediaJob,
-        ):
-            assert db.scalar(select(func.count()).select_from(model)) == 1
-        assert db.scalar(select(func.count()).select_from(GalleryAccessCapability)) == 0
-        assert db.scalar(select(func.count()).select_from(ParentGalleryRegistration)) == 0
-        assert db.scalar(select(func.count()).select_from(AuthChallenge)) == 0
+        for model in (DerivedGalleryPhoto, PhotoSelection, PhotoFavorite, PhotoView, PhotoComment,
+                      GalleryAccess, MediaDerivative, MediaJob, GalleryAccessCapability,
+                      ParentGalleryRegistration, AuthChallenge):
+            assert db.scalar(select(func.count()).select_from(model)) == 0
         assert db.get(Client, owner_id) is not None
         preserved_order = db.get(SaleOrder, order_id)
         preserved_item = db.get(SaleOrderItem, item_id)
-        assert preserved_order.derived_gallery_id == private_id
+        assert preserved_order.derived_gallery_id is None
         assert preserved_order.total_cents == 2100
-        assert preserved_order.parent_gallery_name_snapshot == ("Galeria pública descartável")
-        assert preserved_item.photo_asset_id == photo_id
+        assert preserved_order.payment_status == "confirmed"
+        assert preserved_order.parent_gallery_name_snapshot == "Galeria pública descartável"
+        assert preserved_item.photo_asset_id is None
         assert preserved_item.filename_snapshot == "comprada.jpg"
-        assert db.scalar(select(func.count()).select_from(CommercialHistoryMedia)) == 1
+        assert db.scalar(select(CommercialHistoryMedia)).status == "purged"
         operation = db.get(GalleryLifecycleOperation, operation_id)
         assert operation.manifest["removed_records"]["public_origins"] == 1
-        assert operation.manifest["removed_records"]["photos"] == 1
-        assert operation.manifest["removed_records"]["preserved_private_galleries"] == 1
-        assert operation.manifest["removed_records"]["preserved_private_photos"] == 1
-        assert (
-            db.scalar(
-                select(func.count()).where(
-                    AuditEvent.event == "parent_gallery.operational_records_removed"
-                )
-            )
-            == 1
-        )
+        assert operation.manifest["removed_records"]["photos"] == 2
+        assert operation.manifest["removed_records"]["private_galleries"] == 1
+        assert db.scalar(select(func.count()).where(AuditEvent.event == "parent_gallery.operational_records_removed")) == 1
 
 
 def test_storage_cleanup_uses_manifest_and_retries_partial_failure_without_history(
@@ -912,7 +869,7 @@ def test_storage_cleanup_uses_manifest_and_retries_partial_failure_without_histo
     assert historical.read_bytes() == b"historico-preservado"
 
 
-def test_public_deletion_keeps_one_private_photo_copy_and_private_viewing(
+def test_public_deletion_removes_private_references_and_revokes_viewing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source_root = tmp_path / "retained-source"
@@ -1008,105 +965,36 @@ def test_public_deletion_keeps_one_private_photo_copy_and_private_viewing(
         )
         assert response.status_code == 202
         inventory = response.json()["inventory"]
-        assert inventory["remove"]["photos"] == 1
-        assert inventory["preserve"]["photos_referenced_by_private"] == 1
+        assert inventory["remove"]["photos"] == 2
         operation_id = UUID(response.json()["operation_id"])
-
     with SessionLocal() as db:
         storage = db.get(GalleryLifecycleOperation, operation_id).manifest["operational_storage"]
-        assert [entry["photo_id"] for entry in storage["sources"]] == [str(removable_id)]
-
+        assert {entry["photo_id"] for entry in storage["sources"]} == {str(removable_id), str(retained_id)}
     assert process_next_gallery_lifecycle_operation() is True
-
     with SessionLocal() as db:
-        parent = db.get(ParentGallery, parent_id)
-        assert parent.lifecycle_status == "deleted"
-        assert db.get(DerivedGallery, private_id) is not None
-        assert db.get(PhotoAsset, retained_id) is not None
+        assert db.get(ParentGallery, parent_id).lifecycle_status == "deleted"
+        assert db.get(DerivedGallery, private_id) is None
+        assert db.get(PhotoAsset, retained_id) is None
         assert db.get(PhotoAsset, removable_id) is None
-        assert db.scalar(select(func.count()).select_from(DerivedGalleryPhoto)) == 1
-    assert retained_source.read_bytes() == b"original-privada"
-    assert retained_preview.read_bytes() == b"preview-privada-protegida"
+        assert db.scalar(select(func.count()).select_from(DerivedGalleryPhoto)) == 0
+    assert not retained_source.exists()
+    assert not retained_preview.exists()
     assert not removable_source.exists()
     assert not removable_preview.exists()
-
     with TestClient(app) as client:
         authenticate_client(client, owner_phone)
         library = client.get("/library")
         assert library.status_code == 200
         assert library.json()["public_galleries"] == []
-        assert library.json()["galleries"] == [
-            {
-                "id": str(private_id),
-                "name": "Privada que permanece",
-                "message": "",
-                "selection_expires_at": None,
-                "gallery_status": "origin_removed",
-                "membership_status": "active",
-                "browse_url": f"/gallery/{private_id}",
-                "origin_removed": True,
-                "origin": {
-                    "id": str(parent_id),
-                    "name": "Origem removível",
-                    "available": False,
-                    "browse_url": None,
-                },
-                "folders": [{"id": str(folder.id), "name": "Lote compartilhado"}],
-            }
-        ]
-        assert library.json()["private_galleries"] == library.json()["galleries"]
-        assert library.json()["journeys"] == [
-            {
-                "id": str(parent_id),
-                "name": "Origem removível",
-                "event_name": "",
-                "status": "origin_removed",
-                "primary_surface": "private",
-                "browse_url": f"/gallery/{private_id}",
-                "public_gallery": None,
-                "private_gallery": library.json()["galleries"][0],
-                "selection": {
-                    "quantity": 0,
-                    "items": [],
-                    "draft_order_id": None,
-                },
-                "orders": [],
-                "has_prepared_photos": False,
-                "actions": {
-                    "continue_url": None,
-                    "review_url": None,
-                    "orders_url": None,
-                    "prepared_url": None,
-                    "fallback_url": f"/gallery/{private_id}",
-                },
-            }
-        ]
-        photos = client.get(f"/gallery/{private_id}/photos")
-        assert [item["id"] for item in photos.json()["photos"]] == [str(retained_id)]
-        review = client.get(f"/gallery/{private_id}/review")
-        assert review.status_code == 200
-        assert [item["id"] for item in review.json()["photos"]] == [str(retained_id)]
-        preview = client.get(f"/gallery/{private_id}/photos/{retained_id}/preview")
-        assert preview.status_code == 200
-        assert preview.content == b"preview-privada-protegida"
-        assert (
-            client.post(f"/gallery/{private_id}/photos/{retained_id}/selection").status_code == 409
-        )
+        assert library.json()["galleries"] == []
+        assert library.json()["journeys"] == []
+        assert client.get(f"/gallery/{private_id}/photos").status_code in (403, 404)
+        assert client.get(f"/gallery/{private_id}/photos/{retained_id}/preview").status_code in (403, 404)
         assert client.get(f"/public-galleries/{parent_id}").status_code == 403
-
     with TestClient(app) as admin:
         authenticate_admin(admin)
-        listed = admin.get("/admin/parent-galleries").json()["parent_galleries"]
-        assert all(item["id"] != str(parent_id) for item in listed)
-        detail = admin.get(f"/admin/derived-galleries/{private_id}")
-        assert detail.status_code == 200
-        assert detail.json()["origin_active"] is False
-        assert admin.delete(f"/admin/derived-galleries/{private_id}").status_code == 204
-
-    with SessionLocal() as db:
-        assert db.get(DerivedGallery, private_id) is None
-        assert db.get(ParentGallery, parent_id) is not None
-        assert db.get(PhotoAsset, retained_id) is not None
+        assert all(item["id"] != str(parent_id) for item in admin.get("/admin/parent-galleries").json()["parent_galleries"])
+        assert admin.get(f"/admin/derived-galleries/{private_id}").status_code == 404
 
 
 def test_client_library_separates_public_private_and_origin_states() -> None:
@@ -4169,6 +4057,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
                 "parent_gallery_name": "Galeria pública preservada",
                 "gallery_status_label": "Galeria removida",
                 "gallery_removed": True,
+                "assets_removed": False,
                 "payment_status": "confirmed",
                 "commercial_state": "purchased",
                 "communication_status": None,
@@ -4202,7 +4091,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
 
         client.cookies.clear()
         authenticate_client(client, other_phone)
-        assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": []}
+        assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": [], "removed_movements": []}
         assert client.get(f"/library/history/items/{item_id}/preview").status_code == 403
         assert client.get(f"/library/history/items/{item_id}/delivery").status_code == 403
 

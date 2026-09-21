@@ -720,6 +720,7 @@ def main() -> None:
         with SessionLocal() as batch_db:
             process_ready_batches(batch_db)
         process_highres_cleanup()
+        process_asset_file_cleanup()
         process_next_notification("push")
         process_next_notification("whatsapp")
         if not (
@@ -735,6 +736,23 @@ def main() -> None:
             or process_admin_security_cleanup()
         ):
             time.sleep(2)
+
+
+_last_asset_cleanup = 0.0
+
+
+def process_asset_file_cleanup() -> bool:
+    global _last_asset_cleanup
+    instant = time.monotonic()
+    if instant - _last_asset_cleanup < 30:
+        return False
+    _last_asset_cleanup = instant
+    from app.asset_removal import process_file_cleanup
+    from app.auth import AssetFileCleanup
+    with SessionLocal() as db:
+        job = db.scalar(select(AssetFileCleanup).where(AssetFileCleanup.status.in_(("pending", "failed")))
+                        .order_by(AssetFileCleanup.attempts, AssetFileCleanup.created_at).limit(1).with_for_update(skip_locked=True))
+        return process_file_cleanup(db, job) if job else False
 
 
 _last_highres_cleanup = 0.0

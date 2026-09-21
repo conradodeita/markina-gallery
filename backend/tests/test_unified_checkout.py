@@ -632,7 +632,7 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
     assert len(history["payment_groups"][0]["orders"]) == 2
     browser.cookies.set("markina_session", "other-cart")
     assert browser.get("/library/cart").json()["quantity"] == 0
-    assert browser.get("/library/purchases").json() == {"orders": [], "payment_groups": []}
+    assert browser.get("/library/purchases").json() == {"orders": [], "payment_groups": [], "removed_movements": []}
     assert browser.post(f"/library/payments/{payment['id']}/report", json=report).status_code == 409
 
 

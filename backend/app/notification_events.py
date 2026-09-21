@@ -71,7 +71,7 @@ def record_gallery_milestone(db: Session, *, kind: str, parent_gallery_id: UUID,
 def record_payment_event(db: Session, *, communication, order, event_type: str,
                          decision_revision: int = 0):
     client = db.get(Client, order.client_id)
-    gallery = db.get(DerivedGallery, order.derived_gallery_id)
+    gallery = db.get(DerivedGallery, order.derived_gallery_id) if order.derived_gallery_id else None
     if not client or not gallery or communication.client_id != client.id:
         return None
     reported = event_type == "payment_reported"
