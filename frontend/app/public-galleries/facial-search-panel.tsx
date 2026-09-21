@@ -28,21 +28,16 @@ export function FacialSearchPanel({
   galleryId,
   result,
   onResult,
-  regionId,
-  onRegionClear,
 }: {
   galleryId: string;
   result: FacialSearchResult | null;
   onResult: (result: FacialSearchResult | null) => void;
-  regionId?: string | null;
-  onRegionClear?: () => void;
 }) {
   const [availability, setAvailability] = useState<FacialSearchAvailability | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const showDialog = dialogOpen || Boolean(regionId);
+  const showDialog = dialogOpen;
   const [consented, setConsented] = useState(false);
   const [subjectDeclaration, setSubjectDeclaration] = useState<"adult" | "minor" | "">("");
-  const [guardianConfirmed, setGuardianConfirmed] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -50,14 +45,18 @@ export function FacialSearchPanel({
   const cameraInput = useRef<HTMLInputElement>(null);
   const consentDialog = useRef<HTMLElement>(null);
   const polling = useRef({ signature: "", delay: 0 });
+  const restoreAllowed = useRef(true);
+  const initialResult = useRef(result);
   const storageKey = `markina:facial-search:${galleryId}`;
 
+  useEffect(() => {
+    if (result && result !== initialResult.current) restoreAllowed.current = false;
+  }, [result]);
+
   function closeDialog() {
-    onRegionClear?.();
     setDialogOpen(false);
     setConsented(false);
     setSubjectDeclaration("");
-    setGuardianConfirmed(false);
     setSelectedFile(null);
     if (libraryInput.current) libraryInput.current.value = "";
     if (cameraInput.current) cameraInput.current.value = "";
@@ -95,12 +94,12 @@ export function FacialSearchPanel({
       .catch(() => { if (active) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false }); });
     if (restored) {
       facialSearchApi.read(galleryId, restored)
-        .then((value) => { if (active) onResult(value); })
-        .catch(() => window.sessionStorage.removeItem(storageKey));
+        .then((value) => { if (active && restoreAllowed.current) onResult(value); })
+        .catch(() => { if (active && restoreAllowed.current) window.sessionStorage.removeItem(storageKey); });
     } else {
       facialSearchApi.latest(galleryId)
         .then((latest) => {
-          if (!active || !latest?.id || !latest?.status || !latest?.progress) return;
+          if (!active || !restoreAllowed.current || !latest?.id || !latest?.status || !latest?.progress) return;
           window.sessionStorage.setItem(storageKey, latest.id);
           onResult(latest);
         })
@@ -111,6 +110,7 @@ export function FacialSearchPanel({
 
   useEffect(() => {
     if (!result || terminalStates.has(result.status)) return;
+    let active = true;
     const signature = `${result.status}:${result.progress.index.ready}:${result.progress.comparison.done}`;
     const baseDelay = result.poll_after_ms ?? 2000;
     polling.current = polling.current.signature === signature
@@ -118,8 +118,9 @@ export function FacialSearchPanel({
       : { signature, delay: baseDelay };
     const timer = window.setTimeout(() => {
       facialSearchApi.read(galleryId, result.id)
-        .then(onResult)
+        .then((value) => { if (active) onResult(value); })
         .catch((cause) => {
+          if (!active) return;
           if (cause instanceof FacialApiError && cause.status === 404) {
             window.sessionStorage.removeItem(storageKey);
             onResult(null);
@@ -128,7 +129,7 @@ export function FacialSearchPanel({
           setError(cause instanceof Error ? cause.message : "Não foi possível atualizar a busca.");
         });
     }, polling.current.delay);
-    return () => window.clearTimeout(timer);
+    return () => { active = false; window.clearTimeout(timer); };
   }, [galleryId, onResult, result, storageKey]);
 
   useEffect(() => {
@@ -138,26 +139,17 @@ export function FacialSearchPanel({
   async function submit(event: FormEvent) {
     event.preventDefault();
     const file = selectedFile;
-    if (!regionId && (!file || file.type !== "image/jpeg")) {
+    if (!file || file.type !== "image/jpeg") {
       setError("Escolha uma foto JPEG nítida com apenas um rosto.");
       return;
     }
     if (!consented || !availability?.consent_version || !subjectDeclaration) return;
-    if (subjectDeclaration === "minor" && !guardianConfirmed) return;
+    if (subjectDeclaration === "minor" && !availability.minor_search_available) return;
     setBusy(true);
     setError("");
     try {
-      const created = regionId ? await facialSearchApi.createFromRegion(
-        galleryId, regionId, availability.consent_version, subjectDeclaration,
-        subjectDeclaration === "minor" ? availability.minor_representation_reference ?? undefined : undefined,
-      ) : await facialSearchApi.create(
-        galleryId,
-        file!,
-        availability.consent_version,
-        subjectDeclaration,
-        subjectDeclaration === "minor"
-          ? availability.minor_representation_reference ?? undefined
-          : undefined,
+      const created = await facialSearchApi.create(
+        galleryId, file, availability.consent_version, subjectDeclaration,
       );
       window.sessionStorage.setItem(storageKey, created.id);
       onResult(created);
@@ -227,16 +219,16 @@ export function FacialSearchPanel({
             <header className="facial-consent-header">
               <p className="eyebrow">Consentimento específico</p>
               <h2 id="facial-consent-title">Busca facial nesta galeria</h2>
-              <p id="facial-consent-purpose">{regionId ? "Use o rosto escolhido para procurar outras fotos da mesma pessoa nesta galeria." : "Antes de enviar, entenda como a foto será usada para procurar possíveis correspondências."}</p>
+              <p id="facial-consent-purpose">Antes de enviar, entenda como a foto será usada para procurar possíveis correspondências.</p>
             </header>
             <div className="facial-consent-privacy" id="facial-consent-limits">
               <strong>Uso temporário e restrito</strong>
-              <p>{regionId ? "A busca utiliza os dados da região facial já processada nesta galeria, sem enviar outra imagem. O índice permanece sujeito à retenção da galeria." : "A foto escolhida e a representação biométrica facial extraída dela serão usadas somente para procurar possíveis correspondências nesta galeria."}</p>
-              {!regionId ? <p>Não há cadastro biométrico permanente. Esses dados serão eliminados após o processamento ou, no máximo, em {referenceRetentionMinutes} minutos.</p> : null}
+              <p>A foto escolhida e a representação biométrica facial extraída dela serão usadas somente para procurar possíveis correspondências nesta galeria.</p>
+              <p>Não há cadastro biométrico permanente. Esses dados serão eliminados após o processamento ou, no máximo, em {referenceRetentionMinutes} minutos.</p>
               <small>Os resultados expiram em até {candidateRetentionHours} horas. São apenas sugestões, não confirmam identidade e podem conter correspondências incorretas.</small>
             </div>
             <form onSubmit={submit}>
-              {!regionId ? <section className="facial-consent-step" aria-labelledby="facial-reference-source-title">
+              <section className="facial-consent-step" aria-labelledby="facial-reference-source-title">
                 <div className="facial-consent-step-heading">
                   <span aria-hidden="true">1</span>
                   <div>
@@ -268,16 +260,15 @@ export function FacialSearchPanel({
                 </div>
                 {selectedFile ? <p className="facial-reference-selected" role="status">Foto selecionada e pronta para envio.</p> : null}
                 {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
-              </section> : <p role="status">Rosto escolhido. Confirme a autorização para iniciar a busca.</p>}
+              </section>
               <fieldset className="facial-consent-step facial-consent-subject">
                 <legend><span aria-hidden="true">2</span> Quem aparece na foto?</legend>
-                <label className="gallery-toggle"><input type="radio" name="facial-subject" value="adult" checked={subjectDeclaration === "adult"} onChange={() => { setSubjectDeclaration("adult"); setGuardianConfirmed(false); }} required /> Pessoa adulta</label>
-                <label className="gallery-toggle"><input type="radio" name="facial-subject" value="minor" checked={subjectDeclaration === "minor"} disabled={!availability.minor_search_available} onChange={() => setSubjectDeclaration("minor")} required /> Criança ou adolescente</label>
+                <label className="gallery-toggle"><input type="radio" name="facial-subject" value="adult" checked={subjectDeclaration === "adult"} onChange={() => { setSubjectDeclaration("adult"); setConsented(false); }} required /> Pessoa adulta</label>
+                <label className="gallery-toggle"><input type="radio" name="facial-subject" value="minor" checked={subjectDeclaration === "minor"} disabled={!availability.minor_search_available} onChange={() => { setSubjectDeclaration("minor"); setConsented(false); }} required /> Criança ou adolescente</label>
               </fieldset>
-              {subjectDeclaration === "minor" ? <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={guardianConfirmed} onChange={(event) => setGuardianConfirmed(event.target.checked)} required /> Declaro que sou pai, mãe ou responsável legal pela criança ou adolescente que aparece na foto e possuo autorização para enviá-la.</label> : null}
-              <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> {regionId ? "Autorizo, de forma livre, informada e específica, o uso dos dados biométricos do rosto escolhido exclusivamente para procurar possíveis correspondências nesta galeria." : "Autorizo, de forma livre, informada e específica, o tratamento temporário desta foto e dos dados biométricos extraídos exclusivamente para procurar possíveis correspondências nesta galeria."} Li e compreendi as informações acima.</label>
+              <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> {subjectDeclaration === "minor" ? "Sou pai, mãe ou responsável legal e autorizo a busca de fotos desta criança ou adolescente nesta galeria." : "Autorizo, de forma livre, informada e específica, o tratamento temporário desta foto e dos dados biométricos extraídos exclusivamente para procurar possíveis correspondências nesta galeria. Li e compreendi as informações acima."}</label>
               <p className="field-hint">A busca é opcional. Você pode cancelar ou continuar procurando e selecionando as fotos manualmente.{availability.legal_notice_version ? ` Aviso ${availability.legal_notice_version}.` : ""}{!availability.minor_search_available ? " A busca de criança ainda não está disponível neste ambiente." : ""}</p>
-              <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={(!selectedFile && !regionId) || !consented || !subjectDeclaration || (subjectDeclaration === "minor" && !guardianConfirmed) || busy}>{busy ? "Iniciando busca…" : "Autorizar e procurar fotos"}</MarkinaButton></div>
+              <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!selectedFile || !consented || !subjectDeclaration || (subjectDeclaration === "minor" && !availability.minor_search_available) || busy}>{busy ? "Iniciando busca…" : "Autorizar e procurar fotos"}</MarkinaButton></div>
             </form>
           </section>
         </div>

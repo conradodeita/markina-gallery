@@ -8,7 +8,13 @@ from sqlalchemy import select
 from test_facial_engine import _vector
 from test_facial_search import _fixture, _settings
 
-from app.auth import ParentGallery, ParentGalleryRegistration, PhotoAsset, PhotoFaceEmbedding
+from app.auth import (
+    AuditEvent,
+    ParentGallery,
+    ParentGalleryRegistration,
+    PhotoAsset,
+    PhotoFaceEmbedding,
+)
 from app.facial.crypto import FacialCipher
 from app.facial.engine import _embedding_scope
 from app.facial.jobs import FacialJobRepository
@@ -67,8 +73,8 @@ def test_click_search_never_calls_provider_or_stores_reference(tmp_path):
         db,
         parent_gallery_id=gallery.id,
         client_id=client.id,
-        consent_version=settings.consent_version,
-        subject_declaration="adult",
+        consent_version=None,
+        subject_declaration=None,
         representation_reference=None,
         payload=b"",
         reference_region_id=region.id,
@@ -90,8 +96,8 @@ def test_click_search_never_calls_provider_or_stores_reference(tmp_path):
     assert not settings.reference_root.exists()
 
 
-@pytest.mark.parametrize("invalid", ["missing", "model", "minor", "consent"])
-def test_click_rejects_stale_region_incompatible_model_and_missing_consent(tmp_path, invalid):
+@pytest.mark.parametrize("invalid", ["missing", "model"])
+def test_click_rejects_stale_region_and_incompatible_model(tmp_path, invalid):
     db, gallery, client, settings, _, region = setup_region(tmp_path)
     if invalid == "model":
         region.model_id = "edgeface"
@@ -101,13 +107,47 @@ def test_click_rejects_stale_region_incompatible_model_and_missing_consent(tmp_p
             db,
             parent_gallery_id=gallery.id,
             client_id=client.id,
-            consent_version="wrong" if invalid == "consent" else settings.consent_version,
-            subject_declaration="minor" if invalid == "minor" else "adult",
+            consent_version=None,
+            subject_declaration=None,
             representation_reference=None,
             payload=b"",
             reference_region_id=uuid4() if invalid == "missing" else region.id,
             settings=settings,
         )
+
+
+@pytest.mark.parametrize(
+    ("consent_version", "subject_declaration", "representation_reference"),
+    [(None, None, None), ("consent-v1", "minor", "legacy-representation"),
+     ("old-consent", "adult", None)],
+)
+def test_click_needs_no_consent_and_does_not_record_legacy_upload_fields(
+    tmp_path, consent_version, subject_declaration, representation_reference
+):
+    db, gallery, client, settings, _, region = setup_region(tmp_path)
+    request = create_search_request(
+        db,
+        parent_gallery_id=gallery.id,
+        client_id=client.id,
+        consent_version=consent_version,
+        subject_declaration=subject_declaration,
+        representation_reference=representation_reference,
+        payload=b"",
+        reference_region_id=region.id,
+        settings=settings,
+    )
+    db.commit()
+    db.refresh(request)
+    assert request.status == "queued"
+    assert request.reference_source == "indexed_region"
+    assert request.authorization_method == "direct_region"
+    assert request.consent_version is None
+    assert request.subject_declaration is None
+    assert request.representation_reference is None
+    assert request.reference_locator_ciphertext is None
+    assert db.scalar(select(AuditEvent).where(AuditEvent.event == "facial.region_search_started"))
+    assert db.scalar(select(AuditEvent).where(AuditEvent.event == "facial.search_consented")) is None
+    assert not settings.reference_root.exists()
 
 
 def test_click_revalidates_revoked_membership_before_execution(tmp_path):

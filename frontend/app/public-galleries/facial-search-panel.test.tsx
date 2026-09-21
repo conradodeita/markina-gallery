@@ -54,6 +54,19 @@ function EmptyHarness() {
 }
 
 describe("polling da busca facial", () => {
+  it("não restaura uma busca antiga sobre uma nova busca por região", async () => {
+    let resolveLatest!: (response: Response) => void;
+    const latest = new Promise<Response>((resolve) => { resolveLatest = resolve; });
+    const onResult = vi.fn();
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/latest") ? latest : response({ state: "consent_required", minor_search_available: true, consent_version: "v1" })));
+    const { rerender } = render(<FacialSearchPanel galleryId="gallery-1" result={null} onResult={onResult} />);
+    await screen.findByRole("button", { name: "Enviar foto para procurar" });
+    rerender(<FacialSearchPanel galleryId="gallery-1" result={{ ...queued, id: "direct-new", status: "ready" }} onResult={onResult} />);
+    await act(async () => { resolveLatest(new Response(JSON.stringify(queued))); });
+    expect(onResult).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("markina:facial-search:gallery-1")).toBeNull();
+  });
+
   it("aumenta o intervalo sem progresso e para ao expirar", async () => {
     vi.useFakeTimers();
     let reads = 0;
@@ -114,29 +127,6 @@ describe("polling da busca facial", () => {
 });
 
 describe("jornada mobile e privacidade da referência", () => {
-  it("exige consentimento e envia o UUID da região sem arquivo ou recorte", async () => {
-    const created = { ...queued, reference_deleted: true };
-    const onResult = vi.fn();
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/facial-search")) return response({ state:"consent_required",
-        manual_selection_available:true, minor_search_available:false, consent_version:"consent-v1" });
-      if (path.endsWith("/face-region-searches") && init?.method === "POST") return response(created, 202);
-      return response({detail:"not found"},404);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<FacialSearchPanel galleryId="gallery-1" regionId="region-opaque" result={null} onResult={onResult} />);
-    const submit = await screen.findByRole("button", {name:"Autorizar e procurar fotos"});
-    expect((submit as HTMLButtonElement).disabled).toBe(true);
-    expect(document.querySelector('input[type="file"]')).toBeNull();
-    fireEvent.click(screen.getByRole("radio", {name:"Pessoa adulta"}));
-    fireEvent.click(screen.getByRole("checkbox", {name:/Autorizo, de forma livre/}));
-    fireEvent.submit(submit.closest("form")!);
-    await waitFor(() => expect(onResult).toHaveBeenCalledWith(created));
-    expect(fetchMock).toHaveBeenCalledWith("/api/public-galleries/gallery-1/face-region-searches",
-      expect.objectContaining({method:"POST", body:JSON.stringify({face_region_id:"region-opaque",
-        consent_version:"consent-v1",subject_declaration:"adult"})}));
-  });
-
   it("oferece fototeca e câmera separadas, envia JPEG e persiste somente o identificador opaco", async () => {
     const created = { ...queued, id: "opaque-request-2" };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
@@ -232,14 +222,13 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 
-  it("exige representação e consentimento específicos antes de enviar referência infantil", async () => {
+  it("exige somente um consentimento infantil sem registro prévio de representação", async () => {
     const created = { ...queued, id: "minor-request" };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/facial-search")) return response({
         state: "consent_required",
         manual_selection_available: true,
         minor_search_available: true,
-        minor_representation_reference: "opaque-representation",
         consent_version: "consent-v2",
         legal_notice_version: "notice-v2",
       });
@@ -256,15 +245,16 @@ describe("jornada mobile e privacidade da referência", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
 
     const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
-    const guardian = screen.getByRole("checkbox", { name: /Declaro que sou pai, mãe ou responsável legal/ });
-    const consent = screen.getByRole("checkbox", { name: /Autorizo, de forma livre, informada e específica/ });
-    expect((guardian as HTMLInputElement).checked).toBe(false);
+    const consent = screen.getByRole("checkbox", { name: /Sou pai, mãe ou responsável legal/ });
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
     expect((consent as HTMLInputElement).checked).toBe(false);
     expect(submitButton.disabled).toBe(true);
-
     fireEvent.click(consent);
-    expect(submitButton.disabled).toBe(true);
-    fireEvent.click(guardian);
+    fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
+    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
+    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(screen.getByRole("checkbox"));
     expect(submitButton.disabled).toBe(false);
     fireEvent.submit(submitButton.closest("form")!);
 
@@ -277,7 +267,7 @@ describe("jornada mobile e privacidade da referência", () => {
         headers: expect.objectContaining({
           "x-facial-consent-version": "consent-v2",
           "x-facial-subject-declaration": "minor",
-          "x-facial-representation-reference": "opaque-representation",
+          "x-facial-consent-accepted": "true",
         }),
       }),
     );
