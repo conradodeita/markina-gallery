@@ -169,9 +169,8 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   const renderPhoto = (photo: TPhoto, markers = renderPhotoMarkers) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
     <div className="gallery-presentation-photo-frame">
     <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => openExpanded(photo)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
-    {markers ? <div className="gallery-presentation-photo-markers">{markers(photo)}</div> : null}
     </div>
-    <div className="gallery-presentation-photo-details"><strong>{photo.name}</strong>{renderPhotoDetails?.(photo)}</div>
+    <div className="gallery-presentation-photo-details"><div className="gallery-presentation-photo-caption"><strong title={photo.name}>{photo.name}</strong>{markers ? <div className="gallery-presentation-photo-markers">{markers(photo)}</div> : null}</div>{renderPhotoDetails?.(photo)}</div>
   </article>;
 
   return (
@@ -243,14 +242,18 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
               <span>Prévia protegida</span>
               <button type="button" className="gallery-presentation-close" onClick={closeExpanded}>Fechar</button>
             </div>
-            {renderExpandedMedia ? <div onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>{renderExpandedMedia(expandedPhoto, closeExpanded)}</div> : <div className="gallery-presentation-dialog-media gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
+            <div className="gallery-presentation-dialog-body">
+            {renderExpandedMedia ? <div className="gallery-presentation-custom-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>{renderExpandedMedia(expandedPhoto, closeExpanded)}</div> : <div className="gallery-presentation-dialog-media gallery-protected-media" onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview}>
               <img src={expandedPhoto.previewUrl} alt={`Prévia protegida ampliada de ${expandedPhoto.name}`} draggable={false} width={expandedPhoto.width ?? undefined} height={expandedPhoto.height ?? undefined} />
             </div>}
-            {renderPhotoMarkers ? <div className="gallery-presentation-dialog-selection" aria-label="Selecionar fotografia">{renderPhotoMarkers(expandedPhoto)}</div> : null}
             {renderExpandedPhotoContent ? <div className="gallery-presentation-dialog-context">{renderExpandedPhotoContent(expandedPhoto)}</div> : null}
+            </div>
+            <div className="gallery-presentation-dialog-actions">
+            {renderPhotoMarkers ? <div className="gallery-presentation-dialog-selection" aria-label="Selecionar fotografia">{renderPhotoMarkers(expandedPhoto)}</div> : null}
             <div className="gallery-presentation-dialog-footer">
               <strong>{expandedPhoto.name}</strong>
               {photos.length > 1 ? <div><button type="button" onClick={() => moveExpanded(-1)}>Anterior</button><button type="button" onClick={() => moveExpanded(1)}>Próxima</button></div> : null}
+            </div>
             </div>
           </div>
         </div>

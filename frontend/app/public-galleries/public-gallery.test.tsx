@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => <a href={href} {...props}>{children}</a> }));
-vi.mock("next/navigation", () => ({ useParams: () => ({ galleryId: "public-1" }) }));
+const navigation = vi.hoisted(() => ({ galleryId: "public-1" }));
+vi.mock("next/navigation", () => ({ useParams: () => navigation }));
 vi.mock("../push-control", () => ({ PushControl: () => null, LogoutButton: () => null }));
 
 import PublicGalleryPage from "./[galleryId]/page";
 
 afterEach(() => {
+  navigation.galleryId = "public-1";
   vi.restoreAllMocks();
   window.sessionStorage.clear();
 });
@@ -17,6 +19,100 @@ afterEach(() => {
 function response(value: object, status = 200) { return Promise.resolve(new Response(JSON.stringify(value), { status })); }
 
 describe("Galeria pública da cliente", () => {
+  function mockRegionJourney(admit: () => Promise<Response>) {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(360);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(240);
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({ state: "consent_required", minor_search_available: true, consent_version: "v1" });
+      if (path.endsWith("/latest")) return response({}, 404);
+      if (path.endsWith("/face-regions")) return response({ auto_threshold: 4, regions: [{ id: "region-1", x: .2, y: .2, width: .2, height: .2 }] });
+      if (path.endsWith("/face-region-searches")) return admit();
+      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview", width: 360, height: 240 }] });
+      return response({ id: navigation.galleryId, name: "Galeria", favorites_enabled: false });
+    }));
+  }
+
+  it.each(["failed", "no_candidates"])("mantém a foto e seleção manual sem salto quando a busca termina em %s", async (status) => {
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    mockRegionJourney(() => response({ id: "direct-empty", status, progress: { index: { ready: 1, total: 1 }, comparison: { done: 1, total: 1 } }, candidates: [] }));
+    render(<PublicGalleryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Procurar pessoa no rosto 1" }));
+    await waitFor(() => expect(screen.getAllByText(status === "failed" ? "A busca não foi concluída. Toque no rosto para tentar novamente." : "Nenhuma possibilidade foi encontrada.").length).toBeGreaterThan(0));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Selecionar foto" })).toBeTruthy();
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it("respeita Retry-After e permite nova tentativa consciente", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const admit = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "Busca temporariamente ocupada." }), { status: 503, headers: { "Retry-After": "3" } })));
+    mockRegionJourney(admit);
+    render(<PublicGalleryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Procurar pessoa no rosto 1" }));
+    await screen.findAllByText(/Tente novamente em 3 segundos/);
+    fireEvent.click(screen.getByRole("button", { name: "Procurar pessoa no rosto 1" }));
+    expect(admit).toHaveBeenCalledTimes(1);
+    clock.mockReturnValue(4001);
+    fireEvent.click(screen.getByRole("button", { name: "Procurar pessoa no rosto 1" }));
+    await waitFor(() => expect(admit).toHaveBeenCalledTimes(2));
+  });
+
+  it("ignora resposta pendente ao trocar de galeria", async () => {
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    let complete!: (value: Response) => void;
+    mockRegionJourney(() => new Promise<Response>((resolve) => { complete = resolve; }));
+    const { rerender } = render(<PublicGalleryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Procurar pessoa no rosto 1" }));
+    navigation.galleryId = "public-2";
+    rerender(<PublicGalleryPage />);
+    await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" });
+    await act(async () => complete(new Response(JSON.stringify({ id: "stale-direct", status: "ready" }))));
+    expect(window.sessionStorage.getItem("markina:facial-search:public-1")).toBeNull();
+    expect(window.sessionStorage.getItem("markina:facial-search:public-2")).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it("busca por toque sem consentimento, evita duplicação e volta ao topo uma vez", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(360);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(240);
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    let complete!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { complete = resolve; });
+    const fetchMock = vi.fn((path: string, _init?: RequestInit) => {
+      void _init;
+      if (path.endsWith("/facial-search")) return response({ state: "consent_required", minor_search_available: true, consent_version: "v1" });
+      if (path.endsWith("/latest")) return response({}, 404);
+      if (path.endsWith("/face-regions")) return response({ auto_threshold: 4, regions: [{ id: "region-1", x: .2, y: .2, width: .2, height: .2 }] });
+      if (path.endsWith("/face-region-searches")) return pending;
+      if (path.endsWith("/selection")) return response({ private_gallery_id: "private-1", cart: { quantity: 1 } });
+      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview", width: 360, height: 240 }], cart: { quantity: 0 } });
+      return response({ id: "public-1", name: "Galeria", favorites_enabled: false });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PublicGalleryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" }));
+    const face = await screen.findByRole("button", { name: "Procurar pessoa no rosto 1" });
+    fireEvent.click(face);
+    fireEvent.click(face);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getAllByText("Aguarde, procurando fotos…").length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/face-region-searches"))).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith("/api/public-galleries/public-1/face-region-searches", expect.objectContaining({ body: JSON.stringify({ face_region_id: "region-1" }) }));
+    await act(async () => complete(new Response(JSON.stringify({ id: "direct-1", status: "ready", reference_deleted: true, progress: { index: { total: 1, ready: 1 }, comparison: { total: 1, done: 1 } }, candidates: [{ photo_id: "photo-1", rank: 1, match_class: "matched" }] }), { status: 202 })));
+    expect(await screen.findByRole("region", { name: "Possibilidades encontradas" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar foto" }));
+    await waitFor(() => expect(screen.getByLabelText("Resumo da seleção")).toBeTruthy());
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
   it("usa a largura útil do desktop e amplia a foto sem limitar as demais páginas", () => {
     const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
     expect(css).toContain(".public-gallery-shell { display:grid; width:min(calc(100% - 32px),1760px);");
@@ -135,8 +231,7 @@ describe("Galeria pública da cliente", () => {
     const file = new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Declaro que sou pai, mãe ou responsável legal/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo, de forma livre, informada e específica/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Sou pai, mãe ou responsável legal/ }));
     fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -144,7 +239,7 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           "x-facial-subject-declaration": "minor",
-          "x-facial-representation-reference": "representation-opaque-1",
+          "x-facial-consent-accepted": "true",
         }),
       }),
     ));

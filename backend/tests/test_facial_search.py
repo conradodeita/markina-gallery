@@ -11,7 +11,6 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
-    AdminUser,
     AuditEvent,
     Base,
     Client,
@@ -27,11 +26,9 @@ from app.auth import (
     ParentGalleryRegistration,
     PhotoAsset,
     PhotoFolder,
-    now,
 )
 from app.facial.capacity import FacialSearchCapacityError, measure_search_queue
 from app.facial.config import FacialSettings
-from app.facial.representation import create_legal_representation
 from app.facial.search import (
     FacialSearchError,
     create_search_request,
@@ -194,7 +191,7 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
     assert available["index"] == {"state": "processing", "ready": 0, "total": 1}
     assert available["consent_version"] == "consent-v1"
     assert available["max_reference_bytes"] == 31_457_280
-    assert available["minor_search_available"] is False
+    assert available["minor_search_available"] is True
     assert unavailable == {
         "state": "unavailable",
         "manual_selection_available": True,
@@ -583,7 +580,7 @@ def test_stale_consent_and_minor_search_fail_before_persisting_reference(
             subject_declaration="adult",
             **common,
         )
-    with pytest.raises(FacialSearchError, match="representação legal"):
+    with pytest.raises(FacialSearchError, match="consentimento específico"):
         create_search_request(
             consent_version="consent-v1",
             subject_declaration="minor",
@@ -599,66 +596,23 @@ def test_authorized_minor_reference_requires_guardian_confirmation(
     db, parent, client = _fixture(tmp_path, index_ready=True)
     settings = _settings(tmp_path)
 
-    unavailable_without_proof = search_availability(
-        db, parent_gallery_id=parent.id, client_id=client.id, settings=settings
-    )
-    assert unavailable_without_proof["minor_search_available"] is False
-    assert unavailable_without_proof["minor_representation_reference"] is None
-    admin = AdminUser(
-        id=uuid4(),
-        email="minor-proof-admin@example.test",
-        password_hash="unused",
-        totp_secret="unused",
-    )
-    db.add(admin)
-    db.flush()
-    proof = create_legal_representation(
-        db,
-        client_id=client.id,
-        parent_gallery_id=parent.id,
-        subject_scope_reference="minor-subject-scope-opaque",
-        authority_kind="parent",
-        verification_method="admin_attestation",
-        terms_version=settings.minor_policy_version,
-        evidence_reference="minor-evidence-opaque",
-        verified_by_admin_id=admin.id,
-        expires_at=now() + timedelta(days=30),
-    )
-    db.commit()
-
-    available = search_availability(
-        db, parent_gallery_id=parent.id, client_id=client.id, settings=settings
-    )
+    available = search_availability(db, parent_gallery_id=parent.id, client_id=client.id, settings=settings)
     assert available["minor_search_available"] is True
-    assert available["minor_representation_reference"] == str(proof.id)
-
-    with pytest.raises(FacialSearchError, match="representação legal"):
-        create_search_request(
-            db,
-            parent_gallery_id=parent.id,
-            client_id=client.id,
-            consent_version="consent-v1",
-            subject_declaration="minor",
-            representation_reference=None,
-            payload=_jpeg(),
-            settings=settings,
-        )
-
-    item = create_search_request(
-        db,
-        parent_gallery_id=parent.id,
-        client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="minor",
-        representation_reference=str(proof.id),
-        payload=_jpeg(),
-        settings=settings,
-    )
+    common = {"db": db, "parent_gallery_id": parent.id, "client_id": client.id,
+              "consent_version": "consent-v1", "subject_declaration": "minor",
+              "representation_reference": None, "payload": _jpeg(), "settings": settings}
+    with pytest.raises(FacialSearchError, match="consentimento específico"):
+        create_search_request(**common)
+    item = create_search_request(**common, consent_accepted=True)
     db.commit()
-
     assert item.status == "queued"
     assert item.subject_declaration == "minor"
-    assert item.representation_reference == str(proof.id)
+    assert item.representation_reference is None
+    assert item.authorization_method == "explicit_consent"
+    from app.facial.search_worker import _request_is_authorized
+    assert _request_is_authorized(db, item, settings)
+    item.status = "cancelled"
+    assert not _request_is_authorized(db, item, settings)
 
 
 def test_terminal_index_failure_is_excluded_without_blocking_client_search(

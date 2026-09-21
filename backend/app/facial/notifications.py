@@ -266,7 +266,7 @@ def _notification_scope(
         object_id=request.id,
         purpose="notification",
         model_version=request.model_version,
-        data_version=request.consent_version,
+        data_version=request.consent_version or request.legal_notice_version,
     )
 
 

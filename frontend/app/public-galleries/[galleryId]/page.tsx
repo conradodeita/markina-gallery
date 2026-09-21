@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ClientNavigation, notifyCartChanged } from "../../client-navigation";
 import { ClientCartLink } from "../../client-cart";
 import { PushControl, LogoutButton } from "../../push-control";
-import { facialSearchApi, type FacialSearchResult } from "../../facial-search-client";
+import { FacialApiError, facialSearchApi, type FacialSearchResult } from "../../facial-search-client";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
 import { SystemState } from "../../ui-kit";
@@ -28,6 +28,10 @@ type Cart = {
 
 export default function PublicGalleryPage() {
   const { galleryId } = useParams<{ galleryId: string }>();
+  return <PublicGallery key={galleryId} galleryId={galleryId} />;
+}
+
+function PublicGallery({ galleryId }: { galleryId: string }) {
   const [gallery, setGallery] = useState<PublicGallery | null>(null);
   const [photos, setPhotos] = useState<PublicPhoto[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -39,7 +43,55 @@ export default function PublicGalleryPage() {
   const [photoLoad, setPhotoLoad] = useState<{ galleryId: string; status: "loading" | "ready" | "failed" }>({ galleryId, status: "loading" });
   const [message, setMessage] = useState("");
   const [facialResult, setFacialResult] = useState<FacialSearchResult | null>(null);
-  const [referenceRegion, setReferenceRegion] = useState<string | null>(null);
+  const [regionPending, setRegionPending] = useState(false);
+  const [regionMessage, setRegionMessage] = useState("");
+  const regionRequest = useRef<{ id: string | null; close: () => void } | null>(null);
+  const admissionPending = useRef(false);
+  const retryAt = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
+  const receiveFacialResult = useCallback((value: FacialSearchResult | null) => {
+    if (admissionPending.current) return;
+    if (value && regionRequest.current?.id && value.id !== regionRequest.current.id) return;
+    if (!value) regionRequest.current = null;
+    setFacialResult(value);
+  }, []);
+
+  const searchRegion = useCallback(async (regionId: string, close: () => void) => {
+    if (admissionPending.current || Date.now() < retryAt.current) return;
+    admissionPending.current = true;
+    regionRequest.current = { id: null, close };
+    setRegionPending(true);
+    setRegionMessage("Aguarde, procurando fotos…");
+    try {
+      const created = await facialSearchApi.createFromRegion(galleryId, regionId);
+      if (!mounted.current) return;
+      regionRequest.current = { id: created.id, close };
+      window.sessionStorage.setItem(`markina:facial-search:${galleryId}`, created.id);
+      setRegionMessage("");
+      setFacialResult(created);
+    } catch (cause) {
+      if (!mounted.current) return;
+      regionRequest.current = null;
+      const retry = cause instanceof FacialApiError ? cause.retryAfterSeconds ?? 0 : 0;
+      retryAt.current = Date.now() + retry * 1000;
+      setRegionMessage(`${cause instanceof Error ? cause.message : "Não foi possível iniciar a busca."}${retry ? ` Tente novamente em ${retry} segundos.` : " Toque no rosto para tentar novamente."}`);
+    } finally {
+      admissionPending.current = false;
+      if (mounted.current) setRegionPending(false);
+    }
+  }, [galleryId]);
+
+  useEffect(() => {
+    const current = regionRequest.current;
+    if (!current?.id || facialResult?.id !== current.id || !(["ready", "no_candidates", "failed", "cancelled", "expired", "index_incomplete"].includes(facialResult.status)) || photoLoad.status !== "ready") return;
+    regionRequest.current = null;
+    if (facialResult.status !== "ready") return;
+    current.close();
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [facialResult, photoLoad.status]);
+
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
@@ -193,10 +245,11 @@ export default function PublicGalleryPage() {
         <PushControl /><LogoutButton />
       </nav>
       <ClientNavigation />
-      <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={setFacialResult} regionId={referenceRegion} onRegionClear={() => setReferenceRegion(null)} />
+      <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={receiveFacialResult} />
+      {regionMessage ? <p role="status">{regionMessage}</p> : null}
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
       <SelectionDeadline expiresAt={gallery.selection_expires_at} onRevalidate={() => setRefresh((value) => value + 1)} />
-      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} renderExpandedMedia={(photo, close) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { close(); setReferenceRegion(id); }} />} featuredGroups={featuredGroups} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
+      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} renderExpandedMedia={(photo, close) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { void searchRegion(id, close); }} busy={regionPending} searchStatus={regionMessage || (facialResult ? facialResult.status : "")} />} featuredGroups={featuredGroups} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;

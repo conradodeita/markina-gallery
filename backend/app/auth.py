@@ -1922,7 +1922,19 @@ class FacialSearchRequest(Base):
     __tablename__ = "facial_search_request"
     # Sem FK: reindexação pode remover a região; o worker falha fechado pelo UUID obsoleto.
     reference_region_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    reference_source: Mapped[str] = mapped_column(String(24), default="upload", server_default="upload")
+    authorization_method: Mapped[str] = mapped_column(String(32), default="legacy", server_default="legacy")
     __table_args__ = (
+        CheckConstraint("reference_source IN ('upload', 'indexed_region', 'legacy_unknown')", name="ck_facial_search_source"),
+        CheckConstraint("authorization_method IN ('legacy', 'explicit_consent', 'direct_region')", name="ck_facial_search_authorization"),
+        CheckConstraint(
+            "(authorization_method = 'legacy' AND consent_version IS NOT NULL AND subject_declaration IS NOT NULL) OR "
+            "(authorization_method = 'explicit_consent' AND reference_source = 'upload' AND reference_region_id IS NULL "
+            "AND consent_version IS NOT NULL AND subject_declaration IS NOT NULL AND representation_reference IS NULL) OR "
+            "(authorization_method = 'direct_region' AND reference_source = 'indexed_region' AND (reference_region_id IS NOT NULL OR status IN ('ready', 'no_face', 'multiple_faces', 'low_quality', 'index_incomplete', 'no_candidates', 'cancelled', 'expired', 'failed')) "
+            "AND consent_version IS NULL AND subject_declaration IS NULL AND representation_reference IS NULL)",
+            name="ck_facial_search_authorization_fields",
+        ),
         UniqueConstraint(
             "id", "parent_gallery_id", "client_id", name="uq_facial_search_scope"
         ),
@@ -1956,9 +1968,9 @@ class FacialSearchRequest(Base):
         ForeignKey("gallery_facial_policy.id"), nullable=False, index=True
     )
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
-    consent_version: Mapped[str] = mapped_column(String(80))
+    consent_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     legal_notice_version: Mapped[str] = mapped_column(String(80))
-    subject_declaration: Mapped[str] = mapped_column(String(16))
+    subject_declaration: Mapped[str | None] = mapped_column(String(16), nullable=True)
     representation_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
     model_version: Mapped[str] = mapped_column(String(120))
     quality_version: Mapped[str] = mapped_column(String(120))

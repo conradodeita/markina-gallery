@@ -62,8 +62,14 @@ describe("apresentação editorial compartilhada", () => {
     const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} renderPhotoMarkers={(photo) => <button onClick={() => onSelect(photo.id)}>Selecionar {photo.name}</button>} />);
     fireEvent.click(screen.getByRole("button", { name: "Selecionar Horizontal.jpg" }));
     expect(onSelect).toHaveBeenCalledWith("landscape");
+    const selection = screen.getByRole("button", { name: "Selecionar Horizontal.jpg" });
+    expect(selection.closest(".gallery-presentation-photo-frame")).toBeNull();
+    expect(selection.closest(".gallery-presentation-photo-caption")?.textContent).toContain("Horizontal.jpg");
+    expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
     expect(screen.getByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Anterior" }).closest(".gallery-presentation-dialog-body")).toBeNull();
+    expect(screen.getByRole("button", { name: "Próxima" }).closest(".gallery-presentation-dialog-actions")).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
     expect(screen.getByRole("dialog", { name: "Prévia ampliada de Vertical.jpg" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

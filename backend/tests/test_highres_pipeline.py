@@ -640,6 +640,12 @@ def test_upload_index_media_region_query_and_purge_integrated(scene):
         db, parent_gallery_id=parent.id, client_id=client.id, request_id=request.id
     )
     assert result.status == "ready" and candidates[0].photo_asset_id == photo.id
+    assert result.consent_version is None and result.subject_declaration is None
+    assert result.reference_source == "indexed_region"
+    assert result.authorization_method == "direct_region"
+    from app.auth import AuditEvent
+    assert db.scalar(select(AuditEvent).where(AuditEvent.event == "facial.region_search_started")) is not None
+    assert db.scalar(select(AuditEvent).where(AuditEvent.event == "facial.search_consented")) is None
     purge_gallery_records(db, parent_gallery_id=parent.id)
     db.commit()
     assert facial_cleanup_proof(db, parent_gallery_id=parent.id)["clean"]

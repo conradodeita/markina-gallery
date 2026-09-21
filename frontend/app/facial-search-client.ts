@@ -103,12 +103,10 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
 export const facialSearchApi = {
   regions: (galleryId: string, photoId: string) =>
     jsonRequest<{ regions: FaceRegion[]; auto_threshold: number }>(`/api/public-galleries/${galleryId}/photos/${photoId}/face-regions`),
-  createFromRegion: (galleryId: string, regionId: string, consentVersion: string,
-    subjectDeclaration: "adult" | "minor", representationReference?: string) =>
+  createFromRegion: (galleryId: string, regionId: string) =>
     jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/face-region-searches`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ face_region_id: regionId, consent_version: consentVersion,
-        subject_declaration: subjectDeclaration, representation_reference: representationReference }),
+      body: JSON.stringify({ face_region_id: regionId }),
     }),
   availability: (galleryId: string) =>
     jsonRequest<FacialSearchAvailability>(`/api/public-galleries/${galleryId}/facial-search`),
@@ -123,6 +121,7 @@ export const facialSearchApi = {
     headers: {
       "content-type": "image/jpeg",
       "x-facial-consent-version": consentVersion,
+      "x-facial-consent-accepted": "true",
       "x-facial-subject-declaration": subjectDeclaration,
       ...(representationReference ? { "x-facial-representation-reference": representationReference } : {}),
     },

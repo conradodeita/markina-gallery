@@ -28,11 +28,6 @@ from app.facial.jobs import FacialJobRepository
 from app.facial.notifications import cancel_pending_search_notifications
 from app.facial.policy import activation_inventory, read_policy
 from app.facial.reference_store import FacialReferenceStore
-from app.facial.representation import (
-    FacialLegalRepresentationError,
-    find_valid_legal_representation,
-    require_valid_legal_representation,
-)
 from app.facial.rollout import rollout_is_active
 from app.facial.status import gallery_index_status
 
@@ -92,19 +87,10 @@ def search_availability(
         parent_gallery_id=parent_gallery_id,
         processing_enabled=settings.enabled,
     )
-    minor_representation = find_valid_legal_representation(
-        db,
-        client_id=client_id,
-        parent_gallery_id=parent_gallery_id,
-        terms_version=settings.minor_policy_version,
-    )
     return {
         "state": "consent_required",
         "manual_selection_available": True,
-        "minor_search_available": minor_representation is not None,
-        "minor_representation_reference": (
-            str(minor_representation.id) if minor_representation else None
-        ),
+        "minor_search_available": True,
         "consent_version": settings.consent_version,
         "legal_notice_version": policy.legal_notice_version,
         "reference_retention_seconds": settings.reference_retention_seconds,
@@ -123,14 +109,15 @@ def create_search_request(
     *,
     parent_gallery_id: UUID,
     client_id: UUID,
-    consent_version: str,
-    subject_declaration: str,
+    consent_version: str | None,
+    subject_declaration: str | None,
     representation_reference: str | None,
     payload: bytes,
     settings: FacialSettings,
     reference_store: FacialReferenceStore | None = None,
     repository: FacialJobRepository | None = None,
     reference_region_id: UUID | None = None,
+    consent_accepted: bool = False,
 ) -> FacialSearchRequest:
     policy = read_policy(db, parent_gallery_id)
     if (
@@ -144,26 +131,19 @@ def create_search_request(
         or activation_inventory(policy, settings)
     ):
         raise FacialSearchError("Busca facial indisponível.")
-    if consent_version != settings.consent_version:
-        raise FacialSearchError("O consentimento facial precisa ser revisto.")
-    if subject_declaration not in {"adult", "minor"}:
-        raise FacialSearchError("Declaração do sujeito inválida.")
-    if subject_declaration == "minor":
-        try:
-            representation = require_valid_legal_representation(
-                db,
-                representation_reference=representation_reference,
-                client_id=client_id,
-                parent_gallery_id=parent_gallery_id,
-                terms_version=settings.minor_policy_version,
-            )
-        except FacialLegalRepresentationError as exc:
-            raise FacialSearchError(
-                "A representação legal vigente é obrigatória para esta busca."
-            ) from exc
-        representation_reference = str(representation.id)
-    elif representation_reference:
-        raise FacialSearchError("Representação não é aplicável a uma consulta adulta.")
+    if reference_region_id:
+        if payload:
+            raise FacialSearchError("Consulta por região não aceita arquivo.")
+        consent_version = subject_declaration = representation_reference = None
+    else:
+        if consent_version != settings.consent_version:
+            raise FacialSearchError("O consentimento facial precisa ser revisto.")
+        if subject_declaration not in {"adult", "minor"}:
+            raise FacialSearchError("Declaração do sujeito inválida.")
+        if subject_declaration == "minor" and not consent_accepted:
+            raise FacialSearchError("O consentimento específico do responsável é obrigatório.")
+        # A nova autorização é autodeclarada; nunca fabricar comprovação externa.
+        representation_reference = None
     require_search_capacity(db, settings)
     if reference_region_id:
         from app.facial.regions import authorized_region
@@ -184,6 +164,8 @@ def create_search_request(
     item = FacialSearchRequest(
         id=request_id,
         reference_region_id=reference_region_id,
+        reference_source="indexed_region" if reference_region_id else "upload",
+        authorization_method="direct_region" if reference_region_id else "explicit_consent",
         reference_deleted_at=now() if reference_region_id else None,
         parent_gallery_id=parent_gallery_id,
         client_id=client_id,
@@ -253,11 +235,13 @@ def create_search_request(
         )
         db.add(
             AuditEvent(
-                event="facial.search_consented",
+                event="facial.region_search_started" if reference_region_id else "facial.search_consented",
                 subject=(
                     f"gallery_id:{parent_gallery_id};client_id:{client_id};"
                     f"request_id:{item.id};notice:{item.legal_notice_version};"
-                    f"subject:{subject_declaration}"
+                    f"source:{item.reference_source};authorization:{item.authorization_method};"
+                    f"subject:{subject_declaration};consent:{consent_version};"
+                    f"region:{reference_region_id}"
                 ),
             )
         )

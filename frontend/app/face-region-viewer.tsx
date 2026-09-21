@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { facialSearchApi, type FaceRegion } from "./facial-search-client";
 
-export function FaceRegionViewer({ galleryId, photo, onRegion }: {
+export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, searchStatus }: {
   galleryId: string;
   photo: { id: string; name: string; previewUrl: string; width?: number | null; height?: number | null };
   onRegion: (regionId: string) => void;
+  busy?: boolean;
+  searchStatus?: string;
 }) {
   const [regions, setRegions] = useState<FaceRegion[]>([]);
   const [selecting, setSelecting] = useState(false);
@@ -93,6 +95,7 @@ export function FaceRegionViewer({ galleryId, photo, onRegion }: {
         <img src={photo.previewUrl} alt={`Prévia protegida ampliada de ${photo.name}`} draggable={false}
           onLoad={(event) => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} />
         {selecting ? visible.map((region, index) => <button key={region.id} type="button"
+          disabled={busy}
           className="face-region-target" aria-label={`Procurar pessoa no rosto ${index + 1}`}
           style={{ left: `${(region.x + region.width / 2) * 100}%`, top: `${(region.y + region.height / 2) * 100}%`,
             width: Math.max(44 / zoom, region.width * width), height: Math.max(44 / zoom, region.height * height) }}
@@ -103,5 +106,6 @@ export function FaceRegionViewer({ galleryId, photo, onRegion }: {
     </div>
     {selecting ? <p className="field-hint">Toque no rosto desejado para procurar outras fotos. Amplie para separar rostos próximos.</p> : null}
     {message ? <p role="status">{message}</p> : null}
+    {searchStatus ? <p role="status">{["queued", "waiting_index", "validating_reference", "searching", "ranking"].includes(searchStatus) ? "Aguarde, procurando fotos…" : searchStatus === "ready" ? "Resultados prontos." : searchStatus === "no_candidates" ? "Nenhuma possibilidade foi encontrada." : ["failed", "cancelled", "expired", "index_incomplete"].includes(searchStatus) ? "A busca não foi concluída. Toque no rosto para tentar novamente." : searchStatus}</p> : null}
   </section>;
 }

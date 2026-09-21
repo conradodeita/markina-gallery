@@ -8513,9 +8513,11 @@ def public_photo_face_regions(parent_gallery_id: UUID, photo_id: UUID, request: 
 
 
 class FaceRegionSearchInput(BaseModel):
+    model_config = {"extra": "forbid"}
     face_region_id: UUID
-    consent_version: str = Field(max_length=120)
-    subject_declaration: Literal["adult", "minor"]
+    # Compatibilidade de transporte; não são registrados como novo consentimento.
+    consent_version: str | None = Field(default=None, max_length=120)
+    subject_declaration: Literal["adult", "minor"] | None = None
     representation_reference: str | None = Field(default=None, max_length=200)
 
 
@@ -8598,6 +8600,7 @@ async def create_public_gallery_facial_search(
             representation_reference=representation_reference,
             payload=payload,
             settings=settings,
+            consent_accepted=request.headers.get("x-facial-consent-accepted") == "true",
         )
         db.commit()
         FACIAL_ADMISSION_COUNTER.record("accepted")

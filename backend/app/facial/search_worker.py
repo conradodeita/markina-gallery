@@ -262,9 +262,11 @@ def process_claimed_search_job(
 def _request_is_authorized(
     db: Session, request: FacialSearchRequest, settings: FacialSettings
 ) -> bool:
-    if request.consent_version != settings.consent_version:
+    if request.status in {"cancelled", "expired"}:
         return False
-    if request.subject_declaration == "minor":
+    if request.authorization_method != "direct_region" and request.consent_version != settings.consent_version:
+        return False
+    if request.subject_declaration == "minor" and request.authorization_method == "legacy":
         from app.facial.representation import (
             FacialLegalRepresentationError,
             require_valid_legal_representation,
@@ -292,6 +294,7 @@ def _request_is_authorized(
         and policy
         and policy.parent_gallery_id == request.parent_gallery_id
         and policy.status == "active"
+        and request.legal_notice_version == policy.legal_notice_version
         and rollout_is_active(
             db,
             settings=settings,
