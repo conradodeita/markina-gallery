@@ -1,6 +1,9 @@
-import Link from "next/link";
+"use client";
 
-export function ClientCartLink({ count, href, className = "client-cart-link" }: { count: number; href: string; className?: string }) {
-  if (count < 1) return null;
-  return <Link className={className} href={href}>Carrinho ({count})</Link>;
+import Link from "next/link";
+import { useCartCount } from "./client-navigation";
+
+export function ClientCartLink({ count, className = "client-cart-link" }: { count: number; href?: string; className?: string }) {
+  const total = useCartCount(count);
+  return <Link className={className} href="/library/cart">Carrinho{total === null ? "" : ` (${total})`}</Link>;
 }

@@ -4165,6 +4165,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
             {
                 "id": str(order_id),
                 "gallery_name": "Galeria privada preservada",
+                "payment_group_id": None,
                 "parent_gallery_name": "Galeria pública preservada",
                 "gallery_status_label": "Galeria removida",
                 "gallery_removed": True,
@@ -4201,7 +4202,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
 
         client.cookies.clear()
         authenticate_client(client, other_phone)
-        assert client.get("/library/purchases").json() == {"orders": []}
+        assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": []}
         assert client.get(f"/library/history/items/{item_id}/preview").status_code == 403
         assert client.get(f"/library/history/items/{item_id}/delivery").status_code == 403
 

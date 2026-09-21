@@ -1,0 +1,3 @@
+# Continuidade — 20/09/2026
+
+O proprietário aprovou a implementação de `unified-client-cart-and-pix`. A restrição de agregação exclusivamente visual, os cards de revisão por galeria e a proibição de PIX conjunto desta mudança foram supersedidos. Preservar a fronteira entre carrinho editável e compra informada, o isolamento de identidade e o carregamento independente do histórico. Seguir a matriz de reconciliação de `../unified-client-cart-and-pix/design.md`; não executar pendências de entrega antigas para restabelecer o comportamento separado. Specs principais e arquivo aguardam revisão humana da nova implementação.

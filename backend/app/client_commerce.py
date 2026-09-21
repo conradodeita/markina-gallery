@@ -18,6 +18,7 @@ from app.auth import (
     SaleOrderItem,
 )
 from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
+from app.unified_checkout import communication_join, communications_for_orders
 
 
 def client_carts_by_gallery_payload(
@@ -170,7 +171,7 @@ def client_photo_states(
                 PaymentCommunication.status,
             )
             .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
-            .outerjoin(PaymentCommunication, PaymentCommunication.sale_order_id == SaleOrder.id)
+            .outerjoin(PaymentCommunication, communication_join())
             .where(
                 SaleOrder.derived_gallery_id_snapshot == gallery_id,
                 SaleOrder.client_id == client_id,
@@ -231,16 +232,7 @@ def client_orders_by_gallery_payload(
         .order_by(SaleOrderItem.filename_snapshot)
     ):
         items_by_order[item.sale_order_id].append(item)
-    communications: dict[UUID, PaymentCommunication] = {}
-    for communication in db.scalars(
-        select(PaymentCommunication)
-        .where(
-            PaymentCommunication.sale_order_id.in_(order_ids),
-            PaymentCommunication.client_id == client_id,
-        )
-        .order_by(PaymentCommunication.created_at)
-    ):
-        communications[communication.sale_order_id] = communication
+    communications = communications_for_orders(db, orders)
     communication_ids = [communication.id for communication in communications.values()]
     deliveries: dict[UUID, PaymentNotificationOutbox] = {}
     if communication_ids:
@@ -272,6 +264,7 @@ def client_orders_by_gallery_payload(
         grouped[gallery_id].append(
             {
                 "order_id": str(order.id),
+                "payment_group_id": str(order.payment_group_id) if order.payment_group_id else None,
                 "total_cents": order.total_cents,
                 "payment_status": order.payment_status,
                 "commercial_state": state,

@@ -13,6 +13,7 @@ from app.auth import (
     NotificationMilestone,
     ParentGallery,
     ParentGalleryRegistration,
+    PaymentGroup,
     PaymentNotificationOutbox,
 )
 from app.messaging import WhatsAppConfigurationError, configured_photographer_phone
@@ -74,15 +75,17 @@ def record_payment_event(db: Session, *, communication, order, event_type: str,
     if not client or not gallery or communication.client_id != client.id:
         return None
     reported = event_type == "payment_reported"
+    group = db.get(PaymentGroup, communication.payment_group_id) if communication.payment_group_id else None
     event_key = f"payment-reported:{communication.id}" if reported else (
         f"payment-decision:{communication.id}:{communication.status}:{decision_revision}")
     recipients = list(db.scalars(select(AdminUser.id).where(AdminUser.email_verified))) \
         if reported else [client.id]
     event = enqueue_event(db, event_type=event_type, event_key=event_key,
                           values={"cliente": order.client_name_snapshot or client.full_name,
-                                  "galeria": order.derived_gallery_name_snapshot,
-                                  "pedido": str(order.id)[:8]},
-                          target_path="/admin/payments" if reported else f"/gallery/{gallery.id}",
+                                  "galeria": "sua compra" if group else order.derived_gallery_name_snapshot,
+                                  "pedido": str(group.id if group else order.id)[:8]},
+                          target_path="/admin/payments" if reported else (
+                              f"/library/purchases#payment-{group.id}" if group else f"/gallery/{gallery.id}"),
                           recipients=recipients, parent_gallery_id=gallery.parent_gallery_id,
                           derived_gallery_id=gallery.id, client_id=client.id, sale_order_id=order.id)
     # Projeção técnica para os cards financeiros existentes, nunca segunda fila externa.

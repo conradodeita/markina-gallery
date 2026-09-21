@@ -2701,11 +2701,11 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
     authenticate_client(client, owner.phone_e164)
     library_before_checkout = client.get("/library").json()
     assert library_before_checkout["journeys"][0]["selection"]["quantity"] == 1
-    assert client.get("/library/purchases").json() == {"orders": []}
+    assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": []}
     order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "communication-order-key-0001"}).json()
     library_before_communication = client.get("/library").json()
     assert library_before_communication["journeys"][0]["selection"]["quantity"] == 1
-    assert client.get("/library/purchases").json() == {"orders": []}
+    assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": []}
     first = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
     second = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
     third = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0002"})

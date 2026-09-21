@@ -248,7 +248,7 @@ def test_settings_are_read_only_in_sales_and_saving_without_pix_is_allowed(clien
         assert config["copy_paste"] not in events
 
 
-def test_checkout_updates_open_draft_to_global_pix_version_and_keeps_selection(client):
+def test_checkout_preserves_started_pix_snapshot_and_selection(client):
     import json
 
     with SessionLocal() as db:
@@ -318,16 +318,16 @@ def test_checkout_updates_open_draft_to_global_pix_version_and_keeps_selection(c
         db.commit()
         db.refresh(first)
         assert second.id == first.id
-        assert first.pix_copy_paste_snapshot != first_code
-        assert first.pix_instructions_snapshot == "Segunda instrução"
-        assert first.pix_configuration_snapshot["receiver_name"] == "SEGUNDO"
-        assert first.pix_configuration_snapshot["version"] == 2
+        assert first.pix_copy_paste_snapshot == first_code
+        assert first.pix_instructions_snapshot == "Primeira instrução"
+        assert first.pix_configuration_snapshot["receiver_name"] == "PRIMEIRO"
+        assert first.pix_configuration_snapshot["version"] == 1
         apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(None, 2)))
         db.commit()
-        with pytest.raises(CheckoutError, match="seleção foi mantida"):
-            create_pending_checkout(
-                db, gallery=gallery, client=owner, checkout_key="first-checkout"
-            )
+        resumed = create_pending_checkout(
+            db, gallery=gallery, client=owner, checkout_key="first-checkout"
+        )
+        assert resumed.pix_copy_paste_snapshot == first_code
         assert db.get(PhotoSelection, selection.id)
 
 

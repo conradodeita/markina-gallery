@@ -78,6 +78,7 @@ from app.auth import (
     ParentGalleryRegistration,
     PaymentCommunication,
     PaymentConfirmationCorrection,
+    PaymentGroup,
     PaymentNotificationOutbox,
     PhotoAsset,
     PhotoComment,
@@ -319,6 +320,16 @@ from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
 from app.storage_metrics import measure_photo_storage
+from app.unified_checkout import (
+    cart_payload,
+    communication_join,
+    communications_for_orders,
+    group_payload,
+    lock_payment_scope,
+    payment_scope,
+    prepare_group,
+    report_group,
+)
 from app.whatsapp_channel import (
     channel_payload,
     channel_settings,
@@ -632,12 +643,14 @@ class PaymentCommunicationInput(BaseModel):
 
 class PaymentDecisionInput(BaseModel):
     decision: Literal["confirmed", "refused"]
+    payment_group_id: UUID | None = None
 
 
 class PaymentCorrectionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     idempotency_key: str = Field(min_length=12, max_length=128)
+    payment_group_id: UUID | None = None
 
 
 class GalleryReopeningRequestInput(BaseModel):
@@ -5804,6 +5817,8 @@ def admin_gallery_orders(
     )
     if not gallery and not orders:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    payment_groups = {group.id: group for group in db.scalars(select(PaymentGroup).where(
+        PaymentGroup.id.in_({order.payment_group_id for order in orders if order.payment_group_id})))}
     return {
         "gallery": {
             "id": str(gallery_id),
@@ -5819,6 +5834,9 @@ def admin_gallery_orders(
             {
                 "id": str(order.id),
                 "payment_status": order.payment_status,
+                "payment_group": ({"id": str(order.payment_group_id),
+                                   "total_cents": payment_groups[order.payment_group_id].total_cents}
+                                  if order.payment_group_id else None),
                 "total_cents": order.total_cents,
                 "client_name": order.client_name_snapshot,
                 "created_at": order.created_at.isoformat(),
@@ -6686,7 +6704,7 @@ def admin_private_gallery_photos(
                 .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
                 .outerjoin(
                     PaymentCommunication,
-                    PaymentCommunication.sale_order_id == SaleOrder.id,
+                    communication_join(),
                 )
                 .where(
                     SaleOrder.derived_gallery_id_snapshot == gallery.id,
@@ -7621,6 +7639,78 @@ def client_library(
     }
 
 
+def _commerce_client(request: Request, db: Session) -> Client:
+    session = current_session(request, Role.CLIENT)
+    client = db.get(Client, session.subject_id)
+    if not client:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    return client
+
+
+@app.get("/library/cart")
+def unified_cart(request: Request, db: Session = Depends(db_session)) -> dict:
+    return cart_payload(db, _commerce_client(request, db))
+
+
+@app.post("/library/cart/prepare")
+def prepare_unified_cart(request: Request, db: Session = Depends(db_session)) -> dict:
+    client = _commerce_client(request, db)
+    try:
+        group = prepare_group(db, client)
+        result = {**cart_payload(db, client), "payment": group_payload(group)}
+        db.commit()
+        return result
+    except CheckoutError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class GroupPaymentInput(BaseModel):
+    revision: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/library/payments/{group_id}/report")
+def report_unified_payment(group_id: UUID, payload: GroupPaymentInput, request: Request,
+                           db: Session = Depends(db_session)) -> dict:
+    client = _commerce_client(request, db)
+    try:
+        communication = report_group(db, client, group_id, payload.revision, payload.idempotency_key)
+        db.commit()
+        return {"id": str(communication.id), "status": communication.status,
+                "payment_group_id": str(group_id)}
+    except CheckoutError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/library/cart/{gallery_id}")
+def remove_unified_cart_group(gallery_id: UUID, request: Request,
+                              db: Session = Depends(db_session)) -> dict:
+    client = _commerce_client(request, db)
+    gallery = derived_gallery_for_client(db, gallery_id, client.id)
+    lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
+    photo_ids = list(db.scalars(select(PhotoSelection.photo_asset_id).where(
+        PhotoSelection.derived_gallery_id == gallery.id, PhotoSelection.client_id == client.id)))
+    for photo_id in photo_ids:
+        remove_client_selection_and_close_if_empty(db, gallery=gallery, client_id=client.id, photo_id=photo_id)
+    audit(db, "cart.group_removed", str(gallery.id))
+    db.commit()
+    return cart_payload(db, client)
+
+
+@app.delete("/library/cart/{gallery_id}/photos/{photo_id}")
+def remove_unified_cart_photo(gallery_id: UUID, photo_id: UUID, request: Request,
+                              db: Session = Depends(db_session)) -> dict:
+    client = _commerce_client(request, db)
+    gallery = derived_gallery_for_client(db, gallery_id, client.id)
+    lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
+    remove_client_selection_and_close_if_empty(db, gallery=gallery, client_id=client.id, photo_id=photo_id)
+    audit(db, "cart.photo_removed", str(gallery.id))
+    db.commit()
+    return cart_payload(db, client)
+
+
 @app.get("/library/purchases")
 def client_purchase_history(
     request: Request, db: Session = Depends(db_session)
@@ -7634,6 +7724,9 @@ def client_purchase_history(
                 SaleOrder.client_id == session.subject_id,
                 or_(
                     SaleOrder.payment_status == "confirmed",
+                    SaleOrder.payment_group_id.in_(
+                        select(PaymentCommunication.payment_group_id).where(
+                            PaymentCommunication.client_id == session.subject_id)),
                     SaleOrder.id.in_(
                         select(PaymentCommunication.sale_order_id).where(
                             PaymentCommunication.client_id == session.subject_id
@@ -7670,17 +7763,7 @@ def client_purchase_history(
             )
         )
     }
-    communications_by_order: dict[UUID, PaymentCommunication] = {}
-    if order_ids:
-        for communication in db.scalars(
-            select(PaymentCommunication)
-            .where(
-                PaymentCommunication.sale_order_id.in_(order_ids),
-                PaymentCommunication.client_id == session.subject_id,
-            )
-            .order_by(PaymentCommunication.created_at)
-        ):
-            communications_by_order[communication.sale_order_id] = communication
+    communications_by_order = communications_for_orders(db, orders)
     operational_gallery_ids = {
         order.derived_gallery_id for order in orders if order.derived_gallery_id
     }
@@ -7721,6 +7804,7 @@ def client_purchase_history(
         result.append(
             {
                 "id": str(order.id),
+                "payment_group_id": str(order.payment_group_id) if order.payment_group_id else None,
                 "gallery_name": order.derived_gallery_name_snapshot,
                 "parent_gallery_name": order.parent_gallery_name_snapshot,
                 "gallery_status_label": "Galeria ativa" if gallery else "Galeria removida",
@@ -7752,7 +7836,16 @@ def client_purchase_history(
                 "items": item_payloads,
             }
         )
-    return {"orders": result}
+    groups = {}
+    for order_payload in result:
+        group_id = order_payload["payment_group_id"]
+        if group_id:
+            groups.setdefault(group_id, {"id": group_id, "orders": []})["orders"].append(order_payload)
+    for group in groups.values():
+        group["total_cents"] = sum(item["total_cents"] for item in group["orders"])
+        group["commercial_state"] = group["orders"][0]["commercial_state"]
+    return {"orders": [item for item in result if not item["payment_group_id"]],
+            "payment_groups": list(groups.values())}
 
 
 def _historical_item_for_client(
@@ -9172,13 +9265,11 @@ def decide_payment_communication(
     db: Session = Depends(db_session),
 ) -> dict[str, str]:
     session = current_session(request, Role.ADMIN)
-    communication = db.scalar(
-        select(PaymentCommunication)
-        .where(PaymentCommunication.id == communication_id)
-        .with_for_update()
-    )
-    if not communication:
-        raise HTTPException(status_code=404, detail="Comunicação não encontrada.")
+    try:
+        communication, payment_group, scope_orders = lock_payment_scope(
+            db, communication_id, payload.payment_group_id)
+    except CheckoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if communication.status != "pending_review":
         return {"status": communication.status}
     order = db.get(SaleOrder, communication.sale_order_id)
@@ -9187,11 +9278,13 @@ def decide_payment_communication(
     communication.status = payload.decision
     communication.decided_by_admin_id = session.subject_id
     communication.decided_at = now()
-    if payload.decision == "confirmed":
-        order.payment_status = "confirmed"
-        order.confirmed_at = communication.decided_at
-    else:
-        order.payment_status = "cancelled"
+    if any(item.payment_status != "pending" for item in scope_orders):
+        raise HTTPException(status_code=409, detail="Pedidos indisponíveis para decisão.")
+    for item in scope_orders:
+        item.payment_status = "confirmed" if payload.decision == "confirmed" else "cancelled"
+        item.confirmed_at = communication.decided_at if payload.decision == "confirmed" else None
+    if payment_group:
+        payment_group.state = payload.decision
     client = db.get(Client, communication.client_id)
     if client and client.id == order.client_id:
         decision_revision = (
@@ -9220,6 +9313,11 @@ def correct_payment_confirmation(
     db: Session = Depends(db_session),
 ) -> dict[str, str]:
     session = current_session(request, Role.ADMIN)
+    try:
+        communication, payment_group, scope_orders = lock_payment_scope(
+            db, communication_id, payload.payment_group_id)
+    except CheckoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     existing = db.scalar(
         select(PaymentConfirmationCorrection).where(
             PaymentConfirmationCorrection.payment_communication_id == communication_id,
@@ -9273,8 +9371,13 @@ def correct_payment_confirmation(
     communication.status = "pending_review"
     communication.decided_by_admin_id = None
     communication.decided_at = None
-    order.payment_status = "pending"
-    order.confirmed_at = None
+    if any(item.payment_status != "confirmed" for item in scope_orders):
+        raise HTTPException(status_code=409, detail="Pedidos indisponíveis para correção.")
+    for item in scope_orders:
+        item.payment_status = "pending"
+        item.confirmed_at = None
+    if payment_group:
+        payment_group.state = "reported"
     audit(db, "payment.confirmation_corrected", str(communication.id))
     try:
         db.commit()
@@ -9477,23 +9580,17 @@ def list_payment_communications(
 
     order_rows = list(db.execute(order_query))
     order_ids = [order.id for order, _client, _gallery, _parent in order_rows]
-    communication_rows = (
-        list(
-            db.scalars(
-                select(PaymentCommunication)
-                .where(PaymentCommunication.sale_order_id.in_(order_ids))
-                .order_by(
-                    PaymentCommunication.created_at.desc(),
-                    PaymentCommunication.id.desc(),
-                )
-            )
-        )
-        if order_ids
-        else []
-    )
-    communications_by_order: dict[UUID, list[PaymentCommunication]] = defaultdict(list)
-    for communication in communication_rows:
-        communications_by_order[communication.sale_order_id].append(communication)
+    order_entities = [row[0] for row in order_rows]
+    communication_rows = list(db.scalars(select(PaymentCommunication).where(or_(
+        PaymentCommunication.sale_order_id.in_(order_ids),
+        PaymentCommunication.payment_group_id.in_({order.payment_group_id for order in order_entities
+                                                  if order.payment_group_id}),
+    )).order_by(PaymentCommunication.created_at.desc())))
+    communications_by_order = {order.id: [item for item in communication_rows
+        if item.sale_order_id == order.id or (order.payment_group_id and
+                                             item.payment_group_id == order.payment_group_id)]
+        for order in order_entities}
+    scopes_by_communication = {item.id: payment_scope(db, item) for item in communication_rows}
 
     communication_ids = [communication.id for communication in communication_rows]
     correction_rows = (
@@ -9665,6 +9762,7 @@ def list_payment_communications(
                 corrections=corrections_by_communication.get(communication.id, []),
                 max_attempts=max_attempts,
             )
+            payload["payment_group"] = scopes_by_communication.get(communication.id)
             communication_payloads.append(payload)
             flat_by_id[str(communication.id)] = payload
 
@@ -10035,6 +10133,15 @@ def client_pending_order(
         raise HTTPException(status_code=403, detail="Acesso negado.")
     if order.payment_status != "pending":
         raise HTTPException(status_code=409, detail="Este pedido não está pendente de confirmação.")
+    if order.payment_group_id:
+        return {
+            "id": str(order.id),
+            "payment_group_id": str(order.payment_group_id),
+            "total_cents": order.total_cents,
+            "review_url": "/library/cart" if order.frozen_at is None else
+                f"/library/purchases#payment-{order.payment_group_id}",
+            "pix": None,
+        }
     items = list(
         db.scalars(
             select(SaleOrderItem)

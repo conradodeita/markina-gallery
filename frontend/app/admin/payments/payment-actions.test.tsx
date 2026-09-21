@@ -5,6 +5,21 @@ import { FinancialOrderShortcuts, PaymentActions, type FinancialOrder } from "./
 afterEach(() => vi.restoreAllMocks());
 const order: FinancialOrder = { id: "communication-1", order_id: "order-1", gallery_name: "Evento A", total_cents: 700, quantity: 1, created_at: "2026-09-19T12:00:00Z", status: "pending_review", can_decide: true, can_correct: false };
 describe("atalhos por pedido", () => {
+  it("expõe total e galerias e exige decisão sobre todo o PIX", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "confirmed" })));
+    vi.stubGlobal("fetch", fetch);
+    const refresh = vi.fn();
+    render(<PaymentActions order={{ ...order, payment_group: { id: "group-1", total_cents: 2100,
+      galleries: [{ order_id: "order-1", name: "Galeria 1", total_cents: 700 },
+        { order_id: "order-2", name: "Galeria 2", total_cents: 1400 }] } }} clientName="Ana" onRefresh={refresh} />);
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(confirm.mock.calls[0][0]).toContain("21,00");
+    expect(confirm.mock.calls[0][0]).toContain("Galeria 2");
+    expect(confirm.mock.calls[0][0]).toContain("todos esses pedidos");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ decision: "confirmed", payment_group_id: "group-1" });
+  });
   it("identifica pedidos e confirma apenas a compra escolhida", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetch = vi.fn().mockResolvedValue(new Response("{}")); vi.stubGlobal("fetch", fetch);

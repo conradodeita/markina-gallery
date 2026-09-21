@@ -9,6 +9,7 @@ from app.auth import (
     DerivedGalleryMembership,
     DerivedGalleryPhoto,
     ParentGallery,
+    PaymentGroup,
     PhotoAsset,
     PhotoFolder,
     PhotoSelection,
@@ -31,6 +32,8 @@ def lock_client_commerce(
 ) -> None:
     """Serializa seleção, checkout e congelamento sem bloquear outros membros."""
 
+    # O PIX pode abranger várias galerias: a identidade é sempre o primeiro lock.
+    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
     membership = db.scalar(
         select(DerivedGalleryMembership)
         .where(
@@ -71,9 +74,8 @@ def client_photo_is_frozen(
     )
 
 
-def _checkout_material(
-    db: Session, *, gallery: DerivedGallery, client: Client
-):
+def selected_photos(db: Session, *, gallery: DerivedGallery, client: Client):
+    """Fotos selecionadas ainda autorizadas; também usadas quando não há cotação."""
     selections = list(
         db.scalars(
             select(PhotoSelection)
@@ -81,11 +83,8 @@ def _checkout_material(
                 PhotoSelection.derived_gallery_id == gallery.id,
                 PhotoSelection.client_id == client.id,
             )
-            .with_for_update()
         )
     )
-    if not selections:
-        raise CheckoutError("A seleção está vazia.")
     photo_ids = {selection.photo_asset_id for selection in selections}
     referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
         DerivedGalleryPhoto.derived_gallery_id == gallery.id
@@ -96,6 +95,7 @@ def _checkout_material(
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.id.in_(photo_ids),
+                PhotoAsset.available,
                 (PhotoAsset.derived_gallery_id == gallery.id)
                 | (PhotoAsset.id.in_(referenced_photo_ids)),
                 PhotoFolder.status == "released",
@@ -104,6 +104,16 @@ def _checkout_material(
             .distinct()
         )
     )
+    return selections, photos
+
+
+def _checkout_material(
+    db: Session, *, gallery: DerivedGallery, client: Client, resolve_pix: bool = True
+):
+    selections, photos = selected_photos(db, gallery=gallery, client=client)
+    if not selections:
+        raise CheckoutError("A seleção está vazia.")
+    photo_ids = {selection.photo_asset_id for selection in selections}
     if {photo.id for photo in photos} != photo_ids:
         raise CheckoutError("A seleção contém fotos indisponíveis.")
     already_frozen = db.scalar(
@@ -132,7 +142,7 @@ def _checkout_material(
     except GalleryPricingError as exc:
         raise CheckoutError(str(exc)) from exc
     try:
-        settings = checkout_pix(db)
+        settings = checkout_pix(db) if resolve_pix else None
     except PixCodeError as exc:
         raise CheckoutError(str(exc)) from exc
     folders_by_id = {
@@ -173,15 +183,16 @@ def _synchronize_order(
         },
     }
     order.sales_message_snapshot = parent.sales_message
-    order.pix_copy_paste_snapshot = settings.copy_paste
-    order.pix_qr_code_snapshot = None
-    order.pix_instructions_snapshot = settings.instructions
-    order.pix_configuration_snapshot = {
-        "configuration_id": str(settings.id),
-        "version": settings.version,
-        "receiver_name": settings.receiver_name,
-        "receiver_city": settings.receiver_city,
-    }
+    if settings is not None:
+        order.pix_copy_paste_snapshot = settings.copy_paste
+        order.pix_qr_code_snapshot = None
+        order.pix_instructions_snapshot = settings.instructions
+        order.pix_configuration_snapshot = {
+            "configuration_id": str(settings.id),
+            "version": settings.version,
+            "receiver_name": settings.receiver_name,
+            "receiver_city": settings.receiver_city,
+        }
     db.add(order)
     db.flush()
     db.execute(delete(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id))
@@ -237,7 +248,10 @@ def create_pending_checkout(
             .order_by(SaleOrder.created_at.desc())
             .with_for_update()
         )
-    material = _checkout_material(db, gallery=gallery, client=client)
+    if existing and existing.payment_group_id:
+        raise CheckoutError("Este pedido integra o carrinho único. Revise em /library/cart.")
+    material = _checkout_material(db, gallery=gallery, client=client,
+                                  resolve_pix=not (existing and existing.pix_copy_paste_snapshot))
     created = existing is None
     order = existing or SaleOrder(
         derived_gallery_id=gallery.id,
@@ -286,13 +300,23 @@ def synchronize_editable_draft(
         )
     )
     if not has_selection:
+        payment_group_id = order.payment_group_id
         db.execute(delete(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id))
         db.delete(order)
         audit(db, "sale_order.draft_discarded", str(order.id))
         db.flush()
+        if payment_group_id and not db.scalar(select(SaleOrder.id).where(
+            SaleOrder.payment_group_id == payment_group_id
+        )):
+            db.execute(delete(PaymentGroup).where(PaymentGroup.id == payment_group_id,
+                                                  PaymentGroup.state == "draft"))
         return None
+    if order.payment_group_id:
+        # A composição divergente invalida a revisão no report.
+        return order
     try:
-        material = _checkout_material(db, gallery=gallery, client=client)
+        material = _checkout_material(db, gallery=gallery, client=client,
+                                      resolve_pix=not order.pix_copy_paste_snapshot)
     except CheckoutError:
         # O carrinho continua autoritativo e o rascunho divergente deixa de ser
         # oferecido pela projeção até um novo Prosseguir válido sincronizá-lo.
@@ -321,9 +345,12 @@ def freeze_pending_checkout(
     )
     if not order or order.payment_status != "pending":
         raise CheckoutError("Pedido indisponível para comunicação.")
+    if order.payment_group_id:
+        raise CheckoutError("Informe o pagamento único pela revisão em /library/cart.")
     if order.frozen_at is not None:
         return order
-    material = _checkout_material(db, gallery=gallery, client=client)
+    material = _checkout_material(db, gallery=gallery, client=client,
+                                  resolve_pix=not order.pix_copy_paste_snapshot)
     selections = material[0]
     _synchronize_order(
         db, order=order, gallery=gallery, client=client, material=material

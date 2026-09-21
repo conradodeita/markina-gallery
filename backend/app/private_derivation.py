@@ -122,6 +122,7 @@ def derive_client_selection(
 ) -> PrivateDerivationResult:
     """Cria/reutiliza privada, referência client e seleção em uma transação."""
 
+    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
     parent = db.get(ParentGallery, parent_gallery_id)
     client = db.get(Client, client_id)
     registration = db.scalar(
