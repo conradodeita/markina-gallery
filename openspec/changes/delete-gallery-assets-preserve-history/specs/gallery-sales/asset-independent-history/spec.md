@@ -24,6 +24,13 @@ O sistema SHALL preservar pedidos e composição de PIX iniciados afetados pela 
 ### Requirement: Consulta autorizada sem imagens
 Vendas e pagamentos SHALL apresentar movimentos e referências textuais removidos. A cliente SHALL acessar somente seus próprios registros; a ausência de imagem SHALL ser representada sem link quebrado nem restauração de acesso ao acervo.
 
+#### Scenario: Histórico administrativo sob consulta
+- **WHEN** o fotógrafo abre Vendas e pagamentos
+- **THEN** a visão padrão apresenta pedidos e pagamentos sem carregar ou exibir a lista de movimentos removidos
+- **AND** a opção Histórico de acervo excluído permite consultar esses movimentos por cliente, galeria e período, inclusive galerias que só possuíam seleções sem pedido
+- **AND** os resultados são paginados no servidor, com no máximo 50 movimentos por página, agrupados por cliente e galeria e recolhidos inicialmente
+- **AND** mudar filtros reinicia a paginação e navegar entre páginas substitui os resultados, sem acumular um log na tela
+
 #### Scenario: Outra identidade
 - **WHEN** uma cliente consulta seu histórico após exclusão
 - **THEN** recebe somente movimentos e pedidos da sua identidade, com nomes das fotos e indicação de acervo removido

@@ -8,6 +8,7 @@
 - [x] 3.1 Expor movimentos e pedidos indisponíveis no histórico administrativo/cliente, impedir cobrança de rascunho removido e preservar decisões de grupos comunicados; testar autorização, filtros e regressões.
 - [x] 3.2 Atualizar confirmações, rótulos e visualização textual sem links quebrados; testar frontend e build.
 ## 4. Entrega
+- [x] 4.5 Organizar histórico administrativo sob consulta explícita, filtros e paginação no servidor, sem log na visão padrão; validar autorização, galerias sem pedido, paginação, interface e build.
 - [x] 4.4 Corrigir recuperação da operação após reabrir a galeria; testar resumo autenticado, retomada explícita com inventário atualizado e ausência de nova exclusão/retentativa automática.
 - [x] 4.1 Revisar diff, executar validações proporcionais backend/frontend/OpenSpec e preparar PR com evidências, preservando mudanças locais anteriores; parar quando só CI estiver pendente.
 - [ ] 4.2 Após gates aplicáveis, publicar e verificar homologação; retomar Galeria 01 somente com autorização operacional, registrar saúde/escopo e aceite humano antes de sincronizar/arquivar.
@@ -41,3 +42,11 @@ Validação da correção: `python -m pytest backend/tests/test_preview_adjustme
 Deploy de develop verificado em 21/09/2026: execução 35592663503 e job deploy-homolog bem-sucedidos, servidor limpo em df1e1477, migration 0059, 13 serviços saudáveis e health checks públicos aprovados. Recursos externos intactos. Task 4.2 ainda exige retentativa administrativa da Galeria 01 (58 fotos/2 pastas, operação failed) e aceite real; ver homologacao.md.
 
 Recuperação da interface: backend validou criação idempotente, cancelamento e resumo/retomada (3 casos aprovados) e isolamento/autenticação/última operação cancelada (1 caso aprovado em reteste, após alinhar expectativa ao 403 vigente). Frontend: 52 testes aprovados, incluindo reabrir a página e confirmar inventário antes de POST na operação antiga. Build/TypeScript aprovados, lint 0 erros/27 avisos preexistentes; Ruff e OpenSpec estrito aprovados. Nenhuma retentativa destrutiva remota executada; a correção será publicada na branch codex/fix-gallery-deletion-recovery.
+
+## Histórico administrativo sob consulta
+
+O proprietário confirmou que a exclusão da Galeria 01 funcionou e solicitou retirar o log aberto da página financeira. Implementação na branch `codex/filter-removed-gallery-history`, base `81399b3`: seletor Exibir, consulta administrativa independente, filtros por cliente/galeria/período, páginas substituídas de 25 movimentos e agrupamentos inicialmente recolhidos. O endpoint impõe máximo de 50, aplica filtros antes do limite e mantém ordenação por data/UUID. Galerias disponíveis vêm dos snapshots, inclusive sem pedido. A resposta financeira não carrega mais movimentos removidos. Nenhuma migration nem alteração remota nesta melhoria.
+
+Evidências locais: 2 testes de filtros/autorização/paginação passaram em SQLite (31,43 s) e PostgreSQL (16,26 s), incluindo 55 registros com a mesma data distribuídos sem duplicação entre páginas, galeria sem pedido e limites inválidos. Regressão financeira: 2 testes passaram em 29,42 s. Frontend: 7 testes passaram em 20,76 s, incluindo consulta apenas após seleção explícita, recolhimento e substituição de páginas/filtros. Build/TypeScript passou; ESLint 0 erros/27 avisos preexistentes; Ruff e OpenSpec estrito aprovados.
+
+Próximo gate: PR e CI; parar aguardando retorno do usuário quando só restar CI. Aceite do novo filtro em homologação permanece pendente, sem sincronizar ou arquivar antecipadamente.
