@@ -61,3 +61,11 @@ Harness, screenshots e logs locais em `.codex-tmp/mobile-facial-*`, excluídos d
 ### Limites e continuidade
 
 Validação Windows/SQLite e browser sintético não equivale a homologação Linux/PostgreSQL/autenticada. A suíte completa backend será executada pelo CI. Sem deploy, migration operacional ou processamento real. Task 5.1 pendente; ver `deployment.md`. Publicar branch e PR, então parar até o proprietário informar CI verde. Não consultar CI automaticamente nem efetuar merge. Sync/archive dependem de revisão humana.
+
+### Retorno do CI — PR #94
+
+Após o proprietário informar falha do backend, consultado o run `35639449632`, job `106464905063`: 685 testes passaram, 11 foram ignorados e dois cenários de `test_face_region_search.py` falharam por ainda exigirem recusa de consulta por região com menor/consentimento inválido. Essas expectativas pertenciam ao contrato anterior e não foram incluídas na seleção local original. Frontend, gitleaks e OpenSpec passaram nesse run.
+
+Correção limitada aos testes: mantidas recusas de região inexistente/modelo incompatível; consulta integrada passou a enviar idade/consentimento ausentes; acrescentados cenários que verificam admissão direta sem campos de upload e compatibilidade com clientes antigos, sem persistir idade, representação ou recibo fictício e com auditoria própria. Nenhuma alteração adicional ao comportamento do produto. Novo push será seguido de parada até confirmação humana do CI.
+
+Validação da correção: `pytest backend/tests/test_face_region_search.py backend/tests/test_direct_region_search.py backend/tests/test_facial_search.py -q` → **27 passed**, dois avisos preexistentes de depreciação FastAPI, 36,40 s. `ruff check backend/app backend/tests`, `openspec validate simplify-mobile-gallery-face-search --strict` e `git diff --check` aprovados. Sem repetição de build/frontend porque somente testes Python e documentação foram alterados; a suíte completa backend será reexecutada pelo CI do novo push.

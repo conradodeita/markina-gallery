@@ -23,6 +23,7 @@
 - [x] 4.1 Inspecionar no browser viewports 320px, 360×640, 390×844, paisagem curta e desktop com dados sintéticos; registrar evidência de imagem desobstruída, nome/seleção lado a lado, navegação sempre visível fora da foto e conclusão com retorno ao topo. Não executar biometria real usando os anexos.
 - [x] 4.2 Executar testes backend/frontend pertinentes, lint, typecheck e build aplicáveis; registrar comandos/resultados e corrigir regressões causadas pela change.
 - [x] 4.3 Validar OpenSpec estrito, diff e compatibilidade com outras changes; registrar limitações e manter sync/archive dependentes de revisão humana.
+- [x] 4.4 Corrigir expectativas legadas de consentimento em `test_face_region_search.py` identificadas pelo CI do PR #94; validar busca direta sem idade/consentimento, compatibilidade de transporte sem recibo fictício e preservação de recusas por região/modelo inválido. Evidência: 27 testes aprovados, ruff e OpenSpec estrito aprovados; detalhes em `validation.md`.
 
 ## 5. Habilitação operacional infantil
 
