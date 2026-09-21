@@ -25,3 +25,7 @@ Garantir exclusão completa com rastreabilidade, escopo seguro e recuperação i
 ## Migration Plan
 
 Migration aditiva 0059, sem varrer/excluir dados existentes. Downgrade deve recusar descarte de snapshots ou estado de indisponibilidade criado. Publicar por PR/CI; quando só houver CI pendente, parar. Homologação e retentativa da Galeria 01 seguem inventário e autorização operacional aplicável. Após exclusão real não há restauração de mídia pela reversão do código; corrigir adiante. Sincronizar/arquivar após aceite humano.
+
+## Recuperação após recarregar a interface
+
+A inspeção após o teste humano mostrou a operação antiga ainda com duas tentativas e updated_at de 20/09, sem nova execução. O proprietário confirmou ter clicado em Excluir Galeria 01 no diálogo. O resumo não retornava operação existente e a página guardava seu identificador somente em memória; ao reabrir, disparava outro DELETE, recusado por lifecycle_status=deleting. O resumo administrativo passa a retornar a última operação de delete_parent_gallery daquele alvo (não desvinculações). A página restaura acompanhamento, falha e ações; retentativa explícita exige inventário atualizado e usa POST na operação recuperada. Operação cancelada não bloqueia nova exclusão. GET e deploy nunca retomam limpeza automaticamente.

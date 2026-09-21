@@ -1106,6 +1106,7 @@ describe("editor administrativo de galeria", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Excluir Evento falho" }));
     expect(await screen.findByRole("button", { name: "Retomar operação" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retomar operação" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar exclusão de Evento falho" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/gallery-lifecycle-operations/operation-2/retry",
       expect.objectContaining({ method: "POST" }),
@@ -1143,4 +1144,37 @@ it("exclui pasta liberada com conteúdo após confirmação e preserva a tela em
   fireEvent.click(screen.getByRole("button", { name: "Excluir pasta Festa completa" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Excluir pasta Festa completa" })).toBeNull());
   expect(confirm).toHaveBeenCalledWith(expect.stringContaining("12 foto(s)"));
+});
+
+
+it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventário", async () => {
+  const operation = {
+    operation_id: "old-operation", status: "failed",
+    status_url: "/admin/gallery-lifecycle-operations/old-operation",
+    last_error: "Falha interna na etapa removing_records.",
+    progress: { label: "Falhou", percent: 50, failed_step: "removing_records" },
+    actions: { can_cancel: false, can_retry: true, should_poll: false, poll_after_ms: null },
+  };
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/folders")) return response({ folders: [] });
+    if (path.endsWith("/summary")) return response({ name: "Galeria 01", event_name: "", active: true, public_link_status: "unavailable", cover_preview_url: null, counts: { folders: 2, photos: 58, clients: 1 }, clients: [], deletion_operation: operation });
+    if (path.endsWith("/deletion-inventory")) return response({ target: { id: "source-1", name: "Galeria 01" }, inventory: { remove: { photos: 58, folders: 2, private_galleries: 1 }, preserve: { orders: 3 } } });
+    if (path.endsWith("/old-operation/retry") && init?.method === "POST") return response({ ...operation, status: "queued", last_error: null, progress: { label: "Na fila", percent: 0, failed_step: null }, actions: { can_cancel: false, can_retry: false, should_poll: true, poll_after_ms: 1 } });
+    if (path.endsWith("/old-operation")) return response({ ...operation, status: "completed", last_error: null, progress: { label: "Concluída", percent: 100, failed_step: null }, actions: { can_cancel: false, can_retry: false, should_poll: false, poll_after_ms: null } });
+    return response({}, 500);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const page = render(<SourceGalleryDetailPage />);
+  await screen.findByRole("heading", { name: "Falhou" });
+  page.unmount();
+  render(<SourceGalleryDetailPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Retomar operação" }));
+  const dialog = await screen.findByRole("dialog", { name: "Excluir “Galeria 01”?" });
+  expect(dialog.textContent).toContain("58");
+  expect(dialog.textContent).not.toContain("sem uso privado");
+  expect(fetchMock.mock.calls.every(([, init]) => !init?.method)).toBe(true);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Retomar exclusão de Galeria 01" }));
+  await screen.findByRole("heading", { name: "Concluída" });
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
 });

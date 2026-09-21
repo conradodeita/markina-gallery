@@ -17,6 +17,7 @@ type Summary = {
   cover_preview_url: string | null;
   counts: { folders: number; photos: number; clients: number };
   clients: ClientGalleryRow[];
+  deletion_operation?: LifecycleOperation | null;
 };
 type InventorySection = Record<string, number | Record<string, number>>;
 type DeletionPreview = {
@@ -42,8 +43,8 @@ type LifecycleOperation = {
 
 const inventoryLabels: Record<string, string> = {
   folders: "pastas",
-  photos: "fotos sem uso privado",
-  media_derivatives: "arquivos derivados sem uso privado",
+  photos: "fotos",
+  media_derivatives: "prévias e arquivos derivados",
   registrations: "vínculos públicos",
   access_capabilities: "links e convites públicos",
   clients: "clientes",
@@ -113,10 +114,14 @@ export default function SourceGalleryDetailPage() {
     setDeletionBusy(true);
     setDeletionError("");
     try {
-      const response = await fetch(`/api/admin/parent-galleries/${sourceId}`, {
-        method: "DELETE",
+      const retrying = Boolean(operation?.actions.can_retry);
+      const path = retrying
+        ? `/api/admin/gallery-lifecycle-operations/${operation!.operation_id}/retry`
+        : `/api/admin/parent-galleries/${sourceId}`;
+      const response = await fetch(path, {
+        method: retrying ? "POST" : "DELETE",
         credentials: "same-origin",
-        headers: { "Idempotency-Key": idempotencyKey.current },
+        ...(retrying ? {} : { headers: { "Idempotency-Key": idempotencyKey.current } }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.detail ?? "Não foi possível iniciar a exclusão.");
@@ -129,7 +134,7 @@ export default function SourceGalleryDetailPage() {
     }
   }
 
-  async function operationAction(action: "cancel" | "retry") {
+  async function operationAction(action: "cancel") {
     if (!operation || deletionBusy) return;
     setDeletionBusy(true);
     setDeletionError("");
@@ -149,14 +154,21 @@ export default function SourceGalleryDetailPage() {
   }
 
   useEffect(() => {
+    const controller = new AbortController();
     Promise.all([
-      fetch(`/api/admin/parent-galleries/${sourceId}/folders`, { credentials: "same-origin" }),
-      fetch(`/api/admin/parent-galleries/${sourceId}/summary`, { credentials: "same-origin" }),
+      fetch(`/api/admin/parent-galleries/${sourceId}/folders`, { credentials: "same-origin", signal: controller.signal }),
+      fetch(`/api/admin/parent-galleries/${sourceId}/summary`, { credentials: "same-origin", signal: controller.signal }),
     ]).then(async ([folderResponse, summaryResponse]) => {
       if (!folderResponse.ok || !summaryResponse.ok) throw new Error();
-      setFolders((await folderResponse.json()).folders ?? []);
-      setSummary(await summaryResponse.json());
-    }).catch(() => setFailed(true));
+      const folderPayload = await folderResponse.json();
+      const summaryPayload: Summary = await summaryResponse.json();
+      if (controller.signal.aborted) return;
+      setFolders(folderPayload.folders ?? []);
+      setSummary(summaryPayload);
+      setOperation(summaryPayload.deletion_operation ?? null);
+      setFailed(false);
+    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
   }, [sourceId, refresh]);
 
   useEffect(() => {
@@ -188,9 +200,9 @@ export default function SourceGalleryDetailPage() {
       <section className="admin-card"><h2>Pastas</h2>{folders.length ? <div className="source-folder-cards">{folders.map((folder) => <Link aria-label={`Abrir pasta ${folder.name}`} className="source-folder-card" href={`/admin/galleries/sources/${sourceId}/edit/imagens?folder=${encodeURIComponent(folder.id)}`} key={folder.id}><span className="source-folder-card__preview">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : <b>Pasta sem miniatura</b>}</span><span><strong>{folder.name}</strong><small>{folder.photo_count} foto(s)</small></span><StatusBadge tone={folder.status === "released" ? "success" : "warning"}>{folder.status === "released" ? "Publicada" : "Em preparação"}</StatusBadge></Link>)}</div> : <SystemState title="Nenhuma pasta" detail="Abra a etapa Imagens para criar a primeira pasta desta galeria." />}</section>
       <section className="admin-card"><h2>Clientes vinculadas</h2>{summary.clients.length ? <div className="gallery-linked-clients">{summary.clients.map((person) => <ClientGalleryCard key={person.client_id} person={person} onRefresh={() => setRefresh((value) => value + 1)} />)}</div> : <SystemState title="Nenhuma cliente vinculada" detail="O vínculo pode nascer pelo login no link ou pela etapa Clientes." />}</section>
 
-      {deletionPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="delete-gallery-title" aria-modal="true" className="mk-dialog lifecycle-dialog" role="dialog"><p className="eyebrow">Confirmação única</p><h2 id="delete-gallery-title">Excluir “{deletionPreview.target.name}”?</h2><p>A Galeria pública e o acesso compartilhável serão removidos. Esta limpeza não poderá ser restaurada depois que a etapa física começar.</p><div className="lifecycle-inventory"><section><h3>Será removido</h3><ul>{inventoryRows(deletionPreview.inventory.remove).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section><section><h3>Será preservado</h3><ul>{inventoryRows(deletionPreview.inventory.preserve).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section></div><p>As galerias privadas dependentes, pastas, fotos e prévias também serão removidas. Clientes, nomes das fotos, movimentos e estados financeiros permanecem no histórico.</p>{deletionError ? <p className="form-message form-message--error" role="alert">{deletionError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => { setDeletionPreview(null); setDeletionError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={deletionBusy} onClick={confirmDeletion}>{deletionBusy ? "Iniciando…" : `Excluir ${deletionPreview.target.name}`}</MarkinaButton></div></section></div> : null}
+      {deletionPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="delete-gallery-title" aria-modal="true" className="mk-dialog lifecycle-dialog" role="dialog"><p className="eyebrow">Confirmação única</p><h2 id="delete-gallery-title">Excluir “{deletionPreview.target.name}”?</h2><p>A Galeria pública e o acesso compartilhável serão removidos. Esta limpeza não poderá ser restaurada depois que a etapa física começar.</p><div className="lifecycle-inventory"><section><h3>Será removido</h3><ul>{inventoryRows(deletionPreview.inventory.remove).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section><section><h3>Será preservado</h3><ul>{inventoryRows(deletionPreview.inventory.preserve).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section></div><p>As galerias privadas dependentes, pastas, fotos e prévias também serão removidas. Clientes, nomes das fotos, movimentos e estados financeiros permanecem no histórico.</p>{deletionError ? <p className="form-message form-message--error" role="alert">{deletionError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => { setDeletionPreview(null); setDeletionError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={deletionBusy} onClick={confirmDeletion}>{deletionBusy ? "Iniciando…" : operation?.actions.can_retry ? `Retomar exclusão de ${deletionPreview.target.name}` : `Excluir ${deletionPreview.target.name}`}</MarkinaButton></div></section></div> : null}
 
-      {operation ? <section className="admin-card lifecycle-progress" aria-live="polite"><div className="section-heading"><div><p className="eyebrow">Exclusão da Galeria pública</p><h2>{operation.progress.label}</h2></div><StatusBadge tone={operation.status === "completed" ? "success" : operation.status === "failed" ? "danger" : operation.status === "cancelled" ? "warning" : "neutral"}>{operation.progress.percent}%</StatusBadge></div><progress value={operation.progress.percent} max={100} /><p>{deletionError || operation.last_error || (operation.actions.should_poll ? "A operação continua em segundo plano. Esta página atualiza o progresso automaticamente." : "A operação não exige novas etapas automáticas.")}</p><div className="lifecycle-actions">{operation.actions.can_cancel ? <MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => operationAction("cancel")}>Cancelar antes da remoção física</MarkinaButton> : null}{operation.actions.can_retry ? <MarkinaButton type="button" disabled={deletionBusy} onClick={() => operationAction("retry")}>Retomar operação</MarkinaButton> : null}{operation.status === "completed" ? <MarkinaButton type="button" onClick={() => router.push("/admin/galleries")}>Voltar para galerias</MarkinaButton> : null}{operation.status === "cancelled" ? <MarkinaButton type="button" variant="secondary" onClick={() => { setOperation(null); setDeletionError(""); }}>Fechar acompanhamento</MarkinaButton> : null}</div></section> : null}
+      {operation ? <section className="admin-card lifecycle-progress" aria-live="polite"><div className="section-heading"><div><p className="eyebrow">Exclusão da Galeria pública</p><h2>{operation.progress.label}</h2></div><StatusBadge tone={operation.status === "completed" ? "success" : operation.status === "failed" ? "danger" : operation.status === "cancelled" ? "warning" : "neutral"}>{operation.progress.percent}%</StatusBadge></div><progress value={operation.progress.percent} max={100} /><p>{deletionError || operation.last_error || (operation.actions.should_poll ? "A operação continua em segundo plano. Esta página atualiza o progresso automaticamente." : "A operação não exige novas etapas automáticas.")}</p><div className="lifecycle-actions">{operation.actions.can_cancel ? <MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => operationAction("cancel")}>Cancelar antes da remoção física</MarkinaButton> : null}{operation.actions.can_retry ? <MarkinaButton type="button" disabled={deletionBusy} onClick={openDeletionConfirmation}>Retomar operação</MarkinaButton> : null}{operation.status === "completed" ? <MarkinaButton type="button" onClick={() => router.push("/admin/galleries")}>Voltar para galerias</MarkinaButton> : null}{operation.status === "cancelled" ? <MarkinaButton type="button" variant="secondary" onClick={() => { setOperation(null); setDeletionError(""); }}>Fechar acompanhamento</MarkinaButton> : null}</div></section> : null}
     </main>
   );
 }
