@@ -135,6 +135,7 @@ def cart_payload(db: Session, client: Client):
                 SaleOrder.derived_gallery_id == gallery.id,
                 SaleOrder.client_id == client.id,
                 SaleOrder.frozen_at.is_(None),
+                SaleOrder.assets_removed_at.is_(None),
                 SaleOrder.payment_status == "pending",
                 SaleOrder.checkout_key.is_not(None),
                 SaleOrder.payment_group_id.is_(None),
@@ -235,6 +236,7 @@ def prepare_group(db: Session, client: Client):
                 SaleOrder.client_id == client.id,
                 SaleOrder.payment_status == "pending",
                 SaleOrder.frozen_at.is_(None),
+                SaleOrder.assets_removed_at.is_(None),
                 SaleOrder.checkout_key.is_not(None),
             )
         )

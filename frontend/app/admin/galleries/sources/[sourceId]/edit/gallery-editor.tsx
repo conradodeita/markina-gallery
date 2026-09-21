@@ -86,7 +86,7 @@ async function jsonRequest(path: string, init?: RequestInit) {
     const detail = payload?.detail;
     throw new Error(typeof detail === "string" ? detail : detail?.message ?? "Não foi possível concluir a operação.");
   }
-  return response.status === 204 ? null : response.json();
+  return response.status === 204 ? { cleanup_pending: response.headers.get("X-Asset-Cleanup") === "failed" } : response.json();
 }
 
 export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: { sourceId: string; step: string; initialFolderId?: string }) {
@@ -351,13 +351,13 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   }
 
   async function deleteFolder(folder: Folder) {
-    if (folderDeleteBusy || !window.confirm(`Excluir a pasta “${folder.name}” e suas ${folder.photo_count} foto(s)? As fotos serão removidas também das galerias que as utilizam. Compras confirmadas permanecem no histórico. Esta ação não pode ser desfeita.`)) return;
+    if (folderDeleteBusy || !window.confirm(`Excluir a pasta “${folder.name}” e suas ${folder.photo_count} foto(s)? As fotos serão removidas também das galerias que as utilizam. Nomes das fotos, seleções e todos os estados financeiros permanecem no histórico, sem imagens. Esta ação não pode ser desfeita.`)) return;
     setFolderDeleteBusy(true);
     try {
-      await jsonRequest(`/api/admin/photo-folders/${folder.id}`, { method: "DELETE" });
+      const result = await jsonRequest(`/api/admin/photo-folders/${folder.id}`, { method: "DELETE" });
       if (openFolderId === folder.id) { setOpenFolderId(""); setPhotos([]); setSelectedPhotoIds([]); setExpandedPhoto(null); }
       setFolders((current) => current.filter((item) => item.id !== folder.id));
-      setMessage("Pasta e fotos excluídas.");
+      setMessage(result?.cleanup_pending ? "Pasta removida. A limpeza dos arquivos continuará em segundo plano." : "Pasta e fotos excluídas.");
       setRefresh((value) => value + 1);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível excluir a pasta."); }
     finally { setFolderDeleteBusy(false); }
@@ -366,8 +366,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   async function deletePhoto(photo: Photo) {
     if (!window.confirm(`Excluir ${photo.name}? Esta ação não pode ser desfeita.`)) return;
     try {
-      await jsonRequest(`/api/admin/photo-folders/${openFolderId}/photos/${photo.id}`, { method: "DELETE" });
-      setMessage("Foto excluída da pasta.");
+      const result = await jsonRequest(`/api/admin/photo-folders/${openFolderId}/photos/${photo.id}`, { method: "DELETE" });
+      setMessage(result?.cleanup_pending ? "Foto removida. A limpeza do arquivo continuará em segundo plano." : "Foto excluída da pasta.");
       setExpandedPhoto(null);
       await inspectFolder(openFolderId);
       setRefresh((value) => value + 1);

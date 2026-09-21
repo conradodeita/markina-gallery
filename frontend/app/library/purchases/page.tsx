@@ -5,10 +5,12 @@ import Link from "next/link";
 import { LibraryOrderCard, type Order } from "../purchase-card";
 import { SystemState } from "../../ui-kit";
 
+import { RemovedMovements, type RemovedMovement } from "../../removed-movements";
+
 type PurchaseGroup = { id: string; total_cents: number; orders: Order[] };
 
 export default function PurchasesPage() {
-  const [result, setResult] = useState<{ orders: Order[]; payment_groups: PurchaseGroup[] } | null>(null);
+  const [result, setResult] = useState<{ orders: Order[]; payment_groups: PurchaseGroup[]; removed_movements: RemovedMovement[] } | null>(null);
   const [failed, setFailed] = useState(false);
   const [request, setRequest] = useState(0);
   useEffect(() => {
@@ -17,7 +19,7 @@ export default function PurchasesPage() {
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const data = await response.json();
-        if (!controller.signal.aborted) { setResult({ orders: data.orders ?? [], payment_groups: data.payment_groups ?? [] }); setFailed(false); }
+        if (!controller.signal.aborted) { setResult({ orders: data.orders ?? [], payment_groups: data.payment_groups ?? [], removed_movements: data.removed_movements ?? [] }); setFailed(false); }
       }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     const refresh = () => setRequest((previous) => previous + 1);
     window.addEventListener("focus", refresh);
@@ -31,6 +33,7 @@ export default function PurchasesPage() {
         <h2>Compra {group.id.slice(0, 8)}</h2><p>PIX único · {(group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
         {group.orders.map((order) => <LibraryOrderCard key={order.id} order={order} />)}
       </section>)}
+      <RemovedMovements items={result.removed_movements} />
       {result.orders.map((order) => <LibraryOrderCard key={order.id} order={order} />)}
     </>}
     <Link href="/library">Continuar nas galerias</Link>

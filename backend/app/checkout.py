@@ -231,6 +231,8 @@ def create_pending_checkout(
             SaleOrder.checkout_key == checkout_key,
         )
     )
+    if existing and existing.assets_removed_at:
+        raise CheckoutError("O acervo deste pedido foi removido; consulte o histórico.")
     if existing and (
         existing.frozen_at is not None or existing.payment_status != "pending"
     ):
@@ -243,6 +245,7 @@ def create_pending_checkout(
                 SaleOrder.client_id == client.id,
                 SaleOrder.payment_status == "pending",
                 SaleOrder.frozen_at.is_(None),
+                SaleOrder.assets_removed_at.is_(None),
                 SaleOrder.checkout_key.is_not(None),
             )
             .order_by(SaleOrder.created_at.desc())
@@ -284,6 +287,7 @@ def synchronize_editable_draft(
             SaleOrder.client_id == client_id,
             SaleOrder.payment_status == "pending",
             SaleOrder.frozen_at.is_(None),
+            SaleOrder.assets_removed_at.is_(None),
             SaleOrder.checkout_key.is_not(None),
         )
         .with_for_update()
@@ -343,7 +347,7 @@ def freeze_pending_checkout(
         )
         .with_for_update()
     )
-    if not order or order.payment_status != "pending":
+    if not order or order.assets_removed_at or order.payment_status != "pending":
         raise CheckoutError("Pedido indisponível para comunicação.")
     if order.payment_group_id:
         raise CheckoutError("Informe o pagamento único pela revisão em /library/cart.")

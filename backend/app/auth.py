@@ -662,7 +662,7 @@ class PaymentGroup(Base):
     __tablename__ = "payment_group"
     __table_args__ = (
         UniqueConstraint("id", "client_id", name="uq_payment_group_owner"),
-        CheckConstraint("state IN ('draft', 'reported', 'confirmed', 'refused')",
+        CheckConstraint("state IN ('draft', 'reported', 'confirmed', 'refused', 'unavailable')",
                         name="ck_payment_group_state"),
         CheckConstraint("total_cents >= 0", name="ck_payment_group_total"),
         Index("uq_payment_group_draft", "client_id", unique=True,
@@ -708,11 +708,11 @@ class SaleOrder(Base):
             unique=True,
             sqlite_where=text(
                 "frozen_at IS NULL AND payment_status = 'pending' "
-                "AND checkout_key IS NOT NULL"
+                "AND checkout_key IS NOT NULL AND assets_removed_at IS NULL"
             ),
             postgresql_where=text(
                 "frozen_at IS NULL AND payment_status = 'pending' "
-                "AND checkout_key IS NOT NULL"
+                "AND checkout_key IS NOT NULL AND assets_removed_at IS NULL"
             ),
         ),
     )
@@ -745,6 +745,7 @@ class SaleOrder(Base):
         DateTime(timezone=True), nullable=True
     )
     checkout_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    assets_removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payment_group_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -767,6 +768,39 @@ class SaleOrderItem(Base):
     folder_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     checksum_sha256_snapshot: Mapped[str | None] = mapped_column(String(64), nullable=True)
     unit_price_cents: Mapped[int] = mapped_column(Integer)
+
+
+class RemovedPhotoMovement(Base):
+    """Referência textual autorizada; nenhuma FK para o acervo removível."""
+
+    __tablename__ = "removed_photo_movement"
+    __table_args__ = (UniqueConstraint("kind", "source_id", name="uq_removed_photo_movement_source"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_id: Mapped[UUID] = mapped_column()
+    kind: Mapped[str] = mapped_column(String(20))
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(index=True)
+    derived_gallery_id: Mapped[UUID] = mapped_column(index=True)
+    photo_id: Mapped[UUID] = mapped_column(index=True)
+    parent_gallery_name: Mapped[str] = mapped_column(String(200))
+    gallery_name: Mapped[str] = mapped_column(String(200))
+    folder_name: Mapped[str] = mapped_column(String(200))
+    filename: Mapped[str] = mapped_column(String(512))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    removed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AssetFileCleanup(Base):
+    """Outbox de caminhos relativos confinados, persistida antes de apagar arquivos."""
+
+    __tablename__ = "asset_file_cleanup"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    paths: Mapped[list] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class GalleryLifecycleOperation(Base):

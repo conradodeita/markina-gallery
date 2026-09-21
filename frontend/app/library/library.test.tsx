@@ -45,7 +45,8 @@ describe("biblioteca e compras da cliente", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Ver fotos (2)" }));
     expect(screen.getByText("Ausente.jpg")).toBeTruthy();
     fireEvent.error(screen.getByRole("img", { name: "Prévia protegida de Falha.jpg" }));
-    expect(screen.getAllByText("Prévia indisponível")).toHaveLength(2);
+    expect(screen.getAllByText("Prévia indisponível")).toHaveLength(1);
+    expect(screen.getByText("Imagem removida")).toBeTruthy();
     expect(screen.getByText(/2 foto\(s\)/)).toBeTruthy();
   });
 

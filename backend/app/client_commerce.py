@@ -53,6 +53,7 @@ def client_carts_by_gallery_payload(
                 SaleOrder.client_id == client_id,
                 SaleOrder.payment_status == "pending",
                 SaleOrder.frozen_at.is_(None),
+                SaleOrder.assets_removed_at.is_(None),
                 SaleOrder.checkout_key.is_not(None),
             )
         )

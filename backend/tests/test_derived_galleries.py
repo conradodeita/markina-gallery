@@ -2150,7 +2150,7 @@ def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestC
     assert client.get(f"/admin/parent-galleries/{parent_id}/summary").json()["cover_preview_url"] is None
 
 
-def test_photo_deletion_rejects_other_folder_and_confirmed_purchase(client: TestClient) -> None:
+def test_photo_deletion_rejects_other_folder_and_preserves_confirmed_purchase(client: TestClient) -> None:
     authenticate_admin(client)
     client_id = UUID(
         client.post("/admin/clients", json={"full_name": "Ana", "phone_e164": "+5511999999911"}).json()["id"]
@@ -2189,16 +2189,17 @@ def test_photo_deletion_rejects_other_folder_and_confirmed_purchase(client: Test
 
     assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{first_photo}").status_code == 404
     blocked = client.delete(f"/admin/photo-folders/{first_folder}/photos/{first_photo}")
-    assert blocked.status_code == 409
-    assert "histórico confirmado" in blocked.json()["detail"]
-    assert client.delete(f"/admin/photo-folders/{first_folder}").status_code == 409
+    assert blocked.status_code == 204
+    assert client.delete(f"/admin/photo-folders/{first_folder}").status_code == 204
     with SessionLocal() as db:
-        assert db.get(PhotoFolder, first_folder) is not None
-        assert db.get(PhotoAsset, first_photo) is not None
+        assert db.get(PhotoFolder, first_folder) is None
+        assert db.get(PhotoAsset, first_photo) is None
+        assert db.scalar(select(SaleOrder)).payment_status == "confirmed"
+        assert db.scalar(select(SaleOrderItem)).filename_snapshot == "primeira.jpg"
     assert client.delete(f"/admin/photo-folders/{second_folder}/photos/{second_photo}").status_code == 204
 
 
-def test_photo_bulk_deletion_reports_confirmed_items(client: TestClient) -> None:
+def test_photo_bulk_deletion_preserves_confirmed_history(client: TestClient) -> None:
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento em lote"}).json()["id"])
     folder_id, first_photo = create_folder_photo(client, parent_id, storage_key="evento/lote-1.jpg", ready=True)
@@ -2220,8 +2221,11 @@ def test_photo_bulk_deletion_reports_confirmed_items(client: TestClient) -> None
         db.commit()
     response = client.request("DELETE", f"/admin/photo-folders/{folder_id}/photos", json={"photo_ids": [str(first_photo), str(second_photo)]})
     assert response.status_code == 200
-    assert response.json()["deleted_ids"] == [str(first_photo)]
-    assert response.json()["blocked_ids"] == [str(second_photo)]
+    assert response.json()["deleted_ids"] == [str(first_photo), str(second_photo)]
+    assert response.json()["blocked_ids"] == []
+    with SessionLocal() as db:
+        assert db.scalar(select(SaleOrder)).payment_status == "confirmed"
+        assert db.scalar(select(SaleOrderItem)).filename_snapshot == "lote-2.jpg"
 
 
 def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: TestClient) -> None:
@@ -2701,11 +2705,11 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
     authenticate_client(client, owner.phone_e164)
     library_before_checkout = client.get("/library").json()
     assert library_before_checkout["journeys"][0]["selection"]["quantity"] == 1
-    assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": []}
+    assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": [], "removed_movements": []}
     order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "communication-order-key-0001"}).json()
     library_before_communication = client.get("/library").json()
     assert library_before_communication["journeys"][0]["selection"]["quantity"] == 1
-    assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": []}
+    assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": [], "removed_movements": []}
     first = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
     second = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0001"})
     third = client.post(f"/gallery/{gallery_id}/orders/{order['id']}/payment-communications", json={"idempotency_key": "payment-report-key-0002"})
@@ -3073,7 +3077,8 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
     assert payload["page"]["next_cursor"]
     # Template e regras de preço acrescentam consultas constantes; o limite
     # continua independente da quantidade de clientes, pedidos, itens e comunicações.
-    assert statement_count <= 9
+    # A consulta adicional carrega todos os movimentos removidos em lote.
+    assert statement_count <= 10
 
     second_page = client.get(
         "/admin/payment-communications",
@@ -4447,18 +4452,17 @@ def test_delete_content_folder_cleans_only_its_photos(client, tmp_path, monkeypa
     assert not any((tmp_path / "derivatives").rglob("*.jpg"))
     if not private and released:
         from app.auth import CommercialHistoryMedia
-        from app.historical_media import historical_media_path
         with SessionLocal() as db:
             item = db.scalar(select(SaleOrderItem))
             assert item.photo_asset_id is None
             assert db.scalar(select(SaleOrder)).payment_status == "confirmed"
             manifest = db.scalar(select(CommercialHistoryMedia))
-            assert historical_media_path(manifest.preview_storage_key).read_bytes() == b"preview"
-            assert historical_media_path(manifest.delivery_storage_key).read_bytes() == b"synthetic"
+            assert manifest is None or manifest.status == "purged"
+            assert not any((tmp_path / "history").rglob("*.jpg"))
     assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 404
 
 
-def test_folder_deletion_rolls_back_all_photos_when_commercial_preflight_blocks(client, monkeypatch, tmp_path):
+def test_folder_deletion_preserves_pending_and_reported_payments(client, monkeypatch, tmp_path):
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path))
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Bloqueio integral"}).json()["id"])
@@ -4482,15 +4486,16 @@ def test_folder_deletion_rolls_back_all_photos_when_commercial_preflight_blocks(
                                            idempotency_key="folder-review"))
         db.commit()
     response = client.delete(f"/admin/photo-folders/{folder_id}")
-    assert response.status_code == 409
-    assert "pagamento comunicado" in response.json()["detail"]
+    assert response.status_code == 204, response.text
     with SessionLocal() as db:
-        assert db.get(PhotoFolder, folder_id) is not None
-        assert db.get(PhotoAsset, first) is not None
-        assert db.get(PhotoAsset, second) is not None
+        assert db.get(PhotoFolder, folder_id) is None
+        assert db.get(PhotoAsset, first) is None
+        assert db.get(PhotoAsset, second) is None
         assert all(order.payment_status == "pending" for order in db.scalars(select(SaleOrder)))
-        assert db.scalar(select(AuditEvent).where(AuditEvent.event == "photo_folder.deleted")) is None
-    assert (tmp_path / "first.jpg").read_bytes() == b"preserve"
+        assert db.scalar(select(PaymentCommunication)).status == "pending_review"
+        assert db.scalar(select(AuditEvent).where(AuditEvent.event == "photo_folder.deleted")) is not None
+    assert not (tmp_path / "first.jpg").exists()
+
 
 
 @pytest.mark.parametrize("status", ["preparing", "released"])

@@ -272,6 +272,10 @@ def deletion_inventory(db: Session, client: Client) -> dict[str, object]:
             notification_ids=notification_ids,
         ),
     }
+    from app.auth import RemovedPhotoMovement
+    retained_movements = _count(db, RemovedPhotoMovement, RemovedPhotoMovement.client_id == client.id)
+    if retained_movements:
+        protected["removed_movements"] = retained_movements
     return {
         "client_id": str(client.id),
         "operational_removable": operational,
