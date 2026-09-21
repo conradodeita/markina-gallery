@@ -35,3 +35,8 @@ O sistema SHALL registrar progresso e falhas reais de limpeza e permitir retenta
 - **WHEN** o administrador retoma uma exclusão antiga que falhou após remover arquivos
 - **THEN** o sistema preserva metadados disponíveis, recompõe o escopo autorizado e conclui a limpeza sem exigir mídia já ausente
 - **AND** a publicação de código isoladamente não reinicia exclusões antigas
+
+#### Scenario: Retomada após sair da tela
+- **WHEN** o administrador reabre uma galeria com exclusão pendente ou falha
+- **THEN** a tela recupera do servidor a operação de exclusão existente e suas ações, sem criar outra operação
+- **AND** uma falha pode ser retomada explicitamente após conferir o inventário atualizado; abrir a tela não reinicia a exclusão

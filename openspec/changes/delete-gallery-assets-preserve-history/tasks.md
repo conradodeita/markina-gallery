@@ -8,6 +8,7 @@
 - [x] 3.1 Expor movimentos e pedidos indisponíveis no histórico administrativo/cliente, impedir cobrança de rascunho removido e preservar decisões de grupos comunicados; testar autorização, filtros e regressões.
 - [x] 3.2 Atualizar confirmações, rótulos e visualização textual sem links quebrados; testar frontend e build.
 ## 4. Entrega
+- [x] 4.4 Corrigir recuperação da operação após reabrir a galeria; testar resumo autenticado, retomada explícita com inventário atualizado e ausência de nova exclusão/retentativa automática.
 - [x] 4.1 Revisar diff, executar validações proporcionais backend/frontend/OpenSpec e preparar PR com evidências, preservando mudanças locais anteriores; parar quando só CI estiver pendente.
 - [ ] 4.2 Após gates aplicáveis, publicar e verificar homologação; retomar Galeria 01 somente com autorização operacional, registrar saúde/escopo e aceite humano antes de sincronizar/arquivar.
 
@@ -36,3 +37,7 @@ Revisão final: 35 arquivos relacionados selecionados explicitamente; documentos
 Execução `35579081718` no commit `df1f8d5`: backend com 678 testes aprovados, 11 skips e uma falha em `test_lifecycle_manifest_includes_adjustment_and_preserves_private_reference`. A expectativa antiga removia todos os arquivos do manifesto quando havia referência privada; isso contradiz a política aprovada de exclusão da origem. Atualizar o teste para exigir original, prévias convencionais e ajustada no escopo, mesmo com referência privada. Nenhuma alteração na lógica de produto é necessária. Frontend, OpenSpec e gitleaks passaram nessa execução.
 
 Validação da correção: `python -m pytest backend/tests/test_preview_adjustment.py -q --tb=short` — 22 aprovados em 179,36 s. Ruff completo de app/tests, OpenSpec estrito da change e diff check aprovados. Somente teste e este registro foram alterados; não há mudança adicional de código de produção. Atualização enviada ao PR #91; aguardar retorno humano sobre o próximo CI, sem polling ou deploy.
+
+Deploy de develop verificado em 21/09/2026: execução 35592663503 e job deploy-homolog bem-sucedidos, servidor limpo em df1e1477, migration 0059, 13 serviços saudáveis e health checks públicos aprovados. Recursos externos intactos. Task 4.2 ainda exige retentativa administrativa da Galeria 01 (58 fotos/2 pastas, operação failed) e aceite real; ver homologacao.md.
+
+Recuperação da interface: backend validou criação idempotente, cancelamento e resumo/retomada (3 casos aprovados) e isolamento/autenticação/última operação cancelada (1 caso aprovado em reteste, após alinhar expectativa ao 403 vigente). Frontend: 52 testes aprovados, incluindo reabrir a página e confirmar inventário antes de POST na operação antiga. Build/TypeScript aprovados, lint 0 erros/27 avisos preexistentes; Ruff e OpenSpec estrito aprovados. Nenhuma retentativa destrutiva remota executada; a correção será publicada na branch codex/fix-gallery-deletion-recovery.

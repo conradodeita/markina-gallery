@@ -2896,6 +2896,15 @@ def parent_gallery_summary(
     public_capability = _active_gallery_capability(
         db, parent_gallery_id=gallery.id, scope="public_gallery"
     )
+    deletion_operation = db.scalar(
+        select(GalleryLifecycleOperation)
+        .where(
+            GalleryLifecycleOperation.target_parent_gallery_id == gallery.id,
+            GalleryLifecycleOperation.operation_type == "delete_parent_gallery",
+        )
+        .order_by(GalleryLifecycleOperation.created_at.desc(), GalleryLifecycleOperation.id.desc())
+        .limit(1)
+    )
     return {
         "id": str(gallery.id),
         "name": gallery.name,
@@ -2906,6 +2915,8 @@ def parent_gallery_summary(
         "cover_preview_url": _cover_preview_url(db, gallery),
         "counts": {"folders": len(folders), "photos": photo_count, "clients": len(clients)},
         "clients": clients,
+        "deletion_operation": lifecycle_operation_payload(deletion_operation)
+        if deletion_operation and deletion_operation.status != "cancelled" else None,
     }
 
 

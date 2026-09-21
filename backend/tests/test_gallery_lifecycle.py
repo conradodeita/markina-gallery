@@ -513,6 +513,34 @@ def test_lifecycle_cancellation_is_safe_only_before_physical_removal() -> None:
         )
 
 
+def test_gallery_summary_scopes_deletion_and_hides_cancelled_operation() -> None:
+    with SessionLocal() as db:
+        target = ParentGallery(name="Alvo")
+        other = ParentGallery(name="Outra", lifecycle_status="deleting")
+        db.add_all([target, other])
+        db.flush()
+        for parent in (target, other):
+            db.add(GalleryLifecycleOperation(
+                operation_type="delete_parent_gallery", target_parent_gallery_id=parent.id,
+                actor_admin_id=uuid4(), idempotency_key=str(uuid4()), status="failed"))
+        db.flush()
+        cancelled = GalleryLifecycleOperation(
+            operation_type="delete_parent_gallery", target_parent_gallery_id=target.id,
+            actor_admin_id=uuid4(), idempotency_key=str(uuid4()), status="cancelled",
+            created_at=now() + timedelta(seconds=1))
+        db.add(cancelled)
+        db.commit()
+        target_id, other_id = target.id, other.id
+    with TestClient(app) as client:
+        endpoint = f"/admin/parent-galleries/{target_id}/summary"
+        assert client.get(endpoint).status_code == 403
+        authenticate_admin(client)
+        assert client.get(endpoint).json()["deletion_operation"] is None
+        active = client.get(f"/admin/parent-galleries/{other_id}/summary").json()["deletion_operation"]
+        assert active["target_parent_gallery_id"] == str(other_id)
+        assert active["status"] == "failed"
+
+
 def test_lifecycle_contract_exposes_failure_progress_and_retry_action() -> None:
     with SessionLocal() as db:
         parent = ParentGallery(name="Galeria com retomada", lifecycle_status="deleting")
@@ -554,12 +582,22 @@ def test_lifecycle_contract_exposes_failure_progress_and_retry_action() -> None:
             "poll_after_ms": None,
         }
 
+        # Reabrir a página recupera o progresso sem enfileirar outra tentativa.
+        summary_url = f"/admin/parent-galleries/{parent.id}/summary"
+        summary = client.get(summary_url)
+        assert summary.status_code == 200
+        assert summary.json()["deletion_operation"] == status_response.json()
+        assert client.get(summary_url).json()["deletion_operation"]["status"] == "failed"
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(GalleryLifecycleOperation.id))) == 1
+
         retried = client.post(f"/admin/gallery-lifecycle-operations/{operation_id}/retry")
         assert retried.status_code == 200
         assert retried.json()["status"] == "queued"
         assert retried.json()["completed_steps"] == []
         assert retried.json()["actions"]["can_retry"] is False
         assert retried.json()["actions"]["should_poll"] is True
+        assert client.get(summary_url).json()["deletion_operation"]["status"] == "queued"
         assert (
             client.post(f"/admin/gallery-lifecycle-operations/{operation_id}/retry").status_code
             == 409

@@ -22,3 +22,17 @@ Recursos externos protegidos na inspeção anterior: firefly_bot `9335f5e9077e`,
 Antes de existir histórico novo, downgrade 0059 é tecnicamente protegido pelo teste. Após registrar exclusões, indisponibilidade ou jobs, o downgrade recusa perda de dados; corrigir adiante com código compatível. Reverter código não restaura arquivos já excluídos. Qualquer restauração exige plano e autorização próprios.
 
 Aceite real ainda pendente: Galeria 01; exclusão de pasta e foto; histórico de seleção sem compra, PIX aberto, comunicado e confirmado; cliente no celular/navegador; fotos compartilhadas de outra galeria preservadas. Só depois do aceite humano sincronizar specs principais e arquivar a change.
+
+## Merge autorizado em 21/09/2026
+
+PR #91 incorporado em develop às 11:10:34 UTC, merge `df1e14773f56a6ecd06066db5be7021a578e8c0e`, após todos os checks do head `e5d898d` passarem. O deploy no evento pull_request estava corretamente SKIPPED; somente push em develop o habilita após os checks dessa revisão.
+
+Inventário somente leitura imediatamente antes do merge: checkout remoto limpo em `fff7a742`, migration 0058, 13 serviços Markina saudáveis. Subdomínio e upstream mantidos. IDs de todos os seis serviços de terceiros coincidem com os registrados acima. Inventário e plano de impacto zero apresentados ao proprietário; autorização de merge/deploy mantida na conversa.
+
+Aguardar o novo CI de develop, sem polling, conforme solicitação do proprietário. Deploy e migration 0059 ainda não verificados. Não retomar automaticamente a exclusão da Galeria 01. Task 4.2 permanece pendente até publicação e verificação operacional.
+
+## Deploy verificado em 21/09/2026
+
+Execução `35592663503` concluída com sucesso, inclusive `deploy-homolog`, às 11:21:40 UTC. Verificação posterior somente leitura confirmou checkout remoto limpo no SHA `df1e14773f56a6ecd06066db5be7021a578e8c0e`, migration `20260921_0059`, 13 serviços Markina saudáveis e endpoints públicos `/api/health` e `/healthz` respondendo com sucesso. Os seis serviços de terceiros mantêm os mesmos IDs do inventário anterior.
+
+Galeria 01 continua em `deleting`, com 58 fotos e 2 pastas; operação mais recente `failed`, tentativas 2. O deploy não reexecutou a exclusão, como projetado. Próximo passo de aceite: retentativa administrativa autenticada da operação existente e validação do histórico. Não foi executada operação destrutiva nesta verificação. Task 4.2 permanece pendente somente para a recuperação/aceite real; publicação técnica concluída.
