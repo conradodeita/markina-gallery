@@ -248,12 +248,14 @@ def test_dashboard_filters_text_history_and_client_cannot_read_other_owner():
         parent_id = photo.parent_gallery_id
     browser = TestClient(app)
     browser.cookies.set("markina_session", "history-admin")
-    payload = browser.get(f"/admin/payment-communications?parent_gallery_id={parent_id}&query=Cliente").json()
-    assert len(payload["removed_movements"]) == 1
-    assert browser.get(f"/admin/payment-communications?parent_gallery_id={uuid4()}").json()["removed_movements"] == []
+    assert browser.get("/admin/payment-communications").json()["removed_movements"] == []
+    payload = browser.get(f"/admin/removed-photo-movements?parent_gallery_id={parent_id}&query=Cliente").json()
+    assert len(payload["items"]) == 1
+    assert browser.get(f"/admin/removed-photo-movements?parent_gallery_id={uuid4()}").json()["items"] == []
     browser.cookies.set("markina_session", "history-other")
     assert browser.get('/library/purchases').json()['removed_movements'] == []
     assert browser.get('/admin/payment-communications').status_code in (401, 403)
+    assert browser.get('/admin/removed-photo-movements').status_code in (401, 403)
 
 
 def test_private_deletion_removes_own_uploads_but_keeps_shared_original(tmp_path, monkeypatch):
@@ -316,3 +318,42 @@ def test_cleanup_failure_does_not_starve_other_jobs(tmp_path, monkeypatch):
     with SessionLocal() as db:
         from app.auth import AssetFileCleanup
         assert db.get(AssetFileCleanup, other_id).status == "completed"
+
+
+def test_admin_removed_history_is_bounded_filtered_and_includes_galleries_without_orders():
+    from datetime import UTC, datetime, timedelta
+
+    from app.auth import AdminUser, AuthSession, now, token_hash
+
+    owner, _, _ = setup_cart()
+    parent_id, private_id = uuid4(), uuid4()
+    instant = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    with SessionLocal() as db:
+        for index in range(55):
+            db.add(RemovedPhotoMovement(source_id=uuid4(), kind="selected", client_id=owner,
+                parent_gallery_id=parent_id, derived_gallery_id=private_id, photo_id=uuid4(),
+                parent_gallery_name="Galeria excluída sem pedido", gallery_name="Privada", folder_name="Pasta",
+                filename=f"foto-{index}.jpg", occurred_at=instant))
+        admin = db.scalar(select(AdminUser))
+        db.add(AuthSession(subject_id=admin.id, role="admin", token_hash=token_hash("paged-admin"),
+                           expires_at=now() + timedelta(hours=1)))
+        db.commit()
+        assert db.scalar(select(func.count(SaleOrder.id))) == 0
+    browser = TestClient(app)
+    assert browser.get('/admin/removed-photo-movements').status_code in (401, 403)
+    browser.cookies.set("markina_session", "paged-admin")
+    endpoint = f"/admin/removed-photo-movements?parent_gallery_id={parent_id}"
+    first = browser.get(endpoint).json()
+    assert first["galleries"] == [{"id": str(parent_id), "name": "Galeria excluída sem pedido"}]
+    assert len(first["items"]) == 25 and first["page"]["has_more"]
+    second = browser.get(endpoint + "&offset=25").json()
+    last = browser.get(endpoint + "&offset=50").json()
+    ids = [item["id"] for page in (first, second, last) for item in page["items"]]
+    assert len(ids) == len(set(ids)) == 55
+    assert len(last["items"]) == 5 and not last["page"]["has_more"]
+    assert len(browser.get(endpoint + "&query=Cliente&created_from=2026-09-01T00:00:00Z&created_to=2026-09-01T23:59:59Z").json()["items"]) == 25
+    for suffix in ("&query=Inexistente", "&created_from=2026-09-02T00:00:00Z", "&created_to=2026-08-31T23:59:59Z"):
+        assert browser.get(endpoint + suffix).json()["items"] == []
+    for suffix in ("&limit=51", "&offset=-1", "&created_from=2026-09-02T00:00:00Z&created_to=2026-09-01T00:00:00Z"):
+        assert browser.get(endpoint + suffix).status_code == 422
+    assert browser.get('/admin/payment-communications').json()['removed_movements'] == []

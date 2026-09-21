@@ -5,7 +5,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
 import { PaymentActions } from "./payment-actions";
 
-import { RemovedMovements, type RemovedMovement } from "../../removed-movements";
+import RemovedHistory from "./removed-history";
 
 type Delivery = {
   id: string;
@@ -61,7 +61,6 @@ type ClientGroup = {
   orders: Order[];
 };
 type Dashboard = {
-  removed_movements?: RemovedMovement[];
   templates: Record<"confirmed" | "refused", string>;
   templates_are_global: boolean;
   selections_without_order?: Array<{ client: { id: string; name: string }; gallery: { id: string; name: string }; parent_gallery: { id: string; name: string }; selected_count: number; total_cents: number | null; pricing_available: boolean; created_at: string; folders: Array<{ id: string; name: string; items: Array<{ id: string; name: string }> }> }>;
@@ -135,6 +134,19 @@ function requestPath(filters: Filters, cursor?: string | null) {
 }
 
 export default function AdminPaymentsPage() {
+  const [view, setView] = useState("payments");
+  return <main className="admin-shell payments-dashboard">
+    <p className="eyebrow">Operação financeira · decisão manual</p>
+    <h1>Vendas e pagamentos</h1>
+    <label className="admin-card">Exibir<select value={view} onChange={(event) => setView(event.target.value)}>
+      <option value="payments">Pedidos e pagamentos</option>
+      <option value="removed">Histórico de acervo excluído</option>
+    </select></label>
+    {view === "removed" ? <RemovedHistory /> : <PaymentsDashboard />}
+  </main>;
+}
+
+function PaymentsDashboard() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [filters, setFilters] = useState<Filters>({});
   const [failed, setFailed] = useState(false);
@@ -235,9 +247,7 @@ export default function AdminPaymentsPage() {
   if (!dashboard) return <SystemState tone="loading" title="Carregando pagamentos" detail="Consultando pedidos, decisões e entregas transacionais." />;
 
   const hasFilters = Object.values(filters).some(Boolean);
-  return <main className="admin-shell payments-dashboard">
-    <p className="eyebrow">Operação financeira · decisão manual</p>
-    <h1>Vendas e pagamentos</h1>
+  return <section>
     <p className="intro">A comunicação da cliente não confirma o PIX. Revise cada pedido e registre uma única decisão; o histórico comercial permanece mesmo quando a galeria é removida.</p>
 
     <section aria-label="Resumo de pagamentos" className="payment-summary">
@@ -252,7 +262,6 @@ export default function AdminPaymentsPage() {
 
     {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
 
-    <RemovedMovements items={dashboard.removed_movements ?? []} admin />
     {dashboard.selections_without_order?.length ? <section className="admin-card"><div className="section-heading"><div><h2>Seleções em aberto</h2><p>Fotos que continuam no carrinho e ainda não tiveram pagamento comunicado.</p></div><StatusBadge>{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral">No carrinho</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><div className="payment-client-total"><strong>{selection.total_cents === null ? "Preço indisponível" : money(selection.total_cents)}</strong><span>{selection.selected_count} foto(s)</span></div></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
 
     <details className="admin-card payment-filters" open={hasFilters || undefined}>
@@ -283,7 +292,7 @@ export default function AdminPaymentsPage() {
 
     {dashboard.page.next_cursor ? <div className="payment-pagination"><MarkinaButton variant="secondary" disabled={loadingMore} onClick={() => void load(filters, dashboard.page.next_cursor, true)}>{loadingMore ? "Carregando…" : "Carregar mais clientes"}</MarkinaButton></div> : null}
     {message ? <p className="form-message" role="status">{message}</p> : null}
-  </main>;
+  </section>;
 }
 
 function OrderCard({ order, busyAction, onRefresh, onRetry }: { order: Order; busyAction: string; onRefresh: () => Promise<void>; onRetry: (id: string) => Promise<void> }) {

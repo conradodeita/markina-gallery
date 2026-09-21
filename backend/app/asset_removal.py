@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 from app.auth import (
     AssetFileCleanup,
@@ -174,22 +174,36 @@ def delete_private_records(db, gallery_ids):
 
 
 def removed_movements_payload(db, *, client_id=None, parent_gallery_id=None, query=None,
-                             created_from=None, created_to=None):
+                             created_from=None, created_to=None, limit=None, offset=0,
+                             include_identity=False):
     statement = select(RemovedPhotoMovement, Client.full_name).join(Client)
     if client_id:
         statement = statement.where(RemovedPhotoMovement.client_id == client_id)
     if parent_gallery_id:
         statement = statement.where(RemovedPhotoMovement.parent_gallery_id == parent_gallery_id)
     if query:
-        from sqlalchemy import func
         statement = statement.where(func.lower(Client.full_name).contains(query.strip().lower()))
     if created_from:
         statement = statement.where(RemovedPhotoMovement.occurred_at >= created_from)
     if created_to:
         statement = statement.where(RemovedPhotoMovement.occurred_at <= created_to)
+    statement = statement.order_by(RemovedPhotoMovement.occurred_at.desc(), RemovedPhotoMovement.id)
+    if limit is not None:
+        statement = statement.limit(limit).offset(offset)
     return [{"id": str(row.id), "kind": row.kind, "client_name": name,
+             **({"client_id": str(row.client_id), "parent_gallery_id": str(row.parent_gallery_id)}
+                if include_identity else {}),
              "gallery_name": row.gallery_name, "parent_gallery_name": row.parent_gallery_name,
              "folder_name": row.folder_name, "filename": row.filename,
              "occurred_at": row.occurred_at.isoformat(), "removed_at": row.removed_at.isoformat()}
-            for row, name in db.execute(statement.order_by(RemovedPhotoMovement.occurred_at.desc(),
-                                                           RemovedPhotoMovement.id))]
+            for row, name in db.execute(statement)]
+
+
+def removed_movements_page(db, *, limit=25, offset=0, **filters):
+    items = removed_movements_payload(db, limit=limit + 1, offset=offset,
+                                     include_identity=True, **filters)
+    galleries = db.execute(select(RemovedPhotoMovement.parent_gallery_id,
+        func.min(RemovedPhotoMovement.parent_gallery_name).label("name"))
+        .group_by(RemovedPhotoMovement.parent_gallery_id).order_by("name", RemovedPhotoMovement.parent_gallery_id))
+    return {"items": items[:limit], "page": {"offset": offset, "limit": limit, "has_more": len(items) > limit},
+            "galleries": [{"id": str(gallery_id), "name": name} for gallery_id, name in galleries]}

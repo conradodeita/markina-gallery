@@ -53,6 +53,7 @@ from app.asset_removal import (
     lock_removal_clients,
     preserve_asset_history,
     process_file_cleanup,
+    removed_movements_page,
     removed_movements_payload,
 )
 from app.auth import (
@@ -9512,6 +9513,25 @@ def list_payment_templates(
     }
 
 
+@app.get("/admin/removed-photo-movements")
+def admin_removed_photo_movements(
+    request: Request,
+    query: str | None = Query(default=None, max_length=200),
+    parent_gallery_id: UUID | None = Query(default=None),
+    created_from: datetime | None = Query(default=None),
+    created_to: datetime | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=25, ge=1, le=50),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    if created_from and created_to and created_from > created_to:
+        raise HTTPException(status_code=422, detail="O início do período deve ser anterior ao fim.")
+    return removed_movements_page(db, query=query, parent_gallery_id=parent_gallery_id,
+                                  created_from=created_from, created_to=created_to,
+                                  offset=offset, limit=limit)
+
+
 @app.get("/admin/payment-communications")
 def list_payment_communications(
     request: Request,
@@ -9938,8 +9958,8 @@ def list_payment_communications(
             "financial_statuses": dict(financial_counts),
             "delivery_statuses": dict(delivery_counts),
         },
-        "removed_movements": removed_movements_payload(db, parent_gallery_id=parent_gallery_id,
-            query=query, created_from=created_from, created_to=created_to) if not financial_status and not delivery_status else [],
+        # Compatibilidade: a consulta paginada do histórico é explícita e separada.
+        "removed_movements": [],
         "groups": page_groups,
         "page": {"next_cursor": next_cursor, "limit": limit},
         "communications": [

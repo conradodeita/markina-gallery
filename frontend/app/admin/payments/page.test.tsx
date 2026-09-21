@@ -169,3 +169,43 @@ describe("controle operacional de pagamentos", () => {
     ));
   });
 });
+
+
+it("não carrega histórico por padrão e substitui páginas apenas na consulta explícita", async () => {
+  const fetchMock = vi.fn((path: string) => {
+    if (path.includes("removed-photo-movements")) {
+      const params = new URL(path, "http://localhost").searchParams;
+      const offset = Number(params.get("offset"));
+      const filtered = params.get("query") === "Ana";
+      return Promise.resolve(new Response(JSON.stringify({
+        items: [{ id: String(offset), client_id: "client-1", parent_gallery_id: "removed-1", kind: "selected", client_name: "Ana", gallery_name: "Privada", parent_gallery_name: "Evento excluído", folder_name: "Pasta", filename: filtered ? "filtrada.jpg" : offset ? "segunda.jpg" : "primeira.jpg", occurred_at: "2026-09-01T12:00:00Z", removed_at: "2026-09-02T12:00:00Z" }],
+        galleries: [{ id: "removed-1", name: "Evento excluído" }],
+        page: { offset, limit: 25, has_more: offset === 0 },
+      })));
+    }
+    return Promise.resolve(new Response(JSON.stringify(dashboard())));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AdminPaymentsPage />);
+  await screen.findByText("Receita confirmada");
+  expect(fetchMock.mock.calls.some(([path]) => path.includes("removed-photo-movements"))).toBe(false);
+  expect(screen.queryByRole("heading", { name: "Histórico de acervo removido" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Exibir"), { target: { value: "removed" } });
+  const first = await screen.findByText("primeira.jpg");
+  expect(first.closest("details")?.open).toBe(false);
+  expect(screen.getByRole("option", { name: "Evento excluído" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Próxima página" }));
+  await screen.findByText("segunda.jpg");
+  expect(screen.queryByText("primeira.jpg")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "Ana" } });
+  fireEvent.change(screen.getByLabelText("Galeria do histórico"), { target: { value: "removed-1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Consultar histórico" }));
+  await screen.findByText("filtrada.jpg");
+  const last = new URL(fetchMock.mock.calls.at(-1)![0], "http://localhost");
+  expect(last.searchParams.get("offset")).toBe("0");
+  expect(last.searchParams.get("parent_gallery_id")).toBe("removed-1");
+  expect(screen.queryByText("segunda.jpg")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Exibir"), { target: { value: "payments" } });
+  await screen.findByText("Receita confirmada");
+  expect(screen.queryByText("filtrada.jpg")).toBeNull();
+});
