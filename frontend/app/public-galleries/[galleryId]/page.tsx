@@ -44,6 +44,7 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
   const [message, setMessage] = useState("");
   const [facialResult, setFacialResult] = useState<FacialSearchResult | null>(null);
   const [regionPending, setRegionPending] = useState(false);
+  const [regionSearchId, setRegionSearchId] = useState<string | null>(null);
   const [regionMessage, setRegionMessage] = useState("");
   const regionRequest = useRef<{ id: string | null; close: () => void } | null>(null);
   const admissionPending = useRef(false);
@@ -63,11 +64,13 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
     admissionPending.current = true;
     regionRequest.current = { id: null, close };
     setRegionPending(true);
+    setRegionSearchId(null);
     setRegionMessage("Aguarde, procurando fotos…");
     try {
       const created = await facialSearchApi.createFromRegion(galleryId, regionId);
       if (!mounted.current) return;
       regionRequest.current = { id: created.id, close };
+      setRegionSearchId(created.id);
       window.sessionStorage.setItem(`markina:facial-search:${galleryId}`, created.id);
       setRegionMessage("");
       setFacialResult(created);
@@ -249,7 +252,7 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
       {regionMessage ? <p role="status">{regionMessage}</p> : null}
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
       <SelectionDeadline expiresAt={gallery.selection_expires_at} onRevalidate={() => setRefresh((value) => value + 1)} />
-      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} renderExpandedMedia={(photo, close) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { void searchRegion(id, close); }} busy={regionPending} searchStatus={regionMessage || (facialResult ? facialResult.status : "")} />} featuredGroups={featuredGroups} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
+      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} renderExpandedMedia={(photo, close) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { void searchRegion(id, close); }} busy={regionPending} searchResult={facialResult?.id === regionSearchId ? facialResult : null} searchStatus={regionMessage || (facialResult ? facialResult.status : "")} />} featuredGroups={featuredGroups} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;

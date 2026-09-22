@@ -101,6 +101,8 @@ describe("Galeria pública da cliente", () => {
     fireEvent.click(face);
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getAllByText("Aguarde, procurando fotos…").length).toBeGreaterThan(0);
+    const popup = within(screen.getByRole("dialog")).getByRole("status", { name: "Andamento da busca por rosto" });
+    expect(within(popup).getByRole("progressbar").hasAttribute("value")).toBe(false);
     expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/face-region-searches"))).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/public-galleries/public-1/face-region-searches", expect.objectContaining({ body: JSON.stringify({ face_region_id: "region-1" }) }));
     await act(async () => complete(new Response(JSON.stringify({ id: "direct-1", status: "ready", reference_deleted: true, progress: { index: { total: 1, ready: 1 }, comparison: { total: 1, done: 1 } }, candidates: [{ photo_id: "photo-1", rank: 1, match_class: "matched" }] }), { status: 202 })));
@@ -110,6 +112,31 @@ describe("Galeria pública da cliente", () => {
     expect(scroll).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
     fireEvent.click(screen.getByRole("button", { name: "Selecionar foto" }));
     await waitFor(() => expect(screen.getByLabelText("Resumo da seleção")).toBeTruthy());
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("atualiza progresso por polling e mantém busca após fechar a foto: %s", async (closeEarly) => {
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const searching = { id: "direct-progress", status: "searching", reference_deleted: true, poll_after_ms: 1,
+      progress: { index: { ready: 4, total: 4 }, comparison: { done: 1, total: 4 } } };
+    mockRegionJourney(() => response(searching));
+    const originalFetch = fetch;
+    let complete!: (value: Response) => void;
+    const polled = new Promise<Response>((resolve) => { complete = resolve; });
+    vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/facial-searches/direct-progress") ? polled : originalFetch(path)));
+    render(<PublicGalleryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Procurar pessoa no rosto 1" }));
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: "Progresso da busca na foto ampliada" }).getAttribute("value")).toBe("25"));
+    expect((screen.getByRole("button", { name: "Procurar pessoa no rosto 1" }) as HTMLButtonElement).disabled).toBe(true);
+    if (closeEarly) {
+      fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+      expect(screen.queryByRole("progressbar", { name: "Progresso da busca na foto ampliada" })).toBeNull();
+      expect(screen.getByRole("progressbar", { name: "Progresso da busca facial" })).toBeTruthy();
+    }
+    await act(async () => complete(new Response(JSON.stringify({ ...searching, status: "ready", candidates: [{ photo_id: "photo-1", rank: 1, match_class: "matched" }] }))));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await screen.findByRole("region", { name: "Possibilidades encontradas" })).toBeTruthy();
     expect(scroll).toHaveBeenCalledTimes(1);
   });
 

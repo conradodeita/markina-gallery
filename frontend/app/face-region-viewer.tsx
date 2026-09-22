@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { facialSearchApi, type FaceRegion } from "./facial-search-client";
+import { facialSearchApi, type FaceRegion, type FacialSearchResult } from "./facial-search-client";
 
-export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, searchStatus }: {
+export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, searchStatus, searchResult }: {
   galleryId: string;
   photo: { id: string; name: string; previewUrl: string; width?: number | null; height?: number | null };
   onRegion: (regionId: string) => void;
   busy?: boolean;
   searchStatus?: string;
+  searchResult?: FacialSearchResult | null;
 }) {
   const [regions, setRegions] = useState<FaceRegion[]>([]);
   const [selecting, setSelecting] = useState(false);
@@ -26,6 +27,14 @@ export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, sea
   const maxY = Math.max(0, (height * zoom - viewport.height) / 2);
   const x = Math.max(-maxX, Math.min(maxX, pan.x));
   const y = Math.max(-maxY, Math.min(maxY, pan.y));
+  const searching = busy || Boolean(searchResult && ["queued", "waiting_index", "validating_reference", "searching", "ranking"].includes(searchResult.status));
+  const progress = !busy && searchResult?.status === "waiting_index"
+    ? { done: searchResult.progress.index.ready, total: searchResult.progress.index.total }
+    : !busy && searchResult?.status === "searching" ? searchResult.progress.comparison : null;
+  const percent = progress && progress.total > 0
+    ? Math.max(0, Math.min(100, Math.round(progress.done / progress.total * 100))) : undefined;
+  const progressLabel = !busy && searchResult?.status === "waiting_index" ? "Preparando as fotos"
+    : !busy && searchResult?.status === "ranking" ? "Organizando resultados" : "Procurando fotos semelhantes";
 
   useEffect(() => {
     let active = true;
@@ -95,7 +104,7 @@ export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, sea
         <img src={photo.previewUrl} alt={`Prévia protegida ampliada de ${photo.name}`} draggable={false}
           onLoad={(event) => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} />
         {selecting ? visible.map((region, index) => <button key={region.id} type="button"
-          disabled={busy}
+          disabled={searching}
           className="face-region-target" aria-label={`Procurar pessoa no rosto ${index + 1}`}
           style={{ left: `${(region.x + region.width / 2) * 100}%`, top: `${(region.y + region.height / 2) * 100}%`,
             width: Math.max(44 / zoom, region.width * width), height: Math.max(44 / zoom, region.height * height) }}
@@ -103,9 +112,19 @@ export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, sea
           <span style={{ width: region.width * width, height: region.height * height, borderWidth: 1 / zoom }} />
         </button>) : null}
       </div>
+      {searching ? <div className="face-search-progress-overlay"
+        onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()}
+        onPointerUp={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+        <div className="face-search-progress-popup" role="status" aria-live="polite" aria-atomic="true" aria-label="Andamento da busca por rosto">
+          <strong>{progressLabel}</strong>
+          <p>Aguarde, procurando fotos…</p>
+          <progress value={percent} max={100} aria-label="Progresso da busca na foto ampliada" />
+          <small>{percent === undefined ? "A busca está em andamento." : `${percent}% desta etapa concluído`}</small>
+        </div>
+      </div> : null}
     </div>
     {selecting ? <p className="field-hint">Toque no rosto desejado para procurar outras fotos. Amplie para separar rostos próximos.</p> : null}
     {message ? <p role="status">{message}</p> : null}
-    {searchStatus ? <p role="status">{["queued", "waiting_index", "validating_reference", "searching", "ranking"].includes(searchStatus) ? "Aguarde, procurando fotos…" : searchStatus === "ready" ? "Resultados prontos." : searchStatus === "no_candidates" ? "Nenhuma possibilidade foi encontrada." : ["failed", "cancelled", "expired", "index_incomplete"].includes(searchStatus) ? "A busca não foi concluída. Toque no rosto para tentar novamente." : searchStatus}</p> : null}
+    {searchStatus && !searching ? <p role="status">{["queued", "waiting_index", "validating_reference", "searching", "ranking"].includes(searchStatus) ? "Aguarde, procurando fotos…" : searchStatus === "ready" ? "Resultados prontos." : searchStatus === "no_candidates" ? "Nenhuma possibilidade foi encontrada." : ["failed", "cancelled", "expired", "index_incomplete"].includes(searchStatus) ? "A busca não foi concluída. Toque no rosto para tentar novamente." : searchStatus}</p> : null}
   </section>;
 }

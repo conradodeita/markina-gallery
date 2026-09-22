@@ -29,6 +29,13 @@
 
 - [ ] 5.1 Preparar inventário de ambiente, portas/subdomínio e plano de impacto zero antes da publicação no servidor; verificar implantação coordenada de API/worker/frontend e disponibilidade infantil por consentimento sem registro de representação, com teste autenticado de escopo autorizado. Registrar versão implantada e evidência sem expor dados pessoais.
 
+## 6. Refinamento do progresso após PR #94
+
+- [x] 6.1 Exibir pop-up imediato na foto ampliada, com barra indeterminada/real conforme fase e contadores da consulta por toque; preservar navegação, fechamento, tratamento de falha/sem candidatas e scroll de sucesso. Validar admissão pendente, polling, novo toque, progresso antigo e fechamento manual. Evidência: 21 testes focados aprovados e browser sintético em quatro viewports.
+- [x] 6.2 Validar testes frontend, lint/typecheck/build e browser mobile/paisagem; registrar evidência e preparar PR complementar. Evidência: 330 testes em 45 arquivos, lint sem erros, build com TypeScript, 57 itens OpenSpec e quatro viewports aprovados; detalhes em `validation.md`.
+
+Publicação deste refinamento: push + PR complementar; parar imediatamente depois e aguardar confirmação humana do CI, sem merge ou deploy automático.
+
 ## Estado e continuidade
 
 21/09/2026: implementação local concluída conforme decisões humanas: navegação sempre fora da imagem, busca direta por região e regra infantil baseada no consentimento do responsável sem registro prévio de representação. Essas decisões não devem ser perguntadas novamente. Evidências de testes, build e browser em `validation.md`.

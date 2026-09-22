@@ -7,6 +7,7 @@ Os anexos 01–03 de 21/09/2026 mostram controles sobre as miniaturas e navegaç
 - Colocar nome do arquivo e botão de seleção menores, lado a lado, abaixo da fotografia; preservar duas colunas no mobile, seleção explícita e acessibilidade.
 - Manter `Anterior`, `Próxima` e seleção sempre visíveis em uma barra abaixo e fora da fotografia, inclusive com regiões faciais e zoom habilitados; nenhum desses controles pode sobrepor a imagem.
 - Iniciar a busca ao tocar em uma região facial autorizada, sem diálogo nem checkboxes, com estado imediato `Aguarde, procurando fotos…` e progresso real quando disponível.
+- Refinamento solicitado após o PR #94: mostrar a espera e a barra de progresso em pop-up sobre a área da foto ampliada desde o toque, mantendo fechamento/navegação acessíveis e sem reabrir consentimento.
 - Ao concluir a busca iniciada por toque, fechar a ampliação e levar a cliente ao topo da página para percorrer as possibilidades e selecionar manualmente.
 - Preservar o consentimento no envio de foto. Conforme esclarecimento humano, manter adulto/menor e reunir as duas confirmações infantis em um único checkbox inicialmente desmarcado: `Sou pai, mãe ou responsável legal e autorizo a busca de fotos desta criança ou adolescente nesta galeria.` O aviso adjacente continua explicando o tratamento temporário da imagem e biometria.
 - Separar no backend e na auditoria consulta por região e envio consentido; nunca fabricar aceite ou declarar um rosto adulto automaticamente.
