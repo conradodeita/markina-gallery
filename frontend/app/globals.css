@@ -1028,3 +1028,15 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .gallery-presentation-photo-markers button.gallery-presentation-marker { isolation:isolate; background:transparent; border-color:transparent; }
 .gallery-presentation-photo-markers button.gallery-presentation-marker::before { content:""; position:absolute; inset:7px 0; z-index:-1; border:1px solid #ffffffb8; border-radius:999px; background:#111d; }
 .gallery-presentation-photo-markers button.gallery-presentation-marker[aria-pressed="true"]::before { background:var(--mk-surface); border-color:var(--mk-ink-muted); }
+
+.face-search-progress-overlay { position:absolute; inset:0; z-index:3; display:grid; place-items:center; padding:12px; background:#0006; }
+.face-search-progress-popup { width:min(100%,340px); box-sizing:border-box; padding:20px; border:1px solid #ffffff40; border-radius:16px; background:#20242bf5; color:#fff; box-shadow:0 12px 40px #0008; text-align:center; }
+.face-search-progress-popup strong { display:block; font-size:1rem; }
+.face-search-progress-popup p { margin:8px 0 12px; font-size:.875rem; }
+.face-search-progress-popup progress { display:block; width:100%; height:10px; accent-color:var(--mk-gold,#f5c542); }
+.face-search-progress-popup small { display:block; margin-top:8px; font-size:.75rem; color:#e2e5eb; }
+@media (max-height:450px) {
+  .face-search-progress-overlay { padding:6px; }
+  .face-search-progress-popup { padding:10px 14px; }
+  .face-search-progress-popup p { margin:4px 0 8px; }
+}

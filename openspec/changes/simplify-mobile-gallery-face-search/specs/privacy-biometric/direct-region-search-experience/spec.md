@@ -12,6 +12,14 @@ Ao tocar deliberadamente em uma região facial disponível na galeria autorizada
 - **WHEN** a cliente autenticada e vinculada toca em um rosto disponível
 - **THEN** a busca é admitida diretamente, o estado de espera fica visível mesmo que a página esteja rolada e nenhum diálogo de consentimento é aberto
 
+#### Scenario: Progresso visível sobre a foto ampliada
+- **WHEN** a cliente toca num rosto com a ampliação aberta
+- **THEN** um pop-up de status SHALL aparecer imediatamente na área da foto e permanecer durante a busca, com barra indeterminada antes de contadores úteis e percentual real na fase correspondente; o pop-up SHALL acompanhar somente a consulta iniciada por toque, sem bloquear fechamento/navegação externos à fotografia nem solicitar aceite
+
+#### Scenario: Fim da espera ou fechamento manual
+- **WHEN** a busca termina ou a cliente fecha a foto antes do fim
+- **THEN** o pop-up SHALL desaparecer; sucesso com possibilidades preserva fechamento e scroll único, erro/ausência de candidatas mantém mensagem e exploração manual, e fechar a foto não cancela o polling da página
+
 #### Scenario: Erro ou saturação
 - **WHEN** a admissão é recusada ou o job falha
 - **THEN** a interface encerra a espera com mensagem sanitizada e ação de nova tentativa apropriada, respeita o prazo de retentativa e preserva a navegação manual
