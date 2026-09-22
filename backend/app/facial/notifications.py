@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import timedelta
+from ipaddress import ip_address
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -244,16 +245,49 @@ def _notification_message(
     expected_path = f"/public-galleries/{request.parent_gallery_id}"
     if payload != {"path": expected_path, "result": notification.result_kind}:
         raise WhatsAppConfigurationError("Payload transacional inválido.")
-    base_url = os.getenv("MARKINA_PUBLIC_URL", "").strip().rstrip("/")
-    parsed = urlsplit(base_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.query or parsed.fragment:
-        raise WhatsAppConfigurationError("URL pública da aplicação indisponível.")
+    base_url = notification_public_origin(settings.environment)
     link = f"{base_url}{expected_path}"
     if notification.result_kind == "ready":
         return f"Sua busca na galeria foi concluída. Confira as possibilidades em {link}"
     if notification.result_kind == "no_candidates":
         return f"Sua busca terminou sem possibilidades encontradas. Continue em {link}"
     return f"Não foi possível concluir sua busca. Tente novamente em {link}"
+
+
+def notification_public_origin(environment: str) -> str:
+    # A mesma origem que o deploy configura para links sensíveis tem precedência.
+    origin = os.getenv("PUBLIC_APP_ORIGIN", "").strip() or os.getenv("MARKINA_PUBLIC_URL", "").strip()
+    error = "URL pública da aplicação indisponível ou inválida para este ambiente."
+    try:
+        parsed = urlsplit(origin)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError as exc:
+        raise WhatsAppConfigurationError(error) from exc
+    if (
+        not hostname
+        or parsed.scheme not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query or parsed.fragment
+        or any(char.isspace() for char in origin)
+        or "\\" in origin or "%" in hostname
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise WhatsAppConfigurationError(error)
+    if environment.strip().lower() not in {"development", "test", "local"}:
+        try:
+            public_host = ip_address(hostname).is_global
+        except ValueError:
+            public_host = (
+                "." in hostname
+                and not hostname.endswith((".localhost", ".local", ".internal"))
+                and not all(part.isdigit() for part in hostname.split("."))
+            )
+        if parsed.scheme != "https" or not public_host:
+            raise WhatsAppConfigurationError(error)
+    return origin.rstrip("/")
 
 
 def _notification_scope(
