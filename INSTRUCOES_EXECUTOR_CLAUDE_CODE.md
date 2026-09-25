@@ -1,3 +1,5 @@
+> **Decisão aprovada — `add-order-google-photos-delivery`:** entrega manual Google Photos por pedido confirmado, botão Enviar e aviso configurável em Notificações (WhatsApp/push independentes). Em Compras, verde “Fotos disponíveis” com link autorizado; cinza “Fotos indisponíveis” nos demais casos. Reenvio explícito com deduplicação; correção financeira suspende exposição e invalida avisos pendentes, preservando o URL. Estas regras substituem os estados vermelho/amarelo e a ação de entrega descritos neste mandato, conforme a change aprovada. Não criar backup do histórico visual de mensagens retirado nem apagar filas técnicas compartilhadas.
+
 # Pick-your-Pic — Especificação de Execução para Claude Code
 
 ## 1. Mandato e resultado esperado

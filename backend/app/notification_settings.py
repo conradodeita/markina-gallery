@@ -1,4 +1,4 @@
-"""Configuração global e snapshots imutáveis dos seis eventos transacionais."""
+"""Configuração global e snapshots imutáveis dos eventos transacionais."""
 
 import os
 import re

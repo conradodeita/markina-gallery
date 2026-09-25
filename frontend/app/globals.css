@@ -1055,3 +1055,15 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .gallery-folder-card .gallery-folder-caption { flex-wrap:wrap; }
 .gallery-folder-caption strong { flex-basis:100%; font-size:.875rem; overflow-wrap:anywhere; }
 .gallery-folder-caption > span { margin-left:auto; }
+
+/* Entrega final por pedido */
+.order-delivery-form { display: grid; gap: .65rem; margin-top: 1rem; min-width: 0; }
+.order-delivery-form label { font-weight: 650; }
+.order-delivery-form input { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; padding: .7rem; border: 1px solid var(--mk-border); border-radius: var(--mk-radius-sm); font: inherit; font-size: 1rem; color: var(--mk-ink); background: var(--mk-surface); }
+.order-delivery-form p { margin: 0; overflow-wrap: anywhere; }
+.order-delivery-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.order-album-button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .65rem 1rem; border-radius: .65rem; border: 1px solid transparent; text-decoration: none; font-weight: 700; text-align: center; }
+.order-album-button--available, .order-album-button--available:visited { background: #166534; color: #fff; }
+.order-album-button--available:hover { background: #14532d; color: #fff; }
+.order-album-button--available:focus-visible { outline: 3px solid #22c55e; outline-offset: 3px; }
+.order-album-button--unavailable:disabled { background: #e5e7eb; color: #4b5563; border-color: #9ca3af; opacity: 1; cursor: not-allowed; }

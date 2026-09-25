@@ -30,6 +30,8 @@ from app.messaging import (
     configured_photographer_phone,
     whatsapp_provider_from_environment,
 )
+from app.order_delivery import EVENT_TYPE as ORDER_DELIVERY_EVENT
+from app.order_delivery import delivery_notice_allowed
 from app.private_membership import client_has_operational_membership
 from app.push_subscriptions import decrypt_subscription, push_enabled
 from app.web_push import PushFailure, send_push
@@ -68,6 +70,8 @@ def recipient_allowed(db, event, item) -> bool:
             return False
     elif item.recipient_id != event.client_id or not db.get(Client, item.recipient_id):
         return False
+    if event.event_type == ORDER_DELIVERY_EVENT:
+        return delivery_notice_allowed(db, event, item)
     if event.derived_gallery_id:
         gallery = db.get(DerivedGallery, event.derived_gallery_id)
         if not gallery or not gallery.access_enabled:

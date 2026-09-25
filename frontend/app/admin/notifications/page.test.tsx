@@ -2,21 +2,21 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import NotificationsPage, { NotificationSetting } from "./page";
 
-const settings: NotificationSetting[] = ["first_access", "first_selection", "private_photos_ready", "payment_reported", "payment_confirmed", "payment_refused"].map((event_type) => ({
-  event_type, label: event_type, recipient: event_type === "private_photos_ready" || ["payment_confirmed", "payment_refused"].includes(event_type) ? "client" : "admin",
+const settings: NotificationSetting[] = ["first_access", "first_selection", "private_photos_ready", "payment_reported", "payment_confirmed", "payment_refused", "order_delivery_ready"].map((event_type) => ({
+  event_type, label: event_type, recipient: event_type === "private_photos_ready" || ["payment_confirmed", "payment_refused", "order_delivery_ready"].includes(event_type) ? "client" : "admin",
   allowed_variables: ["cliente", "galeria"], version: 1, push_enabled: true, whatsapp_enabled: true,
   push_title: "Aviso", push_body: "Olá {{cliente}}", whatsapp_body: "Mensagem {{galeria}}",
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it("exibe seis eventos, prévias e dois interruptores sem a caixa de entrada antiga", async () => {
+it("exibe sete eventos, prévias e dois interruptores sem a caixa de entrada antiga", async () => {
   const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings })));
   vi.stubGlobal("fetch", fetch);
   render(<NotificationsPage />);
   await screen.findByRole("form", { name: "first_access" });
-  expect(screen.getAllByRole("form")).toHaveLength(6);
-  expect(screen.getAllByRole("checkbox")).toHaveLength(12);
-  expect(screen.getAllByText("Olá Cliente")).toHaveLength(6);
+  expect(screen.getAllByRole("form")).toHaveLength(7);
+  expect(screen.getAllByRole("checkbox")).toHaveLength(14);
+  expect(screen.getAllByText("Olá Cliente")).toHaveLength(7);
   expect(screen.queryByLabelText("Leitura")).toBeNull();
   expect(screen.queryByText("Marcar como lida")).toBeNull();
   expect(screen.getByText(/As alterações são globais/)).toBeTruthy();

@@ -14,6 +14,10 @@ export default function PurchasesPage() {
   const [failed, setFailed] = useState(false);
   const [request, setRequest] = useState(0);
   useEffect(() => {
+    if (!result || !window.location.hash.startsWith("#order-")) return;
+    document.getElementById(window.location.hash.slice(1))?.scrollIntoView({ block: "start" });
+  }, [result]);
+  useEffect(() => {
     const controller = new AbortController();
     fetch("/api/library/purchases", { credentials: "same-origin", cache: "no-store", signal: controller.signal })
       .then(async (response) => {

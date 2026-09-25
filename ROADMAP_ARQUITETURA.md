@@ -2,6 +2,8 @@
 
 > **Decisão substitutiva aprovada em 21/09/2026 — `simplify-mobile-gallery-face-search`:** para novas buscas, toque em região indexada inicia diretamente sem diálogo/aceite ou declaração de idade; upload continua exigindo consentimento específico. Upload infantil exige somente o checkbox único com autodeclaração de responsável e consentimento versionado, sem registro prévio ou prova administrativa de representação. Regras anteriores de representação obrigatória e dois checkboxes ficam substituídas exclusivamente nesse escopo; evidências/controles históricos permanecem. Nome/seleção ficam abaixo das miniaturas; navegação ampliada sempre visível em barra externa abaixo da fotografia, nunca sobreposta. Demais controles de acesso, retenção, revogação e operação permanecem. Contrato completo: `openspec/changes/simplify-mobile-gallery-face-search/`.
 
+> **Entrega por pedido aprovada — `add-order-google-photos-delivery`:** o campo Google Photos substitui o histórico visual de mensagens. Enviar exige pagamento confirmado, disponibiliza botão verde “Fotos disponíveis” em Compras e agenda o sétimo evento configurável na central de Notificações. Sem entrega elegível, botão cinza “Fotos indisponíveis”. Reenviar aviso é explícito e deduplicado. Correção financeira preserva o link, suspende exposição e invalida avisos antigos; reconfirmação restaura disponibilidade sem aviso automático de entrega. Esta decisão substitui os cartões vermelho/amarelo e o disparo de entrega não configurável previstos abaixo. Filas técnicas e auditoria permanecem, sem backup paralelo do histórico visual.
+
 # Pick-your-Pic — Roadmap Arquitetural
 
 > Direção detalhada de interface e UX: [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md).

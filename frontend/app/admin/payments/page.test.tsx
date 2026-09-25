@@ -71,7 +71,7 @@ const emptyDashboard = {
 };
 
 describe("controle operacional de pagamentos", () => {
-  it("agrupa por cliente, mostra resumo e preserva decisão e retry autorizados", async () => {
+  it("agrupa por cliente, mostra resumo e preserva decisão e substitui histórico por entrega", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchMock = vi.fn((_path: string, options?: RequestInit) => {
       if (options?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "confirmed" }), { status: 200 }));
@@ -91,7 +91,8 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.getAllByText(/8,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/12,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pagamento comunicado").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeTruthy();
+    expect(screen.queryByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeNull();
+    expect(screen.getByLabelText("Link do álbum no Google Photos")).toBeTruthy();
     expect(screen.queryByText(/copia e cola|telefone|api key/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
@@ -101,11 +102,7 @@ describe("controle operacional de pagamentos", () => {
     ));
     expect(await screen.findByText(/Decisão registrada/i)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Tentar enviar novamente" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/payment-notifications/notice-1/retry",
-      expect.objectContaining({ method: "POST" }),
-    ));
+    expect(screen.queryByRole("button", { name: "Tentar enviar novamente" })).toBeNull();
   });
 
   it("combina filtros, apresenta vazio específico e permite limpar", async () => {

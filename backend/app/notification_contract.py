@@ -39,4 +39,9 @@ DEFINITIONS = {
         "Não localizamos seu pagamento. Confira seu pedido.",
         ("cliente", "galeria", "pedido"),
     ),
+    "order_delivery_ready": NotificationDefinition(
+        "Fotos disponíveis", "client", "Fotos disponíveis",
+        "Suas fotos estão prontas! Acesse Compras para abrir seu álbum.",
+        ("cliente", "galeria", "pedido"),
+    ),
 }

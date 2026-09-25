@@ -275,6 +275,13 @@ from app.notification_settings import (
     setting_for,
     setting_payload,
 )
+from app.order_delivery import (
+    delivery_payload,
+    lock_delivery_order,
+    resend_delivery,
+    set_delivery,
+    validate_album_url,
+)
 from app.parent_registration import link_client_to_parent
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
 from app.pix import PixCodeError, pix_qr_data_url
@@ -7831,6 +7838,7 @@ def client_purchase_history(
                 "frozen_at": order.frozen_at.isoformat() if order.frozen_at else None,
                 "confirmed_at": order.confirmed_at.isoformat() if order.confirmed_at else None,
                 "total_cents": order.total_cents,
+                "delivery_album_url": order.delivery_album_url if order.payment_status == "confirmed" else None,
                 "items": item_payloads,
             }
         )
@@ -9382,6 +9390,8 @@ def correct_payment_confirmation(
     communication.decided_by_admin_id = None
     communication.decided_at = None
     for item in scope_orders:
+        if item.payment_status == "confirmed" and item.delivery_album_url:
+            item.delivery_revision += 1
         item.payment_status = "pending"
         item.confirmed_at = None
     if payment_group:
@@ -9402,6 +9412,53 @@ def correct_payment_confirmation(
             raise
         correction = existing
     return {"id": str(correction.id), "status": "pending_review"}
+
+
+class OrderDeliveryInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    album_url: str | None
+    version: int = Field(ge=0)
+
+    @field_validator("album_url")
+    @classmethod
+    def safe_album_url(cls, value):
+        return validate_album_url(value)
+
+
+class OrderDeliveryResendInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    version: int = Field(ge=0)
+    operation_id: UUID
+
+
+@app.put("/admin/orders/{order_id}/delivery")
+def update_order_delivery(order_id: UUID, payload: OrderDeliveryInput, request: Request,
+                          db: Session = Depends(db_session)) -> dict:
+    session = require_admin(request)
+    require_same_origin(request)
+    try:
+        result = set_delivery(db, lock_delivery_order(db, order_id), payload.album_url, payload.version, session.subject_id)
+        db.commit()
+        return result
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/admin/orders/{order_id}/delivery/resend")
+def resend_order_delivery(order_id: UUID, payload: OrderDeliveryResendInput, request: Request,
+                          db: Session = Depends(db_session)) -> dict:
+    session = require_admin(request)
+    require_same_origin(request)
+    try:
+        result = resend_delivery(db, lock_delivery_order(db, order_id), payload.version, payload.operation_id, session.subject_id)
+        db.commit()
+        return result
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 class PushSubscriptionInput(BaseModel):
@@ -9841,6 +9898,7 @@ def list_payment_communications(
                 "delivery_statuses": sorted(delivery_states),
                 "folders": list(folders.values()),
                 "payment_message_snapshot": order.payment_message_snapshot,
+                "delivery": delivery_payload(order),
                 "_client_id": order.client_id,
                 "_client_name": (
                     client.full_name
