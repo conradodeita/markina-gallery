@@ -71,6 +71,33 @@ const emptyDashboard = {
 };
 
 describe("controle operacional de pagamentos", () => {
+  it("mantém o resultado do envio de entrega visível após atualizar a lista", async () => {
+    const album = "https://photos.app.goo.gl/SyntheticAlbum";
+    let sent = false;
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      const delivery = { album_url: sent ? album : null, version: sent ? 1 : 0, can_send: true, can_resend: sent };
+      if (options?.method === "PUT") {
+        sent = true;
+        return Promise.resolve(new Response(JSON.stringify({ delivery: { ...delivery, album_url: album, version: 1, can_resend: true }, notification: { channels: ["whatsapp", "push"] } })));
+      }
+      if (path.endsWith("gallery-reopening-requests")) return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      const data = dashboard();
+      const order = data.groups[0].orders[0];
+      const result = { ...data, groups: [{ ...data.groups[0], orders: [{ ...order, financial_status: "confirmed", communication: null, communications: [], delivery }] }] };
+      return Promise.resolve(new Response(JSON.stringify(result)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    fireEvent.click(await screen.findByText("Ver pedido e entrega"));
+    fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: album } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    expect(await screen.findByText("Fotos disponíveis em Compras. Aviso agendado.")).toBeTruthy();
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/payment-communications"))).toHaveLength(2));
+    expect(screen.getByRole("status").textContent).toContain("Aviso agendado");
+    expect(screen.getByRole("button", { name: "Reenviar aviso" })).toHaveProperty("disabled", false);
+    expect(screen.getByText("Ver pedido e entrega").closest("details")).toHaveProperty("open", true);
+  });
+
   it("agrupa por cliente, mostra resumo e preserva decisão e substitui histórico por entrega", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchMock = vi.fn((_path: string, options?: RequestInit) => {

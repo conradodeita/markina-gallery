@@ -35,8 +35,9 @@ function EventCard({ initial }: { initial: NotificationSetting }) {
       setError(true); setMessage(cause instanceof Error && cause.message !== "Failed to fetch" ? cause.message : "Não foi possível salvar. Tente novamente.");
     } finally { setBusy(false); }
   }
-  return <form className={styles.card} onSubmit={save} aria-labelledby={`event-${item.event_type}`} id={item.event_type}>
-    <header><span className={styles.recipient}>{item.recipient === "admin" ? "Para o fotógrafo" : "Para o cliente"}</span><h2 id={`event-${item.event_type}`}>{item.label}</h2></header>
+  return <details className={styles.card} id={item.event_type}>
+    <summary className={styles.heading}><span className={styles.recipient}>{item.recipient === "admin" ? "Para o fotógrafo" : "Para o cliente"}</span><h2 id={`event-${item.event_type}`}>{item.label}</h2><span className={styles.arrow} aria-hidden="true">▼</span></summary>
+    <form className={styles.content} onSubmit={save} aria-labelledby={`event-${item.event_type}`}>
     <p className={styles.variables}>Variáveis: {item.allowed_variables.map((variable) => <code key={variable}>{`{{${variable}}}`}</code>)}</p>
     <fieldset disabled={busy}><legend>Canais e mensagens</legend>
       <label className={styles.toggle}><input type="checkbox" checked={item.push_enabled} onChange={(event) => setItem({ ...item, push_enabled: event.target.checked })} />Enviar notificação Push</label>
@@ -50,7 +51,8 @@ function EventCard({ initial }: { initial: NotificationSetting }) {
       <aside className={styles.preview} aria-label="Prévia do WhatsApp"><small>PRÉVIA · WHATSAPP</small><p>{preview(item.whatsapp_body)}</p></aside>
     </fieldset>
     <footer><MarkinaButton type="submit" disabled={busy}>{busy ? "Salvando…" : "Salvar evento"}</MarkinaButton>{message && <p role={error ? "alert" : "status"}>{message}</p>}</footer>
-  </form>;
+    </form>
+  </details>;
 }
 
 export default function NotificationsPage() {

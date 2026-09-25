@@ -16,6 +16,38 @@ function worker() {
 }
 const payload = { id: "11111111-1111-4111-8111-111111111111", title: "Novas fotos", body: "Sua galeria está pronta.", path: "/library" };
 
+it("exibe o push de entrega e abre o pedido em Compras", async () => {
+  const { handlers, showNotification, clients } = worker();
+  const path = `/library/purchases#order-${payload.id}`;
+  const waitUntil = vi.fn();
+  handlers.push({ data: { json: () => ({ ...payload, path }) }, waitUntil });
+  await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+  expect(showNotification).toHaveBeenCalledWith(payload.title, expect.objectContaining({ data: { path } }));
+  handlers.notificationclick({ notification: { data: { path }, close: vi.fn() }, waitUntil });
+  await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+  expect(clients.openWindow).toHaveBeenCalledWith(`https://example.test${path}`);
+  const tab = { url: "https://example.test/library", navigate: vi.fn(), focus: vi.fn() };
+  clients.matchAll.mockResolvedValue([tab]);
+  handlers.notificationclick({ notification: { data: { path }, close: vi.fn() }, waitUntil });
+  await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+  expect(tab.navigate).toHaveBeenCalledWith(`https://example.test${path}`);
+  expect(tab.focus).toHaveBeenCalledOnce();
+});
+
+it("aceita Compras sem fragmento e rejeita destinos de entrega adulterados", async () => {
+  const { handlers, showNotification, clients } = worker();
+  const waitUntil = vi.fn();
+  handlers.push({ data: { json: () => ({ ...payload, path: "/library/purchases" }) }, waitUntil });
+  await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+  expect(showNotification).toHaveBeenCalledOnce();
+  for (const path of ["/library/purchases?token=secret", "/library/purchases#other", "/library/purchases#order-invalid", `/library/purchases#order-${"-".repeat(36)}`, `/library/purchases#order-${payload.id}/extra`, `https://evil.test/library/purchases#order-${payload.id}`]) {
+    handlers.push({ data: { json: () => ({ ...payload, path }) }, waitUntil });
+    handlers.notificationclick({ notification: { data: { path }, close: vi.fn() }, waitUntil });
+  }
+  expect(showNotification).toHaveBeenCalledOnce();
+  expect(clients.openWindow).not.toHaveBeenCalled();
+});
+
 it("recebe somente texto curto e usa a mesma tag para o mesmo evento", async () => {
   const { handlers, showNotification } = worker();
   const waitUntil = vi.fn();

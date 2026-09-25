@@ -47,6 +47,10 @@ class PushFailure(Exception):
 
 
 def safe_target(path: str) -> bool:
+    if isinstance(path, str) and re.fullmatch(
+        r"/library/purchases(?:#order-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?", path
+    ):
+        return True
     return bool(isinstance(path, str) and re.fullmatch(
         r"/(?:admin(?:/payments|/galleries/[0-9a-f-]{36}|/galleries/sources/[0-9a-f-]{36}/edit/imagens)?"
         r"|library|gallery/[0-9a-f-]{36}|public-galleries/[0-9a-f-]{36})", path))
