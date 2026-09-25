@@ -3,6 +3,7 @@ self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
 function allowedPushPath(path) {
+  if (typeof path === "string" && /^\/library\/purchases(?:#order-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/.test(path)) return true;
   return typeof path === "string" && /^\/(?:admin(?:\/payments|\/galleries\/[0-9a-f-]{36}|\/galleries\/sources\/[0-9a-f-]{36}\/edit\/imagens)?|library|gallery\/[0-9a-f-]{36}|public-galleries\/[0-9a-f-]{36})$/.test(path);
 }
 

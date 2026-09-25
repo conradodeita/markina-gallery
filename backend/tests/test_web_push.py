@@ -13,7 +13,8 @@ def payload():
             "path": "/library"}
 
 
-def test_encrypts_vapid_payload_without_network_or_logs(monkeypatch, caplog):
+@pytest.mark.parametrize("path", ["/library", "/library/purchases", "/library/purchases#order-11111111-1111-4111-8111-111111111111"])
+def test_encrypts_vapid_payload_without_network_or_logs(monkeypatch, caplog, path):
     monkeypatch.setenv("WEB_PUSH_VAPID_PRIVATE_KEY", base64.urlsafe_b64encode(b"a" * 32).decode())
     monkeypatch.setenv("WEB_PUSH_VAPID_SUBJECT", "mailto:synthetic@example.invalid")
     captured = {}
@@ -25,6 +26,7 @@ def test_encrypts_vapid_payload_without_network_or_logs(monkeypatch, caplog):
         return response
     monkeypatch.setattr(transport.PushHTTPS, "post", post)
     content = payload()
+    content["path"] = path
     transport.send_push(subscription(), content)
     assert content["body"].encode() not in captured["data"]
     assert captured["headers"]["content-encoding"] == "aes128gcm"
@@ -72,7 +74,7 @@ def test_redirect_never_followed_and_remote_body_not_read(monkeypatch):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("path", ["https://evil.invalid", "//evil.invalid", "/api/admin", "/library?token=secret", "/gallery/../admin"])
+@pytest.mark.parametrize("path", ["https://evil.invalid", "//evil.invalid", "/api/admin", "/library?token=secret", "/gallery/../admin", "/library/purchases?token=secret", "/library/purchases#other", "/library/purchases#order-invalid", "/library/purchases#order-" + "-" * 36])
 def test_payload_navigation_is_constrained(path):
     with pytest.raises(transport.PushFailure):
         transport.validate_payload({**payload(), "path": path})
