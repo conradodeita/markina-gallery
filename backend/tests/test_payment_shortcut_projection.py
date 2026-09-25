@@ -94,6 +94,12 @@ def test_shortcuts_keep_all_pending_orders_first_and_isolate_client_and_gallery(
     assert public_card["selection_expires_at"] == private_card["selection_expires_at"]
     assert public_card["selection_expires_at"].startswith(deadline.date().isoformat())
     communication_id = orders[0]["id"]
+    assert client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "refused"}).status_code == 200
+    refused_orders = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()["members"][0]["financial_orders"]
+    refused = next(item for item in refused_orders if item["id"] == communication_id)
+    assert refused["can_correct"] is True and refused["can_decide"] is False
+    assert refused["status"] == "refused"
+    assert client.post(f"/admin/payment-communications/{communication_id}/correction", json={"idempotency_key": "shortcut-refusal-correction"}).status_code == 200
     assert client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "confirmed"}).status_code == 200
     refreshed = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()["members"][0]
     assert refreshed["financial_orders"][0]["order_id"] == oldest_pending

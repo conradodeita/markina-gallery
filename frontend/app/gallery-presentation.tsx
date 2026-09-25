@@ -1,6 +1,7 @@
 "use client";
 
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { GalleryCardPreview } from "./gallery-card-preview";
 
 export type GalleryPresentationPhoto = {
   id: string;
@@ -199,8 +200,8 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
       {folderDisplayMode === "individual" && availableFolders.length > 1 ? (
         <section className="gallery-presentation-folder-section" aria-labelledby="gallery-folders-title">
           <div><p className="eyebrow">Navegação</p><h2 id="gallery-folders-title">Coleções</h2></div>
-          <nav className="gallery-presentation-folders" aria-label="Pastas da galeria">
-            {availableFolders.map((folder) => <button key={folder.id} type="button" aria-pressed={activeFolder?.id === folder.id} onClick={() => setActiveFolderId(folder.id)}>{folder.name}<span>{folder.photos.length}</span></button>)}
+          <nav className="gallery-presentation-folders gallery-folder-cards" aria-label="Pastas da galeria">
+            {availableFolders.map((folder) => <button className="gallery-folder-card" key={folder.id} type="button" aria-label={`${folder.name} (${folder.photos.length} fotos)`} aria-pressed={activeFolder?.id === folder.id} onClick={() => setActiveFolderId(folder.id)}><GalleryCardPreview src={folder.photos[0]?.previewUrl ?? null} name={folder.name} protectedPhoto /><div className="gallery-folder-caption"><strong>{folder.name}</strong><span>{folder.photos.length}</span></div></button>)}
           </nav>
         </section>
       ) : null}

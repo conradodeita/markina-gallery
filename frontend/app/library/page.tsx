@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkinaLink, PageHeading, StatusBadge, SystemState } from "../ui-kit";
 import { EmptyState } from "../validation-ui";
 import { SelectionDeadline } from "../selection-deadline";
+import Link from "next/link";
+import { GalleryCardPreview, galleryCoverUrl } from "../gallery-card-preview";
 
 type PublicGallery = {
   id: string;
@@ -31,6 +33,7 @@ type Journey = {
   status: "active" | "pending_review" | "blocked" | "expired" | "origin_removed" | "unavailable";
   primary_surface: "public" | "private" | "unavailable";
   browse_url: string | null;
+  cover_preview_url?: string | null;
   public_gallery: PublicGallery | null;
   private_gallery: PrivateGallery | null;
   selection: {
@@ -111,6 +114,7 @@ export default function LibraryPage() {
           const primaryAction = browse ? { href: browse, label: "Ver fotos" } : latestOrder ? { href: "/library/purchases", label: "Ver compra" } : null;
           return (
             <article className={`library-card journey-card journey-card--${journey.status}`} key={journey.id}>
+              {browse ? <Link href={browse} className="library-cover-link" aria-label={`Abrir galeria ${journey.name}`}><GalleryCardPreview src={galleryCoverUrl(journey.cover_preview_url)} name={journey.name} /></Link> : <GalleryCardPreview src={null} name={journey.name} />}
               <header><StatusBadge tone={status.tone}>{status.label}</StatusBadge></header>
               <strong>{journey.name}</strong>
               {journey.event_name ? <small>{journey.event_name}</small> : null}

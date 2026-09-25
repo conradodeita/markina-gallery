@@ -229,16 +229,6 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
     { id: "ambiguous", title: "Possíveis correspondências", detail: "Confira estas possibilidades com atenção.", photos: candidatePhotos.filter((photo) => candidateByPhoto.get(photo.id)?.match_class === "ambiguous") },
   ];
 
-  async function rejectCandidate(photo: PublicPhoto) {
-    if (!facialResult) return;
-    try {
-      await facialSearchApi.reject(galleryId, facialResult.id, photo.id);
-      setFacialResult({ ...facialResult, candidates: (facialResult.candidates ?? []).filter((candidate) => candidate.photo_id !== photo.id) });
-      setMessage("Esta possibilidade foi removida somente da sua busca.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível remover este resultado.");
-    }
-  }
 
   return (
     <main className="admin-shell public-gallery-shell">
@@ -261,7 +251,7 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;
-        return <>{frozenLabel ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={favorited ? "Remover dos favoritos" : "Favoritar"} title={favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "♥" : "♡"}</button> : null}<button type="button" className="gallery-presentation-marker gallery-presentation-marker--reject" onClick={() => { void rejectCandidate(photo); }}>Não é esta pessoa</button></>;
+        return <>{frozenLabel ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && privateGalleryId && selected ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={favorited ? "Remover dos favoritos" : "Favoritar"} title={favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "♥" : "♡"}</button> : null}</>;
       }} />}
       {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>

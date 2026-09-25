@@ -23,10 +23,11 @@ export function PaymentActions({ order, clientName, onRefresh }: { order: Financ
   const correctionKey = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const correctionLabel = order.status === "refused" ? "Corrigir pagamento não localizado" : "Corrigir confirmação";
 
   async function act(action: "confirmed" | "refused" | "correction") {
     if (locked.current || (action === "correction" ? !order.can_correct : !order.can_decide)) return;
-    const label = action === "confirmed" ? "Confirmar pagamento" : action === "refused" ? "Pagamento não localizado" : "Corrigir confirmação";
+    const label = action === "confirmed" ? "Confirmar pagamento" : action === "refused" ? "Pagamento não localizado" : correctionLabel;
     const context = order.payment_group
       ? `${clientName}\nPIX único · ${money(order.payment_group.total_cents)}\n${order.payment_group.galleries.map((gallery) => `${gallery.name}: ${money(gallery.total_cents)}`).join("\n")}\nA decisão será aplicada a todos esses pedidos.`
       : `${clientName} · ${order.gallery_name}\nPedido ${order.order_id} · ${order.quantity === undefined ? "" : `${order.quantity} foto(s) · `}${money(order.total_cents)}`;
@@ -41,7 +42,7 @@ export function PaymentActions({ order, clientName, onRefresh }: { order: Financ
       const result = await response.json().catch(() => null);
       const expectedStatus = action === "correction" ? "pending_review" : action;
       const conflict = response.status === 409 || (response.ok && result?.status && result.status !== expectedStatus);
-      setMessage(conflict ? "Pedido atualizado por outra sessão. Confira o estado atual." : response.ok ? (action === "correction" ? "Confirmação corrigida. Nenhuma mensagem enviada." : "Decisão registrada.") : "Não foi possível registrar a decisão. Atualize e tente novamente.");
+      setMessage(conflict ? "Pedido atualizado por outra sessão. Confira o estado atual." : response.ok ? (action === "correction" ? "Pagamento devolvido à revisão. Nenhuma mensagem enviada." : "Decisão registrada.") : "Não foi possível registrar a decisão. Atualize e tente novamente.");
       if (response.ok) correctionKey.current = null;
       await onRefresh();
     } catch {
@@ -53,7 +54,7 @@ export function PaymentActions({ order, clientName, onRefresh }: { order: Financ
     {order.payment_group ? <p>Este pedido integra um PIX único de {money(order.payment_group.total_cents)} · {order.payment_group.galleries.map((gallery) => gallery.name).join(", ")}</p> : null}
     <div className="dashboard-actions">
       {order.can_decide ? <><MarkinaButton type="button" disabled={busy} onClick={() => void act("confirmed")}>Confirmar pagamento</MarkinaButton><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void act("refused")}>Pagamento não localizado</MarkinaButton></> : null}
-      {order.can_correct ? <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void act("correction")}>Corrigir confirmação</MarkinaButton> : null}
+      {order.can_correct ? <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void act("correction")}>{correctionLabel}</MarkinaButton> : null}
     </div>
     {message ? <p role="status">{message}</p> : null}
   </div>;
