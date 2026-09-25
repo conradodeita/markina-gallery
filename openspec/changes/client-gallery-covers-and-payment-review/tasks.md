@@ -8,5 +8,6 @@
 
 ## 3. Entrega
 - [x] 3.1 Executar regressões pertinentes, lint, typecheck/build frontend, validação OpenSpec e revisão do diff; registrar evidências e preparar PR. Evidências completas em `validation.md`.
+- [x] 3.2 Corrigir bloqueio SQLite do teste de migração apontado pelo CI do PR #97, validar encerramento explícito da leitura e preparar a correção para o mesmo PR. Evidência: reprodução determinística antes do fix; arquivo completo com 10 testes aprovados e 1 PostgreSQL pulado após o fix; Ruff e OpenSpec aprovados.
 
 Parar após push + PR para confirmação humana do CI. Sem deploy, mensagens reais, mudanças de `.env`, sync/archive ou inclusão de alterações locais anteriores nesta entrega.

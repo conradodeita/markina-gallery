@@ -12,7 +12,8 @@ from subprocess import run
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 
@@ -57,6 +58,25 @@ def test_upgrade_preserves_existing_client_and_confirmed_order(tmp_path: Path):
         assert connection.execute(text("SELECT full_name FROM client WHERE id = :id"), {"id": client_id.hex}).scalar_one() == "Cliente legado"
 
 
+@pytest.fixture
+def retained_schema_cursors():
+    """Não depender do GC para liberar locks antes do subprocesso Alembic."""
+    cursors = []
+
+    def retain_cursor(connection, cursor, statement, parameters, context, executemany):
+        if statement == "PRAGMA table_info(photo_asset)":
+            cursors.append(cursor)
+
+    event.listen(Engine, "after_cursor_execute", retain_cursor)
+    try:
+        yield
+    finally:
+        event.remove(Engine, "after_cursor_execute", retain_cursor)
+        for cursor in cursors:
+            cursor.close()
+
+
+@pytest.mark.usefixtures("retained_schema_cursors")
 def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Path):
     database = tmp_path / "folder-ownership.sqlite"
     database_url = f"sqlite:///{database.as_posix()}"
@@ -197,9 +217,9 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
             connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
             for table in ("photo_asset", "derived_gallery_photo", "photo_selection", "sale_order_item")
         )
-        folder_column = next(
-            row for row in connection.execute(text("PRAGMA table_info(photo_asset)")) if row[1] == "folder_id"
-        )
+        # Esgotar o resultado fecha o cursor antes da próxima alteração de schema.
+        columns = connection.execute(text("PRAGMA table_info(photo_asset)")).all()
+        folder_column = next(row for row in columns if row[1] == "folder_id")
     assert folder == (parent_id.hex, "Importação anterior", "released")
     assert counts == (1, 1, 1, 1)
     assert folder_column[3] == 1
@@ -226,9 +246,8 @@ def test_gallery_folder_ownership_backfills_without_losing_history(tmp_path: Pat
     alembic(database_url, "downgrade", "20260827_0005")
     inspector = inspect(engine)
     with engine.connect() as connection:
-        folder_column = next(
-            row for row in connection.execute(text("PRAGMA table_info(photo_asset)")) if row[1] == "folder_id"
-        )
+        columns = connection.execute(text("PRAGMA table_info(photo_asset)")).all()
+        folder_column = next(row for row in columns if row[1] == "folder_id")
         assert folder_column[3] == 0
         assert connection.execute(
             text("SELECT folder_id FROM photo_asset WHERE id = :id"), {"id": photo_id.hex}

@@ -22,6 +22,16 @@ Uma asserção inicial de autorização esperava 401, mas o contrato existente u
 
 ## Limites e continuidade
 
+### Falha do CI e investigação — 2026-09-25
+
+Run `36082206514`, job backend `107906406187`: 780 testes passaram, 11 pulados e uma falha em `test_cloned_gallery_migration.py::test_gallery_folder_ownership_backfills_without_losing_history`. O subprocesso de downgrade falhou no commit com `sqlite3.OperationalError: database is locked`. O teste interrompe a leitura de `PRAGMA table_info(photo_asset)` com `next(...)`, sem esgotar/fechar explicitamente o cursor antes de outra conexão alterar o schema. Investigar e corrigir somente o ciclo de recursos do teste, preservando migrations e comportamento da aplicação.
+
+Reprodução controlada: reter referências aos cursores DBAPI de `PRAGMA table_info(photo_asset)` reproduziu o mesmo erro no commit do downgrade em 23,53 s. A correção consome o resultado com `.all()` antes de selecionar a coluna desejada, fechando o cursor. O teste agora retém esses cursores por fixture com teardown explícito, para não depender da coleta de lixo nem mascarar o lock. Preservados todos os asserts de migração e o teste continua executando o downgrade real no banco sintético temporário. Sem aumento de timeout, retentativas ou mudança de migration.
+
+As primeiras execuções locais encontraram um problema separado de limpeza do diretório temporário padrão do pytest (`PermissionError` em `pytest-current` no Windows). As execuções seguintes usam `--basetemp` com diretório novo e exclusivo em `.codex-tmp`, sem apagar ou alterar diretórios preexistentes.
+
+Validação final da correção: `python -m pytest backend/tests/test_cloned_gallery_migration.py -q --basetemp <diretório exclusivo>`: **10 passaram, 1 pulado** (PostgreSQL), em 148,92 s. `ruff check backend/app backend/tests`, validação estrita desta change e `git diff --check` passaram. Alteração restrita ao teste e a estes registros OpenSpec; nenhuma mudança adicional no produto, banco real, frontend ou deploy. Após push no PR #97, aguardar novamente a confirmação humana do CI.
+
 Somente dados sintéticos e provedor falso; nenhum envio real, operação bancária ou escrita remota. Homologação autenticada/manual depende da publicação autorizada e não foi realizada nesta etapa. Testes concorrentes específicos de PostgreSQL são pulados quando o banco de teste é SQLite; locks existentes foram preservados e escopo/atomicidade foram cobertos por regressões transacionais.
 
 Preservadas todas as modificações locais preexistentes, inclusive `backend/app/facial/purge.py`, registros de outras changes e `.codex-tmp/`. Publicar push + PR para `develop`, parar e aguardar o proprietário informar CI verde. Não executar merge/deploy nem sincronizar/arquivar antes de revisão humana.
