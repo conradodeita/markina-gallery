@@ -1116,7 +1116,7 @@ class PaymentCommunication(Base):
 
 
 class PaymentConfirmationCorrection(Base):
-    """Registro append-only de uma confirmação financeira corrigida pelo admin."""
+    """Registro append-only de uma decisão financeira corrigida pelo admin."""
 
     __tablename__ = "payment_confirmation_correction"
     __table_args__ = (

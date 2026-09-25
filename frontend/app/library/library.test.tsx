@@ -36,6 +36,27 @@ const privateGallery = {
 };
 
 describe("biblioteca e compras da cliente", () => {
+  it("abre a mesma galeria pela capa e pelo botão e mantém navegação após falha", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ journeys: [{
+      id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active",
+      cover_preview_url: "/public-galleries/public-1/cover-preview",
+      browse_url: "/public-galleries/public-1", actions: { continue_url: "/public-galleries/public-1" },
+    }, {
+      id: "private-1", name: "Privada", status: "active", cover_preview_url: "/gallery/private-1/cover-preview",
+      actions: { fallback_url: "/gallery/private-1" },
+    }, { id: "blocked", name: "Bloqueada", status: "blocked", cover_preview_url: "/public-galleries/blocked/cover-preview", actions: {} }] })));
+    render(<LibraryPage />);
+    const cover = await screen.findByRole("img", { name: "Capa de Festa escolar" });
+    expect(cover.getAttribute("src")).toBe("/api/public-galleries/public-1/cover-preview");
+    const card = cover.closest("article")!;
+    expect(cover.closest("a")?.getAttribute("href")).toBe(within(card).getByRole("link", { name: "Ver fotos" }).getAttribute("href"));
+    expect(screen.getByRole("img", { name: "Capa de Privada" }).closest("a")?.getAttribute("href")).toBe("/gallery/private-1");
+    expect(screen.queryByRole("img", { name: "Capa de Bloqueada" })).toBeNull();
+    fireEvent.error(cover);
+    expect(within(card).getByText("Prévia indisponível")).toBeTruthy();
+    expect(within(card).getByRole("link", { name: "Ver fotos" })).toBeTruthy();
+    expect(within(card).getByText("Formatura")).toBeTruthy();
+  });
   it("preserva itens e contagem quando a prévia está ausente ou falha", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [{
       id: "order-missing", gallery_name: "Evento", parent_gallery_name: "Evento", confirmed_at: null, total_cents: 1400,

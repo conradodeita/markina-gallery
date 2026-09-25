@@ -296,12 +296,8 @@ describe("Galeria pública da cliente", () => {
     ));
     expect(screen.getAllByRole("button", { name: "Remover dos favoritos" }).length).toBeGreaterThan(0);
     expect(screen.queryByText("Favoritar")).toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: "Não é esta pessoa" })[2]);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/public-galleries/public-1/facial-searches/request-1/candidates/photo-1",
-      expect.objectContaining({ method: "DELETE" }),
-    ));
-    expect(screen.getAllByText("Foto 1")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /Não é (esta|essa) pessoa/ })).toBeNull();
+    expect(fetchMock.mock.calls.some(([path, options]) => path.includes("/candidates/") && options?.method === "DELETE")).toBe(false);
   });
 
   it("retoma pelo request opaco após refresh sem guardar a imagem", async () => {

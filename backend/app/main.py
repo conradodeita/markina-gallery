@@ -7545,6 +7545,18 @@ def client_library(
     parent_order.extend(
         parent_id for parent_id in private_by_parent if parent_id not in public_by_parent
     )
+    # Uma consulta para as capas configuradas, sem carregar fotos por card.
+    ready_cover_parents = set(db.scalars(
+        select(ParentGallery.id)
+        .join(PhotoAsset, PhotoAsset.id == ParentGallery.cover_photo_id)
+        .join(MediaDerivative, MediaDerivative.photo_asset_id == PhotoAsset.id)
+        .where(
+            ParentGallery.id.in_(parent_ids),
+            PhotoAsset.parent_gallery_id == ParentGallery.id,
+            MediaDerivative.variant == "admin_preview",
+            MediaDerivative.status == "ready",
+        )
+    )) if parent_ids else set()
     journeys: list[dict[str, object]] = []
     for parent_id in parent_order:
         public_row = public_by_parent.get(parent_id)
@@ -7596,6 +7608,11 @@ def client_library(
                 "status": journey_status,
                 "primary_surface": primary_surface,
                 "browse_url": primary_url,
+                "cover_preview_url": (
+                    f"{primary_url}/cover-preview"
+                    if primary_url and parent and parent.id in ready_cover_parents
+                    else None
+                ),
                 "public_gallery": public_row,
                 "private_gallery": private_row,
                 "selection": cart,
@@ -9339,11 +9356,19 @@ def correct_payment_confirmation(
         )
         if previous:
             return {"id": str(previous.id), "status": communication.status}
-    if communication.status != "confirmed" or order.payment_status != "confirmed":
+    expected_payment_status = {"confirmed": "confirmed", "refused": "cancelled"}.get(
+        communication.status
+    )
+    if expected_payment_status is None or order.payment_status != expected_payment_status:
         raise HTTPException(
             status_code=409,
-            detail="Somente um pagamento confirmado pode ser corrigido.",
+            detail="Somente um pagamento confirmado ou não localizado pode ser corrigido.",
         )
+    if any(item.payment_status != expected_payment_status for item in scope_orders):
+        raise HTTPException(status_code=409, detail="Pedidos indisponíveis para correção.")
+    if payment_group and payment_group.state != communication.status:
+        raise HTTPException(status_code=409, detail="Pagamento agrupado indisponível para correção.")
+    previous_status = communication.status
     correction = PaymentConfirmationCorrection(
         payment_communication_id=communication.id,
         sale_order_id=order.id,
@@ -9356,14 +9381,13 @@ def correct_payment_confirmation(
     communication.status = "pending_review"
     communication.decided_by_admin_id = None
     communication.decided_at = None
-    if any(item.payment_status != "confirmed" for item in scope_orders):
-        raise HTTPException(status_code=409, detail="Pedidos indisponíveis para correção.")
     for item in scope_orders:
         item.payment_status = "pending"
         item.confirmed_at = None
     if payment_group:
         payment_group.state = "reported"
-    audit(db, "payment.confirmation_corrected", str(communication.id))
+    audit(db, "payment.refusal_corrected" if previous_status == "refused"
+          else "payment.confirmation_corrected", str(communication.id))
     try:
         db.commit()
     except IntegrityError:

@@ -52,9 +52,16 @@ describe("apresentação editorial compartilhada", () => {
     render(<GalleryPresentation galleryName="Evento" folders={folders} folderDisplayMode="individual" />);
     expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeTruthy();
     expect(screen.queryByRole("img", { name: "Prévia protegida de Sem dimensões.jpg" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Encerramento/ }));
+    const folderCover = screen.getByRole("img", { name: "Capa de Encerramento" });
+    expect(folderCover.getAttribute("src")).toBe("/fallback.jpg");
+    expect(fireEvent.contextMenu(folderCover)).toBe(false);
+    fireEvent.click(folderCover);
+    expect(screen.getByRole("button", { name: /Encerramento/ }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("img", { name: "Prévia protegida de Sem dimensões.jpg" })).toBeTruthy();
     expect(screen.queryByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeNull();
+    fireEvent.error(folderCover);
+    fireEvent.click(screen.getByRole("button", { name: /Abertura/ }));
+    expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeTruthy();
   });
 
   it("separa ampliar dos marcadores da cliente e não cria ações no modo fotógrafo", () => {

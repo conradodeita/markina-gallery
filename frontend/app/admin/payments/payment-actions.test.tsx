@@ -5,6 +5,23 @@ import { FinancialOrderShortcuts, PaymentActions, type FinancialOrder } from "./
 afterEach(() => vi.restoreAllMocks());
 const order: FinancialOrder = { id: "communication-1", order_id: "order-1", gallery_name: "Evento A", total_cents: 700, quantity: 1, created_at: "2026-09-19T12:00:00Z", status: "pending_review", can_decide: true, can_correct: false };
 describe("atalhos por pedido", () => {
+  it("permite reabrir pagamento não localizado e confirmar depois do refresh", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "pending_review" })));
+    vi.stubGlobal("fetch", fetch);
+    const refresh = vi.fn();
+    const { rerender } = render(<PaymentActions order={{ ...order, status: "refused", can_decide: false, can_correct: true }} clientName="Ana" onRefresh={refresh} />);
+    fireEvent.click(screen.getByRole("button", { name: "Corrigir pagamento não localizado" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(confirm.mock.calls[0][0]).toContain("Nenhuma mensagem será enviada");
+    expect(fetch.mock.calls[0][0]).toContain("communication-1/correction");
+    expect(await screen.findByText("Pagamento devolvido à revisão. Nenhuma mensagem enviada.")).toBeTruthy();
+    rerender(<PaymentActions order={order} clientName="Ana" onRefresh={refresh} />);
+    fetch.mockResolvedValue(new Response(JSON.stringify({ status: "confirmed" })));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ decision: "confirmed" });
+  });
   it("expõe total e galerias e exige decisão sobre todo o PIX", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "confirmed" })));

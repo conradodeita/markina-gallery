@@ -280,6 +280,35 @@ def test_admin_scope_history_decisions_and_correction(monkeypatch):
         browser.get("/library/purchases").json()["payment_groups"][0]["commercial_state"]
         == "cancelled"
     )
+    refused_correction = {"idempotency_key": "correct-refusal", "payment_group_id": payment["id"]}
+    assert browser.post(path + "/correction", json=refused_correction).status_code == 403
+    browser.cookies.set("markina_session", "admin-cart-test")
+    assert browser.post(path + "/correction", json={"idempotency_key": "without-scope"}).status_code == 409
+    with SessionLocal() as db:
+        inconsistent = db.scalar(select(SaleOrder).order_by(SaleOrder.id))
+        inconsistent.payment_status = "confirmed"
+        inconsistent_id = inconsistent.id
+        db.commit()
+    assert browser.post(path + "/correction", json=refused_correction).status_code == 409
+    with SessionLocal() as db:
+        assert db.scalar(select(PaymentCommunication)).status == "refused"
+        db.get(SaleOrder, inconsistent_id).payment_status = "cancelled"
+        db.commit()
+    assert browser.post(path + "/correction", json=refused_correction).status_code == 200
+    assert browser.post(path + "/correction", json=refused_correction).status_code == 200
+    with SessionLocal() as db:
+        from app.auth import PaymentConfirmationCorrection
+        assert {order.payment_status for order in db.scalars(select(SaleOrder))} == {"pending"}
+        assert db.scalar(select(PaymentGroup)).state == "reported"
+        assert db.scalar(select(func.count(NotificationEvent.id))) == 3
+        assert db.scalar(select(func.count(PaymentConfirmationCorrection.id))) == 2
+    payload["decision"] = "confirmed"
+    assert browser.post(path + "/decision", json=payload).status_code == 200
+    assert browser.post(path + "/decision", json=payload).status_code == 200
+    with SessionLocal() as db:
+        assert {order.payment_status for order in db.scalars(select(SaleOrder))} == {"confirmed"}
+        assert db.scalar(select(PaymentGroup)).state == "confirmed"
+        assert db.scalar(select(func.count(NotificationEvent.id))) == 4
 
 
 def test_legacy_endpoints_cannot_change_group_and_expired_selection_can_be_removed():

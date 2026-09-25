@@ -44,7 +44,9 @@ def payment_capabilities(communication_status: str | None, payment_status: str) 
     """Mesmos gates para Vendas e pagamentos e atalhos, nunca pelo agregado da cliente."""
     return {
         "can_decide": communication_status == "pending_review" and payment_status == "pending",
-        "can_correct": communication_status == "confirmed" and payment_status == "confirmed",
+        "can_correct": (communication_status, payment_status) in {
+            ("confirmed", "confirmed"), ("refused", "cancelled"),
+        },
     }
 
 
