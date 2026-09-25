@@ -52,7 +52,7 @@ def test_configuration_api_is_admin_only_and_validates_templates():
     response = client.get("/admin/notification-settings")
     assert response.status_code == 200
     settings = response.json()["settings"]
-    assert len(settings) == 6
+    assert len(settings) == 7
     item = settings[0]
     payload = {key: item[key] for key in ("version", "whatsapp_enabled", "push_enabled",
                                          "whatsapp_body", "push_title", "push_body")}

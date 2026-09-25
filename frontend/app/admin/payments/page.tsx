@@ -6,6 +6,7 @@ import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-ki
 import { PaymentActions } from "./payment-actions";
 
 import RemovedHistory from "./removed-history";
+import { OrderDeliveryForm, type OrderDelivery } from "./order-delivery";
 
 type Delivery = {
   id: string;
@@ -46,7 +47,7 @@ type Order = {
   communication: Communication | null;
   delivery_statuses: string[];
   folders: Array<{ id: string | null; name: string; items: Array<{ id: string; photo_id: string; name: string; unit_price_cents: number }> }>;
-  payment_message_snapshot: string | null;
+  delivery?: OrderDelivery;
 };
 type ClientGroup = {
   client: { id: string; name: string };
@@ -195,16 +196,6 @@ function PaymentsDashboard() {
     return () => window.removeEventListener("focus", refresh);
   }, [filters, load]);
 
-  async function retry(notificationId: string) {
-    setBusyAction(`retry:${notificationId}`);
-    const response = await fetch(`/api/admin/payment-notifications/${notificationId}/retry`, {
-      method: "POST",
-      credentials: "same-origin",
-    });
-    setMessage(response.ok ? "Notificação reenfileirada." : "O limite de tentativas não permite novo envio.");
-    if (response.ok) await load(filters);
-    setBusyAction("");
-  }
   async function decideReopening(item: Reopening, decision: "approved" | "refused") {
     let selection_expires_at: string | null = null;
     if (decision === "approved") { const value = window.prompt("Novo prazo (AAAA-MM-DD):"); if (!value) return; selection_expires_at = `${value}T23:59:59.000Z`; }
@@ -285,7 +276,7 @@ function PaymentsDashboard() {
       {dashboard.groups.map((group) => <section className="admin-card payment-client-card" key={group.client.id}>
         <header><div><p className="eyebrow">Cliente</p><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
-          {group.orders.map((order) => <OrderCard key={order.id} order={order} busyAction={busyAction} onRefresh={() => load(filters)} onRetry={retry} />)}
+          {group.orders.map((order) => <OrderCard key={order.id} order={order} onRefresh={() => load(filters)} />)}
         </div>
       </section>)}
     </div>
@@ -295,33 +286,21 @@ function PaymentsDashboard() {
   </section>;
 }
 
-function OrderCard({ order, busyAction, onRefresh, onRetry }: { order: Order; busyAction: string; onRefresh: () => Promise<void>; onRetry: (id: string) => Promise<void> }) {
+function OrderCard({ order, onRefresh }: { order: Order; onRefresh: () => Promise<void> }) {
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
     <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.parent_gallery.name} · pedido {order.id.slice(0, 8)}</p></div><strong>{money(order.total_cents)}</strong></div>
     <details>
-      <summary>Ver pedido e mensagens</summary>
+      <summary>Ver pedido e entrega</summary>
       <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div>{order.selection_expires_at ? <div><dt>Prazo</dt><dd>{new Date(order.selection_expires_at).toLocaleDateString("pt-BR")}</dd></div> : null}</dl>
       {order.folders?.length ? <div>{order.folders.map((folder) => <section key={folder.id ?? folder.name}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name} · {money(item.unit_price_cents)}</li>)}</ul></section>)}</div> : null}
       {!communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
         <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
-        {order.payment_message_snapshot ? <details><summary>Mensagem enviada nesta confirmação</summary><p>{order.payment_message_snapshot}</p></details> : null}
-        <DeliveryState label="Aviso ao fotógrafo" delivery={communication.photographer_notification} busyAction={busyAction} onRetry={onRetry} />
-        {communication.status !== "pending_review" ? <DeliveryState label="Resposta à cliente" delivery={communication.client_notification} busyAction={busyAction} onRetry={onRetry} /> : null}
       </>}
+      <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
     </details>
   </article>;
-}
-
-function DeliveryState({ label, delivery, busyAction, onRetry }: { label: string; delivery: Delivery | null; busyAction: string; onRetry: (id: string) => Promise<void> }) {
-  if (!delivery) return <p>{label}: não enfileirado — confira a configuração do ambiente.</p>;
-  const status = deliveryLabels[delivery.status] ?? delivery.status;
-  return <div className={`upload-status${delivery.status === "failed" ? " upload-status--error" : delivery.status === "sent" ? " upload-status--success" : ""}`}>
-    <strong>{label}: {status.toLocaleLowerCase("pt-BR")}</strong>
-    <span>{delivery.attempts} tentativa(s){delivery.last_error ? ` · ${delivery.last_error}` : ""}</span>
-    {delivery.can_retry ? <button className="link-button" type="button" disabled={busyAction === `retry:${delivery.id}`} onClick={() => void onRetry(delivery.id)}>Tentar enviar novamente</button> : null}
-  </div>;
 }

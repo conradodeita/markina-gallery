@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { StatusBadge } from "../ui-kit";
 import { PurchasePreview } from "../purchase-preview";
+import { safeOrderAlbumUrl } from "../order-album-url";
 export type Order = {
   id: string;
   gallery_name: string;
@@ -14,6 +15,7 @@ export type Order = {
   commercial_state?: "awaiting_payment" | "payment_reported" | "purchased" | "cancelled";
   communication_status?: "pending_review" | "confirmed" | "refused" | null;
   total_cents: number;
+  delivery_album_url?: string | null;
   items: Array<{ photo_id: string; name: string; preview_url: string | null; delivery_url: string | null; delivery_reference_available: boolean }>;
 };
 
@@ -40,6 +42,7 @@ export function LibraryOrderCard({ order }: { order: Order }) {
   const activityAt = order.confirmed_at ?? order.communicated_at;
   const activityLabel = order.confirmed_at ? "Confirmada" : "Informada";
   const gridId = `library-order-${order.id}-photos`;
+  const albumUrl = orderState(order) === "purchased" ? safeOrderAlbumUrl(order.delivery_album_url) : null;
 
   useEffect(() => {
     if (!expandedPhoto) return;
@@ -51,9 +54,11 @@ export function LibraryOrderCard({ order }: { order: Order }) {
   }, [expandedPhoto]);
 
   return (
-    <article aria-label={`Compra de ${order.gallery_name}`} className={`library-order library-order--${state}`}>
+    <article id={`order-${order.id}`} aria-label={`Compra de ${order.gallery_name}`} className={`library-order library-order--${state}`}>
       <div className="library-order-summary"><strong>{order.gallery_name}</strong><small>{order.parent_gallery_name}{order.gallery_removed ? " · Galeria removida" : ""}</small><span>{order.items.length} foto(s) · {money(order.total_cents)}</span><StatusBadge tone={order.commercial_state === "purchased" || !order.commercial_state ? "success" : order.commercial_state === "payment_reported" ? "warning" : "neutral"}>{orderLabel(order)}</StatusBadge>{activityAt ? <time dateTime={activityAt}>{activityLabel} em {new Date(activityAt).toLocaleDateString("pt-BR")}</time> : null}</div>
       {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Este registro permanece no seu histórico.</p> : null}
+      {albumUrl ? <a className="order-album-button order-album-button--available" href={albumUrl} target="_blank" rel="noopener noreferrer">Fotos disponíveis</a>
+        : <button type="button" className="order-album-button order-album-button--unavailable" disabled>Fotos indisponíveis</button>}
       <button className="secondary" type="button" aria-expanded={open} aria-controls={gridId} onClick={() => setOpen((current) => !current)} disabled={!photos.length}>{open ? "Ocultar fotos" : `Ver fotos (${photos.length})`}</button>
       {open ? <div className="library-order-photo-grid" id={gridId} role="region" aria-label={`Fotos da compra de ${order.gallery_name}`}>
         {photos.map((photo) => <figure key={photo.photo_id}>
