@@ -22,6 +22,8 @@
 
 ## 4. Integração e entrega para revisão
 
+- [ ] 4.4 Corrigir as falhas do CI do PR #98: reconciliar expectativa do histórico com o novo campo de entrega e tratar o falso positivo sintético do gitleaks com exceção exata; reproduzir, validar e publicar correção sem merge/deploy.
+
 - [x] 4.1 Executar regressões pertinentes de pagamentos/correções, histórico, notificações e migração; lint backend/frontend, typecheck, build e OpenSpec estrito. Registrar comandos, resultados e limites em validation.md sem marcar validações indisponíveis como concluídas.
 - [x] 4.2 Validar navegador com dados sintéticos em mobile/desktop e temas claro/escuro: formulário, Compras com/sem link, prévias, foco/teclado, contraste, ausência de overflow e nova configuração. Registrar evidências sem envio real ou álbuns pessoais.
-- [ ] 4.3 Revisar diff e preparar commit/push + PR somente desta change após implementação autorizada; anexar PR e registrar continuidade. Parar após push aguardando confirmação humana do CI. Merge, publicação, homologação remota e sincronização/arquivamento dependem das respectivas etapas humanas do processo.
+- [x] 4.3 Revisar diff e preparar commit/push + PR somente desta change após implementação autorizada; anexar PR e registrar continuidade. Parar após push aguardando confirmação humana do CI. Merge, publicação, homologação remota e sincronização/arquivamento dependem das respectivas etapas humanas do processo.

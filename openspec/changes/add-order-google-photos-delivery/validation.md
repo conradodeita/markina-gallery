@@ -42,3 +42,15 @@ Proposta e refinamentos aceitos; implementação autorizada. Completar tarefas c
 ## Entrega para revisão
 
 Diff revisado e `git diff --cached --check` aprovado. Somente os 31 arquivos da entrega estão preparados para commit; alterações preexistentes em outras changes, `backend/app/facial/purge.py` e temporários continuam fora dele. Publicar `feature/order-google-photos-delivery` em PR para `develop` e parar aguardando o proprietário confirmar CI verde. Não consultar repetidamente o CI, integrar, publicar em homologação nem arquivar/sincronizar a change nesta etapa. A task 4.3 será encerrada no registro local após confirmação de push/PR.
+
+Push confirmado em 25/09/2026: commit 398a18f, branch feature/order-google-photos-delivery. PR #98 aberto para develop: https://github.com/conradodeita/markina-gallery/pull/98 e anexado à tarefa. Execução parada após push + PR, aguardando confirmação humana do CI. Este fechamento de continuidade é local, posterior ao commit publicado; nenhum CI foi consultado, merge ou deploy executado.
+
+## Correção do CI — PR #98
+
+Após o proprietário informar falha, consultado o run 36161547426 do commit 398a18f. Frontend e OpenSpec passaram. Backend teve 814 aprovados, 13 ignorados e uma falha: o teste de histórico após remoção da galeria comparava o JSON inteiro sem incluir o novo campo `delivery_album_url`. A expectativa agora inclui `None` para pedidos antigos sem álbum, preservando todas as demais verificações de mídia e isolamento.
+
+Gitleaks 8.24.3 sinalizou somente a chave sintética `delivery-correction-1`, usada como identificador de idempotência no teste. Acrescentada expressão ancorada para esse valor exato à lista existente de fixtures sintéticas em `.gitleaks.toml`. Nenhuma regra foi desativada nem diretório ignorado. Apenas renomear o valor não resolveria a varredura do histórico; não houve reescrita de commits ou force push.
+
+Validação da correção: 15 testes passaram em 14,55 s (cenário que falhou e módulo `test_order_delivery.py`) usando o Python do projeto e banco SQLite temporário isolado. Ruff completo aprovado e diff sem erros de whitespace. Executável oficial gitleaks 8.24.3, baixado para temporários locais e conferido pelo SHA-256 publicado: varredura Git de 300 commits, 11,26 MB, sem vazamentos. Artefatos/logs permanecem em `.codex-tmp/`, fora do commit. Não houve alteração no código de produção, frontend ou migration.
+
+Preparar novo commit apenas com teste, exceção exata e continuidade desta change. Fazer push no mesmo PR e parar novamente para o proprietário confirmar CI, sem merge/deploy.

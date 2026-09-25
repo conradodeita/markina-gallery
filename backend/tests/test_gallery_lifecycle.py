@@ -4103,6 +4103,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
                 "frozen_at": None,
                 "confirmed_at": response.json()["orders"][0]["confirmed_at"],
                 "total_cents": 1700,
+                "delivery_album_url": None,
                 "items": [
                     {
                         "item_id": str(item_id),
