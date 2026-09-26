@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from time import perf_counter
@@ -1453,6 +1454,7 @@ def test_legacy_clone_is_rejected_and_client_selection_remains_isolated(client: 
     assert exported.status_code == 200
     assert "IMG_0001.jpg" in exported.text
     assert client.get(f"/admin/derived-galleries/{father_gallery_id}/selection/export.csv").headers["content-type"].startswith("text/csv")
+    assert client.get(f"/admin/derived-galleries/{father_gallery_id}/selection/export.html").status_code == 409
     overview = client.get("/admin/parent-galleries/overview?query=Evento")
     assert overview.status_code == 200
     assert overview.json()["parent_galleries"][0]["private_gallery_count"] == 2
@@ -1463,6 +1465,56 @@ def test_legacy_clone_is_rejected_and_client_selection_remains_isolated(client: 
     client.cookies.clear()
     authenticate_client(client, mother.phone_e164)
     assert client.get(f"/gallery/{gallery_id}/review").status_code == 200
+
+
+def test_confirmed_purchase_download_embeds_preview_without_server_export(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derivative_root = tmp_path / "derivatives"
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivative_root))
+    with SessionLocal() as db:
+        owner = Client(full_name="Ana & Bia", phone_e164="+5511555555188")
+        db.add(owner)
+        db.commit()
+        owner_id = owner.id
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    authenticate_admin(client)
+    endpoint = f"/admin/derived-galleries/{gallery_id}/selection/export.html"
+    assert client.get(endpoint).status_code == 409
+    image = BytesIO()
+    Image.new("RGB", (12, 8), color=(20, 80, 120)).save(image, format="JPEG")
+    preview = derivative_root / str(photo_id) / "admin_preview.jpg"
+    preview.parent.mkdir(parents=True)
+    preview.write_bytes(image.getvalue())
+    with SessionLocal() as db:
+        db.add(MediaDerivative(
+            photo_asset_id=photo_id, variant="admin_preview",
+            relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=12, height=8,
+        ))
+        order = SaleOrder(
+            derived_gallery_id=gallery_id, client_id=owner_id,
+            payment_status="confirmed", total_cents=700, confirmed_at=now(),
+        )
+        db.add(order)
+        db.flush()
+        db.add(SaleOrderItem(
+            sale_order_id=order.id, photo_asset_id=photo_id,
+            filename_snapshot="FOTO_001.jpg", unit_price_cents=700,
+        ))
+        db.commit()
+    before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file()}
+    exported = client.get(endpoint)
+    after = {path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file()}
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("text/html")
+    assert exported.headers["content-disposition"] == 'attachment; filename="fotos-compradas.html"'
+    assert exported.headers["cache-control"] == "private, no-store"
+    assert "Ana &amp; Bia" in exported.text
+    assert "FOTO_001.jpg" in exported.text
+    assert "Gerado em:" in exported.text
+    assert base64.b64encode(image.getvalue()).decode("ascii") in exported.text
+    assert "<img src=\"data:image/jpeg;base64," in exported.text
+    assert before == after
 
 
 def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
@@ -4333,6 +4385,7 @@ def test_private_upload_reuses_media_pipeline_without_entering_public_facial_sco
         owner_phone = owner.phone_e164
     gallery_id, public_photo_id = create_gallery_for_client(client, owner)
     authenticate_admin(client)
+    assert client.get(f"/admin/derived-galleries/{gallery_id}").json()["inherited_folder_display_mode"] == "individual"
     private_folder_id = UUID(
         client.post(
             f"/admin/derived-galleries/{gallery_id}/folders",
