@@ -142,7 +142,7 @@ describe("telas administrativas de galerias", () => {
             ? { folders: [] }
           : path.endsWith("/facial-index")
             ? { state: "completed", progress: { ready: 1, total: 1 }, coverage: { photos_with_faces: 1, total: 1, percent: 100, detected_faces: 1 } }
-            : { id: "private-1", parent_gallery_id: "public-1", name: "Família", custom_message: "Escolha com calma", favorites_enabled: true, comments_enabled: true, selection_expires_at: null, cover_preview_url: null, frozen: false, blocked: false };
+          : { id: "private-1", parent_gallery_id: "public-1", name: "Família", custom_message: "Escolha com calma", favorites_enabled: true, comments_enabled: true, selection_expires_at: null, cover_preview_url: null, inherited_folder_display_mode: "sequential", frozen: false, blocked: false };
       if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ references_created: 1 }), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
     });
@@ -157,8 +157,10 @@ describe("telas administrativas de galerias", () => {
     expect(screen.getByText("Selecionada · Bia")).toBeTruthy();
     expect(screen.getByText("Favoritada por Ana")).toBeTruthy();
     expect(screen.getByText("Quero esta em destaque.")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Exibição das pastas herdada" }) as HTMLSelectElement).value).toBe("sequential");
     expect(screen.getAllByText("Selecionadas e não compradas")).toHaveLength(2);
-    expect(screen.getAllByRole("link", { name: "Abrir seleção individual" })[0].getAttribute("href")).toBe("/admin/galleries/private-1/selection?client=client-1");
+    expect(screen.getByRole("link", { name: "Baixar seleção individual" }).getAttribute("href")).toBe("/api/admin/derived-galleries/private-1/selection/export.html?client_id=client-1");
+    expect(screen.getByText("Disponível após a primeira compra confirmada.")).toBeTruthy();
     expect(screen.getByText("2", { selector: ".private-member-cards dd" })).toBeTruthy();
     expect(screen.getByText("5", { selector: ".private-member-cards dd" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Adicionar ao acervo privado" })).toBeNull();
@@ -295,4 +297,24 @@ it("exclui pasta própria privada com confirmação e atualiza a lista", async (
   fireEvent.click(screen.getByRole("button", { name: "Excluir pasta Pasta exclusiva" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Excluir pasta Pasta exclusiva" })).toBeNull());
   expect(fetchMock).toHaveBeenCalledWith("/api/admin/photo-folders/own-folder", expect.objectContaining({ method: "DELETE" }));
+});
+
+it("libera uma pasta privada depois do processamento", async () => {
+  let released = false;
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path === "/api/admin/photo-folders/own-folder/publish" && init?.method === "POST") {
+      released = true;
+      return Promise.resolve(new Response(JSON.stringify({ status: "released" }), { status: 200 }));
+    }
+    const data = path.endsWith("/folders") ? { folders: [{ id: "own-folder", name: "Pasta exclusiva", status: released ? "released" : "preparing", photo_count: 2 }] }
+      : path.endsWith("/photos") ? { photos: [] } : path.endsWith("/members") ? { members: [] }
+      : { id: "private-1", parent_gallery_id: "source-1", name: "Família", inherited_folder_display_mode: "individual", frozen: false, blocked: false };
+    return Promise.resolve(new Response(JSON.stringify(data), { status: 200 }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<GalleryDetailPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Liberar para cliente" }));
+  await waitFor(() => expect(released).toBe(true));
+  expect(await screen.findByText("Pasta “Pasta exclusiva” liberada para a cliente.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Liberar para cliente" })).toBeNull();
 });

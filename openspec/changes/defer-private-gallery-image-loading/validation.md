@@ -9,8 +9,8 @@
 
 - Os dois grupos de fotos do painel privado usam `loading="lazy"` e `decoding="async"`.
 - `GalleryPresentation` aceita `deferGridImages`; somente a rota da galeria privada ativa a opção, tanto na grade principal quanto na revisão do pedido. O padrão da apresentação pública permanece inalterado. O diálogo ampliado continua usando a URL de prévia e sem carregamento tardio.
-- Testes direcionados de apresentação compartilhada, galeria cliente e painel administrativo: 4 arquivos, 60 testes aprovados. Cobrem atributo nos cards, continuidade da ampliação e padrão público.
-- `npm run lint`: 0 erros, 28 avisos preexistentes. `npm run build`: compilação, TypeScript e 22 páginas estáticas aprovados. `openspec validate defer-private-gallery-image-loading --type change --strict --no-interactive` e `git diff --check`: aprovados.
+- Após integrar `develop` (PR #101), os testes direcionados de apresentação compartilhada, galeria cliente e painel administrativo passaram novamente: 4 arquivos, 61 testes. Cobrem atributo nos cards, continuidade da ampliação e padrão público.
+- Após a integração, `npm run lint`: 0 erros, 25 avisos. `npm run build`: compilação, TypeScript e 22 páginas estáticas aprovados. `openspec validate defer-private-gallery-image-loading --type change --strict --no-interactive` e `git diff --check`: aprovados.
 
 ## Limites e escopo
 

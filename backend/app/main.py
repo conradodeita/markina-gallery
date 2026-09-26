@@ -9,11 +9,13 @@ from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from hashlib import sha256
+from html import escape
 from io import BytesIO
 from os import getenv
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pyotp
 from argon2.exceptions import VerificationError
@@ -23,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.responses import FileResponse, PlainTextResponse
+from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 from app.admin_account import (
     AdminAccountError,
@@ -5057,6 +5059,40 @@ def selection_detail(
     }
 
 
+def _selection_html_preview(db: Session, item: SaleOrderItem) -> str:
+    historical = db.scalar(
+        select(CommercialHistoryMedia).where(
+            CommercialHistoryMedia.sale_order_item_id == item.id,
+            CommercialHistoryMedia.status == "ready",
+        )
+    )
+    if historical and historical.preview_storage_key:
+        try:
+            encoded = base64.b64encode(
+                historical_media_path(historical.preview_storage_key).read_bytes()
+            ).decode("ascii")
+            return f'<img src="data:image/jpeg;base64,{encoded}" alt="Prévia de {escape(item.filename_snapshot)}">'
+        except (OSError, ValueError):
+            pass
+    if not item.photo_asset_id:
+        return '<div class="preview-missing">Prévia indisponível</div>'
+    derivative = db.scalar(
+        select(MediaDerivative).where(
+            MediaDerivative.photo_asset_id == item.photo_asset_id,
+            MediaDerivative.variant == "admin_preview",
+            MediaDerivative.status == "ready",
+        )
+    )
+    if not derivative:
+        return '<div class="preview-missing">Prévia indisponível</div>'
+    try:
+        path = safe_derivative_path(derivative)
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    except (OSError, ValueError):
+        return '<div class="preview-missing">Prévia indisponível</div>'
+    return f'<img src="data:image/jpeg;base64,{encoded}" alt="Prévia de {escape(item.filename_snapshot)}">'
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/selection/export.{format}")
 def export_selection(
     gallery_id: UUID,
@@ -5064,9 +5100,9 @@ def export_selection(
     request: Request,
     client_id: UUID | None = None,
     db: Session = Depends(db_session),
-) -> PlainTextResponse:
+) -> Response:
     require_admin(request)
-    if format not in {"txt", "csv"}:
+    if format not in {"txt", "csv", "html"}:
         raise HTTPException(status_code=404, detail="Formato não suportado.")
     gallery = db.get(DerivedGallery, gallery_id)
     if not gallery:
@@ -5081,6 +5117,56 @@ def export_selection(
         not membership and selected_client_id != gallery.client_id
     ):
         raise HTTPException(status_code=404, detail="Cliente não pertence a esta galeria.")
+    if format == "html":
+        purchased_items = list(db.scalars(
+            select(SaleOrderItem)
+            .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
+            .where(
+                SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                SaleOrder.client_id == selected_client_id,
+                SaleOrder.payment_status == "confirmed",
+            )
+            .order_by(SaleOrder.confirmed_at, SaleOrder.id, SaleOrderItem.filename_snapshot)
+        ))
+        if not purchased_items:
+            raise HTTPException(status_code=409, detail="Nenhuma compra confirmada para esta cliente nesta galeria.")
+        owner = db.get(Client, selected_client_id)
+        generated_at = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y às %H:%M")
+        gallery_name = escape(gallery.name)
+        client_name = escape(owner.full_name if owner else "Cliente")
+        cards = []
+        for item in purchased_items:
+            cards.append(
+                f'<article class="photo"><div class="preview">{_selection_html_preview(db, item)}</div>'
+                f'<div class="caption">{escape(item.filename_snapshot)}</div></article>'
+            )
+        content = f"""<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fotos compradas — {gallery_name} — {client_name}</title>
+<style>
+:root {{ color-scheme: light; font-family: Arial, sans-serif; color: #202124; background: #f5f3ef; }}
+body {{ margin: 0; padding: 28px; }} main {{ max-width: 1440px; margin: 0 auto; }}
+header {{ background: #fff; border: 1px solid #d9d4cc; border-radius: 14px; padding: 22px; margin-bottom: 22px; }}
+h1 {{ margin: 0 0 10px; font-size: 25px; }} p {{ margin: 5px 0; color: #5f5a53; }}
+.photos {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }}
+.photo {{ background: #fff; border: 1px solid #d9d4cc; border-radius: 12px; overflow: hidden; break-inside: avoid; }}
+.preview {{ aspect-ratio: 4 / 3; display: grid; place-items: center; background: #ece9e4; }}
+.preview img {{ display: block; width: 100%; height: 100%; object-fit: contain; }}
+.preview-missing {{ padding: 16px; color: #6d675f; text-align: center; }}
+.caption {{ display: block; padding: 10px 12px 12px; font-weight: 600; overflow-wrap: anywhere; }}
+@media (max-width: 1100px) {{ .photos {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }} }}
+@media (max-width: 620px) {{ body {{ padding: 14px; }} .photos {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }} }}
+@media print {{ body {{ padding: 0; background: #fff; }} header {{ border: 0; padding: 0 0 14px; }} .photos {{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }} .photo {{ border-color: #bbb; }} }}
+</style></head><body><main>
+<header><h1>Fotos compradas</h1><p><strong>Galeria — Cliente:</strong> {gallery_name} — {client_name}</p><p><strong>Gerado em:</strong> {generated_at}</p><p><strong>Total:</strong> {len(cards)} foto(s)</p></header>
+<section class="photos" aria-label="Fotos compradas">{"".join(cards)}</section>
+</main></body></html>"""
+        audit(db, "selection.exported", str(gallery_id))
+        db.commit()
+        return HTMLResponse(
+            content,
+            headers={"Content-Disposition": 'attachment; filename="fotos-compradas.html"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
     rows = []
     for selection in db.scalars(
         select(PhotoSelection).where(
@@ -7094,6 +7180,7 @@ def derived_gallery_detail(
         "client": client_data,
         "responsible": client_data,
         "configuration_inherited": True,
+        "inherited_folder_display_mode": parent.folder_display_mode,
         "origin_active": parent.lifecycle_status == "active",
         **status_data,
     }
