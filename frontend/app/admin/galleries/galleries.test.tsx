@@ -152,7 +152,7 @@ describe("telas administrativas de galerias", () => {
     expect(await screen.findByRole("heading", { name: "Família" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Seleções vindas da Galeria pública" })).toBeTruthy();
     expect(screen.getByText("Cerimônia")).toBeTruthy();
-    expect(screen.getByAltText("Prévia protegida de FOTO_1.jpg")).toBeTruthy();
+    expect(screen.getByAltText("Prévia protegida de FOTO_1.jpg").getAttribute("loading")).toBe("lazy");
     expect(screen.getByText("Comprada · Ana")).toBeTruthy();
     expect(screen.getByText("Selecionada · Bia")).toBeTruthy();
     expect(screen.getByText("Favoritada por Ana")).toBeTruthy();

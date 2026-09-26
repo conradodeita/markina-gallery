@@ -192,6 +192,7 @@ describe("galeria privada da cliente", () => {
       screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("src"),
     ).toBe("/api/gallery/gallery-1/photos/new-1/preview");
     expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("draggable")).toBe("false");
+    expect(screen.getByRole("img", { name: "Prévia protegida de IMG_001.jpg" }).getAttribute("loading")).toBe("lazy");
     expect(screen.queryByRole("img", { name: "Capa de Festa escolar" })).toBeNull();
     const presentation = screen.getByRole("region", { name: "Apresentação de Festa escolar" });
     expect(presentation).toBeTruthy();
