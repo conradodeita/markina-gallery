@@ -646,6 +646,11 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .folder-photo-grid article.photo-state-published { border-color:var(--mk-border); }
 .folder-photo-grid article.photo-state-ready_to_publish { border-color:var(--mk-border); }
 .folder-photo-grid article.photo-state-failed { border-color:var(--mk-border); background:var(--mk-surface); }
+.folder-photo-grid { grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr)); }
+.folder-photo-grid article { grid-template-columns:minmax(0,1fr); }
+.folder-photo-grid article > strong,.folder-photo-grid article > small,.photo-preview-dialog p { overflow-wrap:anywhere; }
+.folder-photo-grid .photo-preview-button { display:block; width:100%; min-width:0; overflow:hidden; }
+.folder-photo-grid img { display:block; max-width:100%; }
 .gallery-folder-grid article.is-published { border-color:var(--mk-border); }
 .gallery-folder-grid article.is-ready { border-color:var(--mk-border); }
 .gallery-folder-grid article.is-processing { border-color:var(--mk-border); }
