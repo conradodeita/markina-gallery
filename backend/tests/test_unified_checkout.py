@@ -14,8 +14,13 @@ from app.auth import (
     Base,
     Client,
     DerivedGallery,
+    FolderClientGrant,
+    GalleryClientState,
     GlobalPixSettings,
+    MediaDerivative,
+    NotificationEvent,
     ParentGallery,
+    ParentGalleryRegistration,
     PaymentCommunication,
     PaymentGroup,
     PhotoAsset,
@@ -23,11 +28,13 @@ from app.auth import (
     PhotoSelection,
     PriceRule,
     SaleOrder,
+    SaleOrderItem,
     SessionLocal,
     engine,
     now,
     token_hash,
 )
+from app.canonical_selection import CanonicalSelectionUnavailable, select_canonical_photo
 from app.checkout import CheckoutError
 from app.main import app
 from app.unified_checkout import cart_payload, prepare_group, report_group
@@ -37,7 +44,7 @@ from tests.test_derived_galleries import set_test_global_pix
 @pytest.fixture(autouse=True)
 def isolated_cart_database():
     if engine.dialect.name == "postgresql":
-        assert engine.url.host == "127.0.0.1" and engine.url.port == 55458
+        assert engine.url.host == "127.0.0.1" and engine.url.port in {55458, 55888}
         assert engine.url.database == "markina_unified_test"
         schema = "cart_" + uuid4().hex
         with engine.begin() as connection:
@@ -116,6 +123,50 @@ def setup_cart():
         return owner.id, other.id, gallery_ids
 
 
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="concorrência exige PostgreSQL descartável")
+def test_simultaneous_first_selections_create_one_canonical_state() -> None:
+    with SessionLocal() as db:
+        owner = Client(full_name="Cliente concorrente", phone_e164="+5511999988333")
+        parent = ParentGallery(name="Evento concorrente")
+        db.add_all([owner, parent])
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent.id, client_id=owner.id, status="active"
+        ))
+        folder = PhotoFolder(
+            parent_gallery_id=parent.id, name="Comum", status="released",
+            audience_scope="all",
+        )
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id, folder_id=folder.id, filename="foto.jpg",
+            storage_key="synthetic/foto.jpg", available=True,
+        )
+        db.add(photo)
+        db.commit()
+        owner_id, parent_id, photo_id = owner.id, parent.id, photo.id
+    barrier = Barrier(2)
+
+    def select_once(_):
+        with SessionLocal() as db:
+            barrier.wait(timeout=10)
+            result = select_canonical_photo(
+                db, parent_gallery_id=parent_id, client_id=owner_id,
+                photo_id=photo_id,
+            )
+            db.commit()
+            return result.state_created, result.selection_created, result.quantity
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(select_once, range(2)))
+    assert sorted(outcomes) == [(False, False, 1), (True, True, 1)]
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count(GalleryClientState.id))) == 1
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 1
+        assert db.scalar(select(func.count(DerivedGallery.id))) == 0
+
+
 def test_global_cart_projects_folders_prices_and_identity():
     owner_id, other_id, gallery_ids = setup_cart()
     with SessionLocal() as db:
@@ -132,6 +183,244 @@ def test_global_cart_projects_folders_prices_and_identity():
         payload = cart_payload(db, db.get(Client, owner_id))
         assert payload["quantity"] == 3 and payload["total_cents"] is None
         assert not payload["can_prepare"]
+
+
+def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
+    owner_id, other_id, legacy_ids = setup_cart()
+    with SessionLocal() as db:
+        parent = db.get(DerivedGallery, legacy_ids[0]).parent_gallery_id
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent, client_id=owner_id, status="active"
+        ))
+        state = GalleryClientState(parent_gallery_id=parent, client_id=owner_id)
+        db.add(state)
+        db.flush()
+        folder = PhotoFolder(
+            parent_gallery_id=parent, name="Pasta comum", status="released",
+            audience_scope="all",
+        )
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            parent_gallery_id=parent, folder_id=folder.id, filename="nova.jpg",
+            storage_key=f"synthetic/{uuid4()}.jpg",
+        )
+        db.add(photo)
+        db.flush()
+        db.add(PhotoSelection(
+            parent_gallery_id=parent, client_id=owner_id, photo_asset_id=photo.id
+        ))
+        db.commit()
+        canonical_id = parent
+        photo_id = photo.id
+        folder_id = folder.id
+    with SessionLocal() as db:
+        owner = db.get(Client, owner_id)
+        cart = cart_payload(db, owner)
+        assert cart["quantity"] == 4
+        assert cart["total_cents"] == 2800
+        canonical = next(group for group in cart["groups"] if group["gallery_id"] == str(canonical_id))
+        assert canonical["quantity"] == 1
+        assert canonical["items"][0]["preview_url"] == (
+            f"/public-galleries/{canonical_id}/photos/{photo_id}/preview"
+        )
+        assert cart_payload(db, db.get(Client, other_id))["groups"] == []
+        group = prepare_group(db, owner)
+        assert prepare_group(db, owner).id == group.id
+        db.commit()
+        assert db.scalar(select(func.count(DerivedGallery.id))) == 2
+        order = db.scalar(select(SaleOrder).where(SaleOrder.parent_gallery_id == canonical_id))
+        assert order and order.derived_gallery_id is None
+        first_communication = report_group(db, owner, group.id, group.revision, "mixed-cart")
+        db.commit()
+        assert order.frozen_at is not None
+        frozen_snapshot = (order.total_cents, order.price_rule_snapshot, tuple(
+            (item.filename_snapshot, item.unit_price_cents)
+            for item in db.scalars(select(SaleOrderItem).where(
+                SaleOrderItem.sale_order_id == order.id
+            ).order_by(SaleOrderItem.id))
+        ))
+        assert db.scalar(select(PhotoSelection.id).where(
+            PhotoSelection.parent_gallery_id == canonical_id,
+            PhotoSelection.photo_asset_id == photo_id,
+        )) is None
+        second = PhotoAsset(
+            parent_gallery_id=canonical_id, folder_id=folder_id,
+            filename="compra-adicional.jpg", storage_key=f"synthetic/{uuid4()}.jpg",
+        )
+        db.add(second)
+        db.flush()
+        db.add(PhotoSelection(
+            parent_gallery_id=canonical_id, client_id=owner_id,
+            photo_asset_id=second.id,
+        ))
+        db.commit()
+        next_group = prepare_group(db, owner)
+        assert next_group.id != group.id
+        assert next_group.total_cents == 700
+        next_communication = report_group(db, owner, next_group.id, next_group.revision, "additional-cart")
+        db.commit()
+        assert db.scalar(select(func.count(SaleOrder.id)).where(
+            SaleOrder.parent_gallery_id == canonical_id,
+            SaleOrder.frozen_at.is_not(None),
+        )) == 2
+        assert db.scalar(select(func.count(NotificationEvent.id)).where(
+            NotificationEvent.event_type == "payment_reported",
+            NotificationEvent.parent_gallery_id == canonical_id,
+        )) >= 1
+        admin = db.scalar(select(AdminUser))
+        db.add(AuthSession(
+            subject_id=admin.id, role="admin", token_hash=token_hash("canonical-admin"),
+            expires_at=now() + timedelta(hours=1),
+        ))
+        db.commit()
+        first_communication_id = first_communication.id
+        next_communication_id = next_communication.id
+        first_order_id = order.id
+        first_group_id, next_group_id = group.id, next_group.id
+    admin_browser = TestClient(app)
+    admin_browser.cookies.set("markina_session", "canonical-admin")
+    for communication_id, payment_group_id in (
+        (first_communication_id, first_group_id),
+        (next_communication_id, next_group_id),
+    ):
+        decision = admin_browser.post(
+            f"/admin/payment-communications/{communication_id}/decision",
+            json={"decision": "confirmed", "payment_group_id": str(payment_group_id)},
+        )
+        assert decision.status_code == 200, decision.text
+    delivery = admin_browser.put(
+        f"/admin/orders/{first_order_id}/delivery",
+        json={"album_url": "https://photos.app.goo.gl/CanonicalTest", "version": 0},
+    )
+    assert delivery.status_code == 200, delivery.text
+    assert delivery.json()["notification"] is not None
+    purchased = admin_browser.get(
+        f"/admin/parent-galleries/{canonical_id}/clients/{owner_id}/selection/export.html"
+    )
+    assert purchased.status_code == 200, purchased.text
+    assert "nova.jpg" in purchased.text and "compra-adicional.jpg" in purchased.text
+    with SessionLocal() as db:
+        original = db.get(SaleOrder, first_order_id)
+        assert (original.total_cents, original.price_rule_snapshot, tuple(
+            (item.filename_snapshot, item.unit_price_cents)
+            for item in db.scalars(select(SaleOrderItem).where(
+                SaleOrderItem.sale_order_id == first_order_id
+            ).order_by(SaleOrderItem.id))
+        )) == frozen_snapshot
+    browser = TestClient(app)
+    browser.cookies.set("markina_session", "cart-test")
+    history = browser.get("/library/purchases")
+    assert history.status_code == 200, history.text
+    assert any(
+        order["gallery_removed"] is False
+        for payment_group in history.json()["payment_groups"]
+        for order in payment_group["orders"]
+        if order["parent_gallery_name"] == "Galeria 1"
+    )
+    with SessionLocal() as db:
+        with pytest.raises(CanonicalSelectionUnavailable):
+            select_canonical_photo(
+                db, parent_gallery_id=canonical_id,
+                client_id=owner_id, photo_id=photo_id,
+            )
+        third = PhotoAsset(
+            parent_gallery_id=canonical_id, folder_id=folder_id,
+            filename="remover.jpg", storage_key=f"synthetic/{uuid4()}.jpg",
+        )
+        db.add(third)
+        db.flush()
+        db.add(PhotoSelection(
+            parent_gallery_id=canonical_id, client_id=owner_id,
+            photo_asset_id=third.id,
+        ))
+        db.commit()
+        third_id = third.id
+    removed = browser.delete(f"/library/cart/{canonical_id}/photos/{third_id}")
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["quantity"] == 0
+
+
+def test_confirmed_canonical_preview_survives_folder_revocation(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path))
+    with SessionLocal() as db:
+        owner = Client(full_name="Compradora", phone_e164="+5511999988111")
+        other = Client(full_name="Outra", phone_e164="+5511999988222")
+        parent = ParentGallery(name="Evento")
+        db.add_all([owner, other, parent])
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent.id, client_id=owner.id, status="active"
+        ))
+        db.add(GalleryClientState(parent_gallery_id=parent.id, client_id=owner.id))
+        folder = PhotoFolder(
+            parent_gallery_id=parent.id, name="Acervo", status="released",
+            audience_scope="selected",
+        )
+        db.add(folder)
+        db.flush()
+        grant = FolderClientGrant(
+            folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id
+        )
+        photo = PhotoAsset(
+            parent_gallery_id=parent.id, folder_id=folder.id,
+            filename="foto.jpg", storage_key="synthetic/foto.jpg", available=True,
+        )
+        db.add_all([grant, photo])
+        db.flush()
+        preview_path = tmp_path / str(photo.id) / "client_preview.jpg"
+        preview_path.parent.mkdir(parents=True)
+        preview_path.write_bytes(b"synthetic-preview")
+        db.add(MediaDerivative(
+            photo_asset_id=photo.id, variant="client_preview", status="ready",
+            relative_path=f"{photo.id}/client_preview.jpg", width=10, height=10,
+        ))
+        order = SaleOrder(
+            parent_gallery_id=parent.id, client_id=owner.id,
+            payment_status="confirmed", total_cents=700, confirmed_at=now(),
+        )
+        db.add(order)
+        db.flush()
+        item = SaleOrderItem(
+            sale_order_id=order.id, photo_asset_id=photo.id,
+            filename_snapshot=photo.filename, unit_price_cents=700,
+        )
+        db.add(item)
+        pending = SaleOrder(
+            parent_gallery_id=parent.id, client_id=owner.id,
+            payment_status="pending", total_cents=700,
+        )
+        db.add(pending)
+        db.flush()
+        pending_item = SaleOrderItem(
+            sale_order_id=pending.id, photo_asset_id=photo.id,
+            filename_snapshot=photo.filename, unit_price_cents=700,
+        )
+        db.add(pending_item)
+        db.add_all([
+            AuthSession(subject_id=owner.id, role="client", token_hash=token_hash("buyer"),
+                        expires_at=now() + timedelta(hours=1)),
+            AuthSession(subject_id=other.id, role="client", token_hash=token_hash("stranger"),
+                        expires_at=now() + timedelta(hours=1)),
+        ])
+        db.commit()
+        parent_id, photo_id, item_id, pending_item_id = (
+            parent.id, photo.id, item.id, pending_item.id
+        )
+        db.delete(grant)
+        db.commit()
+    browser = TestClient(app)
+    browser.cookies.set("markina_session", "buyer")
+    assert browser.get(f"/public-galleries/{parent_id}/photos/{photo_id}/preview").status_code == 404
+    history = browser.get("/library/purchases").json()
+    assert history["orders"][0]["items"][0]["preview_url"] == (
+        f"/library/purchases/items/{item_id}/preview"
+    )
+    preview = browser.get(f"/library/purchases/items/{item_id}/preview")
+    assert preview.status_code == 200 and preview.content == b"synthetic-preview"
+    assert browser.get(f"/library/purchases/items/{pending_item_id}/preview").status_code == 403
+    browser.cookies.set("markina_session", "stranger")
+    assert browser.get(f"/library/purchases/items/{item_id}/preview").status_code == 403
 
 
 def test_prepare_report_preserves_selection_and_is_idempotent():

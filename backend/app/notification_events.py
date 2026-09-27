@@ -1,5 +1,6 @@
 """Marcos de negócio idempotentes; nenhum transporte no ciclo HTTP."""
 
+from hashlib import sha256
 from uuid import UUID
 
 from sqlalchemy import select
@@ -10,11 +11,14 @@ from app.auth import (
     AdminUser,
     Client,
     DerivedGallery,
+    FolderClientGrant,
+    GalleryClientState,
     NotificationMilestone,
     ParentGallery,
     ParentGalleryRegistration,
     PaymentGroup,
     PaymentNotificationOutbox,
+    PhotoFolder,
 )
 from app.messaging import WhatsAppConfigurationError, configured_photographer_phone
 from app.notification_settings import enqueue_event, notification_savepoint, setting_for
@@ -68,11 +72,57 @@ def record_gallery_milestone(db: Session, *, kind: str, parent_gallery_id: UUID,
     return True
 
 
+def record_restricted_folder_ready(
+    db: Session, *, folder: PhotoFolder, photo_ids: set[UUID],
+    batch_key: str, client_ids: set[UUID] | None = None,
+) -> int:
+    """Agenda aviso apenas para destinatárias com acesso efetivo no momento da liberação."""
+    if not photo_ids or folder.audience_scope != "selected" or folder.status != "released":
+        return 0
+    parent = db.get(ParentGallery, folder.parent_gallery_id)
+    if not parent or not parent.active or parent.lifecycle_status != "active":
+        return 0
+    effective_clients = select(FolderClientGrant.client_id, FolderClientGrant.id).join(
+        GalleryClientState,
+        (GalleryClientState.parent_gallery_id == FolderClientGrant.parent_gallery_id)
+        & (GalleryClientState.client_id == FolderClientGrant.client_id),
+    ).join(
+        ParentGalleryRegistration,
+        (ParentGalleryRegistration.parent_gallery_id == FolderClientGrant.parent_gallery_id)
+        & (ParentGalleryRegistration.client_id == FolderClientGrant.client_id),
+    ).where(
+        FolderClientGrant.folder_id == folder.id,
+        FolderClientGrant.parent_gallery_id == parent.id,
+        GalleryClientState.status == "active",
+        ParentGalleryRegistration.status == "active",
+    )
+    if client_ids is not None:
+        effective_clients = effective_clients.where(FolderClientGrant.client_id.in_(client_ids))
+    digest = sha256(",".join(sorted(str(item) for item in photo_ids)).encode()).hexdigest()[:24]
+    sent = 0
+    for client_id, grant_id in db.execute(effective_clients):
+        client = db.get(Client, client_id)
+        if not client:
+            continue
+        enqueue_event(
+            db, event_type="private_photos_ready",
+            event_key=f"private_photos_ready:{folder.id}:{batch_key}:{digest}:{grant_id}:{client_id}",
+            values={"galeria": parent.name, "cliente": client.full_name},
+            target_path=f"/public-galleries/{parent.id}", recipients=[client_id],
+            parent_gallery_id=parent.id, client_id=client_id,
+        )
+        sent += 1
+    return sent
+
+
 def record_payment_event(db: Session, *, communication, order, event_type: str,
                          decision_revision: int = 0):
     client = db.get(Client, order.client_id)
     gallery = db.get(DerivedGallery, order.derived_gallery_id) if order.derived_gallery_id else None
-    if not client or not gallery or communication.client_id != client.id:
+    parent = db.get(ParentGallery, order.parent_gallery_id) if order.parent_gallery_id else (
+        db.get(ParentGallery, gallery.parent_gallery_id) if gallery else None
+    )
+    if not client or not parent or communication.client_id != client.id:
         return None
     reported = event_type == "payment_reported"
     group = db.get(PaymentGroup, communication.payment_group_id) if communication.payment_group_id else None
@@ -85,9 +135,12 @@ def record_payment_event(db: Session, *, communication, order, event_type: str,
                                   "galeria": "sua compra" if group else order.derived_gallery_name_snapshot,
                                   "pedido": str(group.id if group else order.id)[:8]},
                           target_path="/admin/payments" if reported else (
-                              f"/library/purchases#payment-{group.id}" if group else f"/gallery/{gallery.id}"),
-                          recipients=recipients, parent_gallery_id=gallery.parent_gallery_id,
-                          derived_gallery_id=gallery.id, client_id=client.id, sale_order_id=order.id)
+                              f"/library/purchases#payment-{group.id}" if group else (
+                                  f"/gallery/{gallery.id}" if gallery else f"/public-galleries/{parent.id}"
+                              )),
+                          recipients=recipients, parent_gallery_id=parent.id,
+                          derived_gallery_id=gallery.id if gallery else None,
+                          client_id=client.id, sale_order_id=order.id)
     # Projeção técnica para os cards financeiros existentes, nunca segunda fila externa.
     # O materializador legado exclui chaves presentes na outbox transacional.
     if not db.scalar(select(PaymentNotificationOutbox.id).where(

@@ -12,40 +12,77 @@ import os
 import stat
 from pathlib import Path
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.auth import (
-    AdminSecurityChallenge,
-    AdminUser,
-    AuthChallenge,
+    AuditEvent,
     AuthSession,
-    BrandingSettings,
-    Client,
-    DerivedGallery,
-    DerivedGalleryMembership,
-    GalleryLifecycleOperation,
-    GlobalPixSettings,
-    ParentGallery,
-    ParentGalleryRegistration,
-    PaymentCommunication,
-    PaymentMessageTemplate,
-    PhotoAsset,
-    PhotoFolder,
-    PhotoSelection,
-    ProgressivePricingPreset,
+    Base,
+    PushSubscription,
     Role,
-    SaleOrder,
     SessionLocal,
-    WhatsAppChannelSettings,
-    WhatsAppDelivery,
-    WhatsAppDeliveryAttempt,
 )
 from app.media import derivatives_root, source_root
 
 CONFIRMATION = "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
 WITHOUT_BACKUP_CONFIRMATION = "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS_WITHOUT_BACKUP"
 ALLOWED_ENVIRONMENTS = {"homolog", "homologation"}
+EXPECTED_MEDIA_ROOTS = {
+    "source": Path("/var/lib/markina/source"),
+    "derivatives": Path("/var/lib/markina/derivatives"),
+    "history": Path("/var/lib/markina/history"),
+    "facial_references": Path("/var/lib/markina/facial-references"),
+}
+
+# Lista fechada: uma migration que adicione tabela sem classificação bloqueia a limpeza.
+# As linhas mistas são tratadas separadamente para preservar sessões e push do admin.
+PRESERVED_TABLES = frozenset({
+    "admin_action_token", "admin_security_challenge", "admin_user",
+    "branding_settings", "email_delivery", "email_delivery_attempt",
+    "facial_calibration_approval", "facial_rollout_operation",
+    "global_pix_settings", "notification_setting", "payment_message_template",
+    "preview_adjustment_settings", "progressive_pricing_preset",
+    "progressive_pricing_tier", "whatsapp_channel_settings",
+})
+MIXED_TABLES = frozenset({"audit_event", "auth_session", "push_subscription"})
+OPERATIONAL_TABLES = frozenset({
+    "asset_file_cleanup", "auth_challenge", "client",
+    "client_deletion_receipt", "client_phone", "commercial_history_media",
+    "derived_gallery", "derived_gallery_membership", "derived_gallery_photo",
+    "derived_gallery_photo_origin", "facial_job", "facial_legal_representation",
+    "facial_rollout", "facial_search_candidate", "facial_search_notification_outbox",
+    "facial_search_request", "facial_search_snapshot_item", "folder_client_grant",
+    "gallery_access", "gallery_access_capability", "gallery_client_state",
+    "gallery_facial_policy", "gallery_lifecycle_operation",
+    "gallery_membership_notification_outbox", "gallery_preview_settings",
+    "gallery_reopening_notification_outbox", "gallery_reopening_request",
+    "media_derivative", "media_job", "notification_delivery", "notification_event",
+    "notification_milestone", "parent_gallery", "parent_gallery_registration",
+    "payment_communication", "payment_confirmation_correction", "payment_group",
+    "payment_notification_outbox", "photo_analysis", "photo_asset", "photo_comment",
+    "photo_face_embedding", "photo_favorite", "photo_folder", "photo_selection",
+    "photo_view", "pix_checkout_settings", "preview_adjustment", "price_rule",
+    "private_upload_batch", "private_upload_batch_asset", "removed_photo_movement",
+    "sale_order", "sale_order_item", "whatsapp_delivery",
+    "whatsapp_delivery_attempt", "whatsapp_webhook_receipt",
+})
+
+
+def require_known_schema(db: Session) -> None:
+    classified = PRESERVED_TABLES | MIXED_TABLES | OPERATIONAL_TABLES
+    modeled = set(Base.metadata.tables)
+    if modeled != classified:
+        raise RuntimeError(f"Tabela do modelo sem política de limpeza: {sorted(modeled ^ classified)}")
+    if db.bind is None:
+        raise RuntimeError("Conexão de banco indisponível.")
+    actual = set(inspect(db.bind).get_table_names())
+    unknown = actual - classified - {"alembic_version"}
+    missing = classified - actual
+    if unknown or missing:
+        raise RuntimeError(
+            f"Schema inesperado; tabelas desconhecidas={sorted(unknown)}, ausentes={sorted(missing)}"
+        )
 
 
 def require_homolog_environment() -> str:
@@ -62,6 +99,15 @@ def _count(db: Session, model, *criteria) -> int:
     return int(db.scalar(statement) or 0)
 
 
+def admin_security_audit_criteria():
+    return or_(
+        AuditEvent.event.like("admin_security.%"),
+        AuditEvent.event.like("admin_password.%"),
+        AuditEvent.event.like("admin_totp.%"),
+        AuditEvent.event == "admin.redirected",
+    )
+
+
 def _media_inventory(root: Path) -> dict[str, int]:
     resolved = root.resolve()
     files = [] if not resolved.exists() else [path for path in resolved.rglob("*")]
@@ -74,54 +120,63 @@ def _media_inventory(root: Path) -> dict[str, int]:
     }
 
 
-def inventory(db: Session) -> dict[str, object]:
+def media_roots() -> dict[str, Path]:
     return {
-        "environment": require_homolog_environment(),
-        "database": {
-            "clients": _count(db, Client),
-            "parent_galleries": _count(db, ParentGallery),
-            "derived_galleries": _count(db, DerivedGallery),
-            "public_registrations": _count(db, ParentGalleryRegistration),
-            "private_memberships": _count(db, DerivedGalleryMembership),
-            "photos": _count(db, PhotoAsset),
-            "folders": _count(db, PhotoFolder),
-            "selections": _count(db, PhotoSelection),
-            "orders": _count(db, SaleOrder),
-            "payment_communications": _count(db, PaymentCommunication),
-            "client_sessions": _count(db, AuthSession, AuthSession.role == Role.CLIENT.value),
-            "client_otp_challenges": _count(
-                db, AuthChallenge, AuthChallenge.kind == "client_otp"
-            ),
-            "whatsapp_deliveries": _count(db, WhatsAppDelivery),
-            "lifecycle_operations": _count(db, GalleryLifecycleOperation),
-        },
-        "preserved": {
-            "admin_accounts": _count(db, AdminUser),
-            "admin_sessions": _count(db, AuthSession, AuthSession.role == Role.ADMIN.value),
-            "admin_security_challenges": _count(db, AdminSecurityChallenge),
-            "branding_settings": _count(db, BrandingSettings),
-            "global_pix_settings": _count(db, GlobalPixSettings),
-            "payment_message_templates": _count(db, PaymentMessageTemplate),
-            "pricing_presets": _count(db, ProgressivePricingPreset),
-            "whatsapp_channel_settings": _count(db, WhatsAppChannelSettings),
-        },
-        "media": {
-            "source": _media_inventory(source_root()),
-            "derivatives": _media_inventory(derivatives_root()),
-            "history": _media_inventory(
-                Path(os.getenv("MEDIA_HISTORY_ROOT", "/var/lib/markina/history"))
-            ),
-        },
+        "source": source_root(),
+        "derivatives": derivatives_root(),
+        "history": Path(os.getenv("MEDIA_HISTORY_ROOT", "/var/lib/markina/history")),
+        "facial_references": Path(os.getenv(
+            "FACIAL_REFERENCE_ROOT", "/var/lib/markina/facial-references"
+        )),
+    }
+
+
+def require_exclusive_media_roots(roots: dict[str, Path]) -> None:
+    for name, expected in EXPECTED_MEDIA_ROOTS.items():
+        root = roots[name]
+        if root.resolve() != expected.resolve() or not root.is_dir():
+            raise RuntimeError(f"Volume de mídia exclusivo da Markina inválido: {name}.")
+
+
+def inventory(db: Session) -> dict[str, object]:
+    environment = require_homolog_environment()
+    require_known_schema(db)
+    operational_counts = {
+        name: _count(db, Base.metadata.tables[name]) for name in sorted(OPERATIONAL_TABLES)
+    }
+    operational_counts["client_sessions"] = _count(
+        db, AuthSession, AuthSession.role == Role.CLIENT.value
+    )
+    operational_counts["client_push_subscriptions"] = _count(
+        db, PushSubscription, PushSubscription.role == Role.CLIENT.value
+    )
+    operational_counts["client_gallery_audit_events"] = _count(
+        db, AuditEvent, ~admin_security_audit_criteria()
+    )
+    preserved_counts = {
+        name: _count(db, Base.metadata.tables[name]) for name in sorted(PRESERVED_TABLES)
+    }
+    preserved_counts["admin_sessions"] = _count(
+        db, AuthSession, AuthSession.role == Role.ADMIN.value
+    )
+    preserved_counts["admin_push_subscriptions"] = _count(
+        db, PushSubscription, PushSubscription.role == Role.ADMIN.value
+    )
+    preserved_counts["admin_security_audit_events"] = _count(
+        db, AuditEvent, admin_security_audit_criteria()
+    )
+    return {
+        "environment": environment,
+        "database": operational_counts,
+        "preserved": preserved_counts,
+        "media": {name: _media_inventory(root) for name, root in media_roots().items()},
     }
 
 
 def _clear_media_root(root: Path) -> None:
     resolved = root.resolve()
-    allowed_root = Path("/var/lib/markina").resolve()
-    try:
-        resolved.relative_to(allowed_root)
-    except ValueError as exc:
-        raise RuntimeError("Raiz de mídia fora do volume exclusivo da Markina.") from exc
+    if resolved not in {path.resolve() for path in EXPECTED_MEDIA_ROOTS.values()}:
+        raise RuntimeError("Raiz de mídia fora do volume exclusivo da Markina.")
     if not resolved.is_dir():
         return
     entries = sorted(resolved.rglob("*"), key=lambda item: len(item.parts), reverse=True)
@@ -138,25 +193,20 @@ def execute(db: Session, confirmation: str) -> dict[str, object]:
         raise RuntimeError("Confirmação literal inválida; nenhuma alteração foi aplicada.")
     if db.bind is None or db.bind.dialect.name != "postgresql":
         raise RuntimeError("A limpeza homologada exige o PostgreSQL exclusivo da Markina.")
-
-    delivery_ids = select(WhatsAppDelivery.id)
-    db.execute(
-        delete(WhatsAppDeliveryAttempt).where(
-            WhatsAppDeliveryAttempt.delivery_id.in_(delivery_ids)
-        )
-    )
-    db.execute(delete(WhatsAppDelivery))
-    db.execute(delete(AuthChallenge).where(AuthChallenge.kind == "client_otp"))
+    require_known_schema(db)
+    roots = media_roots()
+    require_exclusive_media_roots(roots)
+    # RESTRICT falha antes de mutar caso uma tabela preservada passe a depender
+    # das operacionais. Nenhuma tabela nova pode entrar sem política explícita.
+    tables = ", ".join(f'"{name}"' for name in sorted(OPERATIONAL_TABLES))
+    db.execute(text(f"TRUNCATE TABLE {tables} RESTRICT"))
+    db.execute(delete(AuditEvent).where(~admin_security_audit_criteria()))
+    db.execute(delete(PushSubscription).where(PushSubscription.role == Role.CLIENT.value))
     db.execute(delete(AuthSession).where(AuthSession.role == Role.CLIENT.value))
-    db.execute(delete(GalleryLifecycleOperation))
-    # O banco é exclusivo da Markina. CASCADE alcança somente tabelas que
-    # referenciam as duas raízes operacionais, preservando admin/configurações.
-    db.execute(text("TRUNCATE TABLE parent_gallery, client CASCADE"))
     db.commit()
 
-    _clear_media_root(source_root())
-    _clear_media_root(derivatives_root())
-    _clear_media_root(Path(os.getenv("MEDIA_HISTORY_ROOT", "/var/lib/markina/history")))
+    for root in roots.values():
+        _clear_media_root(root)
     return inventory(db)
 
 

@@ -19,6 +19,54 @@ afterEach(() => {
 function response(value: object, status = 200) { return Promise.resolve(new Response(JSON.stringify(value), { status })); }
 
 describe("Galeria pública da cliente", () => {
+  it("navega pelas pastas comuns e exclusivas de cada cliente sem mostrar as da outra", async () => {
+    let recipient = "ana";
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({ state: "unavailable", manual_selection_available: true });
+      if (path.endsWith("/comments")) return response({ comments: [] });
+      if (path.endsWith("/reopening-requests")) return response({ request: null });
+      if (path.endsWith("/photos")) return response({ photos: [
+        { id: "common", name: "Comum", folder_id: "folder-1", folder_name: "Fotos comuns", folder_position: 0, preview_url: "/common" },
+        { id: recipient, name: "Retrato", folder_id: `folder-${recipient}`, folder_name: `Fotos de ${recipient}`, folder_position: 1, preview_url: "/restricted" },
+      ], cart: { quantity: 0, items: [] } });
+      return response({ id: "public-1", name: "Galeria", favorites_enabled: false, comments_enabled: false, folder_display_mode: "individual" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const first = render(<PublicGalleryPage />);
+    const common = await screen.findByRole("button", { name: "Fotos comuns (1 fotos)" });
+    const ana = screen.getByRole("button", { name: "Fotos de ana (1 fotos)" });
+    expect(common.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(ana);
+    expect(ana.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Fotos de bia")).toBeNull();
+    first.unmount();
+    recipient = "bia";
+    render(<PublicGalleryPage />);
+    expect(await screen.findByRole("button", { name: "Fotos de bia (1 fotos)" })).toBeTruthy();
+    expect(screen.queryByText("Fotos de ana")).toBeNull();
+  });
+
+  it("registra visualização somente ao ampliar a foto", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({ state: "unavailable", manual_selection_available: true });
+      if (path.endsWith("/face-regions")) return response({ auto_threshold: 4, regions: [] });
+      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview", width: 360, height: 240 }] });
+      if (path.endsWith("/view")) return response({ status: "viewed" });
+      return response({ id: "public-1", name: "Galeria", favorites_enabled: false, comments_enabled: false });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PublicGalleryPage />);
+    const expand = await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" });
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/view"))).toHaveLength(0);
+    fireEvent.click(expand);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/public-1/photos/photo-1/view",
+      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+    ));
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/view"))).toHaveLength(1);
+  });
+
   function mockRegionJourney(admit: () => Promise<Response>) {
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(360);
@@ -173,7 +221,7 @@ describe("Galeria pública da cliente", () => {
     expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ }).className).toContain("selection-summary__proceed");
   });
 
-  it("mantém acesso à galeria privada quando o carrinho está vazio", async () => {
+  it("mantém a coleção visível quando o carrinho está vazio, sem atalho privado", async () => {
     let finishPhotos!: (value: Response) => void;
     const photosResponse = new Promise<Response>((resolve) => { finishPhotos = resolve; });
     vi.stubGlobal("fetch", vi.fn((path: string) => {
@@ -185,9 +233,8 @@ describe("Galeria pública da cliente", () => {
 
     render(<PublicGalleryPage />);
 
-    const privateGalleryLink = await screen.findByRole("link", { name: "Minha galeria" });
-    expect(privateGalleryLink.getAttribute("href")).toBe("/gallery/private-1");
-    expect(screen.getByText("Carregando fotos")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Minha galeria" })).toBeNull();
+    expect(await screen.findByText("Carregando fotos")).toBeTruthy();
 
     await act(async () => {
       finishPhotos(new Response(JSON.stringify({
@@ -244,7 +291,7 @@ describe("Galeria pública da cliente", () => {
       if (path.endsWith("/facial-search") && !init?.method) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: true, minor_representation_reference: "representation-opaque-1", consent_version: "consent-v1", legal_notice_version: "notice-v1", reference_retention_seconds: 900, candidate_retention_seconds: 86400 });
       if (path.endsWith("/facial-searches") && init?.method === "POST") return response({ id: "request-1", gallery_id: "public-1", status: "ready", progress: { index: { ready: 3, total: 3 }, comparison: { done: 3, total: 3 } }, reference_deleted: true, expires_at: new Date(Date.now() + 60_000).toISOString(), candidates: [{ photo_id: "photo-1", rank: 3, quality_band: "other", match_class: "ambiguous" }, { photo_id: "photo-2", rank: 1, quality_band: "best", match_class: "matched" }, { photo_id: "photo-3", rank: 2, quality_band: "best", match_class: "matched" }, { photo_id: "photo-2", rank: 8, quality_band: "other", match_class: "ambiguous" }] }, 202);
       if (path.includes("/candidates/photo-2/selection") && init?.method === "POST") return response({ status: "selected", private_gallery_id: "private-1", gallery_created: true, reference_created: true, selection_created: true, cart: { quantity: 1, total_cents: 700 } }, 201);
-      if (path.endsWith("/gallery/private-1/photos/photo-2/favorite") && init?.method === "POST") return response({ status: "favorited" }, 201);
+      if (path.endsWith("/public-galleries/public-1/photos/photo-2/favorite") && init?.method === "POST") return response({ status: "favorited" }, 201);
       if (path.includes("/candidates/photo-1") && init?.method === "DELETE") return response({ rejected: true });
       if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/preview-1", selected: false, favorited: false }, { id: "photo-2", name: "Foto 2", preview_url: "/preview-2", selected: false, favorited: false }, { id: "photo-3", name: "Foto 3", preview_url: "/preview-3", selected: false, favorited: false }], cart: { quantity: 0, items: [] } });
       return response({ id: "public-1", name: "Festa", event_name: null, description: null, access_mode: "standard", photos_url: "/photos", favorites_enabled: true });
@@ -291,7 +338,7 @@ describe("Galeria pública da cliente", () => {
     expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ })).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Favoritar" })[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/gallery/private-1/photos/photo-2/favorite",
+      "/api/public-galleries/public-1/photos/photo-2/favorite",
       expect.objectContaining({ method: "POST", credentials: "same-origin" }),
     ));
     expect(screen.getAllByRole("button", { name: "Remover dos favoritos" }).length).toBeGreaterThan(0);

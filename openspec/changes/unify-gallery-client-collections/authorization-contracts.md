@@ -1,0 +1,30 @@
+# Contratos de autorização e roteiro de aceite
+
+Este arquivo acompanha `design.md` e as delta specs; descreve o contrato esperado ao fim da change. Os testes já presentes estão identificados; os demais cenários têm roteiro e tarefa responsável, sem sugerir que já foram executados.
+
+## Contrato HTTP
+
+1. A sessão de cliente validada por OTP identifica exclusivamente `client_id`. Link, telefone digitado ou ID de galeria não concedem acesso por si só.
+2. A galeria canônica exige vínculo ativo, modo de acesso compatível e estado individual ativo. A Coleção inclui apenas fotos disponíveis em pastas de conteúdo liberadas com público `all` ou público `selected` atribuído à cliente. Pasta em preparação, capa e foto legada de derivada não entram na listagem canônica.
+3. Listagem, prévia direta, ampliação, seleção, favorito, comentário, carrinho, checkout, busca facial e exportação consultam o mesmo público efetivo no backend. Remover atribuição ou bloquear o estado impede novas leituras e mutações; pedido confirmado conserva somente o histórico legalmente devido.
+4. Uma sessão ausente recebe a resposta de autenticação existente; galeria sem vínculo responde 403; foto inexistente ou fora do público responde 404 sem metadados; mutação sobre estado expirado, bloqueado ou comercialmente congelado responde 409 com mensagem genérica. A resposta de cliente não inclui lista de destinatárias nem IDs de atribuição alheia.
+5. Links antigos de `DerivedGallery` exigem sessão e associação da própria cliente antes de redirecionar à Coleção ou a Compras. Registros e snapshots legados continuam legíveis na camada de compatibilidade; não se criam novas derivadas, nem se apagam dados legados fora da limpeza delimitada de homologação.
+
+## Matriz de cenários
+
+| Delta spec | Cenários | Teste ou roteiro de validação |
+| --- | --- | --- |
+| `client-access/folder-audiences` | Pasta comum liberada; Pasta para duas clientes; Pasta ainda em preparação; Coleção da cliente com pastas comuns e atribuídas; URL de foto exclusiva obtida por outra cliente; Atribuição removida; Acesso individual bloqueado | `test_canonical_folder_audience_filters_list_preview_and_selection` cobre três sessões, preparo, URL direta, revogação e metadados; `test_canonical_admin_access_block_is_individual` cobre bloqueio/liberação individual; `public-gallery.test.tsx` cobre navegação por pastas de duas clientes. Roteiro em homologação em 7.3. |
+| `client-access/folder-audiences` | Duas clientes na mesma galeria | Teste de audiência canônica confirma seleção, favorito, comentário, carrinho e visualizações separados; teste de checkout canônico confirma pedidos individuais. Roteiro de duas sessões em 7.3. |
+| `client-access/folder-audiences` | Pasta restrita liberada; Canal ativado após a liberação | Testes de eventos, deduplicação, WhatsApp e push em 4.3; roteiro de canais desligados/ligados sem replay em 7.3. |
+| `client-access/cloned-private-galleries` | Cliente entra pelo link compartilhado; Evento coletivo protegido; Troca de número da mesma cliente; Cliente revisita o evento | Testes de OTP, convite, vínculo e troca de telefone em 2.4/2.5; roteiro 7.3 com duas clientes e um evento coletivo protegido. |
+| `client-access/derived-galleries` | Biblioteca vazia; Nova pasta liberada; Histórico após expiração; Permissão alterada; Navegação sem Minha galeria; Link legado da galeria privada; Galeria de outra responsável | Testes de biblioteca, prazo, redirecionamento e acesso cruzado em 2.4/2.5/4.1/4.4; roteiro 7.3 de expiração, nova rodada, links antigos e histórico em Compras. |
+| `client-access/derived-galleries` | Tentativa de criar galeria ou link privado novo; Exportação individual após a unificação | Testes `test_admin_private_creation_is_closed_without_affecting_public_link`, `test_admin_private_link_endpoints_preserve_legacy_without_issuing_new_links` e `test_canonical_selection_export_is_individual_and_keeps_confirmed_snapshot` passaram na suíte combinada (172 passed) antes das últimas adições; regressão final no checkpoint 6.2/CI. |
+| `gallery-sales/client-selection-operations` | Fotógrafo abre uma seleção; Cliente compra fotos adicionais | Testes da ficha em 3.3 e de pedido adicional sem alterar snapshot em 2.3; roteiro 7.3 de dois pedidos da mesma cliente. |
+| `gallery-sales/operational-gallery-interface` | Criação guiada; Segunda responsável; Pasta em preparação; Proteção do acervo; Importação em processamento; Liberação concluída; Histórico de compra preservado; Fotógrafo abre o card; Pasta compartilhada por dois cards | Testes administrativos 3.1–3.4; roteiro 7.3 para upload, processamento, público efetivo, cards e tentativa de excluir foto comprada. |
+| `gallery-sales/original-gallery-experience` | Fotógrafo inicia a operação; Cliente retoma sua jornada | Testes de navegação responsiva em 3.3/4.1/4.4 e revisão manual mobile em 7.3. |
+| `media-storage/protected-previews` | Prévia do cliente; Prévia administrativa; Acesso indevido | `test_private_upload_reuses_media_pipeline_without_entering_public_facial_scope`, `test_canonical_folder_audience_filters_list_preview_and_selection` e `test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients` cobrem prévias negadas/autorizadas e variantes processadas. |
+| `media-storage/staged-folder-release` | Lote concluído; Pasta restrita concluída; Remoção de preparação abandonada | Testes de liberação, lista vazia, revogação e exclusão segura em 3.1/3.2; roteiro 7.3 com pasta comum e restrita. |
+| `deployment-operations` | Inventário anterior; Execução autorizada; Preservação de credenciais e preferências; Validação temporária concluída; Ambiente ou inventário divergente | Testes da rotina em PostgreSQL/volumes descartáveis em 5.1–5.3; inventário e evidência operacional em 7.1–7.4, inclusive segunda limpeza e contagens finais zero. |
+
+Antes de declarar a change concluída, 6.2 verifica cada linha contra testes executados ou evidência do roteiro, e registra qualquer bloqueio sem marcar a tarefa respectiva como pronta.

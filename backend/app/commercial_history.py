@@ -90,6 +90,23 @@ def materialize_commercial_history(
                 order.client_phone_snapshot or client.phone_e164
             )
         required = (
+            order.parent_gallery_id_snapshot,
+            order.parent_gallery_name_snapshot,
+            order.client_name_snapshot,
+            order.client_phone_snapshot,
+        )
+        legacy_required = (
+            order.derived_gallery_id_snapshot,
+            order.derived_gallery_name_snapshot,
+        )
+        if not all(required) or (order.derived_gallery_id and not all(legacy_required)):
+            _gap(
+                report,
+                kind="order_snapshot",
+                identifier=order.id,
+                reason="Entidade operacional ausente e snapshot comercial incompleto.",
+            )
+        after = (
             order.derived_gallery_id_snapshot,
             order.derived_gallery_name_snapshot,
             order.parent_gallery_id_snapshot,
@@ -97,14 +114,7 @@ def materialize_commercial_history(
             order.client_name_snapshot,
             order.client_phone_snapshot,
         )
-        if not all(required):
-            _gap(
-                report,
-                kind="order_snapshot",
-                identifier=order.id,
-                reason="Entidade operacional ausente e snapshot comercial incompleto.",
-            )
-        if required != before:
+        if after != before:
             report.orders_updated += 1
 
     if order_ids:
@@ -205,23 +215,26 @@ def backfill_commercial_snapshots(
             order.parent_gallery_name_snapshot,
         )
         gallery = db.get(DerivedGallery, order.derived_gallery_id) if order.derived_gallery_id else None
-        parent = db.get(ParentGallery, gallery.parent_gallery_id) if gallery else None
-        if gallery and parent:
+        parent_id = gallery.parent_gallery_id if gallery else order.parent_gallery_id_snapshot
+        parent = db.get(ParentGallery, parent_id) if parent_id else None
+        if gallery:
             order.derived_gallery_id_snapshot = order.derived_gallery_id_snapshot or gallery.id
             order.derived_gallery_name_snapshot = (
                 order.derived_gallery_name_snapshot or gallery.name
             )
+        if parent:
             order.parent_gallery_id_snapshot = order.parent_gallery_id_snapshot or parent.id
             order.parent_gallery_name_snapshot = (
                 order.parent_gallery_name_snapshot or parent.name
             )
-        if not all(
-            (
-                order.derived_gallery_id_snapshot,
-                order.derived_gallery_name_snapshot,
-                order.parent_gallery_id_snapshot,
-                order.parent_gallery_name_snapshot,
-            )
+        parent_snapshot_ready = all(
+            (order.parent_gallery_id_snapshot, order.parent_gallery_name_snapshot)
+        )
+        legacy_snapshot_ready = all(
+            (order.derived_gallery_id_snapshot, order.derived_gallery_name_snapshot)
+        )
+        if not parent_snapshot_ready or (
+            order.derived_gallery_id and not legacy_snapshot_ready
         ):
             _gap(
                 report,

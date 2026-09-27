@@ -440,6 +440,10 @@ class PhotoFolder(Base):
             "purpose != 'cover_assets' OR derived_gallery_id IS NULL",
             name="ck_photo_folder_private_content_only",
         ),
+        CheckConstraint(
+            "audience_scope IS NULL OR audience_scope IN ('all', 'selected')",
+            name="ck_photo_folder_audience_scope",
+        ),
         Index(
             "uq_photo_folder_public_position",
             "parent_gallery_id",
@@ -473,10 +477,61 @@ class PhotoFolder(Base):
     name: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(16), default="preparing", index=True)
     purpose: Mapped[str] = mapped_column(String(24), default="content", server_default="content")
+    audience_scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class GalleryClientState(Base):
+    """Estado individual da cliente na galeria canônica, sem galeria derivada."""
+
+    __tablename__ = "gallery_client_state"
+    __table_args__ = (
+        UniqueConstraint("parent_gallery_id", "client_id", name="uq_gallery_client_state_pair"),
+        CheckConstraint(
+            "status IN ('active', 'blocked', 'unlinked')",
+            name="ck_gallery_client_state_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    selection_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class FolderClientGrant(Base):
+    """Atribuição de uma pasta restrita a uma cliente da mesma galeria."""
+
+    __tablename__ = "folder_client_grant"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["folder_id", "parent_gallery_id"],
+            ["photo_folder.id", "photo_folder.parent_gallery_id"],
+            name="fk_folder_client_grant_folder_parent",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "client_id"],
+            ["gallery_client_state.parent_gallery_id", "gallery_client_state.client_id"],
+            name="fk_folder_client_grant_client_state",
+        ),
+        UniqueConstraint("folder_id", "client_id", name="uq_folder_client_grant_pair"),
+        Index("ix_folder_client_grant_audience", "parent_gallery_id", "client_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    folder_id: Mapped[UUID] = mapped_column(index=True)
+    parent_gallery_id: Mapped[UUID] = mapped_column(index=True)
+    client_id: Mapped[UUID] = mapped_column(index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class DerivedGallery(Base):
@@ -613,10 +668,27 @@ class PhotoSelection(Base):
     __table_args__ = (
         UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),
         Index("ix_photo_selection_gallery_client", "derived_gallery_id", "client_id"),
+        CheckConstraint(
+            "(parent_gallery_id IS NULL AND derived_gallery_id IS NOT NULL) OR "
+            "(parent_gallery_id IS NOT NULL AND derived_gallery_id IS NULL)",
+            name="ck_photo_selection_gallery_scope",
+        ),
+        Index(
+            "uq_photo_selection_canonical",
+            "parent_gallery_id", "photo_asset_id", "client_id",
+            unique=True,
+            sqlite_where=text("derived_gallery_id IS NULL"),
+            postgresql_where=text("derived_gallery_id IS NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id"), nullable=True, index=True
+    )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=True, index=True
+    )
     photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -624,10 +696,29 @@ class PhotoSelection(Base):
 
 class PhotoFavorite(Base):
     __tablename__ = "photo_favorite"
-    __table_args__ = (UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),)
+    __table_args__ = (
+        UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),
+        CheckConstraint(
+            "(parent_gallery_id IS NULL AND derived_gallery_id IS NOT NULL) OR "
+            "(parent_gallery_id IS NOT NULL AND derived_gallery_id IS NULL)",
+            name="ck_photo_favorite_gallery_scope",
+        ),
+        Index(
+            "uq_photo_favorite_canonical",
+            "parent_gallery_id", "photo_asset_id", "client_id",
+            unique=True,
+            sqlite_where=text("derived_gallery_id IS NULL"),
+            postgresql_where=text("derived_gallery_id IS NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id"), nullable=True, index=True
+    )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=True, index=True
+    )
     photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -635,9 +726,28 @@ class PhotoFavorite(Base):
 
 class PhotoView(Base):
     __tablename__ = "photo_view"
-    __table_args__ = (UniqueConstraint("derived_gallery_id", "client_id", "photo_asset_id"),)
+    __table_args__ = (
+        UniqueConstraint("derived_gallery_id", "client_id", "photo_asset_id"),
+        CheckConstraint(
+            "(parent_gallery_id IS NULL AND derived_gallery_id IS NOT NULL) OR "
+            "(parent_gallery_id IS NOT NULL AND derived_gallery_id IS NULL)",
+            name="ck_photo_view_gallery_scope",
+        ),
+        Index(
+            "uq_photo_view_canonical",
+            "parent_gallery_id", "client_id", "photo_asset_id",
+            unique=True,
+            sqlite_where=text("derived_gallery_id IS NULL"),
+            postgresql_where=text("derived_gallery_id IS NULL"),
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id"), nullable=True, index=True
+    )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=True, index=True
+    )
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
     first_viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -646,9 +756,21 @@ class PhotoView(Base):
 
 class PhotoComment(Base):
     __tablename__ = "photo_comment"
+    __table_args__ = (
+        CheckConstraint(
+            "(parent_gallery_id IS NULL AND derived_gallery_id IS NOT NULL) OR "
+            "(parent_gallery_id IS NOT NULL AND derived_gallery_id IS NULL)",
+            name="ck_photo_comment_gallery_scope",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("derived_gallery.id"), index=True)
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id"), nullable=True, index=True
+    )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=True, index=True
+    )
     photo_asset_id: Mapped[UUID] = mapped_column(ForeignKey("photo_asset.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     body: Mapped[str] = mapped_column(Text)
@@ -687,6 +809,15 @@ class SaleOrder(Base):
         CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled')"),
         CheckConstraint("total_cents >= 0"),
         UniqueConstraint("derived_gallery_id", "client_id", "checkout_key"),
+        UniqueConstraint(
+            "parent_gallery_id", "client_id", "checkout_key",
+            name="uq_sale_order_canonical_checkout_key",
+        ),
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "client_id"],
+            ["gallery_client_state.parent_gallery_id", "gallery_client_state.client_id"],
+            name="fk_sale_order_canonical_state",
+        ),
         ForeignKeyConstraint(["payment_group_id", "client_id"],
                              ["payment_group.id", "payment_group.client_id"],
                              name="fk_sale_order_payment_group_owner"),
@@ -715,14 +846,32 @@ class SaleOrder(Base):
                 "AND checkout_key IS NOT NULL AND assets_removed_at IS NULL"
             ),
         ),
+        Index(
+            "uq_sale_order_canonical_editable_draft",
+            "parent_gallery_id", "client_id",
+            unique=True,
+            sqlite_where=text(
+                "parent_gallery_id IS NOT NULL AND frozen_at IS NULL AND "
+                "payment_status = 'pending' AND checkout_key IS NOT NULL "
+                "AND assets_removed_at IS NULL"
+            ),
+            postgresql_where=text(
+                "parent_gallery_id IS NOT NULL AND frozen_at IS NULL AND "
+                "payment_status = 'pending' AND checkout_key IS NOT NULL "
+                "AND assets_removed_at IS NULL"
+            ),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     derived_gallery_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("derived_gallery.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
-    derived_gallery_id_snapshot: Mapped[UUID] = mapped_column(index=True)
+    derived_gallery_id_snapshot: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     derived_gallery_name_snapshot: Mapped[str] = mapped_column(String(200))
     parent_gallery_id_snapshot: Mapped[UUID] = mapped_column(index=True)
     parent_gallery_name_snapshot: Mapped[str] = mapped_column(String(200))
@@ -990,6 +1139,25 @@ def _materialize_required_commercial_snapshots(
 
     for record in session.new:
         if isinstance(record, SaleOrder):
+            if record.derived_gallery_id is not None and record.parent_gallery_id is not None:
+                raise ValueError("Pedido não pode pertencer a duas galerias operacionais.")
+            if record.parent_gallery_id is not None:
+                parent = session.get(ParentGallery, record.parent_gallery_id)
+                if not parent:
+                    raise ValueError("Não foi possível materializar o snapshot da galeria.")
+                record.parent_gallery_id_snapshot = record.parent_gallery_id_snapshot or parent.id
+                record.parent_gallery_name_snapshot = (
+                    record.parent_gallery_name_snapshot or parent.name
+                )
+                # A coluna de nome legado continua preenchida até a camada histórica migrar.
+                record.derived_gallery_name_snapshot = (
+                    record.derived_gallery_name_snapshot or parent.name
+                )
+                client = session.get(Client, record.client_id)
+                if client:
+                    record.client_name_snapshot = record.client_name_snapshot or client.full_name
+                    record.client_phone_snapshot = record.client_phone_snapshot or client.phone_e164
+                continue
             if record.derived_gallery_id is None:
                 if not all(
                     (
@@ -1184,7 +1352,7 @@ class PaymentNotificationOutbox(Base):
 
 
 class GalleryReopeningRequest(Base):
-    """Pedido idempotente de reabertura de uma galeria privada expirada."""
+    """Pedido idempotente de reabertura individual, inclusive do legado."""
 
     __tablename__ = "gallery_reopening_request"
     __table_args__ = (
@@ -1192,6 +1360,19 @@ class GalleryReopeningRequest(Base):
             "derived_gallery_id",
             "idempotency_key",
             name="uq_gallery_reopening_request_idempotency",
+        ),
+        UniqueConstraint(
+            "parent_gallery_id", "requested_by_client_id", "idempotency_key",
+            name="uq_gallery_reopening_canonical_idempotency",
+        ),
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "requested_by_client_id"],
+            ["gallery_client_state.parent_gallery_id", "gallery_client_state.client_id"],
+            name="fk_gallery_reopening_canonical_state",
+        ),
+        CheckConstraint(
+            "(derived_gallery_id IS NOT NULL) <> (parent_gallery_id IS NOT NULL)",
+            name="ck_gallery_reopening_single_scope",
         ),
         CheckConstraint(
             "status IN ('pending', 'approved', 'refused')",
@@ -1205,6 +1386,12 @@ class GalleryReopeningRequest(Base):
             postgresql_where=text("status = 'pending'"),
         ),
         Index(
+            "uq_gallery_reopening_canonical_pending",
+            "parent_gallery_id", "requested_by_client_id", unique=True,
+            sqlite_where=text("parent_gallery_id IS NOT NULL AND status = 'pending'"),
+            postgresql_where=text("parent_gallery_id IS NOT NULL AND status = 'pending'"),
+        ),
+        Index(
             "ix_gallery_reopening_request_status_created",
             "status",
             "created_at",
@@ -1212,8 +1399,11 @@ class GalleryReopeningRequest(Base):
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(
-        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=False, index=True
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id", ondelete="CASCADE"), nullable=True, index=True
     )
     requested_by_client_id: Mapped[UUID] = mapped_column(
         ForeignKey("client.id"), nullable=False, index=True

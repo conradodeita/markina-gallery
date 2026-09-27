@@ -2,29 +2,36 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app import homolog_cleanup
 from app.auth import (
     AdminSecurityChallenge,
     AdminUser,
+    AssetFileCleanup,
+    AuditEvent,
     AuthChallenge,
     AuthSession,
     Base,
     BrandingSettings,
     Client,
+    CommercialHistoryMedia,
     DerivedGallery,
     DerivedGalleryMembership,
     GlobalPixSettings,
+    NotificationSetting,
     ParentGallery,
     PaymentCommunication,
     PaymentMessageTemplate,
     PhotoAsset,
     PhotoFolder,
     PhotoSelection,
+    PreviewAdjustmentSettings,
     ProgressivePricingPreset,
+    PushSubscription,
     Role,
     SaleOrder,
+    SaleOrderItem,
     SessionLocal,
     WhatsAppChannelSettings,
     WhatsAppDelivery,
@@ -57,21 +64,35 @@ def test_inventory_returns_only_counts_without_pii(
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
     monkeypatch.setenv("MEDIA_HISTORY_ROOT", str(tmp_path / "history"))
-    for name in ("source", "derivatives", "history"):
+    monkeypatch.setenv("FACIAL_REFERENCE_ROOT", str(tmp_path / "facial-references"))
+    for name in ("source", "derivatives", "history", "facial-references"):
         (tmp_path / name).mkdir()
     with SessionLocal() as db:
         result = inventory(db)
     assert result["environment"] == "homolog"
     assert set(result) == {"environment", "database", "media", "preserved"}
-    assert "phone" not in str(result).lower()
+    assert all(type(value) is int for value in result["database"].values())
+    assert all(type(value) is int for value in result["preserved"].values())
+
+
+def test_inventory_aborts_for_unclassified_database_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "homolog")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE unknown_cleanup_data (id integer PRIMARY KEY)"))
+    try:
+        with SessionLocal() as db, pytest.raises(RuntimeError, match="desconhecidas"):
+            inventory(db)
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE unknown_cleanup_data"))
 
 
 def test_media_inventory_does_not_follow_symlink_targets(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("APP_ENV", "homolog")
-    roots = [tmp_path / name for name in ("source", "derivatives", "history")]
-    for name, root in zip(("MEDIA_SOURCE_ROOT", "MEDIA_DERIVATIVES_ROOT", "MEDIA_HISTORY_ROOT"), roots):
+    roots = [tmp_path / name for name in ("source", "derivatives", "history", "facial-references")]
+    for name, root in zip(("MEDIA_SOURCE_ROOT", "MEDIA_DERIVATIVES_ROOT", "MEDIA_HISTORY_ROOT", "FACIAL_REFERENCE_ROOT"), roots):
         root.mkdir()
         monkeypatch.setenv(name, str(root))
     (roots[0] / "inside.jpg").write_bytes(b"inside")
@@ -118,14 +139,14 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
 ) -> None:
     Base.metadata.create_all(engine)
     monkeypatch.setenv("APP_ENV", "homolog")
-    roots = tuple(tmp_path / name for name in ("source", "derivatives", "history"))
-    for name, root in zip(("MEDIA_SOURCE_ROOT", "MEDIA_DERIVATIVES_ROOT", "MEDIA_HISTORY_ROOT"), roots):
+    roots = tuple(tmp_path / name for name in ("source", "derivatives", "history", "facial-references"))
+    monkeypatch.setattr(homolog_cleanup, "EXPECTED_MEDIA_ROOTS", dict(zip(
+        ("source", "derivatives", "history", "facial_references"), roots
+    )))
+    for name, root in zip(("MEDIA_SOURCE_ROOT", "MEDIA_DERIVATIVES_ROOT", "MEDIA_HISTORY_ROOT", "FACIAL_REFERENCE_ROOT"), roots):
         root.mkdir()
         (root / "test.jpg").write_bytes(b"photo")
         monkeypatch.setenv(name, str(root))
-    cleared_roots: list[Path] = []
-    monkeypatch.setattr(homolog_cleanup, "_clear_media_root", cleared_roots.append)
-
     expires_at = datetime.now(UTC) + timedelta(hours=1)
     with SessionLocal() as db:
         admin = AdminUser(
@@ -168,6 +189,19 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         template = PaymentMessageTemplate(kind="confirmed", body="Mensagem preservada")
         preset = ProgressivePricingPreset(code="TEST", name="Tabela preservada")
         channel = WhatsAppChannelSettings(environment="homolog", status="ready")
+        notification = NotificationSetting(
+            event_type="first_access", whatsapp_body="Mensagem global",
+            push_title="Aviso", push_body="Corpo do aviso",
+        )
+        adjustment = PreviewAdjustmentSettings(enabled=False)
+        admin_push = PushSubscription(
+            endpoint_fingerprint="a" * 64, encrypted_subscription="admin-ciphertext",
+            role="admin", subject_id=admin.id,
+        )
+        client_push = PushSubscription(
+            endpoint_fingerprint="b" * 64, encrypted_subscription="client-ciphertext",
+            role="client", subject_id=client.id,
+        )
         db.add_all(
             (
                 admin_session,
@@ -179,6 +213,10 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
                 template,
                 preset,
                 channel,
+                notification,
+                adjustment,
+                admin_push,
+                client_push,
             )
         )
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Pasta teste")
@@ -219,6 +257,21 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         )
         db.add_all((selection, order))
         db.flush()
+        item = SaleOrderItem(
+            sale_order_id=order.id, photo_asset_id=photo.id,
+            filename_snapshot="test.jpg", unit_price_cents=1000,
+        )
+        db.add(item)
+        db.flush()
+        db.add_all((
+            CommercialHistoryMedia(
+                sale_order_item_id=item.id, status="ready",
+                preview_storage_key="synthetic/history-preview.jpg",
+            ),
+            AuditEvent(event="gallery.access", subject=str(client.id)),
+            AuditEvent(event="admin_totp.validated", subject=str(admin.id)),
+            AssetFileCleanup(paths=["synthetic/test.jpg"]),
+        ))
         db.add(
             PaymentCommunication(
                 sale_order_id=order.id,
@@ -236,7 +289,12 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
             )
         )
         db.commit()
-        preserved_before = inventory(db)["preserved"]
+        before = inventory(db)
+        preserved_before = before["preserved"]
+        assert before["database"]["commercial_history_media"] == 1
+        assert before["database"]["client_gallery_audit_events"] == 1
+        assert before["preserved"]["admin_security_audit_events"] == 1
+        assert before["database"]["asset_file_cleanup"] == 1
         result = execute(db, WITHOUT_BACKUP_CONFIRMATION)
 
         assert all(value == 0 for value in result["database"].values())
@@ -246,5 +304,12 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         assert db.scalar(select(GlobalPixSettings)).version == 3
         assert db.scalar(select(AuthSession).where(AuthSession.role == Role.ADMIN.value))
         assert not db.scalar(select(AuthSession).where(AuthSession.role == Role.CLIENT.value))
+        assert db.scalar(select(PushSubscription).where(PushSubscription.role == "admin"))
+        assert not db.scalar(select(PushSubscription).where(PushSubscription.role == "client"))
+        assert db.scalar(select(NotificationSetting)).whatsapp_body == "Mensagem global"
+        assert db.scalar(select(PreviewAdjustmentSettings)).enabled is False
+        repeated = execute(db, WITHOUT_BACKUP_CONFIRMATION)
+        assert repeated["database"] == result["database"]
+        assert repeated["preserved"] == preserved_before
 
-    assert cleared_roots == list(roots)
+    assert all(root.is_dir() and not list(root.iterdir()) for root in roots)

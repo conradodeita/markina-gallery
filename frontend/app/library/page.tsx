@@ -13,7 +13,7 @@ type PublicGallery = {
   name: string;
   event_name: string;
   access_mode: "standard" | "invite_only" | "collective_protected";
-  gallery_status: "active" | "pending_review";
+  gallery_status: "active" | "pending_review" | "blocked";
   browse_url: string | null;
 };
 type PrivateGallery = {
@@ -36,6 +36,7 @@ type Journey = {
   cover_preview_url?: string | null;
   public_gallery: PublicGallery | null;
   private_gallery: PrivateGallery | null;
+  selection_expires_at?: string | null;
   selection: {
     quantity: number;
     total_cents?: number;
@@ -118,7 +119,7 @@ export default function LibraryPage() {
               <header><StatusBadge tone={status.tone}>{status.label}</StatusBadge></header>
               <strong>{journey.name}</strong>
               {journey.event_name ? <small>{journey.event_name}</small> : null}
-              <SelectionDeadline expiresAt={journey.private_gallery?.selection_expires_at} onRevalidate={revalidateLibrary} />
+              <SelectionDeadline expiresAt={journey.selection_expires_at ?? journey.private_gallery?.selection_expires_at} onRevalidate={revalidateLibrary} />
               {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "purchased" ? "Pagamento confirmado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : "Pagamento não localizado"}</StatusBadge> : null}
               <div className="library-card-actions">
                 {primaryAction ? <MarkinaLink href={primaryAction.href} prefetch>{primaryAction.label}</MarkinaLink> : <span>Indisponível</span>}

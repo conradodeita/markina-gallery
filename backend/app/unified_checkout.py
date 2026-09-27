@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Client,
+    GalleryClientState,
     ParentGallery,
     PaymentCommunication,
     PaymentGroup,
@@ -91,17 +92,55 @@ def _materials(db, client):
         except CheckoutError as exc:
             error = str(exc)
         result.append((gallery, parent, material, error))
+    canonical_ids = set(db.scalars(
+        select(PhotoSelection.parent_gallery_id).where(
+            PhotoSelection.client_id == client.id,
+            PhotoSelection.parent_gallery_id.is_not(None),
+        )
+    ))
+    for state in db.scalars(select(GalleryClientState).where(
+        GalleryClientState.client_id == client.id,
+        GalleryClientState.parent_gallery_id.in_(canonical_ids),
+    ).order_by(GalleryClientState.parent_gallery_id)):
+        parent = db.get(ParentGallery, state.parent_gallery_id)
+        if not parent or parent.lifecycle_status != "active":
+            continue
+        error = None
+        material = None
+        try:
+            if state.status != "active":
+                raise CheckoutError("O acesso a esta galeria está indisponível.")
+            material = _checkout_material(db, gallery=state, client=client, resolve_pix=False)
+            if state.selection_expires_at and expired(state.selection_expires_at):
+                error = "O prazo desta galeria expirou. Remova a seleção ou solicite reabertura."
+        except CheckoutError as exc:
+            error = str(exc)
+        result.append((state, parent, material, error))
     return result
+
+
+def _gallery_key(gallery):
+    return ("canonical", gallery.parent_gallery_id) if isinstance(
+        gallery, GalleryClientState
+    ) else ("legacy", gallery.id)
+
+
+def _order_key(order):
+    return ("canonical", order.parent_gallery_id) if order.parent_gallery_id else (
+        "legacy", order.derived_gallery_id
+    )
 
 
 def cart_payload(db: Session, client: Client):
     groups = []
     for gallery, parent, material, error in _materials(db, client):
         items = []
+        canonical = isinstance(gallery, GalleryClientState)
         quantity = db.scalar(
             select(func.count(PhotoSelection.id)).where(
                 PhotoSelection.client_id == client.id,
-                PhotoSelection.derived_gallery_id == gallery.id,
+                (PhotoSelection.parent_gallery_id == gallery.parent_gallery_id)
+                if canonical else (PhotoSelection.derived_gallery_id == gallery.id),
             )
         )
         photos = material[1] if material else selected_photos(db, gallery=gallery, client=client)[1]
@@ -127,12 +166,16 @@ def cart_payload(db: Session, client: Client):
                     "id": str(photo.id),
                     "name": photo.display_name or photo.filename,
                     "folder_name": folder.name if folder else None,
-                    "preview_url": f"/gallery/{gallery.id}/photos/{photo.id}/preview",
+                    "preview_url": (
+                        f"/public-galleries/{parent.id}/photos/{photo.id}/preview"
+                        if canonical else f"/gallery/{gallery.id}/photos/{photo.id}/preview"
+                    ),
                 }
             )
         legacy = db.scalar(
             select(SaleOrder.id).where(
-                SaleOrder.derived_gallery_id == gallery.id,
+                (SaleOrder.parent_gallery_id == parent.id)
+                if canonical else (SaleOrder.derived_gallery_id == gallery.id),
                 SaleOrder.client_id == client.id,
                 SaleOrder.frozen_at.is_(None),
                 SaleOrder.assets_removed_at.is_(None),
@@ -143,14 +186,16 @@ def cart_payload(db: Session, client: Client):
         )
         groups.append(
             {
-                "gallery_id": str(gallery.id),
+                "gallery_id": str(parent.id if canonical else gallery.id),
                 "parent_gallery_id": str(parent.id),
                 "legacy_review_url": f"/gallery/{gallery.id}?mode=legacy-review"
-                if legacy
+                if legacy and not canonical
                 else None,
                 "name": parent.name,
-                "private_name": gallery.name,
-                "browse_url": f"/gallery/{gallery.id}",
+                "private_name": parent.name if canonical else gallery.name,
+                "browse_url": (
+                    f"/public-galleries/{parent.id}" if canonical else f"/gallery/{gallery.id}"
+                ),
                 "quantity": quantity,
                 "selection_expires_at": gallery.selection_expires_at.isoformat()
                 if gallery.selection_expires_at
@@ -172,7 +217,7 @@ def cart_payload(db: Session, client: Client):
 def _fingerprint(materials):
     values = [
         {
-            "gallery": str(gallery.id),
+            "gallery": str(_gallery_key(gallery)),
             "items": sorted(str(photo.id) for photo in material[1]),
             "quote": material[3].snapshot,
             "total": material[3].quote.total_cents,
@@ -191,7 +236,8 @@ def _valid_materials(db, client):
     if not materials:
         raise CheckoutError("O carrinho está vazio.")
     for gallery, _parent, _material, error in materials:
-        lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
+        if not isinstance(gallery, GalleryClientState):
+            lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
         if error:
             raise CheckoutError(error)
     return materials
@@ -230,7 +276,7 @@ def prepare_group(db: Session, client: Client):
         .with_for_update()
     )
     drafts = {
-        order.derived_gallery_id: order
+        _order_key(order): order
         for order in db.scalars(
             select(SaleOrder).where(
                 SaleOrder.client_id == client.id,
@@ -261,7 +307,7 @@ def prepare_group(db: Session, client: Client):
             },
         )
     for gallery, _parent, _material, _error in materials:
-        draft = drafts.get(gallery.id)
+        draft = drafts.get(_gallery_key(gallery))
         if (
             draft
             and draft.pix_copy_paste_snapshot
@@ -279,13 +325,16 @@ def prepare_group(db: Session, client: Client):
     db.add(group)
     db.flush()
     # Um rascunho que deixou de participar não pode continuar vinculado ao total.
-    current_ids = {gallery.id for gallery, _, _, _ in materials}
+    current_ids = {_gallery_key(gallery) for gallery, _, _, _ in materials}
     for draft in drafts.values():
-        if draft.payment_group_id == group.id and draft.derived_gallery_id not in current_ids:
+        if draft.payment_group_id == group.id and _order_key(draft) not in current_ids:
             draft.payment_group_id = None
     for gallery, _parent, material, _error in materials:
-        order = drafts.get(gallery.id) or SaleOrder(
-            derived_gallery_id=gallery.id,
+        order = drafts.get(_gallery_key(gallery)) or SaleOrder(
+            parent_gallery_id=gallery.parent_gallery_id
+            if isinstance(gallery, GalleryClientState) else None,
+            derived_gallery_id=None
+            if isinstance(gallery, GalleryClientState) else gallery.id,
             client_id=client.id,
             total_cents=0,
             checkout_key=str(uuid4()),
@@ -407,8 +456,8 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
             .with_for_update()
         )
     )
-    if {order.derived_gallery_id for order in orders} != {
-        gallery.id for gallery, _, _, _ in materials
+    if {_order_key(order) for order in orders} != {
+        _gallery_key(gallery) for gallery, _, _, _ in materials
     }:
         raise CheckoutError("O carrinho mudou. Atualize a revisão.")
     if any(order.frozen_at or order.payment_status != "pending" for order in orders):
@@ -418,7 +467,7 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
         expected = next(
             material
             for gallery, _, material, _ in materials
-            if gallery.id == order.derived_gallery_id
+            if _gallery_key(gallery) == _order_key(order)
         )
         item_ids = set(
             db.scalars(

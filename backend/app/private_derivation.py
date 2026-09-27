@@ -14,8 +14,6 @@ from app.auth import (
     DerivedGalleryPhotoOrigin,
     ParentGallery,
     ParentGalleryRegistration,
-    PhotoAsset,
-    PhotoFolder,
     PhotoSelection,
     expired,
 )
@@ -27,6 +25,7 @@ from app.checkout import (
 from app.notification_events import record_gallery_milestone
 from app.parent_registration import link_client_to_parent
 from app.private_membership import ensure_private_membership
+from app.public_gallery_access import authorized_canonical_photo
 
 
 class PrivateDerivationError(RuntimeError):
@@ -132,8 +131,6 @@ def derive_client_selection(
             ParentGalleryRegistration.status == "active",
         )
     )
-    photo = db.get(PhotoAsset, photo_id)
-    folder = db.get(PhotoFolder, photo.folder_id) if photo else None
     if not registration:
         existing_gallery = db.scalar(
             select(DerivedGallery).where(
@@ -150,6 +147,9 @@ def derive_client_selection(
             client_id=client_id,
             status="active",
         )
+    photo = authorized_canonical_photo(
+        db, parent_gallery_id=parent_gallery_id, client_id=client_id, photo_id=photo_id
+    )
     if (
         not parent
         or not parent.active
@@ -157,13 +157,6 @@ def derive_client_selection(
         or not client
         or not registration
         or not photo
-        or photo.parent_gallery_id != parent.id
-        or photo.derived_gallery_id is not None
-        or not photo.available
-        or not folder
-        or folder.derived_gallery_id is not None
-        or folder.status != "released"
-        or folder.purpose != "content"
     ):
         raise PrivateDerivationError("Foto indisponível para esta cliente.")
     resolution = ensure_private_membership(

@@ -144,7 +144,8 @@ def client_carts_by_gallery_payload(
 
 
 def client_photo_states(
-    db: Session, *, gallery_id: UUID, client_id: UUID, photo_ids: set[UUID]
+    db: Session, *, gallery_id: UUID | None, client_id: UUID,
+    photo_ids: set[UUID], parent_gallery_id: UUID | None = None
 ) -> dict[UUID, str]:
     """Resolve estados por prioridade sem consultas por foto."""
 
@@ -154,7 +155,10 @@ def client_photo_states(
     selected = set(
         db.scalars(
             select(PhotoSelection.photo_asset_id).where(
-                PhotoSelection.derived_gallery_id == gallery_id,
+                or_(
+                    PhotoSelection.derived_gallery_id == gallery_id,
+                    PhotoSelection.parent_gallery_id == parent_gallery_id,
+                ) if parent_gallery_id else PhotoSelection.derived_gallery_id == gallery_id,
                 PhotoSelection.client_id == client_id,
                 PhotoSelection.photo_asset_id.in_(photo_ids),
             )
@@ -174,7 +178,10 @@ def client_photo_states(
             .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
             .outerjoin(PaymentCommunication, communication_join())
             .where(
-                SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                or_(
+                    SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                    SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
+                ) if parent_gallery_id else SaleOrder.derived_gallery_id_snapshot == gallery_id,
                 SaleOrder.client_id == client_id,
                 SaleOrderItem.photo_asset_id_snapshot.in_(photo_ids),
             )

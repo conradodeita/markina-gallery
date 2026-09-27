@@ -9,6 +9,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), useParams: () =
 import NewGalleryPage from "./new/page";
 import GalleryEditor, { photoBulkDeleteBatches } from "./sources/[sourceId]/edit/gallery-editor";
 import SourceGalleryDetailPage from "./sources/[sourceId]/page";
+import { ClientGalleryCard, type ClientGalleryRow } from "./client-gallery-card";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -34,18 +35,111 @@ function response(value: object, status = 200) {
   return Promise.resolve(new Response(status === 204 ? null : JSON.stringify(value), { status, headers: { "content-type": "application/json" } }));
 }
 
+it("mantém o Acervo da cliente independente e inicialmente fechado em dois cards", async () => {
+  const people: ClientGalleryRow[] = ["Ana", "Bia"].map((name, index) => ({
+    client_id: `client-${index + 1}`, name, phone: "+5511999999999",
+    registration_status: "active", derived_gallery_id: null,
+    available_count: 0, selected_count: index === 0 ? 1 : 0, purchased_count: 0,
+    gallery_status: "active", commercial_status: "no_order",
+  }));
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (!path.endsWith("/folders") || init?.method) throw new Error("Chamada inesperada");
+    return response({ folders: [] });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<>{people.map((person) => <ClientGalleryCard
+    key={person.client_id} person={person} parentGalleryId="source-1" linkedClients={people}
+  />)}</>);
+  const cards = people.map((person) => screen.getByRole("article", { name: `Cliente ${person.name}` }));
+  const toggles = cards.map((card) => within(card).getByRole("button", { name: "Acervo da cliente" }));
+  expect(toggles.map((toggle) => toggle.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
+  expect(fetchMock).not.toHaveBeenCalled();
+  fireEvent.click(toggles[0]);
+  await waitFor(() => expect(toggles[0].getAttribute("aria-expanded")).toBe("true"));
+  expect(within(cards[0]).getByRole("link", { name: "Baixar seleção atual (CSV)" }).getAttribute("href")).toBe(
+    "/api/admin/parent-galleries/source-1/clients/client-1/selection/export.csv",
+  );
+  expect(toggles[1].getAttribute("aria-expanded")).toBe("false");
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/admin/parent-galleries/source-1/clients/client-1/folders",
+    expect.objectContaining({ credentials: "same-origin" }),
+  );
+  expect(fetchMock.mock.calls.every(([, init]) => !init || init.method === undefined)).toBe(true);
+  fireEvent.click(toggles[0]);
+  expect(toggles[0].getAttribute("aria-expanded")).toBe("false");
+});
+
+it("bloqueia apenas a cliente do card aberto", async () => {
+  const people: ClientGalleryRow[] = ["Ana", "Bia"].map((name, index) => ({
+    client_id: `client-${index + 1}`, name, phone: "+5511999999999",
+    registration_status: "active", derived_gallery_id: null,
+    available_count: 0, selected_count: 0, purchased_count: 0,
+    gallery_status: "active", access_status: "active",
+  }));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/folders")) return response({ folders: [] });
+    if (path.endsWith("/access") && init?.method === "PATCH") return response({ status: "blocked" });
+    throw new Error("Chamada inesperada");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<>{people.map((person) => <ClientGalleryCard key={person.client_id}
+    person={person} parentGalleryId="source-1" linkedClients={people} />)}</>);
+  const ana = screen.getByRole("article", { name: "Cliente Ana" });
+  const bia = screen.getByRole("article", { name: "Cliente Bia" });
+  fireEvent.click(within(ana).getByRole("button", { name: "Acervo da cliente" }));
+  fireEvent.click(await within(ana).findByRole("button", { name: "Bloquear acesso" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/api/admin/parent-galleries/source-1/clients/client-1/access",
+    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "blocked" }) }),
+  ));
+  expect(within(ana).getByText("Acesso individual bloqueado.")).toBeTruthy();
+  expect(within(bia).getByRole("button", { name: "Acervo da cliente" }).getAttribute("aria-expanded")).toBe("false");
+});
+
+it("oferece exclusão protegida de foto e pasta no Acervo da cliente", async () => {
+  const person: ClientGalleryRow = {
+    client_id: "client-1", name: "Ana", phone: "+5511999999999",
+    registration_status: "active", derived_gallery_id: null,
+    available_count: 1, selected_count: 0, purchased_count: 0,
+    gallery_status: "active",
+  };
+  let deletedPhoto = false;
+  let deletedFolder = false;
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/clients/client-1/folders")) return response({ folders: deletedFolder ? [] : [{ id: "folder-1", name: "Retratos", status: "released", photo_count: deletedPhoto ? 0 : 1, assigned_client_ids: ["client-1"] }] });
+    if (path.endsWith("/photo-folders/folder-1/photos/photo-1") && init?.method === "DELETE") { deletedPhoto = true; return response({}, 204); }
+    if (path.endsWith("/photo-folders/folder-1") && init?.method === "DELETE") { deletedFolder = true; return response({}, 204); }
+    if (path.endsWith("/photo-folders/folder-1/photos")) return response({ photos: deletedPhoto ? [] : [{ id: "photo-1", name: "Retrato", preview_url: "/preview", publication_state: "available", can_delete: true }] });
+    throw new Error("Chamada inesperada");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ClientGalleryCard person={person} parentGalleryId="source-1" linkedClients={[person]} />);
+  const card = screen.getByRole("article", { name: "Cliente Ana" });
+  fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
+  fireEvent.click(await within(card).findByRole("button", { name: /Retratos/ }));
+  fireEvent.click(await within(card).findByRole("button", { name: "Excluir foto" }));
+  await waitFor(() => expect(deletedPhoto).toBe(true));
+  fireEvent.click(within(card).getByRole("button", { name: "Excluir pasta" }));
+  await waitFor(() => expect(deletedFolder).toBe(true));
+  expect(within(card).queryByRole("button", { name: /Retratos/ })).toBeNull();
+});
+
 describe("editor administrativo de galeria", () => {
   it("decide no card do editor e revalida a mesma compra após refoco", async () => {
     let confirmed = false;
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/decision") && init?.method === "POST") { confirmed = true; return response({ status: "confirmed" }); }
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [] });
       if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [{ client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: confirmed ? 0 : 1, purchased_count: confirmed ? 1 : 0, gallery_status: "active", commercial_status: confirmed ? "paid" : "pending_review", financial_orders: [{ id: "communication-1", order_id: "order-1", gallery_name: "Festa escolar", quantity: 1, total_cents: 700, created_at: "2026-09-19T12:00:00Z", status: confirmed ? "confirmed" : "pending_review", can_decide: !confirmed, can_correct: confirmed }] }] });
       return response({ clients: [], members: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Acervo da cliente" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirmar pagamento" }));
     expect(await screen.findByRole("button", { name: "Corrigir confirmação" })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/payment-communications/communication-1/decision", expect.objectContaining({ body: JSON.stringify({ decision: "confirmed" }) }));
@@ -151,6 +245,7 @@ describe("editor administrativo de galeria", () => {
     const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 3, gallery_status: "no_selection", commercial_status: "paid" };
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [] });
       if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
       return response({ clients: [{ id: "client-1", name: "Ana Cliente", phone: "+5511999999999" }] });
     }));
@@ -161,14 +256,17 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("button", { name: "Editar cadastro de Ana Cliente" })).toBeTruthy();
     const card = screen.getByRole("article", { name: "Cliente Ana Cliente" });
     expect(within(card).getByText("Sem seleção")).toBeTruthy();
-    expect(within(card).getByText("Fotos no acervo privado")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Acervo da cliente" }).getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
+    expect(within(card).getByText("Fotos disponíveis")).toBeTruthy();
     expect(within(card).getByText("Fotos selecionadas")).toBeTruthy();
     expect(within(card).getByText("Fotos compradas")).toBeTruthy();
+    expect(within(card).getByRole("link", { name: "Baixar fotos compradas" }).getAttribute("href")).toBe(
+      "/api/admin/parent-galleries/source-1/clients/client-1/selection/export.html",
+    );
     expect(within(card).getByText("Pago")).toBeTruthy();
     expect(within(card).getByText("Sem seleção")).toBeTruthy();
-    const galleryLink = within(card).getByRole("link", { name: "Ana Cliente" });
-    galleryLink.focus();
-    expect(document.activeElement).toBe(galleryLink);
+    expect(within(card).queryByRole("link", { name: "Ana Cliente" })).toBeNull();
   });
 
   it("edita o nome da mesma cliente e recarrega a lista", async () => {
@@ -341,151 +439,92 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("article", { name: "Cliente Cliente Pendente" })).toBeTruthy();
   });
 
-  it("cria galeria privada vazia sem montagem administrativa por catálogo", async () => {
-    const linkedClient = { client_id: "client-1", name: "Cliente Administrativa", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+  it("abre e recolhe o Acervo da cliente sem escrita e cria pasta restrita no card", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    let folderCreated = false;
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/available-photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", folder_name: "Lote liberado", preview_url: "/preview" }] });
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path === "/api/admin/derived-galleries" && init?.method === "POST") return response({ id: "private-1", selected_count: 0 }, 201);
-      return response({ clients: [] });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
-    expect(await screen.findByRole("dialog", { name: "Galeria privada de Cliente Administrativa" })).toBeTruthy();
-    expect(screen.queryByRole("checkbox")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Criar galeria vazia" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/derived-galleries",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ parent_gallery_id: "source-1", client_id: "client-1", name: "Festa escolar · Cliente Administrativa", photo_ids: [], create_empty_private: true }) }),
-    ));
-    expect(await screen.findByText(/carregar fotos do dispositivo/)).toBeTruthy();
-  });
-
-  it("permite criar a galeria privada mesmo sem fotos públicas publicadas", async () => {
-    const linkedClient = { client_id: "client-1", name: "Cliente Sem Fotos", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    vi.stubGlobal("fetch", vi.fn((path: string) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      return response({ clients: [] });
-    }));
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
-    const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Sem Fotos" });
-    expect(within(dialog).getByText(/será criada vazia/)).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: "Criar galeria vazia" })).toBeTruthy();
-  });
-
-  it("mantém no modal o erro ao disponibilizar fotos", async () => {
-    const linkedClient = { client_id: "client-1", name: "Cliente Bloqueada", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/available-photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", folder_name: "Publicadas", preview_url: "/preview" }] });
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path === "/api/admin/derived-galleries" && init?.method === "POST") return response({ detail: "A cliente já possui uma galeria privada nesta Galeria pública." }, 409);
-      return response({ clients: [] });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
-    fireEvent.click(screen.getByRole("button", { name: "Criar galeria vazia" }));
-    const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Bloqueada" });
-    expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "A cliente já possui uma galeria privada nesta Galeria pública.");
-  });
-
-  it("separa vinculados, busca e novo cadastro em blocos responsivos", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
-      return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
-    }));
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    expect(await screen.findByRole("region", { name: "Clientes vinculadas" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Vincular cliente" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Cadastrar e vincular" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Vincular Beatriz Cliente" })).toBeTruthy();
-    expect(screen.getByText("Nenhuma galeria privada criada")).toBeTruthy();
-  });
-
-  it("mostra e copia links permanentes sem oferecer regeneração e gerencia membros", async () => {
-    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 2, selected_count: 1, purchased_count: 0, gallery_status: "active" };
-    const member = { membership_id: "membership-1", client_id: "client-1", client_name: "Ana Cliente", phone_e164: "+5511999999999", status: "active", selected_count: 1, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" };
-    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboardWrite } });
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/clients/client-1/folders") && init?.method === "POST") { folderCreated = true; return response({ id: "folder-1" }, 201); }
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: folderCreated ? [{ id: "folder-1", name: "Retratos", status: "preparing", photo_count: 0, assigned_client_ids: ["client-1"] }] : [] });
       if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
       if (path === "/api/admin/clients") return response({ clients: [] });
-      if (path.endsWith("/public-link")) return response({ status: "active", capability_id: "public-1", expires_at: null, secret_available: true, link: "https://example.test/a/public" });
-      if (path.endsWith("/derived-galleries/derived-1/link")) return response({ status: "active", capability_id: "private-1", expires_at: null, secret_available: true, link: "https://example.test/a/private" });
-      if (path.endsWith("/members/client-1/block") && init?.method === "POST") return response({ ...member, status: "blocked" });
-      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [member] });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-
-    const publicInput = await screen.findByLabelText("Link da Galeria pública") as HTMLInputElement;
-    expect(publicInput.value).toBe("https://example.test/a/public");
-    expect(await screen.findByLabelText("Link privado de Ana Cliente")).toHaveProperty("value", "https://example.test/a/private");
-    expect(screen.getByText("Ana Cliente", { selector: ".private-member-row strong" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("https://example.test/a/public"));
-    expect(screen.queryByRole("button", { name: /Regenerar/ })).toBeNull();
-    expect(screen.getByText(/permanece o mesmo enquanto a galeria existir/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Bloquear" }));
+    const card = await screen.findByRole("article", { name: "Cliente Ana Cliente" });
+    const toggle = within(card).getByRole("button", { name: "Acervo da cliente" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(within(card).queryByLabelText("Nova pasta restrita")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(await within(card).findByLabelText("Nova pasta restrita")).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    fireEvent.change(within(card).getByLabelText("Nova pasta restrita"), { target: { value: "Retratos" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Criar pasta" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/derived-galleries/derived-1/members/client-1/block",
+      "/api/admin/parent-galleries/source-1/clients/client-1/folders",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Retratos" }) }),
+    ));
+    expect(await within(card).findByRole("button", { name: /Retratos/ })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/derived-galleries"))).toBe(false);
+  });
+
+  it("atribui a mesma pasta restrita a outra cliente e disponibiliza fotos prontas", async () => {
+    const linkedClients = ["Ana", "Beatriz"].map((name, index) => ({ client_id: `client-${index + 1}`, name, phone: `+551199999999${index}`, registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" }));
+    let shared = false;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [{ id: "folder-1", name: "Retratos", status: "preparing", photo_count: 1, assigned_client_ids: shared ? ["client-1", "client-2"] : ["client-1"] }] });
+      if (path.endsWith("/clients/client-2/folders")) return response({ folders: [] });
+      if (path.endsWith("/folders/folder-1/clients/client-2") && init?.method === "POST") { shared = true; return response({ id: "grant-1" }, 201); }
+      if (path.endsWith("/photo-folders/folder-1/photos")) return response({ photos: [] });
+      if (path.endsWith("/photo-folders/folder-1/publish") && init?.method === "POST") return response({ published_count: 1, pending_count: 0, failed_count: 0 });
+      if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: linkedClients });
+      if (path === "/api/admin/clients") return response({ clients: [] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    const card = await screen.findByRole("article", { name: "Cliente Ana" });
+    fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
+    fireEvent.click(await within(card).findByRole("button", { name: /Retratos/ }));
+    fireEvent.change(await within(card).findByLabelText("Adicionar cliente"), { target: { value: "client-2" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Adicionar à pasta" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/source-1/folders/folder-1/clients/client-2",
       expect.objectContaining({ method: "POST" }),
     ));
+    fireEvent.click(within(card).getByRole("button", { name: "Disponibilizar fotos prontas" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/photo-folders/folder-1/publish",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    expect(await within(card).findByText(/1 foto\(s\) disponibilizada\(s\)/)).toBeTruthy();
   });
 
-  it("preserva a etapa e mostra conflito ao adicionar cliente já vinculada a outra privada", async () => {
-    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    const member = { membership_id: "membership-1", client_id: "client-1", client_name: "Ana Cliente", phone_e164: "+5511999999999", status: "active", selected_count: 0, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" };
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+  it("mantém apenas o link da galeria pública, sem criar ou buscar link privado", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboardWrite } });
+    const fetchMock = vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
-      if (path === "/api/admin/clients") return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
-      if (path.endsWith("/public-link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
-      if (path.endsWith("/derived-galleries/derived-1/link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
-      if (path.endsWith("/derived-galleries/derived-1/members") && init?.method === "POST") return response({ detail: "A cliente já pertence a outra galeria privada desta origem." }, 409);
-      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [member] });
+      if (path.endsWith("/public-link")) return response({ status: "active", capability_id: "public-1", expires_at: null, secret_available: true, link: "https://example.test/a/public" });
+      if (path === "/api/admin/clients") return response({ clients: [] });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-
-    fireEvent.change(await screen.findByLabelText("Adicionar cliente à galeria de Ana Cliente"), { target: { value: "client-2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar membro" }));
-    expect(await screen.findByText("A cliente já pertence a outra galeria privada desta origem.")).toBeTruthy();
-    expect(screen.getByRole("article", { name: "Galeria privada Ana Cliente" })).toBeTruthy();
-  });
-
-  it("expõe carregamento e erro isolado da galeria privada", async () => {
-    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    let finishPrivateLink!: (value: Response) => void;
-    const pendingPrivateLink = new Promise<Response>((resolve) => { finishPrivateLink = resolve; });
-    vi.stubGlobal("fetch", vi.fn((path: string) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
-      if (path === "/api/admin/clients") return response({ clients: [] });
-      if (path.endsWith("/public-link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
-      if (path.endsWith("/derived-galleries/derived-1/link")) return pendingPrivateLink;
-      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [] });
-      return response({});
-    }));
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-
-    expect(await screen.findByText("Carregando acesso")).toBeTruthy();
-    finishPrivateLink(new Response(JSON.stringify({ detail: "Falha ao consultar link privado." }), { status: 500, headers: { "content-type": "application/json" } }));
-    expect(await screen.findByText("Acesso indisponível")).toBeTruthy();
-    expect(screen.getByText("Falha ao consultar link privado.")).toBeTruthy();
+    const publicInput = await screen.findByLabelText("Link da Galeria pública") as HTMLInputElement;
+    expect(publicInput.value).toBe("https://example.test/a/public");
+    fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("https://example.test/a/public"));
+    expect(screen.queryByText(/galeria privada/i)).toBeNull();
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/derived-galleries"))).toBe(false);
   });
 
   it("mostra capacidade comercial indisponível sem inventar configuração", async () => {

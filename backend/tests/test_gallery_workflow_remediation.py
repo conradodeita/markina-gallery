@@ -396,11 +396,7 @@ def test_admin_private_gallery_rejects_existing_photos_and_allows_empty_creation
             "create_empty_private": True,
         },
     )
-    assert created.status_code == repeated.status_code == 201
-    assert created.json()["gallery_created"] is True
-    assert repeated.json()["gallery_created"] is False
-    assert created.json()["references_created"] == 0
-    assert repeated.json()["references_created"] == 0
+    assert created.status_code == repeated.status_code == 410
     with SessionLocal() as db:
         assert db.scalar(select(PhotoSelection)) is None
 
@@ -417,8 +413,8 @@ def test_admin_private_gallery_rejects_existing_photos_and_allows_empty_creation
         assert rejected.status_code == 410
 
     aggregate = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"]
-    assert aggregate[0]["derived_gallery_id"] == created.json()["id"]
-    assert aggregate[0]["available_count"] == 0
+    assert aggregate[0]["derived_gallery_id"] is None
+    assert aggregate[0]["available_count"] == 1
     assert aggregate[0]["selected_count"] == 0
 
 

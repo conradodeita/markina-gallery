@@ -39,7 +39,7 @@ describe("telas administrativas de galerias", () => {
     );
     render(<GalleriesPage />);
     expect(screen.getByText("Carregando galerias…")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Galerias públicas" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Galerias privadas" })).toBeNull();
     expect(screen.queryByText(/Galerias-mãe/i)).toBeNull();
     resolveFetch!(
       new Response(JSON.stringify({ parent_galleries: [] }), { status: 200 }),
@@ -58,7 +58,7 @@ describe("telas administrativas de galerias", () => {
       "Não foi possível carregar as galerias.",
     );
   });
-  it("consulta galerias privadas pelo termo de busca", async () => {
+  it("consulta apenas galerias públicas pelo termo de busca", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
@@ -67,23 +67,17 @@ describe("telas administrativas de galerias", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleriesPage />);
     await screen.findByText("Nenhum resultado nesta visão.");
-    fireEvent.click(screen.getByRole("tab", { name: "Galerias privadas" }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith(
-        "/api/admin/derived-galleries?tab=active",
-        { credentials: "same-origin" },
-      ),
-    );
     fireEvent.change(
       screen.getByLabelText("Buscar por galeria, nome ou telefone"),
       { target: { value: "Maria" } },
     );
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith(
-        "/api/admin/derived-galleries?tab=active&query=Maria",
+        "/api/admin/parent-galleries/overview?query=Maria",
         { credentials: "same-origin" },
       ),
     );
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("derived-galleries"))).toBe(false);
   });
   it("exige confirmação antes de bloquear uma galeria privada", async () => {
     const fetchMock = vi.fn((path: string) =>

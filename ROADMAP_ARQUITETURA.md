@@ -6,6 +6,8 @@
 
 # Pick-your-Pic — Roadmap Arquitetural
 
+> **Decisão de galeria única — `unify-gallery-client-collections`:** a Galeria pública autenticada é a única galeria operacional. Cada pasta é comum ou atribuída a uma ou mais clientes; “Coleção” reúne somente as pastas comuns e atribuídas à pessoa autenticada. Seleções, compras, prazo e histórico permanecem por galeria + cliente. “Minha galeria” deixa de ser uma tela e links antigos redirecionam após autorização. A limpeza dos dados de teste é exclusiva de homologação, com preservação de admin, 2FA, Evolution e configurações globais. Cláusulas históricas de derivação abaixo ficam substituídas nesse escopo.
+
 > Direção detalhada de interface e UX: [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md).
 
 Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a especificação de implementação para o executor.
@@ -16,7 +18,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Painel administrativo robusto, porém direto para um único fotógrafo no MVP.
 - O produto tem duas áreas — administração do fotógrafo e portal do cliente — com comportamento de CMS apenas para conteúdo estruturado de galerias, não para construção livre de websites.
 - Personalização visual controlada: cor da galeria, tipografia do nome, capa e templates suportados de organização; sem construtor de páginas ou múltiplos templates de website.
-- Galerias privadas organizadas previamente no DigiKam e eventos coletivos protegidos por busca facial privada.
+- Pastas restritas organizadas pelo fotógrafo dentro da galeria autenticada; busca facial limitada às fotos já autorizadas à cliente.
 - Fotos exibidas são JPEGs exportados após o culling; RAW e edição final ficam fora do sistema.
 - Google Photos é o canal de entrega final criado manualmente pelo fotógrafo; o sistema controla o link e a comunicação.
 
@@ -69,9 +71,9 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 
 ## Fase 3 — Galerias e vendas
 
-- Galeria privada: importação DigiKam de fotos já separadas pelo fotógrafo, com vários responsáveis autorizados quando necessário.
+- Pasta restrita: JPEGs já separados pelo fotógrafo, criada no card de uma cliente e atribuível a outras responsáveis autorizadas sem cópia.
 - Galeria pública é uma denominação de produto, não acesso anônimo: nenhuma prévia fotográfica é entregue antes do OTP, e o backend aplica `standard`, `invite_only` ou `collective_protected`.
-- Galerias privadas derivadas herdam a configuração efetiva da Galeria pública; fotos disponíveis e seleções comerciais são estados distintos.
+- A galeria única fornece configuração efetiva a pastas comuns e restritas; fotos disponíveis e seleções comerciais continuam sendo estados distintos por cliente.
 - Evento coletivo: nenhuma grade é anônima; clientes autenticados e vinculados podem visualizar somente a Galeria pública autorizada, enquanto qualquer ampliação de acesso por reconhecimento exige resultado privado aprovado.
 - Cliente pode navegar, ampliar, favoritar e montar carrinho; identificação obrigatória na primeira intenção de compra.
 - Carrinho persistente por cliente e galeria; histórico de acessos, favoritos, remoções e abandono.
@@ -106,7 +108,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 ## Fase 6 — WhatsApp e comunicação
 
 - Evolução aprovada em `configurable-push-and-whatsapp-notifications`: central `/admin/notifications` com seis eventos e dois canais independentes (WhatsApp/push); substitui inbox read/unread e editor de pagamentos em Configurações. Histórico e auditoria permanecem.
-- Avisos ao fotógrafo: primeiro acesso e primeira seleção por cliente/galeria canônica; pagamento informado. Avisos ao cliente: lote de novas prévias privadas pronto; pagamento confirmado ou recusado. Correções financeiras são silenciosas; falha de transporte não desfaz o negócio.
+- Avisos ao fotógrafo: primeiro acesso e primeira seleção por cliente/galeria canônica; pagamento informado. Avisos ao cliente: novas prévias de pasta restrita prontas somente para destinatárias efetivas; pagamento confirmado ou recusado. Correções financeiras são silenciosas; falha de transporte não desfaz o negócio.
 - Web Push exige adesão explícita por dispositivo, inscrição cifrada, VAPID externo, destino interno autenticado e worker sem cache privado. Lotes, marcos e entregas são duráveis/idempotentes; ligar canais não reproduz histórico. Operação real depende de configuração e aceite de homologação, não apenas dos testes locais.
 
 - Mensagens configuráveis para OTP, convite, pagamento, edição, entrega, carrinho abandonado e expiração.
@@ -123,7 +125,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Fluxo: responsável já autorizado aceita em checkbox o consentimento específico para uso temporário da referência, envia uma foto com um rosto e acompanha um job durável. Fechar ou atualizar a tela não cancela a busca; progresso real e conclusão ficam disponíveis para retomada e notificação transacional neutra.
 - Comparar somente com embeddings do snapshot daquela galeria. Resultados apenas reordenam fotos que a cliente já pode visualizar e aparecem na mesma Galeria pública, sem criar permissão, seleção ou galeria privada.
 - Ranqueamento técnico avalia o rosto que correspondeu à referência, não o maior rosto ou a foto inteira. Nitidez local, corte, tamanho/proeminência e pose separam `Melhores resultados encontrados` de `Outros resultados encontrados`; nenhuma foto é excluída ou ocultada automaticamente e nenhum atributo pessoal ou estético é inferido.
-- A primeira seleção consciente, manual ou a partir do resultado, cria ou reutiliza a única galeria privada operacional de `Galeria pública + cliente`; a busca isolada não cria entidade comercial.
+- A primeira seleção consciente, manual ou a partir do resultado, cria ou reutiliza somente o estado comercial individual de `Galeria pública + cliente`; a busca isolada não cria entidade comercial.
 - Nenhuma grade anônima de fotos escolares e nenhuma busca entre eventos. Revisão do fotógrafo permanece obrigatória se um desenho futuro pretender liberar conteúdo antes invisível ou ampliar o escopo autorizado.
 - Feedback “não é esta pessoa” remove resultado e cria tarefa silenciosa para o fotógrafo; não treinar o modelo automaticamente sem revisão humana.
 - Incluir foto/excluir foto da indexação em massa antes da liberação do evento.

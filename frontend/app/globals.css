@@ -347,6 +347,21 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .gallery-client-counts div { display:grid; gap:4px; min-width:0; padding:10px; border:1px solid var(--mk-border); border-radius:10px; background:var(--mk-surface-subtle); }
 .gallery-client-counts dt { color:var(--mk-ink-muted); font-size:.72rem; font-weight:700; }
 .gallery-client-counts dd { margin:0; color:var(--mk-ink); font-size:1.2rem; font-weight:850; }
+.client-collection { min-width:0; border:1px solid var(--mk-border); border-radius:12px; overflow:hidden; }
+.client-collection-toggle { display:flex; width:100%; justify-content:space-between; align-items:center; gap:12px; padding:14px; border:0; background:var(--mk-surface-subtle); color:var(--mk-ink); font:inherit; font-weight:800; text-align:left; cursor:pointer; }
+.client-collection-toggle:focus-visible { outline:3px solid var(--mk-ink); outline-offset:-3px; }
+.client-collection-body { display:grid; min-width:0; gap:16px; padding:14px; }
+.client-collection-folder { display:grid; min-width:0; gap:12px; padding:12px; border:1px solid var(--mk-border); border-radius:10px; }
+.client-collection-folder > button { width:100%; border:0; background:transparent; color:var(--mk-ink); font:inherit; font-weight:700; text-align:left; cursor:pointer; overflow-wrap:anywhere; }
+.client-collection-folder .folder-photo-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr)); }
+.client-collection-folder .folder-photo-grid article { min-width:0; }
+.client-collection-folder .folder-photo-grid img { width:100%; max-width:100%; height:auto; aspect-ratio:4/3; object-fit:contain; }
+.client-collection-folder .folder-photo-grid strong { display:block; overflow-wrap:anywhere; }
+.client-collection-recipients { display:grid; gap:10px; padding:12px; border-radius:10px; background:var(--mk-surface-subtle); }
+.client-collection-recipients ul { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.client-collection-recipients li { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; overflow-wrap:anywhere; }
+.client-collection-recipients label { display:grid; gap:5px; }
+.client-collection-recipients select { min-width:0; max-width:100%; }
 .gallery-client-open { justify-self:start; }
 .gallery-client-unlink { justify-self:start; border-color:var(--mk-border); color:var(--mk-ink); }
 .gallery-client-card-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
