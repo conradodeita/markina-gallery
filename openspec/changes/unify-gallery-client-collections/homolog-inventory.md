@@ -12,7 +12,14 @@
 
 - Excluir somente as 57 tabelas operacionais da Markina, as linhas de cliente nas 3 tabelas mistas, o conteúdo das quatro raízes `source`, `derivatives`, `history` e `facial-references`, e as filas do Redis exclusivo da Markina. Pausar e retomar somente writers do projeto; não tocar em Evolution, branding, banco/volumes/contêineres de terceiros, admin, 2FA, configurações globais, backups preexistentes ou produção.
 - O fluxo sem novo backup não repete o deploy. Antes de enviar o script de manutenção, o workflow exige o SHA acima como ancestral, confirma que nenhum código operacional mudou, confere que o checkout remoto ainda está nesse SHA e verifica as duas rotas de saúde. O script repete as guardas de topologia e o inventário antes de excluir; após, compara preservados e exige tabelas/mídia operacionais zeradas.
-- O proprietário autorizou a limpeza dos dados de teste sem criar novo backup e recebeu o escopo, porta, subdomínio e plano de impacto zero no chat. A execução e a evidência posterior permanecem pendentes.
+- O proprietário autorizou a limpeza dos dados de teste sem criar novo backup e recebeu o escopo, porta, subdomínio e plano de impacto zero no chat antes da execução registrada abaixo.
+
+## Primeira limpeza — 2026-09-27
+
+- O [workflow 36353174348](https://github.com/conradodeita/markina-gallery/actions/runs/36353174348) passou nos cinco jobs. O commit `843b4584d3c2e831d488e03148e0f36ee037ef3b` continha os trailers literais de limpeza sem backup e SHA esperado `58f5dd8723184e5a1a0f115507c22a51920aeaf1`. O job conferiu o checkout remoto e os healthchecks e executou a manutenção sem novo deploy nem backup de pré-deploy; o script confirmou o token exclusivo de limpeza sem novo backup.
+- Inventário imediatamente anterior: 7 galerias, 1 derivada legada, 7 pastas, 1.700 fotos, 1 cliente, 7 pedidos, 35 sessões de cliente, 105 desafios OTP, 190.611 eventos de auditoria de cliente, 6.786 derivados / 1.481.611.860 bytes e 7 fontes / 5.452.814 bytes. O número de eventos de auditoria e alguns outros contadores aumentaram entre a leitura e a pausa dos writers; o gate repetiu a leitura no momento da operação.
+- Inventário posterior: **zero em todas as 57 tabelas operacionais**, zero arquivos/bytes nas quatro raízes de mídia e zero linhas de cliente nas três tabelas mistas. A comparação automática confirmou contagens preservadas idênticas antes/depois: 1 admin, 66 sessões administrativas, 3 desafios de segurança, 15 inscrições push administrativas, 1 marca, 1 PIX global, 7 configurações de notificações, 2 presets com 5 faixas, 1 configuração WhatsApp e 1 configuração de ajuste de prévia, entre outras. O Evolution estava saudável no inventário, sem comandos de exclusão/recriação dirigidos a ele; o healthcheck HTTP da Markina passou após retomar os serviços.
+- Nenhum dado sintético de aceite foi criado ainda. A validação da jornada e a limpeza final permanecem pendentes.
 
 ## Leitura anterior — 2026-09-26
 
