@@ -21,9 +21,11 @@ def test_topology_guard() -> None:
         "\n' || fail", 1
     )[0]
     mounts = {
-        "source": "media-source", "derivatives": "media-derivatives",
-        "history": "media-history", "facial-references": "facial-references",
-        "branding": "branding-assets",
+        "source": "markina-gallery_media-source",
+        "derivatives": "markina-gallery_media-derivatives",
+        "history": "markina-gallery_media-history",
+        "facial-references": "markina-gallery_facial-references",
+        "branding": "markina-gallery_branding-assets",
     }
     config = {
         "name": "markina-gallery",
@@ -32,7 +34,8 @@ def test_topology_guard() -> None:
                 "environment": {
                     "APP_ENV": "staging",
                     "DATABASE_URL": "postgresql+psycopg://synthetic@db:5432/markina_gallery",
-                    "MARKINA_PUBLIC_URL": "https://markina-homolog.duckdns.org",
+                    "MARKINA_PUBLIC_URL": "http://localhost:3000",
+                    "PUBLIC_APP_ORIGIN": "https://markina-homolog.duckdns.org",
                 },
                 "volumes": [
                     {"target": f"/var/lib/markina/{target}", "source": source}
@@ -60,10 +63,17 @@ def test_topology_guard() -> None:
             DATABASE_URL="postgresql+psycopg://synthetic@evolution-db:5432/markina_gallery"
         ),
         lambda value: value["services"]["api"]["environment"].update(
-            MARKINA_PUBLIC_URL="https://example.test"
+            PUBLIC_APP_ORIGIN="https://example.test"
         ),
+        lambda value: value["services"]["api"]["environment"].update(
+            PUBLIC_APP_ORIGIN="http://markina-homolog.duckdns.org"
+        ),
+        lambda value: value["services"]["api"]["environment"].pop("PUBLIC_APP_ORIGIN"),
         lambda value: value["services"]["nginx"]["ports"][0].update(host_ip="0.0.0.0"),
         lambda value: value["services"]["api"]["volumes"][0].update(source="evolution-instances"),
+        lambda value: value["services"]["api"]["volumes"][0].update(
+            source="another-project_media-source"
+        ),
     ):
         changed = json.loads(json.dumps(config))
         mutation(changed)
