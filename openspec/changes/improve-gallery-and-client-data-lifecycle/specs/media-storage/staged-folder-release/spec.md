@@ -29,6 +29,10 @@ O sistema SHALL manter a pasta concluída vinculada à Galeria pública de orige
 - **WHEN** o fotógrafo libera uma pasta concluída para uma galeria privada ativa
 - **THEN** a cliente vê a nova pasta na próxima consulta autorizada e pode revisar somente as fotos liberadas para ela
 
+#### Scenario: Pasta restrita concluída
+- **WHEN** o fotógrafo libera uma pasta pronta para clientes escolhidas
+- **THEN** somente as escolhidas veem a nova rodada; uma lista vazia não libera a pasta
+
 ### Requirement: Exclusão segura de pasta
 
 O sistema SHALL permitir ao fotógrafo excluir diretamente uma pasta vazia ou em preparação sem vínculos privados. Uma pasta liberada SHALL permanecer protegida contra exclusão isolada enquanto referenciada por galeria privada. Durante a exclusão confirmada da Galeria pública, o sistema SHALL remover fotos sem referência privada e pastas que ficarem vazias, mas SHALL conservar, sem duplicação, os ativos e a estrutura mínima ainda utilizados por galerias privadas. A remoção SHALL também preservar a mídia reclassificada como evidência histórica de compra.

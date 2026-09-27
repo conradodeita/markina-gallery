@@ -20,6 +20,10 @@ O sistema SHALL entregar prévias somente após autenticação e autorização d
 - **WHEN** um usuário autorizado visualiza a capa vigente de sua galeria
 - **THEN** recebe somente a prévia reduzida dessa capa, sem marca-d'água, grade ou EXIF/GPS, mantendo autorização e headers privados existentes
 
+#### Scenario: Prévia de compra confirmada após revogação da pasta
+- **WHEN** uma cliente acessa o item do próprio pedido canônico confirmado após perder a atribuição à pasta
+- **THEN** o sistema entrega a prévia protegida desse item, mas nega a prévia operacional da pasta e nega o item a outra cliente ou a pedido não confirmado
+
 ### Requirement: Proteção visual aplicada ao conteúdo
 
 O sistema SHALL aplicar marca-d'água e demais proteção configurada à imagem de prévia de conteúdo entregue ao cliente, e não somente como camada visual do navegador. Somente a apresentação da capa vigente SHALL dispensar marca-d'água e linhas de grade. A exceção SHALL NOT desproteger fotos das pastas, miniaturas de conteúdo, ampliações, carrinho ou pedidos.
