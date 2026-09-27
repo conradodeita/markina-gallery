@@ -48,7 +48,9 @@ compose config --quiet
 
 # O override APP_ENV no contêiner efêmero não prova que o host/volumes são de
 # homologação. Confere a configuração resolvida sem imprimir credenciais.
-compose config --format json | python3 -c '
+# A verificação inclui os serviços Evolution do perfil WhatsApp mesmo quando
+# COMPOSE_PROFILES não está definido para este processo de manutenção.
+compose --profile whatsapp-real config --format json | python3 -c '
 import json, sys
 from urllib.parse import urlsplit
 config = json.load(sys.stdin)
@@ -74,14 +76,18 @@ check(any(str(port.get("published")) == "8080" and port.get("host_ip") == "127.0
 for service in ("db", "redis", "evolution-db", "evolution-redis"):
     check(not services[service].get("ports"), f"portas de {service}")
 mounts = {item["target"]: item["source"] for item in services["api"]["volumes"]}
+volumes = config["volumes"]
 for target, source in {
     "/var/lib/markina/source": "media-source",
     "/var/lib/markina/derivatives": "media-derivatives",
     "/var/lib/markina/history": "media-history",
     "/var/lib/markina/facial-references": "facial-references",
 }.items():
-    check(mounts.get(target) == f"markina-gallery_{source}", f"volume de {target}")
-check(mounts.get("/var/lib/markina/branding") == "markina-gallery_branding-assets", "volume de marca")
+    check(mounts.get(target) == source and volumes.get(source, {}).get("name") == f"markina-gallery_{source}",
+          f"volume de {target}")
+check(mounts.get("/var/lib/markina/branding") == "branding-assets"
+      and volumes.get("branding-assets", {}).get("name") == "markina-gallery_branding-assets",
+      "volume de marca")
 ' || fail "topologia de homologação não corresponde ao projeto/porta/domínio/banco/volumes esperados"
 for service in api db redis; do
   container="$(compose ps -q "$service")"
