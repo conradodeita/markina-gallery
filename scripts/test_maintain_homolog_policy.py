@@ -1,6 +1,8 @@
 """Verificações estruturais da limpeza isolada de homologação."""
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,18 +19,20 @@ def require(fragment: str, label: str, content: str) -> None:
 
 
 def test_topology_guard() -> None:
-    policy = SCRIPT.split("compose config --format json | python3 -c '\n", 1)[1].split(
+    policy = SCRIPT.split("compose --profile whatsapp-real config --format json | python3 -c '\n", 1)[1].split(
         "\n' || fail", 1
     )[0]
     mounts = {
-        "source": "markina-gallery_media-source",
-        "derivatives": "markina-gallery_media-derivatives",
-        "history": "markina-gallery_media-history",
-        "facial-references": "markina-gallery_facial-references",
-        "branding": "markina-gallery_branding-assets",
+        "source": "media-source", "derivatives": "media-derivatives",
+        "history": "media-history", "facial-references": "facial-references",
+        "branding": "branding-assets",
     }
     config = {
         "name": "markina-gallery",
+        "volumes": {
+            source: {"name": f"markina-gallery_{source}"}
+            for source in mounts.values()
+        },
         "services": {
             "api": {
                 "environment": {
@@ -74,10 +78,37 @@ def test_topology_guard() -> None:
         lambda value: value["services"]["api"]["volumes"][0].update(
             source="another-project_media-source"
         ),
+        lambda value: value["volumes"]["media-source"].update(
+            name="another-project_media-source"
+        ),
     ):
         changed = json.loads(json.dumps(config))
         mutation(changed)
         assert not accepted(changed)
+
+    if shutil.which("docker"):
+        environment = os.environ.copy()
+        environment.update({
+            "APP_ENV": "staging",
+            "DATABASE_URL": "postgresql+psycopg://synthetic@db:5432/markina_gallery",
+            "POSTGRES_DB": "markina_gallery",
+            "MARKINA_GALLERY_PORT": "127.0.0.1:8080",
+            "MARKINA_PUBLIC_URL": "http://localhost:3000",
+            "PUBLIC_APP_ORIGIN": "https://markina-homolog.duckdns.org",
+        })
+        resolved = subprocess.run(
+            ["docker", "compose", "--profile", "whatsapp-real", "-p", "markina-gallery", "-f",
+             str(ROOT / "docker" / "docker-compose.yml"), "config", "--format", "json"],
+            cwd=ROOT, env=environment, text=True, capture_output=True, check=False,
+        )
+        assert resolved.returncode == 0, "Compose de teste não resolveu a topologia"
+        actual = subprocess.run(
+            [sys.executable, "-c", policy], input=resolved.stdout, text=True,
+            capture_output=True, check=False,
+        )
+        assert actual.returncode == 0, (
+            f"guarda recusou o Compose real da Markina: {actual.stderr.strip()}"
+        )
 
 
 def main() -> None:
@@ -98,7 +129,7 @@ def main() -> None:
     require("face-index-worker face-search-worker face-maintenance-worker", "writers faciais", SCRIPT)
     require("preview_compose stop preview-adjustment-worker", "pausa do ajuste de prévia", SCRIPT)
     require("preview_compose up -d --no-deps preview-adjustment-worker", "retomada do ajuste de prévia", SCRIPT)
-    require('compose config --format json | python3 -c', "topologia resolvida", SCRIPT)
+    require('compose --profile whatsapp-real config --format json | python3 -c', "topologia resolvida", SCRIPT)
     require('com.docker.compose.project', "rótulo do projeto exclusivo", SCRIPT)
     require('markina-homolog.duckdns.org', "subdomínio de homologação", SCRIPT)
     require('facial-references', "volume de referência facial", SCRIPT)
