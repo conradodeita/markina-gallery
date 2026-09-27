@@ -26,10 +26,10 @@ O sistema SHALL fornecer uma operação explícita, inventariada e restrita à h
 - **WHEN** a limpeza termina
 - **THEN** a conta admin, 2FA, login/instância Evolution e todas as configurações globais permanecem utilizáveis e com contagens/estado preservados
 
-#### Scenario: Validação temporária concluída
+#### Scenario: Estado vazio confirmado sem novos dados
 
-- **WHEN** dados sintéticos são criados após a primeira limpeza para validar a galeria única
-- **THEN** esses dados são removidos novamente e a homologação termina com zero galerias, clientes, fotos, seleções e pedidos, mantendo as configurações preservadas
+- **WHEN** o inventário posterior confirma a limpeza e o proprietário dispensa a validação adicional com dados sintéticos temporários
+- **THEN** homologação permanece com zero galerias, clientes, fotos, seleções e pedidos, sem segunda operação destrutiva, mantendo as configurações preservadas
 
 #### Scenario: Ambiente ou inventário divergente
 

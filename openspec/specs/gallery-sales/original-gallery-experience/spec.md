@@ -6,15 +6,18 @@ Definir a experiência visual autoral e utilizável que conecta a operação do 
 ## Requirements
 
 ### Requirement: Interface original por papel
-O sistema SHALL fornecer uma interface visual coesa para fotógrafo e cliente, com navegação, hierarquia, componentes e estados próprios da Markina Gallery. A interface SHALL ser responsiva, acessível e não copiar componentes ou código de serviços concorrentes.
+
+O sistema SHALL fornecer uma interface visual coesa para fotógrafo e cliente, com navegação, hierarquia, componentes e estados próprios da Pick-your-Pic. A interface SHALL ser responsiva, acessível e não copiar componentes ou código de serviços concorrentes.
 
 #### Scenario: Fotógrafo inicia a operação
+
 - **WHEN** o fotógrafo autenticado abre a área administrativa
-- **THEN** ele vê acesso claro a pendências, galerias, clientes, pastas e operações disponíveis para seus dados autorizados
+- **THEN** vê acesso claro a pendências, galerias únicas, clientes, pastas e operações disponíveis para seus dados autorizados
 
 #### Scenario: Cliente retoma sua jornada
-- **WHEN** uma cliente autenticada abre sua biblioteca ou galeria privada
-- **THEN** ela vê apenas sua jornada de revisão, seleção e histórico, sem controles administrativos ou dados de terceiros
+
+- **WHEN** uma cliente autenticada abre a biblioteca ou uma galeria
+- **THEN** vê uma entrada por galeria e, em “Coleção”, as pastas comuns e atribuídas na navegação atual, além de sua seleção e histórico, sem controles administrativos nem dados de terceiros
 
 ### Requirement: Estados visuais controlados pelo backend
 O sistema SHALL apresentar carregamento, vazio, erro, sucesso, bloqueio, expiração e preparação a partir de respostas autorizadas do backend. O frontend SHALL NOT preencher lacunas com autorizações, fotos, pedidos ou estados simulados persistentes.

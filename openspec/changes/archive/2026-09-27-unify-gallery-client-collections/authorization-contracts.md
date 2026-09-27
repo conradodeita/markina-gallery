@@ -1,6 +1,6 @@
 # Contratos de autorização e roteiro de aceite
 
-Este arquivo acompanha `design.md` e as delta specs; descreve o contrato esperado ao fim da change. Os testes já presentes estão identificados; os demais cenários têm roteiro e tarefa responsável, sem sugerir que já foram executados.
+Este arquivo acompanha `design.md` e as delta specs; descreve o contrato esperado ao fim da change. Os testes já presentes estão identificados. As menções ao roteiro 7.3 na matriz documentam o plano original, dispensado pelo proprietário em 27/09 após conferir homologação vazia; não indicam execução remota desses cenários.
 
 ## Contrato HTTP
 
@@ -25,13 +25,13 @@ Este arquivo acompanha `design.md` e as delta specs; descreve o contrato esperad
 | `gallery-sales/original-gallery-experience` | Fotógrafo inicia a operação; Cliente retoma sua jornada | Testes de navegação responsiva em 3.3/4.1/4.4 e revisão manual mobile em 7.3. |
 | `media-storage/protected-previews` | Prévia do cliente; Prévia administrativa; Acesso indevido | `test_private_upload_reuses_media_pipeline_without_entering_public_facial_scope`, `test_canonical_folder_audience_filters_list_preview_and_selection` e `test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients` cobrem prévias negadas/autorizadas e variantes processadas. |
 | `media-storage/staged-folder-release` | Lote concluído; Pasta restrita concluída; Remoção de preparação abandonada | Testes de liberação, lista vazia, revogação e exclusão segura em 3.1/3.2; roteiro 7.3 com pasta comum e restrita. |
-| `deployment-operations` | Inventário anterior; Execução autorizada; Preservação de credenciais e preferências; Validação temporária concluída; Ambiente ou inventário divergente | Testes da rotina em PostgreSQL/volumes descartáveis em 5.1–5.3; inventário e evidência operacional em 7.1–7.4, inclusive segunda limpeza e contagens finais zero. |
+| `deployment-operations` | Inventário anterior; Execução autorizada; Preservação de credenciais e preferências; Estado vazio confirmado sem novos dados; Ambiente ou inventário divergente | Testes da rotina em PostgreSQL/volumes descartáveis em 5.1–5.3; inventário anterior/posterior e evidência operacional em 7.1–7.2; estado vazio também conferido pelo proprietário. Segunda limpeza dispensada porque nenhum dado temporário foi criado. |
 
-Antes de declarar a change concluída, 6.2 verifica cada linha contra testes executados ou evidência do roteiro, e registra qualquer bloqueio sem marcar a tarefa respectiva como pronta.
+O checkpoint 6.2 e o CI verificaram os testes automatizados. A aceitação funcional em homologação com novos dados não foi realizada; o proprietário escolheu encerrar com a verificação de vazio.
 
-## Roteiro de aceite temporário em homologação
+## Roteiro originalmente previsto, não executado
 
-Pré-condição: primeiro inventário posterior à limpeza zerado; sessão real do fotógrafo autenticada com 2FA e duas sessões de clientes de teste autenticadas por OTP, em números sob controle do proprietário. Não registrar senhas, OTPs, telefones ou nomes reais nos artefatos. Criar apenas uma galeria de teste e JPEGs gerados sinteticamente; manter os canais externos sob configuração já existente, sem alterar segredos nem preferências globais.
+Este roteiro permanece como referência para eventual validação futura, mas não é tarefa pendente desta change. Pré-condição: primeiro inventário posterior à limpeza zerado; sessão real do fotógrafo autenticada com 2FA e duas sessões de clientes de teste autenticadas por OTP, em números sob controle do proprietário. Não registrar senhas, OTPs, telefones ou nomes reais nos artefatos. Criar apenas uma galeria de teste e JPEGs gerados sinteticamente; manter os canais externos sob configuração já existente, sem alterar segredos nem preferências globais.
 
 1. No editor da galeria, vincular duas clientes de teste. Na etapa Imagens, criar e liberar uma pasta comum com JPEG sintético; nos cards das duas clientes, conferir que `Acervo da cliente` começa fechado e abre/recolhe sem salvar. Criar no primeiro card uma pasta exclusiva com outro JPEG, atribuir também à segunda cliente e liberá-la. Conferir uma só pasta/foto no admin, sem galeria derivada.
 2. Em duas sessões OTP distintas, conferir que a Coleção mostra pasta comum e exclusiva compartilhada. Criar uma segunda pasta exclusiva só da primeira cliente e confirmar que a segunda não vê a pasta nem acessa a prévia por URL direta. Conferir que pasta em preparação não aparece. Validar em viewport móvel sem corte dos cards ou nomes de arquivo.
