@@ -53,20 +53,26 @@ import json, sys
 from urllib.parse import urlsplit
 config = json.load(sys.stdin)
 services = config["services"]
-def check(condition):
+def check(condition, label):
     if not condition:
-        raise SystemExit(1)
-check(config["name"] == "markina-gallery")
-check(services["api"]["environment"]["APP_ENV"] in ("staging", "homolog", "homologation"))
+        raise SystemExit(f"guarda de topologia divergente: {label}")
+check(config["name"] == "markina-gallery", "projeto")
+check(services["api"]["environment"]["APP_ENV"] in ("staging", "homolog", "homologation"), "ambiente")
 api_url = urlsplit(services["api"]["environment"]["DATABASE_URL"])
-check(api_url.hostname == "db")
-check(api_url.path.lstrip("/") == services["db"]["environment"]["POSTGRES_DB"])
-public_url = urlsplit(services["api"]["environment"]["MARKINA_PUBLIC_URL"])
-check(public_url.hostname == "markina-homolog.duckdns.org")
+check(api_url.hostname == "db", "host do banco")
+check(api_url.path.lstrip("/") == services["db"]["environment"]["POSTGRES_DB"], "nome do banco")
+# O deploy sincroniza PUBLIC_APP_ORIGIN com a origem HTTPS aprovada. O valor
+# legado MARKINA_PUBLIC_URL pode continuar no default localhost sem afetar o
+# destino público; não usá-lo como identidade do host de homologação.
+public_origin = urlsplit(services["api"]["environment"].get("PUBLIC_APP_ORIGIN", ""))
+check(public_origin.scheme == "https" and public_origin.hostname == "markina-homolog.duckdns.org"
+      and public_origin.path in ("", "/") and not public_origin.query
+      and not public_origin.fragment and not public_origin.username
+      and not public_origin.password, "origem pública")
 check(any(str(port.get("published")) == "8080" and port.get("host_ip") == "127.0.0.1"
-          for port in services["nginx"].get("ports", [])))
+          for port in services["nginx"].get("ports", [])), "porta local")
 for service in ("db", "redis", "evolution-db", "evolution-redis"):
-    check(not services[service].get("ports"))
+    check(not services[service].get("ports"), f"portas de {service}")
 mounts = {item["target"]: item["source"] for item in services["api"]["volumes"]}
 for target, source in {
     "/var/lib/markina/source": "media-source",
@@ -74,8 +80,8 @@ for target, source in {
     "/var/lib/markina/history": "media-history",
     "/var/lib/markina/facial-references": "facial-references",
 }.items():
-    check(mounts[target].split("_")[-1] == source)
-check(mounts["/var/lib/markina/branding"].split("_")[-1] == "branding-assets")
+    check(mounts.get(target) == f"markina-gallery_{source}", f"volume de {target}")
+check(mounts.get("/var/lib/markina/branding") == "markina-gallery_branding-assets", "volume de marca")
 ' || fail "topologia de homologação não corresponde ao projeto/porta/domínio/banco/volumes esperados"
 for service in api db redis; do
   container="$(compose ps -q "$service")"
