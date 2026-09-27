@@ -96,6 +96,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Validar automação de entrega
         run: bash scripts/test_deploy_homolog.sh
       - name: Publicar SHA aprovado em homologação
@@ -114,8 +115,6 @@ jobs:
           printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
           printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
           chmod 600 "$key_file" "$known_hosts_file"
-          remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q --facial-enabled %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA" "$HOMOLOG_FACIAL_PROCESSING_ENABLED")"
-          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
           maintenance_mode="inventory"
           maintenance_confirmation=""
           maintenance_without_backup=""
@@ -126,6 +125,20 @@ jobs:
           elif git log -1 --pretty=%B | grep -Fxq 'Homolog-Cleanup: galleries-and-clients'; then
             maintenance_mode="execute"
             maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
+          fi
+          if [[ "$maintenance_without_backup" == "--without-backup" ]]; then
+            expected_sha="$(git log -1 --pretty=%B | sed -nE 's/^Homolog-Cleanup-Expected-SHA: ([0-9a-f]{40})$/\1/p')"
+            [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'SHA inventariado ausente ou inválido' >&2; exit 1; }
+            git merge-base --is-ancestor "$expected_sha" "$GITHUB_SHA"
+            if ! git diff --quiet "$expected_sha" "$GITHUB_SHA" -- backend frontend docker scripts ':(exclude)scripts/test_maintain_homolog_policy.py'; then
+              echo 'Código operacional mudou desde o SHA inventariado; limpeza cancelada' >&2
+              exit 1
+            fi
+            remote_command="$(printf 'cd /opt/markina-gallery && test "$(git rev-parse HEAD)" = %q && curl -fsS http://127.0.0.1:8080/healthz >/dev/null && curl -fsS http://127.0.0.1:8080/api/health >/dev/null' "$expected_sha")"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" </dev/null
+          else
+            remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q --facial-enabled %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA" "$HOMOLOG_FACIAL_PROCESSING_ENABLED")"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
           fi
           maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
           if [[ -n "$maintenance_without_backup" ]]; then

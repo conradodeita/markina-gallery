@@ -82,6 +82,8 @@ O procedimento exige checkout `/opt/markina-gallery`, projeto Compose `markina-g
 
 Alternativas rejeitadas: `docker compose down`, prune, `DROP DATABASE`, exclusão de volumes, `FLUSHALL` fora do Redis da Markina e limpeza manual sem inventário. Todas ampliam o impacto ou removem proteções.
 
+O deploy normal cria um backup de pré-deploy. Para cumprir a autorização específica de limpeza **sem novo backup**, o commit sinalizado em `develop` deve seguir uma via de manutenção sem repetir o deploy: exigir o SHA de homologação inventariado no trailer do commit, conferir que ele ainda é o checkout remoto, recusar mudanças de código operacional entre esse SHA e o commit, verificar os healthchecks locais e só então enviar o script de manutenção por SSH. O procedimento ainda faz novo inventário e guarda de topologia imediatamente antes da exclusão; os backups já existentes permanecem intactos.
+
 ### 8. Documentação e fases de publicação
 
 Atualizar `INSTRUCOES_EXECUTOR_CLAUDE_CODE.md` e `ROADMAP_ARQUITETURA.md` para substituir as cláusulas que exigem derivada, sem relaxar OTP, privacidade, snapshots e limites faciais. Reconciliar changes ativas que ainda presumem `DerivedGallery`; marcar explicitamente requisitos substituídos e manter trabalho independente. Implementar e testar o backend compatível antes do frontend, validar com clientes sintéticos distintos e uma pasta atribuída a ambos. CI, OpenSpec, lint, tipos e build precedem PR. O deploy de código e migration aditiva deve ser saudável antes da operação de limpeza; a limpeza só ocorre após novo inventário e gate operacional do servidor. Não publicar em produção sem plano separado para dados legados.

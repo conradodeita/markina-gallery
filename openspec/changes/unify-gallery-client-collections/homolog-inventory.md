@@ -1,4 +1,20 @@
-# Inventário somente leitura de homologação — 2026-09-26
+# Inventário somente leitura de homologação — 2026-09-27
+
+## Leitura atual e diferença
+
+- O [workflow 36350841071](https://github.com/conradodeita/markina-gallery/actions/runs/36350841071) passou nos jobs backend, frontend, OpenSpec, gitleaks e deploy/inventário. O checkout publicado e inventariado é `58f5dd8723184e5a1a0f115507c22a51920aeaf1`; `/healthz` e `/api/health` responderam com saúde.
+- A topologia resolvida confirmou projeto `markina-gallery`, entrada exclusiva `127.0.0.1:8080`, domínio `https://markina-homolog.duckdns.org`, banco/Redis sem portas públicas e volumes de mídia da Markina. Evolution permaneceu saudável e separado do alvo da manutenção.
+- Contagens atuais: 7 galerias públicas, 1 derivada legada, 7 pastas, 1.700 fotos, 1 cliente, 2 registros, 1 membro privado, 0 seleções e 7 pedidos. Há ainda 35 sessões de cliente, 105 desafios OTP, 13 inscrições push, 27 eventos de notificação, 36 entregas WhatsApp e históricos técnicos vinculados. O inventário completo discrimina as 57 tabelas operacionais; algumas contagens foram mascaradas pelo filtro de segredos do GitHub no log, sem impedir o teste de pós-condição zero.
+- Mídia atual: origem 7 arquivos / 5.452.814 bytes; derivados 6.786 arquivos / 1.481.611.860 bytes; histórico e referências faciais 0. Em 26/09 eram 19 arquivos de origem / 94.950.818 bytes; as contagens centrais de galerias, fotos, clientes e pedidos não mudaram. Desafios OTP aumentaram de 34 para 105.
+- Preservação inventariada: 1 admin, 66 sessões administrativas, 3 desafios de segurança, 15 inscrições push administrativas, 1 marca, 1 PIX global, 7 configurações de notificações, 2 presets de preços com 5 faixas, 1 configuração de WhatsApp, 1 configuração de ajuste de prévia, além das demais tabelas administrativas/globais classificadas em `backend/app/homolog_cleanup.py`.
+
+## Gate para limpeza autorizada sem novo backup
+
+- Excluir somente as 57 tabelas operacionais da Markina, as linhas de cliente nas 3 tabelas mistas, o conteúdo das quatro raízes `source`, `derivatives`, `history` e `facial-references`, e as filas do Redis exclusivo da Markina. Pausar e retomar somente writers do projeto; não tocar em Evolution, branding, banco/volumes/contêineres de terceiros, admin, 2FA, configurações globais, backups preexistentes ou produção.
+- O fluxo sem novo backup não repete o deploy. Antes de enviar o script de manutenção, o workflow exige o SHA acima como ancestral, confirma que nenhum código operacional mudou, confere que o checkout remoto ainda está nesse SHA e verifica as duas rotas de saúde. O script repete as guardas de topologia e o inventário antes de excluir; após, compara preservados e exige tabelas/mídia operacionais zeradas.
+- O proprietário autorizou a limpeza dos dados de teste sem criar novo backup e recebeu o escopo, porta, subdomínio e plano de impacto zero no chat. A execução e a evidência posterior permanecem pendentes.
+
+## Leitura anterior — 2026-09-26
 
 ## Alvo e topologia
 

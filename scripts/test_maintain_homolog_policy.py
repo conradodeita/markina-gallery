@@ -147,6 +147,22 @@ def main() -> None:
     no_backup_trailer = "Homolog-Cleanup: galleries-and-clients-without-backup"
     require(no_backup_trailer, "sinalização exata sem backup", WORKFLOW)
     require("maintenance_without_backup", "propagação do modo sem backup", WORKFLOW)
+    require("fetch-depth: 0", "histórico completo para comparar SHA inventariado", WORKFLOW)
+    require("Homolog-Cleanup-Expected-SHA: ([0-9a-f]{40})", "SHA inventariado no trailer", WORKFLOW)
+    require('git merge-base --is-ancestor "$expected_sha" "$GITHUB_SHA"', "ancestralidade do SHA", WORKFLOW)
+    require(
+        "git diff --quiet \"$expected_sha\" \"$GITHUB_SHA\" -- backend frontend docker scripts",
+        "código operacional inalterado antes da limpeza",
+        WORKFLOW,
+    )
+    require('test "$(git rev-parse HEAD)" = %q', "checkout remoto inventariado", WORKFLOW)
+    require('curl -fsS http://127.0.0.1:8080/api/health', "saúde remota antes da limpeza", WORKFLOW)
+    skip_deploy = WORKFLOW.split('if [[ "$maintenance_without_backup" == "--without-backup" ]]; then', 1)[1]
+    skip_deploy = skip_deploy.split("\n          fi", 1)[0]
+    if skip_deploy.index("git diff --quiet") > skip_deploy.index("\n          else"):
+        raise AssertionError("comparação de código deve preceder deploy normal")
+    if "< scripts/deploy-homolog.sh" in skip_deploy.split("\n          else", 1)[0]:
+        raise AssertionError("limpeza sem backup não pode executar deploy")
     require(
         'maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS_WITHOUT_BACKUP"',
         "token e trailer sem backup selecionados juntos",
