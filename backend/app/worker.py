@@ -24,6 +24,7 @@ from app.auth import (
     MediaDerivative,
     MediaJob,
     NotificationEvent,
+    ParentGallery,
     PaymentCommunication,
     PaymentNotificationOutbox,
     PhotoAsset,
@@ -90,8 +91,10 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
     order = db.get(SaleOrder, communication.sale_order_id) if communication else None
     client = db.get(Client, communication.client_id) if communication else None
     gallery = db.get(DerivedGallery, order.derived_gallery_id) if order else None
-    if not communication or not order or not client or not gallery:
+    parent = db.get(ParentGallery, order.parent_gallery_id) if order and order.parent_gallery_id else None
+    if not communication or not order or not client or not (gallery or parent):
         raise WhatsAppConfigurationError("Relação da notificação indisponível.")
+    gallery_name = gallery.name if gallery else parent.name
 
     if item.template_kind == "photographer_reported":
         photographer_phone = configured_photographer_phone()
@@ -99,7 +102,7 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
             raise WhatsAppConfigurationError("Destino do fotógrafo não autorizado.")
         return (
             f"Pagamento comunicado para o pedido {str(order.id)[:8]} de "
-            f"{client.full_name}, galeria {gallery.name}. Revise no painel administrativo."
+            f"{client.full_name}, galeria {gallery_name}. Revise no painel administrativo."
         )
 
     if item.template_kind not in DEFAULT_PAYMENT_TEMPLATES:
@@ -113,7 +116,7 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
         body,
         cliente=order.client_name_snapshot or client.full_name,
         pedido=str(order.id)[:8],
-        galeria=gallery.name,
+        galeria=gallery_name,
     )
 
 
@@ -661,14 +664,15 @@ def process_next_gallery_reopening_notification() -> bool:
             if item
             else None
         )
-        gallery = db.get(DerivedGallery, reopening.derived_gallery_id) if reopening else None
+        gallery = db.get(DerivedGallery, reopening.derived_gallery_id) if reopening and reopening.derived_gallery_id else None
+        parent = db.get(ParentGallery, reopening.parent_gallery_id) if reopening and reopening.parent_gallery_id else None
         try:
-            if not item or not reopening or not gallery or not item.recipient_phone:
+            if not item or not reopening or not (gallery or parent) or not item.recipient_phone:
                 raise WhatsAppConfigurationError("Relação da reabertura indisponível.")
             provider = whatsapp_provider_from_environment()
             provider.send_transactional(
                 item.recipient_phone,
-                f"Solicitação de reabertura da galeria {gallery.name}. Revise em Vendas e pagamentos.",
+                f"Solicitação de reabertura da galeria {(gallery or parent).name}. Revise em Vendas e pagamentos.",
                 idempotency_key=f"gallery-reopening:{item.id}",
             )
             item.status = "sent"

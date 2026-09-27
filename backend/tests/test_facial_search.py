@@ -18,8 +18,11 @@ from app.auth import (
     DerivedGalleryMembership,
     FacialJob,
     FacialRollout,
+    FacialSearchCandidate,
     FacialSearchRequest,
     FacialSearchSnapshotItem,
+    FolderClientGrant,
+    GalleryClientState,
     GalleryFacialPolicy,
     MediaDerivative,
     ParentGallery,
@@ -33,6 +36,7 @@ from app.facial.search import (
     FacialSearchError,
     create_search_request,
     read_latest_search_result,
+    read_search_result,
     search_availability,
     search_request_payload,
 )
@@ -439,6 +443,74 @@ def test_latest_search_repeats_client_gallery_authorization_and_expiry(
             client_id=client.id,
         )
 
+
+def test_search_snapshot_and_results_respect_restricted_folder_grant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, owner = _fixture(tmp_path, index_ready=True)
+    other = Client(full_name="Outra cliente", phone_e164="+5511999999997")
+    folder = PhotoFolder(
+        parent_gallery_id=parent.id, name="Retratos exclusivos", status="released",
+        purpose="content", audience_scope="selected", position=1,
+    )
+    db.add_all([other, folder])
+    db.flush()
+    photo = PhotoAsset(
+        parent_gallery_id=parent.id, folder_id=folder.id,
+        filename="restrita.jpg", storage_key=f"{parent.id}/restrita.jpg", available=True,
+    )
+    db.add(photo)
+    db.flush()
+    grant = FolderClientGrant(
+        folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id,
+    )
+    db.add_all([
+        GalleryClientState(parent_gallery_id=parent.id, client_id=owner.id),
+        GalleryClientState(parent_gallery_id=parent.id, client_id=other.id),
+        ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=other.id, status="active"),
+        grant,
+        MediaDerivative(photo_asset_id=photo.id, variant="client_preview", status="ready", relative_path=f"{photo.id}/client_preview.jpg"),
+        FacialJob(kind="index", status="completed", idempotency_key=f"index:{photo.id}",
+                  parent_gallery_id=parent.id, photo_asset_id=photo.id,
+                  model_version="model-v1", quality_version="quality-v1", preview_fingerprint="b" * 64),
+    ])
+    db.commit()
+    owner_search = create_search_request(
+        db, parent_gallery_id=parent.id, client_id=owner.id,
+        consent_version="consent-v1", subject_declaration="adult",
+        representation_reference=None, payload=_jpeg(), settings=_settings(tmp_path),
+    )
+    other_search = create_search_request(
+        db, parent_gallery_id=parent.id, client_id=other.id,
+        consent_version="consent-v1", subject_declaration="adult",
+        representation_reference=None, payload=_jpeg(), settings=_settings(tmp_path),
+    )
+    owner_ids = set(db.scalars(select(FacialSearchSnapshotItem.photo_asset_id).where(
+        FacialSearchSnapshotItem.search_request_id == owner_search.id
+    )))
+    other_ids = set(db.scalars(select(FacialSearchSnapshotItem.photo_asset_id).where(
+        FacialSearchSnapshotItem.search_request_id == other_search.id
+    )))
+    assert photo.id in owner_ids
+    assert photo.id not in other_ids
+    owner_search.status = "ready"
+    db.add(FacialSearchCandidate(
+        search_request_id=owner_search.id, parent_gallery_id=parent.id,
+        client_id=owner.id, photo_asset_id=photo.id, rank=1,
+        quality_band="best", expires_at=datetime.now(UTC) + timedelta(hours=1),
+    ))
+    db.commit()
+    assert len(read_search_result(
+        db, parent_gallery_id=parent.id, client_id=owner.id,
+        request_id=owner_search.id,
+    )[1]) == 1
+    db.delete(grant)
+    db.commit()
+    assert read_search_result(
+        db, parent_gallery_id=parent.id, client_id=owner.id,
+        request_id=owner_search.id,
+    )[1] == []
 
 def test_latest_search_isolated_between_two_concurrent_galleries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

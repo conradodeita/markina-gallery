@@ -30,6 +30,7 @@ from app.facial.policy import activation_inventory, read_policy
 from app.facial.reference_store import FacialReferenceStore
 from app.facial.rollout import rollout_is_active
 from app.facial.status import gallery_index_status
+from app.public_gallery_access import authorized_canonical_photos
 
 
 class FacialSearchError(RuntimeError):
@@ -272,15 +273,13 @@ def _build_snapshot(
 
     photo_ids = list(
         db.scalars(
-            select(PhotoAsset.id)
+            authorized_canonical_photos(parent_gallery_id, client_id)
+            .with_only_columns(PhotoAsset.id)
             .join(
                 MediaDerivative,
                 MediaDerivative.photo_asset_id == PhotoAsset.id,
             )
             .where(
-                PhotoAsset.parent_gallery_id == parent_gallery_id,
-                PhotoAsset.derived_gallery_id.is_(None),
-                PhotoAsset.available.is_(True),
                 MediaDerivative.variant == "client_preview",
                 MediaDerivative.status == "ready",
             )
@@ -436,16 +435,16 @@ def read_search_result(
     candidates = list(
         db.scalars(
             select(FacialSearchCandidate)
-            .join(PhotoAsset, PhotoAsset.id == FacialSearchCandidate.photo_asset_id)
             .where(
                 FacialSearchCandidate.search_request_id == item.id,
                 FacialSearchCandidate.parent_gallery_id == parent_gallery_id,
                 FacialSearchCandidate.client_id == client_id,
                 FacialSearchCandidate.rejected_at.is_(None),
                 FacialSearchCandidate.expires_at > now(),
-                PhotoAsset.parent_gallery_id == parent_gallery_id,
-                PhotoAsset.derived_gallery_id.is_(None),
-                PhotoAsset.available.is_(True),
+                FacialSearchCandidate.photo_asset_id.in_(
+                    authorized_canonical_photos(parent_gallery_id, client_id)
+                    .with_only_columns(PhotoAsset.id)
+                ),
             )
             .order_by(FacialSearchCandidate.rank)
         )
@@ -620,7 +619,6 @@ def authorize_search_candidate_selection(
         raise FacialSearchError("Resultado facial indisponível.")
     candidate = db.scalar(
         select(FacialSearchCandidate)
-        .join(PhotoAsset, PhotoAsset.id == FacialSearchCandidate.photo_asset_id)
         .where(
             FacialSearchCandidate.search_request_id == item.id,
             FacialSearchCandidate.parent_gallery_id == parent_gallery_id,
@@ -628,9 +626,10 @@ def authorize_search_candidate_selection(
             FacialSearchCandidate.photo_asset_id == photo_id,
             FacialSearchCandidate.rejected_at.is_(None),
             FacialSearchCandidate.expires_at > now(),
-            PhotoAsset.parent_gallery_id == parent_gallery_id,
-            PhotoAsset.derived_gallery_id.is_(None),
-            PhotoAsset.available.is_(True),
+            FacialSearchCandidate.photo_asset_id.in_(
+                authorized_canonical_photos(parent_gallery_id, client_id)
+                .with_only_columns(PhotoAsset.id)
+            ),
         )
     )
     if candidate is None:

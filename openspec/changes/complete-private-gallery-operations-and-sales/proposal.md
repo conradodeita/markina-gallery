@@ -1,5 +1,7 @@
 ## Why
 
+> **Reconciliação (2026-09-27):** requisitos de criação ou exibição de galeria privada derivada para novas jornadas foram substituídos por `unify-gallery-client-collections`. Contratos independentes de histórico, proteção, preço e apresentação permanecem, conforme `openspec/changes/unify-gallery-client-collections/supersession.md`. Não retomar tarefas de derivação ainda abertas; esta nota não altera a validação nem arquiva esta change.
+
 O fluxo administrativo atual mistura acervo público e privado, apresenta contadores comerciais que podem permanecer incorretos e separa Vendas de Pagamentos apesar de ambas tratarem o mesmo pedido. A homologação também revelou que a expiração encerra a seleção sem oferecer à cliente um pedido controlado de reabertura e que a confirmação equivocada não possui correção administrativa auditável.
 
 ## What Changes

@@ -3,13 +3,17 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    FolderClientGrant,
     GalleryAccessCapability,
+    GalleryClientState,
     ParentGallery,
     ParentGalleryRegistration,
+    PhotoAsset,
+    PhotoFolder,
     expired,
 )
 from app.parent_registration import link_client_to_parent
@@ -17,6 +21,10 @@ from app.parent_registration import link_client_to_parent
 
 class PublicGalleryAccessDenied(RuntimeError):
     """A identidade não possui autoridade suficiente para a origem."""
+
+
+class CanonicalPhotoAccessDenied(RuntimeError):
+    """A foto não pertence ao público efetivo desta cliente."""
 
 
 @dataclass
@@ -137,4 +145,79 @@ def require_public_gallery_browsing(
     )
     if result.state != "authorized":
         raise PublicGalleryAccessDenied("A grade desta galeria não está disponível.")
+    blocked_state = db.scalar(select(GalleryClientState.id).where(
+        GalleryClientState.parent_gallery_id == parent_gallery_id,
+        GalleryClientState.client_id == client_id,
+        GalleryClientState.status != "active",
+    ))
+    if blocked_state:
+        raise PublicGalleryAccessDenied("Acesso não autorizado.")
     return result.parent
+
+
+def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
+    """Consulta única de fotos liberadas no público efetivo da cliente."""
+
+    granted = (
+        select(FolderClientGrant.id)
+        .join(
+            GalleryClientState,
+            and_(
+                GalleryClientState.parent_gallery_id == FolderClientGrant.parent_gallery_id,
+                GalleryClientState.client_id == FolderClientGrant.client_id,
+            ),
+        )
+        .where(
+            FolderClientGrant.folder_id == PhotoFolder.id,
+            FolderClientGrant.parent_gallery_id == parent_gallery_id,
+            FolderClientGrant.client_id == client_id,
+            GalleryClientState.status == "active",
+        )
+        .exists()
+    )
+    blocked_state = select(GalleryClientState.id).where(
+        GalleryClientState.parent_gallery_id == parent_gallery_id,
+        GalleryClientState.client_id == client_id,
+        GalleryClientState.status != "active",
+    ).exists()
+    return (
+        select(PhotoAsset)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .where(
+            PhotoAsset.parent_gallery_id == parent_gallery_id,
+            PhotoAsset.derived_gallery_id.is_(None),
+            PhotoAsset.available,
+            PhotoFolder.parent_gallery_id == parent_gallery_id,
+            PhotoFolder.derived_gallery_id.is_(None),
+            PhotoFolder.status == "released",
+            PhotoFolder.purpose == "content",
+            ~blocked_state,
+            or_(
+                PhotoFolder.audience_scope == "all",
+                PhotoFolder.audience_scope.is_(None),  # pastas comuns legadas
+                and_(PhotoFolder.audience_scope == "selected", granted),
+            ),
+        )
+    )
+
+
+def authorized_canonical_photo(
+    db: Session, *, parent_gallery_id: UUID, client_id: UUID, photo_id: UUID
+) -> PhotoAsset | None:
+    return db.scalar(
+        authorized_canonical_photos(parent_gallery_id, client_id).where(PhotoAsset.id == photo_id)
+    )
+
+
+def require_authorized_canonical_photo(
+    db: Session, *, parent_gallery_id: UUID, client_id: UUID, photo_id: UUID
+) -> tuple[ParentGallery, PhotoAsset]:
+    parent = require_public_gallery_browsing(
+        db, parent_gallery_id=parent_gallery_id, client_id=client_id
+    )
+    photo = authorized_canonical_photo(
+        db, parent_gallery_id=parent_gallery_id, client_id=client_id, photo_id=photo_id
+    )
+    if not photo:
+        raise CanonicalPhotoAccessDenied("Foto indisponível.")
+    return parent, photo

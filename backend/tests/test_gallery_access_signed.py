@@ -4,7 +4,7 @@ from uuid import UUID
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import (
@@ -259,7 +259,7 @@ def _authenticate_existing_client(
     ).status_code == 200
 
 
-def test_admin_private_link_endpoints_migrate_rotate_reconstruct_and_revoke(
+def test_admin_private_link_endpoints_preserve_legacy_without_issuing_new_links(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0004")
@@ -269,22 +269,16 @@ def test_admin_private_link_endpoints_migrate_rotate_reconstruct_and_revoke(
         db.add_all((owner, parent))
         db.flush()
         private = DerivedGallery(
-            parent_gallery_id=parent.id,
-            client_id=owner.id,
-            name="Privada API",
+            parent_gallery_id=parent.id, client_id=owner.id, name="Privada API",
         )
         db.add(private)
         db.flush()
         legacy, legacy_token = issue_gallery_capability(
-            db,
-            parent_gallery_id=parent.id,
-            derived_gallery_id=private.id,
-            client_id=owner.id,
-            scope="private_invite",
+            db, parent_gallery_id=parent.id, derived_gallery_id=private.id,
+            client_id=owner.id, scope="private_invite",
         )
         db.commit()
-        private_id = private.id
-        legacy_id = legacy.id
+        private_id, legacy_id = private.id, legacy.id
 
     with TestClient(app) as client:
         _authenticate_admin(client)
@@ -292,37 +286,23 @@ def test_admin_private_link_endpoints_migrate_rotate_reconstruct_and_revoke(
         assert status.status_code == 200
         assert status.json()["status"] == "legacy_unrecoverable"
         assert status.json()["link"] is None
-
-        migrated = client.post(
-            f"/admin/derived-galleries/{private_id}/link/rotate",
-            json={},
-        )
-        assert migrated.status_code == 200
-        first_token = migrated.json()["access_token"]
-        assert first_token.startswith("gc1.")
-
-        reconstructed = client.get(f"/admin/derived-galleries/{private_id}/link")
-        assert reconstructed.status_code == 200
-        assert reconstructed.json()["access_token"] == first_token
-        assert reconstructed.json()["secret_available"] is True
-
-        rotated = client.post(
-            f"/admin/derived-galleries/{private_id}/link/rotate",
-            json={},
-        )
-        assert rotated.status_code == 200
-        second_token = rotated.json()["access_token"]
-        assert second_token != first_token
+        assert client.post(
+            f"/admin/derived-galleries/{private_id}/link", json={},
+        ).status_code == 410
+        assert client.post(
+            f"/admin/derived-galleries/{private_id}/link/rotate", json={},
+        ).status_code == 410
+        assert client.post(
+            f"/admin/derived-galleries/{private_id}/invite/rotate", json={},
+        ).status_code == 410
+        assert client.get(f"/admin/derived-galleries/{private_id}/link").json() == status.json()
 
         with SessionLocal() as db:
-            assert db.get(GalleryAccessCapability, legacy_id).status == "revoked"
-            assert resolve_gallery_capability(db, legacy_token) is None
-            assert resolve_gallery_capability(db, first_token) is None
-            assert resolve_gallery_capability(db, second_token) is not None
-
-        assert client.delete(f"/admin/derived-galleries/{private_id}/link").status_code == 204
-        unavailable = client.get(f"/admin/derived-galleries/{private_id}/link")
-        assert unavailable.json()["status"] == "unavailable"
+            assert db.get(GalleryAccessCapability, legacy_id).status == "active"
+            assert resolve_gallery_capability(db, legacy_token) is not None
+            assert db.scalar(select(func.count(GalleryAccessCapability.id)).where(
+                GalleryAccessCapability.scope == "private_gallery_link",
+            )) == 0
 
 
 def test_private_link_otp_reuses_identity_membership_and_existing_origin_binding(

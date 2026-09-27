@@ -1,5 +1,8 @@
 """Verificações estruturais da limpeza isolada de homologação."""
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +16,62 @@ def require(fragment: str, label: str, content: str) -> None:
         raise AssertionError(f"ausente: {label}")
 
 
+def test_topology_guard() -> None:
+    policy = SCRIPT.split("compose config --format json | python3 -c '\n", 1)[1].split(
+        "\n' || fail", 1
+    )[0]
+    mounts = {
+        "source": "media-source", "derivatives": "media-derivatives",
+        "history": "media-history", "facial-references": "facial-references",
+        "branding": "branding-assets",
+    }
+    config = {
+        "name": "markina-gallery",
+        "services": {
+            "api": {
+                "environment": {
+                    "APP_ENV": "staging",
+                    "DATABASE_URL": "postgresql+psycopg://synthetic@db:5432/markina_gallery",
+                    "MARKINA_PUBLIC_URL": "https://markina-homolog.duckdns.org",
+                },
+                "volumes": [
+                    {"target": f"/var/lib/markina/{target}", "source": source}
+                    for target, source in mounts.items()
+                ],
+            },
+            "db": {"environment": {"POSTGRES_DB": "markina_gallery"}},
+            "redis": {}, "evolution-db": {}, "evolution-redis": {},
+            "nginx": {"ports": [{"published": "8080", "host_ip": "127.0.0.1"}]},
+        },
+    }
+
+    def accepted(payload: dict) -> bool:
+        result = subprocess.run(
+            [sys.executable, "-c", policy], input=json.dumps(payload), text=True,
+            capture_output=True, check=False,
+        )
+        return result.returncode == 0
+
+    assert accepted(config)
+    for mutation in (
+        lambda value: value.update(name="another-project"),
+        lambda value: value["services"]["api"]["environment"].update(APP_ENV="production"),
+        lambda value: value["services"]["api"]["environment"].update(
+            DATABASE_URL="postgresql+psycopg://synthetic@evolution-db:5432/markina_gallery"
+        ),
+        lambda value: value["services"]["api"]["environment"].update(
+            MARKINA_PUBLIC_URL="https://example.test"
+        ),
+        lambda value: value["services"]["nginx"]["ports"][0].update(host_ip="0.0.0.0"),
+        lambda value: value["services"]["api"]["volumes"][0].update(source="evolution-instances"),
+    ):
+        changed = json.loads(json.dumps(config))
+        mutation(changed)
+        assert not accepted(changed)
+
+
 def main() -> None:
+    test_topology_guard()
     require('PROJECT_NAME="markina-gallery"', "projeto Compose fixo", SCRIPT)
     require('PROJECT_ROOT="/opt/markina-gallery"', "checkout remoto fixo", SCRIPT)
     require("DELETE_HOMOLOG_GALLERIES_AND_CLIENTS", "confirmação literal", SCRIPT)
@@ -27,6 +85,13 @@ def main() -> None:
     require("-e APP_ENV=homolog api", "ambiente explícito do container efêmero", SCRIPT)
     require("pg_dump -Fc", "backup lógico", SCRIPT)
     require("paused_services=(api worker)", "pausa restrita", SCRIPT)
+    require("face-index-worker face-search-worker face-maintenance-worker", "writers faciais", SCRIPT)
+    require("preview_compose stop preview-adjustment-worker", "pausa do ajuste de prévia", SCRIPT)
+    require("preview_compose up -d --no-deps preview-adjustment-worker", "retomada do ajuste de prévia", SCRIPT)
+    require('compose config --format json | python3 -c', "topologia resolvida", SCRIPT)
+    require('com.docker.compose.project', "rótulo do projeto exclusivo", SCRIPT)
+    require('markina-homolog.duckdns.org', "subdomínio de homologação", SCRIPT)
+    require('facial-references', "volume de referência facial", SCRIPT)
     require('compose stop "${paused_services[@]}"', "pausa somente serviços selecionados", SCRIPT)
     require("compose restart nginx", "recarga do proxy após recriar API", SCRIPT)
     require(
@@ -56,7 +121,11 @@ def main() -> None:
     ):
         raise AssertionError("o trailer sem backup deve ser testado antes do trailer legado")
     require("ALLOWED_ENVIRONMENTS", "gate APP_ENV", MODULE)
-    require('TRUNCATE TABLE parent_gallery, client CASCADE', "raízes operacionais", MODULE)
+    require('TRUNCATE TABLE {tables} RESTRICT', "tabelas operacionais com FK restrita", MODULE)
+    require('require_known_schema(db)', "bloqueio de tabela desconhecida", MODULE)
+    require('require_exclusive_media_roots(roots)', "raízes de mídia fixas", MODULE)
+    if 'TRUNCATE TABLE parent_gallery, client CASCADE' in MODULE:
+        raise AssertionError("TRUNCATE CASCADE amplo não é permitido")
     for forbidden in ("docker system prune", "docker compose down", "rm -rf"):
         if forbidden in SCRIPT:
             raise AssertionError(f"operação proibida encontrada: {forbidden}")

@@ -11,6 +11,8 @@ from app.auth import (
     Client,
     ClientPhone,
     DerivedGallery,
+    FolderClientGrant,
+    GalleryClientState,
     NotificationDelivery,
     NotificationEvent,
     NotificationSetting,
@@ -19,6 +21,7 @@ from app.auth import (
     PaymentCommunication,
     PaymentConfirmationCorrection,
     PaymentNotificationOutbox,
+    PhotoFolder,
     PushSubscription,
     SaleOrder,
     SessionLocal,
@@ -85,6 +88,33 @@ def recipient_allowed(db, event, item) -> bool:
             ParentGalleryRegistration.client_id == event.client_id,
         ))
         if not parent or not parent.active or parent.lifecycle_status != "active" or not registration or registration.status != "active":
+            return False
+    if event.event_type == "private_photos_ready" and not event.derived_gallery_id:
+        try:
+            key_parts = event.event_key.split(":")
+            if len(key_parts) != 6:
+                return False
+            folder_id, grant_id = UUID(key_parts[1]), UUID(key_parts[4])
+        except (ValueError, IndexError):
+            return False
+        folder = db.get(PhotoFolder, folder_id)
+        if (not folder or folder.parent_gallery_id != event.parent_gallery_id
+                or folder.audience_scope != "selected" or folder.status != "released"):
+            return False
+        grant = db.scalar(
+            select(FolderClientGrant.id)
+            .join(GalleryClientState,
+                  (GalleryClientState.parent_gallery_id == FolderClientGrant.parent_gallery_id)
+                  & (GalleryClientState.client_id == FolderClientGrant.client_id))
+            .where(
+                FolderClientGrant.folder_id == folder_id,
+                FolderClientGrant.id == grant_id,
+                FolderClientGrant.parent_gallery_id == event.parent_gallery_id,
+                FolderClientGrant.client_id == event.client_id,
+                GalleryClientState.status == "active",
+            )
+        )
+        if not grant:
             return False
     if event.event_type.startswith("payment_"):
         order = db.get(SaleOrder, event.sale_order_id)

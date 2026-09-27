@@ -30,8 +30,6 @@ type PricingPreset = { id: string; code: string; name: string; label: string; ve
 type PricingQuote = { quantity: number; parcels: Array<PriceTier & { quantity: number; subtotal_cents: number }>; base_total_cents: number; savings_cents: number; total_cents: number };
 type SalesData = { available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
 type GalleryLink = { status: "active" | "unavailable" | "legacy_unrecoverable"; capability_id: string | null; expires_at: string | null; secret_available: boolean; link: string | null };
-type PrivateMember = { membership_id: string; client_id: string; client_name: string; phone_e164: string | null; status: "active" | "blocked" | "unlinked"; selected_count: number; purchased_count: number; order_count: number; confirmed_total_cents: number; payment_status: "none" | "pending" | "confirmed" };
-type PrivateAccessState = { loading: boolean; error: string | null; link: GalleryLink | null; members: PrivateMember[] };
 type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
 type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing" | "failed"; preview_url: string | null; width: number | null; height: number | null; error?: string | null };
 type DetailsData = { available: boolean; capabilities: string[]; font_options: FontOption[]; cover_options: CoverOption[]; settings: { cover_photo_id: string | null; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string } };
@@ -111,8 +109,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [confirmLegacyConversion, setConfirmLegacyConversion] = useState(false);
   const [publicLink, setPublicLink] = useState<GalleryLink | null>(null);
-  const [privateAccess, setPrivateAccess] = useState<Record<string, PrivateAccessState>>({});
-  const [memberCandidateByGallery, setMemberCandidateByGallery] = useState<Record<string, string>>({});
   const [accessBusy, setAccessBusy] = useState("");
   const [dirty, setDirty] = useState(false);
   const [savingStep, setSavingStep] = useState(false);
@@ -129,9 +125,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [unlinkBusy, setUnlinkBusy] = useState(false);
   const [unlinkTarget, setUnlinkTarget] = useState<{ clientId: string; name: string } | null>(null);
   const [unlinkError, setUnlinkError] = useState("");
-  const [privateTarget, setPrivateTarget] = useState<ClientRow | null>(null);
-  const [privateActionBusy, setPrivateActionBusy] = useState(false);
-  const [privateActionError, setPrivateActionError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [facialRefresh, setFacialRefresh] = useState(0);
   const [detailsPollingError, setDetailsPollingError] = useState("");
@@ -161,9 +154,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
 
   useEffect(() => {
     if (!dirty) return;
-    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-    };
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [dirty]);
@@ -182,10 +173,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         setDetailsPollingError(error instanceof Error ? error.message : "Não foi possível atualizar o estado da capa.");
       }
     }, 1500);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
+    return () => { active = false; window.clearTimeout(timer); };
   }, [currentStep, details, detailsPollingRetry, sourceId]);
 
   useEffect(() => {
@@ -207,31 +195,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     }, unlinkOperation.actions.poll_after_ms ?? 1000);
     return () => window.clearTimeout(timer);
   }, [unlinkOperation]);
-
-  useEffect(() => {
-    if (currentStep !== "clientes") return;
-    const galleryIds = [...new Set(linkedClients.map((client) => client.derived_gallery_id).filter((id): id is string => Boolean(id)))];
-    let active = true;
-    if (!galleryIds.length) {
-      queueMicrotask(() => { if (active) setPrivateAccess({}); });
-      return () => { active = false; };
-    }
-    queueMicrotask(() => {
-      if (active) setPrivateAccess((current) => Object.fromEntries(galleryIds.map((galleryId) => [galleryId, { loading: true, error: null, link: current[galleryId]?.link ?? null, members: current[galleryId]?.members ?? [] }])));
-    });
-    Promise.all(galleryIds.map(async (galleryId) => {
-      try {
-        const [link, members] = await Promise.all([
-          jsonRequest(`/api/admin/derived-galleries/${galleryId}/link`) as Promise<GalleryLink>,
-          jsonRequest(`/api/admin/derived-galleries/${galleryId}/members`) as Promise<{ members: PrivateMember[] }>,
-        ]);
-        return [galleryId, { loading: false, error: null, link, members: members.members ?? [] }] as const;
-      } catch (error) {
-        return [galleryId, { loading: false, error: error instanceof Error ? error.message : "Não foi possível carregar a galeria privada.", link: null, members: [] }] as const;
-      }
-    })).then((entries) => { if (active) setPrivateAccess(Object.fromEntries(entries)); });
-    return () => { active = false; };
-  }, [currentStep, linkedClients]);
 
   useEffect(() => {
     let active = true;
@@ -540,62 +503,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     }
   }
 
-  async function createPrivateLink(galleryId: string) {
-    if (accessBusy) return;
-    setAccessBusy(`${galleryId}-create`);
-    try {
-      const result = await jsonRequest(`/api/admin/derived-galleries/${galleryId}/link`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      }) as GalleryLink;
-      setPrivateAccess((current) => ({ ...current, [galleryId]: { ...current[galleryId], link: result } }));
-      setMessage("Link permanente da galeria privada criado.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar o link privado.");
-    } finally {
-      setAccessBusy("");
-    }
-  }
-
-  async function addPrivateMember(galleryId: string) {
-    const clientId = memberCandidateByGallery[galleryId];
-    if (!clientId || accessBusy) return;
-    setAccessBusy(`${galleryId}-member-add`);
-    try {
-      await jsonRequest(`/api/admin/derived-galleries/${galleryId}/members`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ client_id: clientId }),
-      });
-      setMessage("Cliente adicionada à galeria privada.");
-      setMemberCandidateByGallery((current) => ({ ...current, [galleryId]: "" }));
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível adicionar a cliente.");
-    } finally {
-      setAccessBusy("");
-    }
-  }
-
-  async function changePrivateMember(galleryId: string, member: PrivateMember, action: "block" | "unblock" | "unlink") {
-    if (accessBusy) return;
-    if (action === "unlink" && !window.confirm(`Desvincular ${member.client_name} desta galeria privada? O cadastro e o histórico serão preservados.`)) return;
-    setAccessBusy(`${galleryId}-${member.client_id}-${action}`);
-    try {
-      const suffix = action === "unlink" ? "" : `/${action}`;
-      await jsonRequest(`/api/admin/derived-galleries/${galleryId}/members/${member.client_id}${suffix}`, {
-        method: action === "unlink" ? "DELETE" : "POST",
-      });
-      setMessage(action === "block" ? "Acesso da cliente bloqueado." : action === "unblock" ? "Acesso da cliente desbloqueado." : "Cliente desvinculada sem apagar seu histórico.");
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar a cliente.");
-    } finally {
-      setAccessBusy("");
-    }
-  }
-
   async function saveFolderOrganization(event: ChangeEvent<HTMLSelectElement>) {
     const mode = event.target.value;
     const saved = await mutate(`/api/admin/parent-galleries/${sourceId}/settings`, "PATCH", { folder_display_mode: mode });
@@ -684,12 +591,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   }
 
   async function bindClient(clientId: string, name: string) {
-    await mutate("/api/admin/derived-galleries", "POST", {
-      parent_gallery_id: sourceId,
-      client_id: clientId,
-      name: `${editor?.gallery.name ?? "Galeria"} · ${name}`,
-      photo_ids: [],
-    });
+    const linked = await mutate(`/api/admin/parent-galleries/${sourceId}/clients/${clientId}`, "PUT", {});
+    if (linked) setMessage(`${name} vinculada à galeria.`);
   }
 
   async function openUnlinkConfirmation(person: ClientRow) {
@@ -738,33 +641,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       setUnlinkError(error instanceof Error ? error.message : "Não foi possível atualizar a desvinculação.");
     } finally {
       setUnlinkBusy(false);
-    }
-  }
-
-  async function createAdministrativePrivateGallery(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!privateTarget || privateActionBusy) return;
-    setPrivateActionBusy(true);
-    setPrivateActionError("");
-    try {
-      await jsonRequest("/api/admin/derived-galleries", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          parent_gallery_id: sourceId,
-          client_id: privateTarget.client_id,
-          name: `${editor?.gallery.name ?? "Galeria"} · ${privateTarget.name}`,
-          photo_ids: [],
-          create_empty_private: true,
-        }),
-      });
-      setMessage(`Galeria privada de ${privateTarget.name} criada. Abra a ficha para carregar fotos do dispositivo.`);
-      setPrivateTarget(null);
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setPrivateActionError(error instanceof Error ? error.message : "Não foi possível disponibilizar as fotos.");
-    } finally {
-      setPrivateActionBusy(false);
     }
   }
 
@@ -913,11 +789,11 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <section className="gallery-client-card" aria-labelledby="linked-clients-title">
               <p className="eyebrow">Acesso atual</p>
               <h3 id="linked-clients-title">Clientes vinculadas</h3>
-              <p className="gallery-scope-note">Pessoas que já possuem cadastro ou galeria privada associada a este evento.</p>
+              <p className="gallery-scope-note">Pessoas vinculadas a esta galeria. O acervo exclusivo de cada cliente fica no próprio card.</p>
               {unlinkTarget && (unlinkOperation || (unlinkError && !unlinkPreview)) ? <section className={`unlink-progress${unlinkError || unlinkOperation?.status === "failed" ? " unlink-progress--error" : ""}`} aria-label={`Desvinculação de ${unlinkTarget.name}`} aria-live="polite"><div><strong>{unlinkOperation?.progress.label ?? "Não foi possível desvincular"}</strong>{unlinkOperation ? <span>{unlinkOperation.progress.percent}%</span> : null}</div>{unlinkOperation ? <progress value={unlinkOperation.progress.percent} max={100} /> : null}<p>{unlinkError || unlinkOperation?.last_error || (unlinkOperation?.status === "completed" ? "Cliente desvinculada. Cadastro e histórico foram preservados." : unlinkOperation?.status === "cancelled" ? "Desvinculação cancelada antes da remoção física." : "A desvinculação continua em segundo plano.")}</p><div>{unlinkOperation?.actions.can_cancel ? <MarkinaButton type="button" variant="secondary" disabled={unlinkBusy} onClick={() => unlinkOperationAction("cancel")}>Cancelar desvinculação</MarkinaButton> : null}{unlinkOperation?.actions.can_retry ? <MarkinaButton type="button" disabled={unlinkBusy} onClick={() => unlinkOperationAction("retry")}>Retomar desvinculação</MarkinaButton> : null}{!unlinkOperation?.actions.should_poll ? <MarkinaButton type="button" variant="secondary" onClick={() => { setUnlinkOperation(null); setUnlinkTarget(null); setUnlinkError(""); }}>Fechar</MarkinaButton> : null}</div></section> : null}
               {linkedClients.length ? (
                 <div className="gallery-linked-clients" aria-label="Lista de clientes vinculadas">
-                  {linkedClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} onRefresh={() => setRefresh((value) => value + 1)} actions={<><MarkinaButton type="button" variant="secondary" onClick={() => { setPrivateTarget(person); setPrivateActionError(""); }}>Criar galeria privada</MarkinaButton><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></>} />)}
+                  {linkedClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} parentGalleryId={sourceId} linkedClients={linkedClients} onRefresh={() => setRefresh((value) => value + 1)} actions={<><MarkinaButton type="button" variant="secondary" className="gallery-client-unlink" disabled={unlinkBusy || Boolean(unlinkOperation?.actions.should_poll)} onClick={() => openUnlinkConfirmation(person)}>Desvincular cliente</MarkinaButton></>} />)}
                 </div>
               ) : <SystemState title="Nenhuma cliente vinculada" detail="Use a busca ou o novo cadastro para criar o primeiro vínculo." />}
             </section>
@@ -937,28 +813,12 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <ClientCreateForm onCreated={(created) => bindClient(created.id, created.name)} />
             </section>
           </div>
-          <section className="private-access-manager" aria-labelledby="private-access-title">
-            <div className="section-heading"><div><p className="eyebrow">Acesso compartilhado</p><h3 id="private-access-title">Galerias privadas e membros</h3><p className="gallery-scope-note">Cada galeria tem um acervo comum, mas seleção, favoritos, pedidos e pagamentos permanecem individuais.</p></div></div>
-            {!Object.keys(privateAccess).length ? <SystemState title="Nenhuma galeria privada criada" detail="Crie uma galeria privada vazia para a cliente; as seleções dela entrarão automaticamente e o fotógrafo poderá carregar novos arquivos diretamente na privada." /> : <div className="private-access-list">{Object.entries(privateAccess).map(([galleryId, access]) => {
-              const galleryOwner = linkedClients.find((client) => client.derived_gallery_id === galleryId);
-              const availableCandidates = clientOptions.filter((client) => !access.members.some((member) => member.client_id === client.id));
-              return <article className="private-access-card" key={galleryId} aria-label={`Galeria privada ${galleryOwner?.name ?? galleryId}`}>
-                <header><div><strong>{galleryOwner?.name ? `Galeria de ${galleryOwner.name}` : "Galeria privada"}</strong><small>ID {galleryId}</small></div><StatusBadge tone={access.link?.status === "active" ? "success" : "warning"}>{access.link?.status === "active" ? "Link ativo" : "Sem link atual"}</StatusBadge></header>
-                {access.loading ? <SystemState tone="loading" title="Carregando acesso" detail="Consultando link e membros." /> : access.error ? <SystemState tone="error" title="Acesso indisponível" detail={access.error} /> : <>
-                  <div className="private-link-row">{access.link?.link ? <input aria-label={`Link privado de ${galleryOwner?.name ?? galleryId}`} readOnly value={access.link.link} onFocus={(event) => event.currentTarget.select()} /> : <span>{access.link?.status === "legacy_unrecoverable" ? "O link legado não pode ser reconstruído; a reparação fica reservada a incidente." : "Crie o link permanente desta galeria."}</span>}<div className="gallery-access-actions">{access.link?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(access.link?.link ?? null, "Link privado")}>Copiar</MarkinaButton> : access.link?.status !== "legacy_unrecoverable" ? <MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={() => createPrivateLink(galleryId)}>Criar link permanente</MarkinaButton> : null}</div></div>
-                  <div className="private-member-list">{access.members.length ? access.members.map((member) => <div className={`private-member-row private-member-row--${member.status}`} key={member.membership_id}><div><strong>{member.client_name}</strong><small>{member.phone_e164 ?? "Telefone indisponível"}</small></div><StatusBadge tone={member.status === "active" ? "success" : member.status === "blocked" ? "dark" : "neutral"}>{member.status === "active" ? "Ativa" : member.status === "blocked" ? "Bloqueada" : "Desvinculada"}</StatusBadge><dl><div><dt>Fotos selecionadas</dt><dd>{member.selected_count}</dd></div><div><dt>Fotos compradas</dt><dd>{member.purchased_count}</dd></div><div><dt>Pedidos</dt><dd>{member.order_count}</dd></div></dl><div className="gallery-access-actions">{member.status === "active" ? <MarkinaButton type="button" variant="secondary" disabled={Boolean(accessBusy)} onClick={() => changePrivateMember(galleryId, member, "block")}>Bloquear</MarkinaButton> : member.status === "blocked" ? <MarkinaButton type="button" variant="secondary" disabled={Boolean(accessBusy)} onClick={() => changePrivateMember(galleryId, member, "unblock")}>Desbloquear</MarkinaButton> : null}{member.status !== "unlinked" ? <MarkinaButton type="button" variant="quiet" disabled={Boolean(accessBusy)} onClick={() => changePrivateMember(galleryId, member, "unlink")}>Desvincular</MarkinaButton> : null}</div></div>) : <SystemState title="Nenhum membro" detail="Adicione uma cliente cadastrada abaixo." />}</div>
-                  <div className="private-member-add"><label>Adicionar cliente a esta privada<select aria-label={`Adicionar cliente à galeria de ${galleryOwner?.name ?? galleryId}`} value={memberCandidateByGallery[galleryId] ?? ""} onChange={(event) => setMemberCandidateByGallery((current) => ({ ...current, [galleryId]: event.target.value }))}><option value="">Selecione uma cliente</option>{availableCandidates.map((client) => <option key={client.id} value={client.id}>{client.name} · {client.phone}</option>)}</select></label><MarkinaButton type="button" disabled={!memberCandidateByGallery[galleryId] || Boolean(accessBusy)} onClick={() => addPrivateMember(galleryId)}>Adicionar membro</MarkinaButton></div>
-                </>}
-              </article>;
-            })}</div>}
-          </section>
         </section>
       ) : null}
 
       {expandedPhoto ? <div className="photo-preview-dialog" role="presentation" onMouseDown={() => setExpandedPhoto(null)}><div ref={previewDialog} role="dialog" aria-modal="true" aria-label={`Prévia ampliada de ${expandedPhoto.name}`} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") setExpandedPhoto(null); }} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="photo-preview-close" onClick={() => setExpandedPhoto(null)}>Fechar</button><img src={`/api${expandedPhoto.preview_url}`} alt={`Prévia com marca d’água ampliada de ${expandedPhoto.name}`} /><p>{expandedPhoto.name}</p></div></div> : null}
       {clientEditTarget ? <ClientEditorDialog key={clientEditTarget.id} client={clientEditTarget} onClose={() => setClientEditTarget(null)} onUpdated={(updated) => { setClientOptions((current) => current.map((item) => item.id === updated.id ? updated : item)); setClientEditTarget(null); setMessage("Cadastro da cliente atualizado sem alterar seus vínculos ou histórico."); setRefresh((value) => value + 1); }} onDeleted={(clientId) => { setClientOptions((current) => current.filter((item) => item.id !== clientId)); setClientEditTarget(null); setMessage("Cadastro e estado operacional excluídos."); setRefresh((value) => value + 1); }} /> : null}
       {unlinkPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="unlink-client-title" aria-modal="true" className="mk-dialog" role="dialog"><p className="eyebrow">Desvinculação da Galeria pública</p><h2 id="unlink-client-title">Desvincular {unlinkPreview.target.client_name}?</h2><p>O acesso desta cliente será encerrado nesta Galeria pública e na privada associada. O cadastro, as outras galerias e todo histórico comercial serão preservados; o acervo privado compartilhado permanece para os demais membros.</p><div className="unlink-summary"><span><strong>{unlinkPreview.inventory.remove.memberships ?? 0}</strong> vínculo privado</span><span><strong>{unlinkPreview.inventory.remove.selections ?? 0}</strong> selecionadas removíveis</span><span><strong>{typeof unlinkPreview.inventory.preserve.orders === "number" ? unlinkPreview.inventory.preserve.orders : 0}</strong> pedidos preservados</span><span><strong>{typeof unlinkPreview.inventory.preserve.available_references === "number" ? unlinkPreview.inventory.preserve.available_references : 0}</strong> fotos preservadas</span></div><p>Um pagamento informado e ainda em análise impede a desvinculação até a decisão administrativa.</p>{unlinkError ? <p className="form-message form-message--error" role="alert">{unlinkError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={unlinkBusy} onClick={() => { setUnlinkPreview(null); setUnlinkTarget(null); setUnlinkError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={unlinkBusy} onClick={confirmUnlink}>{unlinkBusy ? "Iniciando…" : "Confirmar desvinculação"}</MarkinaButton></div></section></div> : null}
-      {privateTarget ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="private-gallery-title" aria-modal="true" className="mk-dialog administrative-private-dialog" role="dialog"><p className="eyebrow">Acervo exclusivo</p><h2 id="private-gallery-title">Galeria privada de {privateTarget.name}</h2><p>A galeria será criada vazia. Depois, abra a ficha privada para criar pastas e carregar novos JPEGs diretamente do seu dispositivo.</p><form onSubmit={createAdministrativePrivateGallery}>{privateActionError ? <p className="form-message form-message--error" role="alert">{privateActionError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={privateActionBusy} onClick={() => { setPrivateTarget(null); setPrivateActionError(""); }}>Cancelar</MarkinaButton><MarkinaButton disabled={privateActionBusy}>{privateActionBusy ? "Criando…" : "Criar galeria vazia"}</MarkinaButton></div></form></section></div> : null}
       {message ? <p className="notice" role="status">{message}</p> : null}
       <footer className="gallery-editor-footer">
         {previous ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/${previous}`} onClick={confirmDiscard}>← Voltar</Link> : <span />}

@@ -37,14 +37,14 @@ const summary = {
     {
       id: "gallery-1",
       name: "Festa da escola",
-      access_enabled: true,
-      selection_expires_at: null,
+      active: true,
+      event_name: "Formatura",
     },
     {
       id: "gallery-2",
       name: "Ensaio bloqueado",
-      access_enabled: false,
-      selection_expires_at: "2026-09-30T23:59:59Z",
+      active: false,
+      event_name: null,
     },
   ],
 };
@@ -73,13 +73,15 @@ describe("painel operacional", () => {
     expect(screen.queryByText(/responsável/i)).toBeNull();
     expect(
       screen.getByRole("link", { name: "Festa da escola" }).getAttribute("href"),
-    ).toBe("/admin/galleries/gallery-1");
+    ).toBe("/admin/galleries/sources/gallery-1");
     expect(
       screen.getByRole("link", { name: "Ensaio bloqueado" }).getAttribute("href"),
-    ).toBe("/admin/galleries/gallery-2");
+    ).toBe("/admin/galleries/sources/gallery-2");
     expect(screen.getByText("Ativa")).toBeTruthy();
     expect(screen.getByText("Bloqueada")).toBeTruthy();
-    expect(screen.getByText("Prazo configurado")).toBeTruthy();
+    expect(screen.getByText("Formatura")).toBeTruthy();
+    expect(screen.getByText("Galerias recentes")).toBeTruthy();
+    expect(screen.queryByText("Galerias privadas")).toBeNull();
   });
 
   it.each([

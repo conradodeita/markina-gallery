@@ -7,7 +7,6 @@ const globals = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
 const tokens = readFileSync(join(process.cwd(), "app", "design-tokens.css"), "utf8");
 const presentation = readFileSync(join(process.cwd(), "app", "gallery-presentation.tsx"), "utf8");
 const publicGallery = readFileSync(join(process.cwd(), "app", "public-galleries", "[galleryId]", "page.tsx"), "utf8");
-const privateGallery = readFileSync(join(process.cwd(), "app", "gallery", "[galleryId]", "page.tsx"), "utf8");
 
 function declarations(selector: string) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -80,9 +79,8 @@ describe("sistema global de layout fluido", () => {
     expect(mobileBlocks.some((block) => /\.gallery-presentation-photo\s*\{[^}]*grid-column:\s*span 1/.test(block))).toBe(true);
   });
 
-  it("reutiliza a mesma grade na Galeria pública, privada e nos resultados faciais", () => {
+  it("reutiliza a mesma grade na Coleção e nos resultados faciais", () => {
     expect(publicGallery).toContain("<GalleryPresentation");
-    expect(privateGallery).toContain("<GalleryPresentation");
     expect(presentation.match(/className="gallery-presentation-grid"/g)).toHaveLength(2);
     expect(presentation).toContain("featuredGroups");
   });

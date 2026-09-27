@@ -8,7 +8,7 @@ import pyotp
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,8 @@ from app.auth import (
     DerivedGallery,
     DerivedGalleryMembership,
     DerivedGalleryPhoto,
+    FolderClientGrant,
+    GalleryClientState,
     GlobalPixSettings,
     MediaDerivative,
     MediaJob,
@@ -44,13 +46,14 @@ from app.auth import (
     password_hasher,
     token_hash,
 )
+from app.canonical_selection import select_canonical_photo, unselect_canonical_photo
 from app.checkout import create_pending_checkout
 from app.client_commerce import client_carts_by_gallery_payload
 from app.gallery_access import issue_gallery_capability
 from app.global_pix import normalize_configuration
 from app.main import app
 from app.media import generate_derivatives
-from app.private_derivation import ensure_private_photo_reference
+from app.private_derivation import derive_admin_gallery, ensure_private_photo_reference
 
 VALID_PIX_A = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17"
 VALID_PIX_B = "0002015204000053039865802BR5908OUTRAFOT6009SAO PAULO6304FC65"
@@ -649,15 +652,11 @@ def create_gallery_for_client(client: TestClient, person: Client, *, expires=Fal
         f"/admin/parent-galleries/{parent_id}/settings",
         json={"favorites_enabled": True, "comments_enabled": True},
     ).status_code == 200
-    payload = {
-        "parent_gallery_id": str(parent_id),
-        "client_id": str(person.id),
-        "name": "Fotos privadas",
-        "photo_ids": [],
-        "create_empty_private": True,
-    }
-    gallery_id = UUID(client.post("/admin/derived-galleries", json=payload).json()["id"])
     with SessionLocal() as db:
+        gallery_id = derive_admin_gallery(
+            db, parent_gallery_id=parent_id, client_id=person.id,
+            name="Fotos privadas",
+        ).gallery.id
         ensure_private_photo_reference(
             db, gallery_id=gallery_id, photo_id=photo_id, origin="admin"
         )
@@ -679,18 +678,13 @@ def create_empty_private_gallery(
     client_id: UUID,
     name: str,
 ) -> UUID:
-    response = client.post(
-        "/admin/derived-galleries",
-        json={
-            "parent_gallery_id": str(parent_id),
-            "client_id": str(client_id),
-            "name": name,
-            "photo_ids": [],
-            "create_empty_private": True,
-        },
-    )
-    assert response.status_code == 201, response.text
-    return UUID(response.json()["id"])
+    """Monta histórico legado sem reabrir a criação na API do produto."""
+    with SessionLocal() as db:
+        gallery_id = derive_admin_gallery(
+            db, parent_gallery_id=parent_id, client_id=client_id, name=name,
+        ).gallery.id
+        db.commit()
+        return gallery_id
 
 
 def attach_legacy_admin_reference(gallery_id: UUID, photo_id: UUID) -> None:
@@ -731,7 +725,7 @@ def test_admin_cannot_create_private_gallery_from_existing_public_photo(client: 
         },
     )
     assert rejected.status_code == 410
-    assert "inclusão administrativa" in rejected.json()["detail"]
+    assert "criação de galerias privadas" in rejected.json()["detail"]
 
     response = client.post(
         "/admin/derived-galleries",
@@ -743,19 +737,12 @@ def test_admin_cannot_create_private_gallery_from_existing_public_photo(client: 
             "create_empty_private": True,
         },
     )
-    assert response.status_code == 201
-    gallery_id = UUID(response.json()["id"])
+    assert response.status_code == 410
     with SessionLocal() as db:
-        assert db.get(DerivedGallery, gallery_id).client_id == client_id
-        reference = db.scalar(
-            select(DerivedGalleryPhoto).where(
-                DerivedGalleryPhoto.derived_gallery_id == gallery_id
-            )
-        )
-        assert reference is None
+        assert db.scalar(select(DerivedGallery.id)) is None
 
 
-def test_client_selection_still_creates_private_gallery_automatically(client: TestClient):
+def test_client_selection_uses_canonical_gallery_without_derivation(client: TestClient):
     with SessionLocal() as db:
         person = Client(full_name="Cliente", phone_e164="+5511888888888")
         db.add(person)
@@ -792,17 +779,103 @@ def test_client_selection_still_creates_private_gallery_automatically(client: Te
     )
     assert selected.status_code == 201
     assert selected.json()["gallery_created"] is True
-    assert selected.json()["reference_created"] is True
+    assert selected.json()["reference_created"] is False
     assert selected.json()["selection_created"] is True
+    assert selected.json()["private_gallery_id"] is None
+    library = client.get("/library")
+    assert library.status_code == 200, library.text
+    assert len(library.json()["journeys"]) == 1
+    assert library.json()["journeys"][0]["selection"]["quantity"] == 1
+    assert library.json()["journeys"][0]["actions"]["review_url"] == "/library/cart"
     with SessionLocal() as db:
-        reference = db.scalar(
-            select(DerivedGalleryPhoto).where(
-                DerivedGalleryPhoto.derived_gallery_id
-                == UUID(selected.json()["private_gallery_id"]),
-                DerivedGalleryPhoto.photo_asset_id == photo_id,
-            )
+        assert db.scalar(select(DerivedGallery.id)) is None
+        state = db.scalar(select(GalleryClientState).where(
+            GalleryClientState.parent_gallery_id == parent_id,
+            GalleryClientState.client_id == client_id,
+        ))
+        assert state is not None
+        assert db.scalar(select(PhotoSelection.id).where(
+            PhotoSelection.parent_gallery_id == parent_id,
+            PhotoSelection.client_id == client_id,
+            PhotoSelection.photo_asset_id == photo_id,
+        )) is not None
+        state.selection_expires_at = now() - timedelta(minutes=1)
+        db.commit()
+    requested = client.post(
+        f"/public-galleries/{parent_id}/reopening-requests",
+        json={"idempotency_key": "canonical-reopening-1"},
+    )
+    assert requested.status_code == 201, requested.text
+    assert requested.json()["status"] == "pending"
+    assert client.post(
+        f"/public-galleries/{parent_id}/reopening-requests",
+        json={"idempotency_key": "canonical-reopening-1"},
+    ).json()["id"] == requested.json()["id"]
+    client.cookies.clear()
+    authenticate_admin(client)
+    pending = client.get("/admin/gallery-reopening-requests").json()["requests"]
+    assert any(item["id"] == requested.json()["id"] for item in pending)
+    approved = client.post(
+        f"/admin/gallery-reopening-requests/{requested.json()['id']}/decision",
+        json={
+            "decision": "approved",
+            "selection_expires_at": (now() + timedelta(days=1)).isoformat(),
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+    restricted = client.post(
+        f"/admin/parent-galleries/{parent_id}/clients/{client_id}/folders",
+        json={"name": "Acervo da cliente"},
+    )
+    assert restricted.status_code == 201, restricted.text
+    restricted_id = restricted.json()["id"]
+    assert restricted_id in {
+        folder["id"] for folder in client.get(
+            f"/admin/parent-galleries/{parent_id}/clients/{client_id}/folders"
+        ).json()["folders"]
+    }
+    assert restricted_id not in {
+        folder["id"] for folder in client.get(
+            f"/admin/parent-galleries/{parent_id}/folders"
+        ).json()["folders"]
+    }
+    with SessionLocal() as db:
+        second = Client(full_name="Segunda cliente", phone_e164="+5511888888877")
+        db.add(second)
+        db.flush()
+        second_id = second.id
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent_id, client_id=second_id, status="active"
+        ))
+        restricted_folder = db.get(PhotoFolder, UUID(restricted_id))
+        restricted_folder.status = "released"
+        restricted_photo = PhotoAsset(
+            parent_gallery_id=parent_id, folder_id=restricted_folder.id,
+            filename="exclusiva.jpg", storage_key=f"synthetic/{uuid4()}.jpg",
+            available=True,
         )
-        assert reference is not None
+        db.add(restricted_photo)
+        db.commit()
+        restricted_photo_id = restricted_photo.id
+    shared = client.post(
+        f"/admin/parent-galleries/{parent_id}/folders/{restricted_id}/clients/{second_id}"
+    )
+    assert shared.status_code == 201, shared.text
+    client.cookies.clear()
+    authenticate_client(client, "+5511888888877")
+    visible = client.get(f"/public-galleries/{parent_id}/photos")
+    assert visible.status_code == 200
+    assert restricted_photo_id in {UUID(photo["id"]) for photo in visible.json()["photos"]}
+    client.cookies.clear()
+    authenticate_admin(client)
+    assert client.delete(
+        f"/admin/parent-galleries/{parent_id}/folders/{restricted_id}/clients/{second_id}"
+    ).status_code == 204
+    client.cookies.clear()
+    authenticate_client(client, "+5511888888877")
+    hidden = client.get(f"/public-galleries/{parent_id}/photos")
+    assert restricted_photo_id not in {UUID(photo["id"]) for photo in hidden.json()["photos"]}
 
 
 def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
@@ -1037,6 +1110,10 @@ def test_admin_validation_summary_is_authorized_and_has_aggregate_storage(
     response = client.get("/admin/validation-summary")
     assert response.status_code == 200
     assert response.json()["counts"]["clients"] == 1
+    assert response.json()["recent_galleries"] == [{
+        "id": str(parent_id), "name": "Galeria resumo", "active": True,
+        "event_name": None,
+    }]
     assert response.json()["storage"] == {
         "photo_count": 2,
         "bytes": 39,
@@ -1421,20 +1498,11 @@ def test_legacy_clone_is_rejected_and_client_selection_remains_isolated(client: 
     authenticate_admin(client)
     cloned = client.post(f"/admin/derived-galleries/{gallery_id}/clone", json={"client_id": str(father.id), "idempotency_key": "father-clone-key-0001"})
     assert cloned.status_code == 410
-    created = client.post(
-        "/admin/derived-galleries",
-        json={
-            "parent_gallery_id": str(
-                client.get(f"/admin/derived-galleries/{gallery_id}").json()["parent_gallery_id"]
-            ),
-            "client_id": str(father.id),
-            "name": "Fotos do Pai",
-            "photo_ids": [],
-            "create_empty_private": True,
-        },
-    )
-    assert created.status_code == 201
-    father_gallery_id = created.json()["id"]
+    with SessionLocal() as db:
+        parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
+    father_gallery_id = str(create_empty_private_gallery(
+        client, parent_id=parent_id, client_id=father.id, name="Fotos do Pai",
+    ))
     client.cookies.clear()
     authenticate_client(client, father.phone_e164)
     assert client.post(f"/gallery/{father_gallery_id}/photos/{photo_id}/selection").status_code == 404
@@ -1448,11 +1516,17 @@ def test_legacy_clone_is_rejected_and_client_selection_remains_isolated(client: 
     authenticate_admin(client)
     selection = client.get(f"/admin/derived-galleries/{father_gallery_id}/selection")
     assert selection.status_code == 200
-    assert selection.json()["selection_count"] == 1
-    assert selection.json()["photos"][0]["filename"] == "IMG_0001.jpg"
+    assert selection.json()["selection_count"] == 0
+    with SessionLocal() as db:
+        assert db.scalar(select(PhotoSelection.id).where(
+            PhotoSelection.parent_gallery_id == parent_id,
+            PhotoSelection.client_id == father.id,
+            PhotoSelection.photo_asset_id == photo_id,
+        )) is not None
+    assert selection.json()["photos"] == []
     exported = client.get(f"/admin/derived-galleries/{father_gallery_id}/selection/export.txt")
     assert exported.status_code == 200
-    assert "IMG_0001.jpg" in exported.text
+    assert "IMG_0001.jpg" not in exported.text
     assert client.get(f"/admin/derived-galleries/{father_gallery_id}/selection/export.csv").headers["content-type"].startswith("text/csv")
     assert client.get(f"/admin/derived-galleries/{father_gallery_id}/selection/export.html").status_code == 409
     overview = client.get("/admin/parent-galleries/overview?query=Evento")
@@ -1465,6 +1539,42 @@ def test_legacy_clone_is_rejected_and_client_selection_remains_isolated(client: 
     client.cookies.clear()
     authenticate_client(client, mother.phone_e164)
     assert client.get(f"/gallery/{gallery_id}/review").status_code == 200
+
+
+def test_legacy_gallery_link_redirects_only_its_client_to_canonical_collection(
+    client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        owner = Client(full_name="Proprietária", phone_e164="+5511444444433")
+        other = Client(full_name="Outra cliente", phone_e164="+5511444444422")
+        db.add_all([owner, other])
+        db.commit()
+    gallery_id, _ = create_gallery_for_client(client, owner)
+    with SessionLocal() as db:
+        parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
+        registration = db.scalar(select(ParentGalleryRegistration).where(
+            ParentGalleryRegistration.parent_gallery_id == parent_id,
+            ParentGalleryRegistration.client_id == owner.id,
+        ))
+        if registration:
+            registration.status = "active"
+        else:
+            db.add(ParentGalleryRegistration(
+                parent_gallery_id=parent_id, client_id=owner.id, status="active"
+            ))
+        db.commit()
+    client.cookies.clear()
+    authenticate_client(client, other.phone_e164)
+    assert client.get(f"/gallery/{gallery_id}").status_code == 403
+    client.cookies.clear()
+    authenticate_client(client, owner.phone_e164)
+    response = client.get(f"/gallery/{gallery_id}")
+    assert response.status_code == 200
+    assert response.json()["redirect_url"] == f"/public-galleries/{parent_id}"
+    with SessionLocal() as db:
+        db.get(DerivedGallery, gallery_id).access_enabled = False
+        db.commit()
+    assert client.get(f"/gallery/{gallery_id}").json()["redirect_url"] == "/library/purchases"
 
 
 def test_confirmed_purchase_download_embeds_preview_without_server_export(
@@ -2300,6 +2410,7 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
             "phone_verified": False,
             "registration_status": "active",
             "membership_status": None,
+            "access_status": "active",
             "derived_gallery_id": None,
             "available_count": 0,
             "selected_count": 0,
@@ -2432,7 +2543,8 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
     assert clients_by_name["Sem pedido"]["commercial_status"] == "no_order"
     assert clients_by_name["Pago sem galeria"]["commercial_status"] == "paid"
     assert clients_by_name["Pago sem galeria"]["derived_gallery_id"] is None
-    assert statement_count <= 12
+    # Os agregados canônicos acrescentam consultas em lote, sem depender da quantidade de clientes.
+    assert statement_count <= 20
 
 
 def test_admin_queues_empty_parent_gallery_deletion(client: TestClient) -> None:
@@ -2472,11 +2584,13 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     assert created.status_code == 201
     client_id = UUID(created.json()["id"])
     assert client.get("/admin/clients?query=99994321").json()["clients"][0]["id"] == str(client_id)
-    private_payload = {"parent_gallery_id": str(parent_id), "client_id": str(client_id), "name": "Galeria da cliente", "photo_ids": [], "create_empty_private": True}
-    first_link = client.post("/admin/derived-galleries", json=private_payload)
-    second_link = client.post("/admin/derived-galleries", json=private_payload)
-    assert first_link.status_code == second_link.status_code == 201
-    assert first_link.json()["id"] == second_link.json()["id"]
+    first_link = create_empty_private_gallery(
+        client, parent_id=parent_id, client_id=client_id, name="Galeria da cliente",
+    )
+    second_link = create_empty_private_gallery(
+        client, parent_id=parent_id, client_id=client_id, name="Galeria da cliente",
+    )
+    assert first_link == second_link
 
     summary = client.get(f"/admin/parent-galleries/{parent_id}/summary")
     assert summary.status_code == 200
@@ -2804,6 +2918,8 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
             storage_key="events/one/img-complementar.jpg",
         )
         db.add(complementary_photo)
+        db.flush()
+        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery_id, photo_asset_id=complementary_photo.id))
         db.commit()
         complementary_photo_id = complementary_photo.id
         parent_id = persisted_order.parent_gallery_id_snapshot
@@ -2829,10 +2945,10 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
     ] == "payment_reported"
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 409
     selected = client.post(
-        f"/public-galleries/{parent_id}/photos/{complementary_photo_id}/selection"
+        f"/gallery/{gallery_id}/photos/{complementary_photo_id}/selection"
     )
     assert selected.status_code == 201
-    assert selected.json()["cart"]["quantity"] == 1
+    assert client.get(f"/gallery/{gallery_id}/cart").json()["quantity"] == 1
     complementary_order = client.post(
         f"/gallery/{gallery_id}/checkout",
         json={"idempotency_key": "cart" * 3},
@@ -3362,18 +3478,9 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     )
     assert initial.status_code == 200
     created_at = now()
-    created = client.post(
-        "/admin/derived-galleries",
-        json={
-            "parent_gallery_id": str(parent_id),
-            "client_id": str(owner_id),
-            "name": "Privada herdada",
-            "photo_ids": [],
-            "create_empty_private": True,
-        },
+    gallery_id = create_empty_private_gallery(
+        client, parent_id=parent_id, client_id=owner_id, name="Privada herdada",
     )
-    assert created.status_code == 201
-    gallery_id = UUID(created.json()["id"])
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
         first_expiry = gallery.selection_expires_at
@@ -3399,8 +3506,11 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     assert review["message"] == "Mensagem A"
     assert review["favorites_enabled"] is True
     assert review["comments_enabled"] is True
+    with SessionLocal() as db:
+        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery_id, photo_asset_id=photo_id))
+        db.commit()
     assert client.post(
-        f"/public-galleries/{parent_id}/photos/{photo_id}/selection"
+        f"/gallery/{gallery_id}/photos/{photo_id}/selection"
     ).status_code == 201
 
     client.cookies.clear()
@@ -3598,7 +3708,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     authenticate_client(client, owner_phone)
     first = client.post(f"/public-galleries/{parent_id}/photos/{first_photo_id}/selection")
     assert first.status_code == 201
-    gallery_id = UUID(first.json()["private_gallery_id"])
+    assert first.json()["private_gallery_id"] is None
     facial = client.post(
         f"/public-galleries/{parent_id}/facial-searches/{search_id}"
         f"/candidates/{second_photo_id}/selection"
@@ -3608,14 +3718,8 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     client.cookies.clear()
     authenticate_admin(client)
     public_card = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"][0]
-    private_member = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()["members"][0]
-    private_selection = client.get(
-        f"/admin/derived-galleries/{gallery_id}/selection", params={"client_id": owner_id}
-    ).json()
     assert public_card["selected_count"] == 2
-    assert private_member["selected_count"] == 2
-    assert private_selection["selection_count"] == 2
-    assert public_card["purchased_count"] == private_member["purchased_count"] == 0
+    assert public_card["purchased_count"] == 0
     selected_summary = client.get("/admin/payment-communications").json()["summary"]
     assert selected_summary["selected_cents"] == 1_000
     assert selected_summary["reported_cents"] == 0
@@ -3623,16 +3727,14 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
 
     client.cookies.clear()
     authenticate_client(client, owner_phone)
-    order = client.post(
-        f"/gallery/{gallery_id}/checkout",
-        json={"idempotency_key": "counter-order-0001"},
-    )
-    assert order.status_code == 201
+    order = client.post("/library/cart/prepare")
+    assert order.status_code == 200, order.text
+    payment = order.json()["payment"]
     reported = client.post(
-        f"/gallery/{gallery_id}/orders/{order.json()['id']}/payment-communications",
-        json={"idempotency_key": "counter-payment-0001"},
+        f"/library/payments/{payment['id']}/report",
+        json={"revision": payment["revision"], "idempotency_key": "counter-payment-0001"},
     )
-    assert reported.status_code == 201
+    assert reported.status_code == 200, reported.text
 
     client.cookies.clear()
     authenticate_admin(client)
@@ -3643,7 +3745,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     assert reported_summary["confirmed_cents"] == 0
     assert client.post(
         f"/admin/payment-communications/{communication_id}/decision",
-        json={"decision": "confirmed"},
+        json={"decision": "confirmed", "payment_group_id": payment["id"]},
     ).status_code == 200
     confirmed_summary = client.get("/admin/payment-communications").json()["summary"]
     assert confirmed_summary["selected_cents"] == 0
@@ -3652,14 +3754,11 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     public_confirmed = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()[
         "clients"
     ][0]
-    private_confirmed = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()[
-        "members"
-    ][0]
-    assert public_confirmed["purchased_count"] == private_confirmed["purchased_count"] == 2
+    assert public_confirmed["purchased_count"] == 2
 
     corrected = client.post(
         f"/admin/payment-communications/{communication_id}/correction",
-        json={"idempotency_key": "counter-correction-0001"},
+        json={"idempotency_key": "counter-correction-0001", "payment_group_id": payment["id"]},
     )
     assert corrected.status_code == 200
     corrected_summary = client.get("/admin/payment-communications").json()["summary"]
@@ -3669,10 +3768,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     public_corrected = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()[
         "clients"
     ][0]
-    private_corrected = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()[
-        "members"
-    ][0]
-    assert public_corrected["purchased_count"] == private_corrected["purchased_count"] == 0
+    assert public_corrected["purchased_count"] == 0
 
 
 def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_folders(
@@ -3750,22 +3846,29 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
         owner_phone = db.get(Client, owner_id).phone_e164
         db.commit()
 
+    # Regressão da compatibilidade legada: o fluxo canônico já não cria derivadas.
+    with SessionLocal() as db:
+        first_gallery = DerivedGallery(
+            parent_gallery_id=first_parent_id, client_id=owner_id, name="Evento A privado"
+        )
+        second_gallery = DerivedGallery(
+            parent_gallery_id=second_parent_id, client_id=owner_id, name="Evento B privado"
+        )
+        db.add_all([first_gallery, second_gallery])
+        db.flush()
+        first_gallery_id, second_gallery_id = first_gallery.id, second_gallery.id
+        db.add_all([
+            DerivedGalleryPhoto(derived_gallery_id=first_gallery_id, photo_asset_id=first_photo_id),
+            DerivedGalleryPhoto(derived_gallery_id=first_gallery_id, photo_asset_id=second_photo_id),
+            DerivedGalleryPhoto(derived_gallery_id=second_gallery_id, photo_asset_id=third_photo_id),
+        ])
+        db.commit()
     client.cookies.clear()
     authenticate_client(client, owner_phone)
-    first_selection = client.post(
-        f"/public-galleries/{first_parent_id}/photos/{first_photo_id}/selection"
-    )
-    second_selection = client.post(
-        f"/public-galleries/{first_parent_id}/photos/{second_photo_id}/selection"
-    )
-    third_selection = client.post(
-        f"/public-galleries/{second_parent_id}/photos/{third_photo_id}/selection"
-    )
+    first_selection = client.post(f"/gallery/{first_gallery_id}/photos/{first_photo_id}/selection")
+    second_selection = client.post(f"/gallery/{first_gallery_id}/photos/{second_photo_id}/selection")
+    third_selection = client.post(f"/gallery/{second_gallery_id}/photos/{third_photo_id}/selection")
     assert first_selection.status_code == second_selection.status_code == third_selection.status_code == 201
-    first_gallery_id = UUID(first_selection.json()["private_gallery_id"])
-    second_gallery_id = UUID(third_selection.json()["private_gallery_id"])
-    assert UUID(second_selection.json()["private_gallery_id"]) == first_gallery_id
-    assert first_gallery_id != second_gallery_id
 
     client.cookies.clear()
     authenticate_admin(client)
@@ -4444,9 +4547,498 @@ def test_private_upload_reuses_media_pipeline_without_entering_public_facial_sco
         str(public_photo_id),
         str(private_photo_id),
     }
+    public_photos = client.get(f"/public-galleries/{parent_id}/photos")
+    assert public_photos.status_code == 200
+    assert {item["id"] for item in public_photos.json()["photos"]} == {str(public_photo_id)}
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{private_photo_id}/preview"
+    ).status_code == 404
     assert client.post(
         f"/gallery/{gallery_id}/photos/{private_photo_id}/selection"
     ).status_code == 201
+    with SessionLocal() as db:
+        other = Client(full_name="Outra cliente", phone_e164="+5511555591015")
+        db.add(other)
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent_id, client_id=other.id, status="active"
+        ))
+        db.commit()
+    client.cookies.clear()
+    authenticate_client(client, "+5511555591015")
+    assert client.get(f"/public-galleries/{parent_id}/photos").status_code == 200
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{private_photo_id}/preview"
+    ).status_code == 404
+
+
+def test_canonical_folder_audience_filters_list_preview_and_selection(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    derivatives = tmp_path / "derivatives"
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives))
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Evento com públicos", favorites_enabled=True,
+                               comments_enabled=True)
+        people = [
+            Client(full_name=name, phone_e164=phone)
+            for name, phone in (
+                ("Ana", "+5511555592011"),
+                ("Bia", "+5511555592012"),
+                ("Cris", "+5511555592013"),
+            )
+        ]
+        db.add_all([parent, *people])
+        db.flush()
+        for person in people:
+            db.add(ParentGalleryRegistration(
+                parent_gallery_id=parent.id, client_id=person.id, status="active"
+            ))
+            db.add(GalleryClientState(
+                parent_gallery_id=parent.id, client_id=person.id, status="active"
+            ))
+        folders = [
+            PhotoFolder(parent_gallery_id=parent.id, name=name, audience_scope=scope,
+                        status=status, position=position)
+            for position, (name, scope, status) in enumerate((
+                ("Comum", "all", "released"),
+                ("Restrita", "selected", "released"),
+                ("Preparando", "selected", "preparing"),
+            ))
+        ]
+        db.add_all(folders)
+        db.flush()
+        photos = [
+            PhotoAsset(parent_gallery_id=parent.id, folder_id=folder.id,
+                       filename=f"foto-{position}.jpg", storage_key=f"audience/{position}.jpg")
+            for position, folder in enumerate(folders)
+        ]
+        db.add_all(photos)
+        db.flush()
+        for person in people[:2]:
+            db.add(FolderClientGrant(
+                folder_id=folders[1].id, parent_gallery_id=parent.id, client_id=person.id
+            ))
+        db.add(FolderClientGrant(
+            folder_id=folders[2].id, parent_gallery_id=parent.id, client_id=people[0].id
+        ))
+        for photo in photos:
+            path = derivatives / str(photo.id) / "client_preview.jpg"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"synthetic-preview")
+            db.add(MediaDerivative(
+                photo_asset_id=photo.id, variant="client_preview",
+                relative_path=f"{photo.id}/client_preview.jpg", status="ready", width=10, height=10
+            ))
+        db.commit()
+        parent_id = parent.id
+        ana_id = people[0].id
+        bia_id = people[1].id
+        common_folder_id = folders[0].id
+        restricted_folder_id = folders[1].id
+        common_id, restricted_id, preparing_id = (photo.id for photo in photos)
+    for phone, expected_ids in (
+        ("+5511555592011", {common_id, restricted_id}),
+        ("+5511555592012", {common_id, restricted_id}),
+        ("+5511555592013", {common_id}),
+    ):
+        client.cookies.clear()
+        authenticate_client(client, phone)
+        listed = client.get(f"/public-galleries/{parent_id}/photos")
+        assert listed.status_code == 200
+        assert {UUID(item["id"]) for item in listed.json()["photos"]} == expected_ids
+        assert {UUID(item["folder_id"]) for item in listed.json()["photos"]} == (
+            {common_folder_id, restricted_folder_id}
+            if restricted_id in expected_ids else {common_folder_id}
+        )
+        assert "assigned_client_ids" not in listed.text
+        if restricted_id not in expected_ids:
+            assert str(restricted_folder_id) not in listed.text
+        assert client.get(
+            f"/public-galleries/{parent_id}/photos/{preparing_id}/preview"
+        ).status_code == 404
+        assert client.get(
+            f"/public-galleries/{parent_id}/photos/{restricted_id}/preview"
+        ).status_code == (200 if restricted_id in expected_ids else 404)
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/selection"
+    ).status_code == 409
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/favorite"
+    ).status_code == 404
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/comments",
+        json={"body": "Não autorizado"},
+    ).status_code == 404
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/view"
+    ).status_code == 404
+    with SessionLocal() as db:
+        assert db.scalar(select(PhotoView)) is None
+    with SessionLocal() as db:
+        state = db.scalar(select(GalleryClientState).where(
+            GalleryClientState.parent_gallery_id == parent_id,
+            GalleryClientState.client_id == bia_id,
+        ))
+        state.status = "blocked"
+        db.commit()
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592012")
+    assert client.get(f"/public-galleries/{parent_id}/photos").status_code == 403
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/preview"
+    ).status_code == 403
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592011")
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/selection"
+    ).status_code == 201
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/favorite"
+    ).status_code == 201
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/view"
+    ).status_code == 200
+    comment = client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/comments",
+        json={"body": "Foto escolhida"},
+    )
+    assert comment.status_code == 201
+    assert client.get(f"/public-galleries/{parent_id}/comments").json()["comments"] == [
+        {"id": comment.json()["id"], "photo_id": str(restricted_id), "body": "Foto escolhida"}
+    ]
+    ana_photo = next(item for item in client.get(
+        f"/public-galleries/{parent_id}/photos"
+    ).json()["photos"] if item["id"] == str(restricted_id))
+    assert ana_photo["selected"] is True
+    assert ana_photo["favorited"] is True
+    with SessionLocal() as db:
+        bia_state = db.scalar(select(GalleryClientState).where(
+            GalleryClientState.parent_gallery_id == parent_id,
+            GalleryClientState.client_id == bia_id,
+        ))
+        bia_state.status = "active"
+        db.commit()
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592012")
+    bia_photo = next(item for item in client.get(
+        f"/public-galleries/{parent_id}/photos"
+    ).json()["photos"] if item["id"] == str(restricted_id))
+    assert bia_photo["selected"] is False
+    assert bia_photo["favorited"] is False
+    assert client.get(f"/public-galleries/{parent_id}/comments").json()["comments"] == []
+    assert client.get("/library/cart").json()["quantity"] == 0
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/view"
+    ).status_code == 200
+    with SessionLocal() as db:
+        assert {row.client_id for row in db.scalars(select(PhotoView).where(
+            PhotoView.photo_asset_id == restricted_id
+        ))} == {ana_id, bia_id}
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592011")
+    assert client.get("/library/cart").json()["quantity"] == 1
+    assert client.get(f"/public-galleries/{parent_id}/comments").json()["comments"] == [
+        {"id": comment.json()["id"], "photo_id": str(restricted_id), "body": "Foto escolhida"}
+    ]
+    with SessionLocal() as db:
+        grant = db.scalar(select(FolderClientGrant).where(
+            FolderClientGrant.client_id == ana_id,
+            FolderClientGrant.folder_id == restricted_folder_id,
+        ))
+        db.delete(grant)
+        db.commit()
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/preview"
+    ).status_code == 404
+    assert client.delete(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/selection"
+    ).status_code == 404
+    assert client.delete(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/favorite"
+    ).status_code == 404
+    assert client.get(f"/public-galleries/{parent_id}/comments").json()["comments"] == []
+    with SessionLocal() as db:
+        assert db.scalar(select(PhotoSelection.id).where(
+            PhotoSelection.parent_gallery_id == parent_id,
+            PhotoSelection.photo_asset_id == restricted_id,
+        )) is not None
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592013")
+    assert client.get(f"/public-galleries/{parent_id}/comments").json()["comments"] == []
+
+
+def test_revoking_restricted_folder_clears_only_pending_selection(
+    client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Galeria com pasta compartilhada")
+        ana = Client(full_name="Ana", phone_e164="+5511555592051")
+        bia = Client(full_name="Bia", phone_e164="+5511555592052")
+        db.add_all([parent, ana, bia])
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Retratos",
+                             audience_scope="selected", status="released")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(parent_gallery_id=parent.id, folder_id=folder.id,
+                           filename="retrato.jpg", storage_key="synthetic/retrato.jpg")
+        db.add(photo)
+        for person in (ana, bia):
+            db.add(ParentGalleryRegistration(
+                parent_gallery_id=parent.id, client_id=person.id, status="active"
+            ))
+            db.add(GalleryClientState(
+                parent_gallery_id=parent.id, client_id=person.id, status="active"
+            ))
+        db.flush()
+        for person in (ana, bia):
+            db.add(FolderClientGrant(
+                folder_id=folder.id, parent_gallery_id=parent.id, client_id=person.id
+            ))
+        db.commit()
+        parent_id, folder_id, photo_id = parent.id, folder.id, photo.id
+        ana_id, bia_id = ana.id, bia.id
+    with SessionLocal() as db:
+        assert select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=ana_id, photo_id=photo_id
+        ).quantity == 1
+        assert select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=bia_id, photo_id=photo_id
+        ).quantity == 1
+        db.commit()
+    authenticate_admin(client)
+    revoked = client.delete(
+        f"/admin/parent-galleries/{parent_id}/folders/{folder_id}/clients/{ana_id}"
+    )
+    assert revoked.status_code == 204, revoked.text
+    with SessionLocal() as db:
+        remaining = list(db.scalars(select(PhotoSelection.client_id).where(
+            PhotoSelection.photo_asset_id == photo_id
+        )))
+        assert remaining == [bia_id]
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592051")
+    assert client.get("/library/cart").json()["quantity"] == 0
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592052")
+    assert client.get("/library/cart").json()["quantity"] == 1
+
+
+def test_canonical_admin_access_block_is_individual(client: TestClient) -> None:
+    with SessionLocal() as db:
+        parent = ParentGallery(name="Galeria compartilhada")
+        people = [
+            Client(full_name="Ana", phone_e164="+5511555592041"),
+            Client(full_name="Bia", phone_e164="+5511555592042"),
+        ]
+        db.add_all([parent, *people])
+        db.flush()
+        deadline = now() + timedelta(days=7)
+        for person in people:
+            db.add(ParentGalleryRegistration(
+                parent_gallery_id=parent.id, client_id=person.id, status="active"
+            ))
+            db.add(GalleryClientState(
+                parent_gallery_id=parent.id, client_id=person.id,
+                status="active", selection_expires_at=deadline,
+            ))
+        db.commit()
+        parent_id, ana_id, bia_id = parent.id, people[0].id, people[1].id
+    authenticate_admin(client)
+    access = f"/admin/parent-galleries/{parent_id}/clients/{ana_id}/access"
+    blocked = client.patch(access, json={"status": "blocked"})
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json() == {"status": "blocked"}
+    assert client.patch(access, json={"status": "blocked"}).status_code == 200
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592041")
+    assert client.get(f"/public-galleries/{parent_id}/photos").status_code == 403
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592042")
+    assert client.get(f"/public-galleries/{parent_id}/photos").status_code == 200
+    with SessionLocal() as db:
+        ana = db.scalar(select(GalleryClientState).where(
+            GalleryClientState.parent_gallery_id == parent_id,
+            GalleryClientState.client_id == ana_id,
+        ))
+        bia = db.scalar(select(GalleryClientState).where(
+            GalleryClientState.parent_gallery_id == parent_id,
+            GalleryClientState.client_id == bia_id,
+        ))
+        assert ana.status == "blocked" and bia.status == "active"
+        assert ana.selection_expires_at == bia.selection_expires_at
+    client.cookies.clear()
+    authenticate_admin(client)
+    assert client.patch(access, json={"status": "active"}).json() == {"status": "active"}
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592041")
+    assert client.get(f"/public-galleries/{parent_id}/photos").status_code == 200
+
+
+def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    authenticate_admin(client)
+    parent_id = UUID(client.post(
+        "/admin/parent-galleries", json={"name": "Acervo compartilhado"}
+    ).json()["id"])
+    recipients = []
+    for name, phone in (("Ana Cliente", "+5511999955001"), ("Bia Cliente", "+5511999955002")):
+        recipient_id = UUID(client.post(
+            "/admin/clients", json={"full_name": name, "phone_e164": phone}
+        ).json()["id"])
+        assert client.put(
+            f"/admin/parent-galleries/{parent_id}/clients/{recipient_id}"
+        ).status_code == 200
+        recipients.append((recipient_id, phone))
+    folder_response = client.post(
+        f"/admin/parent-galleries/{parent_id}/clients/{recipients[0][0]}/folders",
+        json={"name": "Retratos exclusivos"},
+    )
+    assert folder_response.status_code == 201, folder_response.text
+    folder_id = UUID(folder_response.json()["id"])
+    assert client.post(
+        f"/admin/parent-galleries/{parent_id}/folders/{folder_id}/clients/{recipients[1][0]}"
+    ).status_code == 201
+    photo_response = client.post(
+        f"/admin/photo-folders/{folder_id}/photos",
+        json={"filename": "retrato.jpg", "storage_key": "synthetic/retrato.jpg"},
+    )
+    assert photo_response.status_code == 201, photo_response.text
+    photo_id = UUID(photo_response.json()["id"])
+    image = BytesIO()
+    Image.new("RGB", (40, 30), color=(100, 70, 40)).save(image, format="JPEG")
+    uploaded = client.put(
+        f"/admin/photo-assets/{photo_id}/source", content=image.getvalue(),
+        headers={"content-type": "image/jpeg"},
+    )
+    assert uploaded.status_code == 202, uploaded.text
+    with SessionLocal() as db:
+        generate_derivatives(db, db.get(PhotoAsset, photo_id))
+        db.commit()
+    published = client.post(f"/admin/photo-folders/{folder_id}/publish", json={})
+    assert published.status_code == 200, published.text
+    assert published.json()["available_count"] == 1
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count(PhotoFolder.id)).where(
+            PhotoFolder.parent_gallery_id == parent_id
+        )) == 1
+        assert db.scalar(select(func.count(PhotoAsset.id)).where(
+            PhotoAsset.parent_gallery_id == parent_id
+        )) == 1
+        assert db.scalar(select(func.count(DerivedGallery.id))) == 0
+        assert {row.variant for row in db.scalars(select(MediaDerivative).where(
+            MediaDerivative.photo_asset_id == photo_id
+        ))} >= {"admin_preview", "client_preview"}
+    for _, phone in recipients:
+        client.cookies.clear()
+        authenticate_client(client, phone)
+        listing = client.get(f"/public-galleries/{parent_id}/photos")
+        assert listing.status_code == 200
+        assert {row["id"] for row in listing.json()["photos"]} == {str(photo_id)}
+        assert client.get(
+            f"/public-galleries/{parent_id}/photos/{photo_id}/preview"
+        ).status_code == 200
+
+
+def test_canonical_first_selection_reuses_individual_state_without_derivation(
+    client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        person = Client(full_name="Cliente canônica", phone_e164="+5511555592030")
+        parent = ParentGallery(name="Galeria canônica", selection_duration_days=14)
+        db.add_all([person, parent])
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent.id, client_id=person.id, status="active"
+        ))
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Coleção",
+                             audience_scope="all", status="released")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(parent_gallery_id=parent.id, folder_id=folder.id,
+                           filename="synthetic.jpg", storage_key="canonical/synthetic.jpg")
+        db.add(photo)
+        db.commit()
+        parent_id, client_id, photo_id = parent.id, person.id, photo.id
+    with SessionLocal() as db:
+        first = select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=photo_id
+        )
+        db.commit()
+        assert first.state_created is True
+        assert first.selection_created is True
+        assert first.quantity == 1
+        assert first.state.selection_expires_at is not None
+    authenticate_client(client, "+5511555592030")
+    assert client.get(f"/public-galleries/{parent_id}/photos").json()["photos"][0]["selected"] is True
+    with SessionLocal() as db:
+        repeated = select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=photo_id
+        )
+        assert repeated.state_created is False
+        assert repeated.selection_created is False
+        assert repeated.quantity == 1
+        assert db.scalar(select(DerivedGallery)) is None
+        selection = db.scalar(select(PhotoSelection))
+        assert selection.parent_gallery_id == parent_id
+        assert selection.derived_gallery_id is None
+        removed = unselect_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=photo_id
+        )
+        assert removed.selection_removed is True
+        assert removed.quantity == 0
+        assert unselect_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=photo_id
+        ).selection_removed is False
+        assert db.scalar(select(GalleryClientState)) is not None
+
+
+def test_first_selection_starts_deadline_for_precreated_client_state(
+    client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        person = Client(full_name="Cliente com pasta atribuída", phone_e164="+5511555592031")
+        parent = ParentGallery(name="Galeria com prazo", selection_duration_days=14)
+        db.add_all([person, parent])
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent.id, client_id=person.id, status="active"
+        ))
+        state = GalleryClientState(
+            parent_gallery_id=parent.id, client_id=person.id, status="active"
+        )
+        db.add(state)
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Exclusiva",
+                             audience_scope="selected", status="released")
+        db.add(folder)
+        db.flush()
+        db.add(FolderClientGrant(
+            folder_id=folder.id, parent_gallery_id=parent.id, client_id=person.id
+        ))
+        photo = PhotoAsset(parent_gallery_id=parent.id, folder_id=folder.id,
+                           filename="synthetic.jpg", storage_key="canonical/restricted.jpg")
+        db.add(photo)
+        db.commit()
+        parent_id, client_id, photo_id = parent.id, person.id, photo.id
+    with SessionLocal() as db:
+        first = select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=photo_id
+        )
+        assert first.state_created is False
+        assert first.selection_created is True
+        assert first.state.selection_expires_at is not None
+        deadline = first.state.selection_expires_at
+        db.commit()
+    with SessionLocal() as db:
+        repeated = select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=photo_id
+        )
+        assert repeated.state.selection_expires_at.replace(tzinfo=None) == deadline.replace(tzinfo=None)
+        assert db.scalar(select(DerivedGallery.id)) is None
 
 
 @pytest.mark.parametrize("private", [False, True])

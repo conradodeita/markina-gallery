@@ -26,6 +26,12 @@ compose() {
   docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@" </dev/null
 }
 
+preview_compose() {
+  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" \
+    -f "$COMPOSE_FILE" -f docker/docker-compose.preview-adjustment.yml \
+    --profile preview-adjustment "$@" </dev/null
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="${2:-}"; shift 2 ;;
@@ -39,6 +45,44 @@ done
 [[ "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "execução permitida somente em $PROJECT_ROOT"
 [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" ]] || fail "configuração exclusiva da Markina ausente"
 compose config --quiet
+
+# O override APP_ENV no contêiner efêmero não prova que o host/volumes são de
+# homologação. Confere a configuração resolvida sem imprimir credenciais.
+compose config --format json | python3 -c '
+import json, sys
+from urllib.parse import urlsplit
+config = json.load(sys.stdin)
+services = config["services"]
+def check(condition):
+    if not condition:
+        raise SystemExit(1)
+check(config["name"] == "markina-gallery")
+check(services["api"]["environment"]["APP_ENV"] in ("staging", "homolog", "homologation"))
+api_url = urlsplit(services["api"]["environment"]["DATABASE_URL"])
+check(api_url.hostname == "db")
+check(api_url.path.lstrip("/") == services["db"]["environment"]["POSTGRES_DB"])
+public_url = urlsplit(services["api"]["environment"]["MARKINA_PUBLIC_URL"])
+check(public_url.hostname == "markina-homolog.duckdns.org")
+check(any(str(port.get("published")) == "8080" and port.get("host_ip") == "127.0.0.1"
+          for port in services["nginx"].get("ports", [])))
+for service in ("db", "redis", "evolution-db", "evolution-redis"):
+    check(not services[service].get("ports"))
+mounts = {item["target"]: item["source"] for item in services["api"]["volumes"]}
+for target, source in {
+    "/var/lib/markina/source": "media-source",
+    "/var/lib/markina/derivatives": "media-derivatives",
+    "/var/lib/markina/history": "media-history",
+    "/var/lib/markina/facial-references": "facial-references",
+}.items():
+    check(mounts[target].split("_")[-1] == source)
+check(mounts["/var/lib/markina/branding"].split("_")[-1] == "branding-assets")
+' || fail "topologia de homologação não corresponde ao projeto/porta/domínio/banco/volumes esperados"
+for service in api db redis; do
+  container="$(compose ps -q "$service")"
+  [[ -n "$container" ]] || fail "contêiner da Markina ausente: $service"
+  [[ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container")" == "$PROJECT_NAME" ]] || \
+    fail "contêiner fora do projeto Markina: $service"
+done
 echo "topologia: projeto=$PROJECT_NAME entrada=127.0.0.1:8080 subdomínio=markina-homolog.duckdns.org"
 compose ps
 
@@ -58,16 +102,44 @@ else
     fail "confirmação literal inválida"
 fi
 
+while IFS= read -r service; do
+  case "$service" in
+    nginx|web|api|worker|db|redis|evolution-api|evolution-db|evolution-redis|\
+    face-index-worker|face-search-worker|face-maintenance-worker|preview-adjustment-worker) ;;
+    *) fail "serviço ativo desconhecido no projeto Markina: $service" ;;
+  esac
+done < <(docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+  --format '{{index .Config.Labels "com.docker.compose.service"}}')
+
 paused_services=(api worker)
-if grep -Fxq 'FACIAL_PROCESSING_ENABLED=true' "$ENV_FILE"; then
-  paused_services+=(face-index-worker face-search-worker face-maintenance-worker)
+for service in face-index-worker face-search-worker face-maintenance-worker; do
+  container="$(compose ps -q "$service")"
+  if [[ -n "$container" && "$(docker inspect --format '{{.State.Running}}' "$container")" == "true" ]]; then
+    paused_services+=("$service")
+  fi
+done
+preview_container="$(docker ps -q \
+  --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+  --filter "label=com.docker.compose.service=preview-adjustment-worker")"
+preview_running=false
+if [[ -n "$preview_container" ]]; then
+  [[ -f docker/docker-compose.preview-adjustment.yml ]] || \
+    fail "worker de ajuste de prévia ativo sem override conhecido"
+  preview_compose config --quiet
+  preview_running=true
 fi
 
 restore_services() {
   compose up -d --no-deps "${paused_services[@]}" >/dev/null
+  if [[ "$preview_running" == "true" ]]; then
+    preview_compose up -d --no-deps preview-adjustment-worker >/dev/null
+  fi
 }
 trap restore_services EXIT
 compose stop "${paused_services[@]}"
+if [[ "$preview_running" == "true" ]]; then
+  preview_compose stop preview-adjustment-worker
+fi
 pre_inventory="$(compose run --rm --no-deps -e APP_ENV=homolog api \
   python -m app.homolog_cleanup --mode inventory)"
 printf 'inventário anterior: %s\n' "$pre_inventory"
@@ -99,6 +171,17 @@ for service in "${services_to_check[@]}"; do
   done
   [[ "$status" == "healthy" ]] || fail "serviço Markina não ficou saudável: $service ($status)"
 done
+if [[ "$preview_running" == "true" ]]; then
+  container="$(preview_compose ps -q preview-adjustment-worker)"
+  [[ -n "$container" ]] || fail "worker de ajuste de prévia ausente após limpeza"
+  status="unknown"
+  for _attempt in $(seq 1 30); do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
+    [[ "$status" == "healthy" ]] && break
+    sleep 2
+  done
+  [[ "$status" == "healthy" ]] || fail "worker de ajuste de prévia não ficou saudável: $status"
+fi
 curl --fail --silent --show-error --max-time 15 \
   http://127.0.0.1:8080/api/health >/dev/null || \
   fail "rota HTTP da Markina não ficou saudável após a manutenção"

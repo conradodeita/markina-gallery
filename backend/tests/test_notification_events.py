@@ -9,17 +9,22 @@ from app.auth import (
     AuthSession,
     Client,
     DerivedGallery,
+    FolderClientGrant,
+    GalleryClientState,
+    NotificationDelivery,
     NotificationEvent,
     NotificationMilestone,
     ParentGallery,
     ParentGalleryRegistration,
     PhotoAsset,
     PhotoFolder,
+    PushSubscription,
     SessionLocal,
     now,
     token_hash,
 )
-from app.notification_events import record_gallery_milestone
+from app.notification_delivery import recipient_allowed
+from app.notification_events import record_gallery_milestone, record_restricted_folder_ready
 from app.notification_settings import setting_for
 from tests.test_notification_settings import isolated_schema  # noqa: F401
 
@@ -138,3 +143,86 @@ def test_first_private_selection_independent_of_creation_favorite_and_reselectio
         db.rollback()
     with SessionLocal() as db:
         assert db.scalar(select(func.count(NotificationEvent.id))) == 1
+
+
+def test_restricted_folder_ready_notifies_only_current_recipients_without_replay():
+    owner_id, parent_id = scenario()
+    with SessionLocal() as db:
+        other = Client(full_name="Segunda cliente", phone_e164="+5511999999997")
+        db.add(other)
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            parent_gallery_id=parent_id, client_id=other.id, status="active"
+        ))
+        folder = PhotoFolder(
+            parent_gallery_id=parent_id, name="Acervo", status="released",
+            purpose="content", audience_scope="selected",
+        )
+        db.add(folder)
+        db.flush()
+        db.add_all([
+            GalleryClientState(parent_gallery_id=parent_id, client_id=owner_id),
+            GalleryClientState(parent_gallery_id=parent_id, client_id=other.id),
+        ])
+        db.flush()
+        db.add_all([
+            FolderClientGrant(folder_id=folder.id, parent_gallery_id=parent_id, client_id=owner_id),
+            FolderClientGrant(folder_id=folder.id, parent_gallery_id=parent_id, client_id=other.id),
+            PushSubscription(endpoint_fingerprint="1" * 64, encrypted_subscription="ciphertext",
+                             role="client", subject_id=owner_id),
+            PushSubscription(endpoint_fingerprint="2" * 64, encrypted_subscription="ciphertext",
+                             role="client", subject_id=other.id),
+        ])
+        db.flush()
+        first_photo = uuid4()
+        assert record_restricted_folder_ready(
+            db, folder=folder, photo_ids={first_photo}, batch_key="publish"
+        ) == 2
+        db.commit()
+        events = list(db.scalars(select(NotificationEvent)))
+        assert len(events) == 2
+        assert {event.client_id for event in events} == {owner_id, other.id}
+        assert {event.target_path for event in events} == {f"/public-galleries/{parent_id}"}
+        deliveries = list(db.scalars(select(NotificationDelivery)))
+        assert {(item.recipient_id, item.channel) for item in deliveries} == {
+            (owner_id, "whatsapp"), (owner_id, "push"),
+            (other.id, "whatsapp"), (other.id, "push"),
+        }
+        assert record_restricted_folder_ready(
+            db, folder=folder, photo_ids={first_photo}, batch_key="publish"
+        ) == 2
+        db.commit()
+        assert db.scalar(select(func.count(NotificationEvent.id))) == 2
+        grant = db.scalar(select(FolderClientGrant).where(
+            FolderClientGrant.folder_id == folder.id,
+            FolderClientGrant.client_id == other.id,
+        ))
+        db.delete(grant)
+        db.flush()
+        queued_event = db.scalar(select(NotificationEvent).where(
+            NotificationEvent.client_id == other.id,
+            NotificationEvent.event_type == "private_photos_ready",
+        ))
+        queued_delivery = db.scalar(select(NotificationDelivery).where(
+            NotificationDelivery.event_id == queued_event.id,
+        ))
+        assert not recipient_allowed(db, queued_event, queued_delivery)
+        assert record_restricted_folder_ready(
+            db, folder=folder, photo_ids={uuid4()}, batch_key="publish"
+        ) == 1
+        db.commit()
+        assert db.scalar(select(func.count(NotificationEvent.id))) == 3
+        assert db.scalar(select(func.count(NotificationDelivery.id)).where(
+            NotificationDelivery.recipient_id == other.id
+        )) == 2
+        db.add(FolderClientGrant(
+            folder_id=folder.id, parent_gallery_id=parent_id, client_id=other.id
+        ))
+        db.flush()
+        assert record_restricted_folder_ready(
+            db, folder=folder, photo_ids={first_photo}, batch_key="publish",
+            client_ids={other.id},
+        ) == 1
+        db.commit()
+        assert db.scalar(select(func.count(NotificationEvent.id))) == 4
+        assert not recipient_allowed(db, queued_event, queued_delivery)
