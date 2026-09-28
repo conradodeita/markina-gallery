@@ -12,7 +12,7 @@ A revisão humana em homologação mostrou que o backend já suporta parte relev
 - Permitir adicionar fotos a uma pasta já publicada sem ocultar as fotos anteriores: os novos arquivos permanecem administrativos durante processamento/revisão e são publicados explicitamente depois de prontos.
 - Corrigir e testar de ponta a ponta **Desvincular cliente** e **Disponibilizar fotos**, com estados, motivos de bloqueio, progresso e atualização do card orientados pelo backend.
 - Transformar o resumo da Galeria pública em superfície operacional: miniatura de capa por pasta, abertura da pasta para visualizar/adicionar/excluir fotos e cards reutilizáveis de clientes com selecionadas, compradas, estado da galeria e situação de pagamento/prazo.
-- Criar um painel de Pagamentos agrupado por cliente, com resumo, cards coloridos e textuais, filtros recolhíveis por cliente, galeria, período, situação financeira e entrega de mensagem, além das ações atuais de decisão e reenvio.
+- Criar um painel de Pagamentos agrupado por cliente, com resumo, cards coloridos e textuais, filtros recolhíveis por cliente, galeria, período, situação financeira e entrega de mensagem, além das ações atuais de decisão e reenvio; manter a edição de mensagens globais em Notificações, sem duplicar painel de prévias em Pagamentos.
 - Refinar a apresentação compartilhada do fotógrafo e da cliente para uma galeria editorial, sem molduras de card sobre as fotos, com espaçamento uniforme, adaptação às proporções horizontal/vertical, responsividade e marcador visível de favorito/seleção no papel da cliente.
 - Manter prévias autenticadas, limitadas e marcadas pelo servidor; a reorganização visual não expõe originais nem promete impedir screenshots.
 

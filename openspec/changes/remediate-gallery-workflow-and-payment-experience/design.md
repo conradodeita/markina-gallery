@@ -66,6 +66,8 @@ Alternativa descartada: construir resumo por chamadas individuais a cada privada
 
 Cada grupo conterá pedidos/comunicações com estados e ações explicitamente devolvidos pelo backend. O frontend usará `details`/painel recolhível para filtros, cards com badges textuais e regiões expansíveis para informações e mensagens. Decisão e retry continuarão nos endpoints atuais, e o card será atualizado pela resposta ou por nova consulta sem mutação otimista do estado financeiro.
 
+As mensagens globais de confirmação/recusa continuam editáveis na superfície Notificações. Pagamentos não duplicará essa configuração em um card com prévias, pois a área de Notificações é a origem única desses modelos; os filtros, resumos e pedidos permanecem independentes.
+
 Alternativa descartada: agrupar a lista atual somente no frontend. Isso não resolve filtros, paginação, N+1 nem contagens coerentes do conjunto consultado.
 
 ### Tipografias são tokens locais, não nomes CSS livres
