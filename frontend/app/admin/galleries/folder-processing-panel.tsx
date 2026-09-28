@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
+import { AdminPhotoPreviewDialog, type AdminPhotoPreview } from "./admin-photo-preview-dialog";
 
 type Counts = { queued: number; processing: number; ready?: number; completed?: number; failed: number; cancelled?: number };
 type Processing = {
@@ -32,15 +33,17 @@ function exposure(value: number) {
   return `${value > 0 ? "+" : ""}${(value / 10).toFixed(1).replace(".", ",")}`;
 }
 
-export function FolderProcessingPanel({ folderId, folderName, shared = false }:
-  { folderId: string; folderName: string; shared?: boolean }) {
+export function FolderProcessingPanel({ folderId, folderName, shared = false, embedded = false }:
+  { folderId: string; folderName: string; shared?: boolean; embedded?: boolean }) {
   const id = useId();
   const [open, setOpen] = useState(false);
+  const expanded = embedded || open;
   const [data, setData] = useState<Processing | null>(null);
   const [draft, setDraft] = useState<Processing | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [expandedPhoto, setExpandedPhoto] = useState<AdminPhotoPreview | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     const result = await request<Processing>(`${folderId}/processing`, { signal });
@@ -50,24 +53,24 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false }:
   }, [folderId]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!expanded) return;
     const controller = new AbortController();
     void Promise.resolve().then(() => load(controller.signal)).catch((cause) => {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Não foi possível carregar o processamento.");
     });
     return () => controller.abort();
-  }, [open, load]);
+  }, [expanded, load]);
 
   const pending = (data?.preview_counts.queued ?? 0) + (data?.preview_counts.processing ?? 0)
     + (data?.facial_counts.queued ?? 0) + (data?.facial_counts.processing ?? 0);
   useEffect(() => {
-    if (!open || !pending) return;
+    if (!expanded || !pending) return;
     const controller = new AbortController();
     const timer = window.setInterval(() => {
       void load(controller.signal).catch(() => {});
     }, 5000);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [open, pending, load]);
+  }, [expanded, pending, load]);
 
   async function save() {
     if (!draft || busy) return;
@@ -112,13 +115,16 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false }:
     ? `${data.preview_mode === "custom" ? "Prévia personalizada" : data.preview_mode === "off" ? "Prévia desligada" : "Prévia herdada"} · ${data.facial_mode === "off" ? "Face pausada" : data.facial_mode === "on" ? "Face permitida" : "Face herdada"}`
     : "Configuração da pasta";
   return <section className="folder-processing" aria-label={`Processamento de ${folderName}`}>
-    <button type="button" className="folder-processing__toggle" aria-expanded={open}
+    {embedded ? <div className="folder-processing__toggle folder-processing__toggle--static">
+      <span className="folder-processing__icon" aria-hidden="true">✦</span>
+      <span className="folder-processing__heading"><strong>Processamento da pasta</strong><small>{summary}</small></span>
+    </div> : <button type="button" className="folder-processing__toggle" aria-expanded={open}
       aria-controls={`${id}-content`} onClick={() => { setOpen((value) => !value); setError(""); }}>
       <span className="folder-processing__icon" aria-hidden="true">✦</span>
       <span className="folder-processing__heading"><strong>Processamento da pasta</strong><small>{summary}</small></span>
       <span className="folder-processing__chevron" aria-hidden="true">{open ? "▴" : "▾"}</span>
-    </button>
-    {open ? <div id={`${id}-content`} className="folder-processing__body">
+    </button>}
+    {expanded ? <div id={`${id}-content`} className="folder-processing__body">
       <p className="folder-processing__scope">Ajustes e ações valem somente para “{folderName}”{shared ? " e para todas as clientes atribuídas a esta pasta" : ""}.</p>
       {error ? <p role="alert" className="folder-processing__feedback folder-processing__feedback--error">{error}</p> : null}
       {notice ? <p role="status" className="folder-processing__feedback">{notice}</p> : null}
@@ -162,8 +168,19 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false }:
           </div>
         </div>
         <div className="folder-processing__footer"><span>Alterações de configuração não reprocessam fotos antigas automaticamente.</span><button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Aguarde…" : "Salvar configuração"}</button></div>
-        {data.comparison_photo_id ? <div className="folder-processing__comparison"><h4>Antes e depois</h4><figure><img src={`/api/admin/preview-adjustment/photos/${data.comparison_photo_id}/before`} alt="Prévia convencional protegida" /><figcaption>Convencional</figcaption></figure><figure><img src={`/api/admin/preview-adjustment/photos/${data.comparison_photo_id}/after`} alt="Prévia ajustada protegida" /><figcaption>Ajustada</figcaption></figure></div> : null}
+        {data.comparison_photo_id ? <div className="folder-processing__comparison"><h4>Antes e depois</h4>
+          {(["before", "after"] as const).map((version) => {
+            const label = version === "before" ? "Convencional" : "Ajustada";
+            const src = `/api/admin/preview-adjustment/photos/${data.comparison_photo_id}/${version}`;
+            return <figure key={version}><button type="button" className="photo-preview-button"
+              aria-label={`Ampliar versão ${label.toLowerCase()}`} onClick={(event) => setExpandedPhoto({
+                src, alt: `Prévia ${label.toLowerCase()} protegida`, name: `${folderName} · ${label}`,
+                trigger: event.currentTarget,
+              })}><img src={src} alt={`Prévia ${label.toLowerCase()} protegida`} /></button><figcaption>{label}</figcaption></figure>;
+          })}
+        </div> : null}
       </>}
     </div> : null}
+    {expandedPhoto ? <AdminPhotoPreviewDialog preview={expandedPhoto} onClose={() => setExpandedPhoto(null)} /> : null}
   </section>;
 }

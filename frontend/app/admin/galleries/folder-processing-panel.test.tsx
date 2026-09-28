@@ -37,6 +37,31 @@ it("carrega apenas ao abrir, mostra escopo compartilhado e salva exposição pr�
   expect(screen.queryByText(/todas as clientes atribuídas/)).toBeNull();
 });
 
+it("mostra o processamento embutido sem segunda seta nem gravação ao montar", async () => {
+  const fetcher = vi.fn((_path: string, _init?: RequestInit) => response(payload));
+  vi.stubGlobal("fetch", fetcher);
+  const view = render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" embedded />);
+  expect(await screen.findByRole("button", { name: "Salvar configuração" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Processamento da pasta/ })).toBeNull();
+  expect(fetcher.mock.calls).toHaveLength(1);
+  expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
+  view.unmount();
+  expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+});
+
+it("amplia ambas as versões protegidas do comparativo e devolve o foco", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => response({ ...payload, comparison_photo_id: "photo-1" })));
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" embedded />);
+  for (const [label, path] of [["convencional", "before"], ["ajustada", "after"]]) {
+    const trigger = await screen.findByRole("button", { name: `Ampliar versão ${label}` });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector("img")?.getAttribute("src")).toBe(`/api/admin/preview-adjustment/photos/photo-1/${path}`);
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(document.activeElement).toBe(trigger);
+  }
+});
+
 it("encerra a consulta e o polling ao recolher, sem gravar configuração", async () => {
   const fetcher = vi.fn((_path: string, _init?: RequestInit) => response({ ...payload,
     preview_counts: { ...payload.preview_counts, queued: 1 } }));
