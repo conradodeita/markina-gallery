@@ -1794,6 +1794,150 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
     assert purchased_export.text == f"{bought.id}\tcomprada.jpg\n"
 
 
+def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(client: TestClient):
+    with SessionLocal() as db:
+        first_client = Client(full_name="Cliente A", phone_e164="+5511333333341")
+        second_client = Client(full_name="Cliente B", phone_e164="+5511333333342")
+        parent = ParentGallery(name="Evento compartilhado", event_name="Compartilhado")
+        db.add_all([first_client, second_client, parent])
+        db.flush()
+        folder = PhotoFolder(
+            parent_gallery_id=parent.id, name="Liberadas", status="released", released_at=now()
+        )
+        db.add(folder)
+        db.flush()
+        photos = [
+            PhotoAsset(
+                parent_gallery_id=parent.id,
+                folder_id=folder.id,
+                filename=name,
+                storage_key=f"shared/{name}",
+            )
+            for name in ("cliente-a.jpg", "cliente-b.jpg", "cliente-b-selecao.jpg")
+        ]
+        gallery = DerivedGallery(
+            parent_gallery_id=parent.id, client_id=first_client.id, name="Privada compartilhada"
+        )
+        db.add_all([*photos, gallery])
+        db.flush()
+        db.add_all(
+            [
+                DerivedGalleryMembership(
+                    derived_gallery_id=gallery.id,
+                    parent_gallery_id=parent.id,
+                    client_id=member.id,
+                    status="active",
+                )
+                for member in (first_client, second_client)
+            ]
+            + [
+                DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id)
+                for photo in photos
+            ]
+            + [
+                PhotoSelection(
+                    derived_gallery_id=gallery.id,
+                    photo_asset_id=photos[0].id,
+                    client_id=first_client.id,
+                ),
+                PhotoSelection(
+                    derived_gallery_id=gallery.id,
+                    photo_asset_id=photos[1].id,
+                    client_id=second_client.id,
+                ),
+                PhotoSelection(
+                    derived_gallery_id=gallery.id,
+                    photo_asset_id=photos[2].id,
+                    client_id=second_client.id,
+                ),
+            ]
+        )
+        db.flush()
+        first_order = SaleOrder(
+            derived_gallery_id=gallery.id,
+            client_id=first_client.id,
+            payment_status="confirmed",
+            total_cents=100,
+            confirmed_at=now(),
+        )
+        second_order = SaleOrder(
+            derived_gallery_id=gallery.id,
+            client_id=second_client.id,
+            payment_status="confirmed",
+            total_cents=200,
+            confirmed_at=now(),
+        )
+        removed_snapshot_id = uuid4()
+        removed_order = SaleOrder(
+            derived_gallery_id=gallery.id,
+            client_id=second_client.id,
+            payment_status="confirmed",
+            total_cents=300,
+            confirmed_at=now(),
+        )
+        db.add_all([first_order, second_order, removed_order])
+        db.flush()
+        db.add_all(
+            [
+                SaleOrderItem(
+                    sale_order_id=first_order.id,
+                    photo_asset_id=photos[0].id,
+                    photo_asset_id_snapshot=photos[0].id,
+                    filename_snapshot="cliente-a.jpg",
+                    unit_price_cents=100,
+                ),
+                SaleOrderItem(
+                    sale_order_id=second_order.id,
+                    photo_asset_id=photos[1].id,
+                    photo_asset_id_snapshot=photos[1].id,
+                    filename_snapshot="cliente-b.jpg",
+                    unit_price_cents=200,
+                ),
+                SaleOrderItem(
+                    sale_order_id=removed_order.id,
+                    photo_asset_id=None,
+                    photo_asset_id_snapshot=removed_snapshot_id,
+                    filename_snapshot="removida.jpg",
+                    unit_price_cents=300,
+                ),
+            ]
+        )
+        db.commit()
+
+    authenticate_admin(client)
+    first = client.get(f"/admin/statistics?client_id={first_client.id}")
+    second = client.get(f"/admin/statistics?client_id={second_client.id}&limit=1")
+    second_next_purchased = client.get(
+        f"/admin/statistics?client_id={second_client.id}&limit=1&purchased_offset=1"
+    )
+    second_next_selected = client.get(
+        f"/admin/statistics?client_id={second_client.id}&limit=1&selected_offset=1"
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.json()["revenue_cents"] == 100
+    assert first.json()["purchased_photos"] == [
+        {"id": str(photos[0].id), "filename": "cliente-a.jpg"}
+    ]
+    assert second.json()["revenue_cents"] == 500
+    assert second.json()["purchased_total"] == 2
+    assert second.json()["selected_not_purchased_photos"] == [
+        {"id": str(photos[2].id), "filename": "cliente-b-selecao.jpg"}
+    ]
+    assert second.json()["purchased_photos"] == [
+        {"id": str(photos[1].id), "filename": "cliente-b.jpg"}
+    ]
+    assert second_next_purchased.json()["purchased_photos"] == [
+        {"id": str(removed_snapshot_id), "filename": "removida.jpg"}
+    ]
+    assert second_next_selected.json()["selected_not_purchased_photos"] == []
+    exported = client.get(f"/admin/statistics/purchased.txt?client_id={second_client.id}")
+    assert exported.text == (
+        f"{photos[1].id}\tcliente-b.jpg\n{removed_snapshot_id}\tremovida.jpg\n"
+    )
+    assert "cliente-a.jpg" not in exported.text
+    assert "Cliente A" not in exported.text
+
+
 def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient) -> None:
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Festa escolar"}).json()["id"])

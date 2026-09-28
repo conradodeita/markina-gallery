@@ -15,19 +15,14 @@ type Option = {
 type Statistics = {
   purchased_count: number;
   selected_not_purchased_count: number;
+  purchased_total?: number;
+  selected_not_purchased_total?: number;
   revenue_cents: number;
   revenue_by_day: Array<{ date: string; revenue_cents: number }>;
   purchased_photos: Array<{ id: string; filename: string }>;
   selected_not_purchased_photos: Array<{ id: string; filename: string }>;
 };
-const emptyStatistics: Statistics = {
-  purchased_count: 0,
-  selected_not_purchased_count: 0,
-  revenue_cents: 0,
-  revenue_by_day: [],
-  purchased_photos: [],
-  selected_not_purchased_photos: [],
-};
+const PAGE_SIZE = 50;
 
 function currency(cents: number) {
   return new Intl.NumberFormat("pt-BR", {
@@ -74,6 +69,9 @@ export default function StatisticsPage() {
   }>({ clients: [], parent_galleries: [], derived_galleries: [] });
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [data, setData] = useState<Statistics | null>(null);
+  const [statisticsError, setStatisticsError] = useState(false);
+  const [purchasedPage, setPurchasedPage] = useState(0);
+  const [selectedPage, setSelectedPage] = useState(0);
   const query = useMemo(
     () =>
       new URLSearchParams(
@@ -81,22 +79,34 @@ export default function StatisticsPage() {
       ).toString(),
     [filters],
   );
-  function loadStatistics() {
+  function loadStatistics(
+    nextPurchasedPage = purchasedPage,
+    nextSelectedPage = selectedPage,
+  ) {
     setData(null);
-    fetch(`/api/admin/statistics${query ? `?${query}` : ""}`, {
+    setStatisticsError(false);
+    const params = new URLSearchParams(query);
+    params.set("limit", String(PAGE_SIZE));
+    params.set("purchased_offset", String(nextPurchasedPage * PAGE_SIZE));
+    params.set("selected_offset", String(nextSelectedPage * PAGE_SIZE));
+    fetch(`/api/admin/statistics?${params.toString()}`, {
       credentials: "same-origin",
     })
       .then(async (response) => {
         if (!response.ok) throw new Error();
         setData(await response.json());
+        setStatisticsError(false);
       })
-      .catch(() => setData(emptyStatistics));
+      .catch(() => {
+        setData(null);
+        setStatisticsError(true);
+      });
   }
   useEffect(() => {
     fetch("/api/admin", { credentials: "same-origin" })
       .then((response) => {
         setAuthorized(response.ok);
-        if (response.ok) loadStatistics();
+        if (response.ok) loadStatistics(0, 0);
       })
       .catch(() => setAuthorized(false));
     fetch("/api/admin/statistics/filters", { credentials: "same-origin" })
@@ -108,7 +118,9 @@ export default function StatisticsPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function apply(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    loadStatistics();
+    setPurchasedPage(0);
+    setSelectedPage(0);
+    loadStatistics(0, 0);
   }
   function update(name: string, value: string) {
     setFilters((current) => ({ ...current, [name]: value }));
@@ -212,7 +224,18 @@ export default function StatisticsPage() {
         </label>
         <button className="primary">Aplicar filtros</button>
       </form>
-      {data === null ? (
+      {statisticsError ? (
+        <section className="admin-card" role="alert">
+          <h2>Não foi possível atualizar as estatísticas</h2>
+          <p className="form-message">
+            Os indicadores não foram substituídos por zero. Tente novamente
+            mantendo os filtros atuais.
+          </p>
+          <button type="button" className="primary" onClick={() => loadStatistics()}>
+            Tentar novamente
+          </button>
+        </section>
+      ) : data === null ? (
         <p className="form-message">Atualizando indicadores…</p>
       ) : (
         <>
@@ -253,6 +276,15 @@ export default function StatisticsPage() {
             {!data.purchased_photos.length && (
               <p className="form-message">Nenhuma foto comprada.</p>
             )}
+            <StatisticsPagination
+              label="fotos compradas"
+              page={purchasedPage}
+              total={data.purchased_total ?? data.purchased_count}
+              onChange={(page) => {
+                setPurchasedPage(page);
+                loadStatistics(page, selectedPage);
+              }}
+            />
           </section>
           <section className="admin-card">
             <h2>Selecionadas, não compradas</h2>
@@ -273,9 +305,56 @@ export default function StatisticsPage() {
             {!data.selected_not_purchased_photos.length && (
               <p className="form-message">Nenhuma seleção sem compra.</p>
             )}
+            <StatisticsPagination
+              label="selecionadas sem compra"
+              page={selectedPage}
+              total={data.selected_not_purchased_total ?? data.selected_not_purchased_count}
+              onChange={(page) => {
+                setSelectedPage(page);
+                loadStatistics(purchasedPage, page);
+              }}
+            />
           </section>
         </>
       )}
     </main>
+  );
+}
+
+function StatisticsPagination({
+  label,
+  page,
+  total,
+  onChange,
+}: {
+  label: string;
+  page: number;
+  total: number;
+  onChange: (page: number) => void;
+}) {
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (pages <= 1) return null;
+  return (
+    <nav className="statistics-pagination" aria-label={`Paginação de ${label}`}>
+      <button
+        type="button"
+        className="secondary"
+        disabled={page === 0}
+        onClick={() => onChange(page - 1)}
+      >
+        Anterior
+      </button>
+      <span>
+        Página {page + 1} de {pages}
+      </span>
+      <button
+        type="button"
+        className="secondary"
+        disabled={page >= pages - 1}
+        onClick={() => onChange(page + 1)}
+      >
+        Próxima
+      </button>
+    </nav>
   );
 }
