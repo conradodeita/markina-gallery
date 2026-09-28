@@ -62,8 +62,6 @@ type ClientGroup = {
   orders: Order[];
 };
 type Dashboard = {
-  templates: Record<"confirmed" | "refused", string>;
-  templates_are_global: boolean;
   selections_without_order?: Array<{ client: { id: string; name: string }; gallery: { id: string; name: string }; parent_gallery: { id: string; name: string }; selected_count: number; total_cents: number | null; pricing_available: boolean; created_at: string; folders: Array<{ id: string; name: string; items: Array<{ id: string; name: string }> }> }>;
   summary: {
     clients: number;
@@ -248,8 +246,6 @@ function PaymentsDashboard() {
       <MetricCard label="Receita confirmada" value={money(dashboard.summary.confirmed_cents)} detail={`${dashboard.summary.confirmed_orders} depósito(s) confirmado(s)`} tone="success" />
       <MetricCard label="Falhas de mensagem" value={dashboard.summary.failed_messages} detail="Entregas que exigem atenção" tone={dashboard.summary.failed_messages ? "danger" : "success"} />
     </section>
-
-    <section className="admin-card"><div className="section-heading"><div><h2>Mensagem global após conferência</h2><p>Qualquer edição afeta todas as clientes. O texto efetivamente usado fica salvo no pedido.</p></div><a className="mk-button mk-button--secondary" href="/admin/notifications#payment_confirmed">Editar em Notificações</a></div><details><summary>Ver prévias</summary><p><strong>Pagamento confirmado:</strong> {dashboard.templates?.confirmed ?? "Olá {{cliente}}, o pagamento do pedido {{pedido}} foi confirmado."}</p><p><strong>Pagamento não localizado:</strong> {dashboard.templates?.refused ?? "Olá {{cliente}}, o pagamento do pedido {{pedido}} ainda não foi localizado."}</p></details></section>
 
     {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
 

@@ -132,6 +132,21 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.queryByRole("button", { name: "Tentar enviar novamente" })).toBeNull();
   });
 
+  it("omite o cartão de mensagens globais e preserva filtros e estado vazio", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : emptyDashboard,
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    expect(await screen.findByText("Nenhum pedido ainda")).toBeTruthy();
+    expect(screen.getByText(/Pedidos e comunicações aparecerão aqui/)).toBeTruthy();
+    expect(screen.getByText("Filtros")).toBeTruthy();
+    expect(screen.queryByText("Mensagem global após conferência")).toBeNull();
+    expect(screen.queryByText("Ver prévias")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Editar em Notificações" })).toBeNull();
+  });
+
   it("combina filtros, apresenta vazio específico e permite limpar", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(
       JSON.stringify(path.includes("query=Inexistente") ? emptyDashboard : dashboard()),
