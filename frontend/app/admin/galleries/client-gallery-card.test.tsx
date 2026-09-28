@@ -13,8 +13,48 @@ vi.mock("../../upload-jpeg", () => ({ jpegStorageKey: uploads.key, uploadJpeg: u
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); uploads.key.mockReset(); uploads.send.mockReset(); });
 
+it("abre a pasta pela prévia protegida e mantém outra pasta sem prévia acessível", async () => {
+  const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (init?.method && init.method !== "GET") throw new Error("Escrita inesperada.");
+    return Promise.resolve(new Response(JSON.stringify(
+    path.endsWith("/folders") ? { folders: [
+      { id: "folder-1", name: "Pasta 01", status: "released", photo_count: 1,
+        preview_url: "/admin/photo-assets/photo-1/watermarked-preview", assigned_client_ids: ["ana"] },
+      { id: "folder-2", name: "Pasta 02", status: "preparing", photo_count: 0,
+        preview_url: null, assigned_client_ids: ["ana"] },
+    ] } : path.endsWith("/processing") ? {
+      folder_id: "folder-1", folder_name: "Pasta 01", preview_mode: "inherit", facial_mode: "inherit",
+      preview_strength: 50, preview_exposure_tenths: 0,
+      effective_preview: { mode: "inherit", enabled: false, strength: 50, exposure_tenths: 0 },
+      facial_available: false, facial_allowed: false, total_photos: 1,
+      preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
+      facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
+    } : { photos: [] },
+    ), { status: 200 }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<ClientGalleryCard person={person} parentGalleryId="gallery-1" />);
+  fireEvent.click(screen.getByRole("button", { name: "Acervo da cliente" }));
+  expect(screen.getByRole("heading", { name: "Pastas restritas ao cliente" })).toBeTruthy();
+  const first = await screen.findByRole("button", { name: "Abrir pasta Pasta 01" });
+  const second = screen.getByRole("button", { name: "Abrir pasta Pasta 02" });
+  const preview = first.querySelector("img");
+  expect(preview?.getAttribute("src")).toBe("/api/admin/photo-assets/photo-1/watermarked-preview");
+  expect(second.textContent).toContain("Sem prévia");
+  fireEvent.click(preview!);
+  expect(first.getAttribute("aria-expanded")).toBe("true");
+  expect(second.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(screen.getByRole("button", { name: "Recolher pasta Pasta 01" }));
+  expect(first.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(second);
+  expect(second.getAttribute("aria-expanded")).toBe("true");
+  expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+});
+
 it("mostra destinatárias legadas sem oferecer nova atribuição", async () => {
-  const fetcher = vi.fn((path: string, _init?: RequestInit) => Promise.resolve(new Response(JSON.stringify(
+  const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (init?.method && init.method !== "GET") throw new Error("Escrita inesperada.");
+    return Promise.resolve(new Response(JSON.stringify(
     path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Retratos", status: "released",
       photo_count: 0, assigned_client_ids: ["ana", "bia"] }] }
       : path.endsWith("/processing") ? {
@@ -26,7 +66,8 @@ it("mostra destinatárias legadas sem oferecer nova atribuição", async () => {
         facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
       } : { photos: [{ id: "photo-1", name: "retrato.jpg", preview_url: "/admin/photos/photo-1/preview",
         publication_state: "available", can_delete: true }] },
-  ), { status: 200 })));
+    ), { status: 200 }));
+  });
   vi.stubGlobal("fetch", fetcher);
   render(<ClientGalleryCard person={person} parentGalleryId="gallery-1" linkedClients={[
     person, { ...person, client_id: "bia", name: "Bia" },

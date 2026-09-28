@@ -68,7 +68,7 @@ describe("telas administrativas de galerias", () => {
     render(<GalleriesPage />);
     await screen.findByText("Nenhum resultado nesta visão.");
     fireEvent.change(
-      screen.getByLabelText("Buscar por galeria, nome ou telefone"),
+      screen.getByLabelText("Buscar galeria por nome, evento, cliente ou telefone"),
       { target: { value: "Maria" } },
     );
     await waitFor(() =>

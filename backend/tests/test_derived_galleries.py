@@ -742,6 +742,30 @@ def test_admin_cannot_create_private_gallery_from_existing_public_photo(client: 
         assert db.scalar(select(DerivedGallery.id)) is None
 
 
+def test_gallery_overview_finds_client_with_canonical_registration(client: TestClient):
+    authenticate_admin(client)
+    parent_id = client.post(
+        "/admin/parent-galleries", json={"name": "Evento canônico"}
+    ).json()["id"]
+    other_id = client.post(
+        "/admin/parent-galleries", json={"name": "Outra galeria"}
+    ).json()["id"]
+    client_id = client.post(
+        "/admin/clients",
+        json={"full_name": "Ana Específica", "phone_e164": "+5511999990042"},
+    ).json()["id"]
+    assert client.put(
+        f"/admin/parent-galleries/{parent_id}/clients/{client_id}"
+    ).status_code == 200
+    with SessionLocal() as db:
+        assert db.scalar(select(DerivedGallery.id)) is None
+    for query in ("Ana", "1999990042"):
+        result = client.get("/admin/parent-galleries/overview", params={"query": query})
+        assert result.status_code == 200, result.text
+        assert [row["id"] for row in result.json()["parent_galleries"]] == [parent_id]
+        assert other_id not in {row["id"] for row in result.json()["parent_galleries"]}
+
+
 def test_client_selection_uses_canonical_gallery_without_derivation(client: TestClient):
     with SessionLocal() as db:
         person = Client(full_name="Cliente", phone_e164="+5511888888888")
@@ -4894,6 +4918,11 @@ def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
     )
     assert folder_response.status_code == 201, folder_response.text
     folder_id = UUID(folder_response.json()["id"])
+    empty_folders = client.get(
+        f"/admin/parent-galleries/{parent_id}/clients/{recipients[0][0]}/folders"
+    )
+    assert empty_folders.status_code == 200, empty_folders.text
+    assert empty_folders.json()["folders"][0]["preview_url"] is None
     with SessionLocal() as db:
         db.add(GalleryClientState(
             parent_gallery_id=parent_id, client_id=recipients[1][0], status="active",
@@ -4932,6 +4961,13 @@ def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
     with SessionLocal() as db:
         generate_derivatives(db, db.get(PhotoAsset, photo_id))
         db.commit()
+    listed_folders = client.get(
+        f"/admin/parent-galleries/{parent_id}/clients/{recipients[0][0]}/folders"
+    )
+    assert listed_folders.status_code == 200, listed_folders.text
+    assert listed_folders.json()["folders"][0]["preview_url"] == (
+        f"/admin/photo-assets/{photo_id}/watermarked-preview"
+    )
     published = client.post(f"/admin/photo-folders/{folder_id}/publish", json={})
     assert published.status_code == 200, published.text
     assert published.json()["available_count"] == 1

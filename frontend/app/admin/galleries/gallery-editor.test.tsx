@@ -1099,12 +1099,41 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<SourceGalleryDetailPage />);
     expect(await screen.findByRole("heading", { name: "Evento completo" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Pastas Públicas" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Capa da galeria" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/preview");
     expect(screen.getByText("ativo")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Abrir pasta Lote inicial" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens?folder=folder-1");
     expect(screen.getByRole("article", { name: "Cliente Ana Resumo" })).toBeTruthy();
     expect(screen.getByText("Aguardando pagamento")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Excluir Galeria pública" })).toBeTruthy();
+  });
+
+  it("filtra clientes da galeria aberta por nome ou telefone sem nova consulta", async () => {
+    const clients = [
+      { client_id: "ana", name: "Ana Lívia", phone: "+5511999990001", registration_status: "active",
+        derived_gallery_id: null, available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "active" },
+      { client_id: "bia", name: "Bia Costa", phone: "+5511888880002", registration_status: "active",
+        derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "active" },
+    ];
+    const fetchMock = vi.fn((path: string) => path.endsWith("/folders")
+      ? response({ folders: [] })
+      : response({ name: "Evento", event_name: "Festa", active: true, public_link_status: "active",
+        cover_preview_url: null, counts: { folders: 0, photos: 1, clients: 2 }, clients }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SourceGalleryDetailPage />);
+    const search = await screen.findByRole("searchbox", { name: "Buscar cliente nesta galeria por nome ou telefone" });
+    expect(screen.getAllByRole("article", { name: /^Cliente / })).toHaveLength(2);
+    fireEvent.change(search, { target: { value: "livia" } });
+    expect(screen.getByRole("article", { name: "Cliente Ana Lívia" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Cliente Bia Costa" })).toBeNull();
+    fireEvent.change(search, { target: { value: "88 88" } });
+    expect(screen.getByRole("article", { name: "Cliente Bia Costa" })).toBeTruthy();
+    fireEvent.change(search, { target: { value: "sem resultado" } });
+    expect(screen.getByText("Nenhuma cliente encontrada nesta galeria")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Limpar busca" }));
+    expect(screen.getAllByRole("article", { name: /^Cliente / })).toHaveLength(2);
+    expect(screen.getByText(/2 clientes vinculadas/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("confirma uma vez com inventário e acompanha a exclusão até o sucesso", async () => {

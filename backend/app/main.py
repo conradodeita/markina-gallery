@@ -2596,12 +2596,16 @@ def parent_gallery_overview(
             )
         )
         owners = [db.get(Client, gallery.client_id) for gallery in galleries]
+        linked_clients = (
+            [db.get(Client, registration.client_id) for registration in registrations]
+            if search else []
+        )
         if search and not (
             search in parent.name.casefold()
             or (parent.event_name and search in parent.event_name.casefold())
             or any(
                 owner and (search in owner.full_name.casefold() or search in owner.phone_e164)
-                for owner in owners
+                for owner in (*owners, *linked_clients)
             )
         ):
             continue
@@ -3764,6 +3768,16 @@ def admin_client_restricted_folders(
             FolderClientGrant.folder_id, FolderClientGrant.client_id
         ).where(FolderClientGrant.folder_id.in_([folder.id for folder in folders]))):
             assigned_by_folder[grant_folder_id].append(str(assigned_client_id))
+    preview_by_folder = {
+        folder.id: db.scalar(select(PhotoAsset.id)
+            .join(MediaDerivative, MediaDerivative.photo_asset_id == PhotoAsset.id)
+            .where(PhotoAsset.folder_id == folder.id,
+                   MediaDerivative.variant == "client_preview",
+                   MediaDerivative.status == "ready")
+            .order_by(PhotoAsset.created_at, PhotoAsset.filename)
+            .limit(1))
+        for folder in folders
+    }
     return {"folders": [{
         "id": str(folder.id), "name": folder.name, "status": folder.status,
         "position": folder.position,
@@ -3771,6 +3785,8 @@ def admin_client_restricted_folders(
         "photo_count": db.scalar(select(func.count(PhotoAsset.id)).where(
             PhotoAsset.folder_id == folder.id
         )) or 0,
+        "preview_url": f"/admin/photo-assets/{preview_by_folder[folder.id]}/watermarked-preview"
+        if preview_by_folder[folder.id] else None,
     } for folder in folders]}
 
 
