@@ -234,8 +234,9 @@ def client_unlink_inventory(
             ),
             "orders": sum(order_counts.values()),
             "orders_by_status": {
-                status: order_counts.get(status, 0)
-                for status in ("pending", "confirmed", "cancelled")
+                **{status: order_counts.get(status, 0)
+                   for status in ("pending", "confirmed", "cancelled")},
+                **({"not_required": order_counts["not_required"]} if order_counts.get("not_required") else {}),
             },
             "order_items": count(
                 SaleOrderItem, SaleOrderItem.sale_order_id.in_(order_query)

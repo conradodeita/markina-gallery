@@ -68,7 +68,7 @@ def client_photo_is_frozen(
                 SaleOrder.derived_gallery_id_snapshot == gallery_id,
                 SaleOrder.client_id == client_id,
                 or_(
-                    SaleOrder.payment_status == "confirmed",
+                    SaleOrder.payment_status.in_(("confirmed", "not_required")),
                     and_(
                         SaleOrder.payment_status == "pending",
                         SaleOrder.frozen_at.is_not(None),
@@ -89,7 +89,7 @@ def client_photo_is_frozen_any(db: Session, *, client_id, photo_id) -> bool:
             SaleOrder.client_id == client_id,
             SaleOrderItem.photo_asset_id_snapshot == photo_id,
             or_(
-                SaleOrder.payment_status == "confirmed",
+                SaleOrder.payment_status.in_(("confirmed", "not_required")),
                 and_(SaleOrder.payment_status == "pending", SaleOrder.frozen_at.is_not(None)),
             ),
         )
@@ -165,7 +165,7 @@ def _checkout_material(
         .where(
             SaleOrder.client_id == client.id,
             or_(
-                SaleOrder.payment_status == "confirmed",
+                SaleOrder.payment_status.in_(("confirmed", "not_required")),
                 and_(
                     SaleOrder.payment_status == "pending",
                     SaleOrder.frozen_at.is_not(None),
@@ -183,8 +183,10 @@ def _checkout_material(
         commercial_quote = quote_parent_gallery(db, gallery=parent, quantity=len(photos))
     except GalleryPricingError as exc:
         raise CheckoutError(str(exc)) from exc
+    if resolve_pix and not parent.payment_required:
+        raise CheckoutError("Finalize a seleção sem cobrança pelo carrinho.")
     try:
-        settings = checkout_pix(db) if resolve_pix else None
+        settings = checkout_pix(db) if resolve_pix and parent.payment_required else None
     except PixCodeError as exc:
         raise CheckoutError(str(exc)) from exc
     folders_by_id = {
@@ -213,14 +215,15 @@ def _synchronize_order(
     else:
         order.derived_gallery_id = gallery.id
     order.client_id = client.id
-    order.payment_status = "pending"
+    order.payment_status = "pending" if parent.payment_required else "not_required"
+    order.payment_required_snapshot = parent.payment_required
     order.total_cents = commercial_quote.quote.total_cents
     order.client_name_snapshot = client.full_name
     order.client_phone_snapshot = client.phone_e164
     order.price_rule_snapshot = {
         **commercial_quote.snapshot,
         "terms": {
-            "payment_confirmation": "manual_by_photographer",
+            "payment_confirmation": "manual_by_photographer" if parent.payment_required else "not_required",
             "selection_expires_at": (
                 gallery.selection_expires_at.isoformat()
                 if gallery.selection_expires_at
@@ -352,6 +355,9 @@ def create_pending_checkout(
             .order_by(SaleOrder.created_at.desc())
             .with_for_update()
         )
+    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    if parent and not parent.payment_required:
+        raise CheckoutError("Finalize a seleção sem cobrança pelo carrinho.")
     if existing and existing.payment_group_id:
         raise CheckoutError("Este pedido integra o carrinho único. Revise em /library/cart.")
     material = _checkout_material(db, gallery=gallery, client=client,
@@ -419,6 +425,9 @@ def synchronize_editable_draft(
     if order.payment_group_id:
         # A composição divergente invalida a revisão no report.
         return order
+    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    if parent and not parent.payment_required:
+        return order
     try:
         material = _checkout_material(db, gallery=gallery, client=client,
                                       resolve_pix=not order.pix_copy_paste_snapshot)
@@ -454,6 +463,9 @@ def freeze_pending_checkout(
         raise CheckoutError("Informe o pagamento único pela revisão em /library/cart.")
     if order.frozen_at is not None:
         return order
+    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    if parent and not parent.payment_required:
+        raise CheckoutError("A revisão mudou. Finalize a seleção sem cobrança pelo carrinho.")
     material = _checkout_material(db, gallery=gallery, client=client,
                                   resolve_pix=not order.pix_copy_paste_snapshot)
     selections = material[0]

@@ -37,7 +37,7 @@ from app.auth import (
 from app.canonical_selection import CanonicalSelectionUnavailable, select_canonical_photo
 from app.checkout import CheckoutError
 from app.main import app
-from app.unified_checkout import cart_payload, prepare_group, report_group
+from app.unified_checkout import cart_payload, finalize_selection, prepare_group, report_group
 from tests.test_derived_galleries import set_test_global_pix
 
 
@@ -121,6 +121,217 @@ def setup_cart():
         )
         db.commit()
         return owner.id, other.id, gallery_ids
+
+
+def test_admin_access_contract_preserves_legacy_on_unrelated_patch():
+    from pydantic import ValidationError
+
+    from app.main import ParentGalleryInput as GalleryCreate
+    from app.main import ParentGallerySettingsInput as GalleryUpdate
+
+    assert GalleryCreate(name="Galeria").access_mode == "invite_only"
+    for mode in ("standard", "invite_only"):
+        assert GalleryCreate(name="Galeria", access_mode=mode).access_mode == mode
+    for model in (GalleryCreate, GalleryUpdate):
+        with pytest.raises(ValidationError):
+            model(name="Galeria", access_mode="collective_protected")
+    assert "access_mode" not in GalleryUpdate(name="Outro nome").model_dump(exclude_unset=True)
+
+
+def test_external_selection_is_frozen_without_pix_payment_or_revenue():
+    from app.order_delivery import delivery_payload, order_fulfillable, set_delivery
+
+    owner_id, other_id, gallery_ids = setup_cart()
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        parent = db.get(ParentGallery, gallery.parent_gallery_id)
+        parent.payment_required = False
+        parent.sales_message = "Combine o pacote com o fotógrafo.\nEscolha com calma."
+        db.query(GlobalPixSettings).delete()
+        db.commit()
+        owner = db.get(Client, owner_id)
+        group = next(item for item in cart_payload(db, owner)["groups"]
+                     if item["gallery_id"] == str(gallery.id))
+        assert group["total_cents"] is None
+        assert group["message"] == parent.sales_message
+        with pytest.raises(CheckoutError):
+            finalize_selection(db, db.get(Client, other_id), gallery.id, group["revision"], "other")
+        with pytest.raises(CheckoutError, match="revisão mudou"):
+            finalize_selection(db, owner, gallery.id, "0" * 64, "stale")
+        order = finalize_selection(db, owner, gallery.id, group["revision"], "external")
+        db.commit()
+        assert order.payment_status == "not_required"
+        assert not order.payment_required_snapshot and order.frozen_at
+        assert order.total_cents == 0 and order.payment_group_id is None
+        assert db.scalar(select(func.count(PaymentCommunication.id))) == 0
+        assert db.scalar(select(func.count(NotificationEvent.id))) == 0
+        assert finalize_selection(db, owner, gallery.id, group["revision"], "external").id == order.id
+        assert len(list(db.scalars(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)))) == 2
+        assert order_fulfillable(order) and delivery_payload(order)["can_send"]
+        set_delivery(db, order, "https://photos.app.goo.gl/selection", 0, uuid4())
+        parent.payment_required = True
+        db.commit()
+        assert order_fulfillable(order)
+        assert not order_fulfillable(SaleOrder(payment_status="pending", payment_required_snapshot=True))
+
+
+def test_mixed_cart_pix_excludes_external_selection():
+    owner_id, _other_id, gallery_ids = setup_cart()
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        parent = db.get(ParentGallery, gallery.parent_gallery_id)
+        parent.payment_required = False
+        db.commit()
+        owner = db.get(Client, owner_id)
+        cart = cart_payload(db, owner)
+        assert cart["total_cents"] == 700 and cart["can_prepare"]
+        group = prepare_group(db, owner)
+        db.commit()
+        assert group.total_cents == 700
+        assert len(list(db.scalars(select(SaleOrder).where(SaleOrder.payment_group_id == group.id)))) == 1
+        external = next(item for item in cart["groups"] if not item["payment_required"])
+        finalize_selection(db, owner, gallery.id, external["revision"], "mixed")
+        db.commit()
+        report_group(db, owner, group.id, group.revision, "paid")
+        db.commit()
+        assert group.state == "reported"
+
+
+def test_switch_to_external_discards_only_editable_paid_draft():
+    from app.checkout import create_pending_checkout
+
+    owner_id, _other_id, gallery_ids = setup_cart()
+    with SessionLocal() as db:
+        owner = db.get(Client, owner_id)
+        payment = prepare_group(db, owner)
+        db.commit()
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        parent = db.get(ParentGallery, gallery.parent_gallery_id)
+        parent.payment_required = False
+        db.commit()
+        with pytest.raises(CheckoutError, match="sem cobrança"):
+            create_pending_checkout(db, gallery=gallery, client=owner, checkout_key="legacy")
+        group = next(row for row in cart_payload(db, owner)["groups"] if not row["payment_required"])
+        order = finalize_selection(db, owner, gallery.id, group["revision"], "switch")
+        db.commit()
+        assert order.payment_status == "not_required"
+        assert db.scalar(select(SaleOrder.id).where(SaleOrder.derived_gallery_id == gallery.id, SaleOrder.payment_status == "pending")) is None
+        with pytest.raises(CheckoutError):
+            report_group(db, owner, payment.id, payment.revision, "stale-payment")
+        updated = prepare_group(db, owner)
+        assert updated.total_cents == 700
+
+
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="Concorrência exige PostgreSQL descartável")
+def test_concurrent_external_finalization_creates_one_order():
+    owner_id, _other_id, gallery_ids = setup_cart()
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        db.get(ParentGallery, gallery.parent_gallery_id).payment_required = False
+        db.commit()
+        revision = next(row["revision"] for row in cart_payload(db, db.get(Client, owner_id))["groups"]
+                        if not row["payment_required"])
+    barrier = Barrier(2)
+
+    def finalize():
+        with SessionLocal() as db:
+            owner = db.get(Client, owner_id)
+            barrier.wait(timeout=15)
+            order = finalize_selection(db, owner, gallery_ids[0], revision, "concurrent-external")
+            db.commit()
+            return order.id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(finalize) for _ in range(2)]
+        ids = [future.result(timeout=30) for future in futures]
+    assert ids[0] == ids[1]
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count(SaleOrder.id))) == 1
+        assert db.scalar(select(func.count(SaleOrderItem.id))) == 2
+
+
+def test_canonical_external_selection_api_admin_export_and_history():
+    owner_id, other_id, _legacy_ids = setup_cart()
+    with SessionLocal() as db:
+        admin = AdminUser(email="selection-admin@test.invalid", password_hash="synthetic", email_verified=True, totp_secret="JBSWY3DPEHPK3PXP")
+        parent = ParentGallery(name="Seleção externa", access_mode="collective_protected")
+        db.add_all([admin, parent])
+        db.flush()
+        parent_id = parent.id
+        db.add(ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=owner_id, status="active"))
+        db.add(GalleryClientState(parent_gallery_id=parent.id, client_id=owner_id))
+        folder = PhotoFolder(parent_gallery_id=parent.id, name="Comum", status="released", audience_scope="all")
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(parent_gallery_id=parent.id, folder_id=folder.id, filename="externa.jpg", storage_key="synthetic/external.jpg")
+        db.add(photo)
+        db.flush()
+        db.add(PhotoSelection(parent_gallery_id=parent.id, client_id=owner_id, photo_asset_id=photo.id))
+        for subject, role, key in ((admin.id, "admin", "selection-admin"), (other_id, "client", "selection-other")):
+            db.add(AuthSession(subject_id=subject, role=role, token_hash=token_hash(key), expires_at=now() + timedelta(hours=1)))
+        db.commit()
+    admin_browser = TestClient(app)
+    admin_browser.cookies.set("markina_session", "selection-admin")
+    assert admin_browser.post("/admin/parent-galleries", json={"name": "Recusar", "access_mode": "collective_protected"}).status_code == 422
+    settings = f"/admin/parent-galleries/{parent_id}/settings"
+    assert admin_browser.patch(settings, json={"name": "Seleção externa atualizada"}).status_code == 200
+    with SessionLocal() as db:
+        assert db.get(ParentGallery, parent_id).access_mode == "collective_protected"
+    assert admin_browser.patch(settings, json={"access_mode": "invite_only"}).status_code == 200
+    sales = f"/admin/parent-galleries/{parent_id}/sales"
+    assert admin_browser.put(sales, json={"payment_required": True, "pricing_mode": "fixed", "fixed_unit_price_cents": 0}).status_code == 422
+    assert admin_browser.put(sales, json={"payment_required": False, "sales_message": "Combine o pacote."}).status_code == 200
+    browser = TestClient(app)
+    browser.cookies.set("markina_session", "cart-test")
+    assert browser.get("/library").status_code == 200
+    group = next(row for row in browser.get("/library/cart").json()["groups"] if row["gallery_id"] == str(parent_id))
+    payload = {"revision": group["revision"], "idempotency_key": "canonical-external"}
+    other_browser = TestClient(app)
+    other_browser.cookies.set("markina_session", "selection-other")
+    assert other_browser.post(f"/library/cart/{parent_id}/finalize", json=payload).status_code == 409
+    response = browser.post(f"/library/cart/{parent_id}/finalize", json=payload)
+    assert response.status_code == 200, response.text
+    order_id = response.json()["order_id"]
+    assert browser.post(f"/library/cart/{parent_id}/finalize", json=payload).json()["order_id"] == order_id
+    history = browser.get("/library/purchases").json()["orders"]
+    order = next(row for row in history if row["id"] == order_id)
+    assert order["commercial_state"] == "selection_finalized" and order["total_cents"] is None
+    people = admin_browser.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"]
+    assert people[0]["finalized_orders"][0]["id"] == order_id
+    exported = admin_browser.get(f"/admin/orders/{order_id}/selection/export.csv")
+    assert exported.status_code == 200 and "externa.jpg" in exported.text
+    assert browser.get(f"/admin/orders/{order_id}/selection/export.csv").status_code == 403
+    delivered = admin_browser.put(f"/admin/orders/{order_id}/delivery", json={"album_url": "https://photos.app.goo.gl/external", "version": 0})
+    assert delivered.status_code == 200, delivered.text
+    assert next(row for row in browser.get("/library/purchases").json()["orders"] if row["id"] == order_id)["delivery_album_url"]
+
+
+def test_external_historical_media_uses_explicit_retention_from_finalization(tmp_path, monkeypatch):
+    from app.auth import CommercialHistoryMedia
+    from app.commercial_retention import apply_commercial_media_retention
+
+    owner_id, _other_id, gallery_ids = setup_cart()
+    monkeypatch.setenv("MEDIA_HISTORY_ROOT", str(tmp_path))
+    monkeypatch.delenv("COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS", raising=False)
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        parent = db.get(ParentGallery, gallery.parent_gallery_id)
+        parent.payment_required = False
+        db.commit()
+        owner = db.get(Client, owner_id)
+        group = next(row for row in cart_payload(db, owner)["groups"] if not row["payment_required"])
+        order = finalize_selection(db, owner, gallery.id, group["revision"], "retention")
+        order.frozen_at = now() - timedelta(days=60)
+        db.flush()
+        item = db.scalar(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id))
+        preview = tmp_path / "preview.jpg"
+        preview.write_bytes(b"synthetic")
+        db.add(CommercialHistoryMedia(sale_order_item_id=item.id, preview_storage_key="preview.jpg", status="ready"))
+        db.commit()
+        assert apply_commercial_media_retention(db).purged_items == 0 and preview.exists()
+        monkeypatch.setenv("COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS", "30")
+        assert apply_commercial_media_retention(db).purged_items == 1 and not preview.exists()
+        assert order.payment_status == "not_required" and order.confirmed_at is None
 
 
 @pytest.mark.skipif(engine.dialect.name != "postgresql", reason="concorrência exige PostgreSQL descartável")

@@ -13,6 +13,48 @@ const cart = { groups: [group("1"), group("2")], quantity: 2, can_prepare: true,
 const payment = { id: "group-1", revision: "a".repeat(64), total_cents: 1400, pix_copy_paste: "PIX",
   pix_qr_code: "data:image/png;base64,AA", receiver_name: "Fotógrafo", pix_instructions: "Confira o valor" };
 
+it("mostra mensagem comercial e finaliza sem preços nem preparar PIX", async () => {
+  const external = { ...group("external"), payment_required: false, total_cents: null,
+    revision: "b".repeat(64), message: "Escolha com calma.\nCombine o pacote." };
+  let finalized = false;
+  const fetcher = vi.fn((path: string) => {
+    if (path.endsWith("/finalize")) { finalized = true; return response({ order_id: "external-order" }); }
+    return response({ groups: finalized ? [] : [external], quantity: finalized ? 0 : 1,
+      total_cents: null, can_prepare: false });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<CartPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Finalizar seleção" }));
+  expect(await screen.findByText(/Seleção finalizada/)).toBeTruthy();
+  expect(fetcher.mock.calls.some(([path]) => path.endsWith("/prepare"))).toBe(false);
+  expect(screen.queryByText(/R\$/)).toBeNull();
+});
+
+it("exibe mensagens de cada galeria como texto inerte na revisão paga", async () => {
+  const mixed = { ...cart, groups: [{ ...group("1"), message: "<script>teste</script>" },
+    { ...group("2"), message: "Mensagem da outra galeria" }] };
+  vi.stubGlobal("fetch", vi.fn((path: string) => response(path.endsWith("/prepare") ? { ...mixed, payment } : mixed)));
+  render(<CartPage />);
+  expect(await screen.findByText("<script>teste</script>")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Fotos de Galeria 2" })).getByText("Mensagem da outra galeria")).toBeTruthy();
+  expect(document.querySelector(".unified-cart script")).toBeNull();
+});
+
+it("permite finalizar seleção externa quando o PIX da outra galeria falha", async () => {
+  const external = { ...group("external"), payment_required: false, total_cents: null, revision: "c".repeat(64) };
+  let finalized = false;
+  vi.stubGlobal("fetch", vi.fn((path: string) => {
+    if (path.endsWith("/prepare")) return response({ detail: "PIX indisponível" }, 409);
+    if (path.endsWith("/finalize")) { finalized = true; return response({ order_id: "external" }); }
+    return response({ ...cart, groups: finalized ? [group("paid")] : [group("paid"), external] });
+  }));
+  render(<CartPage />);
+  expect(await screen.findByText("PIX indisponível")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Finalizar seleção" }));
+  expect(await screen.findByText(/Seleção finalizada/)).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Fotos de Galeria external" })).toBeNull();
+});
+
 describe("revisão global da cliente", () => {
   it("abre fotos de duas galerias e pastas com um único PIX e registra uma compra", async () => {
     const fetcher = vi.fn((path: string) => response(path.endsWith("/prepare") ? { ...cart, payment }

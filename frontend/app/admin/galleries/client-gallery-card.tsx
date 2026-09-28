@@ -3,6 +3,7 @@ import { type FormEvent, type ReactNode, useState } from "react";
 import { StatusBadge } from "../../ui-kit";
 import { jpegStorageKey, uploadJpeg } from "../../upload-jpeg";
 import { FinancialOrderShortcuts, type FinancialOrder } from "../payments/payment-actions";
+import { OrderDeliveryForm, type OrderDelivery } from "../payments/order-delivery";
 import { SelectionDeadline } from "../../selection-deadline";
 
 export type ClientGalleryRow = {
@@ -18,8 +19,9 @@ export type ClientGalleryRow = {
   selected_count: number;
   purchased_count: number;
   gallery_status: "pending_registration" | "no_selection" | "blocked" | "expired" | "active";
-  commercial_status?: "pending_review" | "awaiting_payment" | "paid" | "overdue" | "cancelled" | "no_order";
+  commercial_status?: "selection_finalized" | "pending_review" | "awaiting_payment" | "paid" | "overdue" | "cancelled" | "no_order";
   reopening_status?: "pending" | "approved" | "refused" | null;
+  finalized_orders?: Array<{ id: string; frozen_at: string; delivery: OrderDelivery; items: Array<{ name: string; preview_url: string | null }> }>;
   financial_orders?: FinancialOrder[];
   selection_expires_at?: string | null;
 };
@@ -33,6 +35,7 @@ const galleryStatus = {
 } as const;
 
 const commercialStatus = {
+  selection_finalized: { label: "Seleção finalizada", tone: "success" },
   pending_review: { label: "Pagamento comunicado", tone: "warning" },
   awaiting_payment: { label: "Aguardando pagamento", tone: "neutral" },
   paid: { label: "Pago", tone: "success" },
@@ -240,6 +243,17 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
         <div><dt>Fotos selecionadas</dt><dd>{person.selected_count}</dd></div>
         <div><dt>Fotos compradas</dt><dd>{person.purchased_count}</dd></div>
       </dl>
+      {person.finalized_orders?.map((order) => <section key={order.id} aria-label="Seleção finalizada">
+        <h3>Seleção finalizada · {order.items.length} foto(s)</h3>
+        <p>Negociação externa · sem cobrança no sistema</p>
+        <div className="folder-photo-grid">{order.items.map((item, index) => <article key={index}>
+          {item.preview_url ? <a href={`/api${item.preview_url}`} target="_blank" rel="noopener noreferrer"><img src={`/api${item.preview_url}`} alt={`Prévia de ${item.name}`} /></a> : null}
+          <strong>{item.name}</strong>
+        </article>)}</div>
+        <a href={`/api/admin/orders/${order.id}/selection/export.csv`}>Baixar seleção finalizada (CSV)</a>{" · "}
+        <a href={`/api/admin/orders/${order.id}/selection/export.txt`}>Baixar seleção finalizada (TXT)</a>
+        <OrderDeliveryForm orderId={order.id} delivery={order.delivery} onRefresh={async () => { await onRefresh(); }} />
+      </section>)}
       <SelectionDeadline expiresAt={person.selection_expires_at} />
       <button type="button" className="secondary" disabled={busy} onClick={() => { void changeAccess(); }}>
         {person.access_status === "blocked" ? "Liberar acesso" : "Bloquear acesso"}

@@ -18,6 +18,7 @@ from app.auth import (
     SaleOrderItem,
 )
 from app.media import safe_derivative_path, safe_source_path
+from app.order_delivery import fulfillable_order_condition
 
 
 class HistoricalMediaConflict(RuntimeError):
@@ -103,11 +104,11 @@ def prepare_confirmed_historical_media(
     client_id: UUID | None = None,
     photo_asset_id: UUID | None = None,
 ) -> HistoricalMediaReport:
-    """Preserva somente itens confirmados do alvo, sem confirmar a transação."""
+    """Preserva itens confirmados ou finalizados sem cobrança do alvo, sem confirmar a transação."""
 
     order_query = select(SaleOrder.id).where(
         SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
-        SaleOrder.payment_status == "confirmed",
+        fulfillable_order_condition(),
     )
     if client_id:
         order_query = order_query.where(SaleOrder.client_id == client_id)

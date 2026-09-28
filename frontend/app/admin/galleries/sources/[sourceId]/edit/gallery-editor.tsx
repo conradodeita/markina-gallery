@@ -28,7 +28,7 @@ type ClientOption = ClientDirectoryItem;
 type PricingMode = "fixed" | "progressive" | "legacy_volume";
 type PricingPreset = { id: string; code: string; name: string; label: string; version: number; active: boolean; tiers: PriceTier[] };
 type PricingQuote = { quantity: number; parcels: Array<PriceTier & { quantity: number; subtotal_cents: number }>; base_total_cents: number; savings_cents: number; total_cents: number };
-type SalesData = { available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
+type SalesData = { payment_required?: boolean; available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
 type GalleryLink = { status: "active" | "unavailable" | "legacy_unrecoverable"; capability_id: string | null; expires_at: string | null; secret_available: boolean; link: string | null };
 type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
 type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing" | "failed"; preview_url: string | null; width: number | null; height: number | null; error?: string | null };
@@ -389,7 +389,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       event_name: form.get("event_name"),
       description: form.get("description"),
       active: form.get("active") === "on",
-      access_mode: form.get("access_mode"),
+      ...(form.get("access_mode") ? { access_mode: form.get("access_mode") } : {}),
     });
     if (saved) advanceAfterSave();
     setSavingStep(false);
@@ -417,18 +417,18 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     event.preventDefault();
     if (!sales || savingStep) return;
     setSalesError("");
-    if (sales.pricing_mode === "legacy_volume") {
+    if (sales.payment_required !== false && sales.pricing_mode === "legacy_volume") {
       setSalesError("Escolha preço fixo ou uma tabela progressiva para converter a configuração legada.");
       return;
     }
     const fixedUnitPriceCents = sales.pricing_mode === "fixed"
       ? parseBrazilianCurrency(fixedPriceInput)
       : null;
-    if (sales.pricing_mode === "fixed" && fixedUnitPriceCents === null) {
+    if (sales.payment_required !== false && sales.pricing_mode === "fixed" && (fixedUnitPriceCents === null || fixedUnitPriceCents <= 0)) {
       setSalesError("Informe o valor unitário como moeda brasileira, por exemplo R$ 7,00.");
       return;
     }
-    if (sales.pricing_mode === "progressive" && !sales.progressive_pricing_preset_id) {
+    if (sales.payment_required !== false && sales.pricing_mode === "progressive" && !sales.progressive_pricing_preset_id) {
       setSalesError("Escolha uma tabela global de preço progressivo.");
       return;
     }
@@ -438,9 +438,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          pricing_mode: sales.pricing_mode,
-          fixed_unit_price_cents: fixedUnitPriceCents,
-          progressive_pricing_preset_id: sales.pricing_mode === "progressive" ? sales.progressive_pricing_preset_id : null,
+          payment_required: sales.payment_required !== false,
+          pricing_mode: sales.payment_required !== false ? sales.pricing_mode : null,
+          fixed_unit_price_cents: sales.payment_required !== false ? fixedUnitPriceCents : null,
+          progressive_pricing_preset_id: sales.payment_required !== false && sales.pricing_mode === "progressive" ? sales.progressive_pricing_preset_id : null,
           confirm_legacy_conversion: confirmLegacyConversion,
           sales_message: sales.sales_message,
           selection_duration_days: sales.selection_duration_days,
@@ -672,8 +673,9 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           <label>Título da galeria<input name="name" defaultValue={editor.gallery.name} required /></label>
           <label>Evento<input name="event_name" defaultValue={editor.gallery.event_name} /></label>
           <label>Descrição administrativa<textarea name="description" defaultValue={editor.gallery.description} rows={4} /><small className="field-hint">Uso interno do fotógrafo para registrar contexto, observações e pendências desta galeria.</small></label>
-          <label>Modo de acesso<select name="access_mode" defaultValue={editor.gallery.access_mode}><option value="standard">Padrão — link + OTP libera a navegação</option><option value="invite_only">Somente convite individual</option><option value="collective_protected">Coletivo protegido — sem grade pública</option></select><small className="field-hint">A autorização é aplicada pelo backend; nenhuma opção libera prévias antes do login.</small></label>
-          <div className="access-mode-hints" role="region" aria-label="Como funcionam os modos de acesso"><article><strong>Padrão</strong><p>Quem recebe o link fixo e conclui o OTP entra na Galeria pública e pode iniciar sua seleção.</p></article><article><strong>Somente convite individual</strong><p>O link público não cadastra novas pessoas. Apenas clientes já vinculadas pelo fotógrafo ou por convite individual autorizado acessam a galeria.</p></article><article><strong>Coletivo protegido</strong><p>O link e o OTP registram uma solicitação pendente, mas nunca mostram a grade coletiva. Este modo não ativa reconhecimento facial.</p></article></div>
+          {editor.gallery.access_mode === "collective_protected" ? <p role="status">Modo protegido legado: o acesso continua bloqueado. Escolher outro modo altera a possibilidade de entrada e navegação, sem ativar vínculos pendentes.</p> : null}
+          <label>Modo de acesso<select name="access_mode" defaultValue={editor.gallery.access_mode === "collective_protected" ? "" : editor.gallery.access_mode}>{editor.gallery.access_mode === "collective_protected" ? <option value="">Manter modo protegido legado</option> : null}<option value="standard">Padrão</option><option value="invite_only">Somente convite individual</option></select><small className="field-hint">A autorização é aplicada pelo backend; nenhuma opção libera prévias antes do login.</small></label>
+          <div className="access-mode-hints" role="region" aria-label="Como funcionam os modos de acesso"><article><strong>Padrão</strong><p>Quem recebe o link válido e confirma o código no WhatsApp pode entrar, sem cadastro prévio pelo fotógrafo.</p></article><article><strong>Somente convite individual</strong><p>Só entram clientes vinculadas pelo fotógrafo ou autorizadas por convite individual. Encaminhar o link geral não dá acesso a outra pessoa.</p></article><p>Nos dois modos, cada cliente vê as pastas comuns e somente as exclusivas atribuídas a ela. Seleções e compras continuam individuais.</p></div>
           <label className="gallery-toggle"><input name="active" type="checkbox" defaultChecked={editor.gallery.active} /> Galeria ativa</label>
         </form>
       ) : null}
@@ -693,9 +695,9 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                   <label><input type="radio" name="pricing_mode" value="fixed" checked={sales.pricing_mode === "fixed"} onChange={() => { setSales((current) => current ? { ...current, pricing_mode: "fixed", progressive_pricing_preset_id: null } : current); setPricingQuote(null); }} /> Preço fixo por foto</label>
                   <label><input type="radio" name="pricing_mode" value="progressive" checked={sales.pricing_mode === "progressive"} onChange={() => setSales((current) => current ? { ...current, pricing_mode: "progressive", fixed_unit_price_cents: null } : current)} /> Preço progressivo por faixas</label>
                 </div>
-                {sales.pricing_mode === "fixed" ? <label>Valor unitário da foto<input name="fixed_unit_price" inputMode="numeric" value={fixedPriceInput} onChange={(event) => setFixedPriceInput(maskBrazilianCurrencyInput(event.target.value))} placeholder="R$ 7,00" required /></label> : null}
+                {sales.pricing_mode === "fixed" ? <label>Valor unitário da foto<input name="fixed_unit_price" inputMode="numeric" value={fixedPriceInput} onChange={(event) => setFixedPriceInput(maskBrazilianCurrencyInput(event.target.value))} placeholder="R$ 7,00" required={sales.payment_required !== false} /></label> : null}
                 {sales.pricing_mode === "progressive" ? <div className="gallery-progressive-pricing">
-                  <label>Tabela global<select name="progressive_pricing_preset_id" value={sales.progressive_pricing_preset_id ?? ""} onChange={(event) => { setSales((current) => current ? { ...current, progressive_pricing_preset_id: event.target.value || null } : current); setPricingQuote(null); }} required><option value="">Selecione código — nome</option>{pricingPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
+                  <label>Tabela global<select name="progressive_pricing_preset_id" value={sales.progressive_pricing_preset_id ?? ""} onChange={(event) => { setSales((current) => current ? { ...current, progressive_pricing_preset_id: event.target.value || null } : current); setPricingQuote(null); }} required={sales.payment_required !== false}><option value="">Selecione código — nome</option>{pricingPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
                   {!pricingPresets.length ? <p className="field-hint">Nenhuma tabela ativa. <Link href="/admin/pricing">Cadastre uma tabela global</Link> antes de salvar.</p> : null}
                   <div className="gallery-pricing-simulator">
                     <label>Quantidade para simular<input type="number" min={1} max={10000} value={quoteQuantity} onChange={(event) => setQuoteQuantity(Number(event.target.value))} /></label>
@@ -712,6 +714,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               </fieldset>
               <fieldset className="gallery-sales-section">
                 <legend>Jornada da cliente</legend>
+                <label className="gallery-toggle"><input type="checkbox" checked={sales.payment_required !== false} onChange={(event) => setSales((current) => current ? { ...current, payment_required: event.target.checked } : current)} /> Pagamento obrigatório?</label>
+                {sales.payment_required === false ? <p>O sistema será usado somente para seleção. A cliente finaliza sem cobrança, com preços e totais ocultos.</p> : null}
                 <label>Mensagem comercial<textarea name="sales_message" rows={4} value={sales.sales_message} onChange={(event) => setSales((current) => current ? { ...current, sales_message: event.target.value } : current)} /></label>
                 <label>Prazo padrão de seleção (dias)<input name="selection_duration_days" type="number" min={1} max={3650} value={sales.selection_duration_days ?? 14} onChange={(event) => setSales((current) => current ? { ...current, selection_duration_days: Number(event.target.value) } : current)} required /></label>
                 <label className="gallery-toggle"><input name="favorites_enabled" type="checkbox" checked={sales.favorites_enabled} onChange={(event) => setSales((current) => current ? { ...current, favorites_enabled: event.target.checked } : current)} /> Permitir favoritos</label>

@@ -31,9 +31,44 @@ const editor = {
   actions: { can_create_folder: true, can_upload: true },
 };
 
+it("preserva modo protegido legado ao salvar outro campo", async () => {
+  const fetcher = vi.fn((path: string, init?: RequestInit) => init?.method === "PATCH"
+    ? response({}) : response(path.endsWith("/editor")
+      ? { ...editor, gallery: { ...editor.gallery, access_mode: "collective_protected" } } : {}));
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="ajustes" />);
+  expect(await screen.findByText(/Modo protegido legado:/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([_path, init]) => init?.method === "PATCH")).toBe(true));
+  const payload = JSON.parse(fetcher.mock.calls.find(([_path, init]) => init?.method === "PATCH")![1]!.body as string);
+  expect(payload).not.toHaveProperty("access_mode");
+});
+
 function response(value: object, status = 200) {
   return Promise.resolve(new Response(status === 204 ? null : JSON.stringify(value), { status, headers: { "content-type": "application/json" } }));
 }
+
+it("exige preço positivo com cobrança e permite salvar seleção externa", async () => {
+  const sales = { available: true, capabilities: [], payment_required: true, pricing_mode: "fixed",
+    fixed_unit_price_cents: 0, progressive_pricing_preset_id: null, pricing_snapshot: null,
+    pricing_review_required: false, tiers: [], pix: { status: "unconfigured", checkout_available: false },
+    sales_message: "", selection_duration_days: 14, favorites_enabled: false, comments_enabled: false };
+  const fetcher = vi.fn((path: string, init?: RequestInit) => response(path.endsWith("/editor") ? editor
+    : init?.method === "PUT" ? { ...sales, ...JSON.parse(String(init.body)) } : sales));
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="vendas" />);
+  const checkbox = await screen.findByRole("checkbox", { name: "Pagamento obrigatório?" });
+  expect((checkbox as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+  expect(fetcher.mock.calls.some(([_path, init]) => init?.method === "PUT")).toBe(false);
+  fireEvent.click(checkbox);
+  expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("required", false);
+  fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([_path, init]) => init?.method === "PUT")).toBe(true));
+  const saved = JSON.parse(String(fetcher.mock.calls.find(([_path, init]) => init?.method === "PUT")![1]!.body));
+  expect(saved.payment_required).toBe(false);
+  expect(saved.pricing_mode).toBeNull();
+});
 
 it("mantém o Acervo da cliente independente e inicialmente fechado em dois cards", async () => {
   const people: ClientGalleryRow[] = ["Ana", "Bia"].map((name, index) => ({
@@ -194,12 +229,11 @@ describe("editor administrativo de galeria", () => {
       "/api/admin/parent-galleries/source-1/settings",
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"access_mode":"standard"') }),
     ));
-    expect(screen.getByRole("option", { name: /Coletivo protegido/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /Coletivo protegido/ })).toBeNull();
     const accessHints = screen.getByRole("region", { name: "Como funcionam os modos de acesso" });
     expect(within(accessHints).getByText("Padrão")).toBeTruthy();
     expect(within(accessHints).getByText("Somente convite individual")).toBeTruthy();
-    expect(within(accessHints).getByText("Coletivo protegido")).toBeTruthy();
-    expect(within(accessHints).getByText(/não ativa reconhecimento facial/i)).toBeTruthy();
+    expect(within(accessHints).getByText(/pastas comuns e somente as exclusivas/)).toBeTruthy();
     expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/vendas");
   });
 

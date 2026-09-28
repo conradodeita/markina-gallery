@@ -356,6 +356,7 @@ class ParentGallery(Base):
         ForeignKey("photo_asset.id", use_alter=True, name="fk_parent_gallery_cover_photo"),
         nullable=True,
     )
+    payment_required: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     sales_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     selection_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     favorites_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -806,7 +807,7 @@ class PaymentGroup(Base):
 class SaleOrder(Base):
     __tablename__ = "sale_order"
     __table_args__ = (
-        CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled')"),
+        CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled', 'not_required')"),
         CheckConstraint("total_cents >= 0"),
         UniqueConstraint("derived_gallery_id", "client_id", "checkout_key"),
         UniqueConstraint(
@@ -884,6 +885,7 @@ class SaleOrder(Base):
     client_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     client_phone_snapshot: Mapped[str | None] = mapped_column(String(16), nullable=True)
     price_rule_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    payment_required_snapshot: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     sales_message_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     payment_message_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivery_album_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
