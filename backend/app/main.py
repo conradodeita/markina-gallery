@@ -1032,9 +1032,13 @@ def statistics_data(
             "revenue_by_day": [],
         }
 
-    orders_query = select(SaleOrder).where(
-        SaleOrder.payment_status == "confirmed", SaleOrder.derived_gallery_id.in_(gallery_ids)
-    )
+    order_filters = [
+        SaleOrder.payment_status == "confirmed",
+        SaleOrder.derived_gallery_id.in_(gallery_ids),
+    ]
+    if client_id:
+        order_filters.append(SaleOrder.client_id == client_id)
+    orders_query = select(SaleOrder).where(*order_filters)
     if starts_at:
         orders_query = orders_query.where(SaleOrder.confirmed_at >= starts_at)
     if ends_at:
@@ -1046,11 +1050,14 @@ def statistics_data(
         for item in db.scalars(
             select(SaleOrderItem).where(SaleOrderItem.sale_order_id.in_(order_ids))
         ):
-            purchased_by_photo.setdefault(item.photo_asset_id, item.filename_snapshot)
+            photo_id = item.photo_asset_id or item.photo_asset_id_snapshot
+            if photo_id is not None:
+                purchased_by_photo.setdefault(photo_id, item.filename_snapshot)
 
-    selections_query = select(PhotoSelection).where(
-        PhotoSelection.derived_gallery_id.in_(gallery_ids)
-    )
+    selection_filters = [PhotoSelection.derived_gallery_id.in_(gallery_ids)]
+    if client_id:
+        selection_filters.append(PhotoSelection.client_id == client_id)
+    selections_query = select(PhotoSelection).where(*selection_filters)
     if starts_at:
         selections_query = selections_query.where(PhotoSelection.created_at >= starts_at)
     if ends_at:
@@ -7352,7 +7359,9 @@ def admin_statistics(
     parent_gallery_id: UUID | None = None,
     derived_gallery_id: UUID | None = None,
     event_name: str | None = Query(default=None, max_length=200),
-    offset: int = Query(default=0, ge=0),
+    offset: int | None = Query(default=None, ge=0),
+    purchased_offset: int = Query(default=0, ge=0),
+    selected_offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
@@ -7368,13 +7377,20 @@ def admin_statistics(
     )
     purchased = data["purchased"]
     selected_not_purchased = data["selected_not_purchased"]
+    if offset is not None:
+        purchased_offset = offset
+        selected_offset = offset
     return {
         "purchased_count": len(purchased),
         "selected_not_purchased_count": len(selected_not_purchased),
+        "purchased_total": len(purchased),
+        "selected_not_purchased_total": len(selected_not_purchased),
         "revenue_cents": data["revenue_cents"],
         "revenue_by_day": data["revenue_by_day"],
-        "purchased_photos": purchased[offset : offset + limit],
-        "selected_not_purchased_photos": selected_not_purchased[offset : offset + limit],
+        "purchased_photos": purchased[purchased_offset : purchased_offset + limit],
+        "selected_not_purchased_photos": selected_not_purchased[
+            selected_offset : selected_offset + limit
+        ],
     }
 
 
