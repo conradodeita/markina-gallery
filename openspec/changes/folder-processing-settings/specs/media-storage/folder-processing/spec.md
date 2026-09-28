@@ -60,6 +60,8 @@ O processamento facial da pasta SHALL permitir herdar, permitir novos trabalhos 
 
 O administrador SHALL consultar configuração efetiva e progresso separado por pasta, agendar ajuste paginado e solicitar retentativa facial local. Cada ação SHALL identificar e afetar somente a pasta solicitada. As operações SHALL exigir autenticação administrativa e pasta de conteúdo ativa válida, com auditoria e sem alterar público, vínculos, seleção, compra ou entrega. Ações gerais SHALL respeitar configurações locais desligadas ou personalizadas.
 
+A configuração por pasta SHALL ser classificada como dado operacional da pasta na política de limpeza explícita de homologação. O inventário SHALL contá-la sem revelar seus valores; a política SHALL continuar preservando configurações globais e recusando tabelas não classificadas. A simples classificação SHALL NOT iniciar limpeza ou reprocessamento.
+
 #### Scenario: Processar uma entre duas pastas
 - **WHEN** o administrador solicita processamento da pasta A
 - **THEN** somente fotos de A entram na fila e os trabalhos/configurações da pasta B permanecem inalterados
@@ -67,6 +69,10 @@ O administrador SHALL consultar configuração efetiva e progresso separado por 
 #### Scenario: API solicitada por cliente
 - **WHEN** uma cliente conhece o UUID e solicita configuração ou processamento administrativo de uma pasta
 - **THEN** o backend nega a ação sem alterar registros nem revelar prévias não autorizadas
+
+#### Scenario: Inventário de homologação com configuração local
+- **WHEN** uma pasta sintética possui configuração própria e o inventário restrito de homologação é consultado
+- **THEN** a configuração aparece somente como contagem operacional e as configurações globais continuam na categoria preservada
 
 ### Requirement: Painel de pasta acessível e consistente
 

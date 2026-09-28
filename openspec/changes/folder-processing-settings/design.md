@@ -18,6 +18,8 @@ Pastas do Acervo são PhotoFolder de conteúdo com audience_scope=selected e per
 
 Criar registro FolderProcessingSettings com FK de pasta, modos inherit/custom/off para prévias e inherit/on/off para novos trabalhos faciais. Sem registro equivale à herança, mantendo pastas existentes intactas. Campos próprios de intensidade/exposição seguem limites atuais. Não aceitar configurações próprias incompletas; zeros são valores válidos e nunca significam herança.
 
+Classificar a nova tabela como operacional no inventário/limpeza restrita de homologação, pois sua FK aponta à pasta e seus valores não são configuração global. A classificação só atualiza a lista fechada e o inventário; não executa limpeza. A lista de preferências globais preservadas permanece intacta.
+
 O padrão facial herdado continua sendo a disponibilidade atual da galeria/ambiente; on permite agendamento local somente se os gates globais permitirem. off pausa novas admissões/agendamentos e retentativas, preservando índices já existentes e seus resultados autorizados. Trabalhos faciais admitidos antes da pausa podem terminar para evitar interromper o lifecycle/retencão de fontes; o painel explica essa regra. Exclusão de índice e desativação retroativa de busca ficam fora desta change.
 
 ### 2. Resolução efetiva única sem soma

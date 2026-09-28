@@ -53,6 +53,7 @@ OPERATIONAL_TABLES = frozenset({
     "derived_gallery_photo_origin", "facial_job", "facial_legal_representation",
     "facial_rollout", "facial_search_candidate", "facial_search_notification_outbox",
     "facial_search_request", "facial_search_snapshot_item", "folder_client_grant",
+    "folder_processing_settings",
     "gallery_access", "gallery_access_capability", "gallery_client_state",
     "gallery_facial_policy", "gallery_lifecycle_operation",
     "gallery_membership_notification_outbox", "gallery_preview_settings",
