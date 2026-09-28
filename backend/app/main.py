@@ -291,7 +291,9 @@ from app.notification_settings import (
 )
 from app.order_delivery import (
     delivery_payload,
+    fulfillable_order_condition,
     lock_delivery_order,
+    order_fulfillable,
     resend_delivery,
     set_delivery,
     validate_album_url,
@@ -357,6 +359,7 @@ from app.unified_checkout import (
     cart_payload,
     communication_join,
     communications_for_orders,
+    finalize_selection,
     group_payload,
     lock_payment_scope,
     payment_scope,
@@ -469,7 +472,7 @@ class ParentGalleryInput(BaseModel):
     description: str | None = Field(default=None, max_length=5_000)
     access_mode: str = Field(
         default="invite_only",
-        pattern=r"^(standard|invite_only|collective_protected)$",
+        pattern=r"^(standard|invite_only)$",
     )
 
 
@@ -480,7 +483,7 @@ class ParentGallerySettingsInput(BaseModel):
     active: bool | None = None
     access_mode: str | None = Field(
         default=None,
-        pattern=r"^(standard|invite_only|collective_protected)$",
+        pattern=r"^(standard|invite_only)$",
     )
     folder_display_mode: str | None = Field(default=None, pattern=r"^(individual|sequential)$")
     cover_title_font: str | None = Field(default=None, max_length=80)
@@ -775,6 +778,7 @@ class GalleryPricingInput(BaseModel):
 
 
 class ParentGallerySalesInput(GalleryPricingInput):
+    payment_required: bool = True
     sales_message: str | None = Field(default=None, max_length=5_000)
     selection_duration_days: int | None = Field(default=None, ge=1, le=3_650)
     favorites_enabled: bool = False
@@ -2874,6 +2878,7 @@ def parent_gallery_settings(
         "cover_title_color": gallery.cover_title_color,
         "cover_title_size": gallery.cover_title_size,
         "cover_title_position": gallery.cover_title_position,
+        "payment_required": gallery.payment_required,
         "sales_message": gallery.sales_message or "",
         "selection_duration_days": gallery.selection_duration_days,
         "favorites_enabled": gallery.favorites_enabled,
@@ -3016,6 +3021,7 @@ def parent_gallery_sales(
             "interactions",
             "selection_deadline",
         ],
+        "payment_required": gallery.payment_required,
         "sales_message": gallery.sales_message or "",
         "selection_duration_days": gallery.selection_duration_days,
         "favorites_enabled": gallery.favorites_enabled,
@@ -3033,7 +3039,11 @@ def update_parent_gallery_sales(
 ) -> dict[str, object]:
     require_admin(request)
     gallery = require_parent_gallery_mutable(db, parent_gallery_id)
-    tiers = save_parent_pricing(db, gallery.id, payload)
+    if payload.payment_required:
+        tiers = save_parent_pricing(db, gallery.id, payload)
+    else:
+        tiers = []
+    gallery.payment_required = payload.payment_required
     gallery.sales_message = payload.sales_message.strip() if payload.sales_message else None
     gallery.selection_duration_days = payload.selection_duration_days
     gallery.favorites_enabled = payload.favorites_enabled
@@ -3042,7 +3052,7 @@ def update_parent_gallery_sales(
     db.commit()
     return {
         **parent_gallery_sales(parent_gallery_id, request, db),
-        "has_downward_jump": has_downward_jump(tiers),
+        "has_downward_jump": has_downward_jump(tiers) if tiers else False,
     }
 
 
@@ -5087,6 +5097,23 @@ def parent_gallery_clients(
             **capabilities,
             "payment_group": canonical_group_scopes.get(order.payment_group_id),
         })
+    finalized_by_client: dict[UUID, list[dict[str, object]]] = defaultdict(list)
+    finalized = [order for order in canonical_orders if order.payment_status == "not_required"
+                 and order_fulfillable(order)]
+    finalized_items: dict[UUID, list[SaleOrderItem]] = defaultdict(list)
+    for item in db.scalars(select(SaleOrderItem).where(
+        SaleOrderItem.sale_order_id.in_([order.id for order in finalized]),
+    ).order_by(SaleOrderItem.filename_snapshot)):
+        finalized_items[item.sale_order_id].append(item)
+    for order in finalized:
+        finalized_by_client[order.client_id].append({
+            "id": str(order.id), "frozen_at": order.frozen_at.isoformat(),
+            "delivery": delivery_payload(order),
+            "items": [{"name": item.filename_snapshot,
+                       "preview_url": f"/admin/photo-assets/{item.photo_asset_id}/preview"
+                       if item.photo_asset_id else None}
+                      for item in finalized_items[order.id]],
+        })
     canonical_reopening: dict[UUID, str] = {}
     for reopening in db.scalars(select(GalleryReopeningRequest).where(
         GalleryReopeningRequest.parent_gallery_id == parent_gallery_id,
@@ -5130,7 +5157,8 @@ def parent_gallery_clients(
         latest_communication = canonical_communications.get(latest_canonical_order.id) \
             if latest_canonical_order else None
         commercial_status = (
-            "paid" if latest_canonical_order and latest_canonical_order.payment_status == "confirmed"
+            "selection_finalized" if latest_canonical_order and latest_canonical_order.payment_status == "not_required"
+            else "paid" if latest_canonical_order and latest_canonical_order.payment_status == "confirmed"
             else "pending_review" if latest_communication and latest_communication.status == "pending_review"
             else "cancelled" if latest_canonical_order and latest_canonical_order.payment_status == "cancelled"
             else "awaiting_payment" if latest_canonical_order
@@ -5159,6 +5187,7 @@ def parent_gallery_clients(
                 "reopening_status": canonical_reopening.get(client_id) or (
                     projection.reopening_status if projection else None
                 ),
+                **({"finalized_orders": finalized_by_client[client_id]} if finalized_by_client.get(client_id) else {}),
                 "financial_orders": canonical_financial_by_client.get(client_id, [])
                 + (projection.financial_orders if projection else []),
                 "selection_expires_at": state.selection_expires_at.isoformat()
@@ -5548,6 +5577,27 @@ h1 {{ margin: 0 0 10px; font-size: 25px; }} p {{ margin: 5px 0; color: #5f5a53; 
         media_type="text/plain" if format == "txt" else "text/csv",
         headers={"Content-Disposition": f'attachment; filename="selecao.{format}"'},
     )
+
+
+@app.get("/admin/orders/{order_id}/selection/export.{format}")
+def export_finalized_order(order_id: UUID, format: str, request: Request,
+                           db: Session = Depends(db_session)) -> PlainTextResponse:
+    require_admin(request)
+    order = db.get(SaleOrder, order_id)
+    if format not in {"csv", "txt"} or not order or not order_fulfillable(order):
+        raise HTTPException(status_code=404, detail="Seleção finalizada não encontrada.")
+    items = db.scalars(select(SaleOrderItem).where(
+        SaleOrderItem.sale_order_id == order.id,
+    ).order_by(SaleOrderItem.filename_snapshot))
+    output = StringIO()
+    csv.writer(output, delimiter="\t" if format == "txt" else ",", lineterminator="\n").writerows(
+        (str(item.photo_asset_id_snapshot), item.filename_snapshot) for item in items
+    )
+    audit(db, "selection.exported", str(order.id))
+    db.commit()
+    return PlainTextResponse(output.getvalue(), media_type="text/plain" if format == "txt" else "text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="selecao-{order.id}.{format}"',
+                                      "Cache-Control": "private, no-store"})
 
 
 @app.get("/admin/parent-galleries/{parent_gallery_id}/clients/{client_id}/selection/export.{format}")
@@ -6275,6 +6325,10 @@ def save_parent_pricing(
             detail="Escolha preço fixo ou uma tabela progressiva.",
         )
 
+    if getattr(payload, "payment_required", gallery.payment_required) and any(
+        tier.unit_price_cents <= 0 for tier in tiers
+    ):
+        raise HTTPException(status_code=422, detail="Pagamento obrigatório exige valor unitário maior que zero.")
     gallery.pricing_mode = pricing_mode
     gallery.fixed_unit_price_cents = (
         tiers[0].unit_price_cents if pricing_mode == "fixed" else None
@@ -8001,11 +8055,12 @@ def client_library(
         communication = canonical_communications.get(order.id)
         canonical_orders_by_parent[order.parent_gallery_id_snapshot].append({
             "order_id": str(order.id),
-            "commercial_state": "purchased" if order.payment_status == "confirmed"
+            "commercial_state": "selection_finalized" if order.payment_status == "not_required"
+            else "purchased" if order.payment_status == "confirmed"
             else "cancelled" if order.payment_status == "cancelled"
             else "payment_reported" if communication and communication.status == "pending_review"
             else "awaiting_payment",
-            "total_cents": order.total_cents,
+            "total_cents": order.total_cents if order.payment_required_snapshot else None,
         })
     prepared_gallery_ids: set[UUID] = set()
     if gallery_ids:
@@ -8181,6 +8236,19 @@ class GroupPaymentInput(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
+@app.post("/library/cart/{gallery_id}/finalize")
+def finalize_unified_selection(gallery_id: UUID, payload: GroupPaymentInput, request: Request,
+                               db: Session = Depends(db_session)) -> dict:
+    client = _commerce_client(request, db)
+    try:
+        order = finalize_selection(db, client, gallery_id, payload.revision, payload.idempotency_key)
+        db.commit()
+        return {"order_id": str(order.id), "status": "selection_finalized"}
+    except CheckoutError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/library/payments/{group_id}/report")
 def report_unified_payment(group_id: UUID, payload: GroupPaymentInput, request: Request,
                            db: Session = Depends(db_session)) -> dict:
@@ -8263,7 +8331,7 @@ def client_purchase_history(
             .where(
                 SaleOrder.client_id == session.subject_id,
                 or_(
-                    SaleOrder.payment_status == "confirmed",
+                    fulfillable_order_condition(),
                     SaleOrder.assets_removed_at.is_not(None),
                     SaleOrder.payment_group_id.in_(
                         select(PaymentCommunication.payment_group_id).where(
@@ -8342,7 +8410,7 @@ def client_purchase_history(
                         f"/gallery/{order.derived_gallery_id}/photos/{item.photo_asset_id}/preview"
                         if order.derived_gallery_id and item.photo_asset_id
                         else f"/library/purchases/items/{item.id}/preview"
-                        if canonical_parent and item.photo_asset_id and order.payment_status == "confirmed"
+                        if canonical_parent and item.photo_asset_id and order_fulfillable(order)
                         else f"/public-galleries/{canonical_parent.id}/photos/{item.photo_asset_id}/preview"
                         if canonical_parent and item.photo_asset_id
                         else None
@@ -8366,7 +8434,9 @@ def client_purchase_history(
                 "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 "commercial_state": (
-                    "purchased"
+                    "selection_finalized"
+                    if order.payment_status == "not_required"
+                    else "purchased"
                     if order.payment_status == "confirmed"
                     else "cancelled"
                     if order.payment_status == "cancelled"
@@ -8387,8 +8457,9 @@ def client_purchase_history(
                 ),
                 "frozen_at": order.frozen_at.isoformat() if order.frozen_at else None,
                 "confirmed_at": order.confirmed_at.isoformat() if order.confirmed_at else None,
-                "total_cents": order.total_cents,
-                "delivery_album_url": order.delivery_album_url if order.payment_status == "confirmed" else None,
+                "total_cents": order.total_cents if order.payment_required_snapshot else None,
+                **({"payment_required": False} if not order.payment_required_snapshot else {}),
+                "delivery_album_url": order.delivery_album_url if order_fulfillable(order) else None,
                 "items": item_payloads,
             }
         )
@@ -8414,7 +8485,7 @@ def _historical_item_for_client(
         .where(
             SaleOrderItem.id == item_id,
             SaleOrder.client_id == client_id,
-            SaleOrder.payment_status == "confirmed",
+            fulfillable_order_condition(),
         )
     )
     if not item:
@@ -8442,7 +8513,7 @@ def client_purchased_photo_preview(
         .where(
             SaleOrderItem.id == item_id,
             SaleOrder.client_id == session.subject_id,
-            SaleOrder.payment_status == "confirmed",
+            fulfillable_order_condition(),
             SaleOrder.derived_gallery_id_snapshot.is_(None),
         )
     )

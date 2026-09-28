@@ -116,6 +116,9 @@ def client_carts_by_gallery_payload(
         parent = parents.get(gallery.parent_gallery_id)
         if not parent:
             continue
+        payload["payment_required"] = parent.payment_required
+        if not parent.payment_required:
+            continue
         try:
             commercial_quote = quote_parent_gallery(
                 db,
@@ -188,7 +191,9 @@ def client_photo_states(
         )
     )
     for photo_id, payment_status, frozen_at, communication_status in rows:
-        if payment_status == "confirmed":
+        if payment_status == "not_required" and frozen_at:
+            states[photo_id] = "selection_finalized"
+        elif payment_status == "confirmed":
             states[photo_id] = "purchased"
         elif (
             payment_status == "pending"
@@ -258,7 +263,9 @@ def client_orders_by_gallery_payload(
         communication = communications.get(order.id)
         delivery = deliveries.get(communication.id) if communication else None
         state = (
-            "purchased"
+            "selection_finalized"
+            if order.payment_status == "not_required"
+            else "purchased"
             if order.payment_status == "confirmed"
             else "cancelled"
             if order.payment_status == "cancelled"
@@ -273,7 +280,8 @@ def client_orders_by_gallery_payload(
             {
                 "order_id": str(order.id),
                 "payment_group_id": str(order.payment_group_id) if order.payment_group_id else None,
-                "total_cents": order.total_cents,
+                "total_cents": order.total_cents if order.payment_required_snapshot else None,
+                **({"payment_required": False} if not order.payment_required_snapshot else {}),
                 "payment_status": order.payment_status,
                 "commercial_state": state,
                 "frozen_at": order.frozen_at.isoformat() if order.frozen_at else None,
@@ -300,7 +308,7 @@ def client_orders_by_gallery_payload(
                         "item_id": str(item.id),
                         "photo_id": str(item.photo_asset_id_snapshot),
                         "name": item.filename_snapshot,
-                        "unit_price_cents": item.unit_price_cents,
+                        "unit_price_cents": item.unit_price_cents if order.payment_required_snapshot else None,
                         "preview_url": (
                             f"/gallery/{gallery_id}/photos/{item.photo_asset_id_snapshot}/preview"
                             if item.photo_asset_id is not None

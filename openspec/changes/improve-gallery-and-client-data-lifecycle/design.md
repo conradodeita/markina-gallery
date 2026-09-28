@@ -1,3 +1,5 @@
+> Reconciliação `simplify-gallery-access-modes`: as referências a três modos abaixo são históricas; novos modos administrativos são somente standard/invite_only. collective_protected permanece legado bloqueado, sem promoção pendente ou alteração facial.
+
 ## Context
 
 Consulte `proposal.md` para a motivação. Hoje `SaleOrder.derived_gallery_id` e `SaleOrderItem.photo_asset_id` são chaves obrigatórias para entidades operacionais; por isso a exclusão física dessas entidades também quebraria a consulta do histórico. A exclusão da entidade interna `ParentGallery`, que passa a ser chamada de “Galeria pública” no produto, aceita somente galerias vazias, e a remoção de arquivos ocorre em pontos síncronos sem um manifesto durável da limpeza.

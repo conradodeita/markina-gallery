@@ -26,6 +26,9 @@ def quote_parent_gallery(
     quantity: int,
     rules: list[PriceRule] | None = None,
 ) -> GalleryQuote:
+    if gallery.payment_required is False:
+        result = progressive_quote(quantity, [PriceTier(1, None, 0)])
+        return GalleryQuote(quote=result, snapshot={"mode": "external", "payment_required": False})
     if gallery.pricing_mode == "legacy_volume" or gallery.pricing_review_required:
         raise GalleryPricingError(
             "A configuração comercial desta galeria precisa ser revisada antes de novas compras."
@@ -42,6 +45,8 @@ def quote_parent_gallery(
         PriceTier(rule.minimum_quantity, rule.maximum_quantity, rule.unit_price_cents)
         for rule in rules
     ]
+    if any(tier.unit_price_cents <= 0 for tier in tiers):
+        raise GalleryPricingError("Pagamento obrigatório exige valor unitário maior que zero.")
     try:
         result = progressive_quote(quantity, tiers)
     except PricingRuleError as exc:

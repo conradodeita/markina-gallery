@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Client,
+    DerivedGallery,
     GalleryClientState,
     ParentGallery,
     PaymentCommunication,
@@ -202,16 +203,21 @@ def cart_payload(db: Session, client: Client):
                 else None,
                 "items": items,
                 "error": error,
-                "total_cents": material[3].quote.total_cents if material else None,
+                "total_cents": material[3].quote.total_cents if material and parent.payment_required else None,
+                "payment_required": parent.payment_required,
+                "message": parent.sales_message or "",
+                "revision": _fingerprint([(gallery, parent, material, error)]) if material else None,
             }
         )
-    valid = bool(groups) and all(not group["error"] for group in groups)
+    paid = [group for group in groups if group["payment_required"]]
+    valid = bool(paid) and all(not group["error"] for group in paid)
     return {
         "groups": groups,
         "quantity": sum(group["quantity"] for group in groups),
-        "total_cents": sum(group["total_cents"] for group in groups) if valid else None,
+        "total_cents": sum(group["total_cents"] for group in paid) if valid else None,
         "can_prepare": valid,
     }
+
 
 
 def _fingerprint(materials):
@@ -222,6 +228,7 @@ def _fingerprint(materials):
             "quote": material[3].snapshot,
             "total": material[3].quote.total_cents,
             "message": parent.sales_message,
+            "payment_required": parent.payment_required,
             "expires": gallery.selection_expires_at.isoformat()
             if gallery.selection_expires_at
             else None,
@@ -232,7 +239,7 @@ def _fingerprint(materials):
 
 
 def _valid_materials(db, client):
-    materials = _materials(db, client)
+    materials = [item for item in _materials(db, client) if item[1].payment_required]
     if not materials:
         raise CheckoutError("O carrinho está vazio.")
     for gallery, _parent, _material, error in materials:
@@ -499,3 +506,56 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
     )
     audit(db, "payment_group.reported", str(group.id))
     return communication
+
+
+def finalize_selection(db: Session, client: Client, gallery_id: UUID, revision: str, key: str):
+    """Congela somente um grupo externo; não cria comunicação ou PIX."""
+    db.scalar(select(Client.id).where(Client.id == client.id).with_for_update())
+    db.scalar(select(ParentGallery).where(or_(
+        ParentGallery.id == gallery_id,
+        ParentGallery.id.in_(select(DerivedGallery.parent_gallery_id).where(DerivedGallery.id == gallery_id)),
+    )).with_for_update().execution_options(populate_existing=True))
+    existing = db.scalar(select(SaleOrder).where(
+        SaleOrder.client_id == client.id, SaleOrder.checkout_key == "selection:" + hashlib.sha256(key.encode()).hexdigest(),
+    ))
+    if existing:
+        if (existing.payment_required_snapshot or not existing.frozen_at
+                or (existing.price_rule_snapshot or {}).get("finalization_revision") != revision):
+            raise CheckoutError("A chave já foi usada para outra operação.")
+        if (existing.parent_gallery_id or existing.derived_gallery_id) != gallery_id:
+            raise CheckoutError("A chave já foi usada para outra seleção.")
+        return existing
+    entry = next((item for item in _materials(db, client)
+                  if (item[0].parent_gallery_id if isinstance(item[0], GalleryClientState)
+                      else item[0].id) == gallery_id), None)
+    if not entry or entry[1].payment_required:
+        raise CheckoutError("Seleção sem cobrança indisponível. Atualize a revisão.")
+    gallery, _parent, material, error = entry
+    if error or not material:
+        raise CheckoutError(error or "Seleção indisponível.")
+    if _fingerprint([entry]) != revision:
+        raise CheckoutError("A revisão mudou. Confira as fotos novamente.")
+    # Descartar somente rascunho editável anterior; comunicações congeladas permanecem.
+    draft = db.scalar(select(SaleOrder).where(
+        SaleOrder.client_id == client.id,
+        (SaleOrder.parent_gallery_id == gallery.parent_gallery_id)
+        if isinstance(gallery, GalleryClientState) else (SaleOrder.derived_gallery_id == gallery.id),
+        SaleOrder.payment_status == "pending", SaleOrder.frozen_at.is_(None),
+        SaleOrder.assets_removed_at.is_(None), SaleOrder.checkout_key.is_not(None),
+    ).with_for_update())
+    if draft:
+        group_id = draft.payment_group_id
+        db.execute(delete(SaleOrderItem).where(SaleOrderItem.sale_order_id == draft.id))
+        db.delete(draft)
+        db.flush()
+        if group_id and not db.scalar(select(SaleOrder.id).where(SaleOrder.payment_group_id == group_id)):
+            db.execute(delete(PaymentGroup).where(PaymentGroup.id == group_id, PaymentGroup.state == "draft"))
+    order = SaleOrder(client_id=client.id, checkout_key="selection:" + hashlib.sha256(key.encode()).hexdigest(), total_cents=0)
+    _synchronize_order(db, order=order, gallery=gallery, client=client, material=material)
+    order.price_rule_snapshot = {**order.price_rule_snapshot, "finalization_revision": revision}
+    order.frozen_at = now()
+    db.execute(delete(PhotoSelection).where(
+        PhotoSelection.id.in_([row.id for row in material[0]]),
+    ))
+    audit(db, "sale_order.selection_finalized", str(order.id))
+    return order

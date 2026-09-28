@@ -1,3 +1,5 @@
+> Reconciliação `simplify-gallery-access-modes`: as referências a três modos abaixo são históricas; novos modos administrativos são somente standard/invite_only. collective_protected permanece legado bloqueado, sem promoção pendente ou alteração facial.
+
 ## Why
 
 O gerenciamento atual exige desmontar manualmente vínculos, fotos e pastas antes de excluir uma Galeria pública, cria galerias privadas antes de existir uma seleção efetiva e ainda não oferece ao fotógrafo uma leitura clara do estado de cada cliente. Além disso, o teste real de OTP confirmou a negação correta de acesso sem convite, mas tornou necessário explicitar a diferença entre não criar um cadastro permanente de cliente e reter temporariamente dados mínimos do desafio de autenticação.

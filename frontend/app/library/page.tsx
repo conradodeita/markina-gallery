@@ -43,7 +43,7 @@ type Journey = {
     savings_cents?: number;
     pricing_error?: string;
   };
-  orders?: Array<{ order_id: string; commercial_state: "awaiting_payment" | "payment_reported" | "purchased" | "cancelled"; total_cents: number }>;
+  orders?: Array<{ order_id: string; commercial_state: "awaiting_payment" | "payment_reported" | "purchased" | "selection_finalized" | "cancelled"; total_cents: number }>;
   has_prepared_photos: boolean;
   actions: {
     continue_url: string | null;
@@ -112,7 +112,7 @@ export default function LibraryPage() {
           const status = journeyStatus[journey.status] ?? journeyStatus.unavailable;
           const latestOrder = journey.orders?.find((order) => order.commercial_state !== "awaiting_payment");
           const browse = journey.actions.continue_url ?? journey.actions.prepared_url ?? journey.actions.fallback_url ?? journey.browse_url;
-          const primaryAction = browse ? { href: browse, label: "Ver fotos" } : latestOrder ? { href: "/library/purchases", label: "Ver compra" } : null;
+          const primaryAction = browse ? { href: browse, label: "Ver fotos" } : latestOrder ? { href: "/library/purchases", label: latestOrder.commercial_state === "selection_finalized" ? "Ver seleção" : "Ver compra" } : null;
           return (
             <article className={`library-card journey-card journey-card--${journey.status}`} key={journey.id}>
               {browse ? <Link href={browse} className="library-cover-link" aria-label={`Abrir galeria ${journey.name}`}><GalleryCardPreview src={galleryCoverUrl(journey.cover_preview_url)} name={journey.name} /></Link> : <GalleryCardPreview src={null} name={journey.name} />}
@@ -120,7 +120,7 @@ export default function LibraryPage() {
               <strong>{journey.name}</strong>
               {journey.event_name ? <small>{journey.event_name}</small> : null}
               <SelectionDeadline expiresAt={journey.selection_expires_at ?? journey.private_gallery?.selection_expires_at} onRevalidate={revalidateLibrary} />
-              {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "purchased" ? "Pagamento confirmado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : "Pagamento não localizado"}</StatusBadge> : null}
+              {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "selection_finalized" ? "Seleção finalizada" : latestOrder.commercial_state === "purchased" ? "Pagamento confirmado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : "Pagamento não localizado"}</StatusBadge> : null}
               <div className="library-card-actions">
                 {primaryAction ? <MarkinaLink href={primaryAction.href} prefetch>{primaryAction.label}</MarkinaLink> : <span>Indisponível</span>}
               </div>

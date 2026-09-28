@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.auth import Client, NotificationDelivery, NotificationEvent, SaleOrder, audit, now
 from app.notification_settings import enqueue_event
@@ -37,13 +37,28 @@ def validate_album_url(value: str | None) -> str | None:
     return value
 
 
+def fulfillable_order_condition():
+    return or_(
+        SaleOrder.payment_status == "confirmed",
+        and_(SaleOrder.payment_status == "not_required",
+             SaleOrder.payment_required_snapshot.is_(False), SaleOrder.frozen_at.is_not(None)),
+    )
+
+
+def order_fulfillable(order: SaleOrder) -> bool:
+    return order.payment_status == "confirmed" or (
+        order.payment_status == "not_required" and order.payment_required_snapshot is False
+        and order.frozen_at is not None
+    )
+
+
 def delivery_payload(order: SaleOrder) -> dict:
     return {
         "album_url": order.delivery_album_url,
         "version": order.delivery_revision,
         "updated_at": order.delivery_updated_at.isoformat() if order.delivery_updated_at else None,
-        "can_send": order.payment_status == "confirmed",
-        "can_resend": order.payment_status == "confirmed" and bool(order.delivery_album_url),
+        "can_send": order_fulfillable(order),
+        "can_resend": order_fulfillable(order) and bool(order.delivery_album_url),
     }
 
 
@@ -61,7 +76,7 @@ def lock_delivery_order(db, order_id: UUID) -> SaleOrder:
 
 
 def require_confirmed(order):
-    if order.payment_status != "confirmed":
+    if not order_fulfillable(order):
         raise ValueError("Confirme o pagamento para disponibilizar as fotos.")
 
 
@@ -114,7 +129,7 @@ def resend_delivery(db, order, version, operation_id, actor_id):
 def delivery_notice_allowed(db, event, item):
     order = db.get(SaleOrder, event.sale_order_id)
     if (not order or item.recipient_role != "client" or order.client_id != item.recipient_id
-            or event.client_id != order.client_id or order.payment_status != "confirmed"
+            or event.client_id != order.client_id or not order_fulfillable(order)
             or not order.delivery_album_url):
         return False
     parts = event.event_key.split(":")

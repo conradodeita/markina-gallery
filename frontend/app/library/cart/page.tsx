@@ -7,7 +7,7 @@ import { notifyCartChanged } from "../../client-navigation";
 import { SelectionDeadline } from "../../selection-deadline";
 import { SystemState } from "../../ui-kit";
 
-type CartGroup = { gallery_id: string; parent_gallery_id: string; name: string; quantity: number;
+type CartGroup = { payment_required?: boolean; message?: string; revision?: string; gallery_id: string; parent_gallery_id: string; name: string; quantity: number;
   legacy_review_url?: string | null;
   total_cents: number | null; error: string | null; browse_url: string; selection_expires_at: string | null;
   items: Array<{ id: string; name: string; folder_name: string | null; preview_url: string }> };
@@ -25,6 +25,7 @@ export default function CartPage() {
   const sequence = useRef(0);
   const locked = useRef(false);
   const requestKey = useRef<string | null>(null);
+  const finalizationKeys = useRef<Record<string, string>>({});
   const refresh = useCallback(async () => {
     const current = ++sequence.current;
     setError("");
@@ -70,6 +71,29 @@ export default function CartPage() {
     finally { locked.current = false; setBusy(false); }
   }
 
+  async function finalize(group: CartGroup) {
+    if (!group.revision || locked.current) return;
+    locked.current = true; setBusy(true); setError("");
+    const revisionKey = `${group.gallery_id}:${group.revision}`;
+    finalizationKeys.current[revisionKey] ??= crypto.randomUUID();
+    try {
+      const response = await fetch(`/api/library/cart/${group.gallery_id}/finalize`, {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revision: group.revision, idempotency_key: finalizationKeys.current[revisionKey] }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        if (response.status === 409) delete finalizationKeys.current[revisionKey];
+        throw new Error(result.detail ?? "Não foi possível finalizar a seleção.");
+      }
+      delete finalizationKeys.current[revisionKey];
+      notifyCartChanged();
+      await refresh();
+      setNotice("Seleção finalizada. O fotógrafo já pode conferir suas fotos. Acompanhe em Compras.");
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Não foi possível finalizar a seleção."); }
+    finally { locked.current = false; setBusy(false); }
+  }
+
   async function report() {
     if (!cart?.payment || locked.current) return;
     locked.current = true; setBusy(true); setError("");
@@ -97,12 +121,14 @@ export default function CartPage() {
 
   if (reported) return <section className="unified-cart"><h1>Pagamento informado</h1><p>Seu pagamento aguarda a confirmação do fotógrafo.</p><Link className="primary" href={`/library/purchases#payment-${reported}`}>Ver compra</Link><Link href="/library">Continuar nas galerias</Link></section>;
   return <section className="unified-cart">
-    <h1>Revise suas fotos e faça o PIX</h1>
+    <h1>{cart?.groups.length && cart.groups.every((group) => group.payment_required === false) ? "Revise suas fotos" : "Revise suas fotos e faça o PIX"}</h1>
+    {notice ? <p role="status">{notice} <Link href="/library/purchases">Ver histórico</Link></p> : null}
     {error ? <div role="alert"><p>{error}</p><button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Atualizar revisão</button></div> : null}
     {!cart && !error ? <SystemState tone="loading" title="Carregando carrinho" detail="Buscando suas fotos selecionadas." /> : null}
     {cart?.quantity === 0 ? <><p>Seu carrinho está vazio.</p><Link className="primary" href="/library">Escolher fotos</Link></> : null}
     {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
       <div className="section-heading"><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>
+      {group.message?.trim() ? <p style={{ whiteSpace: "pre-wrap" }}>{group.message}</p> : null}
       <SelectionDeadline expiresAt={group.selection_expires_at} />
       {group.error ? <p role="alert">{group.error}</p> : null}
       <div className="unified-cart-photos">{group.items.map((photo) => <figure key={photo.id}>
@@ -111,11 +137,12 @@ export default function CartPage() {
         <button type="button" className="secondary" disabled={busy} aria-label={`Remover ${photo.name} de ${group.name}`} onClick={() => void remove(group, photo.id)}>Remover</button>
       </figure>)}</div>
       <div className="dashboard-actions"><Link href={group.browse_url}>Continuar escolhendo</Link><button type="button" className="secondary" disabled={busy} onClick={() => void remove(group)}>Remover seleção de {group.name}</button></div>
+      {group.payment_required === false ? <button type="button" className="primary" disabled={busy || !!group.error || !group.revision} onClick={() => void finalize(group)}>{busy ? "Salvando…" : "Finalizar seleção"}</button> : null}
       {error && group.legacy_review_url ? <Link href={group.legacy_review_url}>Retomar pagamento anterior de {group.name}</Link> : null}
     </section>)}
-    {cart && cart.quantity > 0 ? <section className="unified-payment" aria-label="Pagamento único">
+    {cart && cart.groups.some((group) => group.payment_required !== false) ? <section className="unified-payment" aria-label="Pagamento único">
       <h2>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</h2>
-      <p>{cart.quantity} foto(s)</p>
+      <p>{cart.groups.filter((group) => group.payment_required !== false).reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</p>
       {cart.payment ? <>
         <h3>Pague com PIX</h3>
         {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}
@@ -126,7 +153,6 @@ export default function CartPage() {
         <p>Após pagar {money(cart.payment.total_cents)}, informe o pagamento para o fotógrafo conferir.</p>
         <button type="button" className="primary" disabled={busy} onClick={() => void report()}>{busy ? "Salvando…" : "Informar pagamento"}</button>
       </> : !error && cart.can_prepare ? <p role="status">Preparando PIX…</p> : <p>Confira os avisos acima para continuar.</p>}
-      {notice ? <p role="status">{notice}</p> : null}
     </section> : null}
   </section>;
 }

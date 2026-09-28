@@ -15,6 +15,7 @@ from app.auth import (
     SaleOrder,
     SaleOrderItem,
 )
+from app.order_delivery import order_fulfillable
 
 
 @dataclass
@@ -271,7 +272,7 @@ def backfill_commercial_snapshots(
             report.items_updated += 1
 
         order = orders_by_id.get(item.sale_order_id)
-        if not order or order.payment_status != "confirmed":
+        if not order or not order_fulfillable(order):
             continue
         historical_media = db.scalar(
             select(CommercialHistoryMedia).where(

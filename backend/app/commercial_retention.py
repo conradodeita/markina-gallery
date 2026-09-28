@@ -5,11 +5,12 @@ from datetime import datetime, timedelta
 from os import getenv
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.auth import AuditEvent, CommercialHistoryMedia, SaleOrder, SaleOrderItem, now
 from app.historical_media import historical_media_path
+from app.order_delivery import fulfillable_order_condition
 
 
 class CommercialRetentionConfigurationError(ValueError):
@@ -65,10 +66,12 @@ def apply_commercial_media_retention(
         return report
     instant = instant or now()
     cutoff = instant - timedelta(days=effective_policy.media_retention_days)
+    retained_at = case((SaleOrder.payment_status == "not_required", SaleOrder.frozen_at),
+                       else_=SaleOrder.confirmed_at)
     rows = list(
         db.execute(
             select(CommercialHistoryMedia)
-            .add_columns(SaleOrder.confirmed_at)
+            .add_columns(retained_at)
             .join(
                 SaleOrderItem,
                 SaleOrderItem.id == CommercialHistoryMedia.sale_order_item_id,
@@ -76,9 +79,9 @@ def apply_commercial_media_retention(
             .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
             .where(
                 CommercialHistoryMedia.status == "ready",
-                SaleOrder.payment_status == "confirmed",
-                SaleOrder.confirmed_at.is_not(None),
-                SaleOrder.confirmed_at <= cutoff,
+                fulfillable_order_condition(),
+                retained_at.is_not(None),
+                retained_at <= cutoff,
             )
             .with_for_update()
         )
