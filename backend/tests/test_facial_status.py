@@ -164,6 +164,33 @@ def test_status_reports_real_latest_counts_and_paginated_sanitized_failures() ->
     }
 
 
+def test_folder_status_and_retries_do_not_cross_folder_or_paused_mode() -> None:
+    from app.folder_processing import configure_folder
+
+    db, parent, photos, jobs = _fixture()
+    other = PhotoFolder(parent_gallery_id=parent.id, name="Reservada", purpose="content", position=1)
+    db.add(other)
+    db.flush()
+    photos[4].folder_id = other.id
+    db.commit()
+
+    own = gallery_index_status(db, parent_gallery_id=parent.id,
+                               folder_id=photos[3].folder_id)
+    reserved = gallery_index_status(db, parent_gallery_id=parent.id, folder_id=other.id)
+    assert (own.total, own.failed, own.photos_with_faces) == (5, 1, 1)
+    assert (reserved.total, reserved.failed, reserved.photos_with_faces) == (1, 1, 0)
+    assert retry_all_failed_index_jobs(db, parent_gallery_id=parent.id,
+                                       folder_id=photos[3].folder_id,
+                                       photo_ids={photos[3].id}) == 1
+    assert jobs[3].status == "queued" and jobs[4].status == "failed"
+
+    configure_folder(db, other.id, preview_mode="inherit", facial_mode="off",
+                     strength=50, exposure_tenths=0)
+    db.commit()
+    assert retry_all_failed_index_jobs(db, parent_gallery_id=parent.id) == 0
+    assert jobs[4].status == "failed"
+
+
 def test_retry_is_scoped_and_idempotent() -> None:
     db, parent, _photos, jobs = _fixture()
     failed_id = jobs[3].id

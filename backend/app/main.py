@@ -228,6 +228,7 @@ from app.facial.status import (
     retry_all_failed_index_jobs,
     retry_failed_index_jobs,
 )
+from app.folder_processing_api import register_routes as register_folder_processing_routes
 from app.gallery_access import (
     consume_gallery_capability,
     issue_gallery_capability,
@@ -11445,4 +11446,8 @@ def remove_comment_as_admin(
 register_preview_adjustment_routes(
     app, db_session=db_session, require_admin=require_admin,
     preview_response=protected_preview_response,
+)
+register_folder_processing_routes(
+    app, db_session=db_session, require_admin=require_admin,
+    require_same_origin=require_same_origin,
 )

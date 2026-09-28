@@ -6,7 +6,12 @@ from uuid import UUID
 
 from sqlalchemy import delete, func, select
 
-from app.auth import GalleryPreviewSettings, PreviewAdjustment, SessionLocal
+from app.auth import (
+    FolderProcessingSettings,
+    GalleryPreviewSettings,
+    PreviewAdjustment,
+    SessionLocal,
+)
 from app.media import derivatives_root
 from app.preview_adjustment.service import result_path
 
@@ -51,7 +56,9 @@ def cleanup(db, *, execute: bool = False, worker_stopped: bool = False):
         "deleted": False,
     }
     if execute:
-        if any(config.enabled for config in configs) or not worker_stopped:
+        custom_active = db.scalar(select(FolderProcessingSettings.folder_id)
+                                  .where(FolderProcessingSettings.preview_mode == "custom").limit(1))
+        if any(config.enabled for config in configs) or custom_active or not worker_stopped:
             raise ValueError("Desligue o módulo e pare o worker antes da limpeza.")
         for path in files:
             path.unlink(missing_ok=True)

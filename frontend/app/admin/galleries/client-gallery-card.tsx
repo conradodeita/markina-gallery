@@ -5,6 +5,7 @@ import { jpegStorageKey, uploadJpeg } from "../../upload-jpeg";
 import { FinancialOrderShortcuts, type FinancialOrder } from "../payments/payment-actions";
 import { OrderDeliveryForm, type OrderDelivery } from "../payments/order-delivery";
 import { SelectionDeadline } from "../../selection-deadline";
+import { FolderProcessingPanel } from "./folder-processing-panel";
 
 export type ClientGalleryRow = {
   client_id: string;
@@ -271,6 +272,7 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
           {folder.name} · {folder.photo_count} foto(s) · {folder.status === "released" ? "Disponível" : "Preparando"}
         </button>
         {activeFolder === folder.id ? <div>
+          <FolderProcessingPanel key={folder.id} folderId={folder.id} folderName={folder.name} shared={folder.assigned_client_ids.length > 1} />
           <button type="button" className="secondary" disabled={busy} onClick={() => { void publishFolder(folder); }}>Disponibilizar fotos prontas</button>
           <button type="button" className="link-button" disabled={busy} onClick={() => { void removeFolder(folder); }}>Excluir pasta</button>
           <div className="client-collection-recipients">

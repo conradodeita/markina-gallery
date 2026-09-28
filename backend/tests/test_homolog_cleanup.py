@@ -2,7 +2,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import Session
 
 from app import homolog_cleanup
 from app.auth import (
@@ -18,6 +19,7 @@ from app.auth import (
     CommercialHistoryMedia,
     DerivedGallery,
     DerivedGalleryMembership,
+    FolderProcessingSettings,
     GlobalPixSettings,
     NotificationSetting,
     ParentGallery,
@@ -73,6 +75,36 @@ def test_inventory_returns_only_counts_without_pii(
     assert set(result) == {"environment", "database", "media", "preserved"}
     assert all(type(value) is int for value in result["database"].values())
     assert all(type(value) is int for value in result["preserved"].values())
+
+
+def test_inventory_counts_folder_settings_as_operational_without_exposing_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APP_ENV", "homolog")
+    roots = {"MEDIA_SOURCE_ROOT": "source", "MEDIA_DERIVATIVES_ROOT": "derivatives",
+             "MEDIA_HISTORY_ROOT": "history", "FACIAL_REFERENCE_ROOT": "facial-references"}
+    for key, name in roots.items():
+        root = tmp_path / name
+        root.mkdir()
+        monkeypatch.setenv(key, str(root))
+    synthetic = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(synthetic)
+    with Session(synthetic) as db:
+        gallery = ParentGallery(name="Galeria sintética")
+        db.add(gallery)
+        db.flush()
+        folder = PhotoFolder(parent_gallery_id=gallery.id, name="Pasta sintética")
+        db.add(folder)
+        db.flush()
+        settings = FolderProcessingSettings(folder_id=folder.id, preview_mode="custom",
+                                            facial_mode="off", preview_exposure_tenths=5)
+        db.add(settings)
+        db.commit()
+        assert db.get(FolderProcessingSettings, folder.id) is not None
+        result = inventory(db)
+    assert result["database"]["folder_processing_settings"] == 1
+    assert "folder_processing_settings" not in result["preserved"]
+    assert "custom" not in str(result) and "off" not in str(result)
 
 
 def test_inventory_aborts_for_unclassified_database_table(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,6 +259,8 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         )
         db.add_all((folder, derived))
         db.flush()
+        db.add(FolderProcessingSettings(folder_id=folder.id, preview_mode="custom",
+                                        preview_exposure_tenths=5))
         photo = PhotoAsset(
             parent_gallery_id=parent.id,
             folder_id=folder.id,
@@ -295,6 +329,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         assert before["database"]["client_gallery_audit_events"] == 1
         assert before["preserved"]["admin_security_audit_events"] == 1
         assert before["database"]["asset_file_cleanup"] == 1
+        assert before["database"]["folder_processing_settings"] == 1
         result = execute(db, WITHOUT_BACKUP_CONFIRMATION)
 
         assert all(value == 0 for value in result["database"].values())

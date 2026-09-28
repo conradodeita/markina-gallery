@@ -103,6 +103,10 @@ def enqueue_photo_index_if_eligible(
     """Enfileira um único evento; jamais torna a prévia dependente da face."""
 
     from app.facial.lifecycle import analysis_for
+    from app.folder_processing import facial_processing_allowed
+
+    if not facial_processing_allowed(db, photo.folder_id):
+        return None
 
     if analysis_for(db, photo.id):
         return None  # opt-in persistido: nunca reescaneia prévia, mesmo após rollback da flag
@@ -172,8 +176,10 @@ def enqueue_gallery_backfill_page(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    folder_id: UUID | None = None,
     derivatives_root: Path,
     cursor: UUID | None = None,
+    end_cursor: UUID | None = None,
     limit: int = 100,
     settings: FacialSettings | None = None,
     repository: FacialJobRepository | None = None,
@@ -207,6 +213,10 @@ def enqueue_gallery_backfill_page(
     )
     if cursor is not None:
         query = query.where(PhotoAsset.id > cursor)
+    if end_cursor is not None:
+        query = query.where(PhotoAsset.id <= end_cursor)
+    if folder_id is not None:
+        query = query.where(PhotoAsset.folder_id == folder_id)
     rows = list(db.execute(query))
     page = rows[:limit]
     queued = 0

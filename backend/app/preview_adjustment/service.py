@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.auth import (
     BrandingSettings,
     DerivedGallery,
+    FolderProcessingSettings,
     GalleryPreviewSettings,
     MediaDerivative,
     ParentGallery,
@@ -23,6 +24,7 @@ from app.auth import (
     PreviewAdjustment,
     now,
 )
+from app.folder_processing import EffectivePreview, effective_preview
 from app.media import derivatives_root, safe_derivative_path, watermark
 from app.preview_adjustment.engine import (
     ENGINE_VERSION,
@@ -89,12 +91,22 @@ def configure(
             .where(
                 PreviewAdjustment.status.in_(("queued", "processing")),
                 PreviewAdjustment.photo_asset_id.in_(
-                    select(PhotoAsset.id).where(PhotoAsset.parent_gallery_id == gallery_id)
+                    select(PhotoAsset.id).join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+                    .outerjoin(FolderProcessingSettings, FolderProcessingSettings.folder_id == PhotoFolder.id)
+                    .where(PhotoAsset.parent_gallery_id == gallery_id,
+                           or_(FolderProcessingSettings.folder_id.is_(None),
+                               FolderProcessingSettings.preview_mode == "inherit"))
                 ),
             )
             .values(status="cancelled", claim_token=None, updated_at=now())
         )
     return config
+
+
+def effective_fingerprint(source_fingerprint: str, config: EffectivePreview) -> str:
+    if config.mode == "inherit":
+        return source_fingerprint  # compatibilidade com resultados legados da galeria
+    return hashlib.sha256(f"{source_fingerprint}:{config.revision_key}".encode()).hexdigest()
 
 
 def inputs(db: Session, photo_id: UUID):
@@ -143,8 +155,8 @@ def enqueue(db: Session, photo_id: UUID, *, retry: bool = False) -> bool:
     if not media_can_proceed(db, photo_id):
         return False
     photo = db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo_id).with_for_update())
-    config = settings(db, photo.parent_gallery_id, lock=True) if photo else None
     folder = db.get(PhotoFolder, photo.folder_id) if photo else None
+    config = effective_preview(db, folder, lock=True) if folder else None
     if (
         not config
         or not config.enabled
@@ -156,8 +168,9 @@ def enqueue(db: Session, photo_id: UUID, *, retry: bool = False) -> bool:
     source = inputs(db, photo_id)
     if not source:
         return False
+    fingerprint = effective_fingerprint(source[2], config)
     row = db.get(PreviewAdjustment, photo_id)
-    if row and row.generation == config.generation and row.fingerprint == source[2]:
+    if row and row.generation == config.generation and row.fingerprint == fingerprint:
         if row.status in {"queued", "processing"}:
             return False
         if row.status == "ready" and existing_result(row):
@@ -167,7 +180,7 @@ def enqueue(db: Session, photo_id: UUID, *, retry: bool = False) -> bool:
     if row is None:
         row = PreviewAdjustment(photo_asset_id=photo_id)
         db.add(row)
-    row.generation, row.fingerprint = config.generation, source[2]
+    row.generation, row.fingerprint = config.generation, fingerprint
     row.status, row.attempts, row.claim_token = "queued", 0, None
     row.last_error, row.elapsed_ms, row.updated_at = None, None, now()
     return True
@@ -212,14 +225,15 @@ def existing_result(row: PreviewAdjustment) -> Path | None:
 
 def adjusted_path(db: Session, photo_id: UUID) -> Path | None:
     photo = db.get(PhotoAsset, photo_id)
-    config = settings(db, photo.parent_gallery_id) if photo else None
+    folder = db.get(PhotoFolder, photo.folder_id) if photo else None
+    config = effective_preview(db, folder) if folder else None
     if not config or not config.enabled:
         return None
     row = db.get(PreviewAdjustment, photo_id, populate_existing=True)
     if not row or row.status != "ready" or row.generation != config.generation:
         return None
     source = inputs(db, photo_id)
-    if not source or row.fingerprint != source[2]:
+    if not source or row.fingerprint != effective_fingerprint(source[2], config):
         return None
     return existing_result(row)
 
@@ -244,30 +258,20 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
             (PreviewAdjustment.status == "processing") & (PreviewAdjustment.updated_at < stale),
         )
         candidate = db.execute(
-            select(PreviewAdjustment.photo_asset_id, PhotoAsset.parent_gallery_id)
+            select(PreviewAdjustment.photo_asset_id, PhotoAsset.folder_id)
             .join(PhotoAsset)
-            .join(
-                GalleryPreviewSettings,
-                GalleryPreviewSettings.parent_gallery_id == PhotoAsset.parent_gallery_id,
-            )
-            .where(
-                eligible,
-                GalleryPreviewSettings.enabled.is_(True),
-                PreviewAdjustment.generation == GalleryPreviewSettings.generation,
-            )
+            .where(eligible)
             .order_by(PreviewAdjustment.updated_at, PreviewAdjustment.photo_asset_id)
             .limit(1)
         ).first()
         if not candidate:
             return False
-        config = settings(db, candidate.parent_gallery_id, lock=True)
-        if not config or not config.enabled:
-            return False
+        folder = db.get(PhotoFolder, candidate.folder_id)
+        config = effective_preview(db, folder, lock=True) if folder else None
         row = db.scalar(
             select(PreviewAdjustment)
             .where(
                 PreviewAdjustment.photo_asset_id == candidate.photo_asset_id,
-                PreviewAdjustment.generation == config.generation,
                 eligible,
             )
             .order_by(PreviewAdjustment.updated_at)
@@ -276,13 +280,17 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
         )
         if not row:
             return False
+        if not config or not config.enabled or row.generation != config.generation:
+            row.status, row.claim_token, row.updated_at = "cancelled", None, now()
+            db.commit()
+            return True
         if row.attempts >= MAX_ATTEMPTS:
             row.status, row.last_error = "failed", "Processamento interrompido. Tente novamente."
             row.updated_at = now()
             db.commit()
             return True
         source = inputs(db, row.photo_asset_id)
-        if not source or source[2] != row.fingerprint:
+        if not source or effective_fingerprint(source[2], config) != row.fingerprint:
             row.status, row.updated_at = "cancelled", now()
             db.commit()
             return True
@@ -327,7 +335,8 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                     select(ParentGallery).where(ParentGallery.id == parent_id).with_for_update()
                 )
             photo = db.scalar(select(PhotoAsset).where(PhotoAsset.id == photo_id).with_for_update())
-            config = settings(db, photo.parent_gallery_id, lock=True) if photo else None
+            folder = db.get(PhotoFolder, photo.folder_id) if photo else None
+            config = effective_preview(db, folder, lock=True) if folder else None
             row = db.get(PreviewAdjustment, photo_id, populate_existing=True)
             source = inputs(db, photo_id) if photo else None
             if (
@@ -338,7 +347,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                 or row.claim_token != claim
                 or row.status != "processing"
                 or not source
-                or source[2] != fingerprint
+                or effective_fingerprint(source[2], config) != fingerprint
                 or not photo_active(db, photo)
             ):
                 if row and row.claim_token == claim:
