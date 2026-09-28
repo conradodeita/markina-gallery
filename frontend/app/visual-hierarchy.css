@@ -9,7 +9,6 @@
 .admin-frame .eyebrow { color:var(--mk-brand); }
 .admin-card,.mk-card,.gallery-editor-panel { border-color:var(--mk-border); box-shadow:0 4px 18px rgb(48 40 20 / 6%); }
 .admin-card > h2,.gallery-editor-panel > .section-heading { border-bottom:1px solid var(--mk-border); padding-bottom:14px; }
-.dashboard-context { background:var(--mk-brand-soft); border-color:var(--mk-border); }
 .mk-metric { background:linear-gradient(135deg,var(--mk-surface),var(--mk-info-soft)); }
 .mk-metric::before { background:var(--mk-info); }
 .mk-metric--success { background:linear-gradient(135deg,var(--mk-surface),var(--mk-surface-subtle)); }

@@ -20,4 +20,4 @@ O sistema SHALL apresentar ao fotógrafo pendências e ações prioritárias, e 
 #### Scenario: Fotógrafo abre o painel
 
 - **WHEN** o fotógrafo autenticado abre a área administrativa
-- **THEN** ele encontra contexto, pendências e atalhos operacionais sem precisar navegar por telas técnicas
+- **THEN** ele encontra pendências e atalhos operacionais sem rótulos técnicos de ambiente/versão ou mensagens de orientação de teste no dashboard

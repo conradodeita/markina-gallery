@@ -12,8 +12,6 @@ import {
 } from "../ui-kit";
 
 type Summary = {
-  environment: string;
-  version: string;
   storage: {
     photo_count: number;
     bytes: number | null;
@@ -92,18 +90,6 @@ export default function AdminPage() {
           </>
         }
       />
-      <section className="dashboard-context" aria-label="Contexto do ambiente">
-        <div>
-          <span>Ambiente de trabalho</span>
-          <strong>{summary.environment}</strong>
-          <small>versão {summary.version}</small>
-        </div>
-        <p>
-          {processing
-            ? `${processing} importação(ões) em processamento. Confira as pastas antes de liberar.`
-            : "Nenhuma importação em andamento. Você pode revisar e liberar as pastas prontas."}
-        </p>
-      </section>
       <section className="dashboard-metrics">
         <MetricCard
           label="Galerias públicas"

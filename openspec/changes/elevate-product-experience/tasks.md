@@ -11,3 +11,4 @@
 ## 3. Qualidade
 
 - [x] 3.1 Executar testes, lint, typecheck, build e validação OpenSpec estrita. (`npm test`: 11 arquivos/33 testes; `tsc --noEmit`; `npm run lint` sem erros, 16 avisos preexistentes; `npm run build`; `openspec validate --strict --all --no-interactive`: 20 aprovados em 2026-08-28)
+- [ ] 3.2 Remover do dashboard o cartão de ambiente/versão e a mensagem sobre importações, retirar os estilos que ficarem sem uso e conferir por inspeção que os demais indicadores e atalhos permanecem. Evidência: validação pelo CI do PR.
