@@ -47,6 +47,7 @@ def gallery_index_status(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    folder_id: UUID | None = None,
     page: int = 1,
     page_size: int = 50,
     processing_enabled: bool = False,
@@ -67,6 +68,7 @@ def gallery_index_status(
                 PhotoAsset.derived_gallery_id.is_(None),
                 PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
+                PhotoAsset.folder_id == folder_id if folder_id else True,
             )
             .order_by(PhotoAsset.id)
         )
@@ -91,6 +93,7 @@ def gallery_index_status(
                 PhotoAsset.parent_gallery_id == parent_gallery_id,
                 PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.available.is_(True),
+                PhotoAsset.folder_id == folder_id if folder_id else True,
             )
             .order_by(PhotoAsset.id)
         )
@@ -155,6 +158,7 @@ def gallery_index_status(
                     PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
                     PhotoFaceEmbedding.model_version == policy.model_version,
                     PhotoFaceEmbedding.quality_version == policy.quality_version,
+                    PhotoFaceEmbedding.photo_asset_id.in_(photo_ids) if folder_id else True,
                 )
             )
             or 0
@@ -165,6 +169,7 @@ def gallery_index_status(
                     PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
                     PhotoFaceEmbedding.model_version == policy.model_version,
                     PhotoFaceEmbedding.quality_version == policy.quality_version,
+                    PhotoFaceEmbedding.photo_asset_id.in_(photo_ids) if folder_id else True,
                 )
             )
             or 0
@@ -210,6 +215,11 @@ def retry_failed_index_jobs(
         raise FacialStatusError("Job facial não encontrado nesta galeria.")
     changed = 0
     for job in jobs:
+        from app.folder_processing import facial_processing_allowed
+
+        photo = db.get(PhotoAsset, job.photo_asset_id) if job.photo_asset_id else None
+        if photo and not facial_processing_allowed(db, photo.folder_id):
+            continue
         if job.status != "failed":
             continue
         if not _prepare_highres_retry(db, job):
@@ -230,6 +240,8 @@ def retry_all_failed_index_jobs(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    folder_id: UUID | None = None,
+    photo_ids: set[UUID] | None = None,
 ) -> int:
     """Recoloca todas as falhas atuais da galeria na fila, sem criar arquivos/jobs."""
 
@@ -241,7 +253,7 @@ def retry_all_failed_index_jobs(
     if policy is None:
         return 0
     latest: dict[UUID, FacialJob] = {}
-    for job in db.scalars(
+    query = (
         select(FacialJob)
         .where(
             FacialJob.parent_gallery_id == parent_gallery_id,
@@ -251,11 +263,21 @@ def retry_all_failed_index_jobs(
         )
         .order_by(FacialJob.created_at, FacialJob.id)
         .with_for_update()
-    ):
+    )
+    if photo_ids is not None:
+        query = query.where(FacialJob.photo_asset_id.in_(photo_ids))
+    for job in db.scalars(query):
         if job.photo_asset_id is not None:
             latest[job.photo_asset_id] = job
     changed = 0
     for job in latest.values():
+        from app.folder_processing import facial_processing_allowed
+
+        photo = db.get(PhotoAsset, job.photo_asset_id) if job.photo_asset_id else None
+        if folder_id is not None and (not photo or photo.folder_id != folder_id):
+            continue
+        if photo and not facial_processing_allowed(db, photo.folder_id):
+            continue
         if job.status != "failed":
             continue
         if not _prepare_highres_retry(db, job):

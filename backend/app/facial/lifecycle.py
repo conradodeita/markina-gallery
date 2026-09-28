@@ -14,7 +14,16 @@ from uuid import uuid4
 from PIL import Image, ImageOps
 from sqlalchemy import func, select, text
 
-from app.auth import FacialJob, MediaDerivative, MediaJob, PhotoAnalysis, PhotoAsset, expired, now
+from app.auth import (
+    FacialJob,
+    MediaDerivative,
+    MediaJob,
+    PhotoAnalysis,
+    PhotoAsset,
+    PhotoFolder,
+    expired,
+    now,
+)
 from app.facial.config import _boolean, _integer, facial_settings_from_environment
 from app.facial.jobs import FacialJobRepository
 from app.facial.policy import ensure_automatic_policy
@@ -37,6 +46,13 @@ def analysis_for(db, photo_id, *, lock=False):
 def admit_source(db, photo, payload: bytes, *, settings=None, reindex=False):
     """Chamado antes da escrita. Serializa quota global e bloqueia substituição ativa."""
     existing = analysis_for(db, photo.id, lock=True)
+    from app.folder_processing import facial_processing_allowed
+
+    if not facial_processing_allowed(db, photo.folder_id):
+        if reindex:
+            raise SourceCapacityError("Novos trabalhos faciais estão pausados nesta pasta.")
+        if not existing:
+            return None
     if not existing and not _boolean("FACIAL_HIGHRES_ENABLED"):
         return None
     if not existing and db.scalar(select(MediaJob.id).where(MediaJob.photo_asset_id == photo.id)):
@@ -206,9 +222,9 @@ def media_can_proceed(db, photo_id):
 
 def cleanup_source(db, photo_id):
     """Lock compartilhado com leitores da fonte. TTL não interrompe um lease ativo."""
+    from app.folder_processing import effective_preview
     from app.media import safe_derivative_path, safe_source_path
     from app.preview_adjustment.service import adjusted_path
-    from app.preview_adjustment.service import settings as preview_settings
 
     row = analysis_for(db, photo_id, lock=True)
     if not row or row.deleted_at:
@@ -247,7 +263,8 @@ def cleanup_source(db, photo_id):
                 return False
             with Image.open(path) as image:
                 image.load()
-        config = preview_settings(db, photo.parent_gallery_id)
+        folder = db.get(PhotoFolder, photo.folder_id)
+        config = effective_preview(db, folder) if folder else None
         if config and config.enabled and not adjusted_path(db, photo_id):
             return False
     if is_expired and (

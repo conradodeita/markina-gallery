@@ -325,6 +325,41 @@ def test_adjustment_must_complete_before_cleanup_and_never_reindexes(scene):
     assert len(list(db.scalars(select(FacialJob)))) == 1
 
 
+def test_folder_override_holds_source_until_its_adjustment_completes(scene):
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.folder_processing import configure_folder
+    from app.preview_adjustment.service import process_one
+
+    db, _parent, photo, settings, tmp = scene
+    _, path = prepare(scene)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    replace_photo_index(db, photo_id=photo.id, derivatives_root=tmp,
+                        provider=HighresProvider(), cipher=cipher, settings=settings)
+    configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="inherit",
+                     strength=50, exposure_tenths=5)
+    db.commit()
+    generate_derivatives(db, photo)
+    assert path.exists() and not cleanup_source(db, photo.id)
+    db.commit()
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
+    assert cleanup_source(db, photo.id)
+    assert not path.exists()
+
+
+def test_folder_facial_pause_refuses_new_highres_admission(scene):
+    from app.folder_processing import configure_folder
+
+    db, _parent, photo, settings, _tmp = scene
+    configure_folder(db, photo.folder_id, preview_mode="inherit", facial_mode="off",
+                     strength=50, exposure_tenths=0)
+    db.commit()
+    assert admit_source(db, photo, jpeg(), settings=settings) is None
+    assert db.get(PhotoAnalysis, photo.id) is None
+
+
 def test_maintenance_preserves_index_between_analysis_and_media(scene):
     from app.facial.purge import purge_photo_records, reconcile_invalid_facial_records
     from app.media import enqueue_derivatives

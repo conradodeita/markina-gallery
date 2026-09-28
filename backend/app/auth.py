@@ -1725,6 +1725,28 @@ class GalleryPreviewSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class FolderProcessingSettings(Base):
+    """Override opcional: ausência de linha significa herança integral da galeria."""
+
+    __tablename__ = "folder_processing_settings"
+    __table_args__ = (
+        CheckConstraint("preview_mode IN ('inherit', 'custom', 'off')"),
+        CheckConstraint("facial_mode IN ('inherit', 'on', 'off')"),
+        CheckConstraint("preview_strength BETWEEN 10 AND 75"),
+        CheckConstraint("preview_exposure_tenths BETWEEN -20 AND 20"),
+        CheckConstraint("revision >= 1"),
+    )
+    folder_id: Mapped[UUID] = mapped_column(
+        ForeignKey("photo_folder.id", ondelete="CASCADE"), primary_key=True
+    )
+    preview_mode: Mapped[str] = mapped_column(String(16), default="inherit", server_default="inherit")
+    facial_mode: Mapped[str] = mapped_column(String(16), default="inherit", server_default="inherit")
+    preview_strength: Mapped[int] = mapped_column(Integer, default=50, server_default="50")
+    preview_exposure_tenths: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class PreviewAdjustment(Base):
     """Fila e resultado substituíveis, sem alterar derivados convencionais."""
 
