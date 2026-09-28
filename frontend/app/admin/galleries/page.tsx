@@ -47,7 +47,7 @@ export default function GalleriesPage() {
         </Link>
       </div>
       <label className="gallery-search">
-        Buscar por galeria, nome ou telefone
+        Buscar galeria por nome, evento, cliente ou telefone
         <input value={query} onChange={(event) => setQuery(event.target.value)} />
       </label>
       {loading ? <p className="form-message" role="status">Carregando galerias…</p> : null}

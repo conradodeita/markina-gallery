@@ -46,7 +46,8 @@ const commercialStatus = {
   no_order: { label: "Sem pedido", tone: "neutral" },
 } as const;
 
-type CollectionFolder = { id: string; name: string; status: string; photo_count: number; assigned_client_ids: string[] };
+type CollectionFolder = { id: string; name: string; status: string; photo_count: number;
+  preview_url?: string | null; assigned_client_ids: string[] };
 type CollectionPhoto = { id: string; name: string; preview_url: string | null; publication_state: string; can_delete: boolean };
 type UploadState = { phase: "preparing" | "uploading" | "waiting" | "success" | "error";
   current: number; total: number; completed: number; filename: string;
@@ -275,13 +276,23 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
       {person.purchased_count > 0 ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${parentGalleryId}/clients/${person.client_id}/selection/export.html`}>Baixar fotos compradas</a> : null}
       {person.reopening_status === "pending" ? <p className="gallery-client-pending">A cliente solicitou reabertura. Decida em Vendas e pagamentos.</p> : null}
       {message ? <p className="form-message" role="status">{message}</p> : null}
+      <h3>Pastas restritas ao cliente</h3>
       <form className="gallery-inline-form" onSubmit={(event) => { void createFolder(event); }}>
         <label>Nova pasta restrita<input name="name" maxLength={200} required /></label>
         <button type="submit" className="primary" disabled={busy}>Criar pasta</button>
       </form>
-      {folders.map((folder) => <section key={folder.id} className="client-collection-folder">
-        <button type="button" aria-expanded={activeFolder === folder.id} disabled={busy} onClick={() => { void openFolder(folder.id); }}>
-          {folder.name} · {folder.photo_count} foto(s) · {folder.status === "released" ? "Disponível" : "Preparando"}
+      <div className="client-collection-folder-list">{folders.map((folder) => <section key={folder.id}
+        className={`client-collection-folder${activeFolder === folder.id ? " is-open" : ""}`}>
+        <button type="button" aria-label={`${activeFolder === folder.id ? "Recolher" : "Abrir"} pasta ${folder.name}`}
+          aria-expanded={activeFolder === folder.id} disabled={busy} onClick={() => { void openFolder(folder.id); }}>
+          <span className="client-collection-folder__preview"><b>Sem prévia</b>
+            {folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" loading="lazy" decoding="async"
+              onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+          </span>
+          <span className="client-collection-folder__label"><strong>{folder.name}</strong>
+            <small>{folder.photo_count} foto(s) · {folder.status === "released" ? "Disponível" : "Preparando"}</small>
+          </span>
+          <span className="client-collection-folder__chevron" aria-hidden="true">{activeFolder === folder.id ? "▲" : "▼"}</span>
         </button>
         {activeFolder === folder.id ? <div>
           <FolderProcessingPanel key={folder.id} folderId={folder.id} folderName={folder.name} shared={folder.assigned_client_ids.length > 1} embedded />
@@ -320,7 +331,7 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
               onClick={() => { void uploadPhotos(retryFiles); }}>Tentar novamente {retryFiles.length} foto(s)</button> : null}
           </div> : null}
         </div> : null}
-      </section>)}
+      </section>)}</div>
       {expandedPhoto ? <AdminPhotoPreviewDialog preview={expandedPhoto} onClose={() => setExpandedPhoto(null)} /> : null}
       <FinancialOrderShortcuts orders={person.financial_orders} clientName={person.name} onRefresh={onRefresh} />
     </div> : null}
