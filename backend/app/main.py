@@ -3851,6 +3851,13 @@ def grant_restricted_folder_client(
         FolderClientGrant.client_id == client_id,
     ))
     if not existing:
+        if db.scalar(select(FolderClientGrant.id).where(
+            FolderClientGrant.folder_id == folder_id
+        ).limit(1)):
+            raise HTTPException(
+                status_code=409,
+                detail="Esta pasta restrita já pertence a outra cliente.",
+            )
         state = db.scalar(select(GalleryClientState).where(
             GalleryClientState.parent_gallery_id == parent_gallery_id,
             GalleryClientState.client_id == client_id,

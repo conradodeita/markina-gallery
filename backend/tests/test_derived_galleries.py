@@ -861,21 +861,15 @@ def test_client_selection_uses_canonical_gallery_without_derivation(client: Test
     shared = client.post(
         f"/admin/parent-galleries/{parent_id}/folders/{restricted_id}/clients/{second_id}"
     )
-    assert shared.status_code == 201, shared.text
+    assert shared.status_code == 409, shared.text
+    assert client.post(
+        f"/admin/parent-galleries/{parent_id}/folders/{restricted_id}/clients/{client_id}"
+    ).status_code == 201
     client.cookies.clear()
     authenticate_client(client, "+5511888888877")
     visible = client.get(f"/public-galleries/{parent_id}/photos")
     assert visible.status_code == 200
-    assert restricted_photo_id in {UUID(photo["id"]) for photo in visible.json()["photos"]}
-    client.cookies.clear()
-    authenticate_admin(client)
-    assert client.delete(
-        f"/admin/parent-galleries/{parent_id}/folders/{restricted_id}/clients/{second_id}"
-    ).status_code == 204
-    client.cookies.clear()
-    authenticate_client(client, "+5511888888877")
-    hidden = client.get(f"/public-galleries/{parent_id}/photos")
-    assert restricted_photo_id not in {UUID(photo["id"]) for photo in hidden.json()["photos"]}
+    assert restricted_photo_id not in {UUID(photo["id"]) for photo in visible.json()["photos"]}
 
 
 def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
@@ -4900,9 +4894,28 @@ def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
     )
     assert folder_response.status_code == 201, folder_response.text
     folder_id = UUID(folder_response.json()["id"])
+    with SessionLocal() as db:
+        db.add(GalleryClientState(
+            parent_gallery_id=parent_id, client_id=recipients[1][0], status="active",
+        ))
+        db.flush()
+        db.add(FolderClientGrant(
+            folder_id=folder_id, parent_gallery_id=parent_id,
+            client_id=recipients[1][0],
+        ))
+        db.commit()
     assert client.post(
         f"/admin/parent-galleries/{parent_id}/folders/{folder_id}/clients/{recipients[1][0]}"
     ).status_code == 201
+    third_id = UUID(client.post(
+        "/admin/clients", json={"full_name": "Terceira Cliente", "phone_e164": "+5511999955003"}
+    ).json()["id"])
+    assert client.put(
+        f"/admin/parent-galleries/{parent_id}/clients/{third_id}"
+    ).status_code == 200
+    assert client.post(
+        f"/admin/parent-galleries/{parent_id}/folders/{folder_id}/clients/{third_id}"
+    ).status_code == 409
     photo_response = client.post(
         f"/admin/photo-folders/{folder_id}/photos",
         json={"filename": "retrato.jpg", "storage_key": "synthetic/retrato.jpg"},

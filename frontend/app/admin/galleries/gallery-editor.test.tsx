@@ -507,14 +507,20 @@ describe("editor administrativo de galeria", () => {
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/derived-galleries"))).toBe(false);
   });
 
-  it("atribui a mesma pasta restrita a outra cliente e disponibiliza fotos prontas", async () => {
+  it("mantém a pasta exclusiva e disponibiliza fotos prontas", async () => {
     const linkedClients = ["Ana", "Beatriz"].map((name, index) => ({ client_id: `client-${index + 1}`, name, phone: `+551199999999${index}`, registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" }));
-    let shared = false;
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [{ id: "folder-1", name: "Retratos", status: "preparing", photo_count: 1, assigned_client_ids: shared ? ["client-1", "client-2"] : ["client-1"] }] });
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [{ id: "folder-1", name: "Retratos", status: "preparing", photo_count: 1, assigned_client_ids: ["client-1"] }] });
       if (path.endsWith("/clients/client-2/folders")) return response({ folders: [] });
-      if (path.endsWith("/folders/folder-1/clients/client-2") && init?.method === "POST") { shared = true; return response({ id: "grant-1" }, 201); }
+      if (path.endsWith("/photo-folders/folder-1/processing")) return response({
+        folder_id: "folder-1", folder_name: "Retratos", preview_mode: "inherit", facial_mode: "inherit",
+        preview_strength: 50, preview_exposure_tenths: 0,
+        effective_preview: { mode: "inherit", enabled: false, strength: 50, exposure_tenths: 0 },
+        facial_available: false, facial_allowed: false, total_photos: 0,
+        preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
+        facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
+      });
       if (path.endsWith("/photo-folders/folder-1/photos")) return response({ photos: [] });
       if (path.endsWith("/photo-folders/folder-1/publish") && init?.method === "POST") return response({ published_count: 1, pending_count: 0, failed_count: 0 });
       if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: linkedClients });
@@ -526,12 +532,9 @@ describe("editor administrativo de galeria", () => {
     const card = await screen.findByRole("article", { name: "Cliente Ana" });
     fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
     fireEvent.click(await within(card).findByRole("button", { name: /Retratos/ }));
-    fireEvent.change(await within(card).findByLabelText("Adicionar cliente"), { target: { value: "client-2" } });
-    fireEvent.click(within(card).getByRole("button", { name: "Adicionar à pasta" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/source-1/folders/folder-1/clients/client-2",
-      expect.objectContaining({ method: "POST" }),
-    ));
+    expect(within(card).queryByLabelText("Adicionar cliente")).toBeNull();
+    expect(await within(card).findByRole("button", { name: "Salvar configuração" })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([path, init]) => String(path).includes("/folders/folder-1/clients/") && init?.method === "POST")).toBe(false);
     fireEvent.click(within(card).getByRole("button", { name: "Disponibilizar fotos prontas" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/photo-folders/folder-1/publish",
