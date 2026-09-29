@@ -23,3 +23,18 @@ Execute estas ações somente após inventário aprovado de containers, portas, 
 ## Recuperação
 
 Para recuperar uma falha com schema comprovadamente inalterado, reexecute o workflow com o SHA saudável por procedimento aprovado. Se qualquer migration tiver sido iniciada e não houver comprovação de revisão idêntica, interrompa e avalie compatibilidade e restauração de banco com aprovação humana explícita. Nunca use `git reset --hard`, `git checkout -- .`, `git clean`, `docker compose down` sem escopo nem restore automático de banco.
+
+### Retomada dos serviços sem deploy ou migration
+
+Use este procedimento somente para iniciar os contêineres existentes depois de uma parada controlada, quando o checkout, as imagens e o schema já correspondem à última versão saudável. Ele não faz deploy, rebuild, recriação, limpeza nem alteração de banco. A migration é uma etapa separada do workflow de deploy.
+
+No host, com a autorização operacional aplicável e após conferir que a execução continua restrita à Markina:
+
+```bash
+cd /opt/markina-gallery
+bash scripts/resume-homolog.sh --public-base-url https://markina-homolog.duckdns.org
+```
+
+O script verifica que está no diretório da Markina, que PostgreSQL e Redis exclusivos estão saudáveis, e que a revisão Alembic do banco é o único head presente no checkout. Só então inicia os contêineres da aplicação que já existem usando `docker compose up -d --no-deps --no-recreate`; isso evita seguir a dependência `migrate` antiga. Espera healthchecks de todos os serviços selecionados e HTTP 200 em `/healthz` e `/api/health`, local e publicamente.
+
+Se preflight, revisão ou healthcheck falhar, não use `docker compose start`, não rode Alembic e não tente limpar/remover o contêiner `migrate`. Preserve o estado para diagnóstico e siga o fluxo de deploy/recuperação aprovado. O script não inclui PostgreSQL, Redis, Evolution, Proxy Manager nem serviços vizinhos na lista de start.
