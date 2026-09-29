@@ -4847,6 +4847,10 @@ def test_canonical_folder_audience_filters_list_preview_and_selection(
         common_folder_id = folders[0].id
         restricted_folder_id = folders[1].id
         common_id, restricted_id, preparing_id = (photo.id for photo in photos)
+    client.cookies.clear()
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{common_id}/preview"
+    ).status_code == 403
     for phone, expected_ids in (
         ("+5511555592011", {common_id, restricted_id}),
         ("+5511555592012", {common_id, restricted_id}),
@@ -4903,6 +4907,9 @@ def test_canonical_folder_audience_filters_list_preview_and_selection(
     assert client.post(
         f"/public-galleries/{parent_id}/photos/{restricted_id}/selection"
     ).status_code == 201
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/preview"
+    ).status_code == 200
     assert client.post(
         f"/public-galleries/{parent_id}/photos/{restricted_id}/favorite"
     ).status_code == 201
@@ -4922,6 +4929,11 @@ def test_canonical_folder_audience_filters_list_preview_and_selection(
     ).json()["photos"] if item["id"] == str(restricted_id))
     assert ana_photo["selected"] is True
     assert ana_photo["favorited"] is True
+    client.cookies.clear()
+    authenticate_client(client, "+5511555592013")
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{restricted_id}/preview"
+    ).status_code == 404
     with SessionLocal() as db:
         bia_state = db.scalar(select(GalleryClientState).where(
             GalleryClientState.parent_gallery_id == parent_id,

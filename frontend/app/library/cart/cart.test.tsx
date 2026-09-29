@@ -30,6 +30,17 @@ it("mostra mensagem comercial e finaliza sem preços nem preparar PIX", async ()
   expect(screen.queryByText(/R\$/)).toBeNull();
 });
 
+it("mostra a prévia protegida de uma foto canônica na revisão", async () => {
+  const canonical = { ...group("canonical"), payment_required: false, total_cents: null,
+    items: [{ id: "photo-canonical", name: "Ensaio.jpg", folder_name: "Pasta",
+      preview_url: "/public-galleries/gallery-1/photos/photo-1/preview" }] };
+  vi.stubGlobal("fetch", vi.fn(() => response({ groups: [canonical], quantity: 1,
+    total_cents: null, can_prepare: false })));
+  render(<CartPage />);
+  const preview = await screen.findByRole("img", { name: "Prévia protegida de Ensaio.jpg" });
+  expect(preview.getAttribute("src")).toBe("/api/public-galleries/gallery-1/photos/photo-1/preview");
+});
+
 it("exibe mensagens de cada galeria como texto inerte na revisão paga", async () => {
   const mixed = { ...cart, groups: [{ ...group("1"), message: "<script>teste</script>" },
     { ...group("2"), message: "Mensagem da outra galeria" }] };

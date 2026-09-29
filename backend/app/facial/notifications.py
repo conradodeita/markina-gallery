@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import timedelta
-from ipaddress import ip_address
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import select
@@ -27,6 +24,7 @@ from app.messaging import (
     WhatsAppDeliveryError,
     WhatsAppProvider,
 )
+from app.public_origin import PublicOriginError, public_app_origin
 from app.whatsapp_channel import require_ready_channel
 
 
@@ -259,39 +257,10 @@ def _notification_message(
 
 
 def notification_public_origin(environment: str) -> str:
-    # A mesma origem que o deploy configura para links sensíveis tem precedência.
-    origin = os.getenv("PUBLIC_APP_ORIGIN", "").strip() or os.getenv("MARKINA_PUBLIC_URL", "").strip()
-    error = "URL pública da aplicação indisponível ou inválida para este ambiente."
     try:
-        parsed = urlsplit(origin)
-        hostname = (parsed.hostname or "").lower().rstrip(".")
-        port = parsed.port
-    except ValueError as exc:
-        raise WhatsAppConfigurationError(error) from exc
-    if (
-        not hostname
-        or parsed.scheme not in {"http", "https"}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query or parsed.fragment
-        or any(char.isspace() for char in origin)
-        or "\\" in origin or "%" in hostname
-        or (port is not None and not 1 <= port <= 65535)
-    ):
-        raise WhatsAppConfigurationError(error)
-    if environment.strip().lower() not in {"development", "test", "local"}:
-        try:
-            public_host = ip_address(hostname).is_global
-        except ValueError:
-            public_host = (
-                "." in hostname
-                and not hostname.endswith((".localhost", ".local", ".internal"))
-                and not all(part.isdigit() for part in hostname.split("."))
-            )
-        if parsed.scheme != "https" or not public_host:
-            raise WhatsAppConfigurationError(error)
-    return origin.rstrip("/")
+        return public_app_origin(environment)
+    except PublicOriginError as exc:
+        raise WhatsAppConfigurationError(str(exc)) from exc
 
 
 def _notification_scope(

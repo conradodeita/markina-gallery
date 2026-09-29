@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 
-/** Only the client's protected operational/historical routes are accepted. */
+/** Only the client's protected gallery and historical routes are accepted. */
 export function purchasePreviewUrl(path: string | null): string | null {
   if (!path) return null;
   const local = path.startsWith("/api/") ? path.slice(4) : path;
-  if (!/^\/(?:library\/history\/items\/[\w-]+|gallery\/[\w-]+\/photos\/[\w-]+)\/preview$/.test(local)) return null;
+  if (!/^\/(?:library\/history\/items\/[\w-]+|gallery\/[\w-]+\/photos\/[\w-]+|public-galleries\/[\w-]+\/photos\/[\w-]+)\/preview$/.test(local)) return null;
   return `/api${local}`;
 }
 
