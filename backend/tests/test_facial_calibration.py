@@ -1,5 +1,4 @@
 """Gate humano de calibração/equidade antes de produção."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,6 +26,7 @@ from app.facial.rollout import (
     prepare_rollout,
     rollout_is_active,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _settings(*, threshold: int = 750) -> FacialSettings:
@@ -66,13 +66,13 @@ def test_production_rollout_requires_matching_human_calibration_approval() -> No
     Base.metadata.create_all(engine)
     settings = _settings()
     with Session(engine) as db:
-        gallery = ParentGallery(id=uuid4(), name="Evento produção")
-        admin = AdminUser(
+        gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento produção")
+        admin = fixture_admin(AdminUser(
             id=uuid4(),
             email="calibration@example.test",
             password_hash="unused",
             totp_secret="unused",
-        )
+        ))
         db.add_all((gallery, admin))
         db.commit()
         prepare_rollout(

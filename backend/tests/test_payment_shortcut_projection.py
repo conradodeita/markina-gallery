@@ -22,6 +22,7 @@ from app.auth import (
 )
 from app.commercial_projection import build_commercial_projections
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_derived_galleries import (  # noqa: F401
     authenticate_admin,
     clean_database,
@@ -39,14 +40,14 @@ def client():
 def test_shortcuts_keep_all_pending_orders_first_and_isolate_client_and_gallery(client):
     authenticate_admin(client)
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento")
-        other_parent = ParentGallery(name="Outro evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
+        other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outro evento")
         owner = Client(full_name="Ana", phone_e164="+5511999912345")
         other = Client(full_name="Bia", phone_e164="+5511999912346")
         db.add_all([parent, other_parent, owner, other]); db.flush()
         deadline = now() + timedelta(days=3)
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=owner.id, name="Privada Ana", selection_expires_at=deadline)
-        other_gallery = DerivedGallery(parent_gallery_id=other_parent.id, client_id=owner.id, name="Outro evento")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name="Privada Ana", selection_expires_at=deadline)
+        other_gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=other_parent.id, client_id=owner.id, name="Outro evento")
         db.add_all([gallery, other_gallery]); db.flush()
         db.add(DerivedGalleryMembership(parent_gallery_id=parent.id, derived_gallery_id=gallery.id, client_id=owner.id, status="active"))
 
@@ -116,14 +117,14 @@ def test_shortcuts_keep_all_pending_orders_first_and_isolate_client_and_gallery(
 def test_effective_deadlines_are_individual_nullable_and_read_only(client):
     authenticate_admin(client)
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento com prazos", selection_duration_days=14)
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento com prazos", selection_duration_days=14)
         db.add(parent); db.flush()
         dates = [now() + timedelta(days=3), now() - timedelta(days=1), None]
         ids = []
         for index, deadline in enumerate(dates):
             owner = Client(full_name=f"Pessoa {index}", phone_e164=f"+551188881234{index}")
             db.add(owner); db.flush()
-            gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=owner.id, name=f"Privada {index}", selection_expires_at=deadline)
+            gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name=f"Privada {index}", selection_expires_at=deadline)
             db.add(gallery); db.flush()
             db.add_all([
                 DerivedGalleryMembership(parent_gallery_id=parent.id, derived_gallery_id=gallery.id, client_id=owner.id, status="active"),

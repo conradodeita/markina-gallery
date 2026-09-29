@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 from tests.test_gallery_client_audience_migration import _alembic
 
 
@@ -23,7 +24,7 @@ def test_optional_payment_upgrade(tmp_path, kind):
             "VALUES (:id, 'Legado', true, CURRENT_TIMESTAMP)"
         ), {"id": gallery_id})
     engine.dispose()
-    _alembic(url, "upgrade", "head")
+    _alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     engine = create_engine(url)
     with engine.connect() as connection:
         assert bool(connection.execute(text(

@@ -1,5 +1,4 @@
 """Idempotência, prioridade e retomada da fila facial durável."""
-
 from datetime import timedelta
 from uuid import uuid4
 
@@ -14,6 +13,7 @@ from app.facial.jobs import (
     FacialJobError,
     FacialJobRepository,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def db() -> Session:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     session = Session(engine)
-    session.add(ParentGallery(id=uuid4(), name="Evento sintético"))
+    session.add(ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético"))
     session.commit()
     try:
         yield session

@@ -94,6 +94,9 @@ def process_next_search_notification(
     settings: FacialSettings,
     max_attempts: int = 3,
 ) -> bool:
+    from app.tenancy import enable_domain_guard, require_single_tenant
+
+    enable_domain_guard(db)
     current = now()
     recovered_interrupted = False
     for interrupted in db.scalars(
@@ -160,6 +163,7 @@ def process_next_search_notification(
             settings=settings,
         )
         require_ready_channel(db, provider)
+        require_single_tenant(db)
         result = provider.send_transactional(
             client.phone_e164,
             message,

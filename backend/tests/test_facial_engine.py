@@ -1,5 +1,4 @@
 """Substituição atômica e busca vetorizada isolada por galeria."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +21,7 @@ from app.facial.engine import replace_photo_index, search_gallery_index
 from app.facial.jobs import FacialJobRepository
 from app.facial.provider import FaceObservation, normalize_embedding
 from app.facial.worker import process_claimed_index_job
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _vector(first: float, second: float = 0.0) -> tuple[float, ...]:
@@ -89,7 +89,7 @@ def _settings(tmp_path: Path) -> FacialSettings:
 
 
 def _gallery(db: Session, root: Path, *, photos: int):
-    parent = ParentGallery(id=uuid4(), name="Evento sintético")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético")
     folder = PhotoFolder(
         id=uuid4(),
         parent_gallery_id=parent.id,
@@ -125,6 +125,7 @@ def _gallery(db: Session, root: Path, *, photos: int):
     created = []
     for index in range(photos):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=parent.id,
             folder_id=folder.id,

@@ -16,6 +16,8 @@ from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(database_url: str, *arguments: str) -> None:
     backend = Path(__file__).resolve().parents[1]
@@ -872,7 +874,7 @@ def test_parent_gallery_cover_migration_is_reversible(tmp_path: Path):
             text("INSERT INTO parent_gallery (id, name, active, created_at) VALUES (:id, :name, :active, :created_at)"),
             {"id": parent_id.hex, "name": "Evento legado", "active": True, "created_at": datetime.now(UTC)},
         )
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as connection:
         columns = {row[1] for row in connection.execute(text("PRAGMA table_info(parent_gallery)"))}
         assert connection.execute(

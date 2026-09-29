@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import (
+    AdminUser,
     AuthSession,
     Base,
     Role,
@@ -41,6 +42,7 @@ from app.whatsapp_delivery import (
     transition_status,
 )
 from app.worker import process_next_whatsapp_delivery
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -205,7 +207,7 @@ def test_whatsapp_transport_migration_upgrades_and_downgrades(tmp_path: Path) ->
                 "instant": instant,
             },
         )
-    _alembic(database_url, "upgrade", "head")
+    _alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with migration_engine.connect() as connection:
         assert connection.scalar(
             text("SELECT COUNT(*) FROM payment_notification_outbox WHERE id = :id"),
@@ -225,7 +227,7 @@ def test_whatsapp_transport_migration_upgrades_and_downgrades(tmp_path: Path) ->
             row[1] for row in connection.execute(text("PRAGMA table_info(auth_challenge)"))
         }
         assert "client_name" not in columns
-    _alembic(database_url, "upgrade", "head")
+    _alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
 
 
 def test_otp_request_queues_encrypted_delivery_without_network(monkeypatch) -> None:
@@ -347,11 +349,15 @@ def test_worker_expires_otp_without_calling_provider(monkeypatch) -> None:
 def authenticated_admin_client() -> TestClient:
     raw_token = "synthetic-admin-session"
     with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(email="channel@example.test", password_hash="synthetic",
+                                        totp_secret="synthetic"))
+        db.add(admin)
+        db.flush()
         db.add(
             AuthSession(
                 token_hash=token_hash(raw_token),
                 role=Role.ADMIN.value,
-                subject_id=uuid4(),
+                subject_id=admin.id,
                 expires_at=now() + timedelta(hours=1),
             )
         )

@@ -30,6 +30,9 @@ def process_claimed_cleanup_job(
     reference_store: FacialReferenceStore | None = None,
     instant: datetime | None = None,
 ) -> FacialJob:
+    from app.tenancy import enable_domain_guard
+
+    enable_domain_guard(db)
     job = db.get(FacialJob, claim.id)
     if job is None or job.kind != "cleanup" or job.search_request_id is None:
         raise FacialJobError("Job facial não pode ser executado.")

@@ -45,6 +45,7 @@ from app.homolog_cleanup import (
     execute,
     inventory,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +91,7 @@ def test_inventory_counts_folder_settings_as_operational_without_exposing_values
     synthetic = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(synthetic)
     with Session(synthetic) as db:
-        gallery = ParentGallery(name="Galeria sintética")
+        gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria sintética")
         db.add(gallery)
         db.flush()
         folder = PhotoFolder(parent_gallery_id=gallery.id, name="Pasta sintética")
@@ -181,14 +182,14 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         monkeypatch.setenv(name, str(root))
     expires_at = datetime.now(UTC) + timedelta(hours=1)
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="admin@example.test",
             password_hash="stored-hash",
             email_verified=True,
             totp_secret="TOTP-FACTOR",
-        )
+        ))
         client = Client(full_name="Cliente teste", phone_e164="+5511999999999")
-        parent = ParentGallery(name="Galeria teste")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria teste")
         db.add_all((admin, client, parent))
         db.flush()
         admin_session = AuthSession(
@@ -253,6 +254,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         )
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Pasta teste")
         derived = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             client_id=client.id,
             name="Privada teste",
@@ -262,6 +264,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         db.add(FolderProcessingSettings(folder_id=folder.id, preview_mode="custom",
                                         preview_exposure_tenths=5))
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="test.jpg",

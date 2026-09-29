@@ -26,7 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 
 from app.admin_account import (
     AdminAccountError,
@@ -356,6 +357,13 @@ from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
 from app.storage_metrics import measure_photo_storage
+from app.tenancy import (
+    TenantContextError,
+    domain_session,
+    require_admin_tenant,
+    require_parent_tenant,
+    require_single_tenant,
+)
 from app.unified_checkout import (
     cart_payload,
     communication_join,
@@ -378,6 +386,23 @@ from app.whatsapp_channel import (
 from app.whatsapp_webhook import process_whatsapp_webhook
 
 app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
+
+
+@app.middleware("http")
+async def require_operational_tenant(request: Request, call_next):
+    if request.url.path != "/health":
+        def check_context():
+            with SessionLocal() as db:
+                require_single_tenant(db)
+
+        try:
+            await run_in_threadpool(check_context)
+        except TenantContextError:
+            return JSONResponse(status_code=503, content={"detail": "Serviço indisponível."})
+    try:
+        return await call_next(request)
+    except TenantContextError:
+        return JSONResponse(status_code=503, content={"detail": "Serviço indisponível."})
 
 
 @app.on_event("startup")
@@ -837,11 +862,8 @@ class AdminEmailConfirmationInput(BaseModel):
 
 
 def db_session():
-    db = SessionLocal()
-    try:
+    with domain_session(SessionLocal) as db:
         yield db
-    finally:
-        db.close()
 
 
 DatabaseSession = Annotated[Session, Depends(db_session)]
@@ -911,6 +933,7 @@ def require_parent_gallery_mutable(db: Session, parent_gallery_id: UUID) -> Pare
     parent = db.get(ParentGallery, parent_gallery_id)
     if not parent:
         raise HTTPException(status_code=404, detail="Galeria pública não encontrada.")
+    require_parent_tenant(db, parent.id)
     if parent.lifecycle_status != "active":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1025,7 +1048,11 @@ def statistics_data(
     derived_gallery_id: UUID | None,
     event_name: str | None,
 ) -> dict[str, object]:
-    gallery_query = select(DerivedGallery.id).join(ParentGallery)
+    gallery_query = select(DerivedGallery.id).join(
+        ParentGallery,
+        (DerivedGallery.parent_gallery_id == ParentGallery.id)
+        & (DerivedGallery.tenant_id == ParentGallery.tenant_id),
+    )
     if client_id:
         authorized_ids = {
             gallery.id
@@ -3151,6 +3178,7 @@ def register_parent_gallery_cover_photo(
     )
     if not asset:
         asset = PhotoAsset(
+            tenant_id=gallery.tenant_id,
             parent_gallery_id=gallery.id,
             folder_id=folder.id,
             filename=payload.filename,
@@ -4186,6 +4214,7 @@ def register_folder_photo_asset(
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
     if folder.status not in {"preparing", "released"}:
         raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
+    tenant_id = require_parent_tenant(db, folder.parent_gallery_id)
     if folder.derived_gallery_id:
         gallery = require_derived_gallery_mutable(
             db, folder.derived_gallery_id, allow_deleted_origin=True
@@ -4217,6 +4246,7 @@ def register_folder_photo_asset(
             PrivateUploadBatchAsset.photo_asset_id == existing.id))
         return {"id": str(existing.id), "duplicate": "false" if existing_batch == payload.upload_batch_id else "true"}
     asset = PhotoAsset(
+        tenant_id=tenant_id,
         parent_gallery_id=folder.parent_gallery_id,
         derived_gallery_id=folder.derived_gallery_id,
         folder_id=folder.id,
@@ -4379,7 +4409,8 @@ def create_parent_gallery(
     payload: ParentGalleryInput, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     admin_session = current_session(request, Role.ADMIN)
-    gallery = ParentGallery(**payload.model_dump())
+    tenant = require_admin_tenant(db, admin_session.subject_id)
+    gallery = ParentGallery(tenant_id=tenant.id, **payload.model_dump())
     db.add(gallery)
     db.flush()
     capability, token = issue_gallery_capability(

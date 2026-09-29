@@ -1,5 +1,4 @@
 """Consulta por região usa o vetor existente, com gates e snapshot normais."""
-
 import json
 from uuid import uuid4
 
@@ -21,6 +20,7 @@ from app.facial.jobs import FacialJobRepository
 from app.facial.regions import photo_regions
 from app.facial.search import FacialSearchError, create_search_request, read_search_result
 from app.facial.search_worker import process_claimed_search_job
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def setup_region(tmp_path):
@@ -194,7 +194,7 @@ def test_regions_disappear_immediately_when_policy_is_revoked(tmp_path):
 
 def test_region_from_another_authorized_gallery_cannot_cross_scope(tmp_path):
     db, gallery, client, settings, _, region = setup_region(tmp_path)
-    other = ParentGallery(name="Outro evento")
+    other = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outro evento")
     db.add(other)
     db.flush()
     # Mesmo uma região existente é invisível ao escopo consultado.

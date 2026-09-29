@@ -1,5 +1,4 @@
 """Purge facial remove inferências sem apagar mídia ou histórico comercial."""
-
 from datetime import timedelta
 from uuid import uuid4
 
@@ -45,17 +44,18 @@ from app.facial.representation import (
 )
 from app.facial.rollout import revoke_rollout, suspend_rollout
 from app.facial.worker import process_claimed_purge_job
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _fixture(db: Session):
-    parent = ParentGallery(id=uuid4(), name="Evento preservado")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento preservado")
     client = Client(id=uuid4(), full_name="Cliente sintética", phone_e164="+5511999999999")
-    admin = AdminUser(
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin-purge@example.invalid",
         password_hash="synthetic",
         totp_secret="synthetic",
-    )
+    ))
     folder = PhotoFolder(
         id=uuid4(),
         parent_gallery_id=parent.id,
@@ -64,6 +64,7 @@ def _fixture(db: Session):
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=folder.id,
@@ -167,6 +168,7 @@ def _fixture(db: Session):
         approved_by_admin_id=admin.id,
     )
     private_gallery = DerivedGallery(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         client_id=client.id,

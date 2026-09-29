@@ -1,5 +1,4 @@
 """Disponibilidade, consentimento e criação da busca facial da cliente."""
-
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -40,6 +39,7 @@ from app.facial.search import (
     search_availability,
     search_request_payload,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _jpeg() -> bytes:
@@ -84,7 +84,7 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento")
     client = Client(id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
     folder = PhotoFolder(
         id=uuid4(),
@@ -94,6 +94,7 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=folder.id,
@@ -457,6 +458,7 @@ def test_search_snapshot_and_results_respect_restricted_folder_grant(
     db.add_all([other, folder])
     db.flush()
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         parent_gallery_id=parent.id, folder_id=folder.id,
         filename="restrita.jpg", storage_key=f"{parent.id}/restrita.jpg", available=True,
     )
@@ -517,7 +519,7 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     db, first_parent, client = _fixture(tmp_path, index_ready=True)
-    second_parent = ParentGallery(id=uuid4(), name="Segundo evento")
+    second_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Segundo evento")
     second_folder = PhotoFolder(
         id=uuid4(),
         parent_gallery_id=second_parent.id,
@@ -526,6 +528,7 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
         purpose="content",
     )
     second_photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=second_parent.id,
         folder_id=second_folder.id,

@@ -44,6 +44,7 @@ from app.worker import (
     process_next_media_job,
     process_next_payment_notification,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -68,13 +69,14 @@ def test_generates_idempotent_protected_derivatives_without_exif(tmp_path, monke
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="foto.jpg",
@@ -99,7 +101,7 @@ def test_rebrand_defaults_preserve_custom_watermark(monkeypatch):
     monkeypatch.delenv("MEDIA_WATERMARK_TEXT", raising=False)
     with SessionLocal() as db:
         settings = BrandingSettings(watermark_text="Fotógrafo • texto personalizado")
-        gallery = ParentGallery(name="Evento de teste")
+        gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento de teste")
         db.add_all([settings, gallery])
         db.commit()
         assert gallery.watermark_text == DEFAULT_WATERMARK_TEXT == "Pick-your-Pic • PRÉVIA"
@@ -306,13 +308,14 @@ def test_protection_reprocessing_does_not_rewrite_clean_analysis_preview(
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
     with SessionLocal() as db:
         settings = BrandingSettings(watermark_text="PRIMEIRA MARCA")
-        parent = ParentGallery(name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all((settings, parent))
         db.flush()
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="protected-only.jpg",
@@ -352,13 +355,14 @@ def test_worker_processes_only_markina_media_job(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="worker.jpg",
@@ -388,13 +392,14 @@ def test_failed_processing_does_not_publish_original(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento com falha")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento com falha")
         db.add(parent)
         db.flush()
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada protegida")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="ausente.jpg",
@@ -420,19 +425,20 @@ def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, mo
     source_root = tmp_path / "source"
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="foto@markina.test",
             password_hash=password_hasher.hash("senha-segura"),
             email_verified=True,
             totp_secret="test-secret",
-        )
-        parent = ParentGallery(name="Evento")
+        ))
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([admin, parent])
         db.flush()
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="foto.jpg",
@@ -477,15 +483,15 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
     derivatives_root = tmp_path / "derivatives"
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="foto@markina.test",
             password_hash=password_hasher.hash("senha-segura"),
             email_verified=True,
             totp_secret="test-secret",
-        )
+        ))
         client_owner = Client(full_name="Cliente Autorizada", phone_e164="+5511999999999")
         client_other = Client(full_name="Outra Cliente", phone_e164="+5511888888888")
-        parent = ParentGallery(name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([admin, client_owner, client_other, parent])
         db.flush()
         folder = PhotoFolder(
@@ -497,12 +503,14 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="original.jpg",
             storage_key="raw.jpg",
         )
         gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, client_id=client_owner.id, name="Galeria privada"
         )
         db.add_all([photo, gallery])
@@ -599,10 +607,10 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
 def test_worker_sends_payment_outbox_once_in_sandbox() -> None:
     with SessionLocal() as db:
         client = Client(full_name="Cliente Sandbox", phone_e164="+5511555554411")
-        parent = ParentGallery(name="Evento Sandbox")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Sandbox")
         db.add_all([client, parent])
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Sandbox")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Sandbox")
         db.add(gallery)
         db.flush()
         order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
@@ -633,10 +641,10 @@ def test_worker_sends_reopening_notice_without_changing_request(monkeypatch) -> 
     monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
     with SessionLocal() as db:
         client = Client(full_name="Cliente Reabertura", phone_e164="+5511555554401")
-        parent = ParentGallery(name="Evento Reabertura")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Reabertura")
         db.add_all([client, parent])
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Reabertura")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Reabertura")
         db.add(gallery)
         db.flush()
         reopening = GalleryReopeningRequest(
@@ -676,10 +684,10 @@ def test_worker_retries_transient_payment_delivery_until_limit(monkeypatch) -> N
     monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: FailingProvider())
     with SessionLocal() as db:
         client = Client(full_name="Cliente Retentativa", phone_e164="+5511555554422")
-        parent = ParentGallery(name="Evento Retentativa")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Retentativa")
         db.add_all([client, parent])
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Retentativa")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Retentativa")
         db.add(gallery)
         db.flush()
         order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
@@ -723,10 +731,10 @@ def test_worker_renders_controlled_template_without_financial_payload(monkeypatc
     monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
     with SessionLocal() as db:
         client = Client(full_name="Cliente Template", phone_e164="+5511555554433")
-        parent = ParentGallery(name="Evento Template")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Template")
         db.add_all([client, parent])
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Template")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Template")
         db.add(gallery)
         db.flush()
         order = SaleOrder(
@@ -768,10 +776,10 @@ def test_worker_blocks_unrelated_payment_recipient_without_sending(monkeypatch, 
     monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
     with SessionLocal() as db:
         client = Client(full_name="Cliente Destino", phone_e164="+5511555554499")
-        parent = ParentGallery(name="Evento Destino")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Destino")
         db.add_all([client, parent])
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Galeria Destino")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Destino")
         db.add(gallery)
         db.flush()
         order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100, client_phone_snapshot=client.phone_e164)

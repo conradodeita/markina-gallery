@@ -1,5 +1,4 @@
 """Escopo, validade, autoridade e minimização da representação legal facial."""
-
 from datetime import timedelta
 from uuid import uuid4
 
@@ -23,6 +22,7 @@ from app.facial.representation import (
     require_valid_legal_representation,
     revoke_legal_representation,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _fixture() -> tuple[
@@ -31,20 +31,20 @@ def _fixture() -> tuple[
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    admin = AdminUser(
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin-representation@example.test",
         password_hash="unused",
         totp_secret="unused",
-    )
+    ))
     client = Client(
         id=uuid4(), full_name="Cliente A", phone_e164="+5511999999801"
     )
     other_client = Client(
         id=uuid4(), full_name="Cliente B", phone_e164="+5511999999802"
     )
-    gallery = ParentGallery(id=uuid4(), name="Evento A")
-    other_gallery = ParentGallery(id=uuid4(), name="Evento B")
+    gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento A")
+    other_gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento B")
     db.add_all((admin, client, other_client, gallery, other_gallery))
     db.flush()
     db.add_all(

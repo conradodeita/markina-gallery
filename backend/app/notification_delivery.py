@@ -37,6 +37,7 @@ from app.order_delivery import EVENT_TYPE as ORDER_DELIVERY_EVENT
 from app.order_delivery import delivery_notice_allowed
 from app.private_membership import client_has_operational_membership
 from app.push_subscriptions import decrypt_subscription, push_enabled
+from app.tenancy import TenantContextError, domain_session, require_single_tenant
 from app.web_push import PushFailure, send_push
 from app.whatsapp_channel import require_ready_channel
 
@@ -138,7 +139,7 @@ def recipient_allowed(db, event, item) -> bool:
 def process_next_notification(channel: str, *, push_sender=None, whatsapp_provider=None) -> bool:
     if channel not in {"push", "whatsapp"}:
         raise ValueError("Canal inválido.")
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         instant = now()
         stale_rows = list(db.scalars(select(NotificationDelivery).where(
             NotificationDelivery.channel == channel, NotificationDelivery.status == "processing",
@@ -198,6 +199,7 @@ def process_next_notification(channel: str, *, push_sender=None, whatsapp_provid
             db.commit()
             try:
                 if channel == "push":
+                    require_single_tenant(db)
                     (push_sender or send_push)(decrypt_subscription(subscription), {
                         "id": str(event.id), "title": event.push_title,
                         "body": event.push_body, "path": event.target_path,
@@ -213,6 +215,7 @@ def process_next_notification(channel: str, *, push_sender=None, whatsapp_provid
                         raise WhatsAppConfigurationError("Destino verificado indisponível.")
                     provider = whatsapp_provider or whatsapp_provider_from_environment()
                     require_ready_channel(db, provider)
+                    require_single_tenant(db)
                     result = provider.send_transactional(phone, event.whatsapp_body,
                                                          idempotency_key=f"notification:{item.id}")
                     if result.recipient_phone_e164 != phone:
@@ -230,6 +233,9 @@ def process_next_notification(channel: str, *, push_sender=None, whatsapp_provid
                     next_attempt = now() + timedelta(seconds=min(30 * 2 ** (item.attempts - 1), 300))
                 else:
                     status = "failed"
+            except TenantContextError:
+                db.rollback()
+                raise
             except Exception:  # noqa: BLE001 - fronteira externa: nunca propagar payload/segredo
                 status, error = "unknown", "unexpected_transport_failure"
         # Outro worker pode ter recuperado o lease. Nunca sobrescrever sua decisão.

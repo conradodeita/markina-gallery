@@ -40,6 +40,7 @@ from app.facial.worker import process_claimed_index_job, process_claimed_purge_j
 from app.gallery_pricing import quote_parent_gallery
 from app.media import generate_derivatives
 from app.private_derivation import derive_client_selection
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _jpeg(color: tuple[int, int, int]) -> bytes:
@@ -110,14 +111,15 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
     db = Session(create_engine(f"sqlite:///{tmp_path / 'integration.db'}"))
     Base.metadata.create_all(db.bind)
 
-    admin = AdminUser(
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin.synthetic@example.invalid",
         password_hash="synthetic",
         email_verified=True,
         totp_secret="synthetic",
-    )
+    ))
     gallery = ParentGallery(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         name="Evento sintético adulto",
         pricing_mode="fixed",
@@ -175,6 +177,7 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
     photos = []
     for index, color in enumerate(((210, 180, 160), (160, 190, 215)), start=1):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=gallery.id,
             folder_id=folder.id,

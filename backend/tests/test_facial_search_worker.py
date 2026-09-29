@@ -1,5 +1,4 @@
 """Execução retomável da busca facial sem depender da tela aberta."""
-
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
@@ -58,6 +57,7 @@ from app.facial.search import (
 from app.facial.search_worker import process_claimed_search_job
 from app.messaging import WhatsAppDeliveryError, WhatsAppDeliveryResult
 from app.private_derivation import derive_client_selection
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _vector(first: float, second: float = 0.0) -> tuple[float, ...]:
@@ -144,7 +144,7 @@ def _base(tmp_path: Path):
     engine = create_engine(f"sqlite:///{tmp_path / 'worker.db'}")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento sintético")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético")
     client = Client(id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
     registration = ParentGalleryRegistration(
         parent_gallery_id=parent.id, client_id=client.id, status="active"
@@ -189,6 +189,7 @@ def _base(tmp_path: Path):
 
 def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=folder.id,
@@ -293,7 +294,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
         search_queue_max_depth=100,
     )
     galleries = [
-        ParentGallery(id=uuid4(), name=f"Evento sintético {index}")
+        ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name=f"Evento sintético {index}")
         for index in range(2)
     ]
     gallery_ids = [gallery.id for gallery in galleries]
@@ -805,7 +806,7 @@ def test_read_reject_and_cancel_repeat_full_client_gallery_scope(
     assert db.scalar(select(func.count()).select_from(DerivedGalleryMembership)) == 1
     assert db.scalar(select(func.count()).select_from(PhotoSelection)) == 1
 
-    other_parent = ParentGallery(id=uuid4(), name="Outro evento sintético")
+    other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Outro evento sintético")
     other_client = Client(
         id=uuid4(), full_name="Outra cliente sintética", phone_e164="+5511888888888"
     )

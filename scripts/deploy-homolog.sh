@@ -316,6 +316,10 @@ PY
 
   occurrences="$(grep -c "^${key}=" "$env_file" || true)"
   [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  if [[ "$occurrences" -eq 1 && "$(grep "^${key}=" "$env_file")" == "$key=$normalized" ]]; then
+    echo "$key já corresponde à origem pública autorizada; ambiente preservado"
+    return 0
+  fi
   temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
   chmod 600 "$temp_file"
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -418,6 +422,31 @@ current_revision() {
   compose run --rm --no-deps migrate alembic current 2>/dev/null | tr -d '\r' | tail -n 1
 }
 
+stop_application_writers() {
+  local service container
+  local writers=(api worker)
+  if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
+    writers+=("${FACIAL_SERVICES[@]}")
+  fi
+  if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
+    writers+=(preview-adjustment-worker)
+  fi
+  compose stop --timeout 60 "${writers[@]}" || {
+    fail "parada dos escritores Markina falhou; migration bloqueada"
+    return 1
+  }
+  for service in "${writers[@]}"; do
+    container="$(docker ps --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service")" || return 1
+    [[ -z "$container" ]] || {
+      fail "escritor Markina ainda ativo: $service; migration bloqueada"
+      return 1
+    }
+  done
+  echo "escritores Markina interrompidos; jobs duráveis preservados"
+}
+
 apply_target_migrations() {
   local previous_revision="$1" next_revision
 
@@ -428,6 +457,8 @@ apply_target_migrations() {
     fail "não foi possível construir a migration do SHA alvo"
     return 1
   }
+
+  stop_application_writers || return 1
 
   # Depois que Alembic começa, uma falha pode significar schema parcialmente
   # alterado. O rollback automático de código fica bloqueado até comprovarmos

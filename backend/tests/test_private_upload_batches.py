@@ -3,8 +3,6 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 
 from app.auth import (
-    AdminUser,
-    AuthSession,
     Client,
     DerivedGallery,
     DerivedGalleryMembership,
@@ -18,6 +16,7 @@ from app.auth import (
     SessionLocal,
 )
 from app.private_upload_batches import process_ready_batches
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_notification_settings import authenticated, isolated_schema  # noqa: F401
 
 
@@ -25,14 +24,11 @@ def setup_private():
     from app.auth import ParentGallery
     browser = authenticated()
     with SessionLocal() as db:
-        session = db.scalar(select(AuthSession))
-        db.add(AdminUser(id=session.subject_id, email="synthetic@example.invalid",
-                         password_hash="unused", totp_secret="unused", email_verified=True))
         client = Client(full_name="Sintético", phone_e164="+5511999999999")
-        parent = ParentGallery(name="Teste")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Teste")
         db.add_all([client, parent])
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=client.id, name="Privada")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Privada")
         db.add(gallery)
         db.flush()
         folder = PhotoFolder(parent_gallery_id=parent.id, derived_gallery_id=gallery.id, name="Fotos")

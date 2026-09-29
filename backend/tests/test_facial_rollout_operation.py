@@ -1,5 +1,4 @@
 """Operação protegida de ativação e suspensão facial."""
-
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +23,7 @@ from app.facial.rollout_operation import (
     FacialRolloutOperationProof,
     execute_protected_rollout_operation,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _settings(*, environment: str = "test", enabled: bool = True) -> FacialSettings:
@@ -80,13 +80,13 @@ def _fixture():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    admin = AdminUser(
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="rollout-operation@example.test",
         password_hash="unused",
         totp_secret="unused",
-    )
-    galleries = [ParentGallery(id=uuid4(), name=f"Evento {index}") for index in range(2)]
+    ))
+    galleries = [ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name=f"Evento {index}") for index in range(2)]
     db.add_all((admin, *galleries))
     db.commit()
     return db, admin, galleries

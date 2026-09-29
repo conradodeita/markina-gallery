@@ -41,6 +41,7 @@ from app.auth import (
     token_hash,
 )
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -64,12 +65,12 @@ def client():
 
 def authenticate_admin(client: TestClient) -> UUID:
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="diretorio@markina.test",
             password_hash=password_hasher.hash("senha-segura"),
             email_verified=True,
             totp_secret=pyotp.random_base32(),
-        )
+        ))
         db.add(admin)
         db.commit()
         admin_id = admin.id
@@ -94,13 +95,14 @@ def add_client(db, name: str, phone: str) -> Client:
 
 
 def add_gallery_graph(db, owner: Client, *, name: str) -> tuple[ParentGallery, DerivedGallery, PhotoAsset]:
-    parent = ParentGallery(name=f"Pública {name}")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name=f"Pública {name}")
     db.add(parent)
     db.flush()
     folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos", status="released")
     db.add(folder)
     db.flush()
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         parent_gallery_id=parent.id,
         folder_id=folder.id,
         filename=f"{name}.jpg",
@@ -108,7 +110,7 @@ def add_gallery_graph(db, owner: Client, *, name: str) -> tuple[ParentGallery, D
     )
     db.add(photo)
     db.flush()
-    gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=owner.id, name=name)
+    gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name=name)
     db.add(gallery)
     db.flush()
     db.add_all(
@@ -438,7 +440,7 @@ def test_verified_phone_change_preserves_uuid_revokes_session_and_refuses_duplic
     with SessionLocal() as db:
         target = add_client(db, "Identidade estável", "+5511900000681")
         other = add_client(db, "Número ocupado", "+5511900000682")
-        registration_parent = ParentGallery(name="Pública identidade")
+        registration_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Pública identidade")
         db.add(registration_parent)
         db.flush()
         registration = ParentGalleryRegistration(
@@ -729,7 +731,7 @@ def test_deletion_removes_transient_facial_request_and_reference_file(
     monkeypatch.setenv("FACIAL_REFERENCE_ROOT", str(reference_root))
     with SessionLocal() as db:
         target = add_client(db, "Busca transitória", "+5511900000701")
-        parent = ParentGallery(name="Pública facial")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Pública facial")
         db.add(parent)
         db.flush()
         policy = GalleryFacialPolicy(

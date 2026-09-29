@@ -133,6 +133,9 @@ def enqueue_file_cleanup(db, paths):
 
 
 def process_file_cleanup(db, job, *, commit=True):
+    from app.tenancy import enable_domain_guard, require_single_tenant
+
+    enable_domain_guard(db)
     roots = {"source": source_root(), "derivatives": derivatives_root(), "history": history_root()}
     job.attempts += 1
     try:
@@ -141,6 +144,7 @@ def process_file_cleanup(db, job, *, commit=True):
             path = (root / entry["path"]).resolve()
             if not path.is_relative_to(root) or path == root:
                 raise ValueError("Caminho inválido")
+            require_single_tenant(db)
             path.unlink(missing_ok=True)
         job.status, job.last_error, job.completed_at = "completed", None, now()
     except (OSError, ValueError, KeyError):

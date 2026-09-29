@@ -25,6 +25,7 @@ from app.auth import (
 )
 from app.commercial_removal import apply_commercial_removal_policy
 from app.media import derivatives_root, source_root
+from app.tenancy import require_single_tenant
 
 
 def prepare_lifecycle_history(db: Session, operation: GalleryLifecycleOperation) -> None:
@@ -104,6 +105,7 @@ def remove_operational_storage(_db: Session, operation: GalleryLifecycleOperatio
     removed_files = 0
     missing_files = 0
     for path in paths:
+        require_single_tenant(_db)
         if path.is_file():
             path.unlink()
             removed_files += 1

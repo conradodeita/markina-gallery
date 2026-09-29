@@ -1,5 +1,4 @@
 """Substituição integral por pasta, preservando herança e revisões."""
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -12,13 +11,14 @@ from app.auth import (
 )
 from app.folder_processing import effective_preview, facial_processing_allowed
 from app.preview_adjustment.service import effective_fingerprint
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def test_effective_preview_never_accumulates_exposure(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'effective.db'}")
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        gallery = ParentGallery(name="Exposição")
+        gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Exposição")
         db.add(gallery)
         db.flush()
         inherited = PhotoFolder(parent_gallery_id=gallery.id, name="Geral", purpose="content", position=0)

@@ -15,6 +15,7 @@ from app.auth import (
     ParentGallery,
     now,
 )
+from app.tenancy import require_parent_tenant
 
 
 class PrivateMembershipError(RuntimeError):
@@ -145,6 +146,7 @@ def _create_legacy_compatible_gallery(
     try:
         with db.begin_nested():
             gallery = DerivedGallery(
+                tenant_id=parent.tenant_id,
                 parent_gallery_id=parent.id,
                 client_id=client.id,
                 name=(name or f"{parent.name} — {client.full_name}")[:200],
@@ -179,6 +181,7 @@ def ensure_private_membership(
 ) -> PrivateMembershipResolution:
     """Cria ou reutiliza a única associação da cliente naquela origem."""
 
+    require_parent_tenant(db, parent.id)
     existing = membership_for_client(
         db,
         parent_gallery_id=parent.id,

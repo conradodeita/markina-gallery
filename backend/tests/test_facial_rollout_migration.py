@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(database_url: str, *arguments: str) -> None:
     backend = Path(__file__).resolve().parents[1]
@@ -37,7 +39,7 @@ def test_rollout_migration_is_additive_and_reversible(tmp_path: Path) -> None:
             {"id": gallery_id.hex, "created_at": datetime.now(UTC)},
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     inspector = inspect(engine)
     assert "facial_rollout" in inspector.get_table_names()
     assert any(
