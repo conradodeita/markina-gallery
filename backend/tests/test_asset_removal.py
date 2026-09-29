@@ -32,6 +32,7 @@ from app.gallery_cleanup import (
 from app.gallery_lifecycle import gallery_operational_storage_manifest, retry_failed_operation
 from app.main import _delete_photo_records, app
 from app.unified_checkout import prepare_group, report_group
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_unified_checkout import isolated_cart_database, setup_cart  # noqa: F401
 
 
@@ -270,7 +271,7 @@ def test_private_deletion_removes_own_uploads_but_keeps_shared_original(tmp_path
         folder = PhotoFolder(parent_gallery_id=gallery.parent_gallery_id, name="Publica", status="released")
         db.add(folder)
         db.flush()
-        shared = PhotoAsset(parent_gallery_id=gallery.parent_gallery_id, folder_id=folder.id,
+        shared = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.parent_gallery_id, folder_id=folder.id,
                             filename="compartilhada.jpg", storage_key="shared.jpg")
         db.add(shared)
         db.flush()

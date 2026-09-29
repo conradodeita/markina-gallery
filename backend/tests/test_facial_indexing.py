@@ -1,5 +1,4 @@
 """Indexação facial nasce somente de eventos explícitos e elegíveis."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,6 +23,7 @@ from app.facial.indexing import (
     reconcile_automatic_gallery_policies,
 )
 from app.media import generate_derivatives
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _settings(tmp_path: Path, *, enabled: bool = True) -> FacialSettings:
@@ -81,6 +81,7 @@ def _eligible_photo(
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=photo_id,
         parent_gallery_id=parent_id,
         folder_id=folder_id,
@@ -111,7 +112,7 @@ def _eligible_photo(
         quality_version="quality-v1",
         calibration_version="calibration-v1",
     )
-    db.add(ParentGallery(id=parent_id, name="Evento sintético"))
+    db.add(ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento sintético"))
     db.add_all((folder, photo, protected_derivative, derivative))
     if include_rollout:
         db.add(
@@ -283,6 +284,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
     folder_id = first.folder_id
     for index in range(3):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=parent_id,
             folder_id=folder_id,
@@ -417,6 +419,7 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=photo_id,
         parent_gallery_id=parent_id,
         folder_id=folder_id,
@@ -425,7 +428,7 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
         available=False,
     )
     media_job = MediaJob(photo_asset_id=photo_id, status="queued", attempts=0)
-    db.add_all((ParentGallery(id=parent_id, name="Evento"), folder, photo, media_job))
+    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento"), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
     derivatives_root = tmp_path / "derivatives"
@@ -461,6 +464,7 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=photo_id,
         parent_gallery_id=parent_id,
         folder_id=folder_id,
@@ -469,7 +473,7 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
         available=False,
     )
     media_job = MediaJob(photo_asset_id=photo_id, status="queued", attempts=0)
-    db.add_all((ParentGallery(id=parent_id, name="Evento"), folder, photo, media_job))
+    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento"), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
     derivatives_root = tmp_path / "derivatives"

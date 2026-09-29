@@ -119,6 +119,16 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
   ' >"$output" 2>&1
 grep -Fq 'PUBLIC_APP_ORIGIN sincronizada com a origem pública autorizada de homologação' "$output"
 
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    mktemp() { echo UNEXPECTED-ENV-WRITE >&2; return 90; }
+    chmod() { echo UNEXPECTED-ENV-WRITE >&2; return 91; }
+    ensure_public_app_origin "$ORIGIN_ENV" "https://markina-homolog.example/"
+  ' >"$output" 2>&1
+grep -Fq 'ambiente preservado' "$output"
+if grep -Fq 'UNEXPECTED-ENV-WRITE' "$output"; then exit 1; fi
+
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
@@ -206,6 +216,7 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
       [[ "$*" == "run --rm --no-deps migrate" ]] && return 42
       return 0
     }
+    docker() { return 0; }
     apply_target_migrations "20260829_0014 (head)"
   ' >"$migration_output" 2>&1; then
   echo "migration sintética falha não interrompeu a publicação" >&2
@@ -366,6 +377,52 @@ set -e
 [[ "$branding_status" -eq 31 ]]
 grep -Fq 'containers antigos mantidos' "$output"
 if grep -Fq 'UNEXPECTED-RECREATION' "$output"; then exit 1; fi
+# A migration nunca concorre com escritores antigos nem para outros projetos.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    FACIAL_DEPLOY_ENABLED=true
+    PREVIEW_WORKER_ACTIVE=1
+    stopped=0
+    compose() {
+      if [[ "$1" == "stop" ]]; then
+        [[ "$*" == "stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker preview-adjustment-worker" ]] || return 80
+        stopped=1
+      fi
+      if [[ "$1" == "run" ]]; then
+        [[ "$stopped" -eq 1 ]] || return 81
+      fi
+      return 0
+    }
+    docker() {
+      [[ "$*" == *"project=markina-gallery"* ]] || return 82
+      [[ "$*" != *"evolution"* ]] || return 83
+      return 0
+    }
+    current_revision() { echo "20260929_0069 (head)"; }
+    apply_target_migrations "20260928_0068 (head)"
+    [[ "$MIGRATION_CHANGED" -eq 1 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 1 ]]
+  ' >"$output" 2>&1
+
+for failure in stop active; do
+  if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FAILURE="$failure" \
+    bash -c '
+      source "$MARKINA_DEPLOY_SCRIPT_PATH"
+      compose() {
+        [[ "$1" == "run" ]] && { echo UNEXPECTED-MIGRATION; return 0; }
+        [[ "$1" == "stop" && "$FAILURE" == "stop" ]] && return 42
+        return 0
+      }
+      docker() { echo synthetic-still-running; }
+      apply_target_migrations "20260928_0068 (head)"
+    ' >"$output" 2>&1; then
+    echo "falha de parada permitiu migration" >&2
+    exit 1
+  fi
+  grep -Fq 'migration bloqueada' "$output"
+  if grep -Fq 'UNEXPECTED-MIGRATION' "$output"; then exit 1; fi
+done
+
 python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
 python3 "$SCRIPT_DIR/test_facial_production_policy.py"
 python3 "$SCRIPT_DIR/test_facial_rollout_homolog_policy.py"

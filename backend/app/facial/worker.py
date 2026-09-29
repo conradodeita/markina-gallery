@@ -27,6 +27,9 @@ def process_claimed_index_job(
     settings: FacialSettings,
     derivatives_root: Path,
 ) -> FacialJob:
+    from app.tenancy import enable_domain_guard
+
+    enable_domain_guard(db)
     job = db.get(FacialJob, claim.id)
     if (
         job is None
@@ -83,6 +86,9 @@ def process_claimed_purge_job(
     repository: FacialJobRepository,
     reference_root: Path | None = None,
 ) -> FacialJob:
+    from app.tenancy import enable_domain_guard
+
+    enable_domain_guard(db)
     job = db.get(FacialJob, claim.id)
     if job is None or job.kind != "purge":
         raise FacialJobError("Job facial não pode ser executado.")

@@ -26,13 +26,14 @@ from app.auth import (
 from app.notification_delivery import recipient_allowed
 from app.notification_events import record_gallery_milestone, record_restricted_folder_ready
 from app.notification_settings import setting_for
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_notification_settings import isolated_schema  # noqa: F401
 
 
 def scenario():
     with SessionLocal() as db:
         person = Client(full_name="Cliente sintético", phone_e164="+5511999999999")
-        parent = ParentGallery(name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([person, parent])
         db.flush()
         db.add(ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=person.id, status="active"))
@@ -50,8 +51,8 @@ def test_first_access_is_once_per_canonical_gallery_with_valid_session():
     for _ in range(2):
         assert browser.get(f"/public-galleries/{parent}").status_code == 200
     with SessionLocal() as db:
-        private = DerivedGallery(parent_gallery_id=parent, client_id=person, name="Privada")
-        another = ParentGallery(name="Outro evento")
+        private = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, client_id=person, name="Privada")
+        another = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outro evento")
         db.add_all([private, another])
         db.flush()
         db.add(ParentGalleryRegistration(parent_gallery_id=another.id, client_id=person, status="active"))
@@ -71,7 +72,7 @@ def test_denied_and_legacy_baseline_do_not_generate_access_events():
     with SessionLocal() as db:
         db.add(NotificationMilestone(parent_gallery_id=parent, client_id=person,
                                       kind="first_access", baseline=True))
-        unauthorized = ParentGallery(name="Não autorizada")
+        unauthorized = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Não autorizada")
         db.add(unauthorized)
         db.commit()
     assert browser.get(f"/public-galleries/{parent}").status_code == 200
@@ -103,14 +104,14 @@ def test_first_private_selection_independent_of_creation_favorite_and_reselectio
     person, parent = scenario()
     with SessionLocal() as db:
         db.get(ParentGallery, parent).favorites_enabled = True
-        gallery = DerivedGallery(parent_gallery_id=parent, client_id=person, name="Privada existente")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, client_id=person, name="Privada existente")
         db.add(gallery)
         db.flush()
         folder = PhotoFolder(parent_gallery_id=parent, derived_gallery_id=gallery.id,
                               name="Privadas", status="released")
         db.add(folder)
         db.flush()
-        photo = PhotoAsset(parent_gallery_id=parent, derived_gallery_id=gallery.id,
+        photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, derived_gallery_id=gallery.id,
                             folder_id=folder.id, filename="teste.jpg", storage_key="synthetic/test.jpg")
         db.add(photo)
         db.commit()
@@ -133,7 +134,7 @@ def test_first_private_selection_independent_of_creation_favorite_and_reselectio
         events = list(db.scalars(select(NotificationEvent)))
         assert len(events) == 1
         assert events[0].event_type == "first_selection"
-        new_parent = ParentGallery(id=uuid4(), name="Rollback")
+        new_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Rollback")
         db.add(new_parent)
         db.flush()
         db.add(ParentGalleryRegistration(parent_gallery_id=new_parent.id, client_id=person, status="active"))

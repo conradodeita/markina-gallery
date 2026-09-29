@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.auth import (
+    AdminUser,
     AuthSession,
     Base,
     NotificationDelivery,
@@ -19,6 +20,7 @@ from app.auth import (
 )
 from app.main import app
 from app.notification_settings import enqueue_event, render_text, save_setting, setting_for
+from tests.tenant_fixtures import fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +38,15 @@ def isolated_schema(monkeypatch):
 
 def authenticated(role="admin"):
     with SessionLocal() as db:
-        session = AuthSession(subject_id=uuid4(), role=role, token_hash=token_hash(role),
+        subject_id = uuid4()
+        if role == "admin":
+            admin = fixture_admin(AdminUser(email="notifications@example.test",
+                                            password_hash="synthetic", totp_secret="synthetic",
+                                            email_verified=True))
+            db.add(admin)
+            db.flush()
+            subject_id = admin.id
+        session = AuthSession(subject_id=subject_id, role=role, token_hash=token_hash(role),
                               expires_at=now() + timedelta(hours=1))
         db.add(session)
         db.commit()

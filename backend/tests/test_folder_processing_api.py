@@ -1,8 +1,8 @@
 """Autorização, escopo e apresentação das configurações por pasta."""
-
 from app.auth import ParentGallery, PhotoAsset, PhotoFolder, PreviewAdjustment
 from app.folder_processing import effective_preview
 from app.preview_adjustment.service import adjusted_path, process_one
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_preview_adjustment import BrightEngine
 
 pytest_plugins = ["tests.test_preview_adjustment"]
@@ -164,7 +164,7 @@ def test_facial_action_pages_and_retries_only_its_folder(api_client, monkeypatch
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
         folder_id, gallery_id = photo.folder_id, photo.parent_gallery_id
-        db.add_all(PhotoAsset(id=uuid4(), parent_gallery_id=gallery_id, folder_id=folder_id,
+        db.add_all(PhotoAsset(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), parent_gallery_id=gallery_id, folder_id=folder_id,
                               filename=f"sintetica-{index}.jpg",
                               storage_key=f"{gallery_id}/sintetica-{index}.jpg", available=True)
                    for index in range(101))

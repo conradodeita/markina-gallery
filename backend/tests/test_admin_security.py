@@ -1,5 +1,4 @@
 """Testes focados nas primitivas e fluxos de segurança administrativa."""
-
 import re
 from datetime import timedelta
 from email.utils import parsedate_to_datetime
@@ -47,6 +46,7 @@ from app.email_delivery import (
 )
 from app.main import app
 from app.worker import process_next_email_delivery
+from tests.tenant_fixtures import fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -71,12 +71,12 @@ def client():
 def create_admin(*, email: str = "admin@markina.test", password: str = "Atual-forte-2026"):
     secret = pyotp.random_base32()
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email=email,
             password_hash=password_hasher.hash(password),
             email_verified=True,
             totp_secret=secret,
-        )
+        ))
         db.add(admin)
         db.add(
             WhatsAppChannelSettings(
@@ -175,12 +175,12 @@ def test_sensitive_payload_is_authenticated_and_requires_key_outside_dev(monkeyp
 
 def test_action_token_is_hash_only_single_use_and_new_issue_invalidates_previous() -> None:
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="admin@markina.test",
             password_hash=password_hasher.hash("Atual-forte-2026"),
             email_verified=True,
             totp_secret="TESTSECRET",
-        )
+        ))
         db.add(admin)
         db.flush()
         first, first_raw = issue_admin_action_token(
@@ -216,12 +216,12 @@ def test_action_token_is_hash_only_single_use_and_new_issue_invalidates_previous
 
 def test_cleanup_is_idempotent_and_removes_recoverable_terminal_payloads() -> None:
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="admin@markina.test",
             password_hash=password_hasher.hash("Atual-forte-2026"),
             email_verified=True,
             totp_secret="TESTSECRET",
-        )
+        ))
         db.add(admin)
         db.flush()
         challenge = AdminSecurityChallenge(

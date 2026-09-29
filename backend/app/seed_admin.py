@@ -7,7 +7,8 @@ import os
 import pyotp
 from sqlalchemy import select
 
-from app.auth import AdminUser, SessionLocal, password_hasher, validate_admin_password
+from app.auth import AdminUser, SessionLocal, TenantAdmin, password_hasher, validate_admin_password
+from app.tenancy import require_admin_tenant, require_single_tenant
 
 
 def required_setting(name: str) -> str:
@@ -29,19 +30,21 @@ def seed_admin() -> None:
     if not pyotp.TOTP(totp_secret).now():
         raise RuntimeError("ADMIN_SEED_TOTP_SECRET não é uma chave TOTP válida.")
     with SessionLocal() as db:
+        tenant = require_single_tenant(db)
         existing = db.scalar(select(AdminUser).where(AdminUser.email == email))
         if existing:
+            require_admin_tenant(db, existing.id)
             return
         if db.scalar(select(AdminUser.id)):
             raise RuntimeError("Já existe outro administrador; seed inicial interrompido.")
-        db.add(
-            AdminUser(
-                email=email,
-                password_hash=password_hasher.hash(password),
-                email_verified=True,
-                totp_secret=totp_secret,
-            )
+        admin = AdminUser(
+            email=email,
+            password_hash=password_hasher.hash(password),
+            email_verified=True,
+            totp_secret=totp_secret,
         )
+        admin.tenant_memberships.append(TenantAdmin(tenant_id=tenant.id))
+        db.add(admin)
         db.commit()
 
 

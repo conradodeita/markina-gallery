@@ -1,5 +1,4 @@
 """Transições e auditoria do rollout facial persistente."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +18,7 @@ from app.facial.rollout import (
     rollout_status_payload,
     suspend_rollout,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _settings(*, enabled: bool = True, environment: str = "test") -> FacialSettings:
@@ -57,13 +57,13 @@ def _fixture() -> tuple[Session, ParentGallery, AdminUser]:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    gallery = ParentGallery(id=uuid4(), name="Evento rollout")
-    admin = AdminUser(
+    gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento rollout")
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin@example.test",
         password_hash="unused",
         totp_secret="unused",
-    )
+    ))
     db.add_all((gallery, admin))
     db.commit()
     return db, gallery, admin

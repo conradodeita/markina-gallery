@@ -1,5 +1,4 @@
 """Gates administrativos da política facial."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,6 +20,7 @@ from app.facial.policy import (
     suspend_policy,
 )
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _settings(tmp_path: Path, *, enabled: bool) -> FacialSettings:
@@ -74,13 +74,13 @@ def _fixture():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento sintético")
-    admin = AdminUser(
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético")
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin@example.test",
         password_hash="not-used",
         totp_secret="not-used",
-    )
+    ))
     db.add_all((parent, admin))
     db.commit()
     return db, parent, admin

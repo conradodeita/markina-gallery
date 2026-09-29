@@ -38,7 +38,14 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    sessionmaker,
+)
 
 from app.messaging import WhatsAppConfigurationError, whatsapp_provider_name
 from app.product_brand import DEFAULT_WATERMARK_TEXT
@@ -135,6 +142,27 @@ class AdminUser(Base):
     password_hash: Mapped[str] = mapped_column(String(512))
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     totp_secret: Mapped[str] = mapped_column(String(128))
+    tenant_memberships: Mapped[list[TenantAdmin]] = relationship(cascade="all, delete-orphan")
+
+
+class Tenant(Base):
+    __tablename__ = "tenant"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended')", name="ck_tenant_status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class TenantAdmin(Base):
+    __tablename__ = "tenant_admin"
+    __table_args__ = (UniqueConstraint("tenant_id", "admin_user_id", name="uq_tenant_admin"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class AdminSecurityChallenge(Base):
@@ -312,6 +340,7 @@ class ParentGallery(Base):
 
     __tablename__ = "parent_gallery"
     __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_parent_gallery_id_tenant"),
         CheckConstraint(
             "lifecycle_status IN ('active', 'deleting', 'deleted')",
             name="ck_parent_gallery_lifecycle_status",
@@ -339,6 +368,7 @@ class ParentGallery(Base):
         ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     event_name: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -394,6 +424,16 @@ class PhotoAsset(Base):
 
     __tablename__ = "photo_asset"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "tenant_id"],
+            ["parent_gallery.id", "parent_gallery.tenant_id"],
+            name="fk_photo_asset_parent_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["derived_gallery_id", "parent_gallery_id", "tenant_id"],
+            ["derived_gallery.id", "derived_gallery.parent_gallery_id", "derived_gallery.tenant_id"],
+            name="fk_photo_asset_private_tenant",
+        ),
         UniqueConstraint("id", "parent_gallery_id", name="uq_photo_asset_id_parent"),
         ForeignKeyConstraint(
             ["folder_id", "parent_gallery_id"],
@@ -412,6 +452,7 @@ class PhotoAsset(Base):
         Index("ix_photo_asset_private_scope", "derived_gallery_id", "created_at"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
     derived_gallery_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("derived_gallery.id", ondelete="CASCADE"), nullable=True, index=True
@@ -540,6 +581,12 @@ class DerivedGallery(Base):
 
     __tablename__ = "derived_gallery"
     __table_args__ = (
+        UniqueConstraint("id", "parent_gallery_id", "tenant_id", name="uq_derived_gallery_tenant"),
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "tenant_id"],
+            ["parent_gallery.id", "parent_gallery.tenant_id"],
+            name="fk_derived_gallery_parent_tenant",
+        ),
         UniqueConstraint(
             "id",
             "parent_gallery_id",
@@ -553,6 +600,7 @@ class DerivedGallery(Base):
         ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -2875,6 +2923,15 @@ def cleanup_expired_client_otp_pii(db: Session, *, current_time: datetime | None
 
 
 def create_session(db: Session, response: Response, role: Role, subject_id: UUID) -> str:
+    from app.tenancy import TenantContextError, require_admin_tenant, require_single_tenant
+
+    try:
+        if role == Role.ADMIN:
+            require_admin_tenant(db, subject_id)
+        else:
+            require_single_tenant(db)
+    except TenantContextError as exc:
+        raise HTTPException(status_code=403, detail="Acesso negado.") from exc
     raw_token = secrets.token_urlsafe(48)
     active_sessions = db.scalars(
         select(AuthSession).where(
@@ -2908,6 +2965,8 @@ def create_session(db: Session, response: Response, role: Role, subject_id: UUID
 
 
 def current_session(request: Request, required_role: Role | None = None) -> AuthSession:
+    from app.tenancy import TenantContextError, require_admin_tenant, require_single_tenant
+
     token = request.cookies.get(os.getenv("SESSION_COOKIE_NAME", "markina_session"))
     if not token:
         raise HTTPException(status_code=403, detail="Acesso negado.")
@@ -2920,6 +2979,13 @@ def current_session(request: Request, required_role: Role | None = None) -> Auth
             or (required_role and session.role != required_role.value)
         ):
             raise HTTPException(status_code=403, detail="Acesso negado.")
+        try:
+            if session.role == Role.ADMIN.value:
+                require_admin_tenant(db, session.subject_id)
+            else:
+                require_single_tenant(db)
+        except TenantContextError as exc:
+            raise HTTPException(status_code=403, detail="Acesso negado.") from exc
         db.expunge(session)
         return session
 

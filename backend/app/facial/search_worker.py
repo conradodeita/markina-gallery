@@ -58,6 +58,10 @@ def process_claimed_search_job(
 ) -> FacialJob:
     """Executa ou retoma a consulta sem depender da presença da cliente na UI."""
 
+    from app.tenancy import enable_domain_guard
+
+    enable_domain_guard(db)
+
     job = db.get(FacialJob, claim.id)
     if job is None or job.kind != "search" or job.search_request_id is None:
         raise FacialJobError("Job facial não pode ser executado.")
@@ -423,6 +427,9 @@ def _finish_request(
     cipher: FacialCipher,
     settings: FacialSettings,
 ) -> None:
+    from app.tenancy import require_single_tenant
+
+    require_single_tenant(db)
     _delete_reference(request, store)
     request.status = status
     request.reference_region_id = None

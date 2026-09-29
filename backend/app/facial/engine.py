@@ -58,7 +58,9 @@ def replace_photo_index(
     from app.facial.detection import normalized_box
     from app.facial.lifecycle import analysis_for
     from app.media import safe_source_path
+    from app.tenancy import enable_domain_guard, require_parent_tenant
 
+    enable_domain_guard(db)
     analysis = analysis_for(db, photo_id, lock=True)
     if not photo or (not photo.available and not analysis):
         raise FacialEngineError("Foto não está elegível para indexação facial.")
@@ -103,6 +105,7 @@ def replace_photo_index(
     if analysis and fingerprint != analysis.source_fingerprint:
         raise FacialEngineError("A fonte facial foi alterada.")
     observations = provider.observe_highres_path(path) if analysis else provider.observe_path(path)
+    require_parent_tenant(db, photo.parent_gallery_id)
     largest_face_area = max(
         (face.box[2] * face.box[3] for face in observations), default=0
     )

@@ -1,5 +1,4 @@
 """Espera bloqueante, descarga ociosa e limite do processo facial."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,6 +9,7 @@ from app.auth import Base, ParentGallery
 from app.facial.config import FacialSettings
 from app.facial.jobs import FacialJobRepository
 from app.facial.runtime import BlockingFacialWorker
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _settings(tmp_path: Path, *, max_jobs: int = 2, idle: int = 30) -> FacialSettings:
@@ -65,7 +65,7 @@ def _database(tmp_path: Path):
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine)
     with factory() as db:
-        parent = ParentGallery(id=uuid4(), name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento")
         db.add(parent)
         db.commit()
         parent_id = parent.id

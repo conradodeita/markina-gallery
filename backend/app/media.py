@@ -253,6 +253,10 @@ def generate_derivatives(
 ) -> list[MediaDerivative]:
     """Gera variantes JPEG sem EXIF; segura para reexecução da mesma foto."""
     from app.facial.lifecycle import analysis_for, cleanup_source, media_can_proceed
+    from app.tenancy import TenantContextError, enable_domain_guard, require_parent_tenant
+
+    enable_domain_guard(db)
+    require_parent_tenant(db, photo.parent_gallery_id)
 
     if not media_can_proceed(db, photo.id):
         raise ValueError("Análise facial ainda em processamento.")
@@ -303,6 +307,11 @@ def generate_derivatives(
                     save_presentation_jpeg(rendered, temporary)
                 else:
                     rendered.save(temporary, format="JPEG", quality=85, optimize=True)
+                try:
+                    require_parent_tenant(db, photo.parent_gallery_id)
+                except TenantContextError:
+                    temporary.unlink(missing_ok=True)
+                    raise
                 temporary.replace(destination)
                 derivative = db.scalar(
                     select(MediaDerivative).where(
@@ -354,6 +363,9 @@ def generate_derivatives(
         except (OSError, ValueError):
             db.rollback()  # artefatos já concluídos; a manutenção retenta o descarte
         return derivatives
+    except TenantContextError:
+        db.rollback()
+        raise
     except Exception:
         job.status = "failed"
         job.last_error = "Falha ao gerar derivados."

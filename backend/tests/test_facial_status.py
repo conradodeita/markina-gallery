@@ -1,5 +1,4 @@
 """Progresso real e retentativa seletiva do índice facial."""
-
 from datetime import timedelta
 from uuid import uuid4
 
@@ -24,13 +23,14 @@ from app.facial.status import (
     retry_all_failed_index_jobs,
     retry_failed_index_jobs,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _fixture():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento")
     folder = PhotoFolder(
         id=uuid4(),
         parent_gallery_id=parent.id,
@@ -53,6 +53,7 @@ def _fixture():
     photos = []
     for index in range(6):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=parent.id,
             folder_id=folder.id,
@@ -273,6 +274,7 @@ def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
         position=1,
     )
     waiting_photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=second_folder.id,
@@ -289,6 +291,7 @@ def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
         position=2,
     )
     cover_photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=cover_folder.id,
@@ -311,7 +314,7 @@ def test_enabled_environment_reports_processing_before_automatic_policy_exists()
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento novo")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento novo")
     folder = PhotoFolder(
         id=uuid4(),
         parent_gallery_id=parent.id,
@@ -320,6 +323,7 @@ def test_enabled_environment_reports_processing_before_automatic_policy_exists()
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=folder.id,

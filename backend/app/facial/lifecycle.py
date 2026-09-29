@@ -28,6 +28,7 @@ from app.facial.config import _boolean, _integer, facial_settings_from_environme
 from app.facial.jobs import FacialJobRepository
 from app.facial.policy import ensure_automatic_policy
 from app.facial.rollout import rollout_is_active
+from app.tenancy import require_single_tenant
 
 PIPELINE_VERSION = "highres-v1"
 
@@ -273,6 +274,7 @@ def cleanup_source(db, photo_id):
         or any(not safe_derivative_path(item).is_file() for item in derivatives)
     ):
         row.state = "reupload_required"
+    require_single_tenant(db)
     safe_source_path(photo).unlink(missing_ok=True)
     row.deleted_at = now()
     db.flush()
@@ -309,11 +311,11 @@ def cleanup_sources(db, *, limit=64):
                 row.updated_at = now()
                 row.metrics = {**row.metrics, "cleanup_error": "artifact_unavailable"}
     db.commit()
-    cleanup_upload_fragments(limit=limit)
+    cleanup_upload_fragments(limit=limit, db=db)
     return removed
 
 
-def cleanup_upload_fragments(*, limit=64):
+def cleanup_upload_fragments(*, limit=64, db=None):
     """Somente fragmentos de nossa escrita atômica, velhos há mais que o TTL."""
     from app.media import source_root
 
@@ -330,6 +332,8 @@ def cleanup_upload_fragments(*, limit=64):
                 or path.stat().st_mtime >= cutoff
             ):
                 continue
+            if db is not None:
+                require_single_tenant(db)
             path.unlink(missing_ok=True)
             removed += 1
         except OSError:

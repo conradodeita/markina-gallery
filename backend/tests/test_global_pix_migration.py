@@ -11,6 +11,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.pix import build_static_pix_code
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 
 
 def alembic(url, *arguments, succeeds=True):
@@ -157,7 +158,7 @@ def test_pix_migration_preserves_legacy_and_snapshots(tmp_path, mode, expected):
         before_legacy = list(
             db.execute(sa.select(metadata.tables["pix_checkout_settings"])).mappings()
         )
-    alembic(url, "upgrade", "head")
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as db:
         row = db.execute(
             sa.text("SELECT status, copy_paste, version FROM global_pix_settings")

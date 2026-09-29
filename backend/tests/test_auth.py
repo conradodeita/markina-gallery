@@ -30,6 +30,7 @@ from app.auth import (
 from app.gallery_access import issue_gallery_capability
 from app.main import app
 from app.seed_admin import seed_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -64,11 +65,11 @@ def otp_for(challenge_id):
 def test_client_otp_redirects_to_single_gallery(client):
     with SessionLocal() as db:
         person = Client(full_name="Responsável", phone_e164="+5511999999999")
-        parent = ParentGallery(name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(person)
         db.add(parent)
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=person.id, name="Privada")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=person.id, name="Privada")
         db.add(gallery)
         db.commit()
         gallery_id = gallery.id
@@ -90,7 +91,7 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
     phone = "+5511987654321"
     with SessionLocal() as db:
         person = Client(full_name="Nome cadastrado pelo fotógrafo", phone_e164=phone)
-        parent = ParentGallery(name="Evento compartilhado", access_mode="standard")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento compartilhado", access_mode="standard")
         db.add_all([person, parent])
         db.flush()
         db.add(ClientPhone(client_id=person.id, phone_e164=phone, active=True))
@@ -103,6 +104,7 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
         )
         db.add(
             DerivedGallery(
+                tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id,
                 client_id=person.id,
                 name="Seleção privada automática",
@@ -189,17 +191,19 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
 def test_client_multiple_galleries_and_used_or_expired_otp(client):
     with SessionLocal() as db:
         person = Client(full_name="Responsável", phone_e164="+5511888888888")
-        first_parent = ParentGallery(name="Evento 1")
-        second_parent = ParentGallery(name="Evento 2")
+        first_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento 1")
+        second_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento 2")
         db.add(person)
         db.add_all([first_parent, second_parent])
         db.flush()
         db.add_all(
             [
                 DerivedGallery(
+                    tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=first_parent.id, client_id=person.id, name="Privada 1"
                 ),
                 DerivedGallery(
+                    tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=second_parent.id, client_id=person.id, name="Privada 2"
                 ),
             ]
@@ -278,7 +282,7 @@ def test_unknown_phone_without_gallery_link_is_not_registered(client):
 
 def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation(client):
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento protegido", access_mode="standard")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento protegido", access_mode="standard")
         db.add(parent)
         db.flush()
         _, access_token = issue_gallery_capability(
@@ -369,7 +373,7 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
 
 def test_disabled_gallery_link_cannot_create_client_after_otp(client):
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento temporário", access_mode="standard")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento temporário", access_mode="standard")
         db.add(parent)
         db.flush()
         _, access_token = issue_gallery_capability(
@@ -404,12 +408,12 @@ def test_admin_requires_totp_and_client_cannot_enter_admin(client):
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(
-            AdminUser(
+            fixture_admin(AdminUser(
                 email="foto@markina.test",
                 password_hash=password_hasher.hash("senha-segura"),
                 email_verified=True,
                 totp_secret=secret,
-            )
+            ))
         )
         db.commit()
     password = client.post(
@@ -450,12 +454,12 @@ def test_invalid_totp_is_neutral_and_audited(client):
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(
-            AdminUser(
+            fixture_admin(AdminUser(
                 email="foto@markina.test",
                 password_hash=password_hasher.hash("senha-segura"),
                 email_verified=True,
                 totp_secret=secret,
-            )
+            ))
         )
         db.commit()
     challenge = client.post(
@@ -620,12 +624,12 @@ def test_production_cookie_is_secure_and_session_is_rotated(monkeypatch, client)
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(
-            AdminUser(
+            fixture_admin(AdminUser(
                 email="foto@markina.test",
                 password_hash=password_hasher.hash("senha-segura"),
                 email_verified=True,
                 totp_secret=secret,
-            )
+            ))
         )
         db.commit()
     password = client.post(

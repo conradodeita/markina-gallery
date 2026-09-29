@@ -14,6 +14,7 @@ from app.auth import (
     PreviewAdjustment,
     PreviewAdjustmentSettings,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture
@@ -32,13 +33,14 @@ def database(tmp_path, monkeypatch):
 
 
 def make_photo(db):
-    parent = ParentGallery(name="Amostra")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Amostra")
     db.add(parent)
     db.flush()
     folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos", purpose="content")
     db.add(folder)
     db.flush()
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         parent_gallery_id=parent.id,
         folder_id=folder.id,
         filename="foto.jpg",
@@ -367,12 +369,16 @@ def api_client(prepared, monkeypatch):
     monkeypatch.setattr(auth, "SessionLocal", factory)
     monkeypatch.setattr(main, "SessionLocal", factory)
     with factory() as db:
+        admin = fixture_admin(auth.AdminUser(email="adjustment@example.test",
+                                              password_hash="synthetic", totp_secret="synthetic"))
+        db.add(admin)
+        db.flush()
         db.add_all(
             [
                 auth.AuthSession(
                     token_hash=auth.token_hash(f"adjustment-{role}"),
                     role=role,
-                    subject_id=uuid4(),
+                    subject_id=admin.id if role == "admin" else uuid4(),
                     expires_at=auth.now() + timedelta(hours=1),
                 )
                 for role in ("admin", "client")
@@ -457,6 +463,7 @@ def test_client_private_delivery_keeps_authorization_and_fallback(api_client):
         db.flush()
         photo = db.get(PhotoAsset, photo_id)
         gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=photo.parent_gallery_id, client_id=owner.id, name="Privada de teste"
         )
         db.add(gallery)
@@ -576,6 +583,7 @@ def test_lifecycle_manifest_includes_adjustment_even_with_private_reference(prep
         db.add(owner)
         db.flush()
         gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=photo.parent_gallery_id,
             client_id=owner.id,
             name="Privada dependente da origem",

@@ -1,5 +1,4 @@
 """Regressões do PIX global e da confirmação administrativa sensível."""
-
 from datetime import timedelta
 from uuid import UUID
 
@@ -35,6 +34,7 @@ from app.auth import (
 from app.checkout import CheckoutError, create_pending_checkout
 from app.global_pix import apply_configuration, canonical_proposal, normalize_configuration
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -53,12 +53,12 @@ def clean_database():
 def client():
     with TestClient(app) as client:
         with SessionLocal() as db:
-            admin = AdminUser(
+            admin = fixture_admin(AdminUser(
                 email="pix@markina.test",
                 email_verified=True,
                 password_hash=password_hasher.hash("Senha-atual-2026"),
                 totp_secret="JBSWY3DPEHPK3PXP",
-            )
+            ))
             db.add(admin)
             db.flush()
             cookie = create_session(db, Response(), Role.ADMIN, admin.id)
@@ -255,6 +255,7 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         admin_id = db.scalar(select(AdminUser.id))
         owner = Client(full_name="Cliente sintética", phone_e164="+5511999990001")
         parent = ParentGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             name="Evento",
             pricing_mode="fixed",
             fixed_unit_price_cents=700,
@@ -265,10 +266,11 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         db.add(PriceRule(parent_gallery_id=parent.id, minimum_quantity=1,
                          maximum_quantity=None, unit_price_cents=700))
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Pasta", status="released")
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=owner.id, name="Privada")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name="Privada")
         db.add_all([folder, gallery])
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="foto.jpg",

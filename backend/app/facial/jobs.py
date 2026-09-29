@@ -16,6 +16,7 @@ from app.auth import FacialJob, now
 from app.facial.crypto import FacialCryptoError
 from app.facial.provider import FacialProviderError
 from app.facial.reference_store import FacialReferenceError
+from app.tenancy import enable_domain_guard
 
 FACIAL_JOB_KINDS_BY_CLASS = {
     "search": frozenset({"search"}),
@@ -137,6 +138,7 @@ class FacialJobRepository:
         instant: datetime | None = None,
         job_class: str | None = None,
     ) -> ClaimedFacialJob | None:
+        enable_domain_guard(db)
         current = instant or now()
         query = select(FacialJob).where(
             FacialJob.available_at <= current,
@@ -276,6 +278,7 @@ class FacialJobRepository:
 
     @staticmethod
     def _leased(db: Session, claim: ClaimedFacialJob) -> FacialJob:
+        enable_domain_guard(db)
         item = db.scalar(
             select(FacialJob).where(FacialJob.id == claim.id).with_for_update()
         )

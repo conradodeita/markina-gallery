@@ -1,5 +1,4 @@
 """Métricas faciais agregadas, SLOs e rejeição de payload sensível."""
-
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -33,6 +32,7 @@ from app.facial.observability import (
     validate_observability_record,
 )
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture
@@ -78,7 +78,7 @@ def test_slo_limits_are_explicit_and_match_retention_contract() -> None:
 def test_collects_worker_admission_retention_and_runtime_metrics(db: Session) -> None:
     instant = datetime(2026, 9, 8, 15, 0, tzinfo=UTC)
     gallery_id = uuid4()
-    db.add(ParentGallery(id=gallery_id, name="Evento sintético"))
+    db.add(ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=gallery_id, name="Evento sintético"))
     jobs = [
         FacialJob(
             kind="search",
@@ -278,12 +278,12 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
     with TestClient(app) as client:
         assert client.get("/admin/facial-observability").status_code == 403
         with SessionLocal() as session:
-            admin = AdminUser(
+            admin = fixture_admin(AdminUser(
                 email="observability@markina.test",
                 email_verified=True,
                 password_hash=password_hasher.hash("Senha-observabilidade-2026"),
                 totp_secret="JBSWY3DPEHPK3PXP",
-            )
+            ))
             session.add(admin)
             session.flush()
             cookie = create_session(session, Response(), Role.ADMIN, admin.id)

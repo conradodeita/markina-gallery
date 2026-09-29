@@ -38,6 +38,7 @@ from app.canonical_selection import CanonicalSelectionUnavailable, select_canoni
 from app.checkout import CheckoutError
 from app.main import app
 from app.unified_checkout import cart_payload, finalize_selection, prepare_group, report_group
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 from tests.test_derived_galleries import set_test_global_pix
 
 
@@ -70,7 +71,7 @@ def setup_cart():
         db.flush()
         gallery_ids = []
         for number, quantity in enumerate((2, 1)):
-            parent = ParentGallery(name=f"Galeria {number + 1}", fixed_unit_price_cents=700)
+            parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name=f"Galeria {number + 1}", fixed_unit_price_cents=700)
             db.add(parent)
             db.flush()
             db.add(
@@ -82,6 +83,7 @@ def setup_cart():
                 )
             )
             gallery = DerivedGallery(
+                tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=owner.id, name=f"Privada {number}"
             )
             db.add(gallery)
@@ -98,6 +100,7 @@ def setup_cart():
                 db.add(folder)
                 db.flush()
                 photo = PhotoAsset(
+                    tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=parent.id,
                     derived_gallery_id=gallery.id,
                     folder_id=folder.id,
@@ -253,8 +256,8 @@ def test_concurrent_external_finalization_creates_one_order():
 def test_canonical_external_selection_api_admin_export_and_history():
     owner_id, other_id, _legacy_ids = setup_cart()
     with SessionLocal() as db:
-        admin = AdminUser(email="selection-admin@test.invalid", password_hash="synthetic", email_verified=True, totp_secret="JBSWY3DPEHPK3PXP")
-        parent = ParentGallery(name="Seleção externa", access_mode="collective_protected")
+        admin = fixture_admin(AdminUser(email="selection-admin@test.invalid", password_hash="synthetic", email_verified=True, totp_secret="JBSWY3DPEHPK3PXP"))
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Seleção externa", access_mode="collective_protected")
         db.add_all([admin, parent])
         db.flush()
         parent_id = parent.id
@@ -263,7 +266,7 @@ def test_canonical_external_selection_api_admin_export_and_history():
         folder = PhotoFolder(parent_gallery_id=parent.id, name="Comum", status="released", audience_scope="all")
         db.add(folder)
         db.flush()
-        photo = PhotoAsset(parent_gallery_id=parent.id, folder_id=folder.id, filename="externa.jpg", storage_key="synthetic/external.jpg")
+        photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=folder.id, filename="externa.jpg", storage_key="synthetic/external.jpg")
         db.add(photo)
         db.flush()
         db.add(PhotoSelection(parent_gallery_id=parent.id, client_id=owner_id, photo_asset_id=photo.id))
@@ -338,7 +341,7 @@ def test_external_historical_media_uses_explicit_retention_from_finalization(tmp
 def test_simultaneous_first_selections_create_one_canonical_state() -> None:
     with SessionLocal() as db:
         owner = Client(full_name="Cliente concorrente", phone_e164="+5511999988333")
-        parent = ParentGallery(name="Evento concorrente")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento concorrente")
         db.add_all([owner, parent])
         db.flush()
         db.add(ParentGalleryRegistration(
@@ -351,6 +354,7 @@ def test_simultaneous_first_selections_create_one_canonical_state() -> None:
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, folder_id=folder.id, filename="foto.jpg",
             storage_key="synthetic/foto.jpg", available=True,
         )
@@ -413,6 +417,7 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent, folder_id=folder.id, filename="nova.jpg",
             storage_key=f"synthetic/{uuid4()}.jpg",
         )
@@ -456,6 +461,7 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
             PhotoSelection.photo_asset_id == photo_id,
         )) is None
         second = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=canonical_id, folder_id=folder_id,
             filename="compra-adicional.jpg", storage_key=f"synthetic/{uuid4()}.jpg",
         )
@@ -536,6 +542,7 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
                 client_id=owner_id, photo_id=photo_id,
             )
         third = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=canonical_id, folder_id=folder_id,
             filename="remover.jpg", storage_key=f"synthetic/{uuid4()}.jpg",
         )
@@ -557,7 +564,7 @@ def test_confirmed_canonical_preview_survives_folder_revocation(tmp_path, monkey
     with SessionLocal() as db:
         owner = Client(full_name="Compradora", phone_e164="+5511999988111")
         other = Client(full_name="Outra", phone_e164="+5511999988222")
-        parent = ParentGallery(name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([owner, other, parent])
         db.flush()
         db.add(ParentGalleryRegistration(
@@ -574,6 +581,7 @@ def test_confirmed_canonical_preview_survives_folder_revocation(tmp_path, monkey
             folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id
         )
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, folder_id=folder.id,
             filename="foto.jpg", storage_key="synthetic/foto.jpg", available=True,
         )
@@ -1139,6 +1147,7 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
         gallery = db.get(DerivedGallery, gallery_ids[0])
         folder = db.scalar(select(PhotoFolder).where(PhotoFolder.derived_gallery_id == gallery.id))
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=gallery.parent_gallery_id,
             derived_gallery_id=gallery.id,
             folder_id=folder.id,

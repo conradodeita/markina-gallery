@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 from tests.test_gallery_client_audience_migration import _alembic
 
 
@@ -27,7 +28,7 @@ def test_folder_processing_migration(tmp_path, kind):
             "VALUES (:id, :gallery, 'Pasta', 'released', 'content', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         ), {"id": folder_id, "gallery": gallery_id})
     engine.dispose()
-    _alembic(url, "upgrade", "head")
+    _alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     engine = create_engine(url)
     assert "folder_processing_settings" in inspect(engine).get_table_names()
     with engine.begin() as connection:

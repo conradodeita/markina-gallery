@@ -43,7 +43,7 @@ PRESERVED_TABLES = frozenset({
     "facial_calibration_approval", "facial_rollout_operation",
     "global_pix_settings", "notification_setting", "payment_message_template",
     "preview_adjustment_settings", "progressive_pricing_preset",
-    "progressive_pricing_tier", "whatsapp_channel_settings",
+    "progressive_pricing_tier", "whatsapp_channel_settings", "tenant", "tenant_admin",
 })
 MIXED_TABLES = frozenset({"audit_event", "auth_session", "push_subscription"})
 OPERATIONAL_TABLES = frozenset({

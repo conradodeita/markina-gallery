@@ -68,6 +68,7 @@ from app.notification_settings import setting_for
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template
 from app.private_upload_batches import process_ready_batches
 from app.product_brand import PRODUCT_NAME
+from app.tenancy import TenantContextError, domain_session, require_single_tenant
 from app.whatsapp_channel import require_ready_channel
 from app.whatsapp_delivery import (
     apply_delivery_status,
@@ -206,7 +207,7 @@ def _record_attempt(
 
 def process_next_media_job() -> bool:
     """Reserva e executa um job pendente, retornando se havia trabalho."""
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         from app.auth import PhotoAnalysis
         from app.facial.lifecycle import media_can_proceed
 
@@ -282,12 +283,12 @@ def process_next_gallery_lifecycle_operation(
 ) -> bool:
     """Reserva e avança uma operação; etapas ausentes falham de modo sanitizado."""
 
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         claim = claim_next_operation(db)
     if not claim:
         return False
     operation_id, lease_token = claim
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         process_claimed_operation(
             db,
             operation_id=operation_id,
@@ -303,7 +304,7 @@ def process_next_gallery_lifecycle_operation(
 
 
 def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         try:
             max_attempts = payment_notification_max_attempts()
         except WhatsAppConfigurationError:
@@ -385,6 +386,7 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
             provider = whatsapp_provider_from_environment()
             require_ready_channel(db, provider)
             message = delivery_message(db, delivery)
+            require_single_tenant(db)
             result = provider.send_transactional(
                 delivery.recipient_phone,
                 message,
@@ -442,7 +444,7 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
 def process_next_email_delivery(*, provider: EmailProvider | None = None) -> bool:
     """Reserva uma entrega de e-mail e nunca repete resultado ambíguo."""
 
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         instant = now()
         stale_before = instant - timedelta(
             seconds=max(30, int(os.getenv("EMAIL_PROCESSING_TIMEOUT_SECONDS", "120")))
@@ -510,6 +512,7 @@ def process_next_email_delivery(*, provider: EmailProvider | None = None) -> boo
                 context=f"email-delivery:{delivery.id}:{delivery.idempotency_key}",
             )
             active_provider = provider or email_provider_from_environment()
+            require_single_tenant(db)
             result = active_provider.send(
                 recipient=str(payload["recipient"]),
                 subject=str(payload["subject"]),
@@ -574,7 +577,7 @@ def process_next_email_delivery(*, provider: EmailProvider | None = None) -> boo
 
 
 def materialize_next_payment_notification() -> bool:
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         item = db.scalar(
             select(PaymentNotificationOutbox)
             .where(PaymentNotificationOutbox.status == "queued",
@@ -618,7 +621,7 @@ def process_next_gallery_membership_notification() -> bool:
         "member_unblocked": "Cliente desbloqueado na galeria privada",
         "member_unlinked": "Cliente desvinculado da galeria privada",
     }
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         def send(notification: GalleryMembershipNotificationOutbox) -> None:
             recipient = configured_photographer_phone()
             if not recipient:
@@ -630,6 +633,7 @@ def process_next_gallery_membership_notification() -> bool:
                 if notification.client_name_snapshot
                 else ""
             )
+            require_single_tenant(db)
             provider.send_transactional(
                 recipient,
                 f"{label}: {notification.derived_name_snapshot}."
@@ -641,7 +645,7 @@ def process_next_gallery_membership_notification() -> bool:
 
 def process_next_gallery_reopening_notification() -> bool:
     """Envia o aviso da reabertura sem acoplar a persistência da solicitação."""
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         item = db.scalar(
             select(GalleryReopeningNotificationOutbox)
             .where(GalleryReopeningNotificationOutbox.status == "queued")
@@ -657,7 +661,7 @@ def process_next_gallery_reopening_notification() -> bool:
         db.commit()
         item_id = item.id
 
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         item = db.get(GalleryReopeningNotificationOutbox, item_id)
         reopening = (
             db.get(GalleryReopeningRequest, item.gallery_reopening_request_id)
@@ -670,6 +674,7 @@ def process_next_gallery_reopening_notification() -> bool:
             if not item or not reopening or not (gallery or parent) or not item.recipient_phone:
                 raise WhatsAppConfigurationError("Relação da reabertura indisponível.")
             provider = whatsapp_provider_from_environment()
+            require_single_tenant(db)
             provider.send_transactional(
                 item.recipient_phone,
                 f"Solicitação de reabertura da galeria {(gallery or parent).name}. Revise em Vendas e pagamentos.",
@@ -688,7 +693,7 @@ def process_next_gallery_reopening_notification() -> bool:
 
 
 def reconcile_next_unknown_delivery() -> bool:
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         delivery = db.scalar(
             select(WhatsAppDelivery)
             .where(
@@ -702,6 +707,7 @@ def reconcile_next_unknown_delivery() -> bool:
         if not delivery or not delivery.external_message_id:
             return False
         provider = whatsapp_provider_from_environment()
+        require_single_tenant(db)
         result = provider.reconcile(delivery.external_message_id)
         if not result:
             return False
@@ -717,28 +723,36 @@ def reconcile_next_unknown_delivery() -> bool:
         return True
 
 
+def run_cycle() -> bool:
+    # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
+    with domain_session(SessionLocal) as batch_db:
+        process_ready_batches(batch_db)
+    process_highres_cleanup()
+    process_asset_file_cleanup()
+    process_next_notification("push")
+    process_next_notification("whatsapp")
+    return (
+        process_next_gallery_lifecycle_operation()
+        or process_next_media_job()
+        or process_next_whatsapp_delivery()
+        or process_next_email_delivery()
+        or materialize_next_payment_notification()
+        or process_next_gallery_membership_notification()
+        or process_next_gallery_reopening_notification()
+        or reconcile_next_unknown_delivery()
+        or process_otp_privacy_cleanup()
+        or process_admin_security_cleanup()
+    )
+
+
 def main() -> None:
     print("markina-gallery-worker: pronto para filas privadas", flush=True)
     while True:
-        # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
-        with SessionLocal() as batch_db:
-            process_ready_batches(batch_db)
-        process_highres_cleanup()
-        process_asset_file_cleanup()
-        process_next_notification("push")
-        process_next_notification("whatsapp")
-        if not (
-            process_next_gallery_lifecycle_operation()
-            or process_next_media_job()
-            or process_next_whatsapp_delivery()
-            or process_next_email_delivery()
-            or materialize_next_payment_notification()
-            or process_next_gallery_membership_notification()
-            or process_next_gallery_reopening_notification()
-            or reconcile_next_unknown_delivery()
-            or process_otp_privacy_cleanup()
-            or process_admin_security_cleanup()
-        ):
+        try:
+            worked = run_cycle()
+        except TenantContextError:
+            worked = False
+        if not worked:
             time.sleep(2)
 
 
@@ -753,7 +767,7 @@ def process_asset_file_cleanup() -> bool:
     _last_asset_cleanup = instant
     from app.asset_removal import process_file_cleanup
     from app.auth import AssetFileCleanup
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         job = db.scalar(select(AssetFileCleanup).where(AssetFileCleanup.status.in_(("pending", "failed")))
                         .order_by(AssetFileCleanup.attempts, AssetFileCleanup.created_at).limit(1).with_for_update(skip_locked=True))
         return process_file_cleanup(db, job) if job else False
@@ -769,7 +783,7 @@ def process_highres_cleanup() -> bool:
         return False
     _last_highres_cleanup = instant
     from app.facial.lifecycle import cleanup_sources
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         return cleanup_sources(db) > 0
 
 
@@ -785,7 +799,7 @@ def process_otp_privacy_cleanup() -> bool:
     if instant - _last_otp_privacy_cleanup < interval:
         return False
     _last_otp_privacy_cleanup = instant
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         return cleanup_expired_client_otp_pii(db) > 0
 
 
@@ -799,7 +813,7 @@ def process_admin_security_cleanup() -> bool:
     if instant - _last_admin_security_cleanup < interval:
         return False
     _last_admin_security_cleanup = instant
-    with SessionLocal() as db:
+    with domain_session(SessionLocal) as db:
         return cleanup_admin_security_material(db) > 0
 
 

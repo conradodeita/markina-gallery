@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 from tests.test_private_gallery_operations_sales_migration import alembic
 
 
@@ -57,8 +58,8 @@ def test_notification_upgrade_preserves_history_and_baselines(tmp_path):
                         "VALUES (:id, :communication, '+5511999999999', 'confirmed', "
                         "'old-decision', 'sent', 1, 'Mensagem histórica', :now, :now)"),
                    {"id": uuid4().hex, "communication": communication_id, "now": instant})
-    alembic(url, "upgrade", "head")
-    alembic(url, "upgrade", "head")  # repetir upgrade não cria eventos
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)  # repetir upgrade não cria eventos
     with engine.connect() as db:
         assert db.scalar(text("SELECT count(*) FROM notification_setting")) == 6
         assert db.scalar(text("SELECT whatsapp_body FROM notification_setting "

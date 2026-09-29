@@ -27,6 +27,7 @@ from app.auth import (
     SaleOrderItem,
     now,
 )
+from app.tenancy import TenantContextError, enable_domain_guard
 
 
 class InvalidLifecycleTransition(ValueError):
@@ -352,6 +353,7 @@ def process_claimed_operation(
 ) -> GalleryLifecycleOperation:
     """Executa etapas idempotentes e confirma progresso após cada uma."""
 
+    enable_domain_guard(db)
     while True:
         operation = db.get(GalleryLifecycleOperation, operation_id)
         if not operation:
@@ -393,6 +395,9 @@ def process_claimed_operation(
             else:
                 operation.lease_expires_at = now() + timedelta(seconds=lease_seconds)
             db.commit()
+        except TenantContextError:
+            db.rollback()
+            raise
         except Exception as error:
             db.rollback()
             operation = db.get(GalleryLifecycleOperation, operation_id)

@@ -32,6 +32,7 @@ from app.preview_adjustment.engine import (
     RawTherapeeEngine,
     compensate_exposure,
 )
+from app.tenancy import domain_session, require_single_tenant
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
@@ -251,7 +252,7 @@ def presentation_path(db: Session, derivative: MediaDerivative) -> Path:
 
 def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool:
     claim, photo_id = str(uuid4()), None
-    with session_factory() as db:
+    with domain_session(session_factory) as db:
         stale = now() - timedelta(seconds=LEASE_SECONDS)
         eligible = or_(
             PreviewAdjustment.status == "queued",
@@ -325,7 +326,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
             raise ValueError("Dimensões inválidas.")
         protected = watermark(compensate_exposure(adjusted, exposure_tenths), branding)
         # Nunca manter lock de banco durante o subprocesso.
-        with session_factory() as db:
+        with domain_session(session_factory) as db:
             parent_id = db.scalar(
                 select(PhotoAsset.parent_gallery_id).where(PhotoAsset.id == photo_id)
             )
@@ -354,6 +355,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                     row.status, row.claim_token = "cancelled", None
                     db.commit()
                 return True
+            require_single_tenant(db)
             output = result_path(photo_id, claim)
             output.parent.mkdir(parents=True, exist_ok=True)
             if highres:
@@ -380,7 +382,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                 output.unlink(missing_ok=True)
             except OSError:
                 logger.warning("preview_adjustment.failed_result_cleanup_failed")
-        with session_factory() as db:
+        with domain_session(session_factory) as db:
             db.execute(
                 update(PreviewAdjustment)
                 .where(
