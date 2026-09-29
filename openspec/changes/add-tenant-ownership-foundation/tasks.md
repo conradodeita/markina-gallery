@@ -26,8 +26,8 @@
 ## 5. Integração e pacote de liberação
 
 - [x] 5.0 Garantir no script de deploy a interrupção e conferência dos escritores exclusivos antes do Alembic, sem parar Evolution ou vizinhos; validar com subprocessos simulados ordem, falha de parada e bloqueio de migration/rollback incompatível.
-- [ ] 5.1 Executar validação integrada proporcional ao risco: lint e testes backend, regressões de OTP/galerias/prévias/checkout/lifecycle e migration PostgreSQL; executar lint/testes/typecheck/build frontend aplicáveis e validação OpenSpec estrita; registrar resultados reais e investigar falhas relacionadas antes de marcar concluído.
-- [ ] 5.2 Revisar diff/hunks, preparar versão exata e preencher o registro de entrega local em `delivery-plan.md` com links de evidência; verificar preservação do trabalho preexistente e que nenhum segredo, ambiente ou artefato local de teste entra no pacote.
+- [x] 5.1 Executar validação integrada proporcional ao risco: lint e testes backend, regressões de OTP/galerias/prévias/checkout/lifecycle e migration PostgreSQL; executar lint/testes/typecheck/build frontend aplicáveis e validação OpenSpec estrita; registrar resultados reais e investigar falhas relacionadas antes de marcar concluído.
+- [x] 5.2 Revisar diff/hunks, preparar versão exata e preencher o registro de entrega local em `delivery-plan.md` com links de evidência; verificar preservação do trabalho preexistente e que nenhum segredo, ambiente ou artefato local de teste entra no pacote.
 
 ## 6. Homologação e entrega ao proprietário
 
@@ -39,6 +39,6 @@
 
 ## Execution Notes
 
-Estado inicial: planejamento, nenhuma implementação ou liberação executada. Todos os checkboxes estão pendentes. As tasks remotas dependem dos gates de paridade e autorização; isso não bloqueia implementação e validação local independentes após revisão da proposta. A definição da revision nova depende de 1.2.
+Estado atual: implementação e validação local/CI concluídas para a release `b4c320e75cbe0d786d8b05d62d57b77aa796a2ec`, PR #115 em rascunho. Backend 890 passed/19 skips condicionais, frontend 352 passed, lint/build/OpenSpec/segredos aprovados. Nenhuma publicação ou limpeza remota executada. Restam somente aprovação operacional, execução/aceite remoto e revisão humana para sincronização/arquivo (6.2–6.5). Ver `validation.md` e `release-runbook.md`.
 
 Durante a aplicação, executar uma task e sua validação por vez, registrar evidência e seguir para a próxima acionável. Bloqueios são documentados por task; aprovação deste plano não aprova outras etapas P0/P1/P2 nem deploy. Não sincronizar/arquivar antecipadamente.

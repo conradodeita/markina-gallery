@@ -29,9 +29,9 @@ Antes de publicar, também serão apresentados versão exata, ambiente, serviço
 
 Exemplo de comunicação **a preencher após execução; não é declaração de entrega atual**:
 
-> Entregue: suas galerias e fotos agora têm sua conta de fotógrafo como proprietária explícita. O acervo anterior foi preservado conforme as conferências registradas.
+> Entregue: novas galerias e fotos têm sua conta de fotógrafo como proprietária explícita. O acervo anterior foi descartado conforme sua autorização, preservando admin, acesso e Evolution conectada, conforme as conferências registradas.
 >
-> Você pode testar: entre como fotógrafo, abra uma galeria existente e crie uma galeria de teste com um JPEG sintético. Confira envio, galeria privada autorizada e prévia protegida. O teste de cliente/OTP depende de acesso humano autorizado e será registrado separadamente.
+> Você pode testar: entre como fotógrafo e crie uma galeria de teste com um JPEG sintético. Confira envio, galeria privada autorizada e prévia protegida. O teste de cliente/OTP depende de acesso humano autorizado e será registrado separadamente.
 >
 > Verificado: [preencher testes e links reais, contagens antes/depois e versão/schema].
 >
@@ -67,7 +67,7 @@ Copiar este modelo para `deploy-<data>-<identificador>.md` dentro da change corr
 
 ## Preparação operacional desta liberação
 
-Branch isolada: `feature/add-tenant-ownership-foundation`, baseada no SHA remoto confirmado. A versão final será registrada após a validação integrada e revisão do diff. Nenhum arquivo de ambiente ou segredo foi alterado.
+Branch isolada: `feature/add-tenant-ownership-foundation`, baseada no SHA remoto confirmado. Implementação versionada em `b4c320e75cbe0d786d8b05d62d57b77aa796a2ec`, [PR #115 em rascunho](https://github.com/conradodeita/markina-gallery/pull/115). Nenhum arquivo de ambiente ou segredo foi alterado. O [procedimento da primeira liberação](release-runbook.md) detalha a sequência manual necessária para inserir a limpeza antes da retomada dos escritores; não usar o merge automático como início dessa janela.
 
 Escopo de preservação solicitado: conta administrativa, hash da senha, TOTP, sessões e meios de acesso; nova conta/vínculo do fotógrafo; configurações do canal e volumes `evolution-instances`, `evolution-pgdata`, `evolution-redisdata`. A Evolution foi consultada sem envio: uma instância `open`. Admin e OTP reais continuam sujeitos ao teste humano, sem compartilhar senha/código no relatório.
 
@@ -92,5 +92,5 @@ Reversão: antes de qualquer mudança de schema, o script permite restaurar cód
 
 - **Entregue localmente:** modelo e migration de propriedade do acervo, vínculo administrativo revalidado, herança em galerias/fotos, gate da conta única e proteção da limpeza. A interface comercial atual permanece igual.
 - **Você poderá testar após publicar:** entrar com o admin atual, criar uma galeria e enviar um JPEG sintético, abrir a prévia e o fluxo privado autorizado. Após a limpeza, o acervo de teste anterior estará vazio. A conectividade da Evolution deve permanecer `open`.
-- **Verificado até aqui:** integridade e migration PostgreSQL sintéticos; sessão e seed; limpeza preservando conta/admin/canal; fluxos de criação/retry; 352 testes frontend, lint, TypeScript e build; políticas/shell de deploy e OpenSpec estrito. Validação backend integrada ainda em andamento; evidências detalhadas em [validation.md](validation.md).
-- **Pendente:** resultado integrado final, versão final revisada, autorização operacional da release, deploy e testes reais de acesso. Múltiplos fotógrafos, quotas, isolamento completo e expansão não estão habilitados.
+- **Verificado:** [CI da implementação b4c320e](https://github.com/conradodeita/markina-gallery/actions/runs/36586629460) aprovada: backend **890 passed / 19 skipped**, frontend **50 arquivos / 352 testes**, lint/build/OpenSpec/varredura de segredos e políticas de deploy. Integridade/migration/contexto novos foram executados com PostgreSQL sintético; quatro testes adicionais de high-res PostgreSQL passaram localmente. TypeScript local aprovado. Evidências e limites dos skips em [validation.md](validation.md).
+- **Pendente:** autorização operacional da release **b4c320e75cbe0d786d8b05d62d57b77aa796a2ec**, deploy/limpeza e testes reais de acesso, seguidos de revisão humana. Múltiplos fotógrafos, quotas, isolamento completo e expansão não estão habilitados. O PR segue em rascunho; nenhuma publicação automática foi iniciada.
