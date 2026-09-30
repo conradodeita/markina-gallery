@@ -79,6 +79,7 @@ no diff/arquivos novos e `git diff --check` também passaram.
 
 A redação estrita de 1.2 exige teste inicialmente falho. O ciclo red/green foi
 observado para o diretório/lifecycle antes desta implementação. A redação estrita
-de 1.3 continua sem evidência retroativa completa no recorte PIX e permanece
-aberta. Deploy, migration em homologação e conferência humana pertencem a 7.6 e
-continuam condicionados a autorização explícita posterior.
+de 1.3 continua sem evidência retroativa completa no recorte PIX. Em 2026-09-30,
+o proprietário aprovou reconciliar 1.3 para cobertura de regressão e CI verde,
+sem afirmar um ciclo red/green prévio; 7.6 foi verificada após deploy autorizado,
+conforme `tasks.md`. A sincronização e o arquivamento ainda exigem revisão humana final.
