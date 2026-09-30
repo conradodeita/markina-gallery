@@ -24,6 +24,39 @@ O orçamento futuro pode usar `C_aplicacao = soma(processos confirmados * teto f
 
 Na Visão geral administrativa, a seção começa recolhida e consulta somente quando aberta. Não há atualização automática; a pessoa administradora pode atualizar manualmente. Uma falha de rede ou autorização remove o snapshot anterior da tela. Valores zero observados são mostrados como zero; campos indisponíveis preservam o motivo, e cada valor mostra a classe de evidência. A interface usa botões nativos para teclado e uma grade que se adapta a telas estreitas.
 
+## Copiar relatório para análise
+
+Depois de uma consulta bem-sucedida, **Copiar relatório** coloca na área de transferência uma representação Markdown `capacity-report/v1` do mesmo snapshot que está na tela. A ação não atualiza o diagnóstico, não chama outro endpoint e não envia o conteúdo para nenhum serviço. Para compartilhar a leitura com uma pessoa ou ferramenta de análise, copie o relatório e cole-o explicitamente no canal autorizado.
+
+O formato usa valores e enums do contrato, sem localização, para evitar ambiguidade de separador decimal ou tradução. Ele contém `schema_version`, início e fim UTC da coleta, `cached`, configurações e ocupação do pool respondente, conexões agregadas do PostgreSQL, as cinco filas cobertas, orçamento global, cobertura e limitações. Cada métrica preserva `value`, `unit`, `evidence`, `scope`, `source`, `collected_at` e `reason`; indisponibilidade permanece `value=null` com motivo e nunca vira zero.
+
+Exemplo reduzido da sintaxe, sem substituir o relatório completo:
+
+```text
+# Relatório de capacidade e filas
+
+- report_format: capacity-report/v1
+- schema_version: 1
+
+## Coleta
+- collection_started_at: 2026-09-30T10:00:00Z
+- collection_finished_at: 2026-09-30T10:00:01Z
+- cached: false
+
+## Pool da API
+- checked_out: value=1 | unit=connections | evidence=observed | scope=responding_api_process | source=sqlalchemy_pool | collected_at=2026-09-30T10:00:00Z | reason=null
+- wait_seconds: value=null | unit=seconds | evidence=unavailable | scope=responding_api_process | source=none | collected_at=2026-09-30T10:00:00Z | reason=field_unavailable
+
+## Filas
+### media
+- queued_total: value=0 | unit=jobs | evidence=observed | scope=application_database | source=media_job | collected_at=2026-09-30T10:00:00Z | reason=null
+- oldest_record_age_seconds: value=4.5 | unit=seconds | evidence=estimated | scope=application_database | source=media_job | collected_at=2026-09-30T10:00:00Z | reason=null
+```
+
+O serializador usa uma lista fechada e ignora propriedades adicionais; não inclui SQL, nomes de banco, usuário ou host, IP, DSN, caminhos, identificadores de negócio, dados pessoais, fotos, tokens, mensagens ou biometria. O texto só existe quando o navegador atende ao gesto de cópia; o produto não o persiste, não cria arquivo nem mantém histórico. Se o navegador negar a área de transferência, a interface informa a falha e mantém o snapshot para nova tentativa. Se a autorização administrativa for perdida, o snapshot e a ação desaparecem.
+
+O relatório continua sendo uma leitura agregada da instalação única. Ele não separa dados por fotógrafo, não mede séries históricas, não cria alertas e não comprova throughput, capacidade futura ou cumprimento de SLO.
+
 ## Requisitos antes de expansão
 
 SLOs gerais e esquema métrico precisam de aprovação; carga mista PostgreSQL/API, jornadas e bytes/egress requerem evidência nos estudos B05/B06/B11 em ambiente isolado e autorizado. Este diagnóstico sozinho não promete capacidade, disponibilidade, preço ou escala. P0.2 fairness/quotas e suporte a vários fotógrafos são escopos separados.

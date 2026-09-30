@@ -1152,6 +1152,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .capacity-diagnostics p { margin:0; line-height:1.5; }
 .capacity-diagnostics dl { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 16px; margin:0; }
 .capacity-diagnostics dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+.capacity-diagnostics-actions { display:flex; flex-wrap:wrap; gap:10px; }
 .capacity-queue-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px; }
 .capacity-queue-grid section { min-width:0; padding:14px; border:1px solid var(--line); border-radius:12px; }
 .capacity-queue-grid h4 { margin:0 0 10px; }
