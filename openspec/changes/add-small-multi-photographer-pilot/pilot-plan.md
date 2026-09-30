@@ -2,7 +2,9 @@
 
 ## Estado e pré-condições
 
-Planejado; não executado. Requer isolamento completo, matriz sem lacunas e suíte local aprovada. Homologação exige inventário e autorização de versão, contas, dados, permissão do dono e canais. Configuração externa ausente bloqueia o aceite remoto correspondente; não usar canal de outro fotógrafo nem bypass de OTP.
+Roteiro futuro; não executado e sem solicitação de execução agora. O proprietário quer validar assim que o sistema estiver pronto e aproveitar essa ocasião para testar o monitor. A prioridade anterior é completar a preparação e o isolamento.
+
+Requer isolamento completo, matriz sem lacunas, migration ensaiada, suíte local aprovada e evidências de prontidão registradas. Homologação exige inventário e autorização de versão, contas, dados, permissão do dono e canais. Configuração externa ausente bloqueia o aceite remoto correspondente; não usar canal de outro fotógrafo nem bypass de OTP. O tamanho do corpus é uma proposta para essa etapa futura, não instrução para cadastrar participantes neste momento.
 
 ## Grupo e corpus propostos
 

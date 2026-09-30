@@ -2,7 +2,7 @@
 
 ## Why
 
-O proprietário quer validar o sistema com poucos fotógrafos e clientes, usando o monitor de capacidade durante as jornadas. A fundação atual bloqueia uma segunda conta e mantém clientes e configurações globais; habilitar várias contas sem completar o isolamento permitiria misturar pessoas, acervos e pagamentos.
+O objetivo imediato do planejamento é preparar o isolamento necessário para operar com fotógrafos independentes. O proprietário quer validar com poucos fotógrafos e clientes assim que o sistema estiver tecnicamente pronto e, nessa ocasião futura, aproveitar para testar o monitor durante as jornadas; não solicitou executar esse ensaio agora. A fundação atual bloqueia uma segunda conta e mantém clientes e configurações globais; habilitar várias contas sem completar o isolamento permitiria misturar pessoas, acervos e pagamentos.
 
 ## What Changes
 
@@ -11,8 +11,8 @@ O proprietário quer validar o sistema com poucos fotógrafos e clientes, usando
 - Resolver o fotógrafo no backend a partir do vínculo administrativo ou do link autorizado da galeria; vincular desafios OTP, sessões e convites ao mesmo contexto.
 - Isolar acervo, clientes, comércio, PIX, branding, configurações, notificações, jobs, caches, arquivos e operações de manutenção. Dados técnicos de infraestrutura continuam próprios da instalação.
 - Separar a permissão do dono da instalação para consultar o monitor agregado da permissão de um fotógrafo comum. Essa permissão permite diagnóstico sanitizado e não acesso implícito aos acervos de outros fotógrafos.
-- Preparar ensaio pequeno proposto: 2 fotógrafos × 3 clientes, 1 galeria e até 6 JPEGs sintéticos por fotógrafo; repetir um telefone nas duas contas e exercitar acesso concorrente limitado, comércio e negativas de acesso cruzado.
-- Comparar relatórios `capacity-report/v1` antes, durante e depois do ensaio. Filas faciais sem atividade continuam identificadas como tal; o ensaio não comprova desempenho facial nem capacidade máxima.
+- Manter roteiro futuro de ensaio pequeno proposto: 2 fotógrafos × 3 clientes, 1 galeria e até 6 JPEGs sintéticos por fotógrafo; repetir um telefone nas duas contas e exercitar acesso concorrente limitado, comércio e negativas de acesso cruzado. Sua execução depende de isolamento completo, testes de engenharia aprovados e prontidão registrada; a intenção de validar assim que possível não autoriza ativação antecipada de contas.
+- Na ocasião desse ensaio futuro, comparar relatórios `capacity-report/v1` antes, durante e depois. Filas faciais sem atividade continuam identificadas como tal; o ensaio não comprova desempenho facial nem capacidade máxima.
 
 ## Capabilities
 
@@ -41,4 +41,4 @@ Cadastro público/SaaS, cobrança da plataforma, quotas/fairness, aumento de wor
 
 ## Review
 
-Decisão já confirmada: clientes independentes por fotógrafo, mesmo com telefone igual. Quantidade 2 × 3, provisionamento controlado, permissão do operador da instalação e detalhes do ensaio são propostas para revisão. O aceite dos artefatos precede código; deploy e uso de canais externos têm autorização operacional separada.
+Decisões confirmadas: clientes independentes por fotógrafo, mesmo com telefone igual; validação pequena somente assim que o sistema estiver pronto, aproveitando essa ocasião para testar o monitor. A prioridade é completar a preparação e o isolamento; o ensaio não é uma ação imediata. Quantidade 2 × 3, provisionamento controlado, permissão do operador da instalação e detalhes do roteiro futuro são propostas para revisão. O aceite dos artefatos precede código; deploy e uso de canais externos têm autorização operacional separada.

@@ -4,13 +4,15 @@
 
 Ver `proposal.md` para motivação. A base de planejamento é `ce628f01d4aa9f7f9d7eb24bf347e30ae42579d3`, em branch isolada `feature/plan-small-multi-photographer-pilot`.
 
+Correção de intenção confirmada pelo proprietário em 30/09/2026: a validação pequena com fotógrafos/clientes ocorrerá assim que houver prontidão técnica. Neste momento o foco é preparar o isolamento; o roteiro não é ordem para executar um piloto agora ou ativar outra conta antes de completar as dependências.
+
 `backend/app/tenancy.py` exige exatamente uma conta e repete o gate no commit; galerias e fotos já têm propriedade e FKs compostas. `Client.phone_e164` e telefones ativos possuem unicidade global; `client_identity.py` consulta sem conta. Branding, PIX, templates, preferências, conectores e várias rotinas ainda são globais. O diagnóstico atual exige a conta única antes de coleta/cache. Portanto, remover somente `require_single_tenant` seria insuficiente.
 
 O PR #115 da fundação foi integrado em 29/09/2026, mas seus artefatos ainda descrevem release em rascunho e tarefas remotas abertas. Essa divergência é dependência real: reconciliar com evidências de deploy/aceite antes de implementar a presente change, sem marcar tarefas históricas por inferência.
 
 ## Goals / Non-Goals
 
-**Goals:** fronteira de autorização verificável em requisições, persistência, workers e mídia; preservação do legado; dois fotógrafos em piloto pequeno; dono com monitor técnico agregado.
+**Goals:** fronteira de autorização verificável em requisições, persistência, workers e mídia; preservação do legado; preparação para fotógrafos independentes; dono com monitor técnico agregado; roteiro futuro de validação pequena condicionado à prontidão.
 
 **Non-Goals:** garantir escala ou concluir P0.2/P0.3; projetar SaaS público; identidade global de cliente; impersonação por suporte; tornar biometria automaticamente disponível; provisionar infraestrutura ou compartilhar canais comerciais por fallback.
 
@@ -58,6 +60,8 @@ Expor à interface uma capacidade booleana sanitizada calculada pelo backend par
 
 ### 7. Ensaio pequeno e monitor
 
+Separar preparação/isolamento, verificação de engenharia e validação futura das jornadas. Antes do ensaio, registrar evidências de matriz completa, migration ensaiada, testes de isolamento/autenticação/comércio aprovados e ausência de bloqueios que invalidem as jornadas. Não reduzir esses critérios para antecipar a demonstração. A intenção é executar assim que os critérios e, no remoto, as autorizações operacionais forem atendidos; não há data ou execução imediata solicitada.
+
 O tamanho 2 × 3 limita somente o ensaio, sem prometer limite comercial ou capacidade. Roteiro em `pilot-plan.md`: 12 JPEGs sintéticos sem rostos e metadados pessoais; concorrência máxima de seis jornadas cliente; amostras antes/durante/depois. Respeitar até 30 segundos de cache e comparar timestamps. Jobs podem terminar entre snapshots; não retardar workers artificialmente nem prometer fila positiva. Logs/evidências de conclusão suplementam o snapshot sem inventar tempos.
 
 Não enviar WhatsApp/push/e-mail real em testes automatizados. Em homologação, o fluxo real OTP depende de canal e destinatários explicitamente autorizados; sem isso, registrar bloqueio do aceite real, não substituir por bypass silencioso. Busca facial não executada é uma lacuna declarada do ensaio, embora acesso cruzado às suas rotas e referências seja testado com fixtures sintéticas.
@@ -76,7 +80,7 @@ Não enviar WhatsApp/push/e-mail real em testes automatizados. Em homologação,
 1. Reconciliar a fundação e a baseline vigente, obter aceite humano desta proposta e documentar exceção ao MVP de fotógrafo único nos artefatos operacionais quando iniciar implementação.
 2. Construir matriz de propriedade e ensaiar migration em PostgreSQL descartável: legado válido, vazio, relações inválidas e duplicidade de telefone em contas distintas. Preservar hashes/referências/contagens sem exportar dados sensíveis.
 3. Completar contexto, constraints, configurações, rotas, workers, frontend e negativas antes de habilitar múltiplas contas. Inventariar revisões Alembic reais; não fixar revision a partir de memória.
-4. Executar testes locais/CI e piloto sintético isolado. Preparar pacote remoto com SHA/schema, backup verificado, janela, serviços próprios, porta/subdomínio e reversão compatível.
+4. Executar testes locais/CI e registrar prontidão. Somente após esses pré-requisitos, realizar o ensaio sintético isolado futuro. Preparar pacote remoto com SHA/schema, backup verificado, janela, serviços próprios, porta/subdomínio e reversão compatível.
 5. Após autorização operacional específica, publicar apenas no projeto `markina-gallery`, em `markina-homolog.duckdns.org`, entrada atual `127.0.0.1:8080`, sujeito a novo inventário. Não criar ou alterar recursos de outros projetos.
 6. Autorizar provisionamento/dados/canais do piloto por inventário separado ou explicitamente abrangido no pacote; executar e registrar aceite. Eventual remoção de dados recebe autorização específica, sem `git clean`, prune ou limpeza integral implícita.
 7. Após revisão humana do resultado, sincronizar specs e arquivar. Não retornar a binário de conta única sobre schema ou dados multitenant sem compatibilidade demonstrada; downgrade destrutivo/restauração exigem decisão própria.

@@ -38,21 +38,21 @@
 - [ ] 6.1 Implementar permissão explícita e revogável do operador, provisionamento offline sem concessão automática e revalidação antes de coleta/cache; testar dono autorizado, fotógrafo comum, cliente e revogação com cache, comprovando ausência de privilégio comercial cruzado.
 - [ ] 6.2 Mostrar painel/cópia somente com capacidade autorizada e manter snapshot sanitizado agregado; testar omissão para fotógrafo comum, remoção após 403, cópia fiel após atualização e compatibilidade `capacity-report/v1`; atualizar guia do dono.
 
-## 7. Piloto local e integração
+## 7. Integração prontidão e ensaio local futuro
 
 - [ ] 7.1 Criar fixtures e executor reproduzível de 2 fotógrafos × 3 clientes, até 12 JPEGs sintéticos sem pessoas, telefone repetido e adaptadores sem envio; verificar provisionamento idempotente e isolamento dos recursos locais e preencher `pilot-plan.md` com comandos validados.
-- [ ] 7.2 Executar jornadas e negativas do roteiro local, concorrência máxima de seis clientes e leituras antes/durante/depois pelo monitor; registrar UTC/cache/valores/lacunas e conclusão de jobs em `pilot-results.md`, recusando liberação em qualquer acesso cruzado.
-- [ ] 7.3 Executar lint/testes backend, regressões PostgreSQL/migrations, testes/lint/typecheck/build frontend e OpenSpec estrito; investigar falhas relacionadas e registrar evidências, matriz completa e revisão do diff/segredos em `validation.md`.
+- [ ] 7.2 Executar lint/testes backend, regressões PostgreSQL/migrations, testes/lint/typecheck/build frontend e OpenSpec estrito; investigar falhas relacionadas e registrar evidências, matriz completa, revisão do diff/segredos e checklist de prontidão em `validation.md` antes do ensaio de jornadas.
+- [ ] 7.3 Somente após prontidão demonstrada em 7.2, executar as jornadas e negativas do roteiro local futuro, concorrência máxima de seis clientes e leituras antes/durante/depois pelo monitor; registrar UTC/cache/valores/lacunas e conclusão de jobs em `pilot-results.md`, recusando liberação em qualquer acesso cruzado.
 
 ## 8. Homologação e fechamento
 
 - [ ] 8.1 Preparar pacote com SHA/schema, inventário do destino, backup verificável, janela, portas/subdomínio, escritores próprios e reversão compatível; obter autorização operacional explícita antes de qualquer merge/push que acione deploy e registrar o aceite do pacote.
 - [ ] 8.2 Executar somente a publicação autorizada e validar healthchecks/legado/serviços vizinhos; registrar SHA/schema/UTC e autorização explícita para contas, dados, operador e canais do piloto antes do provisionamento remoto.
-- [ ] 8.3 Executar ensaio pequeno em homologação e analisar os relatórios reais do monitor; verificar o caso do mesmo telefone, negativas cruzadas, jornada OTP e resultados assíncronos; registrar limitações/bloqueios reais sem concluir etapa com bypass ou evidência local substitutiva.
+- [ ] 8.3 Quando o sistema estiver pronto e 8.1–8.2 estiverem validadas, executar na primeira oportunidade viável o ensaio pequeno futuro em homologação e analisar os relatórios reais do monitor; verificar o caso do mesmo telefone, negativas cruzadas, jornada OTP e resultados assíncronos; registrar limitações/bloqueios reais sem concluir etapa com bypass ou evidência local substitutiva.
 - [ ] 8.4 Entregar resultado ao dono e obter revisão humana; sincronizar somente requisitos implementados/validados e arquivar depois do aceite, verificando validação OpenSpec final e preservando tarefas bloqueadas.
 
 ## Execution Notes
 
-Estado: planejamento local, sem implementação, provisionamento ou deploy. Todas as tarefas permanecem pendentes. Decisão confirmada: cadastro independente por fotógrafo para o mesmo telefone. O tamanho e as demais decisões do piloto estão propostos para revisão.
+Estado: planejamento local, sem implementação, provisionamento ou deploy. Todas as tarefas permanecem pendentes. Decisões confirmadas: cadastro independente por fotógrafo para o mesmo telefone; o proprietário quer validar assim que houver prontidão, sem executar esse ensaio agora. A prioridade é completar o isolamento e os pré-requisitos; o tamanho e as demais decisões do roteiro futuro estão propostos para revisão.
 
 Dependências: reconciliação documental da fundação; aceite desta proposta; gates de operação/canais e eventual biometria. Bloqueios remotos não impedem as tarefas locais independentes após aprovação da implementação. Nenhum fotógrafo adicional será ativado antes de completar a matriz e os testes de isolamento.

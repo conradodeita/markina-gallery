@@ -2,9 +2,21 @@
 
 ## Purpose
 
-Validar jornadas e isolamento com um grupo pequeno de fotógrafos e clientes, usando leituras reais do diagnóstico de capacidade em ensaio controlado e reproduzível.
+Definir a validação futura de jornadas e isolamento com um grupo pequeno de fotógrafos e clientes, usando o diagnóstico de capacidade somente quando o sistema estiver tecnicamente pronto para o ensaio.
 
 ## ADDED Requirements
+
+### Requirement: Validação futura condicionada à prontidão
+
+O ensaio com fotógrafos e clientes SHALL ocorrer somente após completar o isolamento dos caminhos inventariados, preservar o legado e aprovar os testes de engenharia aplicáveis, com evidências de prontidão registradas. A intenção do proprietário de validar assim que possível SHALL ser tratada como objetivo futuro condicionado a esses pré-requisitos e às autorizações operacionais do ambiente. Ela MUST NOT ser tratada, por si só, como ordem de execução imediata, criação de uma segunda conta operacional ou dispensa de isolamento para antecipar a validação. O monitor SHALL ser testado durante as jornadas quando essa etapa futura puder ser executada.
+
+#### Scenario: Preparação ainda incompleta
+- **WHEN** restam caminhos sem isolamento, testes de engenharia pendentes ou dependências que invalidam as jornadas
+- **THEN** o ensaio permanece planejado e o trabalho avança na preparação e nas verificações independentes, sem ativar outra conta operacional
+
+#### Scenario: Prontidão demonstrada
+- **WHEN** os pré-requisitos técnicos estão comprovados e as autorizações operacionais necessárias foram concedidas
+- **THEN** o ensaio pode ser realizado na primeira oportunidade viável, usando o monitor antes, durante e depois das jornadas
 
 ### Requirement: Provisionamento e piloto pequenos e autorizados
 
