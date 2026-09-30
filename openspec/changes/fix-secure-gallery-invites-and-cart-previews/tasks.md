@@ -13,6 +13,6 @@
 ## 3. Integração e publicação controlada
 
 - [x] 3.1 Executar testes focados cruzados, lint/typecheck/build aplicáveis, validação OpenSpec estrita e revisão do diff/segredos; registrar comandos, resultados e limitações em `validation.md`, incluindo que não houve migration nem edição de configuração persistida.
-- [ ] 3.2 Preparar commit/PR restrito à change, sem publicar em `develop`; verificar SHA, arquivos e CI acionada pelo PR, então parar enquanto o proprietário informa o resultado da CI.
+- [x] 3.2 Preparar commit/PR restrito à change, sem publicar em `develop`; verificar SHA, arquivos e CI acionada pelo PR, então parar enquanto o proprietário informa o resultado da CI.
 - [ ] 3.3 Após CI verde e aprovação operacional específica, inventariar SHA/schema, porta/subdomínio e vizinhos, apresentar impacto zero/backup/reversão e só então integrar/deployar; verificar HTTPS do convite e prévia no carrinho com dados sintéticos autorizados, limpar o ensaio e registrar saúde/admin/Evolution sem pagamento real. Se a autorização ou participação humana faltar, registrar o bloqueio e manter a task aberta.
 - [ ] 3.4 Após revisão humana do resultado completo, sincronizar as specs principais e arquivar esta change; verificar validação OpenSpec e registrar a aprovação, sem marcar aceite remoto ou arquivo por CI isoladamente.
