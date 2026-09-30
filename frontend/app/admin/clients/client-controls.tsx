@@ -56,15 +56,61 @@ const inventoryLabels: Record<string, string> = {
   removed_movements: "movimento(s) histórico(s) de acervo removido",
 };
 
-export async function clientJsonRequest(path: string, init?: RequestInit) {
+const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export class ClientRequestError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    readonly requestId?: string,
+    readonly outcome?: "not_committed" | "unknown",
+  ) {
+    super(message);
+    this.name = "ClientRequestError";
+  }
+}
+
+export async function clientJsonRequest(
+  path: string,
+  init?: RequestInit,
+  options?: { deletionDiagnostic?: boolean },
+) {
   const response = await fetch(path, { credentials: "same-origin", ...init });
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
     const detail = payload?.detail;
-    throw new Error(
+    const fromBody = typeof detail?.request_id === "string" ? detail.request_id : undefined;
+    const fromHeader = response.headers.get("X-Request-ID") ?? undefined;
+    const candidate = fromBody ?? fromHeader;
+    const requestId = candidate && requestIdPattern.test(candidate) ? candidate : undefined;
+    const outcome =
+      detail?.outcome === "not_committed" || detail?.outcome === "unknown"
+        ? detail.outcome
+        : undefined;
+    const hasDetailMessage = typeof detail === "string" || typeof detail?.message === "string";
+    const detailMessage =
       typeof detail === "string"
         ? detail
-        : detail?.message ?? "Não foi possível concluir a operação.",
+        : typeof detail?.message === "string"
+          ? detail.message
+          : "Não foi possível concluir a operação.";
+    const message = options?.deletionDiagnostic
+      ? outcome === "not_committed"
+        ? "A exclusão não foi concluída. Feche esta janela e recarregue a lista antes de tentar novamente."
+        : outcome === "unknown"
+          ? "Não foi possível confirmar a exclusão. Feche esta janela e recarregue a lista antes de tentar novamente."
+          : hasDetailMessage
+            ? detailMessage
+            : `Não foi possível confirmar a exclusão (HTTP ${response.status}). Feche esta janela e recarregue a lista antes de tentar novamente.`
+      : detailMessage;
+    const statusMessage = options?.deletionDiagnostic && requestId
+      ? `${message} (HTTP ${response.status})`
+      : message;
+    throw new ClientRequestError(
+      requestId ? `${statusMessage} Referência de diagnóstico: ${requestId}.` : statusMessage,
+      response.status,
+      requestId,
+      outcome,
     );
   }
   return response.status === 204 ? null : response.json();
@@ -134,7 +180,7 @@ export function ClientEditorDialog({
 }: {
   client: ClientDirectoryItem;
   onClose: () => void;
-  onDeleted: (clientId: string) => void;
+  onDeleted: (clientId: string, pendingCleanupRequestId?: string) => void;
   onUpdated: (client: ClientDirectoryItem) => void;
 }) {
   const [name, setName] = useState(client.name);
@@ -210,11 +256,19 @@ export function ClientEditorDialog({
     setBusy(true);
     setError("");
     try {
-      await clientJsonRequest(`/api/admin/clients/${client.id}`, {
+      const result = (await clientJsonRequest(`/api/admin/clients/${client.id}`, {
         method: "DELETE",
         headers: { "Idempotency-Key": deletionKey.current },
-      });
-      onDeleted(client.id);
+      }, { deletionDiagnostic: true })) as {
+        status?: string;
+        diagnostics?: { request_id?: string };
+      };
+      onDeleted(
+        client.id,
+        result.status === "completed_with_pending_cleanup"
+          ? result.diagnostics?.request_id
+          : undefined,
+      );
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Não foi possível excluir a cliente.",

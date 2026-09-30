@@ -6,8 +6,10 @@ import pyotp
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, func, select
+from sqlalchemy.exc import OperationalError
 
 from app import client_lifecycle
+from app import main as main_module
 from app.auth import (
     AdminUser,
     AuditEvent,
@@ -554,6 +556,113 @@ def test_deletion_requires_valid_idempotency_key(client: TestClient) -> None:
     assert client.delete(
         f"/admin/clients/{client_id}", headers={"Idempotency-Key": "curta"}
     ).status_code == 422
+
+
+def test_delete_requires_admin_and_does_not_issue_diagnostic_to_unauthorized_request(
+    client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        target = add_client(db, "Cliente sem autorização", "+5511900000618")
+        db.commit()
+        target_id = target.id
+
+    response = client.delete(
+        f"/admin/clients/{target_id}",
+        headers={"Idempotency-Key": "delete-client-unauthorized-0001"},
+    )
+
+    assert response.status_code == 403
+    assert "X-Request-ID" not in response.headers
+    assert "request_id" not in response.text
+    with SessionLocal() as db:
+        assert db.get(Client, target_id) is not None
+
+
+def test_unexpected_deletion_error_is_sanitized_and_correlated(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        target = add_client(db, "Cliente sintética", "+5511900000619")
+        db.commit()
+        target_id = target.id
+
+    def fail_before_commit(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("SELECT * FROM client WHERE phone='+5511900000619'")
+
+    monkeypatch.setattr(main_module, "delete_client_operational_graph", fail_before_commit)
+    response = client.delete(
+        f"/admin/clients/{target_id}",
+        headers={"Idempotency-Key": "delete-client-sanitized-0001"},
+    )
+
+    assert response.status_code == 500
+    request_id = response.headers["X-Request-ID"]
+    assert UUID(request_id).version == 4
+    assert response.json()["detail"]["request_id"] == request_id
+    assert response.json()["detail"]["outcome"] == "not_committed"
+    assert "+5511900000619" not in response.text
+    assert "SELECT" not in response.text
+    assert "+5511900000619" not in caplog.text
+    assert "SELECT" not in caplog.text
+    assert "RuntimeError" not in caplog.text
+    assert f"request_id={request_id}" in caplog.text
+    with SessionLocal() as db:
+        assert db.get(Client, target_id) is not None
+
+
+def test_post_commit_cleanup_error_returns_completed_receipt_and_reference(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        target = add_client(db, "Cliente com limpeza auxiliar", "+5511900000620")
+        db.commit()
+        target_id = target.id
+
+    original_delete = main_module.delete_client_operational_graph
+
+    def delete_and_return_reference(*args, **kwargs):
+        payload, _ = original_delete(*args, **kwargs)
+        return payload, [uuid4()]
+
+    def fail_file_cleanup(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("synthetic cleanup failure")
+
+    monkeypatch.setattr(main_module, "delete_client_operational_graph", delete_and_return_reference)
+    monkeypatch.setattr(main_module, "remove_facial_reference_files", fail_file_cleanup)
+    response = client.delete(
+        f"/admin/clients/{target_id}",
+        headers={"Idempotency-Key": "delete-client-cleanup-0001"},
+    )
+
+    assert response.status_code == 200
+    request_id = response.headers["X-Request-ID"]
+    assert response.json()["status"] == "completed_with_pending_cleanup"
+    assert response.json()["diagnostics"]["request_id"] == request_id
+    with SessionLocal() as db:
+        assert db.get(Client, target_id) is None
+        assert db.scalar(
+            select(ClientDeletionReceipt).where(
+                ClientDeletionReceipt.idempotency_key
+                == sha256(b"delete-client-cleanup-0001").hexdigest()
+            )
+        ) is not None
+
+
+def test_database_rollback_failure_keeps_transaction_outcome_unknown() -> None:
+    class UnavailableDatabase:
+        def rollback(self) -> None:
+            raise OperationalError("connection", {}, RuntimeError("synthetic DSN"))
+
+    state, receipt = main_module._client_deletion_transaction_state(
+        UnavailableDatabase(), "delete-client-database-unavailable-0001"
+    )
+
+    assert state == "unknown"
+    assert receipt is None
 
 
 def test_verified_phone_change_preserves_uuid_revokes_session_and_refuses_duplicate(

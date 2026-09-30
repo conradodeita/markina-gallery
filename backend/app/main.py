@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import csv
 import json
+import logging
 import secrets
 from collections import defaultdict
 from dataclasses import asdict
@@ -15,7 +16,7 @@ from io import BytesIO, StringIO
 from os import getenv
 from pathlib import Path
 from typing import Annotated, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pyotp
@@ -72,6 +73,7 @@ from app.auth import (
     ChallengeVerification,
     Client,
     ClientChallengeInput,
+    ClientDeletionReceipt,
     ClientPhone,
     CommercialHistoryMedia,
     DerivedGallery,
@@ -165,6 +167,7 @@ from app.client_lifecycle import (
     delete_client_operational_graph,
     deletion_inventory,
     list_client_directory,
+    receipt_payload,
     remove_facial_reference_files,
 )
 from app.commercial_projection import build_commercial_projections, payment_capabilities
@@ -388,6 +391,7 @@ from app.whatsapp_channel import (
 from app.whatsapp_webhook import process_whatsapp_webhook
 
 app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
+logger = logging.getLogger(__name__)
 
 
 @app.middleware("http")
@@ -2538,10 +2542,10 @@ def get_client_deletion_inventory(
     return deletion_inventory(db, client)
 
 
-@app.delete("/admin/clients/{client_id}")
+@app.delete("/admin/clients/{client_id}", response_model=None)
 def delete_client(
     client_id: UUID, request: Request, db: Session = Depends(db_session)
-) -> dict[str, object]:
+) -> dict[str, object] | JSONResponse:
     admin_session = require_admin(request)
     idempotency_key = request.headers.get("Idempotency-Key", "").strip()
     if not 12 <= len(idempotency_key) <= 128:
@@ -2579,11 +2583,85 @@ def delete_client(
                 "Atualize o inventário e tente novamente."
             ),
         ) from exc
-    if reference_ids:
-        remove_facial_reference_files(
-            Path(getenv("FACIAL_REFERENCE_ROOT", "./media/facial-references")), reference_ids
+    except Exception:  # noqa: BLE001 - Fronteira sanitizada de falhas inesperadas desta operação.
+        request_id = str(uuid4())
+        transaction_state, receipt = _client_deletion_transaction_state(db, idempotency_key)
+        status_code = 200 if receipt is not None else 500
+        category = "post_commit_failure" if receipt is not None else "unexpected"
+        logger.error(
+            "client_lifecycle_failure request_id=%s operation=%s category=%s status_code=%s transaction_state=%s",
+            request_id,
+            "delete_client",
+            category,
+            status_code,
+            transaction_state,
         )
+        if receipt is not None:
+            return JSONResponse(
+                status_code=status_code,
+                headers={"X-Request-ID": request_id},
+                content={
+                    **receipt_payload(receipt),
+                    "status": "completed_with_pending_cleanup",
+                    "diagnostics": {"request_id": request_id},
+                },
+            )
+        return JSONResponse(
+            status_code=status_code,
+            headers={"X-Request-ID": request_id},
+            content={
+                "detail": {
+                    "message": "Não foi possível confirmar a exclusão. Atualize a lista antes de tentar novamente.",
+                    "request_id": request_id,
+                    "outcome": "not_committed" if transaction_state == "rolled_back" else "unknown",
+                }
+            },
+        )
+    if reference_ids:
+        try:
+            remove_facial_reference_files(
+                Path(getenv("FACIAL_REFERENCE_ROOT", "./media/facial-references")), reference_ids
+            )
+        except Exception:  # noqa: BLE001 - Falha auxiliar pós-commit não desfaz o recibo.
+            request_id = str(uuid4())
+            logger.error(
+                "client_lifecycle_failure request_id=%s operation=%s category=%s status_code=%s transaction_state=%s",
+                request_id,
+                "delete_client",
+                "post_commit_cleanup",
+                200,
+                "committed",
+            )
+            return JSONResponse(
+                status_code=200,
+                headers={"X-Request-ID": request_id},
+                content={
+                    **payload,
+                    "status": "completed_with_pending_cleanup",
+                    "diagnostics": {"request_id": request_id},
+                },
+            )
     return payload
+
+
+def _client_deletion_transaction_state(
+    db: Session, idempotency_key: str
+) -> tuple[str, ClientDeletionReceipt | None]:
+    """Rollback a failed attempt, then use its durable receipt to classify the outcome."""
+    try:
+        db.rollback()
+    except Exception:  # noqa: BLE001 - Falha no rollback torna o resultado desconhecido.
+        return "unknown", None
+    try:
+        fingerprint = sha256(idempotency_key.encode("utf-8")).hexdigest()
+        receipt = db.scalar(
+            select(ClientDeletionReceipt).where(
+                ClientDeletionReceipt.idempotency_key == fingerprint
+            )
+        )
+    except Exception:  # noqa: BLE001 - Falha na consulta do recibo não pode presumir rollback.
+        return "unknown", None
+    return ("committed", receipt) if receipt is not None else ("rolled_back", None)
 
 
 @app.get("/admin/parent-galleries")
