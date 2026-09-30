@@ -50,7 +50,7 @@ Rollback preferencial é da aplicação com schema aditivo preservado. Antes de 
 - Ruff passou em app, testes e migration. OpenSpec estrito: **28/28**. Gitleaks dos arquivos alterados/novos: sem achados. `git diff --check`: sem erros.
 - A primeira suíte backend completa reportou **337 passed, 10 failed, 1 skipped**: os dez erros eram contratos/fixtures PIX antigos em `test_derived_galleries.py`; a suíte desse arquivo foi corrigida e passou integralmente. A execução completa final passou: **364 passed, 1 skipped** em 27m21s.
 - Conferência visual autenticada e sintética em desktop e viewport 390×844 confirmou a presença do PIX em Configurações, QR, estado/versão, formulário e adaptação dos campos. Um excesso horizontal do formulário foi identificado e corrigido com coluna responsiva e `min-width: 0`; dados e serviços de homologação não foram usados.
-- Não há evidência de ciclo red/green de todos os testes novos antes do código; por isso 1.3 permanece aberta em sua redação estrita. Regressões funcionais estão implementadas e validadas. Em 2.1, somente a persistência PIX está entregue; recibo de exclusão de cliente permanece pendente.
+- Não há evidência de ciclo red/green de todos os testes PIX novos antes do código; regressões funcionais estão implementadas e validadas. Em 2026-09-30, o proprietário aprovou reconciliar 1.3 para exigir a cobertura de regressão e o CI verde, sem alegar execução vermelha anterior. A observação histórica sobre 2.1 descreve o estado deste recorte em 2026-09-06; o recibo de exclusão de cliente foi entregue posteriormente, conforme `tasks.md`.
 
 ## Limite de entrega e homologação
 
