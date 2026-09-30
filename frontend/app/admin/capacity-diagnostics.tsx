@@ -3,10 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { MarkinaButton, SurfaceCard, SystemState } from "../ui-kit";
-
-type Metric = { value: number | null; unit: string; evidence: string; scope: string; collected_at: string; reason: string | null };
-type Queue = { queue_class: string; queued_total: Metric; scheduled_total: Metric; claim_candidates_total: Metric; processing_total: Metric; blocked_dependency_total: Metric; reclaimable_total: Metric; oldest_record_age_seconds: Metric; oldest_due_age_seconds: Metric; oldest_updated_age_seconds: Metric; wait_semantics: string };
-type Snapshot = { collection_started_at: string; collection_finished_at: string; cached: boolean; database: { database_client_connections: Record<string, Metric>; server_client_connections: Record<string, Metric>; max_connections: Metric; superuser_reserved_connections: Metric; reserved_connections: Metric }; pool: { pool_class: string; finite_limit: boolean; unbounded_overflow: boolean; max_overflow: Metric; checked_in: Metric; checked_out: Metric; open_connections_estimate: Metric; potential_max: Metric; acquisition_timeout_seconds: Metric; wait_seconds: Metric; timeout_count: Metric }; queues: Queue[]; connection_budget: { status: string; potential_connections: Metric; budget_headroom: Metric; limitations: string[] }; coverage: string[]; limitations: string[] };
+import { formatCapacityReport, type Metric, type Snapshot } from "./capacity-report";
 
 const labels: Record<string, string> = {
   media: "Mídia", preview_adjustment: "Ajuste de prévias", search: "Busca facial",
@@ -47,9 +44,22 @@ export function CapacityDiagnostics() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copying" | "success" | "error">("idle");
   const request = useRef<AbortController | null>(null);
+  const copyInProgress = useRef(false);
+  const copyOperation = useRef(0);
+  const mounted = useRef(true);
 
-  useEffect(() => () => { request.current?.abort(); request.current = null; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      request.current?.abort();
+      request.current = null;
+      copyOperation.current += 1;
+      copyInProgress.current = false;
+    };
+  }, []);
 
   async function load() {
     if (loading || request.current) return;
@@ -58,6 +68,9 @@ export function CapacityDiagnostics() {
     setLoading(true);
     setError(null);
     setSnapshot(null);
+    copyOperation.current += 1;
+    copyInProgress.current = false;
+    setCopyState("idle");
     try {
       const response = await fetch("/api/admin/capacity-observability", {
         credentials: "same-origin", cache: "no-store", signal: controller.signal,
@@ -76,6 +89,23 @@ export function CapacityDiagnostics() {
         request.current = null;
         setLoading(false);
       }
+    }
+  }
+
+  async function copyReport() {
+    if (!snapshot || copyInProgress.current) return;
+    const operation = copyOperation.current + 1;
+    copyOperation.current = operation;
+    copyInProgress.current = true;
+    setCopyState("copying");
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard_unavailable");
+      await navigator.clipboard.writeText(formatCapacityReport(snapshot));
+      if (mounted.current && copyOperation.current === operation) setCopyState("success");
+    } catch {
+      if (mounted.current && copyOperation.current === operation) setCopyState("error");
+    } finally {
+      if (copyOperation.current === operation) copyInProgress.current = false;
     }
   }
 
@@ -108,7 +138,12 @@ export function CapacityDiagnostics() {
           <div className="capacity-queue-grid">{snapshot.queues.map((queue) => <section key={queue.queue_class} aria-label={labels[queue.queue_class] ?? queue.queue_class}><h4>{labels[queue.queue_class] ?? queue.queue_class}</h4><dl><dt>Queued</dt><dd>{metricText(queue.queued_total)}</dd><dt>Programados</dt><dd>{metricText(queue.scheduled_total)}</dd><dt>Candidatos</dt><dd>{metricText(queue.claim_candidates_total)}</dd><dt>Processing</dt><dd>{metricText(queue.processing_total)}</dd><dt>Bloqueados por dependência</dt><dd>{metricText(queue.blocked_dependency_total)}</dd><dt>Recuperáveis</dt><dd>{metricText(queue.reclaimable_total)}</dd><dt>Idade desde a criação</dt><dd>{metricText(queue.oldest_record_age_seconds)}</dd><dt>Idade desde o agendamento vencido</dt><dd>{metricText(queue.oldest_due_age_seconds)}</dd><dt>Idade desde atualização</dt><dd>{metricText(queue.oldest_updated_age_seconds)}</dd></dl><p>Espera: {waitLabels[queue.wait_semantics] ?? "indisponível"}.</p></section>)}</div>
           <h3>Orçamento global</h3><p>Indisponível. O pool deste processo não representa todos os processos e consumidores; não há orçamento nem margem calculados. Lacunas: {snapshot.connection_budget.limitations.map((reason) => reasonLabels[reason] ?? reason).join(", ")}.</p>
           {snapshot.limitations.length > 0 && <p>Limitações: {snapshot.limitations.join(", ")}.</p>}
-          <MarkinaButton type="button" variant="secondary" onClick={() => void load()} disabled={loading}>Atualizar agora</MarkinaButton>
+          <div className="capacity-diagnostics-actions">
+            <MarkinaButton type="button" variant="secondary" onClick={() => void load()} disabled={loading}>Atualizar agora</MarkinaButton>
+            <MarkinaButton type="button" variant="secondary" onClick={() => void copyReport()} disabled={copyState === "copying"}>{copyState === "copying" ? "Copiando…" : "Copiar relatório"}</MarkinaButton>
+          </div>
+          {copyState === "success" && <p role="status" aria-live="polite">Relatório copiado para a área de transferência.</p>}
+          {copyState === "error" && <p role="alert">Não foi possível copiar o relatório. Tente novamente.</p>}
         </div>}
       </div>
     </SurfaceCard>

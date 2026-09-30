@@ -3,8 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CapacityDiagnostics } from "./capacity-diagnostics";
+import { formatCapacityReport, type Snapshot } from "./capacity-report";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(navigator, "clipboard");
+});
+
+function stubClipboard(writeText?: (text: string) => Promise<void>) {
+  const writer = vi.fn(writeText ?? (() => Promise.resolve()));
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: writer } });
+  return writer;
+}
 
 const metric = (value: number | null, unit = "jobs", reason: string | null = null) => ({
   value, unit, evidence: value === null ? "unavailable" : "observed",
@@ -22,9 +32,10 @@ function snapshot() {
     oldest_updated_age_seconds: metric(null, "seconds", "empty_queue"), wait_semantics: "created_age_estimate",
   });
   return {
+    schema_version: 1 as const,
     collection_started_at: "2026-09-30T10:00:00Z", collection_finished_at: "2026-09-30T10:00:01Z", cached: false,
     database: { database_client_connections: states, server_client_connections: states, max_connections: metric(null, "connections", "field_unavailable"), superuser_reserved_connections: metric(null, "connections", "field_unavailable"), reserved_connections: metric(null, "connections", "field_unavailable") },
-    pool: { pool_class: "queue_pool", finite_limit: true, unbounded_overflow: false, max_overflow: metric(3, "connections"), checked_in: metric(0, "connections"), checked_out: metric(1, "connections"), open_connections_estimate: metric(1, "connections"), potential_max: metric(5, "connections"), acquisition_timeout_seconds: metric(30, "seconds"), wait_seconds: metric(null, "seconds", "field_unavailable"), timeout_count: metric(null, "connections", "field_unavailable") },
+    pool: { pool_class: "queue_pool", finite_limit: true, unbounded_overflow: false, base_size: metric(2, "connections"), max_overflow: metric(3, "connections"), checked_in: metric(0, "connections"), checked_out: metric(1, "connections"), open_connections_estimate: metric(1, "connections"), potential_max: metric(5, "connections"), acquisition_timeout_seconds: metric(30, "seconds"), wait_seconds: metric(null, "seconds", "field_unavailable"), timeout_count: metric(null, "connections", "field_unavailable") },
     queues: ["media", "preview_adjustment", "search", "index", "maintenance"].map(queue),
     connection_budget: { status: "unavailable", potential_connections: metric(null, "connections", "process_inventory_missing"), budget_headroom: metric(null, "connections", "process_inventory_missing"), limitations: ["process_inventory_missing"] },
     coverage: ["media", "preview_adjustment", "search", "index", "maintenance"], limitations: [],
@@ -58,10 +69,68 @@ describe("diagnóstico local de capacidade", () => {
     render(<CapacityDiagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Consultar diagnóstico" }));
     await screen.findByText(/Snapshot em cache|Coletado agora/);
+    expect(screen.getByRole("button", { name: "Copiar relatório" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Atualizar agora" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.queryByText(/Coletado agora/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copiar relatório" })).toBeNull();
     expect(screen.getByText(/sessão administrativa não está mais autorizada/i)).toBeTruthy();
+  });
+
+  it("copia exatamente o snapshot atual sem nova consulta e impede cópias concorrentes", async () => {
+    const current = snapshot();
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(current), { status: 200 }));
+    let finishCopy: (() => void) | undefined;
+    const writeText = stubClipboard(() => new Promise<void>((resolve) => { finishCopy = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<CapacityDiagnostics />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Consultar diagnóstico" }));
+    await screen.findByText(/Coletado agora/);
+    const copy = screen.getByRole("button", { name: "Copiar relatório" });
+    fireEvent.click(copy);
+    fireEvent.click(copy);
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(formatCapacityReport(current as Snapshot));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Copiando…" }).hasAttribute("disabled")).toBe(true);
+
+    finishCopy?.();
+    expect((await screen.findByRole("status")).textContent).toContain("Relatório copiado para a área de transferência.");
+  });
+
+  it("mantém o snapshot e não cria fallback quando o clipboard falha", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(snapshot()), { status: 200 }));
+    const writeText = stubClipboard(() => Promise.reject(new Error("denied")));
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click");
+    const storageWrite = vi.spyOn(Storage.prototype, "setItem");
+    vi.stubGlobal("fetch", fetcher);
+    render(<CapacityDiagnostics />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Consultar diagnóstico" }));
+    await screen.findByText(/Coletado agora/);
+    fireEvent.click(screen.getByRole("button", { name: "Copiar relatório" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível copiar o relatório.");
+    expect(screen.getByText(/Coletado agora/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copiar relatório" })).toBeTruthy();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(anchorClick).not.toHaveBeenCalled();
+    expect(storageWrite).not.toHaveBeenCalled();
+  });
+
+  it("informa indisponibilidade do clipboard sem remover o diagnóstico", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(snapshot()), { status: 200 })));
+    render(<CapacityDiagnostics />);
+    fireEvent.click(screen.getByRole("button", { name: "Consultar diagnóstico" }));
+    await screen.findByText(/Coletado agora/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copiar relatório" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível copiar o relatório.");
+    expect(screen.getByText(/Coletado agora/)).toBeTruthy();
   });
 
   it("cancela a consulta em andamento ao desmontar", async () => {
