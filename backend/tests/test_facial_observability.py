@@ -5,11 +5,12 @@ from uuid import uuid4
 import pytest
 from fastapi import Response
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
     AdminUser,
+    AuthSession,
     Base,
     FacialJob,
     FacialSearchCandidate,
@@ -19,8 +20,10 @@ from app.auth import (
     SessionLocal,
     create_session,
     engine,
+    now,
     password_hasher,
 )
+from app.capacity_observability.collector import reset_cache_for_tests
 from app.facial.observability import (
     ALLOWED_DIMENSIONS,
     FACIAL_ADMISSION_COUNTER,
@@ -273,10 +276,14 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         connection.commit()
     Base.metadata.create_all(engine)
+    reset_cache_for_tests()
     FACIAL_ADMISSION_COUNTER.reset()
     FACIAL_ADMISSION_COUNTER.record("accepted")
     with TestClient(app) as client:
         assert client.get("/admin/facial-observability").status_code == 403
+        anonymous_capacity = client.get("/admin/capacity-observability")
+        assert anonymous_capacity.status_code == 403
+        assert anonymous_capacity.headers["cache-control"] == "no-store"
         with SessionLocal() as session:
             admin = fixture_admin(AdminUser(
                 email="observability@markina.test",
@@ -287,14 +294,44 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
             session.add(admin)
             session.flush()
             cookie = create_session(session, Response(), Role.ADMIN, admin.id)
+            client_cookie = create_session(session, Response(), Role.CLIENT, uuid4())
             session.commit()
+            admin_id = admin.id
         client.cookies.set("markina_session", cookie)
         response = client.get(
             "/admin/facial-observability", params={"expected_enabled": "false"}
         )
+        capacity_response = client.get("/admin/capacity-observability")
+        client.cookies.set("markina_session", client_cookie)
+        client_role_capacity_response = client.get("/admin/capacity-observability")
+        client.cookies.set("markina_session", cookie)
+        cached_capacity_response = client.get(
+            "/admin/capacity-observability", params={"tenant_id": "not-an-input"}
+        )
+        with SessionLocal() as session:
+            auth_session = session.scalar(
+                select(AuthSession).where(AuthSession.subject_id == admin_id)
+            )
+            assert auth_session is not None
+            auth_session.revoked_at = now()
+            session.commit()
+        revoked_capacity_response = client.get("/admin/capacity-observability")
     FACIAL_ADMISSION_COUNTER.reset()
+    reset_cache_for_tests()
 
     assert response.status_code == 200
+    assert capacity_response.status_code == 200
+    assert capacity_response.json()["cached"] is False
+    assert cached_capacity_response.status_code == 200
+    assert cached_capacity_response.json()["cached"] is True
+    assert revoked_capacity_response.status_code == 403
+    assert revoked_capacity_response.headers["cache-control"] == "no-store"
+    assert capacity_response.headers["cache-control"] == "no-store"
+    assert client_role_capacity_response.status_code == 403
+    assert client_role_capacity_response.headers["cache-control"] == "no-store"
+    capacity_payload = capacity_response.json()
+    assert len(capacity_payload["queues"]) == 5
+    assert capacity_payload["database"]["max_connections"]["value"] is None
     payload = response.json()
     assert payload["alerts"] == []
     assert payload["metrics"]

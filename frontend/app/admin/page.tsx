@@ -10,6 +10,7 @@ import {
   SurfaceCard,
   SystemState,
 } from "../ui-kit";
+import { CapacityDiagnostics } from "./capacity-diagnostics";
 
 type Summary = {
   storage: {
@@ -202,6 +203,9 @@ export default function AdminPage() {
             />
           )}
         </SurfaceCard>
+      </section>
+      <section className="capacity-diagnostics-section">
+        <CapacityDiagnostics />
       </section>
     </div>
   );
