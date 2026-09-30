@@ -205,10 +205,14 @@ export function ClientDirectory() {
             setEditing(null);
             setMessage("Cadastro atualizado sem alterar seus vínculos ou histórico.");
           }}
-          onDeleted={(clientId) => {
+          onDeleted={(clientId, pendingCleanupRequestId) => {
             setClients((current) => current.filter((item) => item.id !== clientId));
             setEditing(null);
-            setMessage("Cadastro e estado operacional excluídos. O histórico comercial permaneceu protegido.");
+            setMessage(
+              pendingCleanupRequestId
+                ? `Cadastro excluído; uma etapa auxiliar precisa de reconciliação. Referência de diagnóstico: ${pendingCleanupRequestId}.`
+                : "Cadastro e estado operacional excluídos. O histórico comercial permaneceu protegido.",
+            );
           }}
         />
       ) : null}

@@ -214,4 +214,134 @@ describe("diretório global de clientes", () => {
       expect.stringContaining("/admin/galleries"),
     );
   });
+
+  it("mostra referência segura e orientação de recarga em falha inesperada sem repetir a exclusão", async () => {
+    const person = {
+      id: "client-1",
+      name: "Cliente sintética",
+      phone: "+5511999999999",
+      aggregates: { public_galleries: 0, private_galleries: 0, orders: 0 },
+      deletion_eligible: true,
+    };
+    const requestId = "68f23d79-8281-4a30-a5dd-b2b56ed193ce";
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (String(path).endsWith("/deletion-inventory")) {
+        return response({
+          client_id: person.id,
+          operational_removable: { client: 1 },
+          commercial_protected: { orders: 0 },
+          can_delete: true,
+        });
+      }
+      if (path === `/api/admin/clients/${person.id}` && init?.method === "DELETE") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              detail: {
+                message: "Não foi possível confirmar a exclusão.",
+                request_id: requestId,
+                outcome: "not_committed",
+              },
+            }),
+            { status: 500, headers: { "content-type": "application/json", "X-Request-ID": requestId } },
+          ),
+        );
+      }
+      return response({ clients: [person], page: { has_more: false, next_cursor: null } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ClientDirectory />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir cadastro definitivamente" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("HTTP 500");
+    expect(alert.textContent).toContain(requestId);
+    expect(alert.textContent).toContain("recarregue a lista antes de tentar novamente");
+    expect(await screen.findByText("Cliente sintética")).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("não mostra HTML do proxy e informa status quando a resposta não é JSON", async () => {
+    const person = {
+      id: "client-1",
+      name: "Cliente sintética",
+      phone: "+5511999999999",
+      aggregates: { public_galleries: 0, private_galleries: 0, orders: 0 },
+      deletion_eligible: true,
+    };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (String(path).endsWith("/deletion-inventory")) {
+        return response({
+          client_id: person.id,
+          operational_removable: { client: 1 },
+          commercial_protected: { orders: 0 },
+          can_delete: true,
+        });
+      }
+      if (path === `/api/admin/clients/${person.id}` && init?.method === "DELETE") {
+        return Promise.resolve(
+          new Response("<html>proxy detail must not render</html>", {
+            status: 502,
+            headers: { "content-type": "text/html" },
+          }),
+        );
+      }
+      return response({ clients: [person], page: { has_more: false, next_cursor: null } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ClientDirectory />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir cadastro definitivamente" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("HTTP 502");
+    expect(alert.textContent).toContain("recarregue a lista antes de tentar novamente");
+    expect(alert.textContent).not.toContain("proxy detail must not render");
+    expect(await screen.findByText("Cliente sintética")).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("confirma a exclusão já concluída e mostra a referência da limpeza pendente", async () => {
+    const person = {
+      id: "client-1",
+      name: "Cliente sintética",
+      phone: "+5511999999999",
+      aggregates: { public_galleries: 0, private_galleries: 0, orders: 0 },
+      deletion_eligible: true,
+    };
+    const requestId = "68f23d79-8281-4a30-a5dd-b2b56ed193ce";
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (String(path).endsWith("/deletion-inventory")) {
+        return response({
+          client_id: person.id,
+          operational_removable: { client: 1 },
+          commercial_protected: { orders: 0 },
+          can_delete: true,
+        });
+      }
+      if (path === `/api/admin/clients/${person.id}` && init?.method === "DELETE") {
+        return response({
+          client_id: person.id,
+          status: "completed_with_pending_cleanup",
+          diagnostics: { request_id: requestId },
+        });
+      }
+      return response({ clients: [person], page: { has_more: false, next_cursor: null } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ClientDirectory />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir cadastro definitivamente" }));
+
+    const status = await screen.findByText(/Cadastro excluído; uma etapa auxiliar precisa de reconciliação/);
+    expect(status.textContent).toContain(requestId);
+    expect(screen.queryByText("Cliente sintética")).toBeNull();
+  });
 });
