@@ -31,11 +31,16 @@ from app.auth import (
     FacialSearchNotificationOutbox,
     FacialSearchRequest,
     FacialSearchSnapshotItem,
+    FolderClientGrant,
     GalleryAccess,
     GalleryAccessCapability,
+    GalleryClientState,
     GalleryMembershipNotificationOutbox,
+    GalleryReopeningNotificationOutbox,
+    GalleryReopeningRequest,
     ParentGalleryRegistration,
     PaymentCommunication,
+    PaymentGroup,
     PaymentNotificationOutbox,
     PhotoComment,
     PhotoFavorite,
@@ -116,13 +121,19 @@ def list_client_directory(
         .correlate(Client)
         .scalar_subquery()
     )
+    payment_group_count = (
+        select(func.count(PaymentGroup.id))
+        .where(PaymentGroup.client_id == Client.id)
+        .correlate(Client)
+        .scalar_subquery()
+    )
     normalized_name = func.lower(Client.full_name)
     statement = select(
         Client,
         public_count.label("public_count"),
         (membership_count + owned_without_membership).label("private_count"),
         order_count.label("order_count"),
-        payment_count.label("payment_count"),
+        (payment_count + payment_group_count).label("payment_count"),
         normalized_name.label("sort_name"),
     )
     normalized_query = (query or "").strip().casefold()
@@ -176,6 +187,9 @@ def deletion_inventory(db: Session, client: Client) -> dict[str, object]:
     fingerprints = [pii_fingerprint(phone) for phone in phones]
     gallery_ids = _client_gallery_ids(db, client.id)
     exclusive, shared = _classify_private_galleries(db, client.id, gallery_ids)
+    reopening_ids = select(GalleryReopeningRequest.id).where(
+        GalleryReopeningRequest.requested_by_client_id == client.id
+    )
 
     operational = {
         "client": 1,
@@ -183,6 +197,20 @@ def deletion_inventory(db: Session, client: Client) -> dict[str, object]:
         "gallery_accesses": _count(db, GalleryAccess, GalleryAccess.client_id == client.id),
         "public_gallery_registrations": _count(
             db, ParentGalleryRegistration, ParentGalleryRegistration.client_id == client.id
+        ),
+        "gallery_client_states": _count(
+            db, GalleryClientState, GalleryClientState.client_id == client.id
+        ),
+        "folder_client_grants": _count(
+            db, FolderClientGrant, FolderClientGrant.client_id == client.id
+        ),
+        "reopening_requests": _count(
+            db, GalleryReopeningRequest,
+            GalleryReopeningRequest.requested_by_client_id == client.id,
+        ),
+        "reopening_notifications": _count(
+            db, GalleryReopeningNotificationOutbox,
+            GalleryReopeningNotificationOutbox.gallery_reopening_request_id.in_(reopening_ids),
         ),
         "private_galleries_exclusive": len(exclusive),
         "private_galleries_shared": len(shared),
@@ -242,6 +270,7 @@ def deletion_inventory(db: Session, client: Client) -> dict[str, object]:
     )
     protected = {
         "orders": _count(db, SaleOrder, SaleOrder.client_id == client.id),
+        "payment_groups": _count(db, PaymentGroup, PaymentGroup.client_id == client.id),
         "order_items": int(
             db.scalar(
                 select(func.count())
@@ -318,6 +347,22 @@ def delete_client_operational_graph(
     gallery_ids = _client_gallery_ids(db, client.id)
     exclusive_ids, shared_ids = _classify_private_galleries(db, client.id, gallery_ids)
     counts: dict[str, int] = {}
+
+    reopening_ids = select(GalleryReopeningRequest.id).where(
+        GalleryReopeningRequest.requested_by_client_id == client.id
+    )
+    counts["reopening_notifications"] = _delete_where(
+        db,
+        GalleryReopeningNotificationOutbox,
+        GalleryReopeningNotificationOutbox.gallery_reopening_request_id.in_(reopening_ids),
+    )
+    counts["reopening_requests"] = _delete_where(
+        db, GalleryReopeningRequest,
+        GalleryReopeningRequest.requested_by_client_id == client.id,
+    )
+    counts["folder_client_grants"] = _delete_where(
+        db, FolderClientGrant, FolderClientGrant.client_id == client.id
+    )
 
     if search_ids:
         counts["facial_notifications"] = _delete_where(
@@ -410,6 +455,9 @@ def delete_client_operational_graph(
     )
     counts["public_gallery_registrations"] = _delete_where(
         db, ParentGalleryRegistration, ParentGalleryRegistration.client_id == client.id
+    )
+    counts["gallery_client_states"] = _delete_where(
+        db, GalleryClientState, GalleryClientState.client_id == client.id
     )
     counts["gallery_accesses"] = _delete_where(
         db, GalleryAccess, GalleryAccess.client_id == client.id

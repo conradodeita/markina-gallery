@@ -22,6 +22,8 @@ Escopo desta implementação: PIX global, conforme `pix-implementation.md`. Tare
 - [x] 3.5 Preservar o bloqueio para qualquer histórico comercial e retornar inventário acionável sem PII; verificar pedidos pendentes/confirmados, pagamentos, entregas e snapshots.
 - [x] 3.6 Manter edição de nome e troca verificada de telefone na identidade canônica, invalidando acessos dependentes do número anterior e recusando duplicidade; verificar vínculos e histórico no mesmo UUID.
 - [x] 3.7 Registrar auditoria sanitizada e recibo da exclusão com ator, UUID, contagens e resultado; verificar ausência de nome, telefone, chave PIX, conteúdo comercial e duplicação por retry.
+- [x] 3.8 Cobrir e corrigir a exclusão de cliente sem histórico comercial com referências operacionais residuais de galeria removida, incluindo `GalleryClientState` e dependências; verificar inventário e remoção atômica, preservação do tombstone/auditoria e de terceiros, além do bloqueio para referências comerciais.
+  - Evidência 2026-09-29: os dois testes novos falharam antes da correção por ausência de `gallery_client_states` e `payment_groups` no inventário e passaram após o ajuste. O módulo inteiro aprovou `16 passed`; a interface aprovou `5 passed`, typecheck, lint sem erros e build. Ruff, OpenSpec estrito e `git diff --check` passaram. A suíte backend integral local foi interrompida sem falhas observadas por custo de execução no Windows; a execução completa permanece para o CI do PR, inclusive o recorte PostgreSQL.
 
 ## 4. Diretório global de clientes no frontend
 

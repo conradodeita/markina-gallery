@@ -12,8 +12,7 @@ export type ClientDirectoryItem = {
   aggregates?: {
     public_galleries: number;
     private_galleries: number;
-    removed_movements: "movimento(s) histórico(s) de acervo removido",
-  orders: number;
+    orders: number;
   };
   deletion_eligible?: boolean;
 };
@@ -30,6 +29,10 @@ const inventoryLabels: Record<string, string> = {
   phone_records: "telefone(s)",
   gallery_accesses: "acesso(s)",
   public_gallery_registrations: "vínculo(s) com Galeria pública",
+  gallery_client_states: "estado(s) individual(is) de Galeria pública",
+  folder_client_grants: "atribuição(ões) de pasta",
+  reopening_requests: "pedido(s) de reabertura",
+  reopening_notifications: "aviso(s) de reabertura",
   private_galleries_exclusive: "galeria(s) privada(s) exclusiva(s)",
   private_galleries_shared: "galeria(s) privada(s) compartilhada(s)",
   private_gallery_memberships: "vínculo(s) privado(s)",
@@ -44,11 +47,13 @@ const inventoryLabels: Record<string, string> = {
   otp_deliveries: "entrega(s) OTP",
   facial_searches: "busca(s) facial(is) transitória(s)",
   orders: "pedido(s)",
+  payment_groups: "grupo(s) de pagamento",
   order_items: "item(ns) comprado(s)",
   payment_communications: "comunicação(ões) de pagamento",
   payment_notifications: "notificação(ões) de pagamento",
   commercial_media: "mídia(s) do histórico comercial",
   payment_deliveries: "entrega(s) de pagamento",
+  removed_movements: "movimento(s) histórico(s) de acervo removido",
 };
 
 export async function clientJsonRequest(path: string, init?: RequestInit) {
