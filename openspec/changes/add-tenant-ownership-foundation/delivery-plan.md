@@ -1,6 +1,6 @@
 # Contrato de entrega por etapa
 
-Estado em 2026-09-29: **implementação local concluída; validação integrada em andamento; deploy pendente**.
+Estado em 2026-09-29: **etapa 1 publicada em homologação, com aceite funcional parcial**. Resultado e próximos testes em [deploy-2026-09-29-tenant-foundation.md](deploy-2026-09-29-tenant-foundation.md). O CI/deploy está verde; novo TOTP, OTP de cliente, seleção sem cobrança e pedido PIX pendente de R$ 1,00 foram verificados. O painel gerou link de convite HTTP em vez de HTTPS, e a prévia do carrinho não apareceu.
 
 Este documento permite ao proprietário acompanhar entregas sem ler código. As etapas abaixo são uma sequência proposta; somente a primeira está especificada nesta change. Cada etapa futura precisa de change e aceite próprios. Uma etapa pode exigir mais de uma liberação e nenhum deploy será anunciado como concluído apenas porque seu código foi escrito.
 
@@ -25,17 +25,17 @@ As etapas 2 e 3 completam fundamentos necessários antes de admitir fotógrafos 
 
 Antes de publicar, também serão apresentados versão exata, ambiente, serviços próprios afetados, portas/subdomínio, eventual janela de indisponibilidade do Pick-your-Pic e reversão possível. A autorização operacional é específica para essa liberação.
 
-## Primeiro deploy: resultado esperado
+## Primeiro deploy: resultado observado
 
-Exemplo de comunicação **a preencher após execução; não é declaração de entrega atual**:
+O relatório efetivo está em [deploy-2026-09-29-tenant-foundation.md](deploy-2026-09-29-tenant-foundation.md). Os quatro pontos são:
 
-> Entregue: novas galerias e fotos têm sua conta de fotógrafo como proprietária explícita. O acervo anterior foi descartado conforme sua autorização, preservando admin, acesso e Evolution conectada, conforme as conferências registradas.
+> **Entregue:** propriedade explícita de galerias/fotos e vínculo administrativo para a conta única, sem mudança de interface comercial.
 >
-> Você pode testar: entre como fotógrafo e crie uma galeria de teste com um JPEG sintético. Confira envio, galeria privada autorizada e prévia protegida. O teste de cliente/OTP depende de acesso humano autorizado e será registrado separadamente.
+> **Você pode testar:** login novo com senha/TOTP, acesso de cliente por OTP, prévias protegidas, seleção sem cobrança e preparação de pedido PIX pendente de R$ 1,00. Não houve pagamento.
 >
-> Verificado: [preencher testes e links reais, contagens antes/depois e versão/schema].
+> **Verificado:** CI/deploy verde, galeria sintética com JPEGs e prévias protegidas, propriedade persistida, novo TOTP/OTP, seleção sem cobrança, pedido PIX `pending`/grupo `draft` de 100 centavos, limpeza concluída e serviços próprios/vizinhos saudáveis. Ver versão, schema, contagens e limites no relatório.
 >
-> Pendente: a operação continua com um fotógrafo. Clientes, PIX, branding, notificações e filas ainda precisam de isolamento antes de habilitar outras contas; nenhuma capacidade comercial nova foi comprovada.
+> **Pendente:** corrigir o link de convite HTTP e a rota de prévia rejeitada pelo carrinho, validar pagamento/confirmação em ensaio próprio e obter revisão humana para sincronizar/arquivar. A operação continua restrita a um fotógrafo.
 
 ## Registro de cada liberação
 
@@ -57,7 +57,7 @@ Copiar este modelo para `deploy-<data>-<identificador>.md` dentro da change corr
 | Verificado | Comandos/resumos e links; distinguir aprovado, falhou e não executado |
 | Pendente | Bloqueios, limitações e requisito de avanço |
 
-## Gates desta primeira liberação
+## Gates desta primeira liberação — registro histórico pré-deploy
 
 - Reconciliação concluída: servidor e base de implementação em `04c6bb98cdbb7607026cd54106d9e4cdf43d1e29`, schema remoto `20260928_0068`; alvo `20260929_0069`, ancestral 0068. Ver [validation.md](validation.md).
 - Destino confirmado por leitura: `https://markina-homolog.duckdns.org/`, nginx próprio em `127.0.0.1:8080`. API, web, bancos, Redis e Evolution usam portas internas. Endereço/proxy/DNS/certificados permanecem como estão.
@@ -65,7 +65,7 @@ Copiar este modelo para `deploy-<data>-<identificador>.md` dentro da change corr
 - A obrigatoriedade de propriedade pode impedir escritas de versões antigas. A janela e a reversão compatível precisam de ensaio; não prometer rollback automático nem indisponibilidade zero do produto.
 - Busca facial com dados reais e envio de mensagens continuam sujeitos às autorizações existentes; os testes locais usam dados sintéticos e serviços substitutos.
 
-## Preparação operacional desta liberação
+## Preparação operacional desta liberação — registro histórico pré-deploy
 
 Branch isolada: `feature/add-tenant-ownership-foundation`, baseada no SHA remoto confirmado. Implementação versionada em `b4c320e75cbe0d786d8b05d62d57b77aa796a2ec`, [PR #115 em rascunho](https://github.com/conradodeita/markina-gallery/pull/115). Nenhum arquivo de ambiente ou segredo foi alterado. O [procedimento da primeira liberação](release-runbook.md) detalha a sequência manual necessária para inserir a limpeza antes da retomada dos escritores; não usar o merge automático como início dessa janela.
 
@@ -88,7 +88,7 @@ O site pode ficar indisponível durante a parada dos escritores. A duração de 
 
 Reversão: antes de qualquer mudança de schema, o script permite restaurar código compatível com o schema observado. Após 0069, o binário anterior não pode criar entidades sem proprietário; manter schema e usar correção compatível. Restauração de backup/downgrade é decisão separada e não automática. O backup deste deploy não comprova a etapa futura de backup cifrado externo e restauração/RPO/RTO.
 
-## Entrega local — ainda não publicada
+## Entrega local anterior à publicação — registro histórico
 
 - **Entregue localmente:** modelo e migration de propriedade do acervo, vínculo administrativo revalidado, herança em galerias/fotos, gate da conta única e proteção da limpeza. A interface comercial atual permanece igual.
 - **Você poderá testar após publicar:** entrar com o admin atual, criar uma galeria e enviar um JPEG sintético, abrir a prévia e o fluxo privado autorizado. Após a limpeza, o acervo de teste anterior estará vazio. A conectividade da Evolution deve permanecer `open`.
