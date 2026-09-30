@@ -21,12 +21,17 @@ from app.auth import (
     DerivedGalleryMembership,
     DerivedGalleryPhoto,
     FacialSearchRequest,
+    FolderClientGrant,
     GalleryAccess,
     GalleryAccessCapability,
+    GalleryClientState,
     GalleryFacialPolicy,
+    GalleryReopeningNotificationOutbox,
+    GalleryReopeningRequest,
     ParentGallery,
     ParentGalleryRegistration,
     PaymentCommunication,
+    PaymentGroup,
     PaymentNotificationOutbox,
     PhotoAsset,
     PhotoFolder,
@@ -348,6 +353,124 @@ def test_deletion_preserves_shared_private_gallery_and_other_member(client: Test
                 DerivedGalleryMembership.client_id == survivor_id
             )
         ) == 1
+
+
+def test_deletion_removes_residual_canonical_state_and_keeps_gallery_tombstone(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        target = add_client(db, "Excluir estado residual", "+5511900000411")
+        survivor = add_client(db, "Preservar estado alheio", "+5511900000412")
+        tombstone = ParentGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            name="Galeria removida",
+            active=False,
+            lifecycle_status="deleted",
+        )
+        active = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria preservada")
+        db.add_all([tombstone, active])
+        db.flush()
+        gallery_audit = AuditEvent(event="parent_gallery.deleted", subject=str(tombstone.id))
+        db.add(gallery_audit)
+        folder = PhotoFolder(parent_gallery_id=active.id, name="Restrita")
+        db.add(folder)
+        db.flush()
+        target_states = [
+            GalleryClientState(parent_gallery_id=parent.id, client_id=target.id)
+            for parent in (tombstone, active)
+        ]
+        survivor_states = [
+            GalleryClientState(parent_gallery_id=parent.id, client_id=survivor.id)
+            for parent in (tombstone, active)
+        ]
+        db.add_all([*target_states, *survivor_states])
+        db.flush()
+        target_grant = FolderClientGrant(
+            folder_id=folder.id, parent_gallery_id=active.id, client_id=target.id
+        )
+        survivor_grant = FolderClientGrant(
+            folder_id=folder.id, parent_gallery_id=active.id, client_id=survivor.id
+        )
+        reopening = GalleryReopeningRequest(
+            parent_gallery_id=active.id,
+            requested_by_client_id=target.id,
+            idempotency_key="reopen-target-0001",
+        )
+        db.add_all([target_grant, survivor_grant, reopening])
+        db.flush()
+        notice = GalleryReopeningNotificationOutbox(
+            gallery_reopening_request_id=reopening.id,
+            status="queued",
+        )
+        db.add(notice)
+        db.commit()
+        target_id, survivor_id = target.id, survivor.id
+        tombstone_id, active_id = tombstone.id, active.id
+        gallery_audit_id = gallery_audit.id
+        target_state_ids = [state.id for state in target_states]
+        survivor_state_ids = [state.id for state in survivor_states]
+        target_grant_id, survivor_grant_id = target_grant.id, survivor_grant.id
+        reopening_id, notice_id = reopening.id, notice.id
+
+    inventory = client.get(f"/admin/clients/{target_id}/deletion-inventory")
+    assert inventory.status_code == 200
+    assert inventory.json()["can_delete"] is True
+    operational = inventory.json()["operational_removable"]
+    assert operational["gallery_client_states"] == 2
+    assert operational["folder_client_grants"] == 1
+    assert operational["reopening_requests"] == 1
+    assert operational["reopening_notifications"] == 1
+
+    deleted = client.delete(
+        f"/admin/clients/{target_id}",
+        headers={"Idempotency-Key": "delete-client-residual-state-0001"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["counts"]["gallery_client_states"] == 2
+    with SessionLocal() as db:
+        assert db.get(Client, target_id) is None
+        assert db.get(Client, survivor_id) is not None
+        assert db.get(ParentGallery, tombstone_id).lifecycle_status == "deleted"
+        assert db.get(AuditEvent, gallery_audit_id) is not None
+        assert db.get(ParentGallery, active_id) is not None
+        assert all(db.get(GalleryClientState, state_id) is None for state_id in target_state_ids)
+        assert all(db.get(GalleryClientState, state_id) is not None for state_id in survivor_state_ids)
+        assert db.get(FolderClientGrant, target_grant_id) is None
+        assert db.get(FolderClientGrant, survivor_grant_id) is not None
+        assert db.get(GalleryReopeningRequest, reopening_id) is None
+        assert db.get(GalleryReopeningNotificationOutbox, notice_id) is None
+
+
+def test_deletion_blocks_payment_group_snapshot(client: TestClient) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        target = add_client(db, "Pagamento protegido", "+5511900000413")
+        group = PaymentGroup(
+            client_id=target.id,
+            state="draft",
+            revision="synthetic-revision",
+            total_cents=700,
+            pix_copy_paste_snapshot="synthetic-pix",
+            pix_configuration_snapshot={"synthetic": True},
+        )
+        db.add(group)
+        db.commit()
+        target_id, group_id = target.id, group.id
+
+    inventory = client.get(f"/admin/clients/{target_id}/deletion-inventory").json()
+    assert inventory["commercial_protected"]["payment_groups"] == 1
+    assert inventory["can_delete"] is False
+    directory = client.get("/admin/clients").json()["clients"]
+    assert next(item for item in directory if item["id"] == str(target_id))["deletion_eligible"] is False
+    blocked = client.delete(
+        f"/admin/clients/{target_id}",
+        headers={"Idempotency-Key": "delete-client-payment-group-0001"},
+    )
+    assert blocked.status_code == 409
+    with SessionLocal() as db:
+        assert db.get(Client, target_id) is not None
+        assert db.get(PaymentGroup, group_id) is not None
 
 
 def test_deletion_preserves_private_gallery_with_third_party_interaction(

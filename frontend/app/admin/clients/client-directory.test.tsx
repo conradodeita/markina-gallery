@@ -136,6 +136,10 @@ describe("diretório global de clientes", () => {
           operational_removable: {
             client: 1,
             public_gallery_registrations: 1,
+            gallery_client_states: 1,
+            folder_client_grants: 1,
+            reopening_requests: 1,
+            reopening_notifications: 1,
             private_galleries_exclusive: 1,
           },
           commercial_protected: { orders: 0 },
@@ -159,6 +163,10 @@ describe("diretório global de clientes", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
     fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
     expect(await screen.findByText("Consequências desta exclusão")).toBeTruthy();
+    expect(screen.getByText("1 estado(s) individual(is) de Galeria pública")).toBeTruthy();
+    expect(screen.getByText("1 atribuição(ões) de pasta")).toBeTruthy();
+    expect(screen.getByText("1 pedido(s) de reabertura")).toBeTruthy();
+    expect(screen.getByText("1 aviso(s) de reabertura")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Excluir cadastro definitivamente" }));
 
     await waitFor(() =>
@@ -187,7 +195,7 @@ describe("diretório global de clientes", () => {
         ? response({
             client_id: person.id,
             operational_removable: { client: 1 },
-            commercial_protected: { orders: 1, payment_communications: 1 },
+            commercial_protected: { orders: 1, payment_groups: 1, payment_communications: 1 },
             can_delete: false,
           })
         : response({ clients: [person], page: { has_more: false, next_cursor: null } }),
@@ -198,6 +206,7 @@ describe("diretório global de clientes", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
     fireEvent.click(screen.getByRole("button", { name: "Verificar exclusão" }));
     expect(await screen.findByText("Exclusão bloqueada pelo histórico comercial")).toBeTruthy();
+    expect(screen.getByText("1 grupo(s) de pagamento")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Excluir cadastro definitivamente" })).toBeNull();
     expect(screen.getByText(/Edite o telefone ou administre os vínculos/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Administrar vínculos nas galerias" })).toHaveProperty(

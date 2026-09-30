@@ -34,7 +34,7 @@ O sistema SHALL permitir alterar o nome da cliente e trocar seu telefone na mesm
 
 ### Requirement: Exclusão distingue operação de histórico comercial
 
-O sistema SHALL classificar o inventário da cliente em dependências operacionais removíveis e histórico comercial protegido. Vínculos, sessões, convites, seleções sem pedido, favoritos, comentários, visualizações, buscas faciais transitórias e galerias privadas sem histórico SHALL NOT, isoladamente, impedir a exclusão; pedidos, pagamentos, entregas e seus snapshots SHALL impedir a exclusão definitiva.
+O sistema SHALL classificar o inventário da cliente em dependências operacionais removíveis e histórico comercial protegido. Vínculos, estados individuais e referências residuais de galerias já removidas, sessões, convites, seleções sem pedido, favoritos, comentários, visualizações, buscas faciais transitórias e galerias privadas sem histórico SHALL NOT, isoladamente, impedir a exclusão; pedidos, pagamentos, entregas e seus snapshots SHALL impedir a exclusão definitiva. A exclusão SHALL remover referências operacionais remanescentes à identidade dentro da mesma transação, preservando tombstones e auditorias de galerias e sem alterar dados de terceiros.
 
 #### Scenario: Cliente sintética com privada sem compra
 
@@ -45,6 +45,11 @@ O sistema SHALL classificar o inventário da cliente em dependências operaciona
 
 - **WHEN** o inventário encontra pedido, pagamento ou entrega preservável
 - **THEN** o sistema bloqueia a exclusão definitiva, apresenta as categorias que justificam o bloqueio e orienta editar o telefone ou administrar os vínculos sem apagar o histórico
+
+#### Scenario: Cliente com estado residual de galeria removida
+
+- **WHEN** o fotógrafo confirma a exclusão de uma cliente sem histórico comercial cuja identidade ainda é referenciada por estado individual ou outra dependência operacional de uma galeria removida
+- **THEN** o sistema inclui essas referências no inventário, remove-as atomicamente para concluir a exclusão e preserva o tombstone, auditoria e dados de terceiros da galeria
 
 ### Requirement: Exclusão isolada, idempotente e auditável
 
