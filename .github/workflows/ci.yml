@@ -35,6 +35,10 @@ jobs:
         run: ruff check backend/app backend/tests
       - name: Testes (pytest)
         run: pytest backend/tests -q
+      - name: Regressão do inventário de exclusão em PostgreSQL
+        run: >-
+          DATABASE_URL="$TENANT_TEST_DATABASE_URL"
+          pytest backend/tests/test_admin_client_directory.py::test_deletion_removes_combined_homolog_operational_inventory_and_keeps_tombstone -q
       - name: Persistência de branding e política de deploy
         run: |
           python scripts/test_preserve_branding.py -v
