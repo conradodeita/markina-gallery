@@ -528,10 +528,9 @@ def delete_client_operational_graph(
     db.add(
         AuditEvent(
             event="client.deleted_without_history",
-            subject=(
-                f"client_id:{client_id};actor_id:{actor_admin_id};receipt_id:{receipt.id};"
-                f"inventory:{fingerprint};counts:{json.dumps(counts, sort_keys=True)}"
-            ),
+            # Os detalhes completos ficam no recibo durável; a referência curta
+            # evita exceder o limite de AuditEvent.subject no PostgreSQL.
+            subject=f"client_deletion_receipt:{receipt.id}",
         )
     )
     try:

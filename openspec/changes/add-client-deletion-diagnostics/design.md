@@ -52,11 +52,18 @@ No cliente HTTP, preservar o status num erro tipado mesmo quando parsing JSON fa
 
 Alternativa descartada: exibir o corpo não JSON, que pode conter detalhes do proxy ou infraestrutura.
 
+### 6. O recibo durável é a referência autoritativa da auditoria
+
+O campo `audit_event.subject` tem limite de 320 caracteres. A exclusão já persiste um recibo idempotente com UUID da cliente, ator administrativo, resultado, fingerprint do inventário e contagens removidas. O evento `client.deleted_without_history` deve referenciar esse recibo em vez de duplicar o JSON completo das contagens. A consulta do recibo preserva os detalhes de auditoria sem exceder o limite do PostgreSQL.
+
+Alternativa descartada: truncar ou remover contagens do recibo, pois isso perderia evidência durável da operação.
+
 ## Risks / Trade-offs
 
 - [A aplicação gera o identificador mas uma resposta do proxy não o inclui] → essa UI apresenta somente o status HTTP e a falta de confirmação; nenhum código local será apresentado como se pudesse ser buscado nos logs.
 - [Uma exceção após commit é reportada incorretamente como falha] → consultar o recibo da mesma chave e separar conclusão do banco de tarefas auxiliares.
 - [Mensagens ou logs expõem PII por engano] → campos allowlisted, ausência de `exc_info`/payload e testes que procuram PII, SQL e segredo nas duas superfícies.
+- [O evento de auditoria ultrapassa o limite do PostgreSQL] → manter os dados completos no recibo e testar explicitamente o tamanho máximo de 320 caracteres do evento.
 - [Código público é confundido com credencial] → gerar aleatoriamente, não permitir busca de dados pela referência e exigir sessão admin em toda rota existente.
 
 ## Migration Plan

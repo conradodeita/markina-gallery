@@ -28,6 +28,7 @@ from app.auth import (
     GalleryAccessCapability,
     GalleryClientState,
     GalleryFacialPolicy,
+    GalleryMembershipNotificationOutbox,
     GalleryReopeningNotificationOutbox,
     GalleryReopeningRequest,
     ParentGallery,
@@ -40,6 +41,7 @@ from app.auth import (
     PhotoSelection,
     SaleOrder,
     SessionLocal,
+    Tenant,
     WhatsAppDelivery,
     WhatsAppDeliveryAttempt,
     engine,
@@ -442,6 +444,104 @@ def test_deletion_removes_residual_canonical_state_and_keeps_gallery_tombstone(
         assert db.get(FolderClientGrant, survivor_grant_id) is not None
         assert db.get(GalleryReopeningRequest, reopening_id) is None
         assert db.get(GalleryReopeningNotificationOutbox, notice_id) is None
+
+
+def test_deletion_removes_combined_homolog_operational_inventory_and_keeps_tombstone(
+    client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        if db.get(Tenant, FIXTURE_TENANT_ID) is None:
+            db.add(Tenant(id=FIXTURE_TENANT_ID))
+            db.commit()
+    admin_id = authenticate_admin(client)
+    with SessionLocal() as db:
+        target = add_client(db, "Excluir inventário combinado", "+5511900000414")
+        tombstone = ParentGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            name="Galeria pública removida",
+            active=False,
+            lifecycle_status="deleted",
+        )
+        db.add(tombstone)
+        db.flush()
+        state = GalleryClientState(parent_gallery_id=tombstone.id, client_id=target.id)
+        notification = GalleryMembershipNotificationOutbox(
+            event_key="synthetic-client-login-deletion",
+            event_type="client_logged_in",
+            parent_gallery_id=tombstone.id,
+            client_id=target.id,
+            parent_name_snapshot=tombstone.name,
+            derived_name_snapshot="",
+            client_name_snapshot=target.full_name,
+        )
+        session = AuthSession(
+            token_hash="combined-operational-session",
+            role="client",
+            subject_id=target.id,
+            expires_at=now() + timedelta(days=1),
+        )
+        deliveries = [
+            WhatsAppDelivery(
+                kind="otp",
+                source_type="auth_challenge",
+                source_id=f"synthetic-challenge-{index}",
+                recipient_phone=target.phone_e164,
+                template_kind="client_otp",
+                idempotency_key=f"combined-otp-delivery-{index}",
+                status="accepted",
+            )
+            for index in (1, 2)
+        ]
+        db.add_all([state, notification, session, *deliveries])
+        db.commit()
+        target_id = target.id
+        tombstone_id = tombstone.id
+        state_id = state.id
+        notification_id = notification.id
+        session_id = session.id
+        delivery_ids = [delivery.id for delivery in deliveries]
+
+    inventory = client.get(f"/admin/clients/{target_id}/deletion-inventory")
+    assert inventory.status_code == 200
+    operational = inventory.json()["operational_removable"]
+    assert inventory.json()["can_delete"] is True
+    assert operational["phone_records"] == 1
+    assert operational["gallery_client_states"] == 1
+    assert operational["membership_notifications"] == 1
+    assert operational["sessions"] == 1
+    assert operational["otp_deliveries"] == 2
+
+    deleted = client.delete(
+        f"/admin/clients/{target_id}",
+        headers={"Idempotency-Key": "delete-client-combined-homolog-0001"},
+    )
+    assert deleted.status_code == 200
+    with SessionLocal() as db:
+        assert db.get(Client, target_id) is None
+        assert db.get(ParentGallery, tombstone_id).lifecycle_status == "deleted"
+        assert db.get(GalleryClientState, state_id) is None
+        assert db.get(GalleryMembershipNotificationOutbox, notification_id) is None
+        assert db.get(AuthSession, session_id) is None
+        assert all(db.get(WhatsAppDelivery, delivery_id) is None for delivery_id in delivery_ids)
+        receipt = db.scalar(
+            select(ClientDeletionReceipt).where(
+                ClientDeletionReceipt.target_client_id == target_id
+            )
+        )
+        audit_event = db.scalar(
+            select(AuditEvent).where(AuditEvent.event == "client.deleted_without_history")
+        )
+        assert receipt is not None
+        assert receipt.actor_admin_id == admin_id
+        assert receipt.status == "completed"
+        assert receipt.removed_counts["clients"] == 1
+        assert receipt.removed_counts["gallery_client_states"] == 1
+        assert receipt.removed_counts["membership_notifications"] == 1
+        assert receipt.removed_counts["sessions"] == 1
+        assert receipt.removed_counts["otp_deliveries"] == 2
+        assert audit_event is not None
+        assert audit_event.subject == f"client_deletion_receipt:{receipt.id}"
+        assert len(audit_event.subject) <= AuditEvent.__table__.c.subject.type.length
 
 
 def test_deletion_blocks_payment_group_snapshot(client: TestClient) -> None:
