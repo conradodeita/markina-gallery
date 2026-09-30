@@ -68,6 +68,10 @@ def test_gates_api_e_todas_classes_recusam_contexto(tenant_db, monkeypatch, inva
         monkeypatch.setattr(module, "SessionLocal", factory)
     with TestClient(main.app) as client:
         assert client.get("/health").status_code == 200
+        capacity = client.get("/admin/capacity-observability")
+        assert capacity.status_code == 503
+        assert capacity.json() == {"detail": "Serviço indisponível."}
+        assert capacity.headers["cache-control"] == "no-store"
         response = client.post("/auth/client/challenge", json={"full_name": "Fake", "phone": "+5511999999999"})
         assert response.status_code == 503 and response.json() == {"detail": "Serviço indisponível."}
     operations = (

@@ -139,6 +139,8 @@ from app.canonical_selection import (
     CanonicalSelectionUnavailable,
     select_canonical_photo,
 )
+from app.capacity_observability.collector import CollectionBusy, get_capacity_snapshot
+from app.capacity_observability.contracts import CapacitySnapshot
 from app.checkout import (
     CheckoutError,
     client_photo_is_frozen,
@@ -409,6 +411,14 @@ async def require_operational_tenant(request: Request, call_next):
         return await call_next(request)
     except TenantContextError:
         return JSONResponse(status_code=503, content={"detail": "Serviço indisponível."})
+
+
+@app.middleware("http")
+async def prevent_capacity_snapshot_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/admin/capacity-observability":
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.on_event("startup")
@@ -2440,6 +2450,19 @@ def admin_validation_summary(
             for gallery in galleries[:5]
         ],
     }
+
+
+@app.get("/admin/capacity-observability", response_model=CapacitySnapshot)
+def admin_capacity_observability(
+    request: Request, response: Response
+) -> CapacitySnapshot:
+    """Snapshot diagnóstico sob demanda, autorizado antes de consultar o cache."""
+    response.headers["Cache-Control"] = "no-store"
+    require_admin(request)
+    try:
+        return get_capacity_snapshot()
+    except CollectionBusy as exc:
+        raise HTTPException(status_code=503, detail="collection_busy") from exc
 
 
 @app.get("/admin/facial-observability")
