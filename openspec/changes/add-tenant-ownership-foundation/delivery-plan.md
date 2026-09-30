@@ -1,6 +1,6 @@
 # Contrato de entrega por etapa
 
-Estado em 2026-09-29: **implementação local concluída; validação integrada em andamento; deploy pendente**.
+Estado reconciliado em 2026-09-30: **fundação publicada em homologação; aceite integral pendente**. Fatos da liberação, testes e lacunas estão em [deploy-2026-09-29-tenant-foundation.md](deploy-2026-09-29-tenant-foundation.md). As seções de preparação abaixo são históricas e não devem ser usadas como estado atual.
 
 Este documento permite ao proprietário acompanhar entregas sem ler código. As etapas abaixo são uma sequência proposta; somente a primeira está especificada nesta change. Cada etapa futura precisa de change e aceite próprios. Uma etapa pode exigir mais de uma liberação e nenhum deploy será anunciado como concluído apenas porque seu código foi escrito.
 

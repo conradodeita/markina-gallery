@@ -1,6 +1,6 @@
 # Procedimento da primeira liberação
 
-Estado: preparado para revisão; **não executado**. PR [#115](https://github.com/conradodeita/markina-gallery/pull/115), implementação `b4c320e75cbe0d786d8b05d62d57b77aa796a2ec`. A versão final aprovada deve ser registrada antes da execução. Este procedimento não autoriza deploy nem altera o fluxo habitual das próximas releases.
+Estado: plano histórico da primeira liberação, **não usar como roteiro para repetir deploy ou limpeza**. O PR [#115](https://github.com/conradodeita/markina-gallery/pull/115) foi integrado e publicado; o workflow de merge encontrou a revisão 0069 já aplicada. A execução real e suas lacunas estão em [deploy-2026-09-29-tenant-foundation.md](deploy-2026-09-29-tenant-foundation.md). Este procedimento não autoriza novo deploy nem altera o fluxo habitual das próximas releases.
 
 ## Destino e preservação
 
