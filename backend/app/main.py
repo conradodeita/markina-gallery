@@ -342,6 +342,8 @@ from app.public_gallery_access import (
     require_public_gallery_browsing,
     safe_internal_return,
 )
+from app.public_origin import PublicOriginError
+from app.public_origin import public_app_origin as validated_public_origin
 from app.push_subscriptions import (
     INSTALLATION_COOKIE,
     detach_previous_identity,
@@ -2669,15 +2671,18 @@ def _parent_gallery_or_404(db: Session, parent_gallery_id: UUID) -> ParentGaller
     return gallery
 
 
+def _gallery_capability_origin(request: Request) -> str:
+    try:
+        return validated_public_origin(
+            getenv("APP_ENV", "development"), local_fallback=str(request.base_url)
+        )
+    except PublicOriginError as exc:
+        raise HTTPException(status_code=503, detail="Origem pública indisponível.") from exc
+
+
 def _gallery_capability_link(request: Request, token: str) -> str:
-    """Gera link com token opaco, respeitando o proxy TLS de homologação."""
-    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
-    host = (
-        request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
-        .split(",")[0]
-        .strip()
-    )
-    return f"{scheme}://{host}/?access_token={token}"
+    """Usa origem pública confiável; a conexão interna pode ser HTTP."""
+    return f"{_gallery_capability_origin(request)}/?access_token={token}"
 
 
 def _active_gallery_capability(
@@ -4410,6 +4415,7 @@ def create_parent_gallery(
 ) -> dict[str, object]:
     admin_session = current_session(request, Role.ADMIN)
     tenant = require_admin_tenant(db, admin_session.subject_id)
+    _gallery_capability_origin(request)
     gallery = ParentGallery(tenant_id=tenant.id, **payload.model_dump())
     db.add(gallery)
     db.flush()
@@ -4491,6 +4497,7 @@ def issue_parent_gallery_public_link(
             status_code=409,
             detail="Já existe um link ativo; rotacione-o para obter um novo segredo.",
         )
+    _gallery_capability_origin(request)
     capability, token = issue_gallery_capability(
         db,
         parent_gallery_id=parent_gallery_id,
@@ -4518,6 +4525,7 @@ def rotate_parent_gallery_public_link(
     )
     if not capability:
         raise HTTPException(status_code=404, detail="Link ativo não encontrado.")
+    _gallery_capability_origin(request)
     replacement, token = rotate_gallery_capability(
         db,
         capability,
@@ -4594,6 +4602,7 @@ def issue_parent_gallery_client_invite(
     client = db.get(Client, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+    _gallery_capability_origin(request)
     capability, token = _issue_individual_invite(
         db,
         parent=parent,
@@ -4624,6 +4633,7 @@ def rotate_parent_gallery_client_invite(
     )
     if not capability:
         raise HTTPException(status_code=404, detail="Convite ativo não encontrado.")
+    _gallery_capability_origin(request)
     replacement, token = rotate_gallery_capability(
         db, capability, actor_admin_id=admin_session.subject_id
     )

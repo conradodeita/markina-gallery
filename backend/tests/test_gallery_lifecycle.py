@@ -3173,6 +3173,114 @@ def test_admin_manages_opaque_public_links_and_individual_invites() -> None:
             )
 
 
+def test_gallery_capability_links_use_configured_https_origin(monkeypatch) -> None:
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "synthetic-gallery-capability-signing-key-32bytes")
+        monkeypatch.setenv("MARKINA_PUBLIC_URL", "http://localhost:3000")
+        monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://gallery.example")
+        conflicting_headers = {
+            "Host": "internal.example",
+            "X-Forwarded-Host": "attacker.example",
+            "X-Forwarded-Proto": "http",
+        }
+        created = client.post(
+            "/admin/parent-galleries",
+            json={"name": "Galeria protegida", "access_mode": "invite_only"},
+            headers=conflicting_headers,
+        )
+        assert created.status_code == 201
+        parent_id = created.json()["id"]
+        assert created.json()["public_link"] == (
+            f"https://gallery.example/?access_token={created.json()['access_token']}"
+        )
+        current = client.get(
+            f"/admin/parent-galleries/{parent_id}/public-link", headers=conflicting_headers
+        )
+        assert current.status_code == 200
+        assert current.json()["link"] == created.json()["public_link"]
+        rotated = client.post(
+            f"/admin/parent-galleries/{parent_id}/public-link/rotate",
+            json={}, headers=conflicting_headers,
+        )
+        assert rotated.status_code == 200
+        assert rotated.json()["link"].startswith("https://gallery.example/?access_token=")
+
+        registered = client.post(
+            "/admin/clients",
+            json={"full_name": "Cliente do teste", "phone_e164": "+5511999999311"},
+        )
+        assert registered.status_code == 201
+        invite_path = f"/admin/parent-galleries/{parent_id}/clients/{registered.json()['id']}/invite"
+        invite = client.post(invite_path, json={}, headers=conflicting_headers)
+        assert invite.status_code == 201
+        assert invite.json()["link"].startswith("https://gallery.example/?access_token=")
+        rotated_invite = client.post(
+            f"{invite_path}/rotate", json={}, headers=conflicting_headers
+        )
+        assert rotated_invite.status_code == 200
+        assert rotated_invite.json()["link"].startswith(
+            "https://gallery.example/?access_token="
+        )
+
+        monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://new-gallery.example/")
+        changed = client.get(f"/admin/parent-galleries/{parent_id}/public-link")
+        assert changed.json()["link"].startswith(
+            "https://new-gallery.example/?access_token="
+        )
+        assert changed.json()["access_token"] == rotated.json()["access_token"]
+
+
+@pytest.mark.parametrize("origin", [None, "http://gallery.example", "https://gallery.example/path"])
+def test_gallery_capability_writes_fail_closed_on_bad_origin(monkeypatch, origin) -> None:
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.delenv("MARKINA_PUBLIC_URL", raising=False)
+        if origin is None:
+            monkeypatch.delenv("PUBLIC_APP_ORIGIN", raising=False)
+        else:
+            monkeypatch.setenv("PUBLIC_APP_ORIGIN", origin)
+        rejected = client.post(
+            "/admin/parent-galleries", json={"name": "Não persistir capacidade"}
+        )
+        assert rejected.status_code == 503
+        assert "access_token" not in rejected.json()
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(ParentGallery.id))) == 0
+            assert db.scalar(select(func.count(GalleryAccessCapability.id))) == 0
+
+
+def test_gallery_capability_rotation_does_not_revoke_on_bad_origin(monkeypatch) -> None:
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "synthetic-gallery-capability-signing-key-32bytes")
+        monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://gallery.example")
+        created = client.post(
+            "/admin/parent-galleries", json={"name": "Manter capacidade"}
+        )
+        assert created.status_code == 201
+        parent_id = created.json()["id"]
+        token = created.json()["access_token"]
+        registered = client.post(
+            "/admin/clients",
+            json={"full_name": "Cliente preservada", "phone_e164": "+5511999999312"},
+        )
+        assert registered.status_code == 201
+        invite_path = f"/admin/parent-galleries/{parent_id}/clients/{registered.json()['id']}/invite"
+
+        monkeypatch.setenv("PUBLIC_APP_ORIGIN", "http://gallery.example")
+        for path in (f"/admin/parent-galleries/{parent_id}/public-link/rotate", invite_path):
+            response = client.post(path, json={})
+            assert response.status_code == 503
+            assert "access_token" not in response.json()
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(GalleryAccessCapability.id))) == 1
+            assert resolve_gallery_capability(db, token) is not None
+
+
 def test_expired_gallery_capability_is_neutral_and_persists_terminal_state() -> None:
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria com link expirado")
