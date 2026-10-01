@@ -1,3 +1,4 @@
+
 """Upgrade e compatibilidade de recibos em banco exclusivamente descartável."""
 import os
 import subprocess
@@ -27,19 +28,14 @@ def test_authorization_migration_preserves_receipts_and_rejects_false_consent(tm
     engine = create_engine(url)
     with Session(engine) as db:
         gallery_id = insert_legacy_model(db.connection(), ParentGallery, name="Teste sintético")
-        client = Client(full_name="Teste", phone_e164="+5511999999900")
-        db.add(client)
-        db.flush()
-        policy = GalleryFacialPolicy(parent_gallery_id=gallery_id, model_version="m", quality_version="q")
-        db.add(policy)
-        db.flush()
-        requests = [FacialSearchRequest(parent_gallery_id=gallery_id, client_id=client.id,
-                    policy_id=policy.id, consent_version="receipt-v1", subject_declaration="adult",
-                    legal_notice_version="notice-v1", model_version="m", quality_version="q",
-                    index_generation=1, expires_at=now(), reference_region_id=region)
-                    for region in (None, uuid4(), None)]
-        requests[-1].reference_deleted_at = now()
-        db.add_all(requests)
+        client_id = insert_legacy_model(db.connection(), Client, full_name="Teste", phone_e164="+5511999999900")
+        policy_id = insert_legacy_model(db.connection(), GalleryFacialPolicy, parent_gallery_id=gallery_id,
+                                        model_version="m", quality_version="q")
+        for position, region in enumerate((None, uuid4(), None)):
+            insert_legacy_model(db.connection(), FacialSearchRequest, parent_gallery_id=gallery_id,
+                client_id=client_id, policy_id=policy_id, consent_version="receipt-v1", subject_declaration="adult",
+                legal_notice_version="notice-v1", model_version="m", quality_version="q", index_generation=1,
+                expires_at=now(), reference_region_id=region, reference_deleted_at=now() if position == 2 else None)
         db.commit()
     engine.dispose()
     migrate("downgrade", "20260921_0059")

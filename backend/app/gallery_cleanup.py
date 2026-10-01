@@ -1,6 +1,7 @@
 """Etapas concretas e idempotentes de limpeza operacional de galerias."""
 
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth import (
     AuditEvent,
     AuthChallenge,
+    CommercialHistoryMedia,
     DerivedGallery,
     DerivedGalleryMembership,
     GalleryAccess,
@@ -24,16 +26,17 @@ from app.auth import (
     minimize_client_challenge_pii,
 )
 from app.commercial_removal import apply_commercial_removal_policy
+from app.gallery_lifecycle import gallery_operational_storage_manifest, require_lifecycle_origin
 from app.media import derivatives_root, source_root
-from app.tenancy import require_single_tenant
 
 
 def prepare_lifecycle_history(db: Session, operation: GalleryLifecycleOperation) -> None:
     """Preserva histórico conforme o tipo de operação antes da etapa destrutiva."""
+    require_lifecycle_origin(db, operation)
 
     if operation.operation_type == "unlink_client":
         private_id = db.scalar(
-            select(DerivedGalleryMembership.derived_gallery_id).where(
+            select(DerivedGalleryMembership.derived_gallery_id).where(DerivedGalleryMembership.tenant_id == operation.tenant_id,
                 DerivedGalleryMembership.parent_gallery_id
                 == operation.target_parent_gallery_id,
                 DerivedGalleryMembership.client_id == operation.target_client_id,
@@ -41,7 +44,7 @@ def prepare_lifecycle_history(db: Session, operation: GalleryLifecycleOperation)
         )
         if private_id is None:
             private_id = db.scalar(
-                select(DerivedGallery.id).where(
+                select(DerivedGallery.id).where(DerivedGallery.tenant_id == operation.tenant_id,
                     DerivedGallery.parent_gallery_id
                     == operation.target_parent_gallery_id,
                     DerivedGallery.client_id == operation.target_client_id,
@@ -50,6 +53,8 @@ def prepare_lifecycle_history(db: Session, operation: GalleryLifecycleOperation)
         report = apply_commercial_removal_policy(
             db,
             parent_gallery_id=operation.target_parent_gallery_id,
+            tenant_id=operation.tenant_id,
+            authorize=lambda: require_lifecycle_origin(db, operation),
             client_id=operation.target_client_id,
             derived_gallery_id=private_id,
         )
@@ -62,14 +67,14 @@ def prepare_lifecycle_history(db: Session, operation: GalleryLifecycleOperation)
         return
 
     from app.asset_removal import preserve_asset_history
-    preserve_asset_history(db, operation.target_parent_gallery_id)
+    preserve_asset_history(db, operation.target_parent_gallery_id, tenant_id=operation.tenant_id)
     manifest = dict(operation.manifest or {})
     manifest["history_policy"] = "text-only-v1"
     operation.manifest = manifest
 
 
-def _delete_count(db: Session, model, *criteria) -> int:
-    result = db.execute(delete(model).where(*criteria).execution_options(synchronize_session=False))
+def _delete_count(db: Session, model, *criteria, tenant_id) -> int:
+    result = db.execute(delete(model).where(model.tenant_id == tenant_id, *criteria).execution_options(synchronize_session=False))
     return result.rowcount or 0
 
 
@@ -85,10 +90,31 @@ def _manifest_path(root: Path, relative_path: str) -> Path:
 def remove_operational_storage(_db: Session, operation: GalleryLifecycleOperation) -> None:
     """Remove somente arquivos operacionais congelados no manifesto da operação."""
 
+    require_lifecycle_origin(_db, operation)
     manifest = dict(operation.manifest or {})
     storage_manifest = manifest.get("operational_storage")
     if not isinstance(storage_manifest, dict):
         raise TypeError("Manifesto de armazenamento operacional ausente.")
+    allowed = gallery_operational_storage_manifest(_db, operation.target_parent_gallery_id, tenant_id=operation.tenant_id)
+    for kind in ("sources", "derivatives", "history"):
+        expected = allowed[kind]
+        for entry in storage_manifest.get(kind, []):
+            if entry in expected:
+                continue
+            # Ajustes já removidos na tentativa anterior continuam comprováveis pelo UUID da foto.
+            if kind == "derivatives" and any(source["photo_id"] == entry.get("derivative_id") for source in allowed["sources"]):
+                from app.preview_adjustment.service import result_path
+                for legacy in (False, True):
+                    try:
+                        path = result_path(UUID(entry["derivative_id"]), Path(entry["relative_path"]).stem, tenant_id=operation.tenant_id, legacy=legacy)
+                        if path.relative_to(derivatives_root()).as_posix() == entry["relative_path"]:
+                            break
+                    except ValueError:
+                        continue
+                else:
+                    raise ValueError("Manifesto fora do alvo autorizado.")
+                continue
+            raise ValueError("Manifesto fora do alvo autorizado.")
     source_entries = storage_manifest.get("sources", [])
     derivative_entries = storage_manifest.get("derivatives", [])
     paths: list[Path] = []
@@ -100,12 +126,25 @@ def remove_operational_storage(_db: Session, operation: GalleryLifecycleOperatio
         paths.append(_manifest_path(derivative_base, entry["relative_path"]))
 
     from app.historical_media import historical_media_path
-    paths.extend(historical_media_path(entry["relative_path"]) for entry in storage_manifest.get("history", []))
+    history_keys = {}
+    for media in _db.scalars(select(CommercialHistoryMedia).where(CommercialHistoryMedia.tenant_id == operation.tenant_id)):
+        for key in (media.preview_storage_key, media.delivery_storage_key):
+            if key:
+                history_keys[key] = media.sale_order_item_id
+    paths.extend(historical_media_path(entry["relative_path"], tenant_id=operation.tenant_id,
+        item_id=history_keys[entry["relative_path"]]) for entry in storage_manifest.get("history", []))
 
     removed_files = 0
     missing_files = 0
+    from app.media import media_namespace
     for path in paths:
-        require_single_tenant(_db)
+        for root in (source_base, derivative_base):
+            if path.is_relative_to(root):
+                media_namespace(path.relative_to(root).as_posix(), operation.tenant_id)
+    from app.asset_removal import validate_cleanup_paths
+    validate_cleanup_paths(_db, paths, tenant_id=operation.tenant_id)
+    for path in paths:
+        require_lifecycle_origin(_db, operation)
         if path.is_file():
             path.unlink()
             removed_files += 1
@@ -123,6 +162,7 @@ def remove_operational_storage(_db: Session, operation: GalleryLifecycleOperatio
 
 def remove_operational_records(db: Session, operation: GalleryLifecycleOperation) -> None:
     """Remove o grafo operacional da origem; histórico e cliente ficam fora do alvo."""
+    require_lifecycle_origin(db, operation)
 
     if operation.operation_type == "unlink_client":
         _remove_client_link_records(db, operation)
@@ -141,27 +181,28 @@ def remove_operational_records(db: Session, operation: GalleryLifecycleOperation
     from app.main import _delete_photo_records
 
     # Idempotente também na retomada de uma operação anterior à nova política.
-    preserve_asset_history(db, parent_id)
-    purge_gallery_records(db, parent_gallery_id=parent_id)
-    private_ids = list(db.scalars(select(DerivedGallery.id).where(DerivedGallery.parent_gallery_id == parent_id)))
-    photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.parent_gallery_id == parent_id)
+    preserve_asset_history(db, parent_id, tenant_id=operation.tenant_id)
+    purge_gallery_records(db, parent_gallery_id=parent_id, tenant_id=operation.tenant_id)
+    private_ids = list(db.scalars(select(DerivedGallery.id).where(DerivedGallery.tenant_id == operation.tenant_id, DerivedGallery.parent_gallery_id == parent_id)))
+    photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == operation.tenant_id, PhotoAsset.parent_gallery_id == parent_id)
                             .order_by(PhotoAsset.id).with_for_update()))
-    paths = historical_paths(db, parent_id=parent_id)
+    paths = historical_paths(db, parent_id=parent_id, tenant_id=operation.tenant_id)
     for photo in photos:
-        paths.extend(_delete_photo_records(db, photo))
+        paths.extend(_delete_photo_records(db, photo, tenant_id=operation.tenant_id))
     db.flush()
-    delete_private_records(db, private_ids)
-    removed_folders = _delete_count(db, PhotoFolder, PhotoFolder.parent_gallery_id == parent_id)
-    _delete_count(db, GalleryAccessCapability, GalleryAccessCapability.parent_gallery_id == parent_id)
-    _delete_count(db, ParentGalleryRegistration, ParentGalleryRegistration.parent_gallery_id == parent_id)
-    for challenge in db.scalars(select(AuthChallenge).where(AuthChallenge.parent_gallery_id == parent_id)):
+    delete_private_records(db, private_ids, tenant_id=operation.tenant_id)
+    removed_folders = _delete_count(db, PhotoFolder, PhotoFolder.parent_gallery_id == parent_id, tenant_id=operation.tenant_id)
+    _delete_count(db, GalleryAccessCapability, GalleryAccessCapability.parent_gallery_id == parent_id, tenant_id=operation.tenant_id)
+    _delete_count(db, ParentGalleryRegistration, ParentGalleryRegistration.parent_gallery_id == parent_id, tenant_id=operation.tenant_id)
+    for challenge in db.scalars(select(AuthChallenge).where(AuthChallenge.tenant_id == operation.tenant_id, AuthChallenge.parent_gallery_id == parent_id)):
         if challenge.kind == "client_otp":
             minimize_client_challenge_pii(db, challenge)
-    _delete_count(db, AuthChallenge, AuthChallenge.parent_gallery_id == parent_id)
-    parent = db.get(ParentGallery, parent_id)
+    _delete_count(db, AuthChallenge, AuthChallenge.parent_gallery_id == parent_id, tenant_id=operation.tenant_id)
+    from app.acervo_context import owned_record
+    parent = owned_record(db, ParentGallery, parent_id, tenant_id=operation.tenant_id)
     if parent:
         parent.active, parent.lifecycle_status, parent.cover_photo_id = False, "deleted", None
-    cleanup = enqueue_file_cleanup(db, paths)
+    cleanup = enqueue_file_cleanup(db, paths, tenant_id=operation.tenant_id)
     if not process_file_cleanup(db, cleanup, commit=False):
         raise OSError("Não foi possível concluir a limpeza física do acervo.")
     manifest = dict(operation.manifest or {})
@@ -169,23 +210,24 @@ def remove_operational_records(db: Session, operation: GalleryLifecycleOperation
     manifest["removed_records"] = {"photos": len(photos), "folders": removed_folders,
                                    "private_galleries": len(private_ids), "public_origins": int(parent is not None)}
     operation.manifest = manifest
-    db.add(AuditEvent(event="parent_gallery.operational_records_removed", subject=f"operation_id:{operation.id}"))
+    db.add(AuditEvent(tenant_id=operation.tenant_id, event="parent_gallery.operational_records_removed", subject=f"operation_id:{operation.id}"))
 
 
 def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperation) -> None:
+    require_lifecycle_origin(db, operation)
     parent_id = operation.target_parent_gallery_id
     client_id = operation.target_client_id
     if not client_id:
         raise ValueError("Operação de desvinculação sem cliente alvo.")
     membership = db.scalar(
-        select(DerivedGalleryMembership).where(
+        select(DerivedGalleryMembership).where(DerivedGalleryMembership.tenant_id == operation.tenant_id,
             DerivedGalleryMembership.parent_gallery_id == parent_id,
             DerivedGalleryMembership.client_id == client_id,
         )
     )
     private_ids = [membership.derived_gallery_id] if membership else list(
         db.scalars(
-            select(DerivedGallery.id).where(
+            select(DerivedGallery.id).where(DerivedGallery.tenant_id == operation.tenant_id,
                 DerivedGallery.parent_gallery_id == parent_id,
                 DerivedGallery.client_id == client_id,
             )
@@ -203,7 +245,7 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
                 db,
                 model,
                 model.derived_gallery_id.in_(private_ids),
-                model.client_id == client_id,
+                model.client_id == client_id, tenant_id=operation.tenant_id
             )
             if private_ids
             else 0
@@ -217,7 +259,7 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
             db,
             GalleryAccess,
             GalleryAccess.gallery_id.in_(private_ids),
-            GalleryAccess.client_id == client_id,
+            GalleryAccess.client_id == client_id, tenant_id=operation.tenant_id
         )
         if private_ids
         else 0
@@ -227,7 +269,7 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
             db,
             GalleryAccessCapability,
             GalleryAccessCapability.derived_gallery_id.in_(private_ids),
-            GalleryAccessCapability.client_id == client_id,
+            GalleryAccessCapability.client_id == client_id, tenant_id=operation.tenant_id
         )
         if private_ids
         else 0
@@ -236,7 +278,7 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
         db,
         ParentGalleryRegistration,
         ParentGalleryRegistration.parent_gallery_id == parent_id,
-        ParentGalleryRegistration.client_id == client_id,
+        ParentGalleryRegistration.client_id == client_id, tenant_id=operation.tenant_id
     )
     removed["private_galleries"] = 0
     removed["memberships_unlinked"] = 0
@@ -250,6 +292,7 @@ def _remove_client_link_records(db: Session, operation: GalleryLifecycleOperatio
     db.add(
         AuditEvent(
             event="parent_gallery.client_unlinked",
+            tenant_id=operation.tenant_id,
             subject=f"operation_id:{operation.id}",
         )
     )

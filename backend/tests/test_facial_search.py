@@ -85,9 +85,9 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
     Base.metadata.create_all(engine)
     db = Session(engine)
     parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento")
-    client = Client(id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
+    client = Client(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Fotos",
         status="released",
@@ -103,19 +103,19 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
         available=True,
     )
     protected_derivative = MediaDerivative(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         variant="client_preview",
         status="ready",
         relative_path=f"{photo.id}/client_preview.jpg",
     )
     derivative = MediaDerivative(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         variant="admin_preview",
         status="ready",
         relative_path=f"{photo.id}/admin_preview.jpg",
     )
     policy = GalleryFacialPolicy(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         status="active",
         legal_notice_version="notice-v1",
@@ -128,13 +128,13 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
         index_generation=1,
     )
     registration = ParentGalleryRegistration(
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         client_id=client.id,
         status="active",
     )
     rollouts = tuple(
         FacialRollout(
-            environment=environment,
+            tenant_id=FIXTURE_TENANT_ID, environment=environment,
             parent_gallery_id=parent.id,
             status="active",
             stage="canary",
@@ -164,7 +164,7 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
     if index_ready:
         db.add(
             FacialJob(
-                kind="index",
+                tenant_id=FIXTURE_TENANT_ID, kind="index",
                 status="completed",
                 idempotency_key=f"index:{photo.id}",
                 parent_gallery_id=parent.id,
@@ -252,7 +252,7 @@ def test_saturated_search_queue_refuses_before_storing_reference(
     object.__setattr__(settings, "search_retry_after_seconds", 17)
     db.add(
         FacialJob(
-            kind="search",
+            tenant_id=FIXTURE_TENANT_ID, kind="search",
             status="queued",
             idempotency_key="saturated-search-queue",
             parent_gallery_id=parent.id,
@@ -348,7 +348,7 @@ def test_accepts_one_hundred_isolated_durable_client_searches(
     clients = [first_client]
     for index in range(1, 100):
         client = Client(
-            id=uuid4(),
+            tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
             full_name=f"Cliente {index}",
             phone_e164=f"+55119{index:08d}",
         )
@@ -357,7 +357,7 @@ def test_accepts_one_hundred_isolated_durable_client_searches(
             (
                 client,
                 ParentGalleryRegistration(
-                    parent_gallery_id=parent.id,
+                    tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
                     client_id=client.id,
                     status="active",
                 ),
@@ -450,9 +450,9 @@ def test_search_snapshot_and_results_respect_restricted_folder_grant(
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     db, parent, owner = _fixture(tmp_path, index_ready=True)
-    other = Client(full_name="Outra cliente", phone_e164="+5511999999997")
+    other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra cliente", phone_e164="+5511999999997")
     folder = PhotoFolder(
-        parent_gallery_id=parent.id, name="Retratos exclusivos", status="released",
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Retratos exclusivos", status="released",
         purpose="content", audience_scope="selected", position=1,
     )
     db.add_all([other, folder])
@@ -465,15 +465,15 @@ def test_search_snapshot_and_results_respect_restricted_folder_grant(
     db.add(photo)
     db.flush()
     grant = FolderClientGrant(
-        folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id,
+        tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id,
     )
     db.add_all([
-        GalleryClientState(parent_gallery_id=parent.id, client_id=owner.id),
-        GalleryClientState(parent_gallery_id=parent.id, client_id=other.id),
-        ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=other.id, status="active"),
+        GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id),
+        GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=other.id),
+        ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=other.id, status="active"),
         grant,
-        MediaDerivative(photo_asset_id=photo.id, variant="client_preview", status="ready", relative_path=f"{photo.id}/client_preview.jpg"),
-        FacialJob(kind="index", status="completed", idempotency_key=f"index:{photo.id}",
+        MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="client_preview", status="ready", relative_path=f"{photo.id}/client_preview.jpg"),
+        FacialJob(tenant_id=FIXTURE_TENANT_ID, kind="index", status="completed", idempotency_key=f"index:{photo.id}",
                   parent_gallery_id=parent.id, photo_asset_id=photo.id,
                   model_version="model-v1", quality_version="quality-v1", preview_fingerprint="b" * 64),
     ])
@@ -498,7 +498,7 @@ def test_search_snapshot_and_results_respect_restricted_folder_grant(
     assert photo.id not in other_ids
     owner_search.status = "ready"
     db.add(FacialSearchCandidate(
-        search_request_id=owner_search.id, parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, search_request_id=owner_search.id, parent_gallery_id=parent.id,
         client_id=owner.id, photo_asset_id=photo.id, rank=1,
         quality_band="best", expires_at=datetime.now(UTC) + timedelta(hours=1),
     ))
@@ -521,7 +521,7 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
     db, first_parent, client = _fixture(tmp_path, index_ready=True)
     second_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Segundo evento")
     second_folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=second_parent.id,
         name="Fotos",
         status="released",
@@ -537,7 +537,7 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
         available=True,
     )
     second_policy = GalleryFacialPolicy(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=second_parent.id,
         status="active",
         legal_notice_version="notice-v1",
@@ -555,25 +555,25 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
             second_folder,
             second_photo,
             MediaDerivative(
-                photo_asset_id=second_photo.id,
+                tenant_id=FIXTURE_TENANT_ID, photo_asset_id=second_photo.id,
                 variant="client_preview",
                 status="ready",
                 relative_path=f"{second_photo.id}/client_preview.jpg",
             ),
             MediaDerivative(
-                photo_asset_id=second_photo.id,
+                tenant_id=FIXTURE_TENANT_ID, photo_asset_id=second_photo.id,
                 variant="admin_preview",
                 status="ready",
                 relative_path=f"{second_photo.id}/admin_preview.jpg",
             ),
             second_policy,
             ParentGalleryRegistration(
-                parent_gallery_id=second_parent.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=second_parent.id,
                 client_id=client.id,
                 status="active",
             ),
             FacialRollout(
-                environment="test",
+                tenant_id=FIXTURE_TENANT_ID, environment="test",
                 parent_gallery_id=second_parent.id,
                 status="active",
                 stage="canary",
@@ -586,7 +586,7 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
                 retention_policy_version="retention-v1",
             ),
             FacialJob(
-                kind="index",
+                tenant_id=FIXTURE_TENANT_ID, kind="index",
                 status="completed",
                 idempotency_key=f"index:{second_photo.id}",
                 parent_gallery_id=second_parent.id,
@@ -699,7 +699,7 @@ def test_terminal_index_failure_is_excluded_without_blocking_client_search(
     assert photo is not None
     db.add(
         FacialJob(
-            kind="index",
+            tenant_id=FIXTURE_TENANT_ID, kind="index",
             status="failed",
             idempotency_key=f"failed-index:{photo.id}",
             parent_gallery_id=parent.id,

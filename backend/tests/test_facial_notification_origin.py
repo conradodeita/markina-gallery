@@ -128,7 +128,7 @@ def test_outbox_sends_public_link_once_or_rejects_before_provider(tmp_path, monk
             (
                 client.phone_e164,
                 f"Sua busca na galeria foi concluída. Confira as possibilidades em https://markina-homolog.example/public-galleries/{gallery.id}",
-                notification.idempotency_key,
+                f"tenant:{FIXTURE_TENANT_ID}:{notification.idempotency_key}",
             )
         ]
         assert notification.status == "sent"
@@ -143,3 +143,4 @@ def test_outbox_sends_public_link_once_or_rejects_before_provider(tmp_path, monk
     assert request.status == "ready"
     db.close()
     engine.dispose()
+from tests.tenant_fixtures import FIXTURE_TENANT_ID

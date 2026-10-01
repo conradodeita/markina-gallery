@@ -93,11 +93,11 @@ describe("configurações administrativas de marca", () => {
     fireEvent.click(screen.getByLabelText("Inferior centro"));
     expect(screen.getByRole("complementary", { name: "Como a identificação se comporta" }).textContent).toContain("não simulam uma fotografia");
     expect(screen.getByText(/não promete bloquear capturas de tela/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção da sua conta" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/branding/protection", expect.objectContaining({ method: "PATCH" })));
     const request = fetchMock.mock.calls.find(([path, options]) => path === "/api/admin/branding/protection" && options?.method === "PATCH")?.[1];
     expect(JSON.parse(String(request?.body))).toEqual(expect.objectContaining({ watermark_opacity: 60, watermark_position: "bottom-center", watermark_shadow: true, watermark_security_lines: true }));
-    expect(await screen.findByText(/Proteção visual global salva/)).toBeTruthy();
+    expect(await screen.findByText(/Proteção visual da sua conta salva/)).toBeTruthy();
   });
 
   it("representa na prova a cobertura percentual aceita pelo servidor", async () => {
@@ -123,7 +123,7 @@ describe("configurações administrativas de marca", () => {
     await waitFor(() => expect(Array.from(container.querySelectorAll<HTMLElement>(".protection-preview-surface")).every((surface) => surface.dataset.watermarkCoverage === "96")).toBe(true));
 
     fireEvent.change(size, { target: { value: "74" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção da sua conta" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/branding/protection", expect.objectContaining({ method: "PATCH" })));
     const request = fetchMock.mock.calls.find(([path, options]) => path === "/api/admin/branding/protection" && options?.method === "PATCH")?.[1];
     expect(JSON.parse(String(request?.body)).watermark_size).toBe(74);
@@ -155,7 +155,7 @@ describe("configurações administrativas de marca", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminSettingsPage />);
     await screen.findByLabelText("Direção");
-    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção global" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar proteção da sua conta" }));
     expect(await screen.findByText("Não foi possível salvar a proteção visual.")).toBeTruthy();
   });
 

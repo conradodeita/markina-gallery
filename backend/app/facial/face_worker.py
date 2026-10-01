@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 
+from fastapi import HTTPException
 from redis import Redis
 
 from app.auth import SessionLocal
@@ -25,16 +26,18 @@ from app.facial.retention import process_claimed_cleanup_job
 from app.facial.runtime import BlockingFacialWorker
 from app.facial.search_worker import process_claimed_search_job
 from app.facial.worker import process_claimed_index_job, process_claimed_purge_job
-from app.messaging import WhatsAppConfigurationError, whatsapp_provider_from_environment
-from app.tenancy import TenantContextError, domain_session, enable_domain_guard
+from app.tenancy import TenantContextError, domain_session
 
 
-class _UnavailableMessenger:
-    def connection_status(self):
-        raise WhatsAppConfigurationError("Canal transacional indisponível.")
-
-    def send_transactional(self, *_args, **_kwargs):
-        raise WhatsAppConfigurationError("Canal transacional indisponível.")
+def record_provider_failure(repository: FacialJobRepository, claim: ClaimedFacialJob,
+                            error: Exception) -> None:
+    try:
+        with domain_session(SessionLocal) as db:
+            repository.fail(db, claim, error, max_attempts=3, retry_delay_seconds=5)
+    except (TenantContextError, HTTPException):
+        # Exceção estreita: só devolver o lease demonstrado, mesmo com owner suspenso.
+        with SessionLocal() as db:
+            repository.release_denied(db, claim)
 
 
 def main(worker_class: str | None = None) -> None:
@@ -75,7 +78,7 @@ def main(worker_class: str | None = None) -> None:
 
     def processor(db, claim: ClaimedFacialJob, provider: object | None) -> None:
         try:
-            enable_domain_guard(db)
+            repository._leased(db, claim)
             if claim.kind == "index":
                 if not isinstance(provider, OpenCvSFaceProvider):
                     raise FacialJobError("Provider facial não está disponível.")
@@ -115,9 +118,9 @@ def main(worker_class: str | None = None) -> None:
                 )
             else:
                 raise FacialJobError("Tipo de job facial indisponível.")
-        except TenantContextError:
-            db.rollback()
-            raise
+        except (TenantContextError, HTTPException):
+            repository.release_denied(db, claim)
+            return
         except Exception as error:  # noqa: BLE001 - fronteira do processo sanitiza a falha
             db.rollback()
             repository.fail(
@@ -129,14 +132,7 @@ def main(worker_class: str | None = None) -> None:
             )
 
     def provider_failure(claim: ClaimedFacialJob, error: Exception) -> None:
-        with domain_session(SessionLocal) as db:
-            repository.fail(
-                db,
-                claim,
-                error,
-                max_attempts=3,
-                retry_delay_seconds=5,
-            )
+        record_provider_failure(repository, claim, error)
 
     wake_source = Redis.from_url(
         os.getenv("FACIAL_REDIS_URL", "redis://redis:6379/0"),
@@ -165,17 +161,9 @@ def main(worker_class: str | None = None) -> None:
         try:
             worker.run_cycle()
             if active_class == "search":
-                try:
-                    messenger = whatsapp_provider_from_environment()
-                except WhatsAppConfigurationError:
-                    messenger = _UnavailableMessenger()
-                with domain_session(SessionLocal) as db:
-                    process_next_search_notification(
-                        db,
-                        provider=messenger,
-                        cipher=cipher,
-                        settings=settings,
-                    )
+                with SessionLocal() as db:
+                    process_next_search_notification(db, cipher=cipher, settings=settings)
+
         except TenantContextError:
             time.sleep(settings.queue_block_seconds)
             continue

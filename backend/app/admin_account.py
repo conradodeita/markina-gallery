@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import os
 import secrets
 from datetime import timedelta
 from uuid import UUID, uuid4
 
 from argon2.exceptions import VerificationError
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.admin_security import (
     decrypt_sensitive_payload,
     encrypt_sensitive_payload,
@@ -22,7 +23,6 @@ from app.auth import (
     AdminUser,
     AuthSession,
     EmailDelivery,
-    WhatsAppChannelSettings,
     WhatsAppDelivery,
     audit,
     expired,
@@ -36,15 +36,23 @@ from app.auth import (
 from app.email_delivery import enqueue_email, sensitive_link
 from app.messaging import (
     WhatsAppConfigurationError,
-    configured_photographer_phone,
-    whatsapp_provider_name,
 )
 from app.product_brand import PRODUCT_NAME
+from app.tenancy import TenantContextError, require_admin_tenant
+from app.whatsapp_binding import photographer_phone, resolve_binding
 from app.whatsapp_delivery import encrypt_otp, otp_encryption_key
 
 
 class AdminAccountError(RuntimeError):
     """Falha segura e apresentável de um fluxo administrativo."""
+
+
+def require_security_owner(db: Session, admin_id: UUID | None, tenant_id: UUID | None) -> None:
+    try:
+        if admin_id is None or tenant_id is None or require_admin_tenant(db, admin_id).id != tenant_id:
+            raise TenantContextError("Acesso negado.")
+    except TenantContextError as exc:
+        raise AdminAccountError("Contexto da confirmação indisponível.") from exc
 
 
 def normalize_admin_email(value: str) -> str:
@@ -68,18 +76,13 @@ def mask_email(value: str) -> str:
     return f"{visible}{'•' * max(3, len(local) - len(visible))}@{domain}"
 
 
-def _admin_whatsapp_phone(db: Session) -> str | None:
-    environment = os.getenv("APP_ENV", "development").strip()
-    settings = db.scalar(
-        select(WhatsAppChannelSettings).where(
-            WhatsAppChannelSettings.environment == environment
-        )
-    )
-    if whatsapp_provider_name() == "sandbox":
-        return (settings.expected_phone_e164 if settings else None) or configured_photographer_phone()
-    if not settings or settings.status != "ready":
+def _admin_whatsapp_phone(db: Session, *, tenant_id: UUID | None) -> str | None:
+    if tenant_id is None:
         return None
-    return settings.expected_phone_e164
+    try:
+        return photographer_phone(db, tenant_id=tenant_id)
+    except (WhatsAppConfigurationError, HTTPException):
+        return None
 
 
 def _queue_admin_otp(
@@ -88,11 +91,15 @@ def _queue_admin_otp(
     code: str,
     recipient: str,
 ) -> WhatsAppDelivery:
+    binding = resolve_binding(db, challenge.tenant_id)
     key = f"admin-security-otp:{challenge.id}:{challenge.resend_count}"
-    existing = db.scalar(select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == key))
+    require_active_owner(db, challenge.tenant_id)
+    existing = db.scalar(select(WhatsAppDelivery).where(
+        WhatsAppDelivery.tenant_id == challenge.tenant_id, WhatsAppDelivery.idempotency_key == key))
     if existing:
         return existing
     delivery = WhatsAppDelivery(
+        tenant_id=challenge.tenant_id,
         kind="otp",
         source_type="admin_security_challenge",
         source_id=str(challenge.id),
@@ -107,7 +114,7 @@ def _queue_admin_otp(
             code, key=otp_encryption_key(), context=key
         )
     except (WhatsAppConfigurationError, ValueError):
-        if whatsapp_provider_name() != "sandbox":
+        if binding.name != "sandbox":
             raise
         delivery.status = "accepted"
         delivery.external_message_id = f"sandbox:{token_hash(key)[:24]}"
@@ -124,13 +131,29 @@ def create_security_challenge(
     admin: AdminUser | None,
     session_id: UUID | None = None,
     target: str | None = None,
+    tenant_id: UUID | None = None,
 ) -> tuple[AdminSecurityChallenge, str, bool]:
+    if purpose == "change_pix_otp":
+        require_security_owner(db, admin.id if admin else None, tenant_id)
+        resolve_binding(db, tenant_id)
+    elif admin and tenant_id is None:
+        try:
+            tenant_id = require_admin_tenant(db, admin.id).id
+        except TenantContextError:
+            pass  # Recuperação técnica sem vínculo não escolhe canal comercial.
+    recipient = _admin_whatsapp_phone(db, tenant_id=tenant_id) if admin else None
+    if purpose == "password_recovery_otp" and not recipient:
+        # Sem canal próprio, o fluxo público persiste apenas o desafio neutro.
+        # Não invalida confirmações anteriores nem escolhe outro fotógrafo.
+        admin = None
+        tenant_id = None
     instant = now()
     if admin:
         for previous in db.scalars(
             select(AdminSecurityChallenge).where(
                 AdminSecurityChallenge.admin_id == admin.id,
                 AdminSecurityChallenge.purpose == purpose,
+                AdminSecurityChallenge.tenant_id == tenant_id,
                 AdminSecurityChallenge.used_at.is_(None),
             )
         ):
@@ -138,6 +161,7 @@ def create_security_challenge(
             previous.encrypted_target = None
     code = f"{secrets.randbelow(1_000_000):06d}"
     challenge = AdminSecurityChallenge(
+        tenant_id=tenant_id,
         id=uuid4(),
         purpose=purpose,
         admin_id=admin.id if admin else None,
@@ -152,11 +176,10 @@ def create_security_challenge(
             {"target": target}, context=f"admin-challenge:{challenge.id}:{purpose}"
         )
     db.add(challenge)
-    recipient = _admin_whatsapp_phone(db) if admin else None
     queued = bool(recipient)
     if recipient:
         _queue_admin_otp(db, challenge, code, recipient)
-    audit(db, f"admin_security.{purpose}.requested", subject_fingerprint)
+    audit(db, f"admin_security.{purpose}.requested", subject_fingerprint, tenant_id=tenant_id)
     db.commit()
     return challenge, code, queued
 
@@ -168,8 +191,13 @@ def verify_security_challenge(
     purpose: str,
     code: str,
     session_id: UUID | None = None,
+    tenant_id: UUID | None = None,
 ) -> AdminSecurityChallenge:
-    challenge = db.get(AdminSecurityChallenge, challenge_id)
+    challenge = db.get(AdminSecurityChallenge, challenge_id, populate_existing=True)
+    if purpose == "change_pix_otp":
+        if not challenge or tenant_id is None or challenge.tenant_id != tenant_id:
+            raise AdminAccountError("Não foi possível confirmar o código.")
+        require_security_owner(db, challenge.admin_id, tenant_id)
     if (
         not challenge
         or challenge.purpose != purpose
@@ -184,19 +212,23 @@ def verify_security_challenge(
         if challenge.attempts >= 5:
             challenge.used_at = now()
             challenge.encrypted_target = None
-        audit(db, f"admin_security.{purpose}.failed", challenge.subject_fingerprint)
+        audit(db, f"admin_security.{purpose}.failed", challenge.subject_fingerprint, tenant_id=challenge.tenant_id)
         db.commit()
         raise AdminAccountError("Não foi possível confirmar o código.")
     challenge.used_at = now()
-    audit(db, f"admin_security.{purpose}.validated", challenge.subject_fingerprint)
+    audit(db, f"admin_security.{purpose}.validated", challenge.subject_fingerprint, tenant_id=challenge.tenant_id)
     db.flush()
     return challenge
 
 
 def resend_security_challenge(
-    db: Session, *, challenge_id: UUID, purpose: str
+    db: Session, *, challenge_id: UUID, purpose: str, tenant_id: UUID | None = None
 ) -> AdminSecurityChallenge:
-    challenge = db.get(AdminSecurityChallenge, challenge_id)
+    challenge = db.get(AdminSecurityChallenge, challenge_id, populate_existing=True)
+    if purpose == "change_pix_otp":
+        if not challenge or tenant_id is None or challenge.tenant_id != tenant_id:
+            raise AdminAccountError("Não foi possível reenviar o código.")
+        require_security_owner(db, challenge.admin_id, tenant_id)
     if (
         not challenge
         or challenge.purpose != purpose
@@ -205,13 +237,15 @@ def resend_security_challenge(
         or challenge.resend_count >= 3
     ):
         raise AdminAccountError("Não foi possível reenviar o código.")
-    recipient = _admin_whatsapp_phone(db) if challenge.admin_id else None
+    recipient = _admin_whatsapp_phone(db, tenant_id=challenge.tenant_id) if challenge.admin_id else None
+    if not recipient and purpose == "change_pix_otp":
+        raise WhatsAppConfigurationError("Canal de confirmação indisponível.")
     if not recipient:
         code = f"{secrets.randbelow(1_000_000):06d}"
         challenge.resend_count += 1
         challenge.secret_hash = token_hash(code)
         challenge.attempts = 0
-        audit(db, f"admin_security.{purpose}.resend_simulated", challenge.subject_fingerprint)
+        audit(db, f"admin_security.{purpose}.resend_simulated", challenge.subject_fingerprint, tenant_id=challenge.tenant_id)
         db.commit()
         return challenge
     code = f"{secrets.randbelow(1_000_000):06d}"
@@ -219,7 +253,7 @@ def resend_security_challenge(
     challenge.secret_hash = token_hash(code)
     challenge.attempts = 0
     _queue_admin_otp(db, challenge, code, recipient)
-    audit(db, f"admin_security.{purpose}.resent", challenge.subject_fingerprint)
+    audit(db, f"admin_security.{purpose}.resent", challenge.subject_fingerprint, tenant_id=challenge.tenant_id)
     db.commit()
     return challenge
 
@@ -347,7 +381,15 @@ def queue_previous_email_notice(
 
 
 def active_admin_for_session(db: Session, session: AuthSession) -> AdminUser:
-    admin = db.get(AdminUser, session.subject_id)
+    from app.tenancy import TenantContextError, require_admin_tenant
+
+    try:
+        tenant = require_admin_tenant(db, session.subject_id)
+    except TenantContextError as exc:
+        raise AdminAccountError("Conta administrativa indisponível.") from exc
+    if session.tenant_id != tenant.id or session.admin_subject_id != session.subject_id:
+        raise AdminAccountError("Conta administrativa indisponível.")
+    admin = db.get(AdminUser, session.subject_id, populate_existing=True)
     if not admin or not admin.email_verified:
         raise AdminAccountError("Conta administrativa indisponível.")
     return admin

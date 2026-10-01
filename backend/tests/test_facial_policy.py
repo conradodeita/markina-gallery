@@ -124,12 +124,12 @@ def test_automatic_policy_is_created_once_without_admin_actor(tmp_path: Path) ->
 
     first, first_changed = ensure_automatic_policy(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         settings=settings,
     )
     second, second_changed = ensure_automatic_policy(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         settings=settings,
     )
     db.commit()
@@ -194,7 +194,15 @@ def test_suspend_and_active_version_change_enqueue_idempotent_purge() -> None:
     assert all("embedding" not in subject and "phone" not in subject for subject in subjects)
 
 
-def test_facial_policy_admin_routes_reject_anonymous_access() -> None:
+def test_facial_policy_admin_routes_reject_anonymous_access(monkeypatch) -> None:
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app import main
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(main, "SessionLocal", sessionmaker(bind=engine))
     client = TestClient(app)
     gallery_id = uuid4()
     assert client.get(

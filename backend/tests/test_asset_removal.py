@@ -36,6 +36,11 @@ from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_unified_checkout import isolated_cart_database, setup_cart  # noqa: F401
 
 
+def _lifecycle_actor(db):
+    from app.auth import AdminUser
+    return db.scalar(select(AdminUser)).id
+
+
 @pytest.mark.parametrize("reported", [False, True])
 def test_public_deletion_preserves_group_and_text_without_acervo(tmp_path, monkeypatch, reported):
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
@@ -49,9 +54,9 @@ def test_public_deletion_preserves_group_and_text_without_acervo(tmp_path, monke
         db.commit()
         parent_id = db.get(DerivedGallery, galleries[0]).parent_gallery_id
         before = [(o.id, o.total_cents, o.payment_status) for o in db.scalars(select(SaleOrder).order_by(SaleOrder.id))]
-        operation = GalleryLifecycleOperation(operation_type="delete_parent_gallery",
-            target_parent_gallery_id=parent_id, actor_admin_id=uuid4(), idempotency_key=str(uuid4()),
-            manifest={"operational_storage": gallery_operational_storage_manifest(db, parent_id)})
+        operation = GalleryLifecycleOperation(tenant_id=FIXTURE_TENANT_ID, operation_type="delete_parent_gallery",
+            target_parent_gallery_id=parent_id, actor_admin_id=_lifecycle_actor(db), idempotency_key=str(uuid4()),
+            manifest={"operational_storage": gallery_operational_storage_manifest(db, parent_id, tenant_id=FIXTURE_TENANT_ID)})
         db.add(operation)
         db.flush()
         prepare_lifecycle_history(db, operation)
@@ -69,9 +74,9 @@ def test_public_deletion_preserves_group_and_text_without_acervo(tmp_path, monke
         assert group.state == ("reported" if reported else "unavailable")
         assert group.total_cents == 2100
         assert all(i.filename_snapshot for i in db.scalars(select(SaleOrderItem)))
-        assert removed_movements_payload(db, client_id=other) == []
+        assert removed_movements_payload(db, tenant_id=FIXTURE_TENANT_ID, client_id=other) == []
         if not reported:
-            assert len(removed_movements_payload(db, client_id=owner)) == 2
+            assert len(removed_movements_payload(db, tenant_id=FIXTURE_TENANT_ID, client_id=owner)) == 2
             next_group = prepare_group(db, db.get(Client, owner))
             assert next_group.id != group.id and next_group.total_cents == 700
         db.commit()
@@ -91,16 +96,16 @@ def test_photo_removal_preserves_selection_without_creating_order(tmp_path, monk
     owner, _, galleries = setup_cart()
     with SessionLocal() as db:
         photo = db.scalar(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == galleries[0]))
-        preserve_asset_history(db, photo.parent_gallery_id, photo_ids=[photo.id])
-        preserve_asset_history(db, photo.parent_gallery_id, photo_ids=[photo.id])
-        paths = _delete_photo_records(db, photo)
-        cleanup = enqueue_file_cleanup(db, paths)
+        preserve_asset_history(db, photo.parent_gallery_id, tenant_id=FIXTURE_TENANT_ID, photo_ids=[photo.id])
+        preserve_asset_history(db, photo.parent_gallery_id, tenant_id=FIXTURE_TENANT_ID, photo_ids=[photo.id])
+        paths = _delete_photo_records(db, photo, tenant_id=FIXTURE_TENANT_ID)
+        cleanup = enqueue_file_cleanup(db, paths, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         assert process_file_cleanup(db, cleanup)
         assert db.scalar(select(func.count(RemovedPhotoMovement.id))) == 1
         assert db.scalar(select(func.count(SaleOrder.id))) == 0
         assert db.scalar(select(func.count(PhotoSelection.id))) == 2
-        assert removed_movements_payload(db, client_id=owner)[0]['filename'] == photo.filename
+        assert removed_movements_payload(db, tenant_id=FIXTURE_TENANT_ID, client_id=owner)[0]['filename'] == photo.filename
 
 
 def test_cleanup_retries_io_failure_and_refuses_external_paths(tmp_path, monkeypatch):
@@ -110,8 +115,8 @@ def test_cleanup_retries_io_failure_and_refuses_external_paths(tmp_path, monkeyp
     target.write_bytes(b'synthetic')
     with SessionLocal() as db:
         with pytest.raises(ValueError):
-            enqueue_file_cleanup(db, [tmp_path / 'other-project.jpg'])
-        job = enqueue_file_cleanup(db, [target])
+            enqueue_file_cleanup(db, [tmp_path / 'other-project.jpg'], tenant_id=FIXTURE_TENANT_ID)
+        job = enqueue_file_cleanup(db, [target], tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         original = Path.unlink
         with monkeypatch.context() as patch:
@@ -127,8 +132,8 @@ def test_legacy_failed_operation_rebuilds_manifest_without_autoretry():
     _, _, galleries = setup_cart()
     with SessionLocal() as db:
         parent_id = db.get(DerivedGallery, galleries[0]).parent_gallery_id
-        operation = GalleryLifecycleOperation(operation_type='delete_parent_gallery',
-            target_parent_gallery_id=parent_id, actor_admin_id=uuid4(), idempotency_key=str(uuid4()),
+        operation = GalleryLifecycleOperation(tenant_id=FIXTURE_TENANT_ID, operation_type='delete_parent_gallery',
+            target_parent_gallery_id=parent_id, actor_admin_id=_lifecycle_actor(db), idempotency_key=str(uuid4()),
             status='failed', manifest={'completed_steps':['preparing_history','removing_storage'],
                                       'operational_storage':{'sources':[], 'derivatives':[]}})
         db.add(operation)
@@ -160,8 +165,8 @@ def test_postgresql_report_racing_removal_keeps_one_consistent_group():
     def remove():
         with SessionLocal() as db:
             barrier.wait(timeout=10)
-            preserve_asset_history(db, parent_id, photo_ids=[photo_id])
-            _delete_photo_records(db, db.get(PhotoAsset, photo_id))
+            preserve_asset_history(db, parent_id, tenant_id=FIXTURE_TENANT_ID, photo_ids=[photo_id])
+            _delete_photo_records(db, db.get(PhotoAsset, photo_id), tenant_id=FIXTURE_TENANT_ID)
             db.commit()
 
     def report():
@@ -204,12 +209,12 @@ def test_removed_gallery_keeps_admin_decision_and_notification_history():
         group = prepare_group(db, db.get(Client, owner))
         communication = report_group(db, db.get(Client, owner), group.id, group.revision, "before-removal")
         admin = db.scalar(select(AdminUser))
-        db.add(AuthSession(subject_id=admin.id, role="admin", token_hash=token_hash("remove-admin"),
+        db.add(AuthSession(tenant_id=FIXTURE_TENANT_ID, client_subject_id=None, admin_subject_id=admin.id, subject_id=admin.id, role="admin", token_hash=token_hash("remove-admin"),
                            expires_at=now() + timedelta(hours=1)))
         db.commit()
         event_ids = set(db.scalars(select(NotificationEvent.id)))
         parent_id = db.get(DerivedGallery, galleries[0]).parent_gallery_id
-        operation = GalleryLifecycleOperation(operation_type="delete_parent_gallery", target_parent_gallery_id=parent_id,
+        operation = GalleryLifecycleOperation(tenant_id=FIXTURE_TENANT_ID, operation_type="delete_parent_gallery", target_parent_gallery_id=parent_id,
             actor_admin_id=admin.id, idempotency_key=str(uuid4()), manifest={})
         db.add(operation)
         prepare_lifecycle_history(db, operation)
@@ -238,12 +243,12 @@ def test_dashboard_filters_text_history_and_client_cannot_read_other_owner():
     _owner, other, galleries = setup_cart()
     with SessionLocal() as db:
         photo = db.scalar(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == galleries[0]))
-        preserve_asset_history(db, photo.parent_gallery_id, photo_ids=[photo.id])
-        _delete_photo_records(db, photo)
+        preserve_asset_history(db, photo.parent_gallery_id, tenant_id=FIXTURE_TENANT_ID, photo_ids=[photo.id])
+        _delete_photo_records(db, photo, tenant_id=FIXTURE_TENANT_ID)
         admin = db.scalar(select(AdminUser))
-        db.add_all([AuthSession(subject_id=admin.id, role="admin", token_hash=token_hash("history-admin"),
+        db.add_all([AuthSession(tenant_id=FIXTURE_TENANT_ID, client_subject_id=None, admin_subject_id=admin.id, subject_id=admin.id, role="admin", token_hash=token_hash("history-admin"),
                                 expires_at=now() + timedelta(hours=1)),
-                    AuthSession(subject_id=other, role="client", token_hash=token_hash("history-other"),
+                    AuthSession(tenant_id=FIXTURE_TENANT_ID, client_subject_id=other, admin_subject_id=None, subject_id=other, role="client", token_hash=token_hash("history-other"),
                                 expires_at=now() + timedelta(hours=1))])
         db.commit()
         parent_id = photo.parent_gallery_id
@@ -268,14 +273,14 @@ def test_private_deletion_removes_own_uploads_but_keeps_shared_original(tmp_path
     owner, _, galleries = setup_cart()
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, galleries[0])
-        folder = PhotoFolder(parent_gallery_id=gallery.parent_gallery_id, name="Publica", status="released")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.parent_gallery_id, name="Publica", status="released")
         db.add(folder)
         db.flush()
         shared = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.parent_gallery_id, folder_id=folder.id,
                             filename="compartilhada.jpg", storage_key="shared.jpg")
         db.add(shared)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=shared.id, origin="admin"))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=shared.id, origin="admin"))
         own_photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == gallery.id)))
         own_ids = [photo.id for photo in own_photos]
         paths = [tmp_path / photo.storage_key for photo in own_photos]
@@ -284,7 +289,7 @@ def test_private_deletion_removes_own_uploads_but_keeps_shared_original(tmp_path
             path.write_bytes(b"synthetic")
         prepare_group(db, db.get(Client, owner))
         admin = db.scalar(select(AdminUser))
-        db.add(AuthSession(subject_id=admin.id, role="admin", token_hash=token_hash("private-admin"),
+        db.add(AuthSession(tenant_id=FIXTURE_TENANT_ID, client_subject_id=None, admin_subject_id=admin.id, subject_id=admin.id, role="admin", token_hash=token_hash("private-admin"),
                            expires_at=now() + timedelta(hours=1)))
         db.commit()
         shared_id = shared.id
@@ -298,7 +303,7 @@ def test_private_deletion_removes_own_uploads_but_keeps_shared_original(tmp_path
         assert db.get(DerivedGallery, galleries[1]) is not None
         assert all(db.get(PhotoAsset, photo_id) is None for photo_id in own_ids)
         assert db.get(PhotoAsset, shared_id) is not None
-        assert len(removed_movements_payload(db, client_id=owner)) == 2
+        assert len(removed_movements_payload(db, tenant_id=FIXTURE_TENANT_ID, client_id=owner)) == 2
         assert db.scalar(select(func.count(SaleOrderItem.id))) == 3
     assert all(not path.exists() for path in paths)
     assert (tmp_path / "shared.jpg").exists()
@@ -309,8 +314,8 @@ def test_cleanup_failure_does_not_starve_other_jobs(tmp_path, monkeypatch):
 
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path))
     with SessionLocal() as db:
-        blocked = enqueue_file_cleanup(db, [tmp_path / "blocked.jpg"])
-        other = enqueue_file_cleanup(db, [tmp_path / "other.jpg"])
+        blocked = enqueue_file_cleanup(db, [tmp_path / "blocked.jpg"], tenant_id=FIXTURE_TENANT_ID)
+        other = enqueue_file_cleanup(db, [tmp_path / "other.jpg"], tenant_id=FIXTURE_TENANT_ID)
         blocked.status, blocked.attempts = "failed", 1
         db.commit()
         other_id = other.id
@@ -331,12 +336,12 @@ def test_admin_removed_history_is_bounded_filtered_and_includes_galleries_withou
     instant = datetime(2026, 9, 1, 12, tzinfo=UTC)
     with SessionLocal() as db:
         for index in range(55):
-            db.add(RemovedPhotoMovement(source_id=uuid4(), kind="selected", client_id=owner,
+            db.add(RemovedPhotoMovement(tenant_id=FIXTURE_TENANT_ID, source_id=uuid4(), kind="selected", client_id=owner,
                 parent_gallery_id=parent_id, derived_gallery_id=private_id, photo_id=uuid4(),
                 parent_gallery_name="Galeria excluída sem pedido", gallery_name="Privada", folder_name="Pasta",
                 filename=f"foto-{index}.jpg", occurred_at=instant))
         admin = db.scalar(select(AdminUser))
-        db.add(AuthSession(subject_id=admin.id, role="admin", token_hash=token_hash("paged-admin"),
+        db.add(AuthSession(tenant_id=FIXTURE_TENANT_ID, client_subject_id=None, admin_subject_id=admin.id, subject_id=admin.id, role="admin", token_hash=token_hash("paged-admin"),
                            expires_at=now() + timedelta(hours=1)))
         db.commit()
         assert db.scalar(select(func.count(SaleOrder.id))) == 0

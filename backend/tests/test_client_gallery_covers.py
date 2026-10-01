@@ -10,6 +10,7 @@ from app.auth import (
     SessionLocal,
 )
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_unified_checkout import isolated_cart_database, setup_cart  # noqa: F401
 
 
@@ -23,7 +24,7 @@ def test_library_cover_uses_authorized_destination_and_revalidates_media(tmp_pat
         parent = db.get(ParentGallery, gallery.parent_gallery_id)
         photo = db.scalar(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == gallery.id))
         parent.cover_photo_id = photo.id
-        derivative = MediaDerivative(photo_asset_id=photo.id, variant="admin_preview",
+        derivative = MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="admin_preview",
                                      relative_path="cover.jpg", status="ready", width=60, height=40)
         db.add(derivative)
         db.commit()
@@ -43,7 +44,7 @@ def test_library_cover_uses_authorized_destination_and_revalidates_media(tmp_pat
     assert image.content.startswith(b"\xff\xd8")
     assert next(row for row in browser.get("/library").json()["journeys"] if row["id"] != str(parent_id))["cover_preview_url"] is None
     with SessionLocal() as db:
-        db.add(ParentGalleryRegistration(parent_gallery_id=parent_id, client_id=owner_id, status="active"))
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, client_id=owner_id, status="active"))
         db.commit()
     assert journey()["cover_preview_url"] == f"/public-galleries/{parent_id}/cover-preview"
     assert browser.get(journey()["cover_preview_url"]).status_code == 200

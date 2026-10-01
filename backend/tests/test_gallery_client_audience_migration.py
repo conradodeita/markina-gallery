@@ -11,6 +11,8 @@ import pytest
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def _alembic(database_url: str, *arguments: str) -> None:
     backend = Path(__file__).resolve().parents[1]
@@ -87,7 +89,7 @@ def test_gallery_client_audience_upgrade_preserves_legacy_and_rejects_cross_gall
             "client": client_id, "time": timestamp})
     engine.dispose()
 
-    _alembic(database_url, "upgrade", "head")
+    _alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     engine = create_engine(database_url)
     if database_kind == "sqlite":
         event.listen(engine, "connect", _foreign_keys)

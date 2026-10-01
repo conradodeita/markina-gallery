@@ -6,9 +6,10 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import (
     DerivedGallery,
     DerivedGalleryPhoto,
@@ -53,6 +54,7 @@ def payment_capabilities(communication_status: str | None, payment_status: str) 
 def build_commercial_projections(
     db: Session,
     *,
+    tenant_id: UUID,
     gallery_ids: set[UUID],
     client_ids: set[UUID],
     parent_gallery_ids: set[UUID] | None = None,
@@ -60,22 +62,25 @@ def build_commercial_projections(
 ) -> dict[tuple[UUID, UUID], CommercialProjection]:
     """Calcula todos os agregados por galeria/cliente em consultas de lote constantes."""
 
+    require_active_owner(db, tenant_id)
+    if galleries_by_id and any(g.tenant_id != tenant_id for g in galleries_by_id.values()):
+        raise ValueError("Galeria indisponível neste contexto.")
     parent_gallery_ids = parent_gallery_ids or set()
     if not (gallery_ids or parent_gallery_ids) or not client_ids:
         return {}
     galleries = galleries_by_id or {
         item.id: item
-        for item in db.scalars(select(DerivedGallery).where(DerivedGallery.id.in_(gallery_ids)))
+        for item in db.scalars(select(DerivedGallery).where(DerivedGallery.tenant_id == tenant_id).where(DerivedGallery.id.in_(gallery_ids)))
     }
     available_photo_ids: dict[UUID, set[UUID]] = defaultdict(set)
     available_query = select(
         DerivedGalleryPhoto.derived_gallery_id.label("gallery_id"),
         DerivedGalleryPhoto.photo_asset_id.label("photo_id"),
-    ).where(DerivedGalleryPhoto.derived_gallery_id.in_(gallery_ids)).union_all(
+    ).where(DerivedGalleryPhoto.tenant_id == tenant_id).where(DerivedGalleryPhoto.derived_gallery_id.in_(gallery_ids)).union_all(
         select(
             PhotoAsset.derived_gallery_id.label("gallery_id"),
             PhotoAsset.id.label("photo_id"),
-        ).where(PhotoAsset.derived_gallery_id.in_(gallery_ids))
+        ).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.derived_gallery_id.in_(gallery_ids))
     )
     for gallery_id, photo_id in db.execute(available_query):
         available_photo_ids[gallery_id].add(photo_id)
@@ -85,7 +90,7 @@ def build_commercial_projections(
                 PhotoSelection.derived_gallery_id,
                 PhotoSelection.client_id,
                 PhotoSelection.photo_asset_id,
-            )
+            ).where(PhotoSelection.tenant_id == tenant_id)
             .where(
                 PhotoSelection.derived_gallery_id.in_(gallery_ids),
                 PhotoSelection.client_id.in_(client_ids),
@@ -111,7 +116,7 @@ def build_commercial_projections(
                 PaymentCommunication.status.label("communication_status"),
                 SaleOrderItem.id.label("item_id"),
                 SaleOrderItem.photo_asset_id_snapshot,
-            )
+            ).where(or_(PaymentCommunication.id.is_(None), PaymentCommunication.tenant_id == tenant_id), SaleOrder.tenant_id == tenant_id, or_(SaleOrderItem.id.is_(None), SaleOrderItem.tenant_id == tenant_id))
             .outerjoin(
                 PaymentCommunication,
                 communication_join(),
@@ -126,7 +131,7 @@ def build_commercial_projections(
         )
     )
     order_rows = {}
-    scopes = payment_scopes(db, {row.payment_group_id for row in raw_order_rows if row.payment_group_id})
+    scopes = payment_scopes(db, {row.payment_group_id for row in raw_order_rows if row.payment_group_id}, tenant_id=tenant_id)
     purchased_photo_ids: dict[tuple[UUID, UUID], set[UUID]] = defaultdict(set)
     pending_review_order_ids: set[UUID] = set()
     item_ids_by_order: dict[UUID, set[UUID]] = defaultdict(set)
@@ -156,7 +161,7 @@ def build_commercial_projections(
             ].add(row.photo_asset_id_snapshot)
     latest_reopening: dict[UUID, GalleryReopeningRequest] = {}
     for item in db.scalars(
-        select(GalleryReopeningRequest)
+        select(GalleryReopeningRequest).where(GalleryReopeningRequest.tenant_id == tenant_id)
         .where(GalleryReopeningRequest.derived_gallery_id.in_(gallery_ids))
         .order_by(
             GalleryReopeningRequest.created_at.desc(),

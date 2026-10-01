@@ -3,6 +3,7 @@
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id, owned_record
 from app.auth import (
     Client,
     DerivedGallery,
@@ -37,11 +38,12 @@ def lock_client_commerce(
     db: Session, *, gallery_id, client_id
 ) -> None:
     """Serializa seleção, checkout e congelamento sem bloquear outros membros."""
+    tenant_id = client_tenant_id(db, client_id)
 
     # O PIX pode abranger várias galerias: a identidade é sempre o primeiro lock.
-    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client_id).with_for_update())
     membership = db.scalar(
-        select(DerivedGalleryMembership)
+        select(DerivedGalleryMembership).where(DerivedGalleryMembership.tenant_id == tenant_id)
         .where(
             DerivedGalleryMembership.derived_gallery_id == gallery_id,
             DerivedGalleryMembership.client_id == client_id,
@@ -51,7 +53,7 @@ def lock_client_commerce(
     if membership:
         return
     db.scalar(
-        select(DerivedGallery.id)
+        select(DerivedGallery.id).where(DerivedGallery.tenant_id == tenant_id)
         .where(DerivedGallery.id == gallery_id)
         .with_for_update()
     )
@@ -60,9 +62,10 @@ def lock_client_commerce(
 def client_photo_is_frozen(
     db: Session, *, gallery_id, client_id, photo_id
 ) -> bool:
+    tenant_id = client_tenant_id(db, client_id)
     return bool(
         db.scalar(
-            select(SaleOrderItem.id)
+            select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id)
             .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
             .where(
                 SaleOrder.derived_gallery_id_snapshot == gallery_id,
@@ -82,8 +85,9 @@ def client_photo_is_frozen(
 
 def client_photo_is_frozen_any(db: Session, *, client_id, photo_id) -> bool:
     """Uma foto já comunicada ou comprada não pode voltar a uma seleção nova."""
+    tenant_id = client_tenant_id(db, client_id)
     return bool(db.scalar(
-        select(SaleOrderItem.id)
+        select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id)
         .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
         .where(
             SaleOrder.client_id == client_id,
@@ -100,8 +104,11 @@ def selected_photos(
     db: Session, *, gallery: DerivedGallery | GalleryClientState, client: Client
 ):
     """Fotos selecionadas ainda autorizadas; também usadas quando não há cotação."""
+    tenant_id = client_tenant_id(db, client.id)
+    if gallery.tenant_id != tenant_id:
+        raise CheckoutError("Seleção indisponível.")
     if isinstance(gallery, GalleryClientState):
-        selections = list(db.scalars(select(PhotoSelection).where(
+        selections = list(db.scalars(select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
             PhotoSelection.parent_gallery_id == gallery.parent_gallery_id,
             PhotoSelection.client_id == client.id,
         )))
@@ -113,7 +120,7 @@ def selected_photos(
         return selections, photos
     selections = list(
         db.scalars(
-            select(PhotoSelection)
+            select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id)
             .where(
                 PhotoSelection.derived_gallery_id == gallery.id,
                 PhotoSelection.client_id == client.id,
@@ -121,12 +128,12 @@ def selected_photos(
         )
     )
     photo_ids = {selection.photo_asset_id for selection in selections}
-    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
+    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(DerivedGalleryPhoto.tenant_id == tenant_id).where(
         DerivedGalleryPhoto.derived_gallery_id == gallery.id
     )
     photos = list(
         db.scalars(
-            select(PhotoAsset)
+            select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id)
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.id.in_(photo_ids),
@@ -146,6 +153,7 @@ def _checkout_material(
     db: Session, *, gallery: DerivedGallery | GalleryClientState,
     client: Client, resolve_pix: bool = True
 ):
+    tenant_id = client_tenant_id(db, client.id)
     if isinstance(gallery, GalleryClientState):
         try:
             require_public_gallery_browsing(
@@ -160,7 +168,7 @@ def _checkout_material(
     if {photo.id for photo in photos} != photo_ids:
         raise CheckoutError("A seleção contém fotos indisponíveis.")
     already_frozen = db.scalar(
-        select(SaleOrderItem.id)
+        select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id)
         .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
         .where(
             SaleOrder.client_id == client.id,
@@ -176,7 +184,7 @@ def _checkout_material(
     )
     if already_frozen:
         raise CheckoutError("A seleção contém fotos de um pedido já congelado.")
-    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     if not parent:
         raise CheckoutError("A Galeria pública desta seleção não está disponível.")
     try:
@@ -186,13 +194,13 @@ def _checkout_material(
     if resolve_pix and not parent.payment_required:
         raise CheckoutError("Finalize a seleção sem cobrança pelo carrinho.")
     try:
-        settings = checkout_pix(db) if resolve_pix and parent.payment_required else None
+        settings = checkout_pix(db, tenant_id=client.tenant_id) if resolve_pix and parent.payment_required else None
     except PixCodeError as exc:
         raise CheckoutError(str(exc)) from exc
     folders_by_id = {
         folder.id: folder
         for folder in db.scalars(
-            select(PhotoFolder).where(
+            select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id).where(
                 PhotoFolder.id.in_({photo.folder_id for photo in photos})
             )
         )
@@ -208,7 +216,13 @@ def _synchronize_order(
     client: Client,
     material,
 ) -> SaleOrder:
+    tenant_id = client_tenant_id(db, client.id)
     _selections, photos, parent, commercial_quote, settings, folders_by_id = material
+    resources = [gallery, order, parent, *photos, *folders_by_id.values()]
+    if settings is not None:
+        resources.append(settings)
+    if any(resource.tenant_id != tenant_id for resource in resources):
+        raise CheckoutError("Pedido indisponível neste contexto.")
     if isinstance(gallery, GalleryClientState):
         order.parent_gallery_id = gallery.parent_gallery_id
         order.derived_gallery_id = None
@@ -244,7 +258,7 @@ def _synchronize_order(
         }
     db.add(order)
     db.flush()
-    db.execute(delete(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id))
+    db.execute(delete(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == order.id))
     unit_prices = [
         parcel.unit_price_cents
         for parcel in commercial_quote.quote.parcels
@@ -262,7 +276,7 @@ def _synchronize_order(
                 folder_id_snapshot=folder.id if folder else None,
                 folder_name_snapshot=folder.name if folder else None,
                 unit_price_cents=unit_price_cents,
-            )
+             tenant_id=tenant_id)
         )
     db.flush()
     return order
@@ -272,20 +286,21 @@ def remove_canonical_cart_selection(
     db: Session, *, parent_gallery_id, client_id, photo_id=None
 ) -> int:
     """Remove somente a seleção própria e descarta rascunho ainda editável."""
+    tenant_id = client_tenant_id(db, client_id)
     try:
         require_public_gallery_browsing(
             db, parent_gallery_id=parent_gallery_id, client_id=client_id
         )
     except PublicGalleryAccessDenied as exc:
         raise CheckoutError("Seleção indisponível.") from exc
-    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
-    state = db.scalar(select(GalleryClientState).where(
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client_id).with_for_update())
+    state = db.scalar(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
         GalleryClientState.parent_gallery_id == parent_gallery_id,
         GalleryClientState.client_id == client_id,
     ).with_for_update())
     if not state:
         raise CheckoutError("Seleção indisponível.")
-    query = select(PhotoSelection).where(
+    query = select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
         PhotoSelection.parent_gallery_id == parent_gallery_id,
         PhotoSelection.client_id == client_id,
         PhotoSelection.photo_asset_id.in_(
@@ -298,10 +313,10 @@ def remove_canonical_cart_selection(
     selections = list(db.scalars(query))
     if not selections:
         raise CheckoutError("Seleção indisponível.")
-    db.execute(delete(PhotoSelection).where(
+    db.execute(delete(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
         PhotoSelection.id.in_([row.id for row in selections])
     ))
-    draft = db.scalar(select(SaleOrder).where(
+    draft = db.scalar(select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
         SaleOrder.parent_gallery_id == parent_gallery_id,
         SaleOrder.client_id == client_id,
         SaleOrder.payment_status == "pending",
@@ -310,14 +325,14 @@ def remove_canonical_cart_selection(
         SaleOrder.checkout_key.is_not(None),
     ).with_for_update())
     if draft:
-        db.execute(delete(SaleOrderItem).where(SaleOrderItem.sale_order_id == draft.id))
+        db.execute(delete(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == draft.id))
         group_id = draft.payment_group_id
         db.delete(draft)
         db.flush()
-        if group_id and not db.scalar(select(SaleOrder.id).where(
+        if group_id and not db.scalar(select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
             SaleOrder.payment_group_id == group_id
         )):
-            db.execute(delete(PaymentGroup).where(
+            db.execute(delete(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id).where(
                 PaymentGroup.id == group_id, PaymentGroup.state == "draft"
             ))
     return len(selections)
@@ -327,9 +342,10 @@ def create_pending_checkout(
     db: Session, *, gallery: DerivedGallery, client: Client, checkout_key: str
 ) -> SaleOrder:
     """Cria ou sincroniza o rascunho sem consumir o carrinho da cliente."""
+    tenant_id = client_tenant_id(db, client.id)
     lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
     existing = db.scalar(
-        select(SaleOrder).where(
+        select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
             SaleOrder.derived_gallery_id == gallery.id,
             SaleOrder.client_id == client.id,
             SaleOrder.checkout_key == checkout_key,
@@ -343,7 +359,7 @@ def create_pending_checkout(
         return existing
     if existing is None:
         existing = db.scalar(
-            select(SaleOrder)
+            select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
             .where(
                 SaleOrder.derived_gallery_id == gallery.id,
                 SaleOrder.client_id == client.id,
@@ -355,7 +371,7 @@ def create_pending_checkout(
             .order_by(SaleOrder.created_at.desc())
             .with_for_update()
         )
-    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     if parent and not parent.payment_required:
         raise CheckoutError("Finalize a seleção sem cobrança pelo carrinho.")
     if existing and existing.payment_group_id:
@@ -369,7 +385,7 @@ def create_pending_checkout(
         payment_status="pending",
         total_cents=0,
         checkout_key=checkout_key,
-    )
+     tenant_id=tenant_id)
     _synchronize_order(
         db, order=order, gallery=gallery, client=client, material=material
     )
@@ -377,7 +393,7 @@ def create_pending_checkout(
         db,
         "sale_order.draft_created" if created else "sale_order.draft_updated",
         str(order.id),
-    )
+     tenant_id=tenant_id)
     return order
 
 
@@ -385,10 +401,11 @@ def synchronize_editable_draft(
     db: Session, *, gallery: DerivedGallery, client_id
 ) -> SaleOrder | None:
     """Mantém o rascunho alinhado à seleção após uma mutação do carrinho."""
+    tenant_id = client_tenant_id(db, client_id)
 
     lock_client_commerce(db, gallery_id=gallery.id, client_id=client_id)
     order = db.scalar(
-        select(SaleOrder)
+        select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
         .where(
             SaleOrder.derived_gallery_id == gallery.id,
             SaleOrder.client_id == client_id,
@@ -401,31 +418,31 @@ def synchronize_editable_draft(
     )
     if not order:
         return None
-    client = db.get(Client, client_id)
+    client = owned_record(db, Client, client_id, tenant_id=tenant_id)
     if not client:
         return order
     has_selection = db.scalar(
-        select(PhotoSelection.id).where(
+        select(PhotoSelection.id).where(PhotoSelection.tenant_id == tenant_id).where(
             PhotoSelection.derived_gallery_id == gallery.id,
             PhotoSelection.client_id == client_id,
         )
     )
     if not has_selection:
         payment_group_id = order.payment_group_id
-        db.execute(delete(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id))
+        db.execute(delete(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == order.id))
         db.delete(order)
-        audit(db, "sale_order.draft_discarded", str(order.id))
+        audit(db, "sale_order.draft_discarded", str(order.id), tenant_id=tenant_id)
         db.flush()
-        if payment_group_id and not db.scalar(select(SaleOrder.id).where(
+        if payment_group_id and not db.scalar(select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
             SaleOrder.payment_group_id == payment_group_id
         )):
-            db.execute(delete(PaymentGroup).where(PaymentGroup.id == payment_group_id,
+            db.execute(delete(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id).where(PaymentGroup.id == payment_group_id,
                                                   PaymentGroup.state == "draft"))
         return None
     if order.payment_group_id:
         # A composição divergente invalida a revisão no report.
         return order
-    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     if parent and not parent.payment_required:
         return order
     try:
@@ -438,7 +455,7 @@ def synchronize_editable_draft(
     _synchronize_order(
         db, order=order, gallery=gallery, client=client, material=material
     )
-    audit(db, "sale_order.draft_updated", str(order.id))
+    audit(db, "sale_order.draft_updated", str(order.id), tenant_id=tenant_id)
     return order
 
 
@@ -446,10 +463,11 @@ def freeze_pending_checkout(
     db: Session, *, gallery: DerivedGallery, client: Client, order: SaleOrder
 ) -> SaleOrder:
     """Congela o retrato corrente quando a cliente comunica o pagamento."""
+    tenant_id = client_tenant_id(db, client.id)
 
     lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
     order = db.scalar(
-        select(SaleOrder)
+        select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
         .where(
             SaleOrder.id == order.id,
             SaleOrder.derived_gallery_id == gallery.id,
@@ -463,7 +481,7 @@ def freeze_pending_checkout(
         raise CheckoutError("Informe o pagamento único pela revisão em /library/cart.")
     if order.frozen_at is not None:
         return order
-    parent = db.get(ParentGallery, gallery.parent_gallery_id)
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     if parent and not parent.payment_required:
         raise CheckoutError("A revisão mudou. Finalize a seleção sem cobrança pelo carrinho.")
     material = _checkout_material(db, gallery=gallery, client=client,
@@ -474,9 +492,9 @@ def freeze_pending_checkout(
     )
     order.frozen_at = now()
     db.execute(
-        delete(PhotoSelection).where(
+        delete(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
             PhotoSelection.id.in_([selection.id for selection in selections])
         )
     )
-    audit(db, "sale_order.payment_reported_frozen", str(order.id))
+    audit(db, "sale_order.payment_reported_frozen", str(order.id), tenant_id=tenant_id)
     return order

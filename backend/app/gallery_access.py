@@ -10,7 +10,16 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import GalleryAccessCapability, expired, now
+from app.acervo_context import owned_record
+from app.auth import (
+    Client,
+    DerivedGallery,
+    GalleryAccessCapability,
+    ParentGallery,
+    TenantAdmin,
+    expired,
+    now,
+)
 
 
 class GalleryCapabilityConfigurationError(RuntimeError):
@@ -66,6 +75,7 @@ def reconstruct_gallery_capability_token(capability: GalleryAccessCapability) ->
 def issue_gallery_capability(
     db: Session,
     *,
+    tenant_id: UUID,
     parent_gallery_id: UUID,
     scope: str,
     client_id: UUID | None = None,
@@ -78,8 +88,23 @@ def issue_gallery_capability(
 ) -> tuple[GalleryAccessCapability, str]:
     """Retorna o segredo somente na emissão e persiste exclusivamente seu hash."""
 
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
+    if not parent or parent.lifecycle_status != "active":
+        raise ValueError("Galeria indisponível.")
+    if client_id and not owned_record(db, Client, client_id, tenant_id=tenant_id):
+        raise ValueError("Cliente indisponível.")
+    if derived_gallery_id:
+        gallery = owned_record(db, DerivedGallery, derived_gallery_id, tenant_id=tenant_id)
+        if not gallery or gallery.parent_gallery_id != parent.id:
+            raise ValueError("Galeria indisponível.")
+    if actor_admin_id and not db.scalar(select(TenantAdmin.id).where(
+        TenantAdmin.tenant_id == tenant_id, TenantAdmin.admin_user_id == actor_admin_id,
+        TenantAdmin.active.is_(True),
+    )):
+        raise ValueError("Acesso negado.")
     capability_id = uuid4()
     capability = GalleryAccessCapability(
+        tenant_id=tenant_id,
         id=capability_id,
         parent_gallery_id=parent_gallery_id,
         derived_gallery_id=derived_gallery_id,
@@ -106,7 +131,7 @@ def issue_gallery_capability(
 
 
 def resolve_gallery_capability(
-    db: Session, token: str
+    db: Session, token: str, *, tenant_id: UUID | None = None
 ) -> GalleryAccessCapability | None:
     capability = None
     if token.startswith("gc1."):
@@ -118,9 +143,10 @@ def resolve_gallery_capability(
             return None
         if prefix != "gc1" or token_version < 1:
             return None
-        candidate = db.get(GalleryAccessCapability, capability_id)
+        candidate = db.get(GalleryAccessCapability, capability_id, populate_existing=True)
         if (
             candidate
+            and (tenant_id is None or candidate.tenant_id == tenant_id)
             and candidate.token_mode == "signed_v1"
             and candidate.token_version == token_version
         ):
@@ -131,11 +157,12 @@ def resolve_gallery_capability(
             ):
                 capability = candidate
     else:
-        capability = db.scalar(
-            select(GalleryAccessCapability).where(
-                GalleryAccessCapability.token_hash == capability_hash(token)
-            )
+        query = select(GalleryAccessCapability).where(
+            GalleryAccessCapability.token_hash == capability_hash(token)
         )
+        if tenant_id is not None:
+            query = query.where(GalleryAccessCapability.tenant_id == tenant_id)
+        capability = db.scalar(query.execution_options(populate_existing=True))
     if not capability or capability.status != "active":
         return None
     if capability.expires_at and expired(capability.expires_at):
@@ -166,16 +193,22 @@ def rotate_gallery_capability(
     db: Session,
     capability: GalleryAccessCapability,
     *,
+    tenant_id: UUID,
     actor_admin_id: UUID | None = None,
     reconstructible: bool | None = None,
 ) -> tuple[GalleryAccessCapability, str]:
-    if capability.status != "active":
+    current = owned_record(db, GalleryAccessCapability, capability.id, tenant_id=tenant_id)
+    if current is None:
+        raise ValueError("Somente uma capacidade ativa pode ser rotacionada.")
+    capability = current
+    if capability.tenant_id != tenant_id or capability.status != "active":
         raise ValueError("Somente uma capacidade ativa pode ser rotacionada.")
     capability.status = "rotated"
     capability.revoked_at = now()
     db.flush()
     return issue_gallery_capability(
         db,
+        tenant_id=tenant_id,
         parent_gallery_id=capability.parent_gallery_id,
         derived_gallery_id=capability.derived_gallery_id,
         client_id=capability.client_id,

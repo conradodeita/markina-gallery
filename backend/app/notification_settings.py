@@ -11,14 +11,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    Client,
+    DerivedGallery,
     NotificationDelivery,
     NotificationEvent,
     NotificationSetting,
+    ParentGallery,
     PaymentMessageTemplate,
     PaymentNotificationOutbox,
     PushSubscription,
+    SaleOrder,
+    TenantAdmin,
     now,
 )
+from app.client_identity import require_identity_tenant
 from app.notification_contract import DEFINITIONS
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, PLACEHOLDER, validate_template
 
@@ -63,36 +69,40 @@ def render_text(event_type: str, body: str, values: dict[str, str], limit: int) 
     return rendered
 
 
-def setting_for(db: Session, event_type: str) -> NotificationSetting:
+def setting_for(db: Session, event_type: str, *, tenant_id: UUID) -> NotificationSetting:
+    require_identity_tenant(db, tenant_id)
     if event_type not in DEFINITIONS:
         raise ValueError("Evento não permitido.")
-    setting = db.get(NotificationSetting, event_type)
+    setting = db.get(NotificationSetting, (tenant_id, event_type))
     if setting:
         return setting
     definition = DEFINITIONS[event_type]
     kind = event_type.removeprefix("payment_")
-    legacy = db.scalar(select(PaymentMessageTemplate).where(PaymentMessageTemplate.kind == kind))
+    legacy = db.scalar(select(PaymentMessageTemplate).where(
+        PaymentMessageTemplate.tenant_id == tenant_id, PaymentMessageTemplate.kind == kind,
+    ))
     body = legacy.body if legacy else DEFAULT_PAYMENT_TEMPLATES.get(kind, definition.body)
     try:
         with notification_savepoint(db):
-            setting = NotificationSetting(event_type=event_type, whatsapp_body=body,
+            setting = NotificationSetting(tenant_id=tenant_id, event_type=event_type, whatsapp_body=body,
                                           push_title=definition.title, push_body=definition.body)
             db.add(setting)
             db.flush()
     except IntegrityError:
-        setting = db.get(NotificationSetting, event_type)
+        setting = db.get(NotificationSetting, (tenant_id, event_type))
         if setting is None:
             raise
     return setting
 
 
-def payment_template_bodies(db: Session) -> dict[str, str]:
+def payment_template_bodies(db: Session, *, tenant_id: UUID) -> dict[str, str]:
     """Leitura única, sem writes no dashboard nem consultas por template ausente."""
+    require_identity_tenant(db, tenant_id)
     rows = db.execute(select(
         PaymentMessageTemplate.kind, PaymentMessageTemplate.body, literal(0).label("priority"),
-    ).union_all(select(
+    ).where(PaymentMessageTemplate.tenant_id == tenant_id).union_all(select(
         NotificationSetting.event_type, NotificationSetting.whatsapp_body, literal(1),
-    ).where(NotificationSetting.event_type.in_(["payment_confirmed", "payment_refused"]))))
+    ).where(NotificationSetting.tenant_id == tenant_id, NotificationSetting.event_type.in_(["payment_confirmed", "payment_refused"]))))
     result = dict(DEFAULT_PAYMENT_TEMPLATES)
     for kind, body, _ in sorted(rows, key=lambda row: row.priority):
         result[kind.removeprefix("payment_")] = body
@@ -115,9 +125,10 @@ def setting_payload(setting: NotificationSetting) -> dict:
     }
 
 
-def save_setting(db: Session, event_type: str, values: dict) -> NotificationSetting:
-    setting_for(db, event_type)
+def save_setting(db: Session, event_type: str, values: dict, *, tenant_id: UUID) -> NotificationSetting:
+    setting_for(db, event_type, tenant_id=tenant_id)
     setting = db.scalar(select(NotificationSetting).where(
+        NotificationSetting.tenant_id == tenant_id,
         NotificationSetting.event_type == event_type).with_for_update())
     if "version" in values and values["version"] != setting.version:
         raise ValueError("A configuração mudou. Atualize a página antes de salvar.")
@@ -133,14 +144,18 @@ def save_setting(db: Session, event_type: str, values: dict) -> NotificationSett
             setattr(setting, f"{channel}_disabled_at", now())
             # Não cancelar tentativa em voo; worker revalida antes de qualquer retry.
             db.execute(update(NotificationDelivery).where(
+                NotificationDelivery.tenant_id == tenant_id,
                 NotificationDelivery.event_id.in_(select(NotificationEvent.id).where(
+                    NotificationEvent.tenant_id == tenant_id,
                     NotificationEvent.event_type == event_type)),
                 NotificationDelivery.channel == channel,
                 NotificationDelivery.status == "queued",
             ).values(status="cancelled", last_error="channel_disabled", updated_at=now()))
             if channel == "whatsapp":
                 db.execute(update(PaymentNotificationOutbox).where(
+                    PaymentNotificationOutbox.tenant_id == tenant_id,
                     PaymentNotificationOutbox.idempotency_key.in_(select(NotificationEvent.event_key).where(
+                        NotificationEvent.tenant_id == tenant_id,
                         NotificationEvent.event_type == event_type)),
                     PaymentNotificationOutbox.status == "queued",
                 ).values(status="failed", last_error="channel_disabled"))
@@ -151,16 +166,37 @@ def save_setting(db: Session, event_type: str, values: dict) -> NotificationSett
 
 def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[str, str],
                   target_path: str, recipients: list[UUID], parent_gallery_id=None,
-                  derived_gallery_id=None, client_id=None, sale_order_id=None) -> NotificationEvent:
+                  derived_gallery_id=None, client_id=None, sale_order_id=None,
+                  tenant_id: UUID) -> NotificationEvent:
     """Só persiste na transação chamadora. Nunca envia, commita ou reproduz histórico."""
-    existing = db.scalar(select(NotificationEvent).where(NotificationEvent.event_key == event_key))
+    require_identity_tenant(db, tenant_id)
+    for model, resource_id in ((ParentGallery, parent_gallery_id), (DerivedGallery, derived_gallery_id),
+                               (Client, client_id), (SaleOrder, sale_order_id)):
+        if resource_id is not None and not db.scalar(select(model.id).where(
+            model.id == resource_id, model.tenant_id == tenant_id,
+        )):
+            raise ValueError("Contexto de aviso incompatível.")
+    definition = DEFINITIONS[event_type]
+    for recipient in set(recipients):
+        if definition.recipient == "admin":
+            valid = db.scalar(select(TenantAdmin.id).where(
+                TenantAdmin.tenant_id == tenant_id, TenantAdmin.admin_user_id == recipient,
+                TenantAdmin.active.is_(True),
+            ))
+        else:
+            valid = db.scalar(select(Client.id).where(Client.id == recipient, Client.tenant_id == tenant_id))
+        if not valid:
+            raise ValueError("Destinatário indisponível.")
+    existing = db.scalar(select(NotificationEvent).where(
+        NotificationEvent.tenant_id == tenant_id, NotificationEvent.event_key == event_key,
+    ))
     if existing:
         return existing
-    setting = setting_for(db, event_type)
-    definition = DEFINITIONS[event_type]
+    setting = setting_for(db, event_type, tenant_id=tenant_id)
     try:
         with notification_savepoint(db):
             event = NotificationEvent(
+                tenant_id=tenant_id,
                 event_key=event_key, event_type=event_type, parent_gallery_id=parent_gallery_id,
                 derived_gallery_id=derived_gallery_id, client_id=client_id,
                 sale_order_id=sale_order_id, template_version=setting.version,
@@ -173,20 +209,26 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
             db.flush()
             for recipient in set(recipients):
                 if setting.whatsapp_enabled:
-                    db.add(NotificationDelivery(event_id=event.id, channel="whatsapp",
+                    db.add(NotificationDelivery(tenant_id=tenant_id, event_id=event.id, channel="whatsapp",
                                                recipient_role=definition.recipient,
                                                recipient_id=recipient,
+                                               client_recipient_id=recipient if definition.recipient == "client" else None,
+                                               admin_recipient_id=recipient if definition.recipient == "admin" else None,
                                                status="queued" if event_type.startswith("payment_") or os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true" else "cancelled",
                                                last_error=None if event_type.startswith("payment_") or os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true" else "transport_disabled"))
                 if setting.push_enabled:
                     subscriptions = db.scalars(select(PushSubscription).where(
+                        PushSubscription.tenant_id == tenant_id,
                         PushSubscription.subject_id == recipient,
                         PushSubscription.role == definition.recipient, PushSubscription.active,
                     ))
                     for subscription in subscriptions:
                         db.add(NotificationDelivery(
+                            tenant_id=tenant_id,
                             event_id=event.id, channel="push", recipient_role=definition.recipient,
                             recipient_id=recipient, device_key=str(subscription.id),
+                            client_recipient_id=recipient if definition.recipient == "client" else None,
+                            admin_recipient_id=recipient if definition.recipient == "admin" else None,
                             subscription_id=subscription.id,
                             subscription_generation=subscription.generation,
                             status="queued" if os.getenv("WEB_PUSH_ENABLED", "false").lower() == "true" else "cancelled",
@@ -194,7 +236,9 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
                         ))
             db.flush()
     except IntegrityError:
-        event = db.scalar(select(NotificationEvent).where(NotificationEvent.event_key == event_key))
+        event = db.scalar(select(NotificationEvent).where(
+            NotificationEvent.tenant_id == tenant_id, NotificationEvent.event_key == event_key,
+        ))
         if event is None:
             raise
     return event

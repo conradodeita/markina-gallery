@@ -7,7 +7,8 @@ from datetime import UTC
 
 from sqlalchemy import select
 
-from app.auth import FacialJob, PhotoAnalysis, PhotoAsset, now
+from app.acervo_context import owned_record
+from app.auth import FacialJob, ParentGallery, PhotoAnalysis, PhotoAsset, now
 
 COUNTERS = frozenset(
     {
@@ -37,16 +38,18 @@ def safe_attempt_metrics(payload):
     }
 
 
-def gallery_analysis_metrics(db, *, parent_gallery_id, derived_gallery_id=None):
+def gallery_analysis_metrics(db, *, parent_gallery_id, tenant_id, derived_gallery_id=None):
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria indisponível.")
     scope = (
-        PhotoAsset.parent_gallery_id == parent_gallery_id,
+        PhotoAsset.tenant_id == tenant_id,        PhotoAsset.parent_gallery_id == parent_gallery_id,
         PhotoAsset.derived_gallery_id == derived_gallery_id,
     )
     rows = list(
         db.scalars(
             select(PhotoAnalysis)
             .join(PhotoAsset, PhotoAsset.id == PhotoAnalysis.photo_asset_id)
-            .where(*scope)
+            .where(PhotoAnalysis.tenant_id == tenant_id, *scope)
         )
     )
     result = {key: 0 for key in COUNTERS}
@@ -62,7 +65,7 @@ def gallery_analysis_metrics(db, *, parent_gallery_id, derived_gallery_id=None):
             select(FacialJob.created_at)
             .join(PhotoAsset, PhotoAsset.id == FacialJob.photo_asset_id)
             .where(
-                *scope, FacialJob.kind == "index", FacialJob.status.in_(("queued", "processing"))
+                FacialJob.tenant_id == tenant_id, *scope, FacialJob.kind == "index", FacialJob.status.in_(("queued", "processing"))
             )
         )
     )

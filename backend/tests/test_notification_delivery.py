@@ -18,6 +18,7 @@ from app.notification_delivery import process_next_notification
 from app.notification_settings import enqueue_event, save_setting
 from app.push_subscriptions import subscribe
 from app.web_push import PushFailure
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_notification_settings import isolated_schema  # noqa: F401
 from tests.test_private_upload_batches import setup_private
 from tests.test_push_subscriptions import subscription
@@ -33,7 +34,7 @@ def queued(monkeypatch):
         subscribe(db, owner, "synthetic-installation", subscription())
         event = enqueue_event(db, event_type="first_access", event_key="synthetic-event",
                               values={"cliente": "Teste", "galeria": "Teste"}, target_path="/admin",
-                              recipients=[owner.subject_id])
+                              recipients=[owner.subject_id], tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         return event.id
 
@@ -77,8 +78,8 @@ def test_disabled_channel_never_replays_and_expiration(monkeypatch):
         item = db.scalar(select(NotificationDelivery).where(NotificationDelivery.channel == "push"))
         item.status = "processing"  # interruptor muda durante uma tentativa anterior
         item.lease_until = now() - timedelta(seconds=1)
-        save_setting(db, "first_access", {"push_enabled": False})
-        save_setting(db, "first_access", {"push_enabled": True})
+        save_setting(db, "first_access", {"push_enabled": False}, tenant_id=FIXTURE_TENANT_ID)
+        save_setting(db, "first_access", {"push_enabled": True}, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     process_next_notification("push", push_sender=lambda *_a, **_k: pytest.fail("Não repetir após desligamento"))
     assert status("push").status == "cancelled"
@@ -128,7 +129,7 @@ def test_attempts_exhausted_and_operational_gate_has_no_replay(monkeypatch):
     with SessionLocal() as db:
         owner = db.scalar(select(AuthSession))
         event = enqueue_event(db, event_type="first_access", event_key="disabled-new-event",
-                              values={}, target_path="/admin", recipients=[owner.subject_id])
+                              values={}, target_path="/admin", recipients=[owner.subject_id], tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         delivery = db.scalar(select(NotificationDelivery).where(
             NotificationDelivery.event_id == event.id, NotificationDelivery.channel == "push"))

@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 
 from app.auth import (
     AdminUser,
-    AuthSession,
     Base,
     Role,
     SessionLocal,
@@ -42,11 +41,18 @@ from app.whatsapp_delivery import (
     transition_status,
 )
 from app.worker import process_next_whatsapp_delivery
-from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD, fixture_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, LEGACY_SCHEMA_HEAD, fixture_admin
 
 
 @pytest.fixture(autouse=True)
 def clean_database(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "sandbox")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "development")
+    monkeypatch.setenv("WHATSAPP_API_URL", "https://synthetic-api.invalid")
+    monkeypatch.setenv("WHATSAPP_API_KEY", "synthetic-api-only")
+    monkeypatch.setenv("WHATSAPP_INSTANCE", "synthetic-instance")
+    monkeypatch.setenv("WHATSAPP_WEBHOOK_URL", "https://synthetic-webhook.invalid/internal/whatsapp/webhook")
+    monkeypatch.setenv("WHATSAPP_WEBHOOK_SECRET", "synthetic-webhook-secret")
     monkeypatch.setenv(
         "GALLERY_CAPABILITY_SIGNING_KEY",
         "whatsapp-tests-gallery-signing-key-0001",
@@ -64,6 +70,32 @@ def clean_database(monkeypatch: pytest.MonkeyPatch):
         connection.commit()
     Base.metadata.create_all(engine)
     yield
+
+
+
+def fixture_otp_delivery(db, **values):
+    from uuid import UUID
+
+    from app.auth import AuthChallenge
+
+    expires = values.get("expires_at") or now() + timedelta(minutes=5)
+    if expires < now():
+        return WhatsAppDelivery(**values)
+    old_key = values["idempotency_key"]
+    ciphertext = values.get("encrypted_payload")
+    code = decrypt_otp(ciphertext, key=otp_encryption_key(), context=old_key) if ciphertext and ciphertext != "ciphertext-synthetic" else "000000"
+    challenge = AuthChallenge(id=UUID(values["source_id"]), tenant_id=values["tenant_id"], kind="client_otp",
+                              subject=values["recipient_phone"], secret_hash=token_hash(code), expires_at=expires)
+    db.add(challenge)
+    db.flush()
+    values["idempotency_key"] = f"otp:{challenge.id}:0"
+    values["encrypted_payload"] = encrypt_otp(code, key=otp_encryption_key(), context=values["idempotency_key"])
+    return WhatsAppDelivery(**values)
+
+
+def fixture_sent_key():
+    with SessionLocal() as db:
+        return f"tenant:{FIXTURE_TENANT_ID}:" + db.scalar(select(WhatsAppDelivery.idempotency_key).where(WhatsAppDelivery.kind == "otp"))
 
 
 def test_otp_payload_round_trip_rejects_tampering_and_wrong_key(monkeypatch) -> None:
@@ -102,7 +134,7 @@ def test_delivery_states_are_monotonic_and_terminal() -> None:
     assert transition_status("unknown", "accepted").status == "accepted"
     assert transition_status("unknown", "queued").status == "unknown"
 
-    delivery = WhatsAppDelivery(
+    delivery = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
         kind="otp",
         source_type="auth_challenge",
         source_id=str(uuid4()),
@@ -127,13 +159,13 @@ def test_delivery_constraints_reject_duplicate_idempotency_and_invalid_state() -
         "idempotency_key": "unique-delivery",
     }
     with SessionLocal() as db:
-        db.add(WhatsAppDelivery(source_id="one", **common))
+        db.add(WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID, source_id="one", **common))
         db.commit()
-        db.add(WhatsAppDelivery(source_id="two", **common))
+        db.add(WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID, source_id="two", **common))
         with pytest.raises(IntegrityError):
             db.commit()
         db.rollback()
-        invalid = WhatsAppDelivery(source_id="three", **{**common, "idempotency_key": "invalid"})
+        invalid = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID, source_id="three", **{**common, "idempotency_key": "invalid"})
         invalid.status = "sent"
         db.add(invalid)
         with pytest.raises(IntegrityError):
@@ -239,7 +271,7 @@ def test_otp_request_queues_encrypted_delivery_without_network(monkeypatch) -> N
     )
     monkeypatch.setattr("app.auth.secrets.randbelow", lambda _limit: 123456)
     with TestClient(app) as client:
-        response = client.post(
+        response = linked_post(client,
             "/auth/client/challenge",
             json={"full_name": "Cliente Sintético", "phone": "+5511555550003"},
         )
@@ -264,6 +296,7 @@ def test_worker_sends_queued_otp_and_erases_ciphertext(monkeypatch, capsys) -> N
     key = os.urandom(32)
     phone = "+5511555550004"
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
     monkeypatch.setenv(
         "WHATSAPP_OTP_ENCRYPTION_KEY",
@@ -279,16 +312,14 @@ def test_worker_sends_queued_otp_and_erases_ciphertext(monkeypatch, capsys) -> N
             sent_messages.append((recipient, message, idempotency_key))
             return WhatsAppDeliveryResult("evolution-message-1", recipient, "pending")
 
-    monkeypatch.setattr(
-        "app.worker.whatsapp_provider_from_environment", lambda: FakeEvolution()
-    )
+    monkeypatch.setattr('app.worker.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=FakeEvolution()))
     with SessionLocal() as db:
         db.add(
-            WhatsAppChannelSettings(
+            WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
                 environment="homolog", expected_phone_e164=phone, status="pending_pairing"
             )
         )
-        delivery = WhatsAppDelivery(
+        delivery = fixture_otp_delivery(db, tenant_id=FIXTURE_TENANT_ID,
             kind="otp",
             source_type="auth_challenge",
             source_id=str(uuid4()),
@@ -302,7 +333,7 @@ def test_worker_sends_queued_otp_and_erases_ciphertext(monkeypatch, capsys) -> N
         db.commit()
         delivery_id = delivery.id
     assert process_next_whatsapp_delivery() is True
-    assert sent_messages == [(phone, "Seu código de acesso Pick-your-Pic é 654321.", "otp-worker-1")]
+    assert sent_messages == [(phone, "Seu código de acesso Pick-your-Pic é 654321.", fixture_sent_key())]
     with SessionLocal() as db:
         delivered = db.get(WhatsAppDelivery, delivery_id)
         assert delivered.status == "accepted"
@@ -321,11 +352,9 @@ def test_worker_expires_otp_without_calling_provider(monkeypatch) -> None:
         called = True
         raise AssertionError("provider não deve ser chamado")
 
-    monkeypatch.setattr(
-        "app.worker.whatsapp_provider_from_environment", unexpected_provider
-    )
+    monkeypatch.setattr('app.worker.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=(unexpected_provider)()))
     with SessionLocal() as db:
-        delivery = WhatsAppDelivery(
+        delivery = fixture_otp_delivery(db, tenant_id=FIXTURE_TENANT_ID,
             kind="otp",
             source_type="auth_challenge",
             source_id=str(uuid4()),
@@ -350,11 +379,11 @@ def authenticated_admin_client() -> TestClient:
     raw_token = "synthetic-admin-session"
     with SessionLocal() as db:
         admin = fixture_admin(AdminUser(email="channel@example.test", password_hash="synthetic",
-                                        totp_secret="synthetic"))
+                                        totp_secret="synthetic", email_verified=True))
         db.add(admin)
         db.flush()
         db.add(
-            AuthSession(
+            fixture_session(
                 token_hash=token_hash(raw_token),
                 role=Role.ADMIN.value,
                 subject_id=admin.id,
@@ -379,10 +408,9 @@ def test_admin_whatsapp_channel_requires_admin_and_masks_identity(monkeypatch) -
             return WhatsAppPairingResult("connecting", pairing_code="1234-5678")
 
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
-    monkeypatch.setattr(
-        "app.main.whatsapp_provider_from_environment", lambda: ConnectedProvider()
-    )
+    monkeypatch.setattr('app.main.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=ConnectedProvider()))
     with TestClient(app) as anonymous:
         assert anonymous.get("/admin/whatsapp/channel").status_code == 403
     with authenticated_admin_client() as client:
@@ -411,10 +439,9 @@ def test_admin_whatsapp_channel_blocks_mismatched_sender(monkeypatch) -> None:
             return WhatsAppConnectionStatus("open", "+5511555559999")
 
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
-    monkeypatch.setattr(
-        "app.main.whatsapp_provider_from_environment", lambda: MismatchedProvider()
-    )
+    monkeypatch.setattr('app.main.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=MismatchedProvider()))
     with authenticated_admin_client() as client:
         assert client.patch(
             "/admin/whatsapp/channel",
@@ -453,10 +480,9 @@ def test_admin_whatsapp_channel_accepts_brazilian_legacy_jid(monkeypatch) -> Non
             return WhatsAppConnectionStatus("open", connected)
 
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
-    monkeypatch.setattr(
-        "app.main.whatsapp_provider_from_environment", lambda: LegacyJidProvider()
-    )
+    monkeypatch.setattr('app.main.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=LegacyJidProvider()))
     with authenticated_admin_client() as client:
         assert client.patch(
             "/admin/whatsapp/channel", json={"expected_phone_e164": expected}
@@ -472,8 +498,9 @@ def test_whatsapp_webhook_is_authenticated_deduplicated_and_monotonic(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("WHATSAPP_WEBHOOK_SECRET", "synthetic-webhook-secret")
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
     with SessionLocal() as db:
-        delivery = WhatsAppDelivery(
+        delivery = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
             kind="payment",
             source_type="payment_notification_outbox",
             source_id=str(uuid4()),
@@ -487,7 +514,7 @@ def test_whatsapp_webhook_is_authenticated_deduplicated_and_monotonic(
         db.commit()
         delivery_id = delivery.id
     payload = {
-        "event": "messages.update",
+        "instance": "synthetic-instance", "event": "messages.update",
         "data": {"key": {"id": "webhook-message-1"}, "status": "delivered"},
     }
     with TestClient(app) as client:
@@ -500,7 +527,7 @@ def test_whatsapp_webhook_is_authenticated_deduplicated_and_monotonic(
         older = client.post(
             "/internal/whatsapp/webhook",
             json={
-                "event": "messages.update",
+                "instance": "synthetic-instance", "event": "messages.update",
                 "data": {"key": {"id": "webhook-message-1"}, "status": "accepted"},
             },
             headers=headers,
@@ -508,7 +535,7 @@ def test_whatsapp_webhook_is_authenticated_deduplicated_and_monotonic(
         assert older.status_code == 200
         ignored = client.post(
             "/internal/whatsapp/webhook",
-            json={"event": "messages.upsert", "data": {"message": "não persistir"}},
+            json={"instance": "synthetic-instance", "event": "messages.upsert", "data": {"message": "não persistir"}},
             headers=headers,
         )
         assert ignored.json() == {"status": "ignored"}
@@ -525,9 +552,11 @@ def test_whatsapp_webhook_is_authenticated_deduplicated_and_monotonic(
 def test_connection_webhook_updates_ready_state(monkeypatch) -> None:
     phone = "+5511555550009"
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_WEBHOOK_SECRET", "synthetic-webhook-secret")
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
     with SessionLocal() as db:
-        settings = WhatsAppChannelSettings(
+        settings = WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
             environment="homolog", expected_phone_e164=phone, status="connecting"
         )
         db.add(settings)
@@ -537,7 +566,7 @@ def test_connection_webhook_updates_ready_state(monkeypatch) -> None:
         response = client.post(
             "/internal/whatsapp/webhook",
             json={
-                "event": "connection.update",
+                "instance": "synthetic-instance", "event": "connection.update",
                 "data": {"state": "open", "ownerJid": "5511555550009@s.whatsapp.net"},
             },
             headers={"X-Markina-Webhook-Secret": "synthetic-webhook-secret"},
@@ -550,9 +579,11 @@ def test_connection_webhook_updates_ready_state(monkeypatch) -> None:
 def test_connection_webhook_accepts_brazilian_legacy_jid(monkeypatch) -> None:
     expected = "+5511998761049"
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_WEBHOOK_SECRET", "synthetic-webhook-secret")
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
     with SessionLocal() as db:
-        settings = WhatsAppChannelSettings(
+        settings = WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
             environment="homolog", expected_phone_e164=expected, status="connecting"
         )
         db.add(settings)
@@ -562,7 +593,7 @@ def test_connection_webhook_accepts_brazilian_legacy_jid(monkeypatch) -> None:
         response = client.post(
             "/internal/whatsapp/webhook",
             json={
-                "event": "connection.update",
+                "instance": "synthetic-instance", "event": "connection.update",
                 "data": {"state": "open", "ownerJid": "551198761049@s.whatsapp.net"},
             },
             headers={"X-Markina-Webhook-Secret": "synthetic-webhook-secret"},
@@ -592,12 +623,10 @@ def test_workers_reserve_delivery_once_under_concurrency(monkeypatch) -> None:
                 sent.append(idempotency_key)
             return WhatsAppDeliveryResult("concurrent-message", recipient, "accepted")
 
-    monkeypatch.setattr(
-        "app.worker.whatsapp_provider_from_environment", lambda: SlowProvider()
-    )
+    monkeypatch.setattr('app.worker.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=SlowProvider()))
     with SessionLocal() as db:
         db.add(
-            WhatsAppDelivery(
+            fixture_otp_delivery(db, tenant_id=FIXTURE_TENANT_ID,
                 kind="otp",
                 source_type="auth_challenge",
                 source_id=str(uuid4()),
@@ -613,7 +642,7 @@ def test_workers_reserve_delivery_once_under_concurrency(monkeypatch) -> None:
         db.commit()
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _index: process_next_whatsapp_delivery(), range(2)))
-    assert sent == ["otp-concurrent-1"]
+    assert sent == [fixture_sent_key()]
     assert results.count(True) == 1
 
 
@@ -633,11 +662,9 @@ def test_ambiguous_failure_is_not_retried_blindly(monkeypatch) -> None:
                 "Resultado desconhecido.", transient=False, ambiguous=True
             )
 
-    monkeypatch.setattr(
-        "app.worker.whatsapp_provider_from_environment", lambda: AmbiguousProvider()
-    )
+    monkeypatch.setattr('app.worker.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=AmbiguousProvider()))
     with SessionLocal() as db:
-        delivery = WhatsAppDelivery(
+        delivery = fixture_otp_delivery(db, tenant_id=FIXTURE_TENANT_ID,
             kind="otp",
             source_type="auth_challenge",
             source_id=str(uuid4()),
@@ -661,7 +688,7 @@ def test_ambiguous_failure_is_not_retried_blindly(monkeypatch) -> None:
 def test_stale_processing_becomes_unknown_after_worker_restart(monkeypatch) -> None:
     monkeypatch.setenv("WHATSAPP_PROCESSING_TIMEOUT_SECONDS", "30")
     with SessionLocal() as db:
-        delivery = WhatsAppDelivery(
+        delivery = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
             kind="payment",
             source_type="payment_notification_outbox",
             source_id=str(uuid4()),
@@ -684,7 +711,7 @@ def test_manual_retry_enforces_ambiguity_window_and_hides_recipient(monkeypatch)
     monkeypatch.setenv("WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS", "60")
     phone = "+5511555550013"
     with SessionLocal() as db:
-        delivery = WhatsAppDelivery(
+        delivery = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
             kind="payment",
             source_type="payment_notification_outbox",
             source_id=str(uuid4()),
@@ -730,7 +757,7 @@ def test_worker_prioritizes_otp_over_payment(monkeypatch) -> None:
         base64.urlsafe_b64encode(key).decode("ascii"),
     )
     with SessionLocal() as db:
-        payment = WhatsAppDelivery(
+        payment = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
             kind="payment",
             source_type="payment_notification_outbox",
             source_id=str(uuid4()),
@@ -738,7 +765,7 @@ def test_worker_prioritizes_otp_over_payment(monkeypatch) -> None:
             template_kind="confirmed",
             idempotency_key="priority-payment",
         )
-        otp = WhatsAppDelivery(
+        otp = fixture_otp_delivery(db, tenant_id=FIXTURE_TENANT_ID,
             kind="otp",
             source_type="auth_challenge",
             source_id=str(uuid4()),
@@ -755,3 +782,7 @@ def test_worker_prioritizes_otp_over_payment(monkeypatch) -> None:
     with SessionLocal() as db:
         assert db.get(WhatsAppDelivery, otp_id).status == "accepted"
         assert db.get(WhatsAppDelivery, payment_id).status == "queued"
+
+from app.whatsapp_binding import provider_for as owned_provider
+from tests.tenant_fixtures import fixture_session
+from tests.test_auth import linked_post

@@ -15,6 +15,7 @@ from app import main
 from app.auth import Base, MediaJob
 from app.capacity_observability import collector
 from app.capacity_observability.contracts import UnavailableReason
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 @pytest.fixture
@@ -58,7 +59,7 @@ def test_record_sentinels_are_not_projected_or_logged(isolated_collector, caplog
     sentinel = "private-name phone token SELECT /secret biometric"
     job_id = uuid4()
     with collector.SessionLocal() as db:
-        db.add(MediaJob(id=job_id, photo_asset_id=uuid4(), status="queued", attempts=2, last_error=sentinel))
+        db.add(MediaJob(tenant_id=FIXTURE_TENANT_ID, id=job_id, photo_asset_id=uuid4(), status="queued", attempts=2, last_error=sentinel))
         db.commit()
         before = db.get(MediaJob, job_id)
         before_state = (before.status, before.attempts, before.last_error)
@@ -174,8 +175,8 @@ def test_endpoint_authorizes_before_accessing_a_prefilled_cache(monkeypatch):
 
 
 def test_authorized_endpoint_serializes_snapshot_without_storing(isolated_collector, monkeypatch):
-    monkeypatch.setattr(main, "require_admin", lambda _request: object())
-    monkeypatch.setattr(main, "get_capacity_snapshot", collector._collect_once)
+    monkeypatch.setattr(main, "require_installation_operator", lambda _request: None)
+    monkeypatch.setattr(main, "get_capacity_snapshot", collector.get_capacity_snapshot)
     response = Response()
     request = Request({"type": "http", "method": "GET", "path": "/admin/capacity-observability", "headers": [], "query_string": b"", "server": ("testserver", 80), "scheme": "http", "client": ("testclient", 12345), "root_path": ""})
     snapshot = main.admin_capacity_observability(request, response)
@@ -184,3 +185,22 @@ def test_authorized_endpoint_serializes_snapshot_without_storing(isolated_collec
     assert response.headers["cache-control"] == "no-store"
     assert len(payload["queues"]) == 5
     assert payload["database"]["max_connections"]["value"] is None
+
+
+def test_cached_snapshot_revalidates_before_delivery(monkeypatch):
+    collector.reset_cache_for_tests()
+    snapshot = Mock()
+    monkeypatch.setattr(collector, "_collect_once", lambda: snapshot)
+    collector.get_capacity_snapshot()
+    checks = []
+
+    def authorize():
+        checks.append(True)
+        if len(checks) == 2:
+            raise HTTPException(status_code=403, detail="Acesso não autorizado.")
+
+    with pytest.raises(HTTPException) as exc:
+        collector.get_capacity_snapshot(authorize=authorize)
+    assert exc.value.status_code == 403 and len(checks) == 2
+    snapshot.model_copy.assert_not_called()
+    collector.reset_cache_for_tests()

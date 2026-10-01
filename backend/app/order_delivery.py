@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 
+from app.acervo_context import require_active_owner
 from app.auth import Client, NotificationDelivery, NotificationEvent, SaleOrder, audit, now
 from app.notification_settings import enqueue_event
 
@@ -62,13 +63,14 @@ def delivery_payload(order: SaleOrder) -> dict:
     }
 
 
-def lock_delivery_order(db, order_id: UUID) -> SaleOrder:
-    owner = db.scalar(select(SaleOrder.client_id).where(SaleOrder.id == order_id))
+def lock_delivery_order(db, order_id: UUID, *, tenant_id: UUID) -> SaleOrder:
+    require_active_owner(db, tenant_id)
+    owner = db.scalar(select(SaleOrder.client_id).where(SaleOrder.id == order_id, SaleOrder.tenant_id == tenant_id))
     if owner is None:
         raise LookupError("Pedido não encontrado.")
     # Mesma primeira trava das decisões financeiras e da remoção de acervo.
-    db.scalar(select(Client.id).where(Client.id == owner).with_for_update())
-    order = db.scalar(select(SaleOrder).where(SaleOrder.id == order_id)
+    db.scalar(select(Client.id).where(Client.id == owner, Client.tenant_id == tenant_id).with_for_update())
+    order = db.scalar(select(SaleOrder).where(SaleOrder.id == order_id, SaleOrder.tenant_id == tenant_id)
                       .with_for_update().execution_options(populate_existing=True))
     if order is None:
         raise LookupError("Pedido não encontrado.")
@@ -87,8 +89,10 @@ def record_delivery_notice(db, order, key):
                 "galeria": order.derived_gallery_name_snapshot, "pedido": str(order.id)[:8]},
         target_path=f"/library/purchases#order-{order.id}", recipients=[order.client_id],
         client_id=order.client_id, sale_order_id=order.id,
+        tenant_id=order.tenant_id,
     )
     channels = sorted(set(db.scalars(select(NotificationDelivery.channel).where(
+        NotificationDelivery.tenant_id == order.tenant_id,
         NotificationDelivery.event_id == event.id,
         NotificationDelivery.status.in_(["queued", "processing", "accepted"]),
     ))))
@@ -96,6 +100,10 @@ def record_delivery_notice(db, order, key):
 
 
 def set_delivery(db, order, url, version, actor_id):
+    from app.tenancy import require_admin_tenant
+
+    if require_admin_tenant(db, actor_id).id != order.tenant_id:
+        raise ValueError("Pedido indisponível.")
     url = validate_album_url(url)
     if url:
         require_confirmed(order)
@@ -107,28 +115,34 @@ def set_delivery(db, order, url, version, actor_id):
     order.delivery_revision += 1
     order.delivery_updated_at = now()
     notice = record_delivery_notice(db, order, f"order-delivery:{order.id}:{order.delivery_revision}") if url else None
-    audit(db, "order.delivery_available" if url else "order.delivery_removed", f"order:{order.id}:admin:{actor_id}")
+    audit(db, "order.delivery_available" if url else "order.delivery_removed", f"order:{order.id}:admin:{actor_id}", tenant_id=order.tenant_id)
     return {"delivery": delivery_payload(order), "unchanged": False, "notification": notice}
 
 
 def resend_delivery(db, order, version, operation_id, actor_id):
+    from app.tenancy import require_admin_tenant
+
+    if require_admin_tenant(db, actor_id).id != order.tenant_id:
+        raise ValueError("Pedido indisponível.")
     require_confirmed(order)
     if not order.delivery_album_url:
         raise ValueError("Cadastre o link antes de reenviar o aviso.")
     if order.delivery_revision != version:
         raise ValueError("A entrega mudou. Atualize a página antes de reenviar.")
     key = f"order-delivery-resend:{order.id}:{version}:{operation_id}"
-    existing = db.scalar(select(NotificationEvent.id).where(NotificationEvent.event_key == key))
+    existing = db.scalar(select(NotificationEvent.id).where(NotificationEvent.event_key == key, NotificationEvent.tenant_id == order.tenant_id))
     notice = record_delivery_notice(db, order, key)
     if not existing:
-        audit(db, "order.delivery_notice_resent", f"order:{order.id}:admin:{actor_id}")
+        audit(db, "order.delivery_notice_resent", f"order:{order.id}:admin:{actor_id}", tenant_id=order.tenant_id)
     # O registro do evento deduplicado identifica a ação, sem histórico paralelo.
     return {"delivery": delivery_payload(order), "notification": notice}
 
 
 def delivery_notice_allowed(db, event, item):
-    order = db.get(SaleOrder, event.sale_order_id)
-    if (not order or item.recipient_role != "client" or order.client_id != item.recipient_id
+    order = db.scalar(select(SaleOrder).where(SaleOrder.id == event.sale_order_id,
+        SaleOrder.tenant_id == event.tenant_id).execution_options(populate_existing=True))
+    if (not order or order.tenant_id != event.tenant_id or item.tenant_id != event.tenant_id
+            or item.recipient_role != "client" or order.client_id != item.recipient_id
             or event.client_id != order.client_id or not order_fulfillable(order)
             or not order.delivery_album_url):
         return False

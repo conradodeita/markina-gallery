@@ -430,7 +430,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       return;
     }
     if (sales.payment_required !== false && sales.pricing_mode === "progressive" && !sales.progressive_pricing_preset_id) {
-      setSalesError("Escolha uma tabela global de preço progressivo.");
+      setSalesError("Escolha uma tabela de preço progressivo da sua conta.");
       return;
     }
     setSavingStep(true);
@@ -690,7 +690,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               {salesError ? <p className="form-message form-message--error" role="alert">{salesError}</p> : null}
               <fieldset className="gallery-sales-section">
                 <legend>Preço das fotos</legend>
-                <p>Escolha um valor fixo para qualquer quantidade ou aplique uma tabela progressiva cadastrada globalmente. Pedidos existentes não são recalculados.</p>
+                <p>Escolha um valor fixo para qualquer quantidade ou aplique uma tabela progressiva cadastrada na sua conta. Pedidos existentes não são recalculados.</p>
                 {sales.pricing_review_required || sales.pricing_mode === "legacy_volume" ? <div className="notice" role="alert"><strong>Configuração legada precisa de revisão.</strong><span>As faixas antigas não serão convertidas automaticamente. Escolha um dos modos abaixo e confirme a conversão.</span></div> : null}
                 <div className="gallery-pricing-mode" role="radiogroup" aria-label="Modo de preço">
                   <label><input type="radio" name="pricing_mode" value="fixed" checked={sales.pricing_mode === "fixed"} onChange={() => { setSales((current) => current ? { ...current, pricing_mode: "fixed", progressive_pricing_preset_id: null } : current); setPricingQuote(null); }} /> Preço fixo por foto</label>
@@ -698,8 +698,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                 </div>
                 {sales.pricing_mode === "fixed" ? <label>Valor unitário da foto<input name="fixed_unit_price" inputMode="numeric" value={fixedPriceInput} onChange={(event) => setFixedPriceInput(maskBrazilianCurrencyInput(event.target.value))} placeholder="R$ 7,00" required={sales.payment_required !== false} /></label> : null}
                 {sales.pricing_mode === "progressive" ? <div className="gallery-progressive-pricing">
-                  <label>Tabela global<select name="progressive_pricing_preset_id" value={sales.progressive_pricing_preset_id ?? ""} onChange={(event) => { setSales((current) => current ? { ...current, progressive_pricing_preset_id: event.target.value || null } : current); setPricingQuote(null); }} required={sales.payment_required !== false}><option value="">Selecione código — nome</option>{pricingPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
-                  {!pricingPresets.length ? <p className="field-hint">Nenhuma tabela ativa. <Link href="/admin/pricing">Cadastre uma tabela global</Link> antes de salvar.</p> : null}
+                  <label>Tabela da sua conta<select name="progressive_pricing_preset_id" value={sales.progressive_pricing_preset_id ?? ""} onChange={(event) => { setSales((current) => current ? { ...current, progressive_pricing_preset_id: event.target.value || null } : current); setPricingQuote(null); }} required={sales.payment_required !== false}><option value="">Selecione código — nome</option>{pricingPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
+                  {!pricingPresets.length ? <p className="field-hint">Nenhuma tabela ativa. <Link href="/admin/pricing">Cadastre uma tabela da sua conta</Link> antes de salvar.</p> : null}
                   <div className="gallery-pricing-simulator">
                     <label>Quantidade para simular<input type="number" min={1} max={10000} value={quoteQuantity} onChange={(event) => setQuoteQuantity(Number(event.target.value))} /></label>
                     <MarkinaButton type="button" variant="secondary" disabled={!sales.progressive_pricing_preset_id || quoteLoading} onClick={simulatePricing}>{quoteLoading ? "Calculando…" : "Simular valor"}</MarkinaButton>
@@ -709,7 +709,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                 {sales.pricing_review_required || sales.pricing_mode === "legacy_volume" ? <label className="gallery-toggle"><input type="checkbox" checked={confirmLegacyConversion} onChange={(event) => setConfirmLegacyConversion(event.target.checked)} /> Confirmo a substituição das faixas legadas para esta galeria</label> : null}
               </fieldset>
               <fieldset className="gallery-sales-section">
-                <legend>PIX global</legend>
+                <legend>PIX da sua conta</legend>
                 <GlobalPixSummary pix={sales.pix} />
                 <Link href="/admin/settings#pix">Configurar PIX em Configurações</Link>
               </fieldset>
@@ -733,7 +733,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <div>
               <p className="eyebrow">Etapa 3</p>
               <h2>Detalhes e apresentação</h2>
-              <p className="gallery-scope-note">Configure como esta galeria será apresentada. A marca-d’água continua global e fica em Configurações.</p>
+              <p className="gallery-scope-note">Configure como esta galeria será apresentada. A marca-d’água vale para as galerias da sua conta e fica em Configurações.</p>
             </div>
           </div>
           <form id="gallery-details-step" className="gallery-settings-form gallery-visual-settings" onSubmit={saveVisualSettings} onChange={(event) => { setDirty(true); updateVisualPreview(event); }}>

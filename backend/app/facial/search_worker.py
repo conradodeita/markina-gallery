@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     AuditEvent,
     FacialJob,
@@ -30,6 +32,11 @@ from app.facial.notifications import enqueue_search_notification
 from app.facial.provider import OpenCvSFaceProvider, analyze_query
 from app.facial.reference_store import FacialReferenceError, FacialReferenceStore
 from app.facial.rollout import rollout_is_active
+from app.public_gallery_access import (
+    PublicGalleryAccessDenied,
+    authorized_canonical_photos,
+    require_public_gallery_browsing,
+)
 
 _TERMINAL_STATES = {
     "ready",
@@ -58,14 +65,10 @@ def process_claimed_search_job(
 ) -> FacialJob:
     """Executa ou retoma a consulta sem depender da presença da cliente na UI."""
 
-    from app.tenancy import enable_domain_guard
-
-    enable_domain_guard(db)
-
-    job = db.get(FacialJob, claim.id)
+    job = repository._leased(db, claim)
     if job is None or job.kind != "search" or job.search_request_id is None:
         raise FacialJobError("Job facial não pode ser executado.")
-    request = db.get(FacialSearchRequest, job.search_request_id)
+    request = owned_record(db, FacialSearchRequest, job.search_request_id, tenant_id=claim.tenant_id)
     if request is None or request.parent_gallery_id != job.parent_gallery_id:
         raise FacialJobError("Consulta facial não pode ser executada.")
     store = reference_store or FacialReferenceStore(
@@ -144,14 +147,16 @@ def process_claimed_search_job(
             )
             return repository.complete(db, claim)
 
+        repository._leased(db, claim)
         request.status = "validating_reference"
         db.commit()
         if request.reference_region_id:
             from app.facial.regions import authorized_region, region_embedding
             region = authorized_region(db, gallery_id=request.parent_gallery_id, client_id=request.client_id,
                                        region_id=request.reference_region_id, settings=settings)
-            query_embedding = region_embedding(region, cipher, settings)
+            query_embedding = region_embedding(db, region, cipher, settings, tenant_id=claim.tenant_id)
         else:
+            repository._leased(db, claim)
             payload = store.load(
                 request_id=request.id,
                 gallery_id=request.parent_gallery_id,
@@ -165,30 +170,47 @@ def process_claimed_search_job(
                 return repository.complete(db, claim)
             query_embedding = analysis.observation.embedding
 
+        repository._leased(db, claim)
+        _refresh_snapshot(db, request)
         request.status = "searching"
         db.commit()
         fingerprints = {
             item.photo_asset_id: item.preview_fingerprint
-            for item in _snapshot_items(db, request.id)
+            for item in _snapshot_items(db, request.id, tenant_id=request.tenant_id)
             if item.status == "ready" and item.preview_fingerprint is not None
         }
+
+        def authorize_comparison(photo_id):
+            repository._leased(db, claim)
+            if not _request_is_authorized(db, request, settings):
+                raise FacialJobError("Consulta facial indisponível.")
+            _refresh_snapshot(db, request)
+            return any(item.photo_asset_id == photo_id and item.status == "ready"
+                       for item in _snapshot_items(db, request.id, tenant_id=request.tenant_id))
+
         matches = search_gallery_index(
             db,
             gallery_id=request.parent_gallery_id,
+            tenant_id=claim.tenant_id,
             query_embedding=query_embedding,
             cipher=cipher,
             settings=settings,
             threshold_milli=settings.similarity_threshold_milli,
             allowed_fingerprints=fingerprints,
             ambiguous_threshold_milli=settings.ambiguous_threshold_milli,
+            authorize=authorize_comparison,
         )
+        repository._leased(db, claim)
+        if not _request_is_authorized(db, request, settings):
+            raise FacialJobError("Consulta facial indisponível.")
         request.compare_done = request.compare_total
         request.status = "ranking"
         db.commit()
 
         db.execute(
             delete(FacialSearchCandidate).where(
-                FacialSearchCandidate.search_request_id == request.id
+                FacialSearchCandidate.tenant_id == request.tenant_id,
+                    FacialSearchCandidate.search_request_id == request.id
             )
         )
         candidate_expiry = now() + timedelta(
@@ -196,6 +218,7 @@ def process_claimed_search_job(
         )
         db.add_all(
             FacialSearchCandidate(
+                tenant_id=claim.tenant_id,
                 search_request_id=request.id,
                 parent_gallery_id=request.parent_gallery_id,
                 client_id=request.client_id,
@@ -211,6 +234,7 @@ def process_claimed_search_job(
             repository.enqueue(
                 db,
                 kind="cleanup",
+                tenant_id=request.tenant_id,
                 idempotency_key=f"facial-search-candidate-cleanup:{request.id}",
                 parent_gallery_id=request.parent_gallery_id,
                 search_request_id=request.id,
@@ -233,6 +257,9 @@ def process_claimed_search_job(
             lease_seconds=settings.job_lease_seconds,
         )
         return repository.complete(db, claim)
+    except HTTPException:
+        repository.release_denied(db, claim)
+        return db.get(FacialJob, claim.id)
     except FacialJobError:
         raise
     # A fronteira do worker transforma qualquer falha inesperada em categoria
@@ -246,7 +273,7 @@ def process_claimed_search_job(
             max_attempts=max_attempts,
             retry_delay_seconds=retry_delay_seconds,
         )
-        request = db.get(FacialSearchRequest, job.search_request_id)
+        request = owned_record(db, FacialSearchRequest, job.search_request_id, tenant_id=claim.tenant_id)
         if request is not None:
             if failed_job.status == "failed":
                 _finish_request(
@@ -266,6 +293,11 @@ def process_claimed_search_job(
 def _request_is_authorized(
     db: Session, request: FacialSearchRequest, settings: FacialSettings
 ) -> bool:
+    require_active_owner(db, request.tenant_id)
+    try:
+        require_public_gallery_browsing(db, parent_gallery_id=request.parent_gallery_id, client_id=request.client_id)
+    except PublicGalleryAccessDenied:
+        return False
     if request.status in {"cancelled", "expired"}:
         return False
     if request.authorization_method != "direct_region" and request.consent_version != settings.consent_version:
@@ -281,15 +313,16 @@ def _request_is_authorized(
                 terms_version=settings.minor_policy_version)
         except FacialLegalRepresentationError:
             return False
-    gallery = db.get(ParentGallery, request.parent_gallery_id)
+    gallery = owned_record(db, ParentGallery, request.parent_gallery_id, tenant_id=request.tenant_id)
     registration = db.scalar(
         select(ParentGalleryRegistration.id).where(
-            ParentGalleryRegistration.parent_gallery_id == request.parent_gallery_id,
+            ParentGalleryRegistration.tenant_id == request.tenant_id,
+                    ParentGalleryRegistration.parent_gallery_id == request.parent_gallery_id,
             ParentGalleryRegistration.client_id == request.client_id,
             ParentGalleryRegistration.status == "active",
         )
     )
-    policy = db.get(GalleryFacialPolicy, request.policy_id)
+    policy = owned_record(db, GalleryFacialPolicy, request.policy_id, tenant_id=request.tenant_id)
     return bool(
         gallery
         and gallery.active
@@ -303,6 +336,7 @@ def _request_is_authorized(
             db,
             settings=settings,
             parent_gallery_id=request.parent_gallery_id,
+            tenant_id=request.tenant_id,
         )
         and request.model_version == settings.model_version == policy.model_version
         and request.quality_version
@@ -313,8 +347,8 @@ def _request_is_authorized(
 
 
 def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
-    items = _snapshot_items(db, request.id)
-    pending_items = [item for item in items if item.status == "pending"]
+    items = _snapshot_items(db, request.id, tenant_id=request.tenant_id)
+    pending_items = [item for item in items if item.status in {"pending", "ready"}]
     if pending_items:
         photo_ids = [item.photo_asset_id for item in pending_items]
         eligible = set(
@@ -325,10 +359,13 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
                     MediaDerivative.photo_asset_id == PhotoAsset.id,
                 )
                 .where(
+                    PhotoAsset.tenant_id == request.tenant_id,
                     PhotoAsset.id.in_(photo_ids),
+                    PhotoAsset.id.in_(authorized_canonical_photos(request.parent_gallery_id, request.client_id).with_only_columns(PhotoAsset.id)),
                     PhotoAsset.parent_gallery_id == request.parent_gallery_id,
                     PhotoAsset.derived_gallery_id.is_(None),
                     PhotoAsset.available.is_(True),
+                    MediaDerivative.tenant_id == request.tenant_id,
                     MediaDerivative.variant == "client_preview",
                     MediaDerivative.status == "ready",
                 )
@@ -339,7 +376,8 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
             select(FacialJob)
             .where(
                 FacialJob.kind == "index",
-                FacialJob.parent_gallery_id == request.parent_gallery_id,
+                FacialJob.tenant_id == request.tenant_id,
+                    FacialJob.parent_gallery_id == request.parent_gallery_id,
                 FacialJob.photo_asset_id.in_(photo_ids),
                 FacialJob.model_version == request.model_version,
                 FacialJob.quality_version == request.quality_version,
@@ -372,15 +410,21 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
 
 
 def _snapshot_items(
-    db: Session, request_id: UUID
+    db: Session, request_id: UUID, *, tenant_id: UUID
 ) -> list[FacialSearchSnapshotItem]:
-    return list(
+    request = owned_record(db, FacialSearchRequest, request_id, tenant_id=tenant_id)
+    if request is None:
+        raise FacialJobError("Snapshot facial indisponível.")
+    items = list(
         db.scalars(
             select(FacialSearchSnapshotItem)
-            .where(FacialSearchSnapshotItem.search_request_id == request_id)
+            .where(FacialSearchSnapshotItem.tenant_id == tenant_id, FacialSearchSnapshotItem.search_request_id == request_id)
             .order_by(FacialSearchSnapshotItem.created_at, FacialSearchSnapshotItem.id)
         )
     )
+    if any(item.parent_gallery_id != request.parent_gallery_id or item.client_id != request.client_id for item in items):
+        raise FacialJobError("Snapshot facial indisponível.")
+    return items
 
 
 def _reference_locator(request: FacialSearchRequest) -> FacialEnvelope:
@@ -427,9 +471,19 @@ def _finish_request(
     cipher: FacialCipher,
     settings: FacialSettings,
 ) -> None:
-    from app.tenancy import require_single_tenant
-
-    require_single_tenant(db)
+    require_active_owner(db, request.tenant_id)
+    with db.no_autoflush:
+        current_status = db.scalar(select(FacialSearchRequest.status).where(
+            FacialSearchRequest.id == request.id, FacialSearchRequest.tenant_id == request.tenant_id,
+        ))
+    if current_status is None:
+        raise FacialJobError("Consulta facial indisponível.")
+    if current_status in {"cancelled", "expired"}:
+        status = current_status
+        db.execute(delete(FacialSearchCandidate).where(
+            FacialSearchCandidate.tenant_id == request.tenant_id,
+            FacialSearchCandidate.search_request_id == request.id,
+        ))
     _delete_reference(request, store)
     request.status = status
     request.reference_region_id = None
@@ -437,6 +491,7 @@ def _finish_request(
     request.updated_at = now()
     db.add(
         AuditEvent(
+            tenant_id=request.tenant_id,
             event="facial.search_completed",
             subject=(
                 f"gallery_id:{request.parent_gallery_id};client_id:{request.client_id};"

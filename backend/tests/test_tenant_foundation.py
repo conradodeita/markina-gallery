@@ -23,13 +23,19 @@ from app.auth import (
 
 @pytest.fixture
 def tenant_db(tmp_path):
-    url = os.getenv("TENANT_TEST_DATABASE_URL", f"sqlite:///{tmp_path / 'tenant.sqlite'}")
+    url = (
+        os.getenv("PHOTOGRAPHER_TEST_DATABASE_URL")
+        or os.getenv("TENANT_TEST_DATABASE_URL")
+        or f"sqlite:///{tmp_path / 'tenant.sqlite'}"
+    )
     engine = create_engine(url)
     schema = None
     if engine.dialect.name == "postgresql":
         parsed = engine.url
-        assert parsed.host == "127.0.0.1" and parsed.port == 55469
-        assert parsed.database == "pyp_tenant_test"
+        assert parsed.host == "127.0.0.1"
+        assert (parsed.port, parsed.database) in {
+            (55469, "pyp_tenant_test"), (15470, "pyp_photographer_test"),
+        }
         schema = f"tenant_test_{uuid4().hex}"
         with engine.begin() as connection:
             connection.execute(text(f'CREATE SCHEMA "{schema}"'))
@@ -51,13 +57,15 @@ def tenant_db(tmp_path):
 
 def acervo(db):
     first, second = Tenant(), Tenant()
-    client = Client(full_name="Sintético", phone_e164="+5511999999999")
-    db.add_all([first, second, client])
+    db.add_all([first, second])
+    db.flush()
+    client = Client(tenant_id=first.id, full_name="Sintético", phone_e164="+5511999999999")
+    db.add(client)
     db.flush()
     parent = ParentGallery(name="Sintética", tenant_id=first.id)
     db.add(parent)
     db.flush()
-    folder = PhotoFolder(parent_gallery_id=parent.id, name="Lote")
+    folder = PhotoFolder(tenant_id=first.id, parent_gallery_id=parent.id, name="Lote")
     db.add(folder)
     db.flush()
     return first, second, client, parent, folder
@@ -116,7 +124,8 @@ def test_relacoes_validas_preservam_uuid(tenant_db):
     )
     tenant_db.add(gallery)
     tenant_db.flush()
-    folder = PhotoFolder(name="Privada", parent_gallery_id=parent.id, derived_gallery_id=gallery.id)
+    folder = PhotoFolder(tenant_id=tenant.id, name="Privada", parent_gallery_id=parent.id,
+                         derived_gallery_id=gallery.id)
     tenant_db.add(folder)
     tenant_db.flush()
     photo = PhotoAsset(

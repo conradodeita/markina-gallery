@@ -7,6 +7,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    Client,
     FolderClientGrant,
     GalleryAccessCapability,
     GalleryClientState,
@@ -14,6 +15,7 @@ from app.auth import (
     ParentGalleryRegistration,
     PhotoAsset,
     PhotoFolder,
+    Tenant,
     expired,
 )
 from app.parent_registration import link_client_to_parent
@@ -63,7 +65,8 @@ def active_registration(
     db: Session, *, parent_gallery_id: UUID, client_id: UUID
 ) -> ParentGalleryRegistration | None:
     return db.scalar(
-        select(ParentGalleryRegistration).where(
+        select(ParentGalleryRegistration).join(Client, Client.id == ParentGalleryRegistration.client_id).where(
+            ParentGalleryRegistration.tenant_id == Client.tenant_id,
             ParentGalleryRegistration.parent_gallery_id == parent_gallery_id,
             ParentGalleryRegistration.client_id == client_id,
             ParentGalleryRegistration.status == "active",
@@ -79,7 +82,12 @@ def apply_public_gallery_access(
     capability: GalleryAccessCapability | None = None,
     return_to: str | None = None,
 ) -> PublicGalleryAccessResult:
-    parent = db.get(ParentGallery, parent_gallery_id)
+    from app.acervo_context import owned_record
+
+    client = db.get(Client, client_id)
+    if not client:
+        raise PublicGalleryAccessDenied("Acesso não autorizado.")
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=client.tenant_id)
     if not parent or not parent.active or parent.lifecycle_status != "active":
         raise PublicGalleryAccessDenied("A Galeria pública está indisponível.")
     registration = active_registration(
@@ -87,6 +95,7 @@ def apply_public_gallery_access(
     )
     capability_matches = bool(
         capability
+        and capability.tenant_id == parent.tenant_id
         and capability.status == "active"
         and capability.parent_gallery_id == parent.id
         and (
@@ -158,6 +167,13 @@ def require_public_gallery_browsing(
 def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
     """Consulta única de fotos liberadas no público efetivo da cliente."""
 
+    owner = select(Client.tenant_id).join(Tenant, Tenant.id == Client.tenant_id).where(
+        Client.id == client_id, Tenant.status == "active",
+    ).scalar_subquery()
+    own_parent = select(ParentGallery.id).where(
+        ParentGallery.id == parent_gallery_id, ParentGallery.tenant_id == owner,
+        ParentGallery.active.is_(True), ParentGallery.lifecycle_status == "active",
+    ).exists()
     granted = (
         select(FolderClientGrant.id)
         .join(
@@ -169,6 +185,8 @@ def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
         )
         .where(
             FolderClientGrant.folder_id == PhotoFolder.id,
+            FolderClientGrant.tenant_id == owner,
+            GalleryClientState.tenant_id == owner,
             FolderClientGrant.parent_gallery_id == parent_gallery_id,
             FolderClientGrant.client_id == client_id,
             GalleryClientState.status == "active",
@@ -176,6 +194,7 @@ def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
         .exists()
     )
     blocked_state = select(GalleryClientState.id).where(
+        GalleryClientState.tenant_id == owner,
         GalleryClientState.parent_gallery_id == parent_gallery_id,
         GalleryClientState.client_id == client_id,
         GalleryClientState.status != "active",
@@ -184,6 +203,9 @@ def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
         select(PhotoAsset)
         .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
         .where(
+            own_parent,
+            PhotoAsset.tenant_id == owner,
+            PhotoFolder.tenant_id == owner,
             PhotoAsset.parent_gallery_id == parent_gallery_id,
             PhotoAsset.derived_gallery_id.is_(None),
             PhotoAsset.available,

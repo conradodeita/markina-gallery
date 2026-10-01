@@ -33,3 +33,34 @@ def insert_legacy_model(connection, entity, **values):
         data = {key: value.hex if isinstance(value, UUID) else value for key, value in data.items()}
     connection.execute(table.insert().values(**data))
     return identifier
+
+
+def fixture_session(*, role, subject_id, tenant_id=FIXTURE_TENANT_ID, **values):
+    """Sessão de teste explícita, com um único UUID de sujeito tipado."""
+    from app.auth import AuthSession
+
+    return AuthSession(role=role, subject_id=subject_id, tenant_id=tenant_id,
+        client_subject_id=subject_id if role == "client" else None,
+        admin_subject_id=subject_id if role == "admin" else None, **values)
+
+
+def fixture_access(*, client_id, gallery_id, gallery_type="private", tenant_id=FIXTURE_TENANT_ID, **values):
+    from app.auth import GalleryAccess
+
+    return GalleryAccess(client_id=client_id, gallery_id=gallery_id,
+        tenant_id=tenant_id, parent_gallery_id=gallery_id if gallery_type == "public" else None,
+        derived_gallery_id=gallery_id if gallery_type == "private" else None, **values)
+
+
+def fixture_client_cookie(browser, phone, *, session_factory=None):
+    from fastapi import Response
+
+    from app.auth import Client, Role, SessionLocal, create_session, normalize_e164
+
+    with (session_factory or SessionLocal)() as db:
+        person = db.scalar(sa.select(Client).where(Client.tenant_id == FIXTURE_TENANT_ID,
+                                                  Client.phone_e164 == normalize_e164(phone)))
+        assert person is not None
+        cookie = create_session(db, Response(), Role.CLIENT, person.id, tenant_id=FIXTURE_TENANT_ID)
+        db.commit()
+    browser.cookies.set("markina_session", cookie)

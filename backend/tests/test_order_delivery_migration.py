@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 from tests.test_cloned_gallery_migration import alembic
 
 
@@ -19,7 +20,7 @@ def test_upgrade_preserves_existing_order(tmp_path):
             VALUES (:id, :owner, :gallery, 'Privada', :parent, 'Evento', 'confirmed', 1200, :created)"""),
                            {"id": order, "owner": owner, "gallery": uuid4().hex,
                             "parent": uuid4().hex, "created": datetime.now(UTC)})
-    alembic(url, "upgrade", "head")
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as connection:
         row = connection.execute(text("SELECT payment_status, total_cents, delivery_album_url, delivery_updated_at, delivery_revision FROM sale_order WHERE id=:id"), {"id": order}).one()
         assert row == ("confirmed", 1200, None, None, 0)

@@ -49,7 +49,7 @@ from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 def _fixture(db: Session):
     parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento preservado")
-    client = Client(id=uuid4(), full_name="Cliente sintética", phone_e164="+5511999999999")
+    client = Client(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Cliente sintética", phone_e164="+5511999999999")
     admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin-purge@example.invalid",
@@ -57,7 +57,7 @@ def _fixture(db: Session):
         totp_secret="synthetic",
     ))
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Fotos",
         status="released",
@@ -73,13 +73,13 @@ def _fixture(db: Session):
         available=True,
     )
     derivative = MediaDerivative(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         variant="client_preview",
         status="ready",
         relative_path=f"{photo.id}/client_preview.jpg",
     )
     policy = GalleryFacialPolicy(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         status="active",
         legal_notice_version="notice-v1",
@@ -91,7 +91,7 @@ def _fixture(db: Session):
         calibration_version="calibration-v1",
     )
     request = FacialSearchRequest(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         client_id=client.id,
         policy_id=policy.id,
@@ -112,7 +112,7 @@ def _fixture(db: Session):
         expires_at=now() + timedelta(minutes=15),
     )
     embedding = PhotoFaceEmbedding(
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         photo_asset_id=photo.id,
         face_ordinal=0,
         model_version="model-v1",
@@ -124,7 +124,7 @@ def _fixture(db: Session):
         key_id="test",
     )
     candidate = FacialSearchCandidate(
-        search_request_id=request.id,
+        tenant_id=FIXTURE_TENANT_ID, search_request_id=request.id,
         parent_gallery_id=parent.id,
         client_id=client.id,
         photo_asset_id=photo.id,
@@ -133,7 +133,7 @@ def _fixture(db: Session):
         expires_at=now() + timedelta(hours=24),
     )
     job = FacialJob(
-        kind="index",
+        tenant_id=FIXTURE_TENANT_ID, kind="index",
         status="queued",
         idempotency_key=f"index:{photo.id}",
         parent_gallery_id=parent.id,
@@ -141,7 +141,7 @@ def _fixture(db: Session):
         available_at=now(),
     )
     notification = FacialSearchNotificationOutbox(
-        search_request_id=request.id,
+        tenant_id=FIXTURE_TENANT_ID, search_request_id=request.id,
         parent_gallery_id=parent.id,
         client_id=client.id,
         result_kind="ready",
@@ -153,7 +153,7 @@ def _fixture(db: Session):
         available_at=now(),
     )
     rollout = FacialRollout(
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=parent.id,
         status="active",
         stage="canary",
@@ -189,12 +189,12 @@ def _fixture(db: Session):
     )
     db.flush()
     selection = PhotoSelection(
-        derived_gallery_id=private_gallery.id,
+        tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=private_gallery.id,
         photo_asset_id=photo.id,
         client_id=client.id,
     )
     order = SaleOrder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         derived_gallery_id=private_gallery.id,
         client_id=client.id,
         derived_gallery_id_snapshot=private_gallery.id,
@@ -205,8 +205,10 @@ def _fixture(db: Session):
         total_cents=700,
         checkout_key="purge-preserves-commerce",
     )
+    db.add(order)
+    db.flush()
     order_item = SaleOrderItem(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         sale_order_id=order.id,
         photo_asset_id=photo.id,
         photo_asset_id_snapshot=photo.id,
@@ -214,7 +216,7 @@ def _fixture(db: Session):
         unit_price_cents=700,
     )
     history = CommercialHistoryMedia(
-        sale_order_item_id=order_item.id,
+        tenant_id=FIXTURE_TENANT_ID, sale_order_item_id=order_item.id,
         status="ready",
         delivery_reference="opaque-commercial-reference",
     )
@@ -256,13 +258,13 @@ def test_photo_purge_is_prioritized_idempotent_and_preserves_media() -> None:
 
     first = enqueue_photo_purge(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         photo_asset_id=photo.id,
         reason="photo-deleted",
     )
     second = enqueue_photo_purge(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         photo_asset_id=photo.id,
         reason="photo-deleted",
     )
@@ -270,10 +272,10 @@ def test_photo_purge_is_prioritized_idempotent_and_preserves_media() -> None:
     assert first.id == second.id and first.priority == 0
 
     report = purge_photo_records(
-        db, parent_gallery_id=parent.id, photo_asset_id=photo.id
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, photo_asset_id=photo.id
     )
     repeated = purge_photo_records(
-        db, parent_gallery_id=parent.id, photo_asset_id=photo.id
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, photo_asset_id=photo.id
     )
     db.commit()
 
@@ -296,17 +298,17 @@ def test_gallery_purge_cancels_requests_notifications_and_keeps_origin(
     reference = tmp_path / f"{request.id}.reference"
     reference.write_bytes(b"encrypted-reference")
     purge = enqueue_gallery_purge(
-        db, parent_gallery_id=parent.id, reason="policy-suspended"
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, reason="policy-suspended"
     )
     db.commit()
     assert purge.priority == 0
 
-    assert facial_cleanup_proof(db, parent_gallery_id=parent.id)["clean"] is False
+    assert facial_cleanup_proof(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)["clean"] is False
     report = purge_gallery_records(
-        db, parent_gallery_id=parent.id, reference_root=tmp_path
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, reference_root=tmp_path
     )
     repeated = purge_gallery_records(
-        db, parent_gallery_id=parent.id, reference_root=tmp_path
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, reference_root=tmp_path
     )
     db.commit()
 
@@ -324,7 +326,7 @@ def test_gallery_purge_cancels_requests_notifications_and_keeps_origin(
     notification = db.get(FacialSearchNotificationOutbox, notification.id)
     assert notification.status == "cancelled"
     assert notification.payload_ciphertext == b""
-    proof = facial_cleanup_proof(db, parent_gallery_id=parent.id)
+    proof = facial_cleanup_proof(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)
     assert proof == {
         "clean": True,
         "embeddings": 0,
@@ -374,7 +376,7 @@ def test_rollout_suspend_and_revoke_invalidate_then_purge_without_commercial_los
         repository=repository,
         reference_root=tmp_path,
     )
-    assert facial_cleanup_proof(db, parent_gallery_id=parent.id)["clean"] is True
+    assert facial_cleanup_proof(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)["clean"] is True
     assert not reference.exists()
 
     revoked = revoke_rollout(
@@ -410,7 +412,7 @@ def test_legal_representation_rights_are_idempotent_and_preserve_independent_rec
     assert admin is not None and client is not None
     db.add(
         ParentGalleryRegistration(
-            parent_gallery_id=parent.id,
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
             client_id=client.id,
             status="active",
         )
@@ -431,7 +433,7 @@ def test_legal_representation_rights_are_idempotent_and_preserve_independent_rec
     request.subject_declaration = "minor"
     request.representation_reference = str(representation.id)
     search_job = FacialJob(
-        kind="search",
+        tenant_id=FIXTURE_TENANT_ID, kind="search",
         status="queued",
         idempotency_key=f"rights-search:{request.id}",
         parent_gallery_id=parent.id,
@@ -444,7 +446,7 @@ def test_legal_representation_rights_are_idempotent_and_preserve_independent_rec
     reference.write_bytes(b"encrypted-reference")
 
     assert legal_representation_rights_inventory(
-        db, representation_id=representation.id
+        db, tenant_id=FIXTURE_TENANT_ID, representation_id=representation.id
     ) == {
         "clean": False,
         "active_requests": 1,
@@ -476,7 +478,7 @@ def test_legal_representation_rights_are_idempotent_and_preserve_independent_rec
     ) == (1, 1, 1, 1, 1, 1)
     assert repeated == type(report)(0, 0, 0, 0, 0, 0)
     assert legal_representation_rights_inventory(
-        db, representation_id=representation.id
+        db, tenant_id=FIXTURE_TENANT_ID, representation_id=representation.id
     )["clean"] is True
     assert not reference.exists()
     assert db.get(FacialSearchRequest, request.id).status == "cancelled"
@@ -494,7 +496,7 @@ def test_claimed_purge_job_completes_without_cancelling_its_own_lease() -> None:
     repository = FacialJobRepository()
     purge = enqueue_photo_purge(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         photo_asset_id=photo.id,
         reason="worker-test",
         repository=repository,
@@ -516,8 +518,8 @@ def test_reconciler_removes_only_invalid_inference_records() -> None:
     photo.available = False
     db.commit()
 
-    report = reconcile_invalid_facial_records(db)
-    repeated = reconcile_invalid_facial_records(db)
+    report = reconcile_invalid_facial_records(db, tenant_id=FIXTURE_TENANT_ID)
+    repeated = reconcile_invalid_facial_records(db, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
 
     assert (report.embeddings, report.candidates) == (1, 1)

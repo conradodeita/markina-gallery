@@ -30,7 +30,7 @@ function EventCard({ initial }: { initial: NotificationSetting }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Revise o texto e as variáveis permitidas.");
-      setItem(data); setMessage("Configuração global salva.");
+      setItem(data); setMessage("Configuração da sua conta salva.");
     } catch (cause) {
       setError(true); setMessage(cause instanceof Error && cause.message !== "Failed to fetch" ? cause.message : "Não foi possível salvar. Tente novamente.");
     } finally { setBusy(false); }
@@ -72,7 +72,7 @@ export default function NotificationsPage() {
   }, [reload]);
   return <div className="admin-shell">
     <PageHeading eyebrow="Comunicação" title="Notificações" detail="Escolha os canais e personalize os avisos automáticos." />
-    <div className={styles.notice}><strong>As alterações são globais e afetam todos os clientes.</strong><p>Os textos podem aparecer na tela bloqueada. Evite dados sensíveis. Ligar um canal vale para novos eventos, sem reenviar o histórico. O push depende da ativação no dispositivo e da configuração do servidor.</p></div>
+    <div className={styles.notice}><strong>As alterações afetam os clientes da sua conta.</strong><p>Os textos podem aparecer na tela bloqueada. Evite dados sensíveis. Ligar um canal vale para novos eventos, sem reenviar o histórico. O push depende da ativação no dispositivo e da configuração do servidor.</p></div>
     {error ? <><SystemState tone="error" title="Não foi possível carregar as mensagens" detail="Tente novamente sem alterar suas configurações." /><MarkinaButton type="button" onClick={() => { setError(false); setReload((value) => value + 1); }}>Tentar novamente</MarkinaButton></> : settings ? <section className={styles.grid} aria-label="Configuração dos eventos">{settings.map((item) => <EventCard key={`${reload}-${item.event_type}`} initial={item} />)}</section> : <SystemState tone="loading" title="Carregando mensagens" detail="Consultando configurações dos canais." />}
   </div>;
 }

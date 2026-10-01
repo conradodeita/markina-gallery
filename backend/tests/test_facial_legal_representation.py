@@ -38,10 +38,10 @@ def _fixture() -> tuple[
         totp_secret="unused",
     ))
     client = Client(
-        id=uuid4(), full_name="Cliente A", phone_e164="+5511999999801"
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Cliente A", phone_e164="+5511999999801"
     )
     other_client = Client(
-        id=uuid4(), full_name="Cliente B", phone_e164="+5511999999802"
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Cliente B", phone_e164="+5511999999802"
     )
     gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento A")
     other_gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento B")
@@ -50,17 +50,17 @@ def _fixture() -> tuple[
     db.add_all(
         (
             ParentGalleryRegistration(
-                parent_gallery_id=gallery.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
                 client_id=client.id,
                 status="active",
             ),
             ParentGalleryRegistration(
-                parent_gallery_id=other_gallery.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=other_gallery.id,
                 client_id=client.id,
                 status="active",
             ),
             ParentGalleryRegistration(
-                parent_gallery_id=gallery.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
                 client_id=other_client.id,
                 status="active",
             ),

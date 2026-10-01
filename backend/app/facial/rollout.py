@@ -10,10 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record
 from app.auth import AdminUser, AuditEvent, FacialRollout, ParentGallery, now
 from app.facial.calibration import calibration_is_approved
 from app.facial.config import FacialSettings
 from app.facial.purge import enqueue_gallery_purge, invalidate_gallery_searches
+from app.tenancy import require_admin_tenant
 
 ROLLOUT_ENVIRONMENTS = frozenset(
     {"local", "development", "test", "homolog", "staging", "prod", "production"}
@@ -56,16 +58,20 @@ def read_rollout(
     *,
     environment: str,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     for_update: bool = False,
 ) -> FacialRollout | None:
     environment = _validate_environment(environment)
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialRolloutError("Galeria indisponível.")
     query = select(FacialRollout).where(
+        FacialRollout.tenant_id == tenant_id,
         FacialRollout.environment == environment,
         FacialRollout.parent_gallery_id == parent_gallery_id,
     )
     if for_update:
         query = query.with_for_update()
-    return db.scalar(query)
+    return db.scalar(query.execution_options(populate_existing=True))
 
 
 def prepare_rollout(
@@ -73,11 +79,12 @@ def prepare_rollout(
     *,
     environment: str,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     draft: FacialRolloutDraft,
 ) -> FacialRollout:
     environment = _validate_environment(environment)
     _validate_draft(draft)
-    parent = db.get(ParentGallery, parent_gallery_id)
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if parent is None or not parent.active or parent.lifecycle_status != "active":
         raise FacialRolloutError("Galeria pública indisponível para rollout facial.")
     rollout = read_rollout(
@@ -85,6 +92,7 @@ def prepare_rollout(
         environment=environment,
         parent_gallery_id=parent_gallery_id,
         for_update=True,
+        tenant_id=tenant_id,
     )
     if rollout is not None and rollout.status == "active":
         raise FacialRolloutError("Suspenda o rollout ativo antes de prepará-lo novamente.")
@@ -92,6 +100,7 @@ def prepare_rollout(
     values = draft.__dict__
     if rollout is None:
         rollout = FacialRollout(
+            tenant_id=tenant_id,
             environment=environment,
             parent_gallery_id=parent_gallery_id,
             status="prepared",
@@ -130,6 +139,7 @@ def activate_rollout(
     stage: str,
     settings: FacialSettings,
 ) -> FacialRollout:
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
     environment = _validate_environment(environment)
     stage = stage.strip().lower()
     if stage not in ACTIVE_STAGES:
@@ -141,7 +151,7 @@ def activate_rollout(
         or canonical_rollout_environment(settings.environment) != environment
     ):
         raise FacialRolloutError("O kill switch e o ambiente facial não autorizam ativação.")
-    if not calibration_is_approved(db, settings):
+    if not calibration_is_approved(db, settings, tenant_id=tenant_id):
         raise FacialRolloutError("Calibração e grupos relevantes não foram aprovados.")
     if db.get(AdminUser, actor_admin_id) is None:
         raise FacialRolloutError("Administrador aprovador indisponível.")
@@ -149,6 +159,7 @@ def activate_rollout(
         db,
         environment=environment,
         parent_gallery_id=parent_gallery_id,
+        tenant_id=tenant_id,
     )
     if rollout.status == "revoked":
         raise FacialRolloutError("Rollout revogado deve ser preparado novamente.")
@@ -186,10 +197,12 @@ def suspend_rollout(
     parent_gallery_id: UUID,
     actor_admin_id: UUID,
 ) -> FacialRollout:
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
     rollout = _required_rollout(
         db,
         environment=_validate_environment(environment),
         parent_gallery_id=parent_gallery_id,
+        tenant_id=tenant_id,
     )
     if rollout.status not in {"active", "suspended"}:
         raise FacialRolloutError("Somente rollout ativo pode ser suspenso.")
@@ -211,10 +224,12 @@ def revoke_rollout(
     parent_gallery_id: UUID,
     actor_admin_id: UUID,
 ) -> FacialRollout:
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
     rollout = _required_rollout(
         db,
         environment=_validate_environment(environment),
         parent_gallery_id=parent_gallery_id,
+        tenant_id=tenant_id,
     )
     if rollout.status != "revoked":
         instant = now()
@@ -232,13 +247,14 @@ def rollout_is_active(
     *,
     settings: FacialSettings,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     for_update: bool = False,
 ) -> bool:
     if not settings.enabled:
         return False
-    if not calibration_is_approved(db, settings):
+    if not calibration_is_approved(db, settings, tenant_id=tenant_id):
         return False
-    parent = db.get(ParentGallery, parent_gallery_id)
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if parent is None or not parent.active or parent.lifecycle_status != "active":
         return False
     rollout = read_rollout(
@@ -246,11 +262,12 @@ def rollout_is_active(
         environment=settings.environment,
         parent_gallery_id=parent_gallery_id,
         for_update=for_update,
+        tenant_id=tenant_id,
     )
     if rollout is None:
         rollout_in_another_environment = db.scalar(
             select(FacialRollout.id)
-            .where(FacialRollout.parent_gallery_id == parent_gallery_id)
+            .where(FacialRollout.tenant_id == tenant_id, FacialRollout.parent_gallery_id == parent_gallery_id)
             .limit(1)
         )
         return rollout_in_another_environment is None
@@ -282,13 +299,14 @@ def rollout_status_payload(
 
 
 def _required_rollout(
-    db: Session, *, environment: str, parent_gallery_id: UUID
+    db: Session, *, environment: str, parent_gallery_id: UUID, tenant_id: UUID
 ) -> FacialRollout:
     rollout = read_rollout(
         db,
         environment=environment,
         parent_gallery_id=parent_gallery_id,
         for_update=True,
+        tenant_id=tenant_id,
     )
     if rollout is None:
         raise FacialRolloutError("Rollout facial não encontrado.")
@@ -318,10 +336,12 @@ def _schedule_scope_shutdown(
     invalidate_gallery_searches(
         db,
         parent_gallery_id=rollout.parent_gallery_id,
+        tenant_id=rollout.tenant_id,
     )
     enqueue_gallery_purge(
         db,
         parent_gallery_id=rollout.parent_gallery_id,
+        tenant_id=rollout.tenant_id,
         reason=f"rollout-{reason}:{rollout.id}",
     )
 
@@ -346,6 +366,7 @@ def _audit(
     actor = f";actor_id:{actor_admin_id}" if actor_admin_id else ""
     db.add(
         AuditEvent(
+            tenant_id=rollout.tenant_id,
             event=f"facial.rollout_{action}",
             subject=(
                 f"rollout_id:{rollout.id};gallery_id:{rollout.parent_gallery_id};"

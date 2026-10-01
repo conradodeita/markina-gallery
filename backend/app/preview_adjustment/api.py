@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record
 from app.auth import (
     MediaDerivative,
     ParentGallery,
@@ -26,15 +27,16 @@ class ConfigurationInput(BaseModel):
     exposure_tenths: int = Field(default=0, ge=-20, le=20, strict=True)
 
 
-def register_routes(app, *, db_session, require_admin, preview_response):
+def register_routes(app, *, db_session, require_admin, preview_response, tenant_context):
     database_dependency = Depends(db_session)
 
     @app.get("/admin/preview-adjustment/galleries/{gallery_id}/configuration")
     def configuration(gallery_id: UUID, request: Request, db: Session = database_dependency):
+        tenant_id = tenant_context(db, request)
         require_admin(request)
-        if not db.get(ParentGallery, gallery_id):
+        if not owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id):
             raise HTTPException(404, "Galeria não encontrada.")
-        config = settings(db, gallery_id)
+        config = settings(db, gallery_id, tenant_id=tenant_id)
         return {
             "enabled": bool(config and config.enabled),
             "strength": config.strength if config else 50,
@@ -50,11 +52,12 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         request: Request,
         db: Session = database_dependency,
     ):
+        tenant_id = tenant_context(db, request)
         require_admin(request)
-        if not db.get(ParentGallery, gallery_id):
+        if not owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id):
             raise HTTPException(404, "Galeria não encontrada.")
-        configure(db, gallery_id, payload.enabled, payload.strength, payload.exposure_tenths)
-        audit(db, "preview_adjustment.configured", str(gallery_id))
+        configure(db, gallery_id, payload.enabled, payload.strength, payload.exposure_tenths, tenant_id=tenant_id)
+        audit(db, "preview_adjustment.configured", str(gallery_id), tenant_id=tenant_id)
         db.commit()
         return configuration(gallery_id, request, db)
 
@@ -64,9 +67,10 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         search: str = Query(default="", max_length=120),
         db: Session = database_dependency,
     ):
+        tenant_id = tenant_context(db, request)
         require_admin(request)
         rows = db.execute(
-            select(ParentGallery.id, ParentGallery.name)
+            select(ParentGallery.id, ParentGallery.name).where(ParentGallery.tenant_id == tenant_id)
             .where(
                 ParentGallery.active.is_(True),
                 ParentGallery.name.icontains(search, autoescape=True),
@@ -83,13 +87,14 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         after: UUID | None = None,
         db: Session = database_dependency,
     ):
+        tenant_id = tenant_context(db, request)
         require_admin(request)
-        if not db.get(ParentGallery, gallery_id):
+        if not owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id):
             raise HTTPException(404, "Galeria não encontrada.")
-        config = settings(db, gallery_id)
+        config = settings(db, gallery_id, tenant_id=tenant_id)
         query = (
-            select(PreviewAdjustment.status, func.count())
-            .join(PhotoAsset)
+            select(PreviewAdjustment.status, func.count()).where(PreviewAdjustment.tenant_id == tenant_id)
+            .join(PhotoAsset, PhotoAsset.id == PreviewAdjustment.photo_asset_id)
             .where(
                 PhotoAsset.parent_gallery_id == gallery_id,
                 PreviewAdjustment.generation == (config.generation if config else 1),
@@ -99,8 +104,8 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         counts = {"queued": 0, "processing": 0, "ready": 0, "failed": 0, "cancelled": 0}
         counts.update(dict(db.execute(query).all()))
         photos = (
-            select(PhotoAsset.id, PhotoAsset.filename)
-            .join(PreviewAdjustment)
+            select(PhotoAsset.id, PhotoAsset.filename).where(PhotoAsset.tenant_id == tenant_id)
+            .join(PreviewAdjustment, PreviewAdjustment.photo_asset_id == PhotoAsset.id)
             .where(
                 PhotoAsset.parent_gallery_id == gallery_id,
                 PreviewAdjustment.generation == (config.generation if config else 1),
@@ -125,15 +130,16 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         after: UUID | None = None,
         db: Session = database_dependency,
     ):
+        tenant_id = tenant_context(db, request)
         require_admin(request)
-        gallery = db.get(ParentGallery, gallery_id)
+        gallery = owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id)
         if not gallery or not gallery.active or gallery.lifecycle_status != "active":
             raise HTTPException(409, "Galeria indisponível para processamento.")
-        config = settings(db, gallery_id)
+        config = settings(db, gallery_id, tenant_id=tenant_id)
         if not config or not config.enabled:
             raise HTTPException(409, "Ative o ajuste de prévias primeiro.")
         query = (
-            select(PhotoAsset.id)
+            select(PhotoAsset.id).where(PhotoAsset.tenant_id == tenant_id)
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.parent_gallery_id == gallery_id,
@@ -146,8 +152,8 @@ def register_routes(app, *, db_session, require_admin, preview_response):
         if after:
             query = query.where(PhotoAsset.id > after)
         ids = list(db.scalars(query))
-        queued = sum(enqueue(db, photo_id, retry=True) for photo_id in ids[:100])
-        audit(db, "preview_adjustment.gallery_enqueued", str(gallery_id))
+        queued = sum(enqueue(db, photo_id, tenant_id=tenant_id, retry=True) for photo_id in ids[:100])
+        audit(db, "preview_adjustment.gallery_enqueued", str(gallery_id), tenant_id=tenant_id)
         db.commit()
         return {
             "queued": queued,
@@ -157,14 +163,15 @@ def register_routes(app, *, db_session, require_admin, preview_response):
 
     @app.get("/admin/preview-adjustment/photos/{photo_id}/{version}")
     def compare(photo_id: UUID, version: str, request: Request, db: Session = database_dependency):
+        tenant_id = tenant_context(db, request)
         require_admin(request)
-        if version not in {"before", "after"} or not db.get(PhotoAsset, photo_id):
+        if version not in {"before", "after"} or not owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id):
             raise HTTPException(404, "Prévia indisponível.")
         if version == "after":
-            path = adjusted_path(db, photo_id)
+            path = adjusted_path(db, photo_id, tenant_id=tenant_id)
         else:
             derivative = db.scalar(
-                select(MediaDerivative).where(
+                select(MediaDerivative).where(MediaDerivative.tenant_id == tenant_id).where(
                     MediaDerivative.photo_asset_id == photo_id,
                     MediaDerivative.variant == "client_preview",
                     MediaDerivative.status == "ready",

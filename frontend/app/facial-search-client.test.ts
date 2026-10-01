@@ -72,7 +72,7 @@ describe("contratos HTTP faciais", () => {
     await facialSearchApi.latest("gallery-1");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/gallery-1/facial-searches/latest",
-      { credentials: "same-origin" },
+      { credentials: "same-origin", cache: "no-store" },
     );
   });
 

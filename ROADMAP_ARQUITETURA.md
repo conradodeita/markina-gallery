@@ -17,7 +17,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 ## Princípios do produto
 
 - Experiência mobile-first, com poucos passos para o responsável selecionar e comprar fotos.
-- Painel administrativo robusto, porém direto para um único fotógrafo no MVP.
+- Painel administrativo robusto, porém direto para um único fotógrafo no MVP. Transição aprovada em 30/09/2026 na change `add-small-multi-photographer-pilot`: preparar e implementar localmente fotógrafos independentes, com clientes/telefones próprios da conta e permissão técnica separada para o dono da instalação. Substituição condicionada à fundação anterior validada, isolamento completo, preservação do legado e testes de engenharia; a instalação publicada continua de conta única até liberação autorizada. O ensaio pequeno ocorrerá assim que houver prontidão, sem ativação antecipada nem autorização implícita de deploy/canais/biometria.
 - O produto tem duas áreas — administração do fotógrafo e portal do cliente — com comportamento de CMS apenas para conteúdo estruturado de galerias, não para construção livre de websites.
 - Personalização visual controlada: cor da galeria, tipografia do nome, capa e templates suportados de organização; sem construtor de páginas ou múltiplos templates de website.
 - Pastas restritas organizadas pelo fotógrafo dentro da galeria autenticada; busca facial limitada às fotos já autorizadas à cliente.

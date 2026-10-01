@@ -332,7 +332,7 @@ describe("editor administrativo de galeria", () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
-      if (path === "/api/auth/client/challenge" && init?.method === "POST") return response({ challenge_id: "challenge-phone", message: "Código enviado." }, 202);
+      if (path === "/api/admin/clients/client-2/phone/challenge" && init?.method === "POST") return response({ challenge_id: "challenge-phone", message: "Código enviado." }, 202);
       if (path === "/api/admin/clients/client-2/phone" && init?.method === "POST") return response({ id: "client-2" });
       if (path.startsWith("/api/admin/clients")) return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
       return response({ photos: [] });
@@ -345,8 +345,8 @@ describe("editor administrativo de galeria", () => {
     fireEvent.change(within(dialog).getByLabelText("Número do WhatsApp"), { target: { value: "+55 11 97777-6666" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Enviar código" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/auth/client/challenge",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ full_name: "Beatriz Cliente", phone: "+55 11 97777-6666" }) }),
+      "/api/admin/clients/client-2/phone/challenge",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ phone_e164: "+55 11 97777-6666" }) }),
     ));
     fireEvent.change(await within(dialog).findByLabelText("Código enviado ao novo WhatsApp"), { target: { value: "123456" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Salvar cadastro" }));
@@ -601,7 +601,7 @@ describe("editor administrativo de galeria", () => {
     fireEvent.change(screen.getByLabelText("Valor unitário da foto"), { target: { value: "700000" } });
     expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("value", expect.stringMatching(/7\.000,00/));
     expect(screen.queryByLabelText("Payload do QR Code")).toBeNull();
-    expect(screen.getByAltText("QR Code PIX global")).toBeTruthy();
+    expect(screen.getByAltText("QR Code PIX da sua conta")).toBeTruthy();
     expect(screen.queryByLabelText("Chave PIX ou copia e cola")).toBeNull();
     fireEvent.change(screen.getByLabelText("Mensagem comercial"), { target: { value: "Mensagem atualizada" } });
     fireEvent.change(screen.getByLabelText("Prazo padrão de seleção (dias)"), { target: { value: "21" } });
@@ -847,7 +847,7 @@ describe("editor administrativo de galeria", () => {
     expect(await screen.findByRole("heading", { name: "Detalhes e apresentação" })).toBeTruthy();
     expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.queryByLabelText("Tipografia da marca-d’água")).toBeNull();
-    expect(screen.getByText(/marca-d’água continua global/i)).toBeTruthy();
+    expect(screen.getByText(/marca-d’água vale para as galerias da sua conta/i)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Tamanho do título"), { target: { value: "40" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(

@@ -50,8 +50,8 @@ def clean_database():
 
 def test_membership_service_is_idempotent_and_supports_shared_gallery() -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente titular", phone_e164="+5511999999501")
-        relative = Client(full_name="Cliente familiar", phone_e164="+5511999999502")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente titular", phone_e164="+5511999999501")
+        relative = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente familiar", phone_e164="+5511999999502")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem compartilhada")
         db.add_all((owner, relative, parent))
         db.flush()
@@ -84,8 +84,8 @@ def test_membership_service_is_idempotent_and_supports_shared_gallery() -> None:
 
 def test_membership_service_rejects_second_private_in_same_origin() -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Titular", phone_e164="+5511999999503")
-        other_owner = Client(full_name="Outra titular", phone_e164="+5511999999504")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular", phone_e164="+5511999999503")
+        other_owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra titular", phone_e164="+5511999999504")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem única")
         db.add_all((owner, other_owner, parent))
         db.flush()
@@ -105,8 +105,8 @@ def test_membership_service_rejects_second_private_in_same_origin() -> None:
 
 def test_membership_state_transitions_are_idempotent_and_auditable() -> None:
     with SessionLocal() as db:
-        client = Client(full_name="Cliente", phone_e164="+5511999999505")
-        other_owner = Client(full_name="Outra titular", phone_e164="+5511999999506")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511999999505")
+        other_owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra titular", phone_e164="+5511999999506")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem")
         db.add_all((client, other_owner, parent))
         db.flush()
@@ -151,9 +151,9 @@ def test_membership_state_transitions_are_idempotent_and_auditable() -> None:
 
 def test_operational_authorization_matrix_prefers_membership_over_legacy_owner() -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Titular", phone_e164="+5511999999507")
-        member = Client(full_name="Membro", phone_e164="+5511999999508")
-        outsider = Client(full_name="Terceira", phone_e164="+5511999999509")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular", phone_e164="+5511999999507")
+        member = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Membro", phone_e164="+5511999999508")
+        outsider = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Terceira", phone_e164="+5511999999509")
         legacy_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem legada")
         shared_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem compartilhada")
         db.add_all((owner, member, outsider, legacy_parent, shared_parent))
@@ -225,8 +225,8 @@ def test_operational_authorization_matrix_prefers_membership_over_legacy_owner()
 
 def test_derivation_reuses_shared_collection_and_keeps_member_state_individual() -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Titular", phone_e164="+5511999999510")
-        member = Client(full_name="Familiar", phone_e164="+5511999999511")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular", phone_e164="+5511999999510")
+        member = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Familiar", phone_e164="+5511999999511")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem", active=True)
         db.add_all((owner, member, parent))
         db.flush()
@@ -237,7 +237,7 @@ def test_derivation_reuses_shared_collection_and_keeps_member_state_individual()
             client=member,
             gallery=shared.gallery,
         )
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Lote",
             status="released",
@@ -268,7 +268,7 @@ def test_derivation_reuses_shared_collection_and_keeps_member_state_individual()
             gallery_id=administrative.gallery.id,
             photo_id=photos[0].id,
             origin="admin",
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         selected = derive_client_selection(
             db,
             parent_gallery_id=parent.id,

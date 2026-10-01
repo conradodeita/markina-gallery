@@ -45,13 +45,12 @@ from app.homolog_cleanup import (
     execute,
     inventory,
 )
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin, fixture_session
 
 
 @pytest.fixture(autouse=True)
-def ensure_postgresql_test_schema() -> None:
-    if engine.dialect.name == "postgresql":
-        Base.metadata.create_all(engine)
+def ensure_isolated_test_schema(legacy_tenant_fixture) -> None:
+    Base.metadata.create_all(engine)
 
 
 def test_inventory_requires_homolog_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,10 +93,10 @@ def test_inventory_counts_folder_settings_as_operational_without_exposing_values
         gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria sintética")
         db.add(gallery)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=gallery.id, name="Pasta sintética")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id, name="Pasta sintética")
         db.add(folder)
         db.flush()
-        settings = FolderProcessingSettings(folder_id=folder.id, preview_mode="custom",
+        settings = FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, preview_mode="custom",
                                             facial_mode="off", preview_exposure_tenths=5)
         db.add(settings)
         db.commit()
@@ -188,11 +187,11 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
             email_verified=True,
             totp_secret="TOTP-FACTOR",
         ))
-        client = Client(full_name="Cliente teste", phone_e164="+5511999999999")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente teste", phone_e164="+5511999999999")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria teste")
         db.add_all((admin, client, parent))
         db.flush()
-        admin_session = AuthSession(
+        admin_session = fixture_session(
             token_hash="admin-session",
             role=Role.ADMIN.value,
             subject_id=admin.id,
@@ -205,7 +204,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
             secret_hash="challenge-hash",
             expires_at=expires_at,
         )
-        client_session = AuthSession(
+        client_session = fixture_session(
             token_hash="client-session",
             role=Role.CLIENT.value,
             subject_id=client.id,
@@ -216,24 +215,24 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
             subject_fingerprint="b" * 64,
             secret_hash="otp-hash",
             expires_at=expires_at,
-        )
-        branding = BrandingSettings(watermark_text="PREFERÊNCIA PRESERVADA")
-        pix = GlobalPixSettings(admin_user_id=admin.id, version=3)
-        template = PaymentMessageTemplate(kind="confirmed", body="Mensagem preservada")
-        preset = ProgressivePricingPreset(code="TEST", name="Tabela preservada")
-        channel = WhatsAppChannelSettings(environment="homolog", status="ready")
-        notification = NotificationSetting(
+        tenant_id=FIXTURE_TENANT_ID)
+        branding = BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_text="PREFERÊNCIA PRESERVADA")
+        pix = GlobalPixSettings(tenant_id=FIXTURE_TENANT_ID, admin_user_id=admin.id, version=3)
+        template = PaymentMessageTemplate(tenant_id=FIXTURE_TENANT_ID, kind="confirmed", body="Mensagem preservada")
+        preset = ProgressivePricingPreset(tenant_id=FIXTURE_TENANT_ID, code="TEST", name="Tabela preservada")
+        channel = WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID, environment="homolog", status="ready")
+        notification = NotificationSetting(tenant_id=FIXTURE_TENANT_ID,
             event_type="first_access", whatsapp_body="Mensagem global",
             push_title="Aviso", push_body="Corpo do aviso",
         )
-        adjustment = PreviewAdjustmentSettings(enabled=False)
-        admin_push = PushSubscription(
+        adjustment = PreviewAdjustmentSettings(tenant_id=FIXTURE_TENANT_ID, enabled=False)
+        admin_push = PushSubscription(tenant_id=FIXTURE_TENANT_ID,
             endpoint_fingerprint="a" * 64, encrypted_subscription="admin-ciphertext",
-            role="admin", subject_id=admin.id,
+            role="admin", subject_id=admin.id, admin_subject_id=admin.id,
         )
-        client_push = PushSubscription(
+        client_push = PushSubscription(tenant_id=FIXTURE_TENANT_ID,
             endpoint_fingerprint="b" * 64, encrypted_subscription="client-ciphertext",
-            role="client", subject_id=client.id,
+            role="client", subject_id=client.id, client_subject_id=client.id,
         )
         db.add_all(
             (
@@ -252,7 +251,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
                 client_push,
             )
         )
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Pasta teste")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Pasta teste")
         derived = DerivedGallery(
             tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
@@ -261,7 +260,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         )
         db.add_all((folder, derived))
         db.flush()
-        db.add(FolderProcessingSettings(folder_id=folder.id, preview_mode="custom",
+        db.add(FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, preview_mode="custom",
                                         preview_exposure_tenths=5))
         photo = PhotoAsset(
             tenant_id=FIXTURE_TENANT_ID,
@@ -270,19 +269,19 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
             filename="test.jpg",
             storage_key="test/test.jpg",
         )
-        membership = DerivedGalleryMembership(
+        membership = DerivedGalleryMembership(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=derived.id,
             parent_gallery_id=parent.id,
             client_id=client.id,
         )
         db.add_all((photo, membership))
         db.flush()
-        selection = PhotoSelection(
+        selection = PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=derived.id,
             photo_asset_id=photo.id,
             client_id=client.id,
         )
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=derived.id,
             client_id=client.id,
             derived_gallery_id_snapshot=derived.id,
@@ -294,30 +293,30 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         )
         db.add_all((selection, order))
         db.flush()
-        item = SaleOrderItem(
+        item = SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
             sale_order_id=order.id, photo_asset_id=photo.id,
             filename_snapshot="test.jpg", unit_price_cents=1000,
         )
         db.add(item)
         db.flush()
         db.add_all((
-            CommercialHistoryMedia(
+            CommercialHistoryMedia(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_item_id=item.id, status="ready",
                 preview_storage_key="synthetic/history-preview.jpg",
             ),
-            AuditEvent(event="gallery.access", subject=str(client.id)),
+            AuditEvent(tenant_id=FIXTURE_TENANT_ID, event="gallery.access", subject=str(client.id)),
             AuditEvent(event="admin_totp.validated", subject=str(admin.id)),
-            AssetFileCleanup(paths=["synthetic/test.jpg"]),
+            AssetFileCleanup(tenant_id=FIXTURE_TENANT_ID, paths=["synthetic/test.jpg"]),
         ))
         db.add(
-            PaymentCommunication(
+            PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=order.id,
                 client_id=client.id,
                 idempotency_key="payment-test",
             )
         )
         db.add(
-            WhatsAppDelivery(
+            WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
                 kind="payment",
                 source_type="sale_order",
                 source_id=str(order.id),

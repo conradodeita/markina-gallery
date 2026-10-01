@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     AuditEvent,
     FacialJob,
@@ -19,6 +20,7 @@ from app.auth import (
     FacialSearchRequest,
     GalleryFacialPolicy,
     MediaJob,
+    ParentGallery,
     PhotoAnalysis,
     PhotoAsset,
     PhotoFaceEmbedding,
@@ -41,14 +43,17 @@ def invalidate_gallery_searches(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
 ) -> FacialPurgeReport:
     """Invalida resultados e jobs de busca antes do purge físico assíncrono."""
 
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria indisponível.")
     instant = now()
     notification_result = db.execute(
         update(FacialSearchNotificationOutbox)
         .where(
-            FacialSearchNotificationOutbox.parent_gallery_id == parent_gallery_id,
+            FacialSearchNotificationOutbox.tenant_id == tenant_id, FacialSearchNotificationOutbox.parent_gallery_id == parent_gallery_id,
             FacialSearchNotificationOutbox.status.in_(("queued", "processing")),
         )
         .values(
@@ -62,13 +67,13 @@ def invalidate_gallery_searches(
     )
     candidate_result = db.execute(
         delete(FacialSearchCandidate)
-        .where(FacialSearchCandidate.parent_gallery_id == parent_gallery_id)
+        .where(FacialSearchCandidate.tenant_id == tenant_id, FacialSearchCandidate.parent_gallery_id == parent_gallery_id)
         .execution_options(synchronize_session=False)
     )
     request_result = db.execute(
         update(FacialSearchRequest)
         .where(
-            FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+            FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.parent_gallery_id == parent_gallery_id,
             FacialSearchRequest.status.not_in(("cancelled", "expired")),
         )
         .values(
@@ -81,7 +86,7 @@ def invalidate_gallery_searches(
     job_result = db.execute(
         update(FacialJob)
         .where(
-            FacialJob.parent_gallery_id == parent_gallery_id,
+            FacialJob.tenant_id == tenant_id, FacialJob.parent_gallery_id == parent_gallery_id,
             FacialJob.kind == "search",
             FacialJob.status.in_(("queued", "processing")),
         )
@@ -103,6 +108,7 @@ def invalidate_gallery_searches(
     )
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event="facial.search_scope_invalidated",
             subject=(
                 f"gallery_id:{parent_gallery_id};candidates:{report.candidates};"
@@ -114,11 +120,13 @@ def invalidate_gallery_searches(
 
 
 def facial_cleanup_proof(
-    db: Session, *, parent_gallery_id: UUID
+    db: Session, *, parent_gallery_id: UUID, tenant_id: UUID
 ) -> dict[str, int | bool]:
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria indisponível.")
     def count(model, criterion) -> int:
         return int(
-            db.scalar(select(func.count()).select_from(model).where(criterion)) or 0
+            db.scalar(select(func.count()).select_from(model).where(model.tenant_id == tenant_id, criterion)) or 0
         )
 
     embeddings = count(
@@ -149,41 +157,42 @@ def facial_cleanup_proof(
     }
 
 
-def reconcile_invalid_facial_records(db: Session) -> FacialPurgeReport:
+def reconcile_invalid_facial_records(db: Session, *, tenant_id: UUID) -> FacialPurgeReport:
     """Remove inferências cuja finalidade/origem deixou de estar operacional."""
 
+    require_active_owner(db, tenant_id)
     valid_gallery_ids = select(GalleryFacialPolicy.parent_gallery_id).where(
-        GalleryFacialPolicy.status == "active"
+        GalleryFacialPolicy.tenant_id == tenant_id, GalleryFacialPolicy.status == "active"
     )
-    valid_photo_ids = select(PhotoAsset.id).where(PhotoAsset.available.is_(True))
+    valid_photo_ids = select(PhotoAsset.id).where(PhotoAsset.tenant_id == tenant_id, PhotoAsset.available.is_(True))
     valid_index_photo_ids = select(PhotoAsset.id).where(
-        PhotoAsset.available.is_(True) | select(PhotoAnalysis.photo_asset_id).where(
-            PhotoAnalysis.photo_asset_id == PhotoAsset.id,
+        PhotoAsset.tenant_id == tenant_id, PhotoAsset.available.is_(True) | select(PhotoAnalysis.photo_asset_id).where(
+            PhotoAnalysis.tenant_id == tenant_id, PhotoAsset.tenant_id == tenant_id, PhotoAnalysis.photo_asset_id == PhotoAsset.id,
             PhotoAnalysis.state.in_(("pending", "ready")),
             PhotoAnalysis.deleted_at.is_(None), PhotoAnalysis.expires_at > now(),
-            select(MediaJob.id).where(MediaJob.photo_asset_id == PhotoAsset.id,
+            select(MediaJob.id).where(MediaJob.tenant_id == tenant_id, PhotoAsset.tenant_id == tenant_id, MediaJob.photo_asset_id == PhotoAsset.id,
                 MediaJob.status.in_(("queued", "processing"))).correlate(PhotoAsset).exists(),
         ).exists())
     embeddings = _delete_count(
         db,
         PhotoFaceEmbedding,
         PhotoFaceEmbedding.parent_gallery_id.not_in(valid_gallery_ids),
-    )
+     tenant_id=tenant_id)
     embeddings += _delete_count(
         db,
         PhotoFaceEmbedding,
         PhotoFaceEmbedding.photo_asset_id.not_in(valid_index_photo_ids),
-    )
+     tenant_id=tenant_id)
     candidates = _delete_count(
         db,
         FacialSearchCandidate,
         FacialSearchCandidate.parent_gallery_id.not_in(valid_gallery_ids),
-    )
+     tenant_id=tenant_id)
     candidates += _delete_count(
         db,
         FacialSearchCandidate,
         FacialSearchCandidate.photo_asset_id.not_in(valid_photo_ids),
-    )
+     tenant_id=tenant_id)
     return FacialPurgeReport(embeddings, candidates, 0, 0, 0)
 
 
@@ -191,6 +200,7 @@ def enqueue_gallery_purge(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     reason: str,
     repository: FacialJobRepository | None = None,
 ) -> FacialJob:
@@ -198,6 +208,7 @@ def enqueue_gallery_purge(
     item, _created = (repository or FacialJobRepository()).enqueue(
         db,
         kind="purge",
+        tenant_id=tenant_id,
         idempotency_key=f"facial-purge:gallery:{parent_gallery_id}:{digest}",
         parent_gallery_id=parent_gallery_id,
         priority=0,
@@ -209,6 +220,7 @@ def enqueue_photo_purge(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     photo_asset_id: UUID,
     reason: str,
     repository: FacialJobRepository | None = None,
@@ -217,6 +229,7 @@ def enqueue_photo_purge(
     item, _created = (repository or FacialJobRepository()).enqueue(
         db,
         kind="purge",
+        tenant_id=tenant_id,
         idempotency_key=f"facial-purge:photo:{photo_asset_id}:{digest}",
         parent_gallery_id=parent_gallery_id,
         photo_asset_id=photo_asset_id,
@@ -228,14 +241,21 @@ def enqueue_photo_purge(
 def purge_photo_records(
     db: Session,
     *,
+    tenant_id: UUID,
     parent_gallery_id: UUID,
     photo_asset_id: UUID,
     exclude_job_id: UUID | None = None,
 ) -> FacialPurgeReport:
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
+    if not parent:
+        raise ValueError("Galeria indisponível.")
+    photo = owned_record(db, PhotoAsset, photo_asset_id, tenant_id=tenant_id)
+    if photo is not None and photo.parent_gallery_id != parent.id:
+        raise ValueError("Foto indisponível.")
     db.execute(update(FacialSearchRequest).where(
-        FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+        FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.parent_gallery_id == parent_gallery_id,
         FacialSearchRequest.reference_region_id.in_(select(PhotoFaceEmbedding.id).where(
-            PhotoFaceEmbedding.photo_asset_id == photo_asset_id,
+            PhotoFaceEmbedding.tenant_id == tenant_id, PhotoFaceEmbedding.photo_asset_id == photo_asset_id,
             PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id)),
     ).values(reference_region_id=None, status="cancelled", completed_at=now()))
     candidates = _delete_count(
@@ -243,22 +263,23 @@ def purge_photo_records(
         FacialSearchCandidate,
         FacialSearchCandidate.parent_gallery_id == parent_gallery_id,
         FacialSearchCandidate.photo_asset_id == photo_asset_id,
-    )
+     tenant_id=tenant_id)
     embeddings = _delete_count(
         db,
         PhotoFaceEmbedding,
         PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
         PhotoFaceEmbedding.photo_asset_id == photo_asset_id,
-    )
+     tenant_id=tenant_id)
     jobs = _cancel_and_detach_jobs(
         db,
         FacialJob.parent_gallery_id == parent_gallery_id,
         FacialJob.photo_asset_id == photo_asset_id,
         exclude_job_id=exclude_job_id,
-    )
+     tenant_id=tenant_id)
     db.add(
         AuditEvent(
             event="facial.photo_purged",
+            tenant_id=tenant_id,
             subject=(
                 f"gallery_id:{parent_gallery_id};photo_id:{photo_asset_id};"
                 f"embeddings:{embeddings};candidates:{candidates}"
@@ -272,13 +293,17 @@ def purge_gallery_records(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     exclude_job_id: UUID | None = None,
     reference_root: Path | None = None,
 ) -> FacialPurgeReport:
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria indisponível.")
     instant = now()
     notification_result = db.execute(
         update(FacialSearchNotificationOutbox)
         .where(
+            FacialSearchNotificationOutbox.tenant_id == tenant_id,
             FacialSearchNotificationOutbox.parent_gallery_id == parent_gallery_id,
             FacialSearchNotificationOutbox.status.in_(("queued", "processing")),
         )
@@ -295,17 +320,20 @@ def purge_gallery_records(
     candidates = _delete_count(
         db,
         FacialSearchCandidate,
+        FacialSearchCandidate.tenant_id == tenant_id,
         FacialSearchCandidate.parent_gallery_id == parent_gallery_id,
-    )
+     tenant_id=tenant_id)
     embeddings = _delete_count(
         db,
         PhotoFaceEmbedding,
+        PhotoFaceEmbedding.tenant_id == tenant_id,
         PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
-    )
+     tenant_id=tenant_id)
     requests_with_reference = list(
         db.scalars(
             select(FacialSearchRequest).where(
-                FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+                FacialSearchRequest.tenant_id == tenant_id,
+            FacialSearchRequest.parent_gallery_id == parent_gallery_id,
                 FacialSearchRequest.reference_locator_ciphertext.is_not(None),
             )
         )
@@ -314,10 +342,12 @@ def purge_gallery_records(
         os.getenv("FACIAL_REFERENCE_ROOT", "./media/facial-references")
     )
     for request in requests_with_reference:
+        require_active_owner(db, tenant_id)
         delete_reference_file(root, request.id)
     request_result = db.execute(
         update(FacialSearchRequest)
         .where(
+            FacialSearchRequest.tenant_id == tenant_id,
             FacialSearchRequest.parent_gallery_id == parent_gallery_id,
             FacialSearchRequest.status.not_in(("cancelled", "expired")),
         )
@@ -330,11 +360,13 @@ def purge_gallery_records(
     )
     requests = request_result.rowcount or 0
     db.execute(update(FacialSearchRequest).where(
-        FacialSearchRequest.parent_gallery_id == parent_gallery_id
+        FacialSearchRequest.tenant_id == tenant_id,
+            FacialSearchRequest.parent_gallery_id == parent_gallery_id
     ).values(reference_region_id=None))
     db.execute(
         update(FacialSearchRequest)
         .where(
+            FacialSearchRequest.tenant_id == tenant_id,
             FacialSearchRequest.parent_gallery_id == parent_gallery_id,
             FacialSearchRequest.reference_locator_ciphertext.is_not(None),
         )
@@ -349,12 +381,14 @@ def purge_gallery_records(
     )
     jobs = _cancel_and_detach_jobs(
         db,
+        FacialJob.tenant_id == tenant_id,
         FacialJob.parent_gallery_id == parent_gallery_id,
         exclude_job_id=exclude_job_id,
-    )
+     tenant_id=tenant_id)
     db.add(
         AuditEvent(
             event="facial.gallery_purged",
+            tenant_id=tenant_id,
             subject=(
                 f"gallery_id:{parent_gallery_id};embeddings:{embeddings};"
                 f"candidates:{candidates};requests:{requests}"
@@ -365,14 +399,15 @@ def purge_gallery_records(
 
 
 def _cancel_and_detach_jobs(
-    db: Session, *criteria, exclude_job_id: UUID | None = None
+    db: Session, *criteria, tenant_id: UUID, exclude_job_id: UUID | None = None
 ) -> int:
-    all_criteria = list(criteria)
+    require_active_owner(db, tenant_id)
+    all_criteria = [*criteria]
     if exclude_job_id is not None:
         all_criteria.append(FacialJob.id != exclude_job_id)
     result = db.execute(
         update(FacialJob)
-        .where(*all_criteria, FacialJob.status.in_(("queued", "processing")))
+        .where(FacialJob.tenant_id == tenant_id, *all_criteria, FacialJob.status.in_(("queued", "processing")))
         .values(
             status="cancelled",
             lease_token=None,
@@ -384,7 +419,7 @@ def _cancel_and_detach_jobs(
     )
     changed = result.rowcount or 0
     db.execute(update(PhotoAnalysis).where(
-        PhotoAnalysis.photo_asset_id.in_(select(FacialJob.photo_asset_id).where(*all_criteria)),
+        PhotoAnalysis.tenant_id == tenant_id, PhotoAnalysis.photo_asset_id.in_(select(FacialJob.photo_asset_id).where(*all_criteria)),
         PhotoAnalysis.state.in_(("pending", "receiving")),
     ).values(state="failed"))
     db.execute(
@@ -396,8 +431,8 @@ def _cancel_and_detach_jobs(
     return changed
 
 
-def _delete_count(db: Session, model, *criteria) -> int:
+def _delete_count(db: Session, model, *criteria, tenant_id) -> int:
     result = db.execute(
-        delete(model).where(*criteria).execution_options(synchronize_session=False)
+        delete(model).where(model.tenant_id == tenant_id, *criteria).execution_options(synchronize_session=False)
     )
     return result.rowcount or 0

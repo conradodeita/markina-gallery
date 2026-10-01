@@ -34,7 +34,7 @@ export function GlobalPixSummary({ pix }: { pix: GlobalPix }) {
     </StatusBadge>
     {pix.status === "active" ? <>
       <p><strong>{pix.receiver_name}</strong>{pix.receiver_city ? ` · ${pix.receiver_city}` : ""}</p>
-      {pix.qr_png_data_url ? <img className="gallery-pix-qr" src={pix.qr_png_data_url} alt="QR Code PIX global" /> : null}
+      {pix.qr_png_data_url ? <img className="gallery-pix-qr" src={pix.qr_png_data_url} alt="QR Code PIX da sua conta" /> : null}
       {pix.instructions ? <p>{pix.instructions}</p> : null}
       <small>Configuração compartilhada por todas as galerias · versão {pix.version}</small>
     </> : <p role="status">{pix.status === "review_required" ? "As configurações anteriores precisam ser conferidas. Defina o PIX em Configurações para receber novos pagamentos." : "Configure o PIX para habilitar novos pagamentos. Você pode continuar preparando a galeria e as seleções serão preservadas."}</p>}
@@ -109,14 +109,14 @@ export default function PixPanel() {
     try {
       const result = await requestPix("/confirm", { challenge_id: challenge.challenge_id, code });
       setPix(result); setEditing(false); setChallenge(null); setCode("");
-      setMessage(removing ? "PIX removido. Novos pagamentos estão indisponíveis; os pedidos existentes foram preservados." : "PIX global salvo. Todas as galerias usarão esta configuração nos novos pedidos.");
+      setMessage(removing ? "PIX removido. Novos pagamentos estão indisponíveis; os pedidos existentes foram preservados." : "PIX salvo. As galerias da sua conta usarão esta configuração nos novos pedidos.");
       editButton.current?.focus();
     } catch (failure) { setError((failure as Error).message); }
     finally { setBusy(false); }
   }
 
   return <section id="pix" className="admin-card global-pix-settings" aria-labelledby="global-pix-title">
-    <p className="eyebrow">Pagamentos · Padrão global</p>
+    <p className="eyebrow">Pagamentos · Sua conta</p>
     <h2 id="global-pix-title">PIX</h2>
     <p>Configure uma vez para todas as galerias. Pedidos já iniciados conservam o PIX informado na compra.</p>
     {!pix ? <SystemState tone={error ? "error" : "loading"} title={error ? "PIX indisponível" : "Carregando PIX"} detail={error || "Consultando a configuração de pagamento."} /> : <>

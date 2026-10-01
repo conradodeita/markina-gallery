@@ -1,10 +1,11 @@
+
 """Migration aditiva em banco descartável; nenhum banco de operação é acessado."""
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app.auth import ParentGallery, PhotoAsset, PhotoFaceEmbedding, PhotoFolder
@@ -38,7 +39,7 @@ def test_highres_upgrade_downgrade_upgrade(tmp_path):
                     photo_id = insert_legacy_model(db.connection(), PhotoAsset,
                                                   parent_gallery_id=parent_id, folder_id=folder_id,
                                                   filename="legacy.jpg", storage_key="synthetic/legacy.jpg")
-                    region = PhotoFaceEmbedding(
+                    region_id = insert_legacy_model(db.connection(), PhotoFaceEmbedding,
                         parent_gallery_id=parent_id,
                         photo_asset_id=photo_id,
                         face_ordinal=0,
@@ -49,11 +50,9 @@ def test_highres_upgrade_downgrade_upgrade(tmp_path):
                         payload_nonce=b"synthetic-nonce",
                         key_id="synthetic-key",
                     )
-                    db.add(region)
                     db.commit()
-                    region_id = region.id
                 else:
-                    region = db.get(PhotoFaceEmbedding, region_id)
+                    region = db.execute(text("SELECT payload_ciphertext, model_version, bbox_x, pipeline_version FROM photo_face_embedding WHERE id=:id"), {"id": region_id.hex}).one()
                     assert region.payload_ciphertext == b"synthetic-ciphertext"
                     assert region.model_version == "legacy-model"
                     assert region.bbox_x is None and region.pipeline_version == "legacy-preview-v1"

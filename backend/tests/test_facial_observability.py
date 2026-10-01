@@ -12,6 +12,7 @@ from app.auth import (
     AdminUser,
     AuthSession,
     Base,
+    Client,
     FacialJob,
     FacialSearchCandidate,
     FacialSearchRequest,
@@ -35,6 +36,7 @@ from app.facial.observability import (
     validate_observability_record,
 )
 from app.main import app
+from app.provision_installation_operator import provision_operator
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
@@ -83,7 +85,7 @@ def test_collects_worker_admission_retention_and_runtime_metrics(db: Session) ->
     gallery_id = uuid4()
     db.add(ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=gallery_id, name="Evento sintético"))
     jobs = [
-        FacialJob(
+        FacialJob(tenant_id=FIXTURE_TENANT_ID,
             kind="search",
             status="queued",
             idempotency_key="search-queued",
@@ -91,7 +93,7 @@ def test_collects_worker_admission_retention_and_runtime_metrics(db: Session) ->
             created_at=instant - timedelta(seconds=601),
             updated_at=instant - timedelta(seconds=601),
         ),
-        FacialJob(
+        FacialJob(tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             status="completed",
             idempotency_key="index-completed",
@@ -99,7 +101,7 @@ def test_collects_worker_admission_retention_and_runtime_metrics(db: Session) ->
             created_at=instant - timedelta(seconds=210),
             updated_at=instant,
         ),
-        FacialJob(
+        FacialJob(tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             status="failed",
             idempotency_key="index-failed",
@@ -107,7 +109,7 @@ def test_collects_worker_admission_retention_and_runtime_metrics(db: Session) ->
             created_at=instant - timedelta(seconds=90),
             updated_at=instant,
         ),
-        FacialJob(
+        FacialJob(tenant_id=FIXTURE_TENANT_ID,
             kind="cleanup",
             status="failed",
             idempotency_key="maintenance-failed",
@@ -116,7 +118,7 @@ def test_collects_worker_admission_retention_and_runtime_metrics(db: Session) ->
             updated_at=instant,
         ),
     ]
-    request = FacialSearchRequest(
+    request = FacialSearchRequest(tenant_id=FIXTURE_TENANT_ID,
         parent_gallery_id=gallery_id,
         client_id=uuid4(),
         policy_id=uuid4(),
@@ -137,7 +139,7 @@ def test_collects_worker_admission_retention_and_runtime_metrics(db: Session) ->
     db.add_all([*jobs, request])
     db.flush()
     db.add(
-        FacialSearchCandidate(
+        FacialSearchCandidate(tenant_id=FIXTURE_TENANT_ID,
             search_request_id=request.id,
             parent_gallery_id=gallery_id,
             client_id=request.client_id,
@@ -294,7 +296,12 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
             session.add(admin)
             session.flush()
             cookie = create_session(session, Response(), Role.ADMIN, admin.id)
-            client_cookie = create_session(session, Response(), Role.CLIENT, uuid4())
+            person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente sintética", phone_e164="+5511999997700")
+            session.add(person)
+            session.flush()
+            client_cookie = create_session(session, Response(), Role.CLIENT, person.id, tenant_id=FIXTURE_TENANT_ID)
+            provision_operator(session, admin_id=admin.id, action="grant", authorization_reference="synthetic-regression",
+                               apply=True)
             session.commit()
             admin_id = admin.id
         client.cookies.set("markina_session", cookie)

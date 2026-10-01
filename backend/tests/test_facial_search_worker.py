@@ -145,19 +145,19 @@ def _base(tmp_path: Path):
     Base.metadata.create_all(engine)
     db = Session(engine)
     parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético")
-    client = Client(id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
+    client = Client(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
     registration = ParentGalleryRegistration(
-        parent_gallery_id=parent.id, client_id=client.id, status="active"
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, status="active"
     )
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Fotos",
         status="released",
         purpose="content",
     )
     policy = GalleryFacialPolicy(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         status="active",
         legal_notice_version="notice-v1",
@@ -170,7 +170,7 @@ def _base(tmp_path: Path):
         index_generation=1,
     )
     rollout = FacialRollout(
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=parent.id,
         status="active",
         stage="canary",
@@ -198,7 +198,7 @@ def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
         available=True,
     )
     protected_derivative = MediaDerivative(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         variant="client_preview",
         status="ready",
         relative_path=f"{photo.id}/client_preview.jpg",
@@ -206,7 +206,7 @@ def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
         height=480,
     )
     derivative = MediaDerivative(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         variant="admin_preview",
         status="ready",
         relative_path=f"{photo.id}/admin_preview.jpg",
@@ -233,7 +233,7 @@ def _index_photo(
 ) -> None:
     replace_photo_index(
         db,
-        photo_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
         derivatives_root=root,
         provider=Provider([]),
         cipher=cipher,
@@ -245,7 +245,7 @@ def _index_photo(
     assert embedding is not None
     db.add(
         FacialJob(
-            kind="index",
+            tenant_id=FIXTURE_TENANT_ID, kind="index",
             status="completed",
             idempotency_key=f"index:{photo.id}:{embedding.preview_fingerprint}",
             parent_gallery_id=photo.parent_gallery_id,
@@ -304,7 +304,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
             setup.add_all(
                 (
                     GalleryFacialPolicy(
-                        id=uuid4(),
+                        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
                         parent_gallery_id=gallery.id,
                         status="active",
                         legal_notice_version="notice-v1",
@@ -317,7 +317,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                         index_generation=1,
                     ),
                     FacialRollout(
-                        environment="test",
+                        tenant_id=FIXTURE_TENANT_ID, environment="test",
                         parent_gallery_id=gallery.id,
                         status="active",
                         stage="canary",
@@ -335,7 +335,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
         for index in range(100):
             gallery = galleries[index % len(galleries)]
             client = Client(
-                id=uuid4(),
+                tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
                 full_name=f"Cliente sintética {index}",
                 phone_e164=f"+55118{index:08d}",
             )
@@ -344,7 +344,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                 (
                     client,
                     ParentGalleryRegistration(
-                        parent_gallery_id=gallery.id,
+                        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
                         client_id=client.id,
                         status="active",
                     ),
@@ -808,14 +808,14 @@ def test_read_reject_and_cancel_repeat_full_client_gallery_scope(
 
     other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Outro evento sintético")
     other_client = Client(
-        id=uuid4(), full_name="Outra cliente sintética", phone_e164="+5511888888888"
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Outra cliente sintética", phone_e164="+5511888888888"
     )
     db.add_all(
         (
             other_parent,
             other_client,
             ParentGalleryRegistration(
-                parent_gallery_id=other_parent.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=other_parent.id,
                 client_id=other_client.id,
                 status="active",
             ),
@@ -960,7 +960,7 @@ def test_cleanup_recovers_after_external_reference_delete_and_is_idempotent(
 
     repeated, _ = repository.enqueue(
         db,
-        kind="cleanup",
+        tenant_id=FIXTURE_TENANT_ID, kind="cleanup",
         idempotency_key=f"cleanup-repeat:{request.id}",
         parent_gallery_id=parent.id,
         search_request_id=request.id,
@@ -1068,7 +1068,7 @@ def test_completion_notification_is_encrypted_idempotent_and_sent_once(
     assert len(messenger.calls) == 1
     recipient, message, key = messenger.calls[0]
     assert recipient == client.phone_e164
-    assert key == notification.idempotency_key
+    assert key == f"tenant:{FIXTURE_TENANT_ID}:{notification.idempotency_key}"
     assert message.endswith(f"/public-galleries/{parent.id}")
     assert all(word not in message.lower() for word in ("score", "rosto", "identidade", "quantidade"))
     db.refresh(notification)

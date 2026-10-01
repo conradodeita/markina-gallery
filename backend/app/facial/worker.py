@@ -27,10 +27,7 @@ def process_claimed_index_job(
     settings: FacialSettings,
     derivatives_root: Path,
 ) -> FacialJob:
-    from app.tenancy import enable_domain_guard
-
-    enable_domain_guard(db)
-    job = db.get(FacialJob, claim.id)
+    job = repository._leased(db, claim)
     if (
         job is None
         or job.kind != "index"
@@ -42,16 +39,16 @@ def process_claimed_index_job(
         db,
         settings=settings,
         parent_gallery_id=job.parent_gallery_id,
-    ):
+     tenant_id=job.tenant_id):
         from app.facial.lifecycle import analysis_for
-        analysis = analysis_for(db, job.photo_asset_id, lock=True)
+        analysis = analysis_for(db, job.photo_asset_id, lock=True, tenant_id=job.tenant_id)
         if analysis:
             analysis.state = "failed"
         return repository.cancel(db, claim)
     # Mantém lease/fonte serializados durante análise; outro consumidor usa SKIP LOCKED.
     repository._leased(db, claim)
     from app.facial.lifecycle import analysis_for, source_job_key
-    analysis = analysis_for(db, job.photo_asset_id, lock=True)
+    analysis = analysis_for(db, job.photo_asset_id, lock=True, tenant_id=job.tenant_id)
     policy = db.scalar(select(GalleryFacialPolicy).where(
         GalleryFacialPolicy.parent_gallery_id == job.parent_gallery_id))
     if analysis and policy and job.idempotency_key != source_job_key(job.photo_asset_id, analysis, policy):
@@ -62,6 +59,8 @@ def process_claimed_index_job(
     indexed = replace_photo_index(
         db,
         photo_id=job.photo_asset_id,
+        tenant_id=claim.tenant_id,
+        authorize=lambda: repository._leased(db, claim),
         derivatives_root=derivatives_root,
         provider=provider,
         cipher=cipher,
@@ -86,15 +85,13 @@ def process_claimed_purge_job(
     repository: FacialJobRepository,
     reference_root: Path | None = None,
 ) -> FacialJob:
-    from app.tenancy import enable_domain_guard
-
-    enable_domain_guard(db)
-    job = db.get(FacialJob, claim.id)
+    job = repository._leased(db, claim)
     if job is None or job.kind != "purge":
         raise FacialJobError("Job facial não pode ser executado.")
     if job.photo_asset_id is not None:
         report = purge_photo_records(
             db,
+            tenant_id=job.tenant_id,
             parent_gallery_id=job.parent_gallery_id,
             photo_asset_id=job.photo_asset_id,
             exclude_job_id=job.id,
@@ -102,6 +99,7 @@ def process_claimed_purge_job(
     else:
         report = purge_gallery_records(
             db,
+            tenant_id=job.tenant_id,
             parent_gallery_id=job.parent_gallery_id,
             exclude_job_id=job.id,
             reference_root=reference_root,

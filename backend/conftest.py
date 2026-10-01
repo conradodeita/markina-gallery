@@ -16,7 +16,8 @@ def legacy_tenant_fixture(request):
         return
 
     def seed_tenant(_metadata, connection, **_kwargs):
-        if inspect(connection).has_table("tenant") and not connection.scalar(select(Tenant.id)):
+        schema = (connection.get_execution_options().get("schema_translate_map") or {}).get(None)
+        if inspect(connection).has_table("tenant", schema=schema) and not connection.scalar(select(Tenant.id)):
             connection.execute(Tenant.__table__.insert().values(
                 id=FIXTURE_TENANT_ID, status="active", created_at=now(),
             ))

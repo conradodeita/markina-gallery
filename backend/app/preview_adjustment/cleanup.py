@@ -14,24 +14,26 @@ from app.auth import (
 )
 from app.media import derivatives_root
 from app.preview_adjustment.service import result_path
+from app.tenancy import require_single_tenant
 
 
-def photo_files(photo_id: UUID):
-    directory = result_path(photo_id, str(UUID(int=0))).parent
-    if not directory.exists():
-        return []
+def photo_files(photo_id: UUID, *, tenant_id: UUID):
     files = []
-    for entry in directory.iterdir():
-        try:
-            expected = result_path(photo_id, entry.stem)
-            if entry == expected and entry.is_file() and not entry.is_symlink():
-                files.append(entry)
-        except ValueError:
+    for legacy in (False, True):
+        directory = result_path(photo_id, str(UUID(int=0)), tenant_id=tenant_id, legacy=legacy).parent
+        if not directory.exists():
             continue
+        for entry in directory.iterdir():
+            try:
+                expected = result_path(photo_id, entry.stem, tenant_id=tenant_id, legacy=legacy)
+                if entry == expected and entry.is_file() and not entry.is_symlink():
+                    files.append(entry)
+            except ValueError:
+                continue
     return files
 
 
-def inventory():
+def inventory(*, tenant_id: UUID):
     root = derivatives_root()
     files = []
     if root.exists():
@@ -42,13 +44,24 @@ def inventory():
                 photo_id = UUID(photo_directory.name)
             except ValueError:
                 continue
-            files.extend(photo_files(photo_id))
-    return files
+            files.extend(photo_files(photo_id, tenant_id=tenant_id))
+    owner_root = root / "tenants" / str(tenant_id) / "photos"
+    if owner_root.exists() and not owner_root.is_symlink():
+        for photo_directory in owner_root.iterdir():
+            if not photo_directory.is_dir() or photo_directory.is_symlink():
+                continue
+            try:
+                photo_id = UUID(photo_directory.name)
+            except ValueError:
+                continue
+            files.extend(photo_files(photo_id, tenant_id=tenant_id))
+    return list(dict.fromkeys(files))
 
 
 def cleanup(db, *, execute: bool = False, worker_stopped: bool = False):
+    tenant = require_single_tenant(db)
     configs = list(db.scalars(select(GalleryPreviewSettings).with_for_update()))
-    files = inventory()
+    files = inventory(tenant_id=tenant.id)
     report = {
         "files": len(files),
         "bytes": sum(p.stat().st_size for p in files),
@@ -61,7 +74,9 @@ def cleanup(db, *, execute: bool = False, worker_stopped: bool = False):
         if any(config.enabled for config in configs) or custom_active or not worker_stopped:
             raise ValueError("Desligue o módulo e pare o worker antes da limpeza.")
         for path in files:
+            require_single_tenant(db)
             path.unlink(missing_ok=True)
+        require_single_tenant(db)
         db.execute(delete(PreviewAdjustment))
         db.commit()
         report["deleted"] = True

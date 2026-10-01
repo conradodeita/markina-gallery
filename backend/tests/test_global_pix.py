@@ -63,7 +63,7 @@ def client():
             db.flush()
             cookie = create_session(db, Response(), Role.ADMIN, admin.id)
             db.add(
-                WhatsAppChannelSettings(
+                WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
                     environment="development",
                     status="sandbox",
                     expected_phone_e164="+5511999999999",
@@ -129,8 +129,11 @@ def test_global_pix_denies_anonymous_and_client_access(client):
     client.cookies.clear()
     assert client.get("/admin/settings/pix").status_code == 403
     with SessionLocal() as db:
-        subject = db.scalar(select(AdminUser.id))
-        cookie = create_session(db, Response(), Role.CLIENT, subject)
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente fixture", phone_e164="+5511999999631")
+        db.add(person)
+        db.flush()
+        subject = person.id
+        cookie = create_session(db, Response(), Role.CLIENT, subject, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     client.cookies.set("markina_session", cookie)
     assert client.get("/admin/settings/pix").status_code == 403
@@ -180,7 +183,7 @@ def test_wrong_password_unavailable_channel_rate_limit_and_sensitive_audit(clien
     request = {"current_password": "wrong", "configuration": None}
     assert client.post("/admin/settings/pix/challenge", json=request).status_code == 401
     request["current_password"] = "Senha-atual-2026"
-    monkeypatch.setattr("app.admin_account._admin_whatsapp_phone", lambda db: None)
+    monkeypatch.setattr("app.admin_account._admin_whatsapp_phone", lambda db, **_kwargs: None)
     assert client.post("/admin/settings/pix/challenge", json=request).status_code == 409
     for _ in range(3):
         assert client.post("/admin/settings/pix/challenge", json=request).status_code == 409
@@ -253,7 +256,7 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
 
     with SessionLocal() as db:
         admin_id = db.scalar(select(AdminUser.id))
-        owner = Client(full_name="Cliente sintética", phone_e164="+5511999990001")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente sintética", phone_e164="+5511999990001")
         parent = ParentGallery(
             tenant_id=FIXTURE_TENANT_ID,
             name="Evento",
@@ -263,9 +266,9 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         )
         db.add_all([owner, parent])
         db.flush()
-        db.add(PriceRule(parent_gallery_id=parent.id, minimum_quantity=1,
+        db.add(PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, minimum_quantity=1,
                          maximum_quantity=None, unit_price_cents=700))
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Pasta", status="released")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Pasta", status="released")
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name="Privada")
         db.add_all([folder, gallery])
         db.flush()
@@ -278,15 +281,15 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         )
         db.add(photo)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id))
-        selection = PhotoSelection(
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo.id))
+        selection = PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id, client_id=owner.id, photo_asset_id=photo.id
         )
         db.add(selection)
         db.commit()
         for status in ("unconfigured", "review_required"):
             if status == "review_required":
-                db.add(GlobalPixSettings(admin_user_id=admin_id, status=status))
+                db.add(GlobalPixSettings(tenant_id=FIXTURE_TENANT_ID, admin_user_id=admin_id, status=status))
                 db.commit()
             with pytest.raises(CheckoutError, match="seleção foi mantida"):
                 create_pending_checkout(
@@ -302,7 +305,7 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         }
         first_settings = apply_configuration(
             db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 0))
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         first_code = first_settings.copy_paste
         first = create_pending_checkout(
             db, gallery=gallery, client=owner, checkout_key="first-checkout"
@@ -313,7 +316,7 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         config["instructions"] = "Segunda instrução"
         apply_configuration(
             db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 1))
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         second = create_pending_checkout(
             db, gallery=gallery, client=owner, checkout_key="second-checkout"
         )
@@ -324,7 +327,7 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         assert first.pix_instructions_snapshot == "Primeira instrução"
         assert first.pix_configuration_snapshot["receiver_name"] == "PRIMEIRO"
         assert first.pix_configuration_snapshot["version"] == 1
-        apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(None, 2)))
+        apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(None, 2)), tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         resumed = create_pending_checkout(
             db, gallery=gallery, client=owner, checkout_key="first-checkout"
@@ -363,7 +366,7 @@ def test_stale_proposal_rolls_back_confirmation(client):
               "receiver_city": "SAO PAULO"}
     with SessionLocal() as db:
         admin_id = db.scalar(select(AdminUser.id))
-        apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 0)))
+        apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 0)), tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     response = client.post("/admin/settings/pix/confirm", json=pending)
     assert response.status_code == 409

@@ -92,7 +92,7 @@ def set_test_global_pix(copy_paste=VALID_PIX_A, instructions=None):
             db.flush()
         settings = db.scalar(select(GlobalPixSettings))
         if not settings:
-            settings = GlobalPixSettings(admin_user_id=admin.id, version=1)
+            settings = GlobalPixSettings(tenant_id=FIXTURE_TENANT_ID, admin_user_id=admin.id, version=1)
             db.add(settings)
         for key, value in normalize_configuration({"copy_paste": copy_paste, "instructions": instructions}).items():
             setattr(settings, key, value)
@@ -121,16 +121,18 @@ def authenticate_admin(client: TestClient) -> None:
 
 
 def authenticate_client(client: TestClient, phone: str) -> None:
-    challenge = client.post(
-        "/auth/client/challenge", json={"full_name": "Cliente", "phone": phone}
-    ).json()["challenge_id"]
+    # Fixture de autorização do domínio; OTP por link é coberto na suíte de auth.
+    from fastapi import Response
+
+    from app.auth import Role, create_session
+
     with SessionLocal() as db:
-        stored = db.get(AuthChallenge, UUID(challenge))
-        stored.secret_hash = token_hash("123456")
+        person = db.scalar(select(Client).where(Client.tenant_id == FIXTURE_TENANT_ID,
+                                                Client.phone_e164 == phone))
+        assert person is not None, "A fixture deve persistir a cliente antes da sessão."
+        value = create_session(db, Response(), Role.CLIENT, person.id, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
-    assert client.post(
-        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
-    ).status_code == 200
+    client.cookies.set("markina_session", value)
 
 
 def test_admin_manages_and_simulates_versioned_progressive_pricing_presets(
@@ -308,7 +310,7 @@ def test_cart_and_checkout_share_progressive_quote_and_freeze_all_terms(
     client: TestClient,
 ) -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Progressiva", phone_e164="+5511555554991")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Progressiva", phone_e164="+5511555554991")
         db.add(owner)
         db.commit()
         owner_id = owner.id
@@ -326,15 +328,15 @@ def test_cart_and_checkout_share_progressive_quote_and_freeze_all_terms(
         )
         db.add(second_photo)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery_id, photo_asset_id=second_photo.id))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=second_photo.id))
         db.add_all(
             [
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery_id,
                     photo_asset_id=first_photo_id,
                     client_id=owner_id,
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery_id,
                     photo_asset_id=second_photo.id,
                     client_id=owner_id,
@@ -461,7 +463,7 @@ def test_uploaded_app_icon_sizes_preserve_art_and_update(client: TestClient, mon
     for size in (180, 192, 512):
         response = client.get(f"/branding/app-icon?size={size}")
         assert response.status_code == 200
-        assert response.headers["cache-control"] == "no-cache"
+        assert response.headers["cache-control"] == "private, no-store"
         with Image.open(BytesIO(response.content)) as rendered:
             assert rendered.size == (size, size)
             assert rendered.getpixel((0, 0))[3] == 0
@@ -473,7 +475,7 @@ def test_uploaded_app_icon_sizes_preserve_art_and_update(client: TestClient, mon
     client.put("/admin/branding/favicon", content=changed, headers={"content-type": "image/png"})
     response = client.get("/branding/favicon")
     assert response.content == changed
-    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["cache-control"] == "private, no-store"
 
 
 def test_persistent_branding_new_client_keeps_hashes_preferences_and_missing_fallback(
@@ -495,17 +497,19 @@ def test_persistent_branding_new_client_keeps_hashes_preferences_and_missing_fal
         assert response.status_code == 200
         expected[asset] = sha256(body).hexdigest()
     with TestClient(app) as fresh_client:
+        assert fresh_client.get("/branding/logo").status_code == 404
+        authenticate_admin(fresh_client)
         for asset, hashed in expected.items():
             response = fresh_client.get(f"/branding/{asset}")
             assert response.status_code == 200
             assert sha256(response.content).hexdigest() == hashed
         assert fresh_client.get("/branding").json()["login_title"] == "Preferência preservada"
-        (root / "favicon.png").unlink()
+        (root / "tenants" / str(FIXTURE_TENANT_ID) / "branding" / f"favicon-{expected['favicon']}.png").unlink()
         assert fresh_client.get("/branding/favicon").status_code == 404
         assert fresh_client.get("/branding/logo").status_code == 200
     with SessionLocal() as db:
         settings = db.scalar(select(BrandingSettings))
-        assert settings.favicon_key == "favicon.png"
+        assert settings.favicon_key == f"tenants/{FIXTURE_TENANT_ID}/branding/favicon-{expected['favicon']}.png"
         assert settings.login_title == "Preferência preservada"
 
 
@@ -519,14 +523,14 @@ def test_global_visual_protection_requeues_existing_derivatives(client: TestClie
         gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria protegida")
         db.add(gallery)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=gallery.id, name="Lote")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id, name="Lote")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id, folder_id=folder.id, filename="foto.jpg", storage_key="lote/foto.jpg")
         db.add(photo)
         db.flush()
-        db.add(MediaJob(photo_asset_id=photo.id, status="completed"))
-        db.add(MediaDerivative(photo_asset_id=photo.id, variant="client_preview", relative_path=f"{photo.id}/client_preview.jpg", status="ready"))
+        db.add(MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, status="completed"))
+        db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="client_preview", relative_path=f"{photo.id}/client_preview.jpg", status="ready"))
         db.commit()
         photo_id = photo.id
 
@@ -575,11 +579,11 @@ def test_derivative_generation_uses_global_visual_protection(tmp_path, monkeypat
 
     monkeypatch.setattr("app.media.watermark", record_settings)
     with SessionLocal() as db:
-        db.add(BrandingSettings(watermark_text="PROTEÇÃO GLOBAL"))
+        db.add(BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_text="PROTEÇÃO GLOBAL"))
         gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria", watermark_text="VALOR LOCAL LEGADO")
         db.add(gallery)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=gallery.id, name="Lote")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id, name="Lote")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
@@ -594,6 +598,24 @@ def test_derivative_generation_uses_global_visual_protection(tmp_path, monkeypat
         generate_derivatives(db, photo)
 
     assert observed == ["PROTEÇÃO GLOBAL"]
+
+
+def register_legacy_photo(client, path, *, json):
+    """Registra pela chave HTTP válida e prepara explicitamente o corpus legado."""
+    payload = dict(json)
+    folder_id = UUID(path.split("/")[3])
+    with SessionLocal() as db:
+        folder = db.get(PhotoFolder, folder_id)
+        assert folder.tenant_id == FIXTURE_TENANT_ID
+        prefix = f"private/{folder.derived_gallery_id}" if folder.derived_gallery_id else str(folder.parent_gallery_id)
+        payload["storage_key"] = f"{prefix}/{folder_id}/{payload['filename']}"
+    response = client.post(path, json=payload)
+    if response.status_code == 201:
+        with SessionLocal() as db:
+            photo = db.get(PhotoAsset, UUID(response.json()["id"]))
+            photo.storage_key = json["storage_key"]
+            db.commit()
+    return response
 
 
 def create_folder_photo(
@@ -613,9 +635,13 @@ def create_folder_photo(
     photo_id = UUID(
         client.post(
             f"/admin/photo-folders/{folder_id}/photos",
-            json={"filename": filename, "storage_key": storage_key},
+            json={"filename": filename, "storage_key": f"{parent_id}/{folder_id}/{filename}"},
         ).json()["id"]
     )
+    # O corpus legado preserva suas keys históricas; o cadastro HTTP usa key lógica válida.
+    with SessionLocal() as db:
+        db.get(PhotoAsset, photo_id).storage_key = storage_key
+        db.commit()
     if ready:
         mark_photo_ready(photo_id)
     return folder_id, photo_id
@@ -624,7 +650,7 @@ def create_folder_photo(
 def mark_photo_ready(photo_id: UUID) -> None:
     with SessionLocal() as db:
         if not db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == photo_id)):
-            db.add(MediaJob(photo_asset_id=photo_id, status="completed", attempts=1))
+            db.add(MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="completed", attempts=1))
         if not db.scalar(
             select(MediaDerivative).where(
                 MediaDerivative.photo_asset_id == photo_id,
@@ -632,7 +658,7 @@ def mark_photo_ready(photo_id: UUID) -> None:
             )
         ):
             db.add(
-                MediaDerivative(
+                MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
                     photo_asset_id=photo_id,
                     variant="client_preview",
                     relative_path=f"{photo_id}/client_preview.jpg",
@@ -662,7 +688,7 @@ def create_gallery_for_client(client: TestClient, person: Client, *, expires=Fal
         ).gallery.id
         ensure_private_photo_reference(
             db, gallery_id=gallery_id, photo_id=photo_id, origin="admin"
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     if expires:
         with SessionLocal() as db:
@@ -696,13 +722,13 @@ def attach_legacy_admin_reference(gallery_id: UUID, photo_id: UUID) -> None:
     with SessionLocal() as db:
         ensure_private_photo_reference(
             db, gallery_id=gallery_id, photo_id=photo_id, origin="admin"
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
 
 def test_admin_cannot_create_private_gallery_from_existing_public_photo(client: TestClient):
     with SessionLocal() as db:
-        person = Client(full_name="Cliente", phone_e164="+5511999999999")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511999999999")
         db.add(person)
         db.commit()
         client_id = person.id
@@ -771,7 +797,7 @@ def test_gallery_overview_finds_client_with_canonical_registration(client: TestC
 
 def test_client_selection_uses_canonical_gallery_without_derivation(client: TestClient):
     with SessionLocal() as db:
-        person = Client(full_name="Cliente", phone_e164="+5511888888888")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511888888888")
         db.add(person)
         db.commit()
         client_id = person.id
@@ -868,11 +894,11 @@ def test_client_selection_uses_canonical_gallery_without_derivation(client: Test
         ).json()["folders"]
     }
     with SessionLocal() as db:
-        second = Client(full_name="Segunda cliente", phone_e164="+5511888888877")
+        second = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Segunda cliente", phone_e164="+5511888888877")
         db.add(second)
         db.flush()
         second_id = second.id
-        db.add(ParentGalleryRegistration(
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent_id, client_id=second_id, status="active"
         ))
         restricted_folder = db.get(PhotoFolder, UUID(restricted_id))
@@ -902,20 +928,10 @@ def test_client_selection_uses_canonical_gallery_without_derivation(client: Test
 
 def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
     with SessionLocal() as db:
-        person = Client(full_name="Cliente", phone_e164="+5511777777777")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511777777777")
         db.add(person)
         db.commit()
-    response = client.post(
-        "/auth/client/challenge", json={"full_name": "Cliente", "phone": "+5511777777777"}
-    )
-    challenge_id = UUID(response.json()["challenge_id"])
-    with SessionLocal() as db:
-        challenge = db.get(AuthChallenge, challenge_id)
-        challenge.secret_hash = token_hash("123456")
-        db.commit()
-    assert client.post(
-        "/auth/client/verify", json={"challenge_id": str(challenge_id), "code": "123456"}
-    ).status_code == 200
+    authenticate_client(client, "+5511777777777")
     assert client.get("/library").json() == {
         "journeys": [],
         "public_galleries": [],
@@ -1114,7 +1130,7 @@ def test_admin_validation_summary_is_authorized_and_has_aggregate_storage(
 
     clear_storage_usage_cache()
     with SessionLocal() as db:
-        db.add(Client(full_name="Cliente do resumo", phone_e164="+5511999999999"))
+        db.add(Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente do resumo", phone_e164="+5511999999999"))
         db.commit()
     assert client.get("/admin/validation-summary").status_code == 403
     authenticate_admin(client)
@@ -1138,7 +1154,7 @@ def test_admin_validation_summary_is_authorized_and_has_aggregate_storage(
     }]
     assert response.json()["storage"] == {
         "photo_count": 2,
-        "bytes": 39,
+        "bytes": 0,
         "available": True,
     }
     assert "phone" not in response.text
@@ -1152,8 +1168,8 @@ def test_admin_validation_summary_keeps_other_metrics_when_storage_is_unavailabl
 
     authenticate_admin(client)
     monkeypatch.setattr(
-        "app.main.measure_photo_storage",
-        lambda: PhotoStorageMeasurement(bytes=None, available=False),
+        "app.main.measure_owned_photo_storage",
+        lambda db, *, tenant_id: PhotoStorageMeasurement(bytes=None, available=False),
     )
     response = client.get("/admin/validation-summary")
     assert response.status_code == 200
@@ -1275,7 +1291,7 @@ def test_folder_release_rejects_gallery_from_another_source(client: TestClient) 
 
 def test_client_interactions_are_private_reversible_and_audited(client: TestClient):
     with SessionLocal() as db:
-        person = Client(full_name="Cliente", phone_e164="+5511666666666")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511666666666")
         db.add(person)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, person)
@@ -1328,8 +1344,8 @@ def test_client_interactions_are_private_reversible_and_audited(client: TestClie
 
 def test_expired_selection_and_foreign_client_interactions_are_denied(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
-        outsider = Client(full_name="Outro cliente", phone_e164="+5511444444444")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511555555555")
+        outsider = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outro cliente", phone_e164="+5511444444444")
         db.add_all([owner, outsider])
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner, expires=True)
@@ -1342,15 +1358,15 @@ def test_expired_selection_and_foreign_client_interactions_are_denied(client: Te
 
 def test_expired_gallery_rejects_checkout_of_existing_selection(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Expirada", phone_e164="+5511555555566")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Expirada", phone_e164="+5511555555566")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner, expires=True)
     with SessionLocal() as db:
         parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
         db.add_all([
-            PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
-            PriceRule(parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500),
+            PhotoSelection(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
+            PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500),
         ])
         db.commit()
     authenticate_client(client, owner.phone_e164)
@@ -1360,7 +1376,7 @@ def test_expired_gallery_rejects_checkout_of_existing_selection(client: TestClie
 
 def test_expired_gallery_rejects_freezing_an_open_draft(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Prazo", phone_e164="+5511555555567")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Prazo", phone_e164="+5511555555567")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
@@ -1368,12 +1384,12 @@ def test_expired_gallery_rejects_freezing_an_open_draft(client: TestClient):
         gallery = db.get(DerivedGallery, gallery_id)
         db.add_all(
             [
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery_id,
                     photo_asset_id=photo_id,
                     client_id=owner.id,
                 ),
-                PriceRule(
+                PriceRule(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=gallery.parent_gallery_id,
                     minimum_quantity=1,
                     maximum_quantity=None,
@@ -1410,7 +1426,7 @@ def test_expired_gallery_rejects_freezing_an_open_draft(client: TestClient):
 
 def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511555555555")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
@@ -1419,14 +1435,14 @@ def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
     assert initial["purchase_state"] == "nova"
     assert initial["commercial_state"] == "available"
     with SessionLocal() as db:
-        db.add(PhotoView(derived_gallery_id=gallery_id, client_id=owner.id, photo_asset_id=photo_id))
+        db.add(PhotoView(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, client_id=owner.id, photo_asset_id=photo_id))
         db.commit()
     assert client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]["purchase_state"] == "visualizada mas não comprada"
     with SessionLocal() as db:
-        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="confirmed", total_cents=100, confirmed_at=now())
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, client_id=owner.id, payment_status="confirmed", total_cents=100, confirmed_at=now())
         db.add(order)
         db.flush()
-        db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photo_id, filename_snapshot="IMG_0001.jpg", unit_price_cents=100))
+        db.add(SaleOrderItem(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id=photo_id, filename_snapshot="IMG_0001.jpg", unit_price_cents=100))
         db.commit()
     purchased = client.get(f"/gallery/{gallery_id}/review").json()["photos"][0]
     assert purchased["purchase_state"] == "já comprada"
@@ -1438,7 +1454,7 @@ def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
 
 def test_phone_change_preserves_gallery_owner_and_retires_old_phone(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511555555555")
         db.add(owner)
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
@@ -1448,15 +1464,17 @@ def test_phone_change_preserves_gallery_owner_and_retires_old_phone(client: Test
             role="client",
             subject_id=owner.id,
             expires_at=now() + timedelta(days=1),
-        )
+        tenant_id=FIXTURE_TENANT_ID, client_subject_id=owner.id)
         db.add(stale_session)
         db.commit()
         stale_session_id = stale_session.id
     authenticate_admin(client)
-    challenge = client.post("/auth/client/challenge", json={"full_name": owner.full_name, "phone": "+5511666666666"}).json()["challenge_id"]
     with SessionLocal() as db:
-        db.get(AuthChallenge, UUID(challenge)).secret_hash = token_hash("123456")
+        confirmation = AuthChallenge(tenant_id=FIXTURE_TENANT_ID, kind="client_otp", subject="+5511666666666",
+            secret_hash=token_hash("123456"), expires_at=now() + timedelta(minutes=10))
+        db.add(confirmation)
         db.commit()
+        challenge = str(confirmation.id)
     assert client.post(f"/admin/clients/{owner.id}/phone", json={"phone_e164": "+5511666666666", "challenge_id": challenge, "code": "123456"}).status_code == 200
     with SessionLocal() as db:
         assert db.get(DerivedGallery, gallery_id).client_id == owner.id
@@ -1472,20 +1490,15 @@ def test_phone_change_preserves_gallery_owner_and_retires_old_phone(client: Test
     authenticate_client(client, "+5511666666666")
     assert client.get(f"/gallery/{gallery_id}/review").status_code == 200
     client.cookies.clear()
-    old = client.post("/auth/client/challenge", json={"full_name": owner.full_name, "phone": owner.phone_e164}).json()["challenge_id"]
+    old = client.post("/auth/client/challenge", json={"full_name": owner.full_name, "phone": "+5511555555555"})
+    assert old.status_code == 401
     with SessionLocal() as db:
-        db.get(AuthChallenge, UUID(old)).secret_hash = token_hash("123456")
-        db.commit()
-    denied = client.post(
-        "/auth/client/verify", json={"challenge_id": old, "code": "123456"}
-    )
-    assert denied.status_code == 403
-    assert "link compartilhado" in denied.json()["detail"]
+        assert not db.scalar(select(ClientPhone).where(ClientPhone.phone_e164 == "+5511555555555", ClientPhone.active.is_(True)))
 
 
 def test_unlisted_source_link_registers_client_without_exposing_photos(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente", phone_e164="+5511555555555")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511555555555")
         parent = ParentGallery(
             tenant_id=FIXTURE_TENANT_ID,
             name="Evento coletivo", access_mode="collective_protected"
@@ -1494,7 +1507,7 @@ def test_unlisted_source_link_registers_client_without_exposing_photos(client: T
         db.flush()
         _, access_token = issue_gallery_capability(
             db, parent_gallery_id=parent.id, scope="public_gallery"
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     challenge = client.post(
         "/auth/client/challenge",
@@ -1507,15 +1520,15 @@ def test_unlisted_source_link_registers_client_without_exposing_photos(client: T
     with SessionLocal() as db:
         db.get(AuthChallenge, UUID(challenge)).secret_hash = token_hash("123456")
         db.commit()
-    assert client.post("/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}).json() == {"destination": "/library?access=pending"}
+    assert client.post("/auth/client/verify", json={"challenge_id": challenge, "code": "123456", "access_token": access_token}).json() == {"destination": "/library?access=pending"}
     with SessionLocal() as db:
         assert db.scalar(select(ParentGalleryRegistration).where(ParentGalleryRegistration.parent_gallery_id == parent.id, ParentGalleryRegistration.client_id == owner.id)).status == "pending"
 
 
 def test_legacy_clone_is_rejected_and_client_selection_remains_isolated(client: TestClient):
     with SessionLocal() as db:
-        mother = Client(full_name="Mãe", phone_e164="+5511555555555")
-        father = Client(full_name="Pai", phone_e164="+5511444444444")
+        mother = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Mãe", phone_e164="+5511555555555")
+        father = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Pai", phone_e164="+5511444444444")
         db.add_all([mother, father])
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, mother)
@@ -1569,8 +1582,8 @@ def test_legacy_gallery_link_redirects_only_its_client_to_canonical_collection(
     client: TestClient,
 ) -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Proprietária", phone_e164="+5511444444433")
-        other = Client(full_name="Outra cliente", phone_e164="+5511444444422")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Proprietária", phone_e164="+5511444444433")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra cliente", phone_e164="+5511444444422")
         db.add_all([owner, other])
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
@@ -1583,7 +1596,7 @@ def test_legacy_gallery_link_redirects_only_its_client_to_canonical_collection(
         if registration:
             registration.status = "active"
         else:
-            db.add(ParentGalleryRegistration(
+            db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent_id, client_id=owner.id, status="active"
             ))
         db.commit()
@@ -1607,7 +1620,7 @@ def test_confirmed_purchase_download_embeds_preview_without_server_export(
     derivative_root = tmp_path / "derivatives"
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivative_root))
     with SessionLocal() as db:
-        owner = Client(full_name="Ana & Bia", phone_e164="+5511555555188")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Ana & Bia", phone_e164="+5511555555188")
         db.add(owner)
         db.commit()
         owner_id = owner.id
@@ -1621,17 +1634,17 @@ def test_confirmed_purchase_download_embeds_preview_without_server_export(
     preview.parent.mkdir(parents=True)
     preview.write_bytes(image.getvalue())
     with SessionLocal() as db:
-        db.add(MediaDerivative(
+        db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
             photo_asset_id=photo_id, variant="admin_preview",
             relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=12, height=8,
         ))
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery_id, client_id=owner_id,
             payment_status="confirmed", total_cents=700, confirmed_at=now(),
         )
         db.add(order)
         db.flush()
-        db.add(SaleOrderItem(
+        db.add(SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
             sale_order_id=order.id, photo_asset_id=photo_id,
             filename_snapshot="FOTO_001.jpg", unit_price_cents=700,
         ))
@@ -1653,7 +1666,7 @@ def test_confirmed_purchase_download_embeds_preview_without_server_export(
 
 def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
     with SessionLocal() as db:
-        person = Client(full_name="Cliente", phone_e164="+5511333333333")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511333333333")
         db.add(person)
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, person, expires=True)
@@ -1676,12 +1689,12 @@ def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
 
 def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
     with SessionLocal() as db:
-        first_client = Client(full_name="Primeiro cliente", phone_e164="+5511333333333")
-        second_client = Client(full_name="Segundo cliente", phone_e164="+5511222222222")
+        first_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Primeiro cliente", phone_e164="+5511333333333")
+        second_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Segundo cliente", phone_e164="+5511222222222")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento", event_name="Festa")
         db.add_all([first_client, second_client, parent])
         db.flush()
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, name="Importadas", status="released", released_at=now()
         )
         db.add(folder)
@@ -1719,36 +1732,36 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
         db.flush()
         db.add_all(
             [
-                DerivedGalleryPhoto(derived_gallery_id=first_gallery.id, photo_asset_id=bought.id),
-                DerivedGalleryPhoto(derived_gallery_id=first_gallery.id, photo_asset_id=selected.id),
-                DerivedGalleryPhoto(derived_gallery_id=second_gallery.id, photo_asset_id=other.id),
-                PhotoSelection(
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=first_gallery.id, photo_asset_id=bought.id),
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=first_gallery.id, photo_asset_id=selected.id),
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=second_gallery.id, photo_asset_id=other.id),
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=first_gallery.id,
                     photo_asset_id=selected.id,
                     client_id=first_client.id,
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=second_gallery.id,
                     photo_asset_id=other.id,
                     client_id=second_client.id,
                 ),
             ]
         )
-        first_order = SaleOrder(
+        first_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=first_gallery.id,
             client_id=first_client.id,
             payment_status="confirmed",
             total_cents=1_250,
             confirmed_at=now(),
         )
-        second_order = SaleOrder(
+        second_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=second_gallery.id,
             client_id=second_client.id,
             payment_status="confirmed",
             total_cents=800,
             confirmed_at=now(),
         )
-        reported_order = SaleOrder(
+        reported_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=first_gallery.id,
             client_id=first_client.id,
             payment_status="pending",
@@ -1758,7 +1771,7 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
         db.add_all([first_order, second_order, reported_order])
         db.flush()
         db.add(
-            PaymentCommunication(
+            PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=reported_order.id,
                 client_id=first_client.id,
                 idempotency_key="statistics-reported-order",
@@ -1766,13 +1779,13 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
         )
         db.add_all(
             [
-                SaleOrderItem(
+                SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                     sale_order_id=first_order.id,
                     photo_asset_id=bought.id,
                     filename_snapshot="comprada.jpg",
                     unit_price_cents=1_250,
                 ),
-                SaleOrderItem(
+                SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                     sale_order_id=second_order.id,
                     photo_asset_id=other.id,
                     filename_snapshot="outra.jpg",
@@ -1807,12 +1820,12 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
 
 def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(client: TestClient):
     with SessionLocal() as db:
-        first_client = Client(full_name="Cliente A", phone_e164="+5511333333341")
-        second_client = Client(full_name="Cliente B", phone_e164="+5511333333342")
+        first_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente A", phone_e164="+5511333333341")
+        second_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente B", phone_e164="+5511333333342")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento compartilhado", event_name="Compartilhado")
         db.add_all([first_client, second_client, parent])
         db.flush()
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, name="Liberadas", status="released", released_at=now()
         )
         db.add(folder)
@@ -1835,7 +1848,7 @@ def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(c
         db.flush()
         db.add_all(
             [
-                DerivedGalleryMembership(
+                DerivedGalleryMembership(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     parent_gallery_id=parent.id,
                     client_id=member.id,
@@ -1844,21 +1857,21 @@ def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(c
                 for member in (first_client, second_client)
             ]
             + [
-                DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id)
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo.id)
                 for photo in photos
             ]
             + [
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     photo_asset_id=photos[0].id,
                     client_id=first_client.id,
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     photo_asset_id=photos[1].id,
                     client_id=second_client.id,
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     photo_asset_id=photos[2].id,
                     client_id=second_client.id,
@@ -1866,14 +1879,14 @@ def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(c
             ]
         )
         db.flush()
-        first_order = SaleOrder(
+        first_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=first_client.id,
             payment_status="confirmed",
             total_cents=100,
             confirmed_at=now(),
         )
-        second_order = SaleOrder(
+        second_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=second_client.id,
             payment_status="confirmed",
@@ -1881,7 +1894,7 @@ def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(c
             confirmed_at=now(),
         )
         removed_snapshot_id = uuid4()
-        removed_order = SaleOrder(
+        removed_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=second_client.id,
             payment_status="confirmed",
@@ -1892,21 +1905,21 @@ def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(c
         db.flush()
         db.add_all(
             [
-                SaleOrderItem(
+                SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                     sale_order_id=first_order.id,
                     photo_asset_id=photos[0].id,
                     photo_asset_id_snapshot=photos[0].id,
                     filename_snapshot="cliente-a.jpg",
                     unit_price_cents=100,
                 ),
-                SaleOrderItem(
+                SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                     sale_order_id=second_order.id,
                     photo_asset_id=photos[1].id,
                     photo_asset_id_snapshot=photos[1].id,
                     filename_snapshot="cliente-b.jpg",
                     unit_price_cents=200,
                 ),
-                SaleOrderItem(
+                SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                     sale_order_id=removed_order.id,
                     photo_asset_id=None,
                     photo_asset_id_snapshot=removed_snapshot_id,
@@ -2008,11 +2021,11 @@ def test_blocked_parent_gallery_rejects_new_folder_and_photo(client: TestClient)
     assert rejected_folder.json()["detail"] == "A galeria está bloqueada para novas pastas."
 
     with SessionLocal() as db:
-        folder = PhotoFolder(parent_gallery_id=parent_id, name="Rodada anterior")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, name="Rodada anterior")
         db.add(folder)
         db.commit()
         folder_id = folder.id
-    rejected_photo = client.post(
+    rejected_photo = register_legacy_photo(client,
         f"/admin/photo-folders/{folder_id}/photos",
         json={"filename": "BLOQUEADA.jpg", "storage_key": "blocked/BLOQUEADA.jpg"},
     )
@@ -2030,7 +2043,7 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
         client.post(f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Lote 1"}).json()["id"]
     )
     photo_id = UUID(
-        client.post(
+        register_legacy_photo(client,
             f"/admin/photo-folders/{folder_id}/photos",
             json={"filename": "IMG_001.jpg", "storage_key": "formatura/lote-1/IMG_001.jpg"},
         ).json()["id"]
@@ -2069,7 +2082,7 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
     with SessionLocal() as db:
         db.get(PhotoFolder, folder_id).status = "released"  # type: ignore[union-attr]
         db.commit()
-    assert client.post(
+    assert register_legacy_photo(client,
         f"/admin/photo-folders/{folder_id}/photos",
         json={"filename": "IMG_002.jpg", "storage_key": "formatura/lote-1/IMG_002.jpg"},
     ).status_code == 201
@@ -2081,7 +2094,7 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
 
 
 def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client: TestClient) -> None:
-    owner = Client(full_name="Dona da galeria", phone_e164="+5511999998888")
+    owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Dona da galeria", phone_e164="+5511999998888")
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento público")
         db.add_all([owner, parent])
@@ -2090,7 +2103,7 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
             tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, client_id=owner.id, name="Fotos da família"
         )
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada 1")
         db.add_all([private_gallery, folder])
         db.flush()
         photo = PhotoAsset(
@@ -2205,20 +2218,20 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
         ).json()["id"]
     )
     photo_id = UUID(
-        client.post(
+        register_legacy_photo(client,
             f"/admin/photo-folders/{first_folder_id}/photos",
             json={"filename": "TESTE_001.jpg", "storage_key": "synthetic/round-1/TESTE_001.jpg"},
         ).json()["id"]
     )
     preparing_photo_id = UUID(
-        client.post(
+        register_legacy_photo(client,
             f"/admin/photo-folders/{second_folder_id}/photos",
             json={"filename": "AINDA_NAO_LIBERADA.jpg", "storage_key": "synthetic/round-2/AINDA_NAO_LIBERADA.jpg"},
         ).json()["id"]
     )
     mark_photo_ready(photo_id)
     with SessionLocal() as db:
-        db.add(MediaDerivative(photo_asset_id=photo_id, variant="admin_preview", relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=1200, height=800))
+        db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, variant="admin_preview", relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=1200, height=800))
         db.commit()
     released = client.post(
         f"/admin/photo-folders/{first_folder_id}/release", json={"gallery_ids": []}
@@ -2266,7 +2279,7 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
     ]
 
     with SessionLocal() as db:
-        db.add(DerivedGalleryPhoto(derived_gallery_id=derived_gallery_id, photo_asset_id=preparing_photo_id))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=derived_gallery_id, photo_asset_id=preparing_photo_id))
         db.commit()
     assert client.put(f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(photo_id)}).status_code == 200
 
@@ -2299,7 +2312,7 @@ def test_private_gallery_serves_dedicated_cover_without_exposing_it_as_content(
     derivative_root = tmp_path / "derivatives"
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivative_root))
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente da capa", phone_e164="+5511555554123")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente da capa", phone_e164="+5511555554123")
         parent = ParentGallery(
             tenant_id=FIXTURE_TENANT_ID,
             name="Evento com capa dedicada",
@@ -2308,13 +2321,13 @@ def test_private_gallery_serves_dedicated_cover_without_exposing_it_as_content(
         )
         db.add_all([owner, parent])
         db.flush()
-        content_folder = PhotoFolder(
+        content_folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Conteúdo",
             purpose="content",
             status="released",
         )
-        cover_folder = PhotoFolder(
+        cover_folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Ativos de capa",
             purpose="cover_assets",
@@ -2349,14 +2362,14 @@ def test_private_gallery_serves_dedicated_cover_without_exposing_it_as_content(
         )
         db.add(gallery)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=content.id))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=content.id))
         for photo in (content, cover):
             relative_path = f"{photo.id}/client_preview.jpg"
             target = derivative_root / relative_path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"preview-protegida")
             db.add(
-                MediaDerivative(
+                MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
                     photo_asset_id=photo.id,
                     variant="client_preview",
                     relative_path=relative_path,
@@ -2368,7 +2381,7 @@ def test_private_gallery_serves_dedicated_cover_without_exposing_it_as_content(
         if clean_ready:
             clean_path = f"{cover.id}/admin_preview.jpg"
             (derivative_root / clean_path).write_bytes(b"capa-limpa")
-            db.add(MediaDerivative(photo_asset_id=cover.id, variant="admin_preview", relative_path=clean_path, status="ready", width=900, height=1600))
+            db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=cover.id, variant="admin_preview", relative_path=clean_path, status="ready", width=900, height=1600))
         db.commit()
         gallery_id = gallery.id
         cover_id = cover.id
@@ -2452,8 +2465,8 @@ def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestC
     with SessionLocal() as db:
         db.add_all(
             [
-                MediaJob(photo_asset_id=photo_id, status="completed"),
-                MediaDerivative(
+                MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="completed"),
+                MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
                     photo_asset_id=photo_id,
                     variant="client_preview",
                     relative_path=f"{photo_id}/client_preview.jpg",
@@ -2461,7 +2474,7 @@ def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestC
                     width=1200,
                     height=800,
                 ),
-                MediaDerivative(photo_asset_id=photo_id, variant="admin_preview", relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=1200, height=800),
+                MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, variant="admin_preview", relative_path=f"{photo_id}/admin_preview.jpg", status="ready", width=1200, height=800),
             ]
         )
         db.commit()
@@ -2511,7 +2524,7 @@ def test_photo_deletion_rejects_other_folder_and_preserves_confirmed_purchase(cl
     )
     attach_legacy_admin_reference(gallery_id, first_photo)
     with SessionLocal() as db:
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery_id,
             client_id=client_id,
             payment_status="confirmed",
@@ -2521,7 +2534,7 @@ def test_photo_deletion_rejects_other_folder_and_preserves_confirmed_purchase(cl
         db.add(order)
         db.flush()
         db.add(
-            SaleOrderItem(
+            SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=order.id,
                 photo_asset_id=first_photo,
                 filename_snapshot="primeira.jpg",
@@ -2546,7 +2559,7 @@ def test_photo_bulk_deletion_preserves_confirmed_history(client: TestClient) -> 
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento em lote"}).json()["id"])
     folder_id, first_photo = create_folder_photo(client, parent_id, storage_key="evento/lote-1.jpg", ready=True)
-    second_photo = UUID(client.post(f"/admin/photo-folders/{folder_id}/photos", json={"filename": "lote-2.jpg", "storage_key": "evento/lote-2.jpg"}).json()["id"])
+    second_photo = UUID(register_legacy_photo(client, f"/admin/photo-folders/{folder_id}/photos", json={"filename": "lote-2.jpg", "storage_key": "evento/lote-2.jpg"}).json()["id"])
     mark_photo_ready(second_photo)
     assert client.post(
         f"/admin/photo-folders/{folder_id}/release", json={"gallery_ids": []}
@@ -2557,10 +2570,10 @@ def test_photo_bulk_deletion_preserves_confirmed_history(client: TestClient) -> 
     )
     attach_legacy_admin_reference(gallery_id, second_photo)
     with SessionLocal() as db:
-        order = SaleOrder(derived_gallery_id=gallery_id, client_id=client_id, payment_status="confirmed", total_cents=1000, confirmed_at=now())
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, client_id=client_id, payment_status="confirmed", total_cents=1000, confirmed_at=now())
         db.add(order)
         db.flush()
-        db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=second_photo, filename_snapshot="lote-2.jpg", unit_price_cents=1000))
+        db.add(SaleOrderItem(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id=second_photo, filename_snapshot="lote-2.jpg", unit_price_cents=1000))
         db.commit()
     response = client.request("DELETE", f"/admin/photo-folders/{folder_id}/photos", json={"photo_ids": [str(first_photo), str(second_photo)]})
     assert response.status_code == 200
@@ -2659,7 +2672,7 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
         db.add_all(galleries.values())
         db.flush()
         db.add(
-            DerivedGalleryMembership(
+            DerivedGalleryMembership(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=galleries["Cancelado"].id,
                 parent_gallery_id=parent_id,
                 client_id=client_ids["Cancelado"],
@@ -2669,7 +2682,7 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
         )
 
         def order(label: str, payment_status: str) -> SaleOrder:
-            return SaleOrder(
+            return SaleOrder(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=galleries[label].id,
                 client_id=client_ids[label],
                 payment_status=payment_status,
@@ -2689,7 +2702,7 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
         )
         db.flush()
         db.add(
-            PaymentCommunication(
+            PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=review_order.id,
                 client_id=client_ids["Revisão"],
                 idempotency_key="commercial-precedence-review",
@@ -2730,8 +2743,8 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
     assert clients_by_name["Pago sem galeria"]["commercial_status"] == "paid"
     assert clients_by_name["Pago sem galeria"]["derived_gallery_id"] is None
     # Os agregados canônicos acrescentam consultas em lote, sem depender da quantidade de clientes.
-    assert statement_count <= 20
-    assert context_statement_count <= 4
+    assert statement_count <= 22  # Inclui duas revalidações de proprietário, constantes por requisição.
+    assert context_statement_count <= 12
 
 
 def test_admin_queues_empty_parent_gallery_deletion(client: TestClient) -> None:
@@ -2757,9 +2770,9 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     )
     # A capa só pode ser escolhida com dimensões horizontais verificadas.
     with SessionLocal() as db:
-        db.add(MediaJob(photo_asset_id=cover_photo, status="completed"))
-        db.add(MediaDerivative(photo_asset_id=cover_photo, variant="client_preview", relative_path=f"{cover_photo}/preview.jpg", status="ready", width=1200, height=800))
-        db.add(MediaDerivative(photo_asset_id=cover_photo, variant="admin_preview", relative_path=f"{cover_photo}/admin_preview.jpg", status="ready", width=1200, height=800))
+        db.add(MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=cover_photo, status="completed"))
+        db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=cover_photo, variant="client_preview", relative_path=f"{cover_photo}/preview.jpg", status="ready", width=1200, height=800))
+        db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=cover_photo, variant="admin_preview", relative_path=f"{cover_photo}/admin_preview.jpg", status="ready", width=1200, height=800))
         db.commit()
     assert client.put(f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(cover_photo)}).status_code == 200
     first_folder = client.get(f"/admin/parent-galleries/{parent_id}/folders").json()["folders"][0]["id"]
@@ -2801,7 +2814,7 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
 def test_pending_checkout_keeps_cart_editable_until_payment_is_reported(client: TestClient):
     set_test_global_pix(instructions="Confirme com o fotógrafo.")
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente PIX", phone_e164="+5511555554321")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente PIX", phone_e164="+5511555554321")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
@@ -2810,7 +2823,7 @@ def test_pending_checkout_keeps_cart_editable_until_payment_is_reported(client: 
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
         db.add_all([
-            PriceRule(parent_gallery_id=gallery.parent_gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=700),
+            PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.parent_gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=700),
         ])
         db.commit()
         order = create_pending_checkout(db, gallery=gallery, client=owner, checkout_key="checkout-test-0001")
@@ -2828,7 +2841,7 @@ def test_pending_checkout_keeps_cart_editable_until_payment_is_reported(client: 
 
 def test_checkout_reuses_and_resynchronizes_the_open_draft(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Rascunho", phone_e164="+5511555554320")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Rascunho", phone_e164="+5511555554320")
         db.add(owner)
         db.commit()
     gallery_id, first_photo_id = create_gallery_for_client(client, owner)
@@ -2846,16 +2859,16 @@ def test_checkout_reuses_and_resynchronizes_the_open_draft(client: TestClient):
         db.flush()
         ensure_private_photo_reference(
             db, gallery_id=gallery.id, photo_id=second_photo.id, origin="admin"
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         db.add_all(
             [
-                PriceRule(
+                PriceRule(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=gallery.parent_gallery_id,
                     minimum_quantity=1,
                     maximum_quantity=None,
                     unit_price_cents=700,
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     client_id=owner.id,
                     photo_asset_id=first_photo_id,
@@ -2871,7 +2884,7 @@ def test_checkout_reuses_and_resynchronizes_the_open_draft(client: TestClient):
             db, galleries=[gallery], client_id=owner.id
         )[gallery.id]["draft_order_id"] == str(first.id)
         db.add(
-            PhotoSelection(
+            PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=gallery.id,
                 client_id=owner.id,
                 photo_asset_id=second_photo.id,
@@ -2940,12 +2953,12 @@ def test_checkout_reuses_and_resynchronizes_the_open_draft(client: TestClient):
 
 def test_checkout_key_is_unique_for_the_same_client_and_gallery(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Concorrência", phone_e164="+5511555554322")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Concorrência", phone_e164="+5511555554322")
         db.add(owner)
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
-        db.add(SaleOrder(
+        db.add(SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery_id,
             client_id=owner.id,
             payment_status="pending",
@@ -2953,7 +2966,7 @@ def test_checkout_key_is_unique_for_the_same_client_and_gallery(client: TestClie
             checkout_key="same-checkout-key-0001",
         ))
         db.commit()
-        db.add(SaleOrder(
+        db.add(SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery_id,
             client_id=owner.id,
             payment_status="pending",
@@ -2967,7 +2980,7 @@ def test_checkout_key_is_unique_for_the_same_client_and_gallery(client: TestClie
 
 def test_client_cart_and_checkout_are_private(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Carrinho", phone_e164="+5511555554333")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Carrinho", phone_e164="+5511555554333")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
@@ -2986,8 +2999,8 @@ def test_client_cart_and_checkout_are_private(client: TestClient):
         db.flush()
         ensure_private_photo_reference(
             db, gallery_id=gallery_id, photo_id=second_photo.id, origin="admin"
-        )
-        db.add(PriceRule(parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500))
+        , tenant_id=FIXTURE_TENANT_ID)
+        db.add(PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500))
         db.commit()
         second_photo_id = second_photo.id
     authenticate_client(client, owner.phone_e164)
@@ -3022,15 +3035,15 @@ def test_client_cart_and_checkout_are_private(client: TestClient):
 
 def test_pending_order_is_private_and_preserves_pix_snapshot(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Pedido", phone_e164="+5511555554344")
-        other = Client(full_name="Outra Cliente", phone_e164="+5511555554355")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Pedido", phone_e164="+5511555554344")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra Cliente", phone_e164="+5511555554355")
         db.add_all([owner, other])
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
         parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
         db.add_all([
-            PriceRule(parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=1_200),
+            PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=1_200),
         ])
         db.commit()
     authenticate_client(client, owner.phone_e164)
@@ -3049,13 +3062,13 @@ def test_pending_order_is_private_and_preserves_pix_snapshot(client: TestClient)
 def test_client_reports_own_pending_payment_idempotently(client: TestClient, monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHOTOGRAPHER_PHONE_E164", "+5511555554000")
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Comunica", phone_e164="+5511555554388")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Comunica", phone_e164="+5511555554388")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
         parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
-        db.add_all([PriceRule(parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500), PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id)])
+        db.add_all([PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500), PhotoSelection(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id)])
         db.commit()
     authenticate_client(client, owner.phone_e164)
     library_before_checkout = client.get("/library").json()
@@ -3109,7 +3122,7 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
         )
         db.add(complementary_photo)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery_id, photo_asset_id=complementary_photo.id))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=complementary_photo.id))
         db.commit()
         complementary_photo_id = complementary_photo.id
         parent_id = persisted_order.parent_gallery_id_snapshot
@@ -3160,12 +3173,12 @@ def test_frozen_legacy_pending_order_remains_resumable_without_cart(
 ):
     monkeypatch.setenv("WHATSAPP_PHOTOGRAPHER_PHONE_E164", "+5511555554000")
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Legada", phone_e164="+5511555554387")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Legada", phone_e164="+5511555554387")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery_id,
             client_id=owner.id,
             payment_status="pending",
@@ -3176,7 +3189,7 @@ def test_frozen_legacy_pending_order_remains_resumable_without_cart(
         db.add(order)
         db.flush()
         db.add(
-            SaleOrderItem(
+            SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=order.id,
                 photo_asset_id=photo_id,
                 unit_price_cents=500,
@@ -3209,15 +3222,15 @@ def test_frozen_legacy_pending_order_remains_resumable_without_cart(
 
 def test_admin_confirms_payment_communication_once(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Decide", phone_e164="+5511555554399")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Decide", phone_e164="+5511555554399")
         db.add(owner)
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
-        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500, client_phone_snapshot="+5511555554001")
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500, client_phone_snapshot="+5511555554001")
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=owner.id, idempotency_key="decision-key-0001")
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=owner.id, idempotency_key="decision-key-0001")
         db.add(communication)
         db.commit()
         communication_id = communication.id
@@ -3238,15 +3251,15 @@ def test_admin_confirms_payment_communication_once(client: TestClient):
 def test_admin_lists_and_refuses_payment_communication_without_confirming_order(client: TestClient, monkeypatch):
     from app.auth import NotificationDelivery
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Recusa", phone_e164="+5511555554400")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Recusa", phone_e164="+5511555554400")
         db.add(owner)
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
-        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500)
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500)
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=owner.id, idempotency_key="refusal-key-0001")
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=owner.id, idempotency_key="refusal-key-0001")
         db.add(communication)
         db.commit()
         communication_id, order_id = communication.id, order.id
@@ -3288,8 +3301,8 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
 ):
     reference = now()
     with SessionLocal() as db:
-        ana = Client(full_name="Ana Pagamentos", phone_e164="+5511555554411")
-        bia = Client(full_name="Bia Histórica", phone_e164="+5511555554422")
+        ana = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Ana Pagamentos", phone_e164="+5511555554411")
+        bia = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Bia Histórica", phone_e164="+5511555554422")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento atual")
         db.add_all([ana, bia, parent])
         db.flush()
@@ -3301,7 +3314,7 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         )
         db.add(gallery)
         db.flush()
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Seleção atual",
             status="released",
@@ -3320,13 +3333,13 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         db.flush()
         db.add_all(
             [
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     photo_asset_id=photo.id,
                     client_id=ana.id,
                     created_at=reference - timedelta(minutes=20),
                 ),
-                PriceRule(
+                PriceRule(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=parent.id,
                     minimum_quantity=1,
                     maximum_quantity=None,
@@ -3334,14 +3347,14 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
                 ),
             ]
         )
-        reported = SaleOrder(
+        reported = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=ana.id,
             payment_status="pending",
             total_cents=1200,
             created_at=reference - timedelta(minutes=10),
         )
-        confirmed = SaleOrder(
+        confirmed = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=ana.id,
             payment_status="confirmed",
@@ -3351,7 +3364,7 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         )
         removed_parent_id = uuid4()
         removed_gallery_id = uuid4()
-        historical = SaleOrder(
+        historical = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=None,
             derived_gallery_id_snapshot=removed_gallery_id,
             derived_gallery_name_snapshot="Galeria preservada",
@@ -3363,7 +3376,7 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
             total_cents=1500,
             created_at=reference,
         )
-        editable_checkout = SaleOrder(
+        editable_checkout = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=ana.id,
             payment_status="pending",
@@ -3373,7 +3386,7 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         )
         db.add_all([reported, confirmed, historical, editable_checkout])
         db.flush()
-        communication = PaymentCommunication(
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
             sale_order_id=reported.id,
             client_id=ana.id,
             idempotency_key="dashboard-reported-0001",
@@ -3381,7 +3394,7 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         db.add(communication)
         db.flush()
         db.add(
-            PaymentNotificationOutbox(
+            PaymentNotificationOutbox(tenant_id=FIXTURE_TENANT_ID,
                 payment_communication_id=communication.id,
                 recipient_phone="+5511555554000",
                 template_kind="photographer_reported",
@@ -3442,8 +3455,8 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
     # Template e regras de preço acrescentam consultas constantes; o limite
     # continua independente da quantidade de clientes, pedidos, itens e comunicações.
     # A consulta adicional carrega todos os movimentos removidos em lote.
-    assert statement_count <= 10
-    assert context_statement_count <= 4
+    assert statement_count <= 12  # Inclui duas revalidações de proprietário, sem query por pedido.
+    assert context_statement_count <= 10
 
     second_page = client.get(
         "/admin/payment-communications",
@@ -3470,8 +3483,8 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
 def test_admin_payment_dashboard_combines_validated_filters(client: TestClient):
     reference = now()
     with SessionLocal() as db:
-        ana = Client(full_name="Ana Filtro", phone_e164="+5511555554433")
-        bia = Client(full_name="Bia Filtro", phone_e164="+5511555554444")
+        ana = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Ana Filtro", phone_e164="+5511555554433")
+        bia = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Bia Filtro", phone_e164="+5511555554444")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento filtrável")
         other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outro evento")
         db.add_all([ana, bia, parent, other_parent])
@@ -3486,14 +3499,14 @@ def test_admin_payment_dashboard_combines_validated_filters(client: TestClient):
         )
         db.add_all([ana_gallery, bia_gallery])
         db.flush()
-        ana_order = SaleOrder(
+        ana_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=ana_gallery.id,
             client_id=ana.id,
             payment_status="pending",
             total_cents=1000,
             created_at=reference,
         )
-        bia_order = SaleOrder(
+        bia_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=bia_gallery.id,
             client_id=bia.id,
             payment_status="confirmed",
@@ -3503,7 +3516,7 @@ def test_admin_payment_dashboard_combines_validated_filters(client: TestClient):
         )
         db.add_all([ana_order, bia_order])
         db.flush()
-        communication = PaymentCommunication(
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
             sale_order_id=ana_order.id,
             client_id=ana.id,
             idempotency_key="combined-filter-0001",
@@ -3511,7 +3524,7 @@ def test_admin_payment_dashboard_combines_validated_filters(client: TestClient):
         db.add(communication)
         db.flush()
         db.add(
-            PaymentNotificationOutbox(
+            PaymentNotificationOutbox(tenant_id=FIXTURE_TENANT_ID,
                 payment_communication_id=communication.id,
                 recipient_phone="+5511555554000",
                 template_kind="photographer_reported",
@@ -3573,13 +3586,13 @@ def test_admin_payment_templates_are_controlled_and_have_safe_defaults(client: T
 
 def test_payment_communication_contracts_enforce_role_and_gallery_owner(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Autorizada", phone_e164="+5511555554477")
-        other = Client(full_name="Cliente Terceira", phone_e164="+5511555554488")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Autorizada", phone_e164="+5511555554477")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Terceira", phone_e164="+5511555554488")
         db.add_all([owner, other])
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
-        order = SaleOrder(derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500)
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, client_id=owner.id, payment_status="pending", total_cents=500)
         db.add(order)
         db.commit()
         order_id = order.id
@@ -3597,7 +3610,7 @@ def test_payment_communication_contracts_enforce_role_and_gallery_owner(client: 
 
 def test_admin_pricing_requires_contiguous_tiers_and_returns_jump_warning(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Preço", phone_e164="+5511555554366")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Preço", phone_e164="+5511555554366")
         db.add(owner)
         db.commit()
     gallery_id, _ = create_gallery_for_client(client, owner)
@@ -3642,7 +3655,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     client: TestClient,
 ):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Herança", phone_e164="+5511555554367")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Herança", phone_e164="+5511555554367")
         db.add(owner)
         db.commit()
         owner_id = owner.id
@@ -3706,7 +3719,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     assert review["favorites_enabled"] is True
     assert review["comments_enabled"] is True
     with SessionLocal() as db:
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery_id, photo_asset_id=photo_id))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=photo_id))
         db.commit()
     assert client.post(
         f"/gallery/{gallery_id}/photos/{photo_id}/selection"
@@ -3786,15 +3799,15 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
 
 def test_admin_sees_pending_order_snapshots_without_confirming_it(client: TestClient):
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Conferência", phone_e164="+5511555554377")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Conferência", phone_e164="+5511555554377")
         db.add(owner)
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
         db.add_all([
-            PriceRule(parent_gallery_id=gallery.parent_gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=900),
-            PhotoSelection(derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
+            PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.parent_gallery_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=900),
+            PhotoSelection(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
         ])
         db.commit()
         create_pending_checkout(db, gallery=gallery, client=owner, checkout_key="admin-order-snapshot-0001")
@@ -3835,7 +3848,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
     assert client.put(f"/admin/parent-galleries/{parent_id}/clients/{owner_id}").status_code == 200
     folder_id, first_photo_id = create_folder_photo(client, parent_id, ready=True)
     second_photo_id = UUID(
-        client.post(
+        register_legacy_photo(client,
             f"/admin/photo-folders/{folder_id}/photos",
             json={
                 "filename": "IMG_0002.jpg",
@@ -3848,7 +3861,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
 
     with SessionLocal() as db:
         owner = db.get(Client, owner_id)
-        policy = GalleryFacialPolicy(
+        policy = GalleryFacialPolicy(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent_id,
             status="active",
             legal_notice_version="test-notice",
@@ -3861,7 +3874,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
         )
         db.add(policy)
         db.flush()
-        search = FacialSearchRequest(
+        search = FacialSearchRequest(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent_id,
             client_id=owner_id,
             policy_id=policy.id,
@@ -3881,7 +3894,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
         db.add(search)
         db.flush()
         db.add(
-            FacialSearchCandidate(
+            FacialSearchCandidate(tenant_id=FIXTURE_TENANT_ID,
                 search_request_id=search.id,
                 parent_gallery_id=parent_id,
                 client_id=owner_id,
@@ -3892,7 +3905,7 @@ def test_real_selection_routes_keep_public_and_private_counters_in_sync_through_
             )
         )
         db.add(
-            PriceRule(
+            PriceRule(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent_id,
                 minimum_quantity=1,
                 maximum_quantity=None,
@@ -3984,8 +3997,9 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
             raise WhatsAppDeliveryError("Provedor temporariamente indisponível.", transient=False)
 
     monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "1")
-    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: FailingProvider())
-    monkeypatch.setattr("app.notification_delivery.whatsapp_provider_from_environment", lambda: FailingProvider())
+    from app.whatsapp_binding import provider_for as owned_provider
+    monkeypatch.setattr("app.worker.provider_for", lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=FailingProvider()))
+    monkeypatch.setattr("app.notification_delivery.provider_for", lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=FailingProvider()))
     authenticate_admin(client)
     owner_id = UUID(
         client.post(
@@ -4028,13 +4042,13 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
     with SessionLocal() as db:
         db.add_all(
             [
-                PriceRule(
+                PriceRule(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=first_parent_id,
                     minimum_quantity=1,
                     maximum_quantity=None,
                     unit_price_cents=500,
                 ),
-                PriceRule(
+                PriceRule(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=second_parent_id,
                     minimum_quantity=1,
                     maximum_quantity=None,
@@ -4059,9 +4073,9 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
         db.flush()
         first_gallery_id, second_gallery_id = first_gallery.id, second_gallery.id
         db.add_all([
-            DerivedGalleryPhoto(derived_gallery_id=first_gallery_id, photo_asset_id=first_photo_id),
-            DerivedGalleryPhoto(derived_gallery_id=first_gallery_id, photo_asset_id=second_photo_id),
-            DerivedGalleryPhoto(derived_gallery_id=second_gallery_id, photo_asset_id=third_photo_id),
+            DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=first_gallery_id, photo_asset_id=first_photo_id),
+            DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=first_gallery_id, photo_asset_id=second_photo_id),
+            DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=second_gallery_id, photo_asset_id=third_photo_id),
         ])
         db.commit()
     client.cookies.clear()
@@ -4244,8 +4258,8 @@ def test_same_client_commercial_journey_stays_isolated_across_two_galleries_and_
 
 def test_client_cart_projection_is_batched_and_isolated_between_members() -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente do carrinho", phone_e164="+5511777777711")
-        other = Client(full_name="Outra cliente", phone_e164="+5511777777722")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente do carrinho", phone_e164="+5511777777711")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra cliente", phone_e164="+5511777777722")
         db.add_all([owner, other])
         db.flush()
         galleries: list[DerivedGallery] = []
@@ -4254,14 +4268,14 @@ def test_client_cart_projection_is_batched_and_isolated_between_members() -> Non
             db.add(parent)
             db.flush()
             db.add(
-                PriceRule(
+                PriceRule(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=parent.id,
                     minimum_quantity=1,
                     maximum_quantity=None,
                     unit_price_cents=500 + position,
                 )
             )
-            folder = PhotoFolder(
+            folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id,
                 name="Fotos",
                 status="released",
@@ -4285,12 +4299,12 @@ def test_client_cart_projection_is_batched_and_isolated_between_members() -> Non
             db.flush()
             db.add_all(
                 [
-                    PhotoSelection(
+                    PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                         derived_gallery_id=gallery.id,
                         photo_asset_id=photo.id,
                         client_id=owner.id,
                     ),
-                    PhotoSelection(
+                    PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                         derived_gallery_id=gallery.id,
                         photo_asset_id=photo.id,
                         client_id=other.id,
@@ -4314,7 +4328,7 @@ def test_client_cart_projection_is_batched_and_isolated_between_members() -> Non
         finally:
             event.remove(engine, "before_cursor_execute", count_statement)
 
-        assert statement_count <= 6
+        assert statement_count <= 8  # seis consultas em lote + duas revalidações de conta
         assert len(payload) == 5
         assert all(cart["quantity"] == 1 for cart in payload.values())
         assert {
@@ -4329,7 +4343,7 @@ def test_client_library_and_purchase_history_queries_remain_batched(
 ) -> None:
     phone = "+5511777777733"
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente", phone_e164=phone)
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164=phone)
         db.add(owner)
         db.commit()
         owner_id = owner.id
@@ -4343,7 +4357,7 @@ def test_client_library_and_purchase_history_queries_remain_batched(
             )
             db.add(parent)
             db.flush()
-            folder = PhotoFolder(
+            folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id,
                 name="Fotos",
                 status="released",
@@ -4359,7 +4373,7 @@ def test_client_library_and_purchase_history_queries_remain_batched(
                 [
                     folder,
                     gallery,
-                    ParentGalleryRegistration(
+                    ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                         parent_gallery_id=parent.id,
                         client_id=owner_id,
                         status="active",
@@ -4377,13 +4391,13 @@ def test_client_library_and_purchase_history_queries_remain_batched(
             db.add(photo)
             db.flush()
             db.add(
-                DerivedGalleryPhoto(
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     photo_asset_id=photo.id,
                     origin="client",
                 )
             )
-            order = SaleOrder(
+            order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=gallery.id,
                 derived_gallery_id_snapshot=gallery.id,
                 derived_gallery_name_snapshot=gallery.name,
@@ -4398,7 +4412,7 @@ def test_client_library_and_purchase_history_queries_remain_batched(
             db.add(order)
             db.flush()
             db.add(
-                SaleOrderItem(
+                SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                     sale_order_id=order.id,
                     photo_asset_id=photo.id,
                     photo_asset_id_snapshot=photo.id,
@@ -4409,7 +4423,7 @@ def test_client_library_and_purchase_history_queries_remain_batched(
                 )
             )
             db.add(
-                PaymentCommunication(
+                PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
                     sale_order_id=order.id,
                     client_id=owner_id,
                     idempotency_key=f"library-batched-payment-{position}",
@@ -4471,7 +4485,7 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
 ) -> None:
     """Contratos HTTP ausentes antes da implementação não dependem de fixtures implícitas."""
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Operações", phone_e164="+5511555591002")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Operações", phone_e164="+5511555591002")
         db.add(owner)
         db.commit()
         owner_id = owner.id
@@ -4486,7 +4500,7 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
     private_folder_id = UUID(created_folder.json()["id"])
     assert client.get(f"/admin/derived-galleries/{gallery_id}/folders").status_code == 200
     assert (
-        client.post(
+        register_legacy_photo(client,
             f"/admin/photo-folders/{private_folder_id}/photos",
             json={
                 "filename": "PRIVADA_0001.jpg",
@@ -4499,7 +4513,7 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
         gallery.selection_expires_at = now() - timedelta(minutes=1)
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery_id,
             client_id=owner_id,
             payment_status="confirmed",
@@ -4508,7 +4522,7 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
         )
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
             sale_order_id=order.id,
             client_id=owner_id,
             idempotency_key="operations-correction-source",
@@ -4567,8 +4581,8 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
 def test_private_media_scope_constraints_reject_cross_gallery_ownership() -> None:
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Escopo")
-        first_client = Client(full_name="Primeira", phone_e164="+5511555591011")
-        second_client = Client(full_name="Segunda", phone_e164="+5511555591012")
+        first_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Primeira", phone_e164="+5511555591011")
+        second_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Segunda", phone_e164="+5511555591012")
         db.add_all([parent, first_client, second_client])
         db.flush()
         first_gallery = DerivedGallery(
@@ -4585,18 +4599,18 @@ def test_private_media_scope_constraints_reject_cross_gallery_ownership() -> Non
         )
         db.add_all([first_gallery, second_gallery])
         db.flush()
-        public_folder = PhotoFolder(
+        public_folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Pública",
             position=0,
         )
-        first_folder = PhotoFolder(
+        first_folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             derived_gallery_id=first_gallery.id,
             name="Privada A",
             position=0,
         )
-        second_folder = PhotoFolder(
+        second_folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             derived_gallery_id=second_gallery.id,
             name="Privada B",
@@ -4628,7 +4642,7 @@ def test_financial_correction_and_reopening_constraints_are_idempotent() -> None
             email_verified=True,
             totp_secret="synthetic",
         ))
-        owner = Client(full_name="Cliente Constraints", phone_e164="+5511555591013")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Constraints", phone_e164="+5511555591013")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Constraints")
         db.add_all([admin, owner, parent])
         db.flush()
@@ -4641,7 +4655,7 @@ def test_financial_correction_and_reopening_constraints_are_idempotent() -> None
         )
         db.add(gallery)
         db.flush()
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=owner.id,
             payment_status="confirmed",
@@ -4649,7 +4663,7 @@ def test_financial_correction_and_reopening_constraints_are_idempotent() -> None
         )
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
             sale_order_id=order.id,
             client_id=owner.id,
             idempotency_key="constraints-source",
@@ -4658,7 +4672,7 @@ def test_financial_correction_and_reopening_constraints_are_idempotent() -> None
         db.add(communication)
         db.flush()
         db.add(
-            PaymentConfirmationCorrection(
+            PaymentConfirmationCorrection(tenant_id=FIXTURE_TENANT_ID,
                 payment_communication_id=communication.id,
                 sale_order_id=order.id,
                 actor_admin_id=admin.id,
@@ -4668,7 +4682,7 @@ def test_financial_correction_and_reopening_constraints_are_idempotent() -> None
             )
         )
         db.add(
-            GalleryReopeningRequest(
+            GalleryReopeningRequest(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=gallery.id,
                 requested_by_client_id=owner.id,
                 idempotency_key="constraints-reopening-a",
@@ -4677,7 +4691,7 @@ def test_financial_correction_and_reopening_constraints_are_idempotent() -> None
         db.flush()
         with pytest.raises(IntegrityError), db.begin_nested():
             db.add(
-                GalleryReopeningRequest(
+                GalleryReopeningRequest(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery.id,
                     requested_by_client_id=owner.id,
                     idempotency_key="constraints-reopening-b",
@@ -4692,7 +4706,7 @@ def test_private_upload_reuses_media_pipeline_without_entering_public_facial_sco
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente Mídia Privada", phone_e164="+5511555591014")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Mídia Privada", phone_e164="+5511555591014")
         db.add(owner)
         db.commit()
         owner_phone = owner.phone_e164
@@ -4706,7 +4720,7 @@ def test_private_upload_reuses_media_pipeline_without_entering_public_facial_sco
         ).json()["id"]
     )
     private_photo_id = UUID(
-        client.post(
+        register_legacy_photo(client,
             f"/admin/photo-folders/{private_folder_id}/photos",
             json={
                 "filename": "PRIVADA_0002.jpg",
@@ -4767,10 +4781,10 @@ def test_private_upload_reuses_media_pipeline_without_entering_public_facial_sco
         f"/gallery/{gallery_id}/photos/{private_photo_id}/selection"
     ).status_code == 201
     with SessionLocal() as db:
-        other = Client(full_name="Outra cliente", phone_e164="+5511555591015")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra cliente", phone_e164="+5511555591015")
         db.add(other)
         db.flush()
-        db.add(ParentGalleryRegistration(
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent_id, client_id=other.id, status="active"
         ))
         db.commit()
@@ -4791,7 +4805,7 @@ def test_canonical_folder_audience_filters_list_preview_and_selection(
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento com públicos", favorites_enabled=True,
                                comments_enabled=True)
         people = [
-            Client(full_name=name, phone_e164=phone)
+            Client(tenant_id=FIXTURE_TENANT_ID, full_name=name, phone_e164=phone)
             for name, phone in (
                 ("Ana", "+5511555592011"),
                 ("Bia", "+5511555592012"),
@@ -4801,14 +4815,14 @@ def test_canonical_folder_audience_filters_list_preview_and_selection(
         db.add_all([parent, *people])
         db.flush()
         for person in people:
-            db.add(ParentGalleryRegistration(
+            db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=person.id, status="active"
             ))
-            db.add(GalleryClientState(
+            db.add(GalleryClientState(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=person.id, status="active"
             ))
         folders = [
-            PhotoFolder(parent_gallery_id=parent.id, name=name, audience_scope=scope,
+            PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name=name, audience_scope=scope,
                         status=status, position=position)
             for position, (name, scope, status) in enumerate((
                 ("Comum", "all", "released"),
@@ -4826,17 +4840,17 @@ def test_canonical_folder_audience_filters_list_preview_and_selection(
         db.add_all(photos)
         db.flush()
         for person in people[:2]:
-            db.add(FolderClientGrant(
+            db.add(FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
                 folder_id=folders[1].id, parent_gallery_id=parent.id, client_id=person.id
             ))
-        db.add(FolderClientGrant(
+        db.add(FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
             folder_id=folders[2].id, parent_gallery_id=parent.id, client_id=people[0].id
         ))
         for photo in photos:
             path = derivatives / str(photo.id) / "client_preview.jpg"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"synthetic-preview")
-            db.add(MediaDerivative(
+            db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
                 photo_asset_id=photo.id, variant="client_preview",
                 relative_path=f"{photo.id}/client_preview.jpg", status="ready", width=10, height=10
             ))
@@ -4995,11 +5009,11 @@ def test_revoking_restricted_folder_clears_only_pending_selection(
 ) -> None:
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria com pasta compartilhada")
-        ana = Client(full_name="Ana", phone_e164="+5511555592051")
-        bia = Client(full_name="Bia", phone_e164="+5511555592052")
+        ana = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Ana", phone_e164="+5511555592051")
+        bia = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Bia", phone_e164="+5511555592052")
         db.add_all([parent, ana, bia])
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Retratos",
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Retratos",
                              audience_scope="selected", status="released")
         db.add(folder)
         db.flush()
@@ -5007,15 +5021,15 @@ def test_revoking_restricted_folder_clears_only_pending_selection(
                            filename="retrato.jpg", storage_key="synthetic/retrato.jpg")
         db.add(photo)
         for person in (ana, bia):
-            db.add(ParentGalleryRegistration(
+            db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=person.id, status="active"
             ))
-            db.add(GalleryClientState(
+            db.add(GalleryClientState(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=person.id, status="active"
             ))
         db.flush()
         for person in (ana, bia):
-            db.add(FolderClientGrant(
+            db.add(FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
                 folder_id=folder.id, parent_gallery_id=parent.id, client_id=person.id
             ))
         db.commit()
@@ -5051,17 +5065,17 @@ def test_canonical_admin_access_block_is_individual(client: TestClient) -> None:
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria compartilhada")
         people = [
-            Client(full_name="Ana", phone_e164="+5511555592041"),
-            Client(full_name="Bia", phone_e164="+5511555592042"),
+            Client(tenant_id=FIXTURE_TENANT_ID, full_name="Ana", phone_e164="+5511555592041"),
+            Client(tenant_id=FIXTURE_TENANT_ID, full_name="Bia", phone_e164="+5511555592042"),
         ]
         db.add_all([parent, *people])
         db.flush()
         deadline = now() + timedelta(days=7)
         for person in people:
-            db.add(ParentGalleryRegistration(
+            db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=person.id, status="active"
             ))
-            db.add(GalleryClientState(
+            db.add(GalleryClientState(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=person.id,
                 status="active", selection_expires_at=deadline,
             ))
@@ -5128,11 +5142,11 @@ def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
     assert empty_folders.status_code == 200, empty_folders.text
     assert empty_folders.json()["folders"][0]["preview_url"] is None
     with SessionLocal() as db:
-        db.add(GalleryClientState(
+        db.add(GalleryClientState(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent_id, client_id=recipients[1][0], status="active",
         ))
         db.flush()
-        db.add(FolderClientGrant(
+        db.add(FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
             folder_id=folder_id, parent_gallery_id=parent_id,
             client_id=recipients[1][0],
         ))
@@ -5149,7 +5163,7 @@ def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
     assert client.post(
         f"/admin/parent-galleries/{parent_id}/folders/{folder_id}/clients/{third_id}"
     ).status_code == 409
-    photo_response = client.post(
+    photo_response = register_legacy_photo(client,
         f"/admin/photo-folders/{folder_id}/photos",
         json={"filename": "retrato.jpg", "storage_key": "synthetic/retrato.jpg"},
     )
@@ -5201,14 +5215,14 @@ def test_canonical_first_selection_reuses_individual_state_without_derivation(
     client: TestClient,
 ) -> None:
     with SessionLocal() as db:
-        person = Client(full_name="Cliente canônica", phone_e164="+5511555592030")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente canônica", phone_e164="+5511555592030")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria canônica", selection_duration_days=14)
         db.add_all([person, parent])
         db.flush()
-        db.add(ParentGalleryRegistration(
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, client_id=person.id, status="active"
         ))
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Coleção",
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Coleção",
                              audience_scope="all", status="released")
         db.add(folder)
         db.flush()
@@ -5254,22 +5268,22 @@ def test_first_selection_starts_deadline_for_precreated_client_state(
     client: TestClient,
 ) -> None:
     with SessionLocal() as db:
-        person = Client(full_name="Cliente com pasta atribuída", phone_e164="+5511555592031")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente com pasta atribuída", phone_e164="+5511555592031")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria com prazo", selection_duration_days=14)
         db.add_all([person, parent])
         db.flush()
-        db.add(ParentGalleryRegistration(
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, client_id=person.id, status="active"
         ))
-        state = GalleryClientState(
+        state = GalleryClientState(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, client_id=person.id, status="active"
         )
         db.add(state)
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Exclusiva",
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Exclusiva",
                              audience_scope="selected", status="released")
         db.add(folder)
         db.flush()
-        db.add(FolderClientGrant(
+        db.add(FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
             folder_id=folder.id, parent_gallery_id=parent.id, client_id=person.id
         ))
         photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=folder.id,
@@ -5303,22 +5317,22 @@ def test_delete_content_folder_cleans_only_its_photos(client, tmp_path, monkeypa
     authenticate_admin(client)
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento de exclusão")
-        owner = Client(full_name="Cliente", phone_e164="+5511998765432")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511998765432")
         db.add_all([parent, owner]); db.flush()
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name="Privada")
         db.add(gallery); db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, derived_gallery_id=gallery.id if private else None,
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, derived_gallery_id=gallery.id if private else None,
                              name="Remover", status="released" if released else "preparing")
-        other = PhotoFolder(parent_gallery_id=parent.id, name="Preservar", position=2)
+        other = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Preservar", position=2)
         db.add_all([folder, other]); db.flush()
         photos = [PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, derived_gallery_id=folder.derived_gallery_id,
                              folder_id=folder.id, filename=f"{i}.jpg", storage_key=f"remove/{i}.jpg") for i in range(2)]
         survivor = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=other.id, filename="keep.jpg", storage_key="keep.jpg")
         db.add_all([*photos, survivor]); db.flush()
         for photo in photos:
-            db.add(MediaJob(photo_asset_id=photo.id, status="queued"))
-            db.add(MediaDerivative(photo_asset_id=photo.id, variant="client_preview", relative_path=f"{photo.id}/client_preview.jpg", status="ready", width=10, height=10))
-            db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id))
+            db.add(MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, status="queued"))
+            db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="client_preview", relative_path=f"{photo.id}/client_preview.jpg", status="ready", width=10, height=10))
+            db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo.id))
             source = tmp_path / "source" / photo.storage_key
             source.parent.mkdir(parents=True, exist_ok=True); source.write_bytes(b"synthetic")
             preview = tmp_path / "derivatives" / str(photo.id) / "client_preview.jpg"
@@ -5326,10 +5340,10 @@ def test_delete_content_folder_cleans_only_its_photos(client, tmp_path, monkeypa
         if not private:
             parent.cover_photo_id = photos[0].id
             if released:
-                order = SaleOrder(derived_gallery_id=gallery.id, client_id=owner.id,
+                order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, client_id=owner.id,
                                   payment_status="confirmed", total_cents=1000, confirmed_at=now())
                 db.add(order); db.flush()
-                db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photos[0].id,
+                db.add(SaleOrderItem(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id=photos[0].id,
                                     filename_snapshot=photos[0].filename, unit_price_cents=1000))
         else:
             parent.lifecycle_status = "deleted"
@@ -5365,22 +5379,22 @@ def test_folder_deletion_preserves_pending_and_reported_payments(client, monkeyp
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Bloqueio integral"}).json()["id"])
     folder_id, first = create_folder_photo(client, parent_id, storage_key="first.jpg")
-    second = UUID(client.post(f"/admin/photo-folders/{folder_id}/photos", json={"filename": "second.jpg", "storage_key": "second.jpg"}).json()["id"])
+    second = UUID(register_legacy_photo(client, f"/admin/photo-folders/{folder_id}/photos", json={"filename": "second.jpg", "storage_key": "second.jpg"}).json()["id"])
     (tmp_path / "first.jpg").write_bytes(b"preserve")
     with SessionLocal() as db:
-        owner = Client(full_name="Revisão", phone_e164="+5511987654321")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Revisão", phone_e164="+5511987654321")
         db.add(owner); db.flush()
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, client_id=owner.id, name="Privada")
         db.add(gallery); db.flush()
         # Ordenação faz a primeira compra ser preparada antes de encontrar o bloqueio.
         for index, photo_id in enumerate(sorted([first, second])):
-            order = SaleOrder(derived_gallery_id=gallery.id, client_id=owner.id,
+            order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, client_id=owner.id,
                               payment_status="pending", total_cents=1000)
             db.add(order); db.flush()
-            db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id=photo_id,
+            db.add(SaleOrderItem(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id=photo_id,
                                 filename_snapshot="synthetic.jpg", unit_price_cents=1000))
             if index == 1:
-                db.add(PaymentCommunication(sale_order_id=order.id, client_id=owner.id,
+                db.add(PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=owner.id,
                                            idempotency_key="folder-review"))
         db.commit()
     response = client.delete(f"/admin/photo-folders/{folder_id}")
@@ -5402,7 +5416,7 @@ def test_delete_empty_folder(client, status):
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Pasta vazia")
         db.add(parent); db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Vazia", status=status)
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Vazia", status=status)
         db.add(folder); db.commit(); folder_id = folder.id
     assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 204
     with SessionLocal() as db:
@@ -5414,7 +5428,7 @@ def test_folder_deletion_requires_admin_and_rejects_cover_assets(client):
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Capa")
         db.add(parent); db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
         db.add(folder); db.commit(); folder_id = folder.id
     assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 404
     client.cookies.clear()
@@ -5431,7 +5445,7 @@ def test_folder_deletion_removes_temporary_highres_analysis(client, monkeypatch,
     folder_id, photo_id = create_folder_photo(client, parent_id, storage_key="highres.jpg")
     (tmp_path / "highres.jpg").write_bytes(b"synthetic")
     with SessionLocal() as db:
-        db.add(PhotoAnalysis(photo_asset_id=photo_id, source_fingerprint="a" * 64,
+        db.add(PhotoAnalysis(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, source_fingerprint="a" * 64,
                              source_bytes=9, width=4000, height=3000,
                              expires_at=now() + timedelta(hours=1)))
         db.commit()
