@@ -31,6 +31,8 @@ O objetivo imediato do planejamento é preparar o isolamento necessário para op
 
 ## Impact
 
+Preparação de canais após publicação: completar entrega do contrato de bindings aos consumidores de WhatsApp via arquivo Compose opcional raw e não versionado. Sem criação de arquivo real/segredos, alteração do canal existente ou recursos remotos na implementação local.
+
 Backend FastAPI/SQLAlchemy/Alembic, resolvedores de identidade e autorização, rotas e workers do domínio, índices/constraints, configuração PIX/branding/notificações, caches e acesso à mídia, frontend de autenticação e capacidade, fixtures e testes PostgreSQL. A migration deve preservar o legado único e ser ensaiada em banco descartável antes de liberação autorizada.
 
 Esta proposta substitui a restrição arquitetural de fotógrafo único somente depois de revisão e aceite explícitos. Não altera código, roadmap consolidado, banco, credenciais ou homologação nesta fase. A fundação `add-tenant-ownership-foundation` está no código e seu PR #115 foi integrado; suas evidências e pendências documentais de liberação precisam ser reconciliadas antes de iniciar esta implementação.
