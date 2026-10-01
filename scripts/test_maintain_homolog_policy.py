@@ -178,11 +178,14 @@ def main() -> None:
     ):
         raise AssertionError("o trailer sem backup deve ser testado antes do trailer legado")
     require("ALLOWED_ENVIRONMENTS", "gate APP_ENV", MODULE)
-    require('TRUNCATE TABLE {tables} RESTRICT', "tabelas operacionais com FK restrita", MODULE)
+    require('order = operational_delete_order()', "ordem explícita de filhos antes dos pais", MODULE)
+    require('db.execute(delete(Base.metadata.tables[name]))', "exclusão restrita à lista operacional", MODULE)
+    require('require_single_tenant(db)', "recusa de limpeza integral multitenant", MODULE)
+    require('LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE', "serialização do proprietário", MODULE)
     require('require_known_schema(db)', "bloqueio de tabela desconhecida", MODULE)
     require('require_exclusive_media_roots(roots)', "raízes de mídia fixas", MODULE)
-    if 'TRUNCATE TABLE parent_gallery, client CASCADE' in MODULE:
-        raise AssertionError("TRUNCATE CASCADE amplo não é permitido")
+    if 'TRUNCATE TABLE' in MODULE or 'DISABLE TRIGGER' in MODULE:
+        raise AssertionError("limpeza não pode truncar tabelas mistas ou desabilitar constraints")
     for forbidden in ("docker system prune", "docker compose down", "rm -rf"):
         if forbidden in SCRIPT:
             raise AssertionError(f"operação proibida encontrada: {forbidden}")

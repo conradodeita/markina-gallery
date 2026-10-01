@@ -333,3 +333,12 @@ As únicas falhas foram regexes de homologação/confirmação literal em `test_
 Revalidação: `integration-homolog-utf8-20261001.xml`, **8 passed, 1 skipped**, 1,75 s, SQLite próprio; `integration-homolog-utf8-20261001-pg-runtime.xml`, **8 passed, 1 skipped**, 6,96 s, PostgreSQL descartável próprio em 15470. Skips complementares: limpeza PostgreSQL na execução SQLite e recusa de SQLite na execução PostgreSQL; os nove casos foram cobertos entre as duas. O executor criou/removou somente sua database UUID. Ruff dirigido aprovado. Não houve alteração em banco, conta ou serviço remoto.
 
 Nova CI completa no head corrigido é obrigatória antes de pedir aceite do pacote de publicação. Pacote pronto em `release-package.md`; tasks 8.1–8.4 continuam abertas para autorização/publicação/ensaio remoto/revisão humana. Resultado final da nova CI será vinculado no PR, sem antecipar aprovação.
+
+
+### Segunda execução CI — política de manutenção reconciliada
+
+[36927458143](https://github.com/conradodeita/markina-gallery/actions/runs/36927458143), head `cb52e0dc0423f11a4e05e5d10a071ac36a5d2588`: frontend 398 testes/build/lint, OpenSpec e gitleaks aprovados. Backend lint aprovado; suíte **1.186 passed, 20 skipped, 550 warnings**, 901,62 s; regressão adicional de inventário/exclusão PostgreSQL **1 passed**, 1,50 s. Workflow falhou depois na política estrutural de manutenção que ainda exigia `TRUNCATE TABLE`, substituído por DELETE restrito/ordenado já implementado e ensaiado na task 2.3 (evidência acima). Não declarar o workflow verde.
+
+Assertion estrutural atualizada para ordem explícita, lista operacional, conta única e lock de proprietário; continua exigindo schema conhecido/raízes fixas e passa a recusar qualquer TRUNCATE TABLE ou DISABLE TRIGGER. Sem alteração de limpeza/deploy do produto. Scripts locais de branding (12 aprovados, dois skips específicos de Docker/symlink Windows), deploy, manutenção, retomada, produção facial e rollout aprovados. Executor completo `bash scripts/test_deploy_homolog.sh` via Git Bash aprovado, log externo `pilot-policy-shell-20261001.log`; recursos e envs sintéticos dos testes, sem execução de deploy/manutenção real. Na CI Linux anterior branding teve 13 aprovados/um skip Docker.
+
+Ordem da CI ajustada somente para executar os checks curtos de branding/política antes da suíte de quinze minutos; mesmas verificações, serviços e gatilhos. YAML conferido e políticas revalidadas. Nova execução completa precisa confirmar o head corrigido; resultado será vinculado no PR antes da autorização operacional.
