@@ -2,6 +2,7 @@
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from PIL import Image
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
@@ -64,6 +65,11 @@ def _session() -> Session:
     return Session(engine)
 
 
+@pytest.fixture(autouse=True)
+def owned_derivative_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path))
+
+
 def _eligible_photo(
     db: Session,
     tmp_path: Path,
@@ -74,7 +80,7 @@ def _eligible_photo(
 ):
     parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
     folder = PhotoFolder(
-        id=folder_id,
+        tenant_id=FIXTURE_TENANT_ID, id=folder_id,
         parent_gallery_id=parent_id,
         name="Fotos",
         status="released",
@@ -89,20 +95,22 @@ def _eligible_photo(
         storage_key="event/foto.jpg",
         available=True,
     )
+    from app.media import derivatives_root, safe_derivative_path
+    prefix = tmp_path.relative_to(derivatives_root())
     protected_derivative = MediaDerivative(
-        photo_asset_id=photo_id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id,
         variant="client_preview",
         status="ready",
-        relative_path=f"{photo_id}/client_preview.jpg",
+        relative_path=(prefix / str(photo_id) / "client_preview.jpg").as_posix(),
     )
     derivative = MediaDerivative(
-        photo_asset_id=photo_id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id,
         variant="admin_preview",
         status="ready",
-        relative_path=f"{photo_id}/admin_preview.jpg",
+        relative_path=(prefix / str(photo_id) / "admin_preview.jpg").as_posix(),
     )
     policy = GalleryFacialPolicy(
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         status=status,
         legal_notice_version="notice-v1",
         legal_basis_reference="synthetic-only",
@@ -117,7 +125,7 @@ def _eligible_photo(
     if include_rollout:
         db.add(
             FacialRollout(
-                environment="test",
+                tenant_id=FIXTURE_TENANT_ID, environment="test",
                 parent_gallery_id=parent_id,
                 status="active",
                 stage="canary",
@@ -133,7 +141,7 @@ def _eligible_photo(
     if include_policy:
         db.add(policy)
     db.commit()
-    path = tmp_path / derivative.relative_path
+    path = safe_derivative_path(derivative)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"protected-preview")
     return photo, derivative, path
@@ -293,13 +301,13 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
             available=True,
         )
         protected_derivative = MediaDerivative(
-            photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
             variant="client_preview",
             status="ready",
             relative_path=f"{photo.id}/client_preview.jpg",
         )
         derivative = MediaDerivative(
-            photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
             variant="admin_preview",
             status="ready",
             relative_path=f"{photo.id}/admin_preview.jpg",
@@ -312,7 +320,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
 
     first_page = enqueue_gallery_backfill_page(
         db,
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         derivatives_root=tmp_path,
         limit=2,
         settings=settings,
@@ -320,7 +328,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
     db.commit()
     second_page = enqueue_gallery_backfill_page(
         db,
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         derivatives_root=tmp_path,
         cursor=first_page.next_cursor,
         limit=2,
@@ -334,7 +342,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
 
     repeated = enqueue_gallery_backfill_page(
         db,
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         derivatives_root=tmp_path,
         limit=500,
         settings=settings,
@@ -412,7 +420,7 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
 
     parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
     folder = PhotoFolder(
-        id=folder_id,
+        tenant_id=FIXTURE_TENANT_ID, id=folder_id,
         parent_gallery_id=parent_id,
         name="Upload",
         status="preparing",
@@ -427,7 +435,7 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
         storage_key="event/foto.jpg",
         available=False,
     )
-    media_job = MediaJob(photo_asset_id=photo_id, status="queued", attempts=0)
+    media_job = MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="queued", attempts=0)
     db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento"), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
@@ -457,7 +465,7 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
 
     parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
     folder = PhotoFolder(
-        id=folder_id,
+        tenant_id=FIXTURE_TENANT_ID, id=folder_id,
         parent_gallery_id=parent_id,
         name="Upload",
         status="preparing",
@@ -472,7 +480,7 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
         storage_key="event/foto.jpg",
         available=False,
     )
-    media_job = MediaJob(photo_asset_id=photo_id, status="queued", attempts=0)
+    media_job = MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="queued", attempts=0)
     db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento"), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
@@ -494,7 +502,7 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
 
     generate_derivatives(db, photo, media_job)
 
-    admin_path = derivatives_root / str(photo_id) / "admin_preview.jpg"
-    protected_path = derivatives_root / str(photo_id) / "client_preview.jpg"
+    admin_path = derivatives_root / f"tenants/{FIXTURE_TENANT_ID}/photos/{photo_id}/admin_preview.jpg"
+    protected_path = derivatives_root / f"tenants/{FIXTURE_TENANT_ID}/photos/{photo_id}/client_preview.jpg"
     assert observed == {"variant": "admin_preview", "path": admin_path.resolve()}
     assert admin_path.read_bytes() != protected_path.read_bytes()

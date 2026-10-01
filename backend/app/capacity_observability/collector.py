@@ -204,18 +204,26 @@ def _collect_once() -> CapacitySnapshot:
     )
 
 
-def get_capacity_snapshot() -> CapacitySnapshot:
+def get_capacity_snapshot(*, authorize: Callable[[], None] | None = None) -> CapacitySnapshot:
     """Retorna cache fresco ou inicia no máximo uma coleta neste processo."""
     global _cached, _collecting
+    if authorize is not None:
+        authorize()
     now_mono = time.monotonic()
     with _cache_lock:
         if _cached is not None and now_mono - _cached[0] < CACHE_TTL_SECONDS:
+            if authorize is not None:
+                authorize()
             return _cached[1].model_copy(update={"cached": True})
         if _collecting:
             raise CollectionBusy
         _collecting = True
     try:
+        if authorize is not None:
+            authorize()
         snapshot = _collect_once()
+        if authorize is not None:
+            authorize()
         with _cache_lock:
             _cached = (time.monotonic(), snapshot)
         return snapshot

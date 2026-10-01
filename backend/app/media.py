@@ -6,11 +6,22 @@ import os
 from math import cos, hypot, radians, sin
 from pathlib import Path
 
+from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import BrandingSettings, MediaDerivative, MediaJob, PhotoAsset, PhotoFolder, now
+from app.acervo_context import owned_record
+from app.auth import (
+    BrandingSettings,
+    DerivedGallery,
+    MediaDerivative,
+    MediaJob,
+    ParentGallery,
+    PhotoAsset,
+    PhotoFolder,
+    now,
+)
 from app.product_brand import DEFAULT_WATERMARK_TEXT
 
 VARIANTS = {
@@ -29,11 +40,13 @@ def derivatives_root() -> Path:
 
 
 def safe_source_path(photo: PhotoAsset) -> Path:
+    media_namespace(photo.storage_key, photo.tenant_id)
     candidate = (source_root() / photo.storage_key).resolve()
     try:
         candidate.relative_to(source_root())
     except ValueError as exc:
         raise ValueError("Caminho de mídia inválido.") from exc
+    media_namespace(candidate.relative_to(source_root()).as_posix(), photo.tenant_id)
     return candidate
 
 
@@ -41,11 +54,13 @@ def safe_derivative_path(derivative: MediaDerivative) -> Path:
     """Resolve um derivado persistido sem aceitar caminhos vindos do browser."""
     if not derivative.relative_path:
         raise ValueError("Prévia indisponível.")
+    media_namespace(derivative.relative_path, derivative.tenant_id)
     candidate = (derivatives_root() / derivative.relative_path).resolve()
     try:
         candidate.relative_to(derivatives_root())
     except ValueError as exc:
         raise ValueError("Caminho de mídia inválido.") from exc
+    media_namespace(candidate.relative_to(derivatives_root()).as_posix(), derivative.tenant_id)
     return candidate
 
 
@@ -226,14 +241,31 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
     return marked.convert("RGB")
 
 
+def require_media_photo(db: Session, photo: PhotoAsset) -> PhotoAsset:
+    owner = photo.tenant_id
+    fresh = owned_record(db, PhotoAsset, photo.id, tenant_id=owner)
+    parent = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=owner) if fresh else None
+    folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=owner) if fresh else None
+    private = owned_record(db, DerivedGallery, photo.derived_gallery_id, tenant_id=owner) if fresh and photo.derived_gallery_id else None
+    if not fresh or not parent or not parent.active or parent.lifecycle_status != "active" or not folder or (photo.derived_gallery_id and not private):
+        raise ValueError("Mídia indisponível.")
+    return fresh
+
+
+def media_namespace(key: str, tenant_id) -> None:
+    if key.startswith("tenants/") and not key.startswith(f"tenants/{tenant_id}/"):
+        raise ValueError("Caminho de mídia inválido.")
+
+
 def enqueue_derivatives(db: Session, photo: PhotoAsset) -> MediaJob:
+    photo = require_media_photo(db, photo)
     job = db.scalar(
         select(MediaJob).where(
-            MediaJob.photo_asset_id == photo.id, MediaJob.kind == "generate_derivatives"
+            MediaJob.tenant_id == photo.tenant_id, MediaJob.photo_asset_id == photo.id, MediaJob.kind == "generate_derivatives"
         )
     )
     if not job:
-        job = MediaJob(photo_asset_id=photo.id, status="queued", attempts=0)
+        job = MediaJob(tenant_id=photo.tenant_id, photo_asset_id=photo.id, status="queued", attempts=0)
         db.add(job)
     elif job.status in {"completed", "failed"}:
         job.status = "queued"
@@ -253,14 +285,17 @@ def generate_derivatives(
 ) -> list[MediaDerivative]:
     """Gera variantes JPEG sem EXIF; segura para reexecução da mesma foto."""
     from app.facial.lifecycle import analysis_for, cleanup_source, media_can_proceed
-    from app.tenancy import TenantContextError, enable_domain_guard, require_parent_tenant
+    photo = require_media_photo(db, photo)
+    owner = photo.tenant_id
+    if job is not None:
+        persisted = owned_record(db, MediaJob, job.id, tenant_id=owner)
+        if not persisted or persisted.photo_asset_id != photo.id or persisted.kind != "generate_derivatives":
+            raise ValueError("Job de mídia indisponível.")
+        job = persisted
 
-    enable_domain_guard(db)
-    require_parent_tenant(db, photo.parent_gallery_id)
-
-    if not media_can_proceed(db, photo.id):
+    if not media_can_proceed(db, photo.id, tenant_id=photo.tenant_id):
         raise ValueError("Análise facial ainda em processamento.")
-    analysis = analysis_for(db, photo.id, lock=True)
+    analysis = analysis_for(db, photo.id, lock=True, tenant_id=photo.tenant_id)
     job = job or enqueue_derivatives(db, photo)
     if job.status != "processing":
         job.status = "processing"
@@ -269,7 +304,7 @@ def generate_derivatives(
     source = safe_source_path(photo)
     if analysis and analysis.deleted_at:
         clean = db.scalar(select(MediaDerivative).where(
-            MediaDerivative.photo_asset_id == photo.id,
+            MediaDerivative.tenant_id == owner, MediaDerivative.photo_asset_id == photo.id,
             MediaDerivative.variant == "admin_preview", MediaDerivative.status == "ready"))
         if clean:
             source = safe_derivative_path(clean)
@@ -280,9 +315,9 @@ def generate_derivatives(
         db.commit()
         raise FileNotFoundError("Arquivo de origem indisponível.")
     try:
-        # Serializa a geração com alterações globais. Se uma geração começou
+        # Serializa a geração com alterações da própria conta. Se uma geração começou
         # antes, a atualização aguardará o commit e a reenfileirará em seguida.
-        settings = db.scalar(select(BrandingSettings).limit(1).with_for_update())
+        settings = db.scalar(select(BrandingSettings).where(BrandingSettings.tenant_id == owner).with_for_update())
         with Image.open(source) as opened:
             original = ImageOps.exif_transpose(opened).convert("RGB")
             derivatives: list[MediaDerivative] = []
@@ -300,7 +335,14 @@ def generate_derivatives(
                     rendered.thumbnail((max_width, max_width * 2), Image.Resampling.LANCZOS)
                 if protected:
                     rendered = watermark(rendered, settings)
-                destination = derivatives_root() / str(photo.id) / f"{variant}.jpg"
+                derivative = db.scalar(select(MediaDerivative).where(
+                    MediaDerivative.tenant_id == owner, MediaDerivative.photo_asset_id == photo.id,
+                    MediaDerivative.variant == variant))
+                key = derivative.relative_path if derivative and derivative.relative_path else f"tenants/{owner}/photos/{photo.id}/{variant}.jpg"
+                media_namespace(key, owner)
+                destination = (derivatives_root() / key).resolve()
+                destination.relative_to(derivatives_root())
+                media_namespace(destination.relative_to(derivatives_root()).as_posix(), owner)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 temporary = destination.with_suffix(".tmp")
                 if analysis:
@@ -308,29 +350,24 @@ def generate_derivatives(
                 else:
                     rendered.save(temporary, format="JPEG", quality=85, optimize=True)
                 try:
-                    require_parent_tenant(db, photo.parent_gallery_id)
-                except TenantContextError:
+                    require_media_photo(db, photo)
+                except (HTTPException, ValueError):
                     temporary.unlink(missing_ok=True)
                     raise
                 temporary.replace(destination)
-                derivative = db.scalar(
-                    select(MediaDerivative).where(
-                        MediaDerivative.photo_asset_id == photo.id,
-                        MediaDerivative.variant == variant,
-                    )
-                )
                 if not derivative:
-                    derivative = MediaDerivative(photo_asset_id=photo.id, variant=variant)
+                    derivative = MediaDerivative(tenant_id=owner, photo_asset_id=photo.id, variant=variant)
                     db.add(derivative)
                 derivative.relative_path = destination.relative_to(derivatives_root()).as_posix()
                 derivative.status = "ready"
                 derivative.width, derivative.height = rendered.size
                 derivative.updated_at = now()
                 derivatives.append(derivative)
+        require_media_photo(db, photo)
         job.status = "completed"
         job.last_error = None
         job.updated_at = now()
-        folder = db.get(PhotoFolder, photo.folder_id)
+        folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=owner)
         if folder and folder.purpose == "content":
             photo.available = True
             if folder.status == "preparing":
@@ -356,14 +393,14 @@ def generate_derivatives(
         db.commit()
         from app.preview_adjustment.service import enqueue_after_derivatives
 
-        enqueue_after_derivatives(db, photo.id)
+        enqueue_after_derivatives(db, photo.id, tenant_id=owner)
         try:
-            cleanup_source(db, photo.id)
+            cleanup_source(db, photo.id, tenant_id=photo.tenant_id)
             db.commit()
         except (OSError, ValueError):
             db.rollback()  # artefatos já concluídos; a manutenção retenta o descarte
         return derivatives
-    except TenantContextError:
+    except HTTPException:
         db.rollback()
         raise
     except Exception:

@@ -1,11 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AuthEntry,
   brazilMobileE164,
   formatBrazilPhone,
 } from "./auth-entry";
+
+const fixtureToken = "synthetic-link-with-more-than-32-characters";
+beforeEach(() => {
+  window.history.replaceState({}, "", `/?access_token=${fixtureToken}`);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -14,6 +19,55 @@ afterEach(() => {
 });
 
 describe("entrada com identidade configurável", () => {
+  it("orienta usar o link sem pesquisar telefone global e preserva entrada administrativa", async () => {
+    window.history.replaceState({}, "", "/");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Abra o link do seu fotógrafo" })).toBeTruthy();
+    expect(screen.queryByLabelText("WhatsApp")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Receber código" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Fotógrafo" }));
+    expect(screen.getByLabelText("E-mail")).toBeTruthy();
+    expect(screen.getByLabelText("Senha")).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/destination", expect.anything()));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/auth/client/challenge"))).toBe(false);
+  });
+
+  it.each(["fotografo-A", "fotografo-B"])("mantém o token de %s na verificação e reenvio", async (owner) => {
+    const token = `${owner}-link-with-more-than-32-characters`;
+    const navigate = vi.fn();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/branding") || url.includes("/auth/destination")) return Promise.resolve(new Response(null, { status: 403 }));
+      return Promise.resolve(new Response(JSON.stringify({ challenge_id: "own-challenge", message: "Código solicitado.", destination: "/library" }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry initialInvitation={{ accessToken: token, returnTo: "" }} navigate={navigate} />);
+    fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Cliente sintética" } });
+    fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11999990001" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Receber código" }).closest("form")!);
+    await screen.findByLabelText("Código enviado por WhatsApp");
+    fireEvent.click(screen.getByRole("button", { name: "Reenviar código" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/resend", expect.objectContaining({ body: JSON.stringify({ challenge_id: "own-challenge", access_token: token }) })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Entrar" }).hasAttribute("disabled")).toBe(false));
+    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), { target: { value: "123456" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Entrar" }).closest("form")!);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/verify", expect.objectContaining({ body: JSON.stringify({ challenge_id: "own-challenge", code: "123456", access_token: token }) })));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/library"));
+  });
+
+  it("cookie de outro fotógrafo recusado no link não navega para sua biblioteca", async () => {
+    const navigate = vi.fn();
+    const fetchMock = vi.fn((input: string | URL | Request) => Promise.resolve(
+      String(input).includes("/auth/destination") ? new Response(JSON.stringify({ destination: "/library" }), { status: 200 }) : new Response(null, { status: 403 }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={navigate} />);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/public-gallery/access"))).toBe(true));
+    expect(screen.getByLabelText("Nome completo")).toBeTruthy();
+    expect(navigate).not.toHaveBeenCalled();
+  });
   it("mantém os textos de fallback quando a marca não pode ser carregada", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
     render(<AuthEntry />);
@@ -26,6 +80,27 @@ describe("entrada com identidade configurável", () => {
     render(<AuthEntry />);
     await waitFor(() => expect(document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href).toContain("/api/branding/favicon"));
     expect(document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.href).toContain("/api/branding/app-icon?size=180");
+  });
+
+  it("carrega a marca pelo link e conserva seu contexto ao redimensionar o ícone", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => Promise.resolve(
+      String(input).includes("/branding")
+        ? new Response(JSON.stringify({ login_title: "Fotógrafo B", logo_url: null,
+            app_icon_url: "/branding/app-icon?access_token=syntheticB",
+            favicon_url: "/branding/favicon?access_token=syntheticB" }), { status: 200 })
+        : new Response(null, { status: 403 }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<AuthEntry initialInvitation={{ accessToken: "syntheticB", returnTo: "" }} />);
+    await screen.findByRole("heading", { name: "Fotógrafo B" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/branding?access_token=syntheticB", expect.objectContaining({ cache: "no-store" }));
+    expect(document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.getAttribute("href"))
+      .toBe("/api/branding/app-icon?access_token=syntheticB&size=180");
+    view.unmount();
+    expect(document.querySelector('link[rel="icon"]')).toBeNull();
+    expect(document.querySelector('link[rel="apple-touch-icon"]')).toBeNull();
+    expect(window.localStorage.getItem("access_token")).toBeNull();
+    expect(window.sessionStorage.getItem("access_token")).toBeNull();
   });
 
   it("apresenta +55 e envia DDD, nono dígito e celular em E.164", async () => {
@@ -60,6 +135,7 @@ describe("entrada com identidade configurável", () => {
           body: JSON.stringify({
             full_name: "Cliente Sintético",
             phone: "+5511987654321",
+            access_token: fixtureToken,
           }),
         }),
       ),
@@ -91,7 +167,7 @@ describe("entrada com identidade configurável", () => {
       expect(
         screen.getByText("Informe DDD e celular com o nono dígito: (11) 99999-9999."),
       ).toBeTruthy();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/auth/client/challenge"))).toBe(false);
     },
   );
 

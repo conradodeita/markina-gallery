@@ -200,10 +200,10 @@ export function ClientEditorDialog({
     try {
       const phoneChanged = phone.trim() !== client.phone;
       if (phoneChanged && !challengeId) {
-        const challenge = (await clientJsonRequest("/api/auth/client/challenge", {
+        const challenge = (await clientJsonRequest(`/api/admin/clients/${client.id}/phone/challenge`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ full_name: name, phone }),
+          body: JSON.stringify({ phone_e164: phone }),
         })) as { challenge_id: string };
         setChallengeId(challenge.challenge_id);
         return;

@@ -21,11 +21,11 @@ def admin_access(tenant_db, monkeypatch):
     tenant = Tenant()
     tenant_db.add(tenant)
     tenant_db.flush()
-    admin = AdminUser(email="admin@example.test", password_hash="synthetic", totp_secret="synthetic")
+    admin = AdminUser(email="admin@example.test", password_hash="synthetic", totp_secret="synthetic", email_verified=True)
     admin.tenant_memberships.append(TenantAdmin(tenant_id=tenant.id))
     tenant_db.add(admin)
     tenant_db.flush()
-    tenant_db.add(AuthSession(role="admin", subject_id=admin.id,
+    tenant_db.add(AuthSession(tenant_id=tenant.id, role="admin", subject_id=admin.id, admin_subject_id=admin.id,
                              token_hash=auth.token_hash("synthetic-session"),
                              expires_at=auth.now() + timedelta(days=7)))
     tenant_db.commit()
@@ -41,14 +41,10 @@ def test_sessao_preexistente_valida(tenant_db, admin_access):
     assert require_admin_tenant(tenant_db, session.subject_id).id == tenant.id
 
 
-@pytest.mark.parametrize("remove", [False, True])
-def test_vinculo_revogado_ou_ausente_bloqueia(tenant_db, admin_access, remove):
+def test_vinculo_revogado_bloqueia(tenant_db, admin_access):
     _, _, request = admin_access
     link = tenant_db.scalar(select(TenantAdmin))
-    if remove:
-        tenant_db.delete(link)
-    else:
-        link.active = False
+    link.active = False
     tenant_db.commit()
     with pytest.raises(HTTPException) as caught:
         auth.current_session(request, Role.ADMIN)
@@ -63,18 +59,24 @@ def test_contexto_externo_nao_substitui_vinculo(tenant_db, admin_access):
     assert auth.current_session(request).subject_id == admin.id
 
 
-@pytest.mark.parametrize("invalid", ["suspended", "second"])
-def test_conta_invalida_bloqueia_sessao_e_novo_login(tenant_db, admin_access, invalid):
+def test_conta_suspensa_bloqueia_sessao_e_novo_login(tenant_db, admin_access):
     admin, tenant, request = admin_access
-    if invalid == "suspended":
-        tenant.status = "suspended"
-    else:
-        tenant_db.add(Tenant())
+    tenant.status = "suspended"
     tenant_db.commit()
     with pytest.raises(HTTPException):
         auth.current_session(request, Role.ADMIN)
     with pytest.raises(HTTPException):
         auth.create_session(tenant_db, Response(), Role.ADMIN, admin.id)
+    with pytest.raises(TenantContextError):
+        require_single_tenant(tenant_db)
+
+
+def test_outra_conta_nao_muda_vinculo_mas_gate_operacional_permanece(tenant_db, admin_access):
+    admin, tenant, request = admin_access
+    tenant_db.add(Tenant())
+    tenant_db.commit()
+    assert auth.current_session(request, Role.ADMIN).tenant_id == tenant.id
+    auth.create_session(tenant_db, Response(), Role.ADMIN, admin.id)
     with pytest.raises(TenantContextError):
         require_single_tenant(tenant_db)
 

@@ -2,10 +2,10 @@
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app.auth import Base, ParentGallery
+from app.auth import Base, ParentGallery, PhotoAsset, PhotoFolder
 from app.facial.config import FacialSettings
 from app.facial.jobs import FacialJobRepository
 from app.facial.runtime import BlockingFacialWorker
@@ -72,6 +72,21 @@ def _database(tmp_path: Path):
     return factory, parent_id
 
 
+
+def fixture_index_photo(db, parent_id):
+    folder = db.scalar(select(PhotoFolder).where(PhotoFolder.tenant_id == FIXTURE_TENANT_ID,
+                                                PhotoFolder.parent_gallery_id == parent_id))
+    if folder is None:
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, name="Origem sintética")
+        db.add(folder)
+        db.flush()
+    photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, folder_id=folder.id,
+                       filename="synthetic.jpg", storage_key=f"synthetic/{uuid4()}.jpg")
+    db.add(photo)
+    db.flush()
+    return photo.id
+
+
 def test_empty_queue_blocks_without_loading_or_reprocessing(tmp_path: Path) -> None:
     factory, _parent_id = _database(tmp_path)
     clock = [0.0]
@@ -99,7 +114,7 @@ def test_cleanup_job_does_not_load_models(tmp_path: Path) -> None:
     loads = []
     with factory() as db:
         repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="cleanup",
             idempotency_key="cleanup-without-model",
             parent_gallery_id=parent_id,
@@ -147,11 +162,11 @@ def test_provider_startup_failure_is_delegated_without_losing_claim(
     repository = FacialJobRepository()
     with factory() as db:
         job, _created = repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             idempotency_key="provider-failure",
             parent_gallery_id=parent_id,
-            photo_asset_id=uuid4(),
+            photo_asset_id=fixture_index_photo(db, parent_id),
             model_version="model-v1",
             quality_version="quality-v1",
             preview_fingerprint="a" * 64,
@@ -206,11 +221,11 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
     )
     with factory() as db:
         repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             idempotency_key="first",
             parent_gallery_id=parent_id,
-            photo_asset_id=uuid4(),
+            photo_asset_id=fixture_index_photo(db, parent_id),
             model_version="model-v1",
             quality_version="quality-v1",
             preview_fingerprint="b" * 64,
@@ -225,11 +240,11 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
 
     with factory() as db:
         repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             idempotency_key="second",
             parent_gallery_id=parent_id,
-            photo_asset_id=uuid4(),
+            photo_asset_id=fixture_index_photo(db, parent_id),
             model_version="model-v1",
             quality_version="quality-v1",
             preview_fingerprint="c" * 64,

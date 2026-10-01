@@ -15,6 +15,7 @@ const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro
 
 type AuthEntryProps = {
   navigate?: (destination: string) => void;
+  initialInvitation?: { accessToken: string; returnTo: string };
 };
 
 const defaultNavigate = (destination: string) => window.location.assign(destination);
@@ -44,6 +45,7 @@ export function brazilMobileE164(value: string) {
 
 export function AuthEntry({
   navigate = defaultNavigate,
+  initialInvitation,
 }: AuthEntryProps = {}) {
   const [context, setContext] = useState<Context>("client");
   const [step, setStep] = useState<Step>("details");
@@ -54,6 +56,7 @@ export function AuthEntry({
   const [message, setMessage] = useState("");
   const [branding, setBranding] = useState(defaultBranding);
   const [invitation] = useState(() => {
+    if (initialInvitation) return initialInvitation;
     if (typeof window === "undefined") return { accessToken: "", returnTo: "" };
     const params = new URLSearchParams(window.location.search);
     return {
@@ -62,32 +65,52 @@ export function AuthEntry({
     };
   });
   useEffect(() => {
-    fetch("/api/branding")
+    const controller = new AbortController();
+    const brandingUrl = invitation.accessToken
+      ? `/api/branding?access_token=${encodeURIComponent(invitation.accessToken)}`
+      : "/api/branding";
+    fetch(brandingUrl, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const result = await response.json();
+        if (controller.signal.aborted) return;
         setBranding({ ...defaultBranding, ...result, login_title: result.login_title || defaultBranding.login_title, login_intro: result.login_intro || defaultBranding.login_intro, login_helper: result.login_helper || defaultBranding.login_helper });
       })
       .catch(() => undefined);
-  }, []);
+    return () => controller.abort();
+  }, [invitation.accessToken]);
   useEffect(() => {
-    if (!branding.favicon_url) return;
+    if (!branding.favicon_url) {
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.remove();
+      return;
+    }
     let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!icon) { icon = document.createElement("link"); icon.rel = "icon"; document.head.appendChild(icon); }
     icon.href = `/api${branding.favicon_url}`;
+    return () => icon.remove();
   }, [branding.favicon_url]);
   useEffect(() => {
-    if (!branding.app_icon_url) return;
+    if (!branding.app_icon_url) {
+      document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.remove();
+      return;
+    }
     let icon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (!icon) { icon = document.createElement("link"); icon.rel = "apple-touch-icon"; document.head.appendChild(icon); }
-    icon.href = `/api${branding.app_icon_url}?size=180`;
+    icon.href = `/api${branding.app_icon_url}${branding.app_icon_url.includes("?") ? "&" : "?"}size=180`;
+    return () => icon.remove();
   }, [branding.app_icon_url]);
   useEffect(() => {
-    if (!invitation.accessToken) return;
     let active = true;
     fetch("/api/auth/destination", { credentials: "same-origin" })
       .then(async (sessionResponse) => {
         if (!active || !sessionResponse.ok) return;
+        if (!invitation.accessToken) {
+          const session = await sessionResponse.json();
+          if (active && typeof session.destination === "string" && session.destination !== "/admin") {
+            navigate(session.destination);
+          }
+          return;
+        }
         const accessResponse = await fetch("/api/public-gallery/access", {
           method: "POST",
           credentials: "same-origin",
@@ -99,7 +122,7 @@ export function AuthEntry({
         });
         if (!accessResponse.ok) return;
         const result = await accessResponse.json();
-        if (active) navigate(result.destination);
+        if (active && typeof result.destination === "string") navigate(result.destination);
       })
       .catch(() => undefined);
     return () => { active = false; };
@@ -159,7 +182,9 @@ export function AuthEntry({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ challenge_id: challengeId, code }),
+          body: JSON.stringify({ challenge_id: challengeId, code,
+            ...(context === "client" && invitation.accessToken ? { access_token: invitation.accessToken } : {}),
+          }),
         },
       );
       const result = await response.json();
@@ -192,7 +217,9 @@ export function AuthEntry({
       const response = await fetch("/api/auth/client/resend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challenge_id: challengeId }),
+        body: JSON.stringify({ challenge_id: challengeId,
+          ...(invitation.accessToken ? { access_token: invitation.accessToken } : {}),
+        }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error();
@@ -304,7 +331,12 @@ export function AuthEntry({
             Fotógrafo
           </button>
         </div>
-        {step === "details" ? (
+        {step === "details" && context === "client" && !invitation.accessToken ? (
+          <section className="auth-form" aria-labelledby="client-link-title">
+            <h2 id="client-link-title">Abra o link do seu fotógrafo</h2>
+            <p>Para acessar suas fotos, use o link enviado pelo fotógrafo. Cada fotógrafo tem seu cadastro e acesso próprios.</p>
+          </section>
+        ) : step === "details" ? (
           <form onSubmit={requestCode} className="auth-form">
             {context === "client" ? (
               <>

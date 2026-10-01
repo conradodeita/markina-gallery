@@ -12,11 +12,20 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import FacialJob, now
+from app.acervo_context import owned_record, require_active_owner
+from app.auth import (
+    DerivedGallery,
+    FacialJob,
+    FacialSearchRequest,
+    ParentGallery,
+    PhotoAsset,
+    Tenant,
+    expired,
+    now,
+)
 from app.facial.crypto import FacialCryptoError
 from app.facial.provider import FacialProviderError
 from app.facial.reference_store import FacialReferenceError
-from app.tenancy import enable_domain_guard
 
 FACIAL_JOB_KINDS_BY_CLASS = {
     "search": frozenset({"search"}),
@@ -54,6 +63,7 @@ class QueueNotifier(Protocol):
 class ClaimedFacialJob:
     id: UUID
     lease_token: str
+    tenant_id: UUID
     kind: str | None = None
 
 
@@ -77,6 +87,7 @@ class FacialJobRepository:
         kind: str,
         idempotency_key: str,
         parent_gallery_id: UUID,
+        tenant_id: UUID,
         derived_gallery_id: UUID | None = None,
         priority: int = 100,
         photo_asset_id: UUID | None = None,
@@ -98,12 +109,16 @@ class FacialJobRepository:
             raise FacialJobError("Job de índice facial sem versão ou fingerprint.")
         if kind == "search" and search_request_id is None:
             raise FacialJobError("Job de consulta facial sem request.")
+        self.require_origin(db, tenant_id=tenant_id, parent_gallery_id=parent_gallery_id,
+                            derived_gallery_id=derived_gallery_id, photo_asset_id=photo_asset_id,
+                            search_request_id=search_request_id)
         existing = db.scalar(
-            select(FacialJob).where(FacialJob.idempotency_key == idempotency_key)
+            select(FacialJob).where(FacialJob.tenant_id == tenant_id, FacialJob.idempotency_key == idempotency_key)
         )
         if existing:
             return existing, False
         item = FacialJob(
+            tenant_id=tenant_id,
             kind=kind,
             status="queued",
             idempotency_key=idempotency_key,
@@ -123,7 +138,7 @@ class FacialJobRepository:
                 db.flush()
         except IntegrityError:
             existing = db.scalar(
-                select(FacialJob).where(FacialJob.idempotency_key == idempotency_key)
+                select(FacialJob).where(FacialJob.tenant_id == tenant_id, FacialJob.idempotency_key == idempotency_key)
             )
             if existing:
                 return existing, False
@@ -138,9 +153,9 @@ class FacialJobRepository:
         instant: datetime | None = None,
         job_class: str | None = None,
     ) -> ClaimedFacialJob | None:
-        enable_domain_guard(db)
         current = instant or now()
-        query = select(FacialJob).where(
+        query = select(FacialJob).join(Tenant, Tenant.id == FacialJob.tenant_id).where(
+            Tenant.status == "active",
             FacialJob.available_at <= current,
             or_(
                 FacialJob.status == "queued",
@@ -159,10 +174,13 @@ class FacialJobRepository:
             query
             .order_by(FacialJob.priority, FacialJob.available_at, FacialJob.created_at)
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=True, of=FacialJob)
         )
         if item is None:
             return None
+        self.require_origin(db, tenant_id=item.tenant_id, parent_gallery_id=item.parent_gallery_id,
+                            derived_gallery_id=item.derived_gallery_id, photo_asset_id=item.photo_asset_id,
+                            search_request_id=item.search_request_id)
         lease_token = token_hex(24)
         item.status = "processing"
         item.lease_token = lease_token
@@ -170,7 +188,7 @@ class FacialJobRepository:
         item.attempts += 1
         item.updated_at = current
         db.commit()
-        return ClaimedFacialJob(id=item.id, lease_token=lease_token, kind=item.kind)
+        return ClaimedFacialJob(id=item.id, tenant_id=item.tenant_id, lease_token=lease_token, kind=item.kind)
 
     def progress(
         self,
@@ -254,7 +272,7 @@ class FacialJobRepository:
             from app.facial.lifecycle import analysis_for
             from app.facial.provider import FacialProviderError
 
-            analysis = analysis_for(db, item.photo_asset_id, lock=True)
+            analysis = analysis_for(db, item.photo_asset_id, lock=True, tenant_id=item.tenant_id)
             if analysis:
                 metrics = safe_attempt_metrics(error.metrics) if isinstance(error, FacialProviderError) else {}
                 analysis.metrics = {**metrics, "attempts": item.attempts,
@@ -264,7 +282,7 @@ class FacialJobRepository:
             item.status = "failed"
             if item.kind == "index" and item.photo_asset_id:
                 from app.facial.lifecycle import analysis_for
-                analysis = analysis_for(db, item.photo_asset_id, lock=True)
+                analysis = analysis_for(db, item.photo_asset_id, lock=True, tenant_id=item.tenant_id)
                 if analysis:
                     analysis.state = "failed"
                     analysis.metrics = {**analysis.metrics, "final_error": item.last_error_category,
@@ -277,18 +295,50 @@ class FacialJobRepository:
         return item
 
     @staticmethod
+    def require_origin(db: Session, *, tenant_id: UUID, parent_gallery_id: UUID,
+                       derived_gallery_id: UUID | None = None, photo_asset_id: UUID | None = None,
+                       search_request_id: UUID | None = None) -> None:
+        if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+            raise FacialJobError("Origem facial indisponível.")
+        for model, resource_id in ((DerivedGallery, derived_gallery_id), (PhotoAsset, photo_asset_id),
+                                   (FacialSearchRequest, search_request_id)):
+            if resource_id:
+                resource = owned_record(db, model, resource_id, tenant_id=tenant_id)
+                if resource is None or resource.parent_gallery_id != parent_gallery_id:
+                    raise FacialJobError("Origem facial indisponível.")
+
+    @staticmethod
     def _leased(db: Session, claim: ClaimedFacialJob) -> FacialJob:
-        enable_domain_guard(db)
+        require_active_owner(db, claim.tenant_id)
         item = db.scalar(
-            select(FacialJob).where(FacialJob.id == claim.id).with_for_update()
+            select(FacialJob).where(FacialJob.tenant_id == claim.tenant_id, FacialJob.id == claim.id)
+            .with_for_update().execution_options(populate_existing=True)
         )
         if (
             item is None
             or item.status != "processing"
             or item.lease_token != claim.lease_token
+            or item.lease_expires_at is None
+            or expired(item.lease_expires_at)
         ):
             raise FacialJobError("Lease facial inválido ou expirado.")
+        FacialJobRepository.require_origin(db, tenant_id=item.tenant_id, parent_gallery_id=item.parent_gallery_id,
+                                          derived_gallery_id=item.derived_gallery_id, photo_asset_id=item.photo_asset_id,
+                                          search_request_id=item.search_request_id)
         return item
+
+    @staticmethod
+    def release_denied(db: Session, claim: ClaimedFacialJob) -> None:
+        """Preserva trabalho suspenso; só libera o lease durável deste consumidor."""
+        db.rollback()
+        item = db.scalar(select(FacialJob).where(FacialJob.id == claim.id, FacialJob.tenant_id == claim.tenant_id,
+            FacialJob.lease_token == claim.lease_token).with_for_update())
+        if item:
+            item.status = "queued"
+            item.lease_token = None
+            item.lease_expires_at = None
+            item.attempts = max(0, item.attempts - 1)
+            db.commit()
 
 
 class FacialJobDispatcher:

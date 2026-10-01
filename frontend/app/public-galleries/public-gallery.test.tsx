@@ -16,7 +16,11 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
-function response(value: object, status = 200) { return Promise.resolve(new Response(JSON.stringify(value), { status })); }
+const facialContext = "a".repeat(64);
+
+function response(value: object, status = 200) {
+  if ("state" in value) value = { storage_context: facialContext, ...value };
+  return Promise.resolve(new Response(JSON.stringify(value), { status })); }
 
 describe("Galeria pública da cliente", () => {
   it("navega pelas pastas comuns e exclusivas de cada cliente sem mostrar as da outra", async () => {
@@ -119,7 +123,7 @@ describe("Galeria pública da cliente", () => {
     rerender(<PublicGalleryPage />);
     await screen.findByRole("button", { name: "Ampliar prévia protegida de Foto 1" });
     await act(async () => complete(new Response(JSON.stringify({ id: "stale-direct", status: "ready" }))));
-    expect(window.sessionStorage.getItem("markina:facial-search:public-1")).toBeNull();
+    expect(window.sessionStorage.getItem(`markina:facial-search:v2:${facialContext}:public-1`)).toBeNull();
     expect(window.sessionStorage.getItem("markina:facial-search:public-2")).toBeNull();
     expect(scroll).not.toHaveBeenCalled();
   });
@@ -348,7 +352,7 @@ describe("Galeria pública da cliente", () => {
   });
 
   it("retoma pelo request opaco após refresh sem guardar a imagem", async () => {
-    window.sessionStorage.setItem("markina:facial-search:public-1", "request-restored");
+    window.sessionStorage.setItem(`markina:facial-search:v2:${facialContext}:public-1`, "request-restored");
     const fetchMock = vi.fn((path: string) => {
       if (path.endsWith("/facial-search")) return response({ state: "consent_required", manual_selection_available: true, minor_search_available: false, consent_version: "consent-v1" });
       if (path.endsWith("/facial-searches/request-restored")) return response({ id: "request-restored", gallery_id: "public-1", status: "searching", progress: { index: { ready: 1, total: 1 }, comparison: { done: 0, total: 1 } }, reference_deleted: false, expires_at: new Date(Date.now() + 60_000).toISOString(), candidates: [] });
@@ -362,7 +366,7 @@ describe("Galeria pública da cliente", () => {
       "/api/public-galleries/public-1/facial-searches/request-restored",
       expect.objectContaining({ credentials: "same-origin" }),
     );
-    expect(window.sessionStorage.getItem("markina:facial-search:public-1")).toBe("request-restored");
+    expect(window.sessionStorage.getItem(`markina:facial-search:v2:${facialContext}:public-1`)).toBe("request-restored");
     expect(document.querySelector("img[src*='referencia']")).toBeNull();
   });
 
@@ -380,9 +384,9 @@ describe("Galeria pública da cliente", () => {
     expect(screen.getByText("Possíveis correspondências")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/public-1/facial-searches/latest",
-      { credentials: "same-origin" },
+      { credentials: "same-origin", cache: "no-store" },
     );
-    expect(window.sessionStorage.getItem("markina:facial-search:public-1")).toBe("latest-request");
+    expect(window.sessionStorage.getItem(`markina:facial-search:v2:${facialContext}:public-1`)).toBe("latest-request");
   });
 
   it("leva o foco ao consentimento e permite cancelar por teclado", async () => {

@@ -5,19 +5,27 @@ import time
 from datetime import timedelta
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import case, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record, require_active_owner
 from app.admin_security import (
     AdminSecurityConfigurationError,
     cleanup_admin_security_material,
     decrypt_sensitive_payload,
 )
 from app.auth import (
+    AdminActionToken,
+    AdminSecurityChallenge,
+    AdminUser,
+    AuthChallenge,
+    AuthSession,
     Client,
     DerivedGallery,
     EmailDelivery,
     EmailDeliveryAttempt,
+    GalleryAccessCapability,
     GalleryMembershipNotificationOutbox,
     GalleryReopeningNotificationOutbox,
     GalleryReopeningRequest,
@@ -30,11 +38,13 @@ from app.auth import (
     PhotoAsset,
     SaleOrder,
     SessionLocal,
+    Tenant,
     WhatsAppDelivery,
     WhatsAppDeliveryAttempt,
     cleanup_expired_client_otp_pii,
     expired,
     now,
+    pii_fingerprint,
 )
 from app.email_delivery import (
     EmailConfigurationError,
@@ -59,16 +69,19 @@ from app.membership_notifications import (
 from app.messaging import (
     WhatsAppConfigurationError,
     WhatsAppDeliveryError,
-    configured_photographer_phone,
     payment_notification_max_attempts,
-    whatsapp_provider_from_environment,
 )
 from app.notification_delivery import process_next_notification
 from app.notification_settings import setting_for
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template
 from app.private_upload_batches import process_ready_batches
 from app.product_brand import PRODUCT_NAME
-from app.tenancy import TenantContextError, domain_session, require_single_tenant
+from app.tenancy import (
+    TenantContextError,
+    domain_session,
+    require_admin_tenant,
+)
+from app.whatsapp_binding import photographer_phone, provider_for
 from app.whatsapp_channel import require_ready_channel
 from app.whatsapp_delivery import (
     apply_delivery_status,
@@ -88,18 +101,19 @@ def sanitized_delivery_error(error: Exception) -> str:
 
 def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -> str:
     """Valida relação/destino e renderiza sem registrar o corpo em logs."""
-    communication = db.get(PaymentCommunication, item.payment_communication_id)
-    order = db.get(SaleOrder, communication.sale_order_id) if communication else None
-    client = db.get(Client, communication.client_id) if communication else None
-    gallery = db.get(DerivedGallery, order.derived_gallery_id) if order else None
-    parent = db.get(ParentGallery, order.parent_gallery_id) if order and order.parent_gallery_id else None
+    require_active_owner(db, item.tenant_id)
+    communication = owned_record(db, PaymentCommunication, item.payment_communication_id, tenant_id=item.tenant_id)
+    order = owned_record(db, SaleOrder, communication.sale_order_id, tenant_id=item.tenant_id) if communication else None
+    client = owned_record(db, Client, communication.client_id, tenant_id=item.tenant_id) if communication else None
+    gallery = owned_record(db, DerivedGallery, order.derived_gallery_id, tenant_id=item.tenant_id) if order else None
+    parent = owned_record(db, ParentGallery, order.parent_gallery_id, tenant_id=item.tenant_id) if order and order.parent_gallery_id else None
     if not communication or not order or not client or not (gallery or parent):
         raise WhatsAppConfigurationError("Relação da notificação indisponível.")
     gallery_name = gallery.name if gallery else parent.name
 
     if item.template_kind == "photographer_reported":
-        photographer_phone = configured_photographer_phone()
-        if not photographer_phone or item.recipient_phone != photographer_phone:
+        destination = photographer_phone(db, tenant_id=item.tenant_id)
+        if not destination or item.recipient_phone != destination:
             raise WhatsAppConfigurationError("Destino do fotógrafo não autorizado.")
         return (
             f"Pagamento comunicado para o pedido {str(order.id)[:8]} de "
@@ -112,7 +126,7 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
         raise WhatsAppConfigurationError("Destino da cliente não autorizado.")
     if item.rendered_body_snapshot:
         return item.rendered_body_snapshot
-    body = setting_for(db, f"payment_{item.template_kind}").whatsapp_body
+    body = setting_for(db, f"payment_{item.template_kind}", tenant_id=item.tenant_id).whatsapp_body
     return render_template(
         body,
         cliente=order.client_name_snapshot or client.full_name,
@@ -122,13 +136,14 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
 
 
 def materialize_payment_delivery(db: Session, item: PaymentNotificationOutbox) -> WhatsAppDelivery:
+    require_active_owner(db, item.tenant_id)
     delivery = db.scalar(
-        select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == item.idempotency_key)
+        select(WhatsAppDelivery).where(WhatsAppDelivery.tenant_id == item.tenant_id, WhatsAppDelivery.idempotency_key == item.idempotency_key)
     )
     if delivery:
         return delivery
     delivery = WhatsAppDelivery(
-        kind="payment",
+        tenant_id=item.tenant_id, kind="payment",
         source_type="payment_notification_outbox",
         source_id=str(item.id),
         recipient_phone=item.recipient_phone,
@@ -152,7 +167,8 @@ def mirror_payment_delivery(db: Session, delivery: WhatsAppDelivery) -> None:
         item_id = UUID(delivery.source_id)
     except ValueError:
         return
-    item = db.get(PaymentNotificationOutbox, item_id)
+    item = db.scalar(select(PaymentNotificationOutbox).where(PaymentNotificationOutbox.id == item_id,
+        PaymentNotificationOutbox.tenant_id == delivery.tenant_id))
     if not item:
         return
     if delivery.status in {"accepted", "delivered", "read"}:
@@ -166,8 +182,51 @@ def mirror_payment_delivery(db: Session, delivery: WhatsAppDelivery) -> None:
     item.updated_at = now()
 
 
+def validate_otp_origin(db: Session, delivery: WhatsAppDelivery):
+    try:
+        source = UUID(delivery.source_id)
+    except ValueError:
+        raise WhatsAppConfigurationError("Origem OTP indisponível.") from None
+    owner = delivery.tenant_id
+    if delivery.source_type == "auth_challenge":
+        challenge = owned_record(db, AuthChallenge, source, tenant_id=owner)
+        if (not challenge or challenge.kind != "client_otp" or challenge.subject != delivery.recipient_phone
+                or delivery.idempotency_key != f"otp:{challenge.id}:{challenge.resend_count}"):
+            raise WhatsAppConfigurationError("Origem OTP indisponível.")
+        if challenge.gallery_capability_id:
+            cap = owned_record(db, GalleryAccessCapability, challenge.gallery_capability_id, tenant_id=owner)
+            if not cap or cap.revoked_at or (cap.expires_at and expired(cap.expires_at)):
+                raise WhatsAppConfigurationError("Origem OTP indisponível.")
+        if challenge.parent_gallery_id:
+            parent = owned_record(db, ParentGallery, challenge.parent_gallery_id, tenant_id=owner)
+            if not parent or not parent.active or parent.lifecycle_status != "active":
+                raise WhatsAppConfigurationError("Origem OTP indisponível.")
+    elif delivery.source_type == "admin_security_challenge":
+        challenge = owned_record(db, AdminSecurityChallenge, source, tenant_id=owner)
+        if (not challenge or not challenge.admin_id
+                or delivery.idempotency_key != f"admin-security-otp:{challenge.id}:{challenge.resend_count}"
+                or delivery.recipient_phone != photographer_phone(db, tenant_id=owner)):
+            raise WhatsAppConfigurationError("Origem OTP indisponível.")
+        try:
+            admin = db.get(AdminUser, challenge.admin_id, populate_existing=True)
+            if not admin or not admin.email_verified or require_admin_tenant(db, admin.id).id != owner:
+                raise TenantContextError("Acesso negado.")
+        except TenantContextError:
+            raise WhatsAppConfigurationError("Origem OTP indisponível.") from None
+        if challenge.session_id:
+            session = owned_record(db, AuthSession, challenge.session_id, tenant_id=owner)
+            if not session or session.revoked_at or expired(session.expires_at) or session.subject_id != admin.id:
+                raise WhatsAppConfigurationError("Origem OTP indisponível.")
+    else:
+        raise WhatsAppConfigurationError("Origem OTP indisponível.")
+    if challenge.used_at or expired(challenge.expires_at) or challenge.attempts >= 5:
+        raise WhatsAppConfigurationError("Origem OTP indisponível.")
+
+
 def delivery_message(db: Session, delivery: WhatsAppDelivery) -> str:
+    require_active_owner(db, delivery.tenant_id)
     if delivery.kind == "otp":
+        validate_otp_origin(db, delivery)
         if not delivery.encrypted_payload:
             raise WhatsAppConfigurationError("Payload OTP indisponível.")
         return (
@@ -179,7 +238,7 @@ def delivery_message(db: Session, delivery: WhatsAppDelivery) -> str:
             item_id = UUID(delivery.source_id)
         except ValueError as exc:
             raise WhatsAppConfigurationError("Relação da notificação indisponível.") from exc
-        item = db.get(PaymentNotificationOutbox, item_id)
+        item = owned_record(db, PaymentNotificationOutbox, item_id, tenant_id=delivery.tenant_id)
         if not item:
             raise WhatsAppConfigurationError("Relação da notificação indisponível.")
         return payment_notification_message(db, item)
@@ -196,7 +255,7 @@ def _record_attempt(
 ) -> None:
     db.add(
         WhatsAppDeliveryAttempt(
-            delivery_id=delivery.id,
+            tenant_id=delivery.tenant_id, delivery_id=delivery.id,
             attempt_number=delivery.attempts,
             result=result,
             external_message_id=external_message_id,
@@ -207,13 +266,14 @@ def _record_attempt(
 
 def process_next_media_job() -> bool:
     """Reserva e executa um job pendente, retornando se havia trabalho."""
-    with domain_session(SessionLocal) as db:
+    with SessionLocal() as db:
         from app.auth import PhotoAnalysis
         from app.facial.lifecycle import media_can_proceed
 
         # Só jobs do lifecycle novo: retentativa limitada e recuperação de crash.
         recoverable = list(db.scalars(select(MediaJob).join(PhotoAnalysis,
-            PhotoAnalysis.photo_asset_id == MediaJob.photo_asset_id).where(
+            PhotoAnalysis.photo_asset_id == MediaJob.photo_asset_id).join(Tenant, Tenant.id == MediaJob.tenant_id).where(
+                Tenant.status == "active", PhotoAnalysis.tenant_id == MediaJob.tenant_id,
                 MediaJob.kind == "generate_derivatives",
                 or_((MediaJob.status == "processing") & (MediaJob.updated_at < now() - timedelta(minutes=10)),
                     (MediaJob.status == "failed") & (MediaJob.updated_at < now() - timedelta(seconds=30))),
@@ -224,15 +284,17 @@ def process_next_media_job() -> bool:
             stale.status = "queued"
         db.flush()
         job = db.scalar(
-            select(MediaJob)
+            select(MediaJob).join(Tenant, Tenant.id == MediaJob.tenant_id)
+            .where(Tenant.status == "active")
             .where(MediaJob.kind == "generate_derivatives", MediaJob.status == "queued")
             .where(~select(PhotoAnalysis.photo_asset_id).where(
+                PhotoAnalysis.tenant_id == MediaJob.tenant_id,
                 PhotoAnalysis.photo_asset_id == MediaJob.photo_asset_id,
                 PhotoAnalysis.state.in_(("pending", "receiving")),
             ).exists())
             .order_by(MediaJob.created_at)
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=MediaJob, skip_locked=True)
         )
         if not job:
             db.commit()
@@ -243,21 +305,22 @@ def process_next_media_job() -> bool:
         db.commit()
         db.refresh(job, with_for_update=True)
 
-        photo = db.get(PhotoAsset, job.photo_asset_id)
+        require_active_owner(db, job.tenant_id)
+        photo = owned_record(db, PhotoAsset, job.photo_asset_id, tenant_id=job.tenant_id)
         if not photo:
             job.status = "failed"
             job.last_error = "Foto de origem não encontrada."
             job.updated_at = now()
             db.commit()
             return True
-        if not media_can_proceed(db, photo.id):
+        if not media_can_proceed(db, photo.id, tenant_id=job.tenant_id):
             job.status = "queued"
             db.commit()
             return False
         derivatives = {
             item.variant: item
             for item in db.scalars(
-                select(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id)
+                select(MediaDerivative).where(MediaDerivative.tenant_id == job.tenant_id, MediaDerivative.photo_asset_id == photo.id)
             )
         }
         protected_only = bool(
@@ -283,28 +346,35 @@ def process_next_gallery_lifecycle_operation(
 ) -> bool:
     """Reserva e avança uma operação; etapas ausentes falham de modo sanitizado."""
 
-    with domain_session(SessionLocal) as db:
+    with SessionLocal() as db:
         claim = claim_next_operation(db)
     if not claim:
         return False
     operation_id, lease_token = claim
-    with domain_session(SessionLocal) as db:
-        process_claimed_operation(
-            db,
-            operation_id=operation_id,
-            lease_token=lease_token,
-            handlers=handlers
-            or {
-                "preparing_history": prepare_lifecycle_history,
-                "removing_storage": remove_operational_storage,
-                "removing_records": remove_operational_records,
-            },
-        )
+    with SessionLocal() as db:
+        try:
+            process_claimed_operation(
+                db,
+                operation_id=operation_id,
+                lease_token=lease_token,
+                handlers=handlers
+                or {
+                    "preparing_history": prepare_lifecycle_history,
+                    "removing_storage": remove_operational_storage,
+                    "removing_records": remove_operational_records,
+                },
+            )
+        except TenantContextError:
+            return True  # o executor já liberou somente o lease recusado
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            return True
     return True
 
 
-def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
-    with domain_session(SessionLocal) as db:
+def process_next_whatsapp_delivery(*, kind: str | None = None, adapter=None) -> bool:
+    with SessionLocal() as db:
         try:
             max_attempts = payment_notification_max_attempts()
         except WhatsAppConfigurationError:
@@ -315,8 +385,8 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
         )
         recovered_stale = False
         for stale in db.scalars(
-            select(WhatsAppDelivery).where(
-                WhatsAppDelivery.status == "processing",
+            select(WhatsAppDelivery).join(Tenant, Tenant.id == WhatsAppDelivery.tenant_id).where(
+                Tenant.status == "active", WhatsAppDelivery.status == "processing",
                 WhatsAppDelivery.updated_at < stale_before,
             )
         ):
@@ -339,22 +409,23 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
             filters.append(WhatsAppDelivery.kind == kind)
         delivery = db.scalar(
             select(WhatsAppDelivery)
-            .where(*filters)
+            .join(Tenant, Tenant.id == WhatsAppDelivery.tenant_id)
+            .where(Tenant.status == "active", *filters)
             .order_by(
                 case((WhatsAppDelivery.kind == "otp", 0), else_=1),
                 WhatsAppDelivery.expires_at.asc(),
                 WhatsAppDelivery.created_at,
             )
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=WhatsAppDelivery, skip_locked=True)
         )
         if not delivery:
             return recovered_stale
-        delivery_id = delivery.id
+        delivery_id, owner = delivery.id, delivery.tenant_id
         claimed = db.execute(
             update(WhatsAppDelivery)
             .where(
-                WhatsAppDelivery.id == delivery_id,
+                WhatsAppDelivery.tenant_id == owner, WhatsAppDelivery.id == delivery_id,
                 *filters,
             )
             .values(
@@ -370,7 +441,7 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
             return recovered_stale
         db.commit()
         db.expire_all()
-        delivery = db.get(WhatsAppDelivery, delivery_id)
+        delivery = db.scalar(select(WhatsAppDelivery).where(WhatsAppDelivery.id == delivery_id, WhatsAppDelivery.tenant_id == owner))
         if not delivery:
             return recovered_stale
 
@@ -383,10 +454,10 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
             return True
 
         try:
-            provider = whatsapp_provider_from_environment()
-            require_ready_channel(db, provider)
+            provider = provider_for(db, tenant_id=owner, adapter=adapter)
+            require_ready_channel(db, provider, tenant_id=owner)
             message = delivery_message(db, delivery)
-            require_single_tenant(db)
+            require_active_owner(db, owner)
             result = provider.send_transactional(
                 delivery.recipient_phone,
                 message,
@@ -410,6 +481,13 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
                 "accepted",
                 external_message_id=result.external_message_id,
             )
+        except HTTPException:
+            db.rollback()
+            db.execute(update(WhatsAppDelivery).where(WhatsAppDelivery.id == delivery_id,
+                WhatsAppDelivery.tenant_id == owner, WhatsAppDelivery.status == "processing").values(
+                status="queued", attempts=WhatsAppDelivery.attempts - 1, last_error="Conta indisponível.", updated_at=now()))
+            db.commit()
+            return True
         except (WhatsAppConfigurationError, WhatsAppDeliveryError) as exc:
             if isinstance(exc, WhatsAppDeliveryError) and exc.ambiguous:
                 apply_delivery_status(delivery, "unknown", at=now())
@@ -441,10 +519,38 @@ def process_next_whatsapp_delivery(*, kind: str | None = None) -> bool:
         return True
 
 
+def validate_email_origin(db: Session, delivery: EmailDelivery, *, payload=None):
+    # SMTP técnico não seleciona canal comercial e não concede acesso a uma conta.
+    try:
+        source = UUID(delivery.source_id)
+    except ValueError:
+        raise EmailConfigurationError("Origem de e-mail indisponível.") from None
+    expected = None
+    if delivery.source_type == "admin_action_token":
+        token = db.get(AdminActionToken, source, populate_existing=True)
+        purpose = {"password_recovery": "password_reset", "email_verification": "verify_admin_email"}.get(delivery.kind)
+        admin = db.get(AdminUser, token.admin_id, populate_existing=True) if token else None
+        if not token or token.used_at or expired(token.expires_at) or token.purpose != purpose or not admin or not admin.email_verified:
+            raise EmailConfigurationError("Origem de e-mail indisponível.")
+        if delivery.kind == "password_recovery":
+            expected = pii_fingerprint(admin.email.strip().casefold())
+        else:
+            expected = token.target_fingerprint
+    elif delivery.source_type == "admin_user" and delivery.kind == "security_notice":
+        if not db.get(AdminUser, source, populate_existing=True):
+            raise EmailConfigurationError("Origem de e-mail indisponível.")
+        # Destino anterior: o produtor o prova e conserva no envelope autenticado.
+        expected = delivery.recipient_fingerprint
+    if not expected or expected != delivery.recipient_fingerprint:
+        raise EmailConfigurationError("Origem de e-mail indisponível.")
+    if payload is not None and pii_fingerprint(str(payload.get("recipient", "")).strip().casefold()) != expected:
+        raise EmailConfigurationError("Destino de e-mail indisponível.")
+
+
 def process_next_email_delivery(*, provider: EmailProvider | None = None) -> bool:
     """Reserva uma entrega de e-mail e nunca repete resultado ambíguo."""
 
-    with domain_session(SessionLocal) as db:
+    with SessionLocal() as db:
         instant = now()
         stale_before = instant - timedelta(
             seconds=max(30, int(os.getenv("EMAIL_PROCESSING_TIMEOUT_SECONDS", "120")))
@@ -507,12 +613,13 @@ def process_next_email_delivery(*, provider: EmailProvider | None = None) -> boo
         try:
             if not delivery.encrypted_payload:
                 raise EmailConfigurationError("Payload de e-mail indisponível.")
+            validate_email_origin(db, delivery)
             payload = decrypt_sensitive_payload(
                 delivery.encrypted_payload,
                 context=f"email-delivery:{delivery.id}:{delivery.idempotency_key}",
             )
             active_provider = provider or email_provider_from_environment()
-            require_single_tenant(db)
+            validate_email_origin(db, delivery, payload=payload)
             result = active_provider.send(
                 recipient=str(payload["recipient"]),
                 subject=str(payload["subject"]),
@@ -577,21 +684,22 @@ def process_next_email_delivery(*, provider: EmailProvider | None = None) -> boo
 
 
 def materialize_next_payment_notification() -> bool:
-    with domain_session(SessionLocal) as db:
+    with SessionLocal() as db:
         item = db.scalar(
-            select(PaymentNotificationOutbox)
-            .where(PaymentNotificationOutbox.status == "queued",
+            select(PaymentNotificationOutbox).join(Tenant, Tenant.id == PaymentNotificationOutbox.tenant_id)
+            .where(Tenant.status == "active", PaymentNotificationOutbox.status == "queued",
                    ~select(NotificationEvent.id).where(
+                       NotificationEvent.tenant_id == PaymentNotificationOutbox.tenant_id,
                        NotificationEvent.event_key == PaymentNotificationOutbox.idempotency_key
                    ).exists())
             .order_by(PaymentNotificationOutbox.created_at)
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=PaymentNotificationOutbox, skip_locked=True)
         )
         if not item:
             return False
         existing = db.scalar(
-            select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == item.idempotency_key)
+            select(WhatsAppDelivery).where(WhatsAppDelivery.tenant_id == item.tenant_id, WhatsAppDelivery.idempotency_key == item.idempotency_key)
         )
         if existing:
             mirror_payment_delivery(db, existing)
@@ -611,7 +719,7 @@ def process_next_payment_notification() -> bool:
     return materialized or processed
 
 
-def process_next_gallery_membership_notification() -> bool:
+def process_next_gallery_membership_notification(*, adapter=None) -> bool:
     """Entrega opcional ao fotógrafo sem acoplar a transação de associação."""
 
     labels = {
@@ -621,96 +729,106 @@ def process_next_gallery_membership_notification() -> bool:
         "member_unblocked": "Cliente desbloqueado na galeria privada",
         "member_unlinked": "Cliente desvinculado da galeria privada",
     }
-    with domain_session(SessionLocal) as db:
+    with SessionLocal() as db:
         def send(notification: GalleryMembershipNotificationOutbox) -> None:
-            recipient = configured_photographer_phone()
+            recipient = photographer_phone(db, tenant_id=notification.tenant_id)
             if not recipient:
                 raise WhatsAppConfigurationError("Destino do fotógrafo não configurado.")
-            provider = whatsapp_provider_from_environment()
+            provider = provider_for(db, tenant_id=notification.tenant_id, adapter=adapter)
             label = labels[notification.event_type]
             client_suffix = (
                 f" Cliente: {notification.client_name_snapshot}."
                 if notification.client_name_snapshot
                 else ""
             )
-            require_single_tenant(db)
+            require_ready_channel(db, provider, tenant_id=notification.tenant_id)
+            parent = owned_record(db, ParentGallery, notification.parent_gallery_id, tenant_id=notification.tenant_id)
+            if not parent or not parent.active or parent.lifecycle_status != "active":
+                raise WhatsAppConfigurationError("Origem indisponível.")
+            recipient = photographer_phone(db, tenant_id=notification.tenant_id)
+            if not recipient:
+                raise WhatsAppConfigurationError("Destino indisponível.")
             provider.send_transactional(
                 recipient,
                 f"{label}: {notification.derived_name_snapshot}."
                 f" Origem: {notification.parent_name_snapshot}.{client_suffix}",
+                idempotency_key=f"membership:{notification.id}",
             )
 
         return process_membership_outbox(db, send)
 
 
-def process_next_gallery_reopening_notification() -> bool:
-    """Envia o aviso da reabertura sem acoplar a persistência da solicitação."""
-    with domain_session(SessionLocal) as db:
-        item = db.scalar(
-            select(GalleryReopeningNotificationOutbox)
-            .where(GalleryReopeningNotificationOutbox.status == "queued")
-            .order_by(GalleryReopeningNotificationOutbox.created_at)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
+def reopening_origin(db, item):
+    owner = item.tenant_id
+    source = owned_record(db, GalleryReopeningRequest, item.gallery_reopening_request_id, tenant_id=owner)
+    if not source or not owned_record(db, Client, source.requested_by_client_id, tenant_id=owner):
+        raise WhatsAppConfigurationError("Origem da reabertura indisponível.")
+    gallery = owned_record(db, DerivedGallery, source.derived_gallery_id, tenant_id=owner) if source.derived_gallery_id else None
+    parent_id = source.parent_gallery_id or (gallery.parent_gallery_id if gallery else None)
+    parent = owned_record(db, ParentGallery, parent_id, tenant_id=owner) if parent_id else None
+    if not parent or not parent.active or parent.lifecycle_status != "active":
+        raise WhatsAppConfigurationError("Origem da reabertura indisponível.")
+    return gallery or parent
+
+
+def process_next_gallery_reopening_notification(*, adapter=None) -> bool:
+    """Claim próprio; suspensão antes do efeito conserva o aviso para retomada."""
+    with SessionLocal() as db:
+        item = db.scalar(select(GalleryReopeningNotificationOutbox).join(Tenant,
+            Tenant.id == GalleryReopeningNotificationOutbox.tenant_id).where(
+            Tenant.status == "active", GalleryReopeningNotificationOutbox.status == "queued").order_by(
+            GalleryReopeningNotificationOutbox.created_at).limit(1).with_for_update(
+            of=GalleryReopeningNotificationOutbox, skip_locked=True))
         if not item:
             return False
-        item.status = "processing"
-        item.attempts += 1
+        item.status, item.attempts, item.updated_at = "processing", item.attempts + 1, now()
+        db.commit()
+        try:
+            origin = reopening_origin(db, item)
+            provider = provider_for(db, tenant_id=item.tenant_id, adapter=adapter)
+            require_ready_channel(db, provider, tenant_id=item.tenant_id)
+            origin = reopening_origin(db, item)
+            recipient = photographer_phone(db, tenant_id=item.tenant_id)
+            if not recipient or item.recipient_phone != recipient:
+                raise WhatsAppConfigurationError("Destino da reabertura indisponível.")
+            result = provider.send_transactional(recipient,
+                f"Solicitação de reabertura da galeria {origin.name}. Revise em Vendas e pagamentos.",
+                idempotency_key=f"gallery-reopening:{item.id}")
+            if result.recipient_phone_e164 != recipient:
+                raise WhatsAppDeliveryError("Destino divergente.", transient=False, ambiguous=True)
+            item.status, item.last_error = "sent", None
+        except HTTPException:
+            item.status, item.attempts = "queued", item.attempts - 1
+        except (WhatsAppConfigurationError, WhatsAppDeliveryError) as error:
+            # Nenhum retry automático após resultado ambíguo.
+            item.status, item.last_error = "failed", sanitized_delivery_error(error)
         item.updated_at = now()
         db.commit()
-        item_id = item.id
-
-    with domain_session(SessionLocal) as db:
-        item = db.get(GalleryReopeningNotificationOutbox, item_id)
-        reopening = (
-            db.get(GalleryReopeningRequest, item.gallery_reopening_request_id)
-            if item
-            else None
-        )
-        gallery = db.get(DerivedGallery, reopening.derived_gallery_id) if reopening and reopening.derived_gallery_id else None
-        parent = db.get(ParentGallery, reopening.parent_gallery_id) if reopening and reopening.parent_gallery_id else None
-        try:
-            if not item or not reopening or not (gallery or parent) or not item.recipient_phone:
-                raise WhatsAppConfigurationError("Relação da reabertura indisponível.")
-            provider = whatsapp_provider_from_environment()
-            require_single_tenant(db)
-            provider.send_transactional(
-                item.recipient_phone,
-                f"Solicitação de reabertura da galeria {(gallery or parent).name}. Revise em Vendas e pagamentos.",
-                idempotency_key=f"gallery-reopening:{item.id}",
-            )
-            item.status = "sent"
-            item.last_error = None
-        except (WhatsAppConfigurationError, WhatsAppDeliveryError) as error:
-            if item:
-                item.status = "failed"
-                item.last_error = sanitized_delivery_error(error)
-        if item:
-            item.updated_at = now()
-            db.commit()
         return True
 
 
 def reconcile_next_unknown_delivery() -> bool:
-    with domain_session(SessionLocal) as db:
+    with SessionLocal() as db:
         delivery = db.scalar(
-            select(WhatsAppDelivery)
-            .where(
+            select(WhatsAppDelivery).join(Tenant, Tenant.id == WhatsAppDelivery.tenant_id)
+            .where(Tenant.status == "active",
                 WhatsAppDelivery.status == "unknown",
                 WhatsAppDelivery.external_message_id.is_not(None),
             )
             .order_by(WhatsAppDelivery.updated_at)
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=WhatsAppDelivery, skip_locked=True)
         )
         if not delivery or not delivery.external_message_id:
             return False
-        provider = whatsapp_provider_from_environment()
-        require_single_tenant(db)
+        provider = provider_for(db, tenant_id=delivery.tenant_id)
+        delivery_message(db, delivery)
+        require_ready_channel(db, provider, tenant_id=delivery.tenant_id)
         result = provider.reconcile(delivery.external_message_id)
         if not result:
             return False
+        if result.recipient_phone_e164 != delivery.recipient_phone:
+            raise WhatsAppConfigurationError("Destino divergente.")
         delivery.provider_status = result.provider_status
         if result.provider_status.lower() in {"read", "played"}:
             apply_delivery_status(delivery, "read", at=now())
@@ -767,10 +885,18 @@ def process_asset_file_cleanup() -> bool:
     _last_asset_cleanup = instant
     from app.asset_removal import process_file_cleanup
     from app.auth import AssetFileCleanup
-    with domain_session(SessionLocal) as db:
-        job = db.scalar(select(AssetFileCleanup).where(AssetFileCleanup.status.in_(("pending", "failed")))
-                        .order_by(AssetFileCleanup.attempts, AssetFileCleanup.created_at).limit(1).with_for_update(skip_locked=True))
-        return process_file_cleanup(db, job) if job else False
+    with SessionLocal() as db:
+        job = db.scalar(select(AssetFileCleanup).join(Tenant, Tenant.id == AssetFileCleanup.tenant_id).where(Tenant.status == "active").where(AssetFileCleanup.status.in_(("pending", "failed")))
+                        .order_by(AssetFileCleanup.attempts, AssetFileCleanup.created_at).limit(1).with_for_update(skip_locked=True, of=AssetFileCleanup))
+        if not job:
+            return False
+        try:
+            return process_file_cleanup(db, job)
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            db.rollback()
+            return True
 
 
 _last_highres_cleanup = 0.0
@@ -783,7 +909,7 @@ def process_highres_cleanup() -> bool:
         return False
     _last_highres_cleanup = instant
     from app.facial.lifecycle import cleanup_sources
-    with domain_session(SessionLocal) as db:
+    with SessionLocal() as db:
         return cleanup_sources(db) > 0
 
 
@@ -799,8 +925,17 @@ def process_otp_privacy_cleanup() -> bool:
     if instant - _last_otp_privacy_cleanup < interval:
         return False
     _last_otp_privacy_cleanup = instant
-    with domain_session(SessionLocal) as db:
-        return cleanup_expired_client_otp_pii(db) > 0
+    with SessionLocal() as db:
+        owners = list(db.scalars(select(Tenant.id).where(Tenant.status == "active")))
+        removed = 0
+        for tenant_id in owners:
+            try:
+                removed += cleanup_expired_client_otp_pii(db, tenant_id=tenant_id)
+            except HTTPException as exc:
+                db.rollback()
+                if exc.status_code != 403:
+                    raise
+        return removed > 0
 
 
 _last_admin_security_cleanup = 0.0
@@ -814,7 +949,19 @@ def process_admin_security_cleanup() -> bool:
         return False
     _last_admin_security_cleanup = instant
     with domain_session(SessionLocal) as db:
-        return cleanup_admin_security_material(db) > 0
+        removed = cleanup_admin_security_material(db)
+    with SessionLocal() as db:
+        owners = list(db.scalars(select(Tenant.id).where(Tenant.status == "active")))
+    for tenant_id in owners:
+        try:
+            with domain_session(SessionLocal) as db:
+                removed += cleanup_admin_security_material(db, tenant_id=tenant_id)
+        except TenantContextError:
+            continue
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+    return removed > 0
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
@@ -10,9 +11,11 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     GalleryFacialPolicy,
     MediaDerivative,
+    ParentGallery,
     PhotoAsset,
     PhotoFaceEmbedding,
 )
@@ -47,25 +50,25 @@ def replace_photo_index(
     db: Session,
     *,
     photo_id: UUID,
+    tenant_id: UUID,
     derivatives_root: Path,
     provider: OpenCvSFaceProvider,
     cipher: FacialCipher,
     settings: FacialSettings,
+    authorize: Callable[[], object] | None = None,
 ) -> int:
     """Substitui todas as faces da foto em uma única transação/savepoint."""
 
-    photo = db.get(PhotoAsset, photo_id)
+    photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     from app.facial.detection import normalized_box
     from app.facial.lifecycle import analysis_for
     from app.media import safe_source_path
-    from app.tenancy import enable_domain_guard, require_parent_tenant
-
-    enable_domain_guard(db)
-    analysis = analysis_for(db, photo_id, lock=True)
+    analysis = analysis_for(db, photo_id, lock=True, tenant_id=tenant_id)
     if not photo or (not photo.available and not analysis):
         raise FacialEngineError("Foto não está elegível para indexação facial.")
     policy = db.scalar(
         select(GalleryFacialPolicy).where(
+            GalleryFacialPolicy.tenant_id == tenant_id,
             GalleryFacialPolicy.parent_gallery_id == photo.parent_gallery_id,
             GalleryFacialPolicy.status == "active",
         )
@@ -74,6 +77,7 @@ def replace_photo_index(
         raise FacialEngineError("Política facial não está elegível para indexação.")
     derivative = db.scalar(
         select(MediaDerivative).where(
+            MediaDerivative.tenant_id == tenant_id,
             MediaDerivative.photo_asset_id == photo.id,
             MediaDerivative.variant == FACIAL_ANALYSIS_VARIANT,
             MediaDerivative.status == "ready",
@@ -83,6 +87,7 @@ def replace_photo_index(
         raise FacialEngineError("Prévia facial não está pronta.")
     protected_preview_ready = db.scalar(
         select(MediaDerivative.id).where(
+            MediaDerivative.tenant_id == tenant_id,
             MediaDerivative.photo_asset_id == photo.id,
             MediaDerivative.variant == CLIENT_PRESENTATION_VARIANT,
             MediaDerivative.status == "ready",
@@ -95,17 +100,32 @@ def replace_photo_index(
             raise FacialEngineError("Reenvie o JPEG original para reindexar esta foto.")
         path = safe_source_path(photo)
     else:
+        from app.media import media_namespace
         root = derivatives_root.resolve()
+        media_namespace(derivative.relative_path, tenant_id)
         path = (root / derivative.relative_path).resolve()
+        media_namespace(path.relative_to(root).as_posix(), tenant_id)
         try:
             path.relative_to(root)
         except ValueError as exc:
             raise FacialEngineError("Caminho de prévia facial inválido.") from exc
+    def revalidate():
+        if authorize:
+            authorize()
+        current = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
+        parent = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=tenant_id)
+        current_policy = db.scalar(select(GalleryFacialPolicy).where(
+            GalleryFacialPolicy.tenant_id == tenant_id,
+            GalleryFacialPolicy.parent_gallery_id == photo.parent_gallery_id,
+        ).execution_options(populate_existing=True))
+        if not current or not parent or not parent.active or parent.lifecycle_status != "active" or not current_policy or current_policy.status != "active" or not _policy_matches(current_policy, settings):
+            raise FacialEngineError("Origem facial indisponível.")
+    revalidate()
     fingerprint = preview_fingerprint(path)
     if analysis and fingerprint != analysis.source_fingerprint:
         raise FacialEngineError("A fonte facial foi alterada.")
     observations = provider.observe_highres_path(path) if analysis else provider.observe_path(path)
-    require_parent_tenant(db, photo.parent_gallery_id)
+    revalidate()
     largest_face_area = max(
         (face.box[2] * face.box[3] for face in observations), default=0
     )
@@ -149,6 +169,7 @@ def replace_photo_index(
             geometry = dict(zip(("bbox_x", "bbox_y", "bbox_width", "bbox_height"), box, strict=True))
         records.append(
             PhotoFaceEmbedding(
+                tenant_id=tenant_id,
                 parent_gallery_id=photo.parent_gallery_id,
                 derived_gallery_id=photo.derived_gallery_id,
                 photo_asset_id=photo.id,
@@ -168,9 +189,11 @@ def replace_photo_index(
                 **geometry,
             )
         )
+    revalidate()
     with db.begin_nested():
         db.execute(
             delete(PhotoFaceEmbedding).where(
+                PhotoFaceEmbedding.tenant_id == tenant_id,
                 PhotoFaceEmbedding.photo_asset_id == photo.id,
                 PhotoFaceEmbedding.parent_gallery_id == photo.parent_gallery_id,
             )
@@ -190,12 +213,14 @@ def search_gallery_index(
     db: Session,
     *,
     gallery_id: UUID,
+    tenant_id: UUID,
     query_embedding: tuple[float, ...],
     cipher: FacialCipher,
     settings: FacialSettings,
     threshold_milli: int,
     allowed_fingerprints: dict[UUID, str] | None = None,
     ambiguous_threshold_milli: int | None = None,
+    authorize: Callable[[UUID], bool] | None = None,
 ) -> list[SearchMatch]:
     """Compara em memória somente embeddings autorizados da mesma galeria."""
 
@@ -203,6 +228,8 @@ def search_gallery_index(
         import numpy as np
     except ImportError as exc:
         raise FacialEngineError("Runtime vetorial facial indisponível.") from exc
+    if not owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id):
+        raise FacialEngineError("Origem facial indisponível.")
     normalized_query = normalize_embedding(query_embedding)
     if allowed_fingerprints is not None and not allowed_fingerprints:
         return []
@@ -211,6 +238,8 @@ def search_gallery_index(
             select(PhotoFaceEmbedding)
             .join(PhotoAsset, PhotoAsset.id == PhotoFaceEmbedding.photo_asset_id)
             .where(
+                PhotoFaceEmbedding.tenant_id == tenant_id,
+                PhotoAsset.tenant_id == tenant_id,
                 PhotoFaceEmbedding.parent_gallery_id == gallery_id,
                 PhotoFaceEmbedding.model_version == settings.model_version,
                 PhotoFaceEmbedding.model_id == "opencv-yunet-sface",
@@ -234,6 +263,17 @@ def search_gallery_index(
     matrix: list[tuple[float, ...]] = []
     usable_rows: list[PhotoFaceEmbedding] = []
     for row in rows:
+        require_active_owner(db, tenant_id)
+        if authorize is not None and not authorize(row.photo_asset_id):
+            continue
+        parent = owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id)
+        photo = owned_record(db, PhotoAsset, row.photo_asset_id, tenant_id=tenant_id)
+        from app.facial.policy import read_policy
+        policy = read_policy(db, gallery_id, tenant_id=tenant_id)
+        if not parent or not parent.active or parent.lifecycle_status != "active" or not policy or policy.status != "active" or not _policy_matches(policy, settings):
+            raise FacialEngineError("Origem facial indisponível.")
+        if not photo or not photo.available or photo.parent_gallery_id != gallery_id or photo.derived_gallery_id is not None:
+            continue
         if (
             allowed_fingerprints is not None
             and allowed_fingerprints.get(row.photo_asset_id)

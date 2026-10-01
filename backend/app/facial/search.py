@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id
 from app.auth import (
     AuditEvent,
     FacialJob,
@@ -30,7 +32,11 @@ from app.facial.policy import activation_inventory, read_policy
 from app.facial.reference_store import FacialReferenceStore
 from app.facial.rollout import rollout_is_active
 from app.facial.status import gallery_index_status
-from app.public_gallery_access import authorized_canonical_photos
+from app.public_gallery_access import (
+    PublicGalleryAccessDenied,
+    authorized_canonical_photos,
+    require_public_gallery_browsing,
+)
 
 
 class FacialSearchError(RuntimeError):
@@ -59,6 +65,17 @@ _POLL_AFTER_MS = {
 }
 
 
+def _require_search_context(db: Session, parent_gallery_id: UUID, client_id: UUID) -> UUID:
+    try:
+        tenant_id = client_tenant_id(db, client_id)
+        parent = require_public_gallery_browsing(db, parent_gallery_id=parent_gallery_id, client_id=client_id)
+    except (PublicGalleryAccessDenied, HTTPException) as exc:
+        raise FacialSearchError("Consulta facial indisponível.") from exc
+    if parent.tenant_id != tenant_id:
+        raise FacialSearchError("Consulta facial indisponível.")
+    return tenant_id
+
+
 def search_availability(
     db: Session,
     *,
@@ -66,12 +83,14 @@ def search_availability(
     client_id: UUID,
     settings: FacialSettings,
 ) -> dict[str, object]:
-    policy = read_policy(db, parent_gallery_id)
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
+    policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     if (
         not rollout_is_active(
             db,
             settings=settings,
             parent_gallery_id=parent_gallery_id,
+            tenant_id=tenant_id,
         )
         or policy is None
         or policy.status != "active"
@@ -87,6 +106,7 @@ def search_availability(
         db,
         parent_gallery_id=parent_gallery_id,
         processing_enabled=settings.enabled,
+        tenant_id=tenant_id,
     )
     return {
         "state": "consent_required",
@@ -120,12 +140,14 @@ def create_search_request(
     reference_region_id: UUID | None = None,
     consent_accepted: bool = False,
 ) -> FacialSearchRequest:
-    policy = read_policy(db, parent_gallery_id)
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
+    policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     if (
         not rollout_is_active(
             db,
             settings=settings,
             parent_gallery_id=parent_gallery_id,
+            tenant_id=tenant_id,
         )
         or policy is None
         or policy.status != "active"
@@ -163,7 +185,8 @@ def create_search_request(
     snapshot_ready = sum(item.status == "ready" for item in snapshot)
     snapshot_pending = any(item.status == "pending" for item in snapshot)
     item = FacialSearchRequest(
-        id=request_id,
+            tenant_id=tenant_id,
+            id=request_id,
         reference_region_id=reference_region_id,
         reference_source="indexed_region" if reference_region_id else "upload",
         authorization_method="direct_region" if reference_region_id else "explicit_consent",
@@ -194,12 +217,14 @@ def create_search_request(
         max_bytes=settings.max_reference_bytes,
         max_pixels=settings.max_reference_pixels,
     )
+    _require_search_context(db, parent_gallery_id, client_id)
     stored = None if reference_region_id else store.store(
         request_id=item.id,
         gallery_id=parent_gallery_id,
         model_version=item.model_version,
         data_version=item.consent_version,
         payload=payload,
+        authorize=lambda: _require_search_context(db, parent_gallery_id, client_id),
     )
     if stored:
         item.reference_locator_ciphertext = stored.locator.ciphertext
@@ -219,6 +244,7 @@ def create_search_request(
         job_repository.enqueue(
             db,
             kind="search",
+            tenant_id=item.tenant_id,
             idempotency_key=f"facial-search:{item.id}",
             parent_gallery_id=parent_gallery_id,
             search_request_id=item.id,
@@ -228,6 +254,7 @@ def create_search_request(
         job_repository.enqueue(
             db,
             kind="cleanup",
+            tenant_id=item.tenant_id,
             idempotency_key=f"facial-search-reference-cleanup:{item.id}",
             parent_gallery_id=parent_gallery_id,
             search_request_id=item.id,
@@ -236,7 +263,8 @@ def create_search_request(
         )
         db.add(
             AuditEvent(
-                event="facial.region_search_started" if reference_region_id else "facial.search_consented",
+            tenant_id=tenant_id,
+            event="facial.region_search_started" if reference_region_id else "facial.search_consented",
                 subject=(
                     f"gallery_id:{parent_gallery_id};client_id:{client_id};"
                     f"request_id:{item.id};notice:{item.legal_notice_version};"
@@ -270,6 +298,7 @@ def _build_snapshot(
     quality_version: str,
 ) -> list[FacialSearchSnapshotItem]:
     """Congela apenas os IDs elegíveis e o fingerprint já pronto no início."""
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
 
     photo_ids = list(
         db.scalars(
@@ -280,7 +309,7 @@ def _build_snapshot(
                 MediaDerivative.photo_asset_id == PhotoAsset.id,
             )
             .where(
-                MediaDerivative.variant == "client_preview",
+                MediaDerivative.tenant_id == tenant_id, MediaDerivative.variant == "client_preview",
                 MediaDerivative.status == "ready",
             )
             .order_by(PhotoAsset.created_at, PhotoAsset.id)
@@ -293,7 +322,7 @@ def _build_snapshot(
     jobs = db.scalars(
         select(FacialJob)
         .where(
-            FacialJob.kind == "index",
+            FacialJob.tenant_id == tenant_id, FacialJob.kind == "index",
             FacialJob.parent_gallery_id == parent_gallery_id,
             FacialJob.photo_asset_id.in_(photo_ids),
             FacialJob.model_version == model_version,
@@ -307,6 +336,7 @@ def _build_snapshot(
 
     return [
         FacialSearchSnapshotItem(
+            tenant_id=tenant_id,
             search_request_id=request_id,
             parent_gallery_id=parent_gallery_id,
             client_id=client_id,
@@ -336,10 +366,11 @@ def _retire_prior_searches(
     client_id: UUID,
     store: FacialReferenceStore,
 ) -> None:
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     prior_requests = list(
         db.scalars(
             select(FacialSearchRequest).where(
-                FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+                FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.parent_gallery_id == parent_gallery_id,
                 FacialSearchRequest.client_id == client_id,
                 FacialSearchRequest.status != "cancelled",
             )
@@ -347,6 +378,7 @@ def _retire_prior_searches(
     )
     for prior in prior_requests:
         if prior.reference_deleted_at is None:
+            _require_search_context(db, parent_gallery_id, client_id)
             store.delete(
                 request_id=prior.id,
                 gallery_id=prior.parent_gallery_id,
@@ -364,22 +396,23 @@ def _retire_prior_searches(
         prior.updated_at = now()
         db.execute(
             delete(FacialSearchCandidate).where(
-                FacialSearchCandidate.search_request_id == prior.id
+                FacialSearchCandidate.tenant_id == tenant_id, FacialSearchCandidate.search_request_id == prior.id
             )
         )
         for job in db.scalars(
             select(FacialJob).where(
-                FacialJob.search_request_id == prior.id,
+                FacialJob.tenant_id == tenant_id, FacialJob.search_request_id == prior.id,
                 FacialJob.status.in_(("queued", "processing")),
             )
         ):
             job.status = "cancelled"
             job.lease_token = None
             job.lease_expires_at = None
-        cancel_pending_search_notifications(db, request_id=prior.id)
+        cancel_pending_search_notifications(db, request_id=prior.id, tenant_id=tenant_id)
         db.add(
             AuditEvent(
-                event="facial.search_replaced",
+            tenant_id=tenant_id,
+            event="facial.search_replaced",
                 subject=(
                     f"gallery_id:{parent_gallery_id};client_id:{client_id};"
                     f"request_id:{prior.id}"
@@ -426,6 +459,7 @@ def read_search_result(
     client_id: UUID,
     request_id: UUID,
 ) -> tuple[FacialSearchRequest, list[FacialSearchCandidate]]:
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     item = _authorized_search_request(
         db,
         parent_gallery_id=parent_gallery_id,
@@ -436,7 +470,7 @@ def read_search_result(
         db.scalars(
             select(FacialSearchCandidate)
             .where(
-                FacialSearchCandidate.search_request_id == item.id,
+                FacialSearchCandidate.tenant_id == tenant_id, FacialSearchCandidate.search_request_id == item.id,
                 FacialSearchCandidate.parent_gallery_id == parent_gallery_id,
                 FacialSearchCandidate.client_id == client_id,
                 FacialSearchCandidate.rejected_at.is_(None),
@@ -459,6 +493,7 @@ def read_latest_search_result(
     client_id: UUID,
 ) -> tuple[FacialSearchRequest, list[FacialSearchCandidate]]:
     """Recupera somente a consulta mais recente do vínculo autenticado."""
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
 
     item = db.scalar(
         select(FacialSearchRequest)
@@ -469,7 +504,7 @@ def read_latest_search_result(
         )
         .join(ParentGallery, ParentGallery.id == parent_gallery_id)
         .where(
-            FacialSearchRequest.parent_gallery_id == parent_gallery_id,
+            FacialSearchRequest.tenant_id == tenant_id, ParentGallery.tenant_id == tenant_id, ParentGalleryRegistration.tenant_id == tenant_id, FacialSearchRequest.parent_gallery_id == parent_gallery_id,
             FacialSearchRequest.client_id == client_id,
             FacialSearchRequest.status.not_in(("cancelled", "expired")),
             or_(
@@ -502,6 +537,7 @@ def cancel_search_request(
     settings: FacialSettings,
     reference_store: FacialReferenceStore | None = None,
 ) -> FacialSearchRequest:
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     item = _authorized_search_request(
         db,
         parent_gallery_id=parent_gallery_id,
@@ -517,6 +553,7 @@ def cancel_search_request(
             max_bytes=settings.max_reference_bytes,
             max_pixels=settings.max_reference_pixels,
         )
+        _require_search_context(db, parent_gallery_id, client_id)
         store.delete(
             request_id=item.id,
             gallery_id=item.parent_gallery_id,
@@ -534,23 +571,24 @@ def cancel_search_request(
     item.updated_at = now()
     db.execute(
         delete(FacialSearchCandidate).where(
-            FacialSearchCandidate.search_request_id == item.id
+            FacialSearchCandidate.tenant_id == tenant_id, FacialSearchCandidate.search_request_id == item.id
         )
     )
     for job in db.scalars(
         select(FacialJob).where(
-            FacialJob.search_request_id == item.id,
+            FacialJob.tenant_id == tenant_id, FacialJob.search_request_id == item.id,
             FacialJob.status.in_(("queued", "processing")),
         )
     ):
         job.status = "cancelled"
         job.lease_token = None
         job.lease_expires_at = None
-    cancel_pending_search_notifications(db, request_id=item.id)
+    cancel_pending_search_notifications(db, request_id=item.id, tenant_id=tenant_id)
     if not was_cancelled:
         db.add(
             AuditEvent(
-                event="facial.search_cancelled",
+            tenant_id=tenant_id,
+            event="facial.search_cancelled",
                 subject=(
                     f"gallery_id:{parent_gallery_id};client_id:{client_id};"
                     f"request_id:{item.id}"
@@ -569,6 +607,7 @@ def reject_search_candidate(
     request_id: UUID,
     photo_id: UUID,
 ) -> FacialSearchCandidate:
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     item = _authorized_search_request(
         db,
         parent_gallery_id=parent_gallery_id,
@@ -577,7 +616,7 @@ def reject_search_candidate(
     )
     candidate = db.scalar(
         select(FacialSearchCandidate).where(
-            FacialSearchCandidate.search_request_id == item.id,
+            FacialSearchCandidate.tenant_id == tenant_id, FacialSearchCandidate.search_request_id == item.id,
             FacialSearchCandidate.parent_gallery_id == parent_gallery_id,
             FacialSearchCandidate.client_id == client_id,
             FacialSearchCandidate.photo_asset_id == photo_id,
@@ -590,7 +629,8 @@ def reject_search_candidate(
         candidate.rejected_at = now()
         db.add(
             AuditEvent(
-                event="facial.candidate_rejected",
+            tenant_id=tenant_id,
+            event="facial.candidate_rejected",
                 subject=(
                     f"gallery_id:{parent_gallery_id};client_id:{client_id};"
                     f"request_id:{item.id};photo_id:{photo_id}"
@@ -609,6 +649,7 @@ def authorize_search_candidate_selection(
     request_id: UUID,
     photo_id: UUID,
 ) -> FacialSearchCandidate:
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     item = _authorized_search_request(
         db,
         parent_gallery_id=parent_gallery_id,
@@ -620,7 +661,7 @@ def authorize_search_candidate_selection(
     candidate = db.scalar(
         select(FacialSearchCandidate)
         .where(
-            FacialSearchCandidate.search_request_id == item.id,
+            FacialSearchCandidate.tenant_id == tenant_id, FacialSearchCandidate.search_request_id == item.id,
             FacialSearchCandidate.parent_gallery_id == parent_gallery_id,
             FacialSearchCandidate.client_id == client_id,
             FacialSearchCandidate.photo_asset_id == photo_id,
@@ -660,6 +701,7 @@ def _authorized_search_request(
     client_id: UUID,
     request_id: UUID,
 ) -> FacialSearchRequest:
+    tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     item = db.scalar(
         select(FacialSearchRequest)
         .join(
@@ -669,7 +711,7 @@ def _authorized_search_request(
         )
         .join(ParentGallery, ParentGallery.id == parent_gallery_id)
         .where(
-            FacialSearchRequest.id == request_id,
+            FacialSearchRequest.tenant_id == tenant_id, ParentGallery.tenant_id == tenant_id, ParentGalleryRegistration.tenant_id == tenant_id, FacialSearchRequest.id == request_id,
             FacialSearchRequest.parent_gallery_id == parent_gallery_id,
             FacialSearchRequest.client_id == client_id,
             ParentGalleryRegistration.status == "active",

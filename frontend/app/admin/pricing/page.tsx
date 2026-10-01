@@ -141,7 +141,7 @@ export default function PricingPresetsPage() {
   return (
     <div className="admin-shell pricing-presets-page">
       <PageHeading
-        eyebrow="Configuração comercial global"
+        eyebrow="Configuração comercial da sua conta"
         title="Tabelas de preço progressivo"
         detail="Cadastre uma vez e selecione a tabela desejada na etapa Vendas de cada Galeria pública."
       />

@@ -29,8 +29,8 @@ describe("PIX global em Configurações", () => {
     expect(screen.queryByLabelText("Senha atual")).toBeNull();
     fireEvent.change(code, { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar PIX" }));
-    expect(await screen.findByText(/PIX global salvo/)).toBeTruthy();
-    expect(screen.getByAltText("QR Code PIX global")).toBeTruthy();
+    expect(await screen.findByText(/PIX salvo/)).toBeTruthy();
+    expect(screen.getByAltText("QR Code PIX da sua conta")).toBeTruthy();
     const confirm = fetchMock.mock.calls.find(([path]) => path.endsWith("/confirm"));
     expect(confirm).toBeTruthy();
   });

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id, owned_record, require_active_owner
 from app.auth import (
     Client,
     DerivedGallery,
@@ -44,12 +45,19 @@ def communication_join():
 
 
 def communications_for_orders(db, orders):
+    if not orders:
+        return {}
+    tenant_id = orders[0].tenant_id
+    require_active_owner(db, tenant_id)
+    if any(order.tenant_id != tenant_id for order in orders):
+        raise CheckoutError("Pedidos indisponíveis neste contexto.")
     ids = [order.id for order in orders]
     group_ids = {order.payment_group_id for order in orders if order.payment_group_id}
     result = {}
     rows = db.scalars(
         select(PaymentCommunication)
         .where(
+            PaymentCommunication.tenant_id == tenant_id,
             or_(
                 PaymentCommunication.sale_order_id.in_(ids),
                 PaymentCommunication.payment_group_id.in_(group_ids),
@@ -69,10 +77,11 @@ def communications_for_orders(db, orders):
 
 
 def _materials(db, client):
+    tenant_id = client_tenant_id(db, client.id)
     result = []
     selected_ids = set(
         db.scalars(
-            select(PhotoSelection.derived_gallery_id).where(PhotoSelection.client_id == client.id)
+            select(PhotoSelection.derived_gallery_id).where(PhotoSelection.tenant_id == tenant_id).where(PhotoSelection.client_id == client.id)
         )
     )
     for gallery in sorted(
@@ -80,7 +89,7 @@ def _materials(db, client):
     ):
         if gallery.id not in selected_ids:
             continue
-        parent = db.get(ParentGallery, gallery.parent_gallery_id)
+        parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
         # Não revelar seleções cujo acesso foi revogado.
         if not parent or parent.lifecycle_status != "active":
             continue
@@ -94,16 +103,16 @@ def _materials(db, client):
             error = str(exc)
         result.append((gallery, parent, material, error))
     canonical_ids = set(db.scalars(
-        select(PhotoSelection.parent_gallery_id).where(
+        select(PhotoSelection.parent_gallery_id).where(PhotoSelection.tenant_id == tenant_id).where(
             PhotoSelection.client_id == client.id,
             PhotoSelection.parent_gallery_id.is_not(None),
         )
     ))
-    for state in db.scalars(select(GalleryClientState).where(
+    for state in db.scalars(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
         GalleryClientState.client_id == client.id,
         GalleryClientState.parent_gallery_id.in_(canonical_ids),
     ).order_by(GalleryClientState.parent_gallery_id)):
-        parent = db.get(ParentGallery, state.parent_gallery_id)
+        parent = owned_record(db, ParentGallery, state.parent_gallery_id, tenant_id=tenant_id)
         if not parent or parent.lifecycle_status != "active":
             continue
         error = None
@@ -133,12 +142,13 @@ def _order_key(order):
 
 
 def cart_payload(db: Session, client: Client):
+    tenant_id = client_tenant_id(db, client.id)
     groups = []
     for gallery, parent, material, error in _materials(db, client):
         items = []
         canonical = isinstance(gallery, GalleryClientState)
         quantity = db.scalar(
-            select(func.count(PhotoSelection.id)).where(
+            select(func.count(PhotoSelection.id)).where(PhotoSelection.tenant_id == tenant_id).where(
                 PhotoSelection.client_id == client.id,
                 (PhotoSelection.parent_gallery_id == gallery.parent_gallery_id)
                 if canonical else (PhotoSelection.derived_gallery_id == gallery.id),
@@ -151,7 +161,7 @@ def cart_payload(db: Session, client: Client):
             else {
                 folder.id: folder
                 for folder in db.scalars(
-                    select(PhotoFolder).where(
+                    select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id).where(
                         PhotoFolder.id.in_({photo.folder_id for photo in photos})
                     )
                 )
@@ -174,7 +184,7 @@ def cart_payload(db: Session, client: Client):
                 }
             )
         legacy = db.scalar(
-            select(SaleOrder.id).where(
+            select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
                 (SaleOrder.parent_gallery_id == parent.id)
                 if canonical else (SaleOrder.derived_gallery_id == gallery.id),
                 SaleOrder.client_id == client.id,
@@ -239,10 +249,21 @@ def _fingerprint(materials):
 
 
 def _valid_materials(db, client):
+    tenant_id = client_tenant_id(db, client.id)
     materials = [item for item in _materials(db, client) if item[1].payment_required]
+    if any(gallery.tenant_id != tenant_id or parent.tenant_id != tenant_id
+           for gallery, parent, _material, _error in materials):
+        raise CheckoutError("Carrinho indisponível neste contexto.")
     if not materials:
         raise CheckoutError("O carrinho está vazio.")
-    for gallery, _parent, _material, error in materials:
+    for gallery, _parent, material, error in materials:
+        if material:
+            selections, photos, parent, _quote, settings, folders = material
+            resources = [*selections, *photos, parent, *folders.values()]
+            if settings is not None:
+                resources.append(settings)
+            if any(resource.tenant_id != tenant_id for resource in resources):
+                raise CheckoutError("Carrinho indisponível neste contexto.")
         if not isinstance(gallery, GalleryClientState):
             lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
         if error:
@@ -274,18 +295,19 @@ def _check_amount(code, total):
 
 
 def prepare_group(db: Session, client: Client):
-    db.scalar(select(Client.id).where(Client.id == client.id).with_for_update())
+    tenant_id = client_tenant_id(db, client.id)
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client.id).with_for_update())
     materials = _valid_materials(db, client)
     revision = _fingerprint(materials)
     group = db.scalar(
-        select(PaymentGroup)
+        select(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id)
         .where(PaymentGroup.client_id == client.id, PaymentGroup.state == "draft")
         .with_for_update()
     )
     drafts = {
         _order_key(order): order
         for order in db.scalars(
-            select(SaleOrder).where(
+            select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
                 SaleOrder.client_id == client.id,
                 SaleOrder.payment_status == "pending",
                 SaleOrder.frozen_at.is_(None),
@@ -296,7 +318,7 @@ def prepare_group(db: Session, client: Client):
     }
     if group is None:
         try:
-            settings = checkout_pix(db)
+            settings = checkout_pix(db, tenant_id=client.tenant_id)
         except PixCodeError as exc:
             raise CheckoutError(str(exc)) from exc
         group = PaymentGroup(
@@ -312,7 +334,7 @@ def prepare_group(db: Session, client: Client):
                 "receiver_name": settings.receiver_name,
                 "receiver_city": settings.receiver_city,
             },
-        )
+         tenant_id=tenant_id)
     for gallery, _parent, _material, _error in materials:
         draft = drafts.get(_gallery_key(gallery))
         if (
@@ -345,7 +367,7 @@ def prepare_group(db: Session, client: Client):
             client_id=client.id,
             total_cents=0,
             checkout_key=str(uuid4()),
-        )
+         tenant_id=tenant_id)
         _synchronize_order(db, order=order, gallery=gallery, client=client, material=material)
         order.payment_group_id = group.id
         if not order.pix_copy_paste_snapshot:
@@ -353,7 +375,7 @@ def prepare_group(db: Session, client: Client):
             order.pix_configuration_snapshot = group.pix_configuration_snapshot
             order.pix_instructions_snapshot = group.pix_instructions_snapshot
     db.flush()
-    audit(db, "payment_group.prepared", str(group.id))
+    audit(db, "payment_group.prepared", str(group.id), tenant_id=tenant_id)
     return group
 
 
@@ -370,17 +392,18 @@ def group_payload(group):
     }
 
 
-def payment_scopes(db, group_ids):
+def payment_scopes(db, group_ids, *, tenant_id):
     """Escopos completos em duas consultas, inclusive em atalhos filtrados."""
+    require_active_owner(db, tenant_id)
     if not group_ids:
         return {}
     result = {
         group.id: {"id": str(group.id), "total_cents": group.total_cents, "galleries": []}
-        for group in db.scalars(select(PaymentGroup).where(PaymentGroup.id.in_(group_ids)))
+        for group in db.scalars(select(PaymentGroup).where(PaymentGroup.id.in_(group_ids), PaymentGroup.tenant_id == tenant_id))
     }
     for order in db.scalars(
         select(SaleOrder)
-        .where(SaleOrder.payment_group_id.in_(group_ids))
+        .where(SaleOrder.payment_group_id.in_(group_ids), SaleOrder.tenant_id == tenant_id)
         .order_by(SaleOrder.parent_gallery_name_snapshot, SaleOrder.id)
     ):
         result[order.payment_group_id]["galleries"].append(
@@ -396,14 +419,14 @@ def payment_scopes(db, group_ids):
 def payment_scope(db, communication):
     if not communication.payment_group_id:
         return None
-    return payment_scopes(db, {communication.payment_group_id}).get(communication.payment_group_id)
+    return payment_scopes(db, {communication.payment_group_id}, tenant_id=communication.tenant_id).get(communication.payment_group_id)
 
 
-def lock_payment_scope(db, communication_id, expected_group_id=None):
-    communication = db.get(PaymentCommunication, communication_id)
+def lock_payment_scope(db, communication_id, expected_group_id=None, *, tenant_id):
+    communication = owned_record(db, PaymentCommunication, communication_id, tenant_id=tenant_id)
     if not communication:
         raise CheckoutError("Comunicação não encontrada.")
-    db.scalar(select(Client.id).where(Client.id == communication.client_id).with_for_update())
+    db.scalar(select(Client.id).where(Client.id == communication.client_id, Client.tenant_id == tenant_id).with_for_update())
     group = None
     if communication.payment_group_id:
         if expected_group_id != communication.payment_group_id:
@@ -412,7 +435,7 @@ def lock_payment_scope(db, communication_id, expected_group_id=None):
             )
         group = db.scalar(
             select(PaymentGroup)
-            .where(PaymentGroup.id == communication.payment_group_id)
+            .where(PaymentGroup.id == communication.payment_group_id, PaymentGroup.tenant_id == tenant_id)
             .with_for_update()
         )
     db.refresh(communication, with_for_update=True)
@@ -420,6 +443,7 @@ def lock_payment_scope(db, communication_id, expected_group_id=None):
         db.scalars(
             select(SaleOrder)
             .where(
+                SaleOrder.tenant_id == tenant_id,
                 SaleOrder.payment_group_id == group.id
                 if group
                 else SaleOrder.id == communication.sale_order_id
@@ -435,16 +459,17 @@ def lock_payment_scope(db, communication_id, expected_group_id=None):
 
 
 def report_group(db: Session, client: Client, group_id: UUID, revision: str, key: str):
-    db.scalar(select(Client.id).where(Client.id == client.id).with_for_update())
+    tenant_id = client_tenant_id(db, client.id)
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client.id).with_for_update())
     group = db.scalar(
-        select(PaymentGroup)
+        select(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id)
         .where(PaymentGroup.id == group_id, PaymentGroup.client_id == client.id)
         .with_for_update()
     )
     if not group:
         raise CheckoutError("Compra indisponível.")
     existing = db.scalar(
-        select(PaymentCommunication).where(PaymentCommunication.payment_group_id == group.id)
+        select(PaymentCommunication).where(PaymentCommunication.tenant_id == tenant_id).where(PaymentCommunication.payment_group_id == group.id)
     )
     if existing:
         if revision != group.revision:
@@ -457,7 +482,7 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
         )
     orders = list(
         db.scalars(
-            select(SaleOrder)
+            select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
             .where(SaleOrder.payment_group_id == group.id)
             .order_by(SaleOrder.id)
             .with_for_update()
@@ -478,7 +503,7 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
         )
         item_ids = set(
             db.scalars(
-                select(SaleOrderItem.photo_asset_id_snapshot).where(
+                select(SaleOrderItem.photo_asset_id_snapshot).where(SaleOrderItem.tenant_id == tenant_id).where(
                     SaleOrderItem.sale_order_id == order.id
                 )
             )
@@ -490,7 +515,7 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
             raise CheckoutError("A revisão mudou. Confira as fotos novamente.")
         order.frozen_at = now()
         db.execute(
-            delete(PhotoSelection).where(PhotoSelection.id.in_([row.id for row in expected[0]]))
+            delete(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(PhotoSelection.id.in_([row.id for row in expected[0]]))
         )
     group.state, group.reported_at = "reported", now()
     communication = PaymentCommunication(
@@ -498,24 +523,25 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
         client_id=client.id,
         payment_group_id=group.id,
         idempotency_key=key,
-    )
+     tenant_id=tenant_id)
     db.add(communication)
     db.flush()
     record_payment_event(
         db, communication=communication, order=orders[0], event_type="payment_reported"
     )
-    audit(db, "payment_group.reported", str(group.id))
+    audit(db, "payment_group.reported", str(group.id), tenant_id=tenant_id)
     return communication
 
 
 def finalize_selection(db: Session, client: Client, gallery_id: UUID, revision: str, key: str):
     """Congela somente um grupo externo; não cria comunicação ou PIX."""
-    db.scalar(select(Client.id).where(Client.id == client.id).with_for_update())
-    db.scalar(select(ParentGallery).where(or_(
+    tenant_id = client_tenant_id(db, client.id)
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client.id).with_for_update())
+    db.scalar(select(ParentGallery).where(ParentGallery.tenant_id == tenant_id).where(or_(
         ParentGallery.id == gallery_id,
-        ParentGallery.id.in_(select(DerivedGallery.parent_gallery_id).where(DerivedGallery.id == gallery_id)),
+        ParentGallery.id.in_(select(DerivedGallery.parent_gallery_id).where(DerivedGallery.tenant_id == tenant_id).where(DerivedGallery.id == gallery_id)),
     )).with_for_update().execution_options(populate_existing=True))
-    existing = db.scalar(select(SaleOrder).where(
+    existing = db.scalar(select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
         SaleOrder.client_id == client.id, SaleOrder.checkout_key == "selection:" + hashlib.sha256(key.encode()).hexdigest(),
     ))
     if existing:
@@ -536,7 +562,7 @@ def finalize_selection(db: Session, client: Client, gallery_id: UUID, revision: 
     if _fingerprint([entry]) != revision:
         raise CheckoutError("A revisão mudou. Confira as fotos novamente.")
     # Descartar somente rascunho editável anterior; comunicações congeladas permanecem.
-    draft = db.scalar(select(SaleOrder).where(
+    draft = db.scalar(select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
         SaleOrder.client_id == client.id,
         (SaleOrder.parent_gallery_id == gallery.parent_gallery_id)
         if isinstance(gallery, GalleryClientState) else (SaleOrder.derived_gallery_id == gallery.id),
@@ -545,17 +571,17 @@ def finalize_selection(db: Session, client: Client, gallery_id: UUID, revision: 
     ).with_for_update())
     if draft:
         group_id = draft.payment_group_id
-        db.execute(delete(SaleOrderItem).where(SaleOrderItem.sale_order_id == draft.id))
+        db.execute(delete(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == draft.id))
         db.delete(draft)
         db.flush()
-        if group_id and not db.scalar(select(SaleOrder.id).where(SaleOrder.payment_group_id == group_id)):
-            db.execute(delete(PaymentGroup).where(PaymentGroup.id == group_id, PaymentGroup.state == "draft"))
-    order = SaleOrder(client_id=client.id, checkout_key="selection:" + hashlib.sha256(key.encode()).hexdigest(), total_cents=0)
+        if group_id and not db.scalar(select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(SaleOrder.payment_group_id == group_id)):
+            db.execute(delete(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id).where(PaymentGroup.id == group_id, PaymentGroup.state == "draft"))
+    order = SaleOrder(client_id=client.id, checkout_key="selection:" + hashlib.sha256(key.encode()).hexdigest(), total_cents=0, tenant_id=tenant_id)
     _synchronize_order(db, order=order, gallery=gallery, client=client, material=material)
     order.price_rule_snapshot = {**order.price_rule_snapshot, "finalization_revision": revision}
     order.frozen_at = now()
-    db.execute(delete(PhotoSelection).where(
+    db.execute(delete(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
         PhotoSelection.id.in_([row.id for row in material[0]]),
     ))
-    audit(db, "sale_order.selection_finalized", str(order.id))
+    audit(db, "sale_order.selection_finalized", str(order.id), tenant_id=tenant_id)
     return order

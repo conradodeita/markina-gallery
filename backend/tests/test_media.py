@@ -10,13 +10,11 @@ from sqlalchemy import select
 from app.auth import (
     AdminUser,
     AuditEvent,
-    AuthSession,
     Base,
     BrandingSettings,
     Client,
     DerivedGallery,
     DerivedGalleryPhoto,
-    GalleryAccess,
     GalleryReopeningNotificationOutbox,
     GalleryReopeningRequest,
     MediaDerivative,
@@ -38,7 +36,8 @@ from app.auth import (
 )
 from app.main import app
 from app.media import enqueue_derivatives, generate_derivatives, watermark
-from app.messaging import WhatsAppDeliveryError, WhatsAppDeliveryResult
+from app.messaging import SandboxWhatsAppProvider, WhatsAppDeliveryError, WhatsAppDeliveryResult
+from app.whatsapp_binding import provider_for as owned_provider
 from app.worker import (
     process_next_gallery_reopening_notification,
     process_next_media_job,
@@ -72,7 +71,7 @@ def test_generates_idempotent_protected_derivatives_without_exif(tmp_path, monke
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada 1")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
@@ -88,8 +87,8 @@ def test_generates_idempotent_protected_derivatives_without_exif(tmp_path, monke
         second = generate_derivatives(db, photo)
         assert {item.variant for item in first} == {"thumbnail", "client_preview", "admin_preview"}
         assert {item.id for item in first} == {item.id for item in second}
-    client_preview = derivatives_root / str(photo.id) / "client_preview.jpg"
-    admin_preview = derivatives_root / str(photo.id) / "admin_preview.jpg"
+    client_preview = derivatives_root / "tenants" / str(FIXTURE_TENANT_ID) / "photos" / str(photo.id) / "client_preview.jpg"
+    admin_preview = derivatives_root / "tenants" / str(FIXTURE_TENANT_ID) / "photos" / str(photo.id) / "admin_preview.jpg"
     assert client_preview.read_bytes() != admin_preview.read_bytes()
     with Image.open(client_preview) as rendered:
         assert rendered.width <= 1600
@@ -100,7 +99,7 @@ def test_rebrand_defaults_preserve_custom_watermark(monkeypatch):
     from app.product_brand import DEFAULT_WATERMARK_TEXT
     monkeypatch.delenv("MEDIA_WATERMARK_TEXT", raising=False)
     with SessionLocal() as db:
-        settings = BrandingSettings(watermark_text="Fotógrafo • texto personalizado")
+        settings = BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_text="Fotógrafo • texto personalizado")
         gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento de teste")
         db.add_all([settings, gallery])
         db.commit()
@@ -116,7 +115,7 @@ def test_rebrand_defaults_preserve_custom_watermark(monkeypatch):
 
 def test_watermark_direction_does_not_rotate_photo():
     source = Image.new("RGB", (320, 180), color=(40, 60, 80))
-    settings = BrandingSettings(watermark_direction="diagonal", watermark_font="serif")
+    settings = BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_direction="diagonal", watermark_font="serif")
     rendered = watermark(source, settings)
     assert rendered.size == source.size
     assert rendered.mode == "RGB"
@@ -126,7 +125,7 @@ def test_watermark_applies_configurable_opacity_shadow_position_and_security_lin
     source = Image.new("RGB", (640, 420), color=(40, 60, 80))
     plain = watermark(
         source,
-        BrandingSettings(
+        BrandingSettings(tenant_id=FIXTURE_TENANT_ID,
             watermark_text="PROTEGIDA",
             watermark_opacity=35,
             watermark_position="top-left",
@@ -136,7 +135,7 @@ def test_watermark_applies_configurable_opacity_shadow_position_and_security_lin
     )
     layered = watermark(
         source,
-        BrandingSettings(
+        BrandingSettings(tenant_id=FIXTURE_TENANT_ID,
             watermark_text="PROTEGIDA",
             watermark_opacity=80,
             watermark_position="bottom-right",
@@ -171,7 +170,7 @@ def test_watermark_composes_text_once_and_keeps_security_grid_independent(
     monkeypatch.setattr(Image.Image, "alpha_composite", recording_alpha_composite)
     rendered = watermark(
         source,
-        BrandingSettings(
+        BrandingSettings(tenant_id=FIXTURE_TENANT_ID,
             watermark_text="MARCA ÚNICA",
             watermark_direction=direction,
             watermark_size=size,
@@ -210,7 +209,7 @@ def test_watermark_size_tracks_directional_photo_coverage(
     source = Image.new("RGB", image_size, color=(40, 60, 80))
     rendered = watermark(
         source,
-        BrandingSettings(
+        BrandingSettings(tenant_id=FIXTURE_TENANT_ID,
             watermark_text="MARCA ÚNICA",
             watermark_direction=direction,
             watermark_size=coverage,
@@ -249,7 +248,7 @@ def test_long_watermark_stays_inside_photo(monkeypatch, direction, position):
     monkeypatch.setattr(Image.Image, "alpha_composite", recording_alpha_composite)
     rendered = watermark(
         source,
-        BrandingSettings(
+        BrandingSettings(tenant_id=FIXTURE_TENANT_ID,
             watermark_text="FOTOGRAFIA PROTEGIDA POR DIREITOS AUTORAIS",
             watermark_direction=direction,
             watermark_size=96,
@@ -284,7 +283,7 @@ def test_watermark_font_fallback_preserves_proportional_rendering(monkeypatch):
     source = Image.new("RGB", (900, 600), color=(40, 60, 80))
     rendered = watermark(
         source,
-        BrandingSettings(
+        BrandingSettings(tenant_id=FIXTURE_TENANT_ID,
             watermark_text="FALLBACK",
             watermark_direction="horizontal",
             watermark_size=74,
@@ -307,11 +306,11 @@ def test_protection_reprocessing_does_not_rewrite_clean_analysis_preview(
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivatives_root))
     with SessionLocal() as db:
-        settings = BrandingSettings(watermark_text="PRIMEIRA MARCA")
+        settings = BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_text="PRIMEIRA MARCA")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all((settings, parent))
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
@@ -325,8 +324,8 @@ def test_protection_reprocessing_does_not_rewrite_clean_analysis_preview(
         db.commit()
         generate_derivatives(db, photo)
         photo_id = photo.id
-        admin_path = derivatives_root / str(photo_id) / "admin_preview.jpg"
-        client_path = derivatives_root / str(photo_id) / "client_preview.jpg"
+        admin_path = derivatives_root / "tenants" / str(FIXTURE_TENANT_ID) / "photos" / str(photo_id) / "admin_preview.jpg"
+        client_path = derivatives_root / "tenants" / str(FIXTURE_TENANT_ID) / "photos" / str(photo_id) / "client_preview.jpg"
         clean_before = admin_path.read_bytes()
         protected_before = client_path.read_bytes()
         settings.watermark_text = "SEGUNDA MARCA"
@@ -358,7 +357,7 @@ def test_worker_processes_only_markina_media_job(tmp_path, monkeypatch):
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada 1")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
@@ -384,7 +383,7 @@ def test_worker_processes_only_markina_media_job(tmp_path, monkeypatch):
         assert photo.available is True
         assert folder.status == "released"
         assert folder.released_at is not None
-    assert (derivatives_root / str(photo_id) / "thumbnail.jpg").is_file()
+    assert (derivatives_root / "tenants" / str(FIXTURE_TENANT_ID) / "photos" / str(photo_id) / "thumbnail.jpg").is_file()
     assert not process_next_media_job()
 
 
@@ -395,7 +394,7 @@ def test_failed_processing_does_not_publish_original(tmp_path, monkeypatch):
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento com falha")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada protegida")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada protegida")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
@@ -434,7 +433,7 @@ def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, mo
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([admin, parent])
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada 1")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada 1")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
@@ -448,7 +447,7 @@ def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, mo
         db.flush()
         token = "admin-session-test"
         db.add(
-            AuthSession(
+            fixture_session(
                 token_hash=token_hash(token),
                 role=Role.ADMIN.value,
                 subject_id=admin.id,
@@ -489,12 +488,12 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
             email_verified=True,
             totp_secret="test-secret",
         ))
-        client_owner = Client(full_name="Cliente Autorizada", phone_e164="+5511999999999")
-        client_other = Client(full_name="Outra Cliente", phone_e164="+5511888888888")
+        client_owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Autorizada", phone_e164="+5511999999999")
+        client_other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra Cliente", phone_e164="+5511888888888")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([admin, client_owner, client_other, parent])
         db.flush()
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Rodada 1",
             status="released",
@@ -517,15 +516,15 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
         db.flush()
         db.add_all(
             [
-                GalleryAccess(client_id=client_owner.id, gallery_id=gallery.id),
-                DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id),
-                MediaDerivative(
+                fixture_access(tenant_id=FIXTURE_TENANT_ID, client_id=client_owner.id, gallery_id=gallery.id),
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo.id),
+                MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
                     photo_asset_id=photo.id,
                     variant="client_preview",
                     relative_path=f"{photo.id}/client_preview.jpg",
                     status="ready",
                 ),
-                MediaDerivative(
+                MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
                     photo_asset_id=photo.id,
                     variant="admin_preview",
                     relative_path=f"{photo.id}/admin_preview.jpg",
@@ -533,7 +532,7 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
                 ),
             ]
         )
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=client_owner.id,
             payment_status="confirmed",
@@ -542,7 +541,7 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
         db.add(order)
         db.flush()
         db.add(
-            SaleOrderItem(
+            SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=order.id,
                 photo_asset_id=photo.id,
                 filename_snapshot="original.jpg",
@@ -558,7 +557,7 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
             (admin_token, Role.ADMIN, admin.id),
         ):
             db.add(
-                AuthSession(
+                fixture_session(
                     token_hash=token_hash(token),
                     role=role.value,
                     subject_id=subject_id,
@@ -606,20 +605,20 @@ def test_protected_preview_requires_authorized_role_and_never_returns_original(t
 
 def test_worker_sends_payment_outbox_once_in_sandbox() -> None:
     with SessionLocal() as db:
-        client = Client(full_name="Cliente Sandbox", phone_e164="+5511555554411")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Sandbox", phone_e164="+5511555554411")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Sandbox")
         db.add_all([client, parent])
         db.flush()
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Sandbox")
         db.add(gallery)
         db.flush()
-        order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-a")
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=client.id, idempotency_key="pay-a")
         db.add(communication)
         db.flush()
-        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-a")
+        outbox = PaymentNotificationOutbox(tenant_id=FIXTURE_TENANT_ID, payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-a")
         db.add(outbox)
         db.commit()
         outbox_id = outbox.id
@@ -632,29 +631,32 @@ def test_worker_sends_payment_outbox_once_in_sandbox() -> None:
 
 
 def test_worker_sends_reopening_notice_without_changing_request(monkeypatch) -> None:
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "sandbox")
+    monkeypatch.setenv("WHATSAPP_PHOTOGRAPHER_PHONE_E164", "+5511555554402")
     sent: list[tuple[str, str, str]] = []
 
-    class RecordingProvider:
+    class RecordingProvider(SandboxWhatsAppProvider):
         def send_transactional(self, phone_e164, message, *, idempotency_key):
             sent.append((phone_e164, message, idempotency_key))
+            return WhatsAppDeliveryResult("synthetic-reopening", phone_e164, "accepted")
 
-    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
+    monkeypatch.setattr("app.worker.provider_for", lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=RecordingProvider()))
     with SessionLocal() as db:
-        client = Client(full_name="Cliente Reabertura", phone_e164="+5511555554401")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Reabertura", phone_e164="+5511555554401")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Reabertura")
         db.add_all([client, parent])
         db.flush()
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Reabertura")
         db.add(gallery)
         db.flush()
-        reopening = GalleryReopeningRequest(
+        reopening = GalleryReopeningRequest(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             requested_by_client_id=client.id,
             idempotency_key="reopening-worker-test",
         )
         db.add(reopening)
         db.flush()
-        notice = GalleryReopeningNotificationOutbox(
+        notice = GalleryReopeningNotificationOutbox(tenant_id=FIXTURE_TENANT_ID,
             gallery_reopening_request_id=reopening.id,
             recipient_phone="+5511555554402",
             status="queued",
@@ -674,29 +676,29 @@ def test_worker_sends_reopening_notice_without_changing_request(monkeypatch) -> 
 
 
 def test_worker_retries_transient_payment_delivery_until_limit(monkeypatch) -> None:
-    class FailingProvider:
+    class FailingProvider(SandboxWhatsAppProvider):
         def send_transactional(self, phone_e164, message, *, idempotency_key):
             del phone_e164, message, idempotency_key
             raise WhatsAppDeliveryError("Provedor indisponível temporariamente.", transient=True)
 
     monkeypatch.setenv("WHATSAPP_MAX_ATTEMPTS", "2")
     monkeypatch.setenv("WHATSAPP_RETRY_BASE_SECONDS", "0")
-    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: FailingProvider())
+    monkeypatch.setattr("app.worker.provider_for", lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=FailingProvider()))
     with SessionLocal() as db:
-        client = Client(full_name="Cliente Retentativa", phone_e164="+5511555554422")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Retentativa", phone_e164="+5511555554422")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Retentativa")
         db.add_all([client, parent])
         db.flush()
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Retentativa")
         db.add(gallery)
         db.flush()
-        order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100)
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-b")
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=client.id, idempotency_key="pay-b")
         db.add(communication)
         db.flush()
-        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-b")
+        outbox = PaymentNotificationOutbox(tenant_id=FIXTURE_TENANT_ID, payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-b")
         db.add(outbox)
         db.commit()
         outbox_id = outbox.id
@@ -719,7 +721,7 @@ def test_worker_retries_transient_payment_delivery_until_limit(monkeypatch) -> N
 def test_worker_renders_controlled_template_without_financial_payload(monkeypatch) -> None:
     sent: list[tuple[str, str, str]] = []
 
-    class RecordingProvider:
+    class RecordingProvider(SandboxWhatsAppProvider):
         def send_transactional(self, phone_e164, message, *, idempotency_key):
             sent.append((phone_e164, message, idempotency_key))
             return WhatsAppDeliveryResult(
@@ -728,16 +730,16 @@ def test_worker_renders_controlled_template_without_financial_payload(monkeypatc
                 provider_status="accepted",
             )
 
-    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
+    monkeypatch.setattr("app.worker.provider_for", lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=RecordingProvider()))
     with SessionLocal() as db:
-        client = Client(full_name="Cliente Template", phone_e164="+5511555554433")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Template", phone_e164="+5511555554433")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Template")
         db.add_all([client, parent])
         db.flush()
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Template")
         db.add(gallery)
         db.flush()
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id,
             client_id=client.id,
             payment_status="pending",
@@ -748,11 +750,11 @@ def test_worker_renders_controlled_template_without_financial_payload(monkeypatc
         )
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-c")
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=client.id, idempotency_key="pay-c")
         db.add(communication)
         db.flush()
-        db.add(PaymentMessageTemplate(kind="confirmed", body="Olá {{cliente}}, pedido {{pedido}} da {{galeria}} confirmado."))
-        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-c")
+        db.add(PaymentMessageTemplate(tenant_id=FIXTURE_TENANT_ID, kind="confirmed", body="Olá {{cliente}}, pedido {{pedido}} da {{galeria}} confirmado."))
+        outbox = PaymentNotificationOutbox(tenant_id=FIXTURE_TENANT_ID, payment_communication_id=communication.id, recipient_phone=client.phone_e164, template_kind="confirmed", idempotency_key="box-c")
         db.add(outbox)
         db.commit()
 
@@ -762,33 +764,33 @@ def test_worker_renders_controlled_template_without_financial_payload(monkeypatc
     assert "Cliente Template" in sent[0][1]
     assert "Galeria Template" in sent[0][1]
     assert "dado-bancario-nao-enviar" not in sent[0][1]
-    assert sent[0][2] == "box-c"
+    assert sent[0][2] == f"tenant:{FIXTURE_TENANT_ID}:box-c"
 
 
 def test_worker_blocks_unrelated_payment_recipient_without_sending(monkeypatch, capsys) -> None:
     sent: list[str] = []
 
-    class RecordingProvider:
+    class RecordingProvider(SandboxWhatsAppProvider):
         def send_transactional(self, phone_e164, message, *, idempotency_key):
             del message, idempotency_key
             sent.append(phone_e164)
 
-    monkeypatch.setattr("app.worker.whatsapp_provider_from_environment", lambda: RecordingProvider())
+    monkeypatch.setattr("app.worker.provider_for", lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=RecordingProvider()))
     with SessionLocal() as db:
-        client = Client(full_name="Cliente Destino", phone_e164="+5511555554499")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Destino", phone_e164="+5511555554499")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento Destino")
         db.add_all([client, parent])
         db.flush()
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, name="Galeria Destino")
         db.add(gallery)
         db.flush()
-        order = SaleOrder(derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100, client_phone_snapshot=client.phone_e164)
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, client_id=client.id, payment_status="pending", total_cents=100, client_phone_snapshot=client.phone_e164)
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=client.id, idempotency_key="pay-d")
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=client.id, idempotency_key="pay-d")
         db.add(communication)
         db.flush()
-        outbox = PaymentNotificationOutbox(payment_communication_id=communication.id, recipient_phone="+5511555554500", template_kind="confirmed", idempotency_key="box-d")
+        outbox = PaymentNotificationOutbox(tenant_id=FIXTURE_TENANT_ID, payment_communication_id=communication.id, recipient_phone="+5511555554500", template_kind="confirmed", idempotency_key="box-d")
         db.add(outbox)
         db.commit()
         outbox_id = outbox.id
@@ -801,3 +803,5 @@ def test_worker_blocks_unrelated_payment_recipient_without_sending(monkeypatch, 
         assert blocked.last_error == "Configuração do provedor indisponível."
     captured = capsys.readouterr()
     assert "+5511555554500" not in captured.out + captured.err
+
+from tests.tenant_fixtures import fixture_access, fixture_session

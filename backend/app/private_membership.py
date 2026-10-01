@@ -13,9 +13,10 @@ from app.auth import (
     DerivedGallery,
     DerivedGalleryMembership,
     ParentGallery,
+    Tenant,
     now,
 )
-from app.tenancy import require_parent_tenant
+from app.client_identity import require_client_owner
 
 
 class PrivateMembershipError(RuntimeError):
@@ -41,7 +42,9 @@ def membership_for_client(
     client_id: UUID,
     lock: bool = False,
 ) -> DerivedGalleryMembership | None:
+    owner = select(Client.tenant_id).where(Client.id == client_id).scalar_subquery()
     query = select(DerivedGalleryMembership).where(
+        DerivedGalleryMembership.tenant_id == owner,
         DerivedGalleryMembership.parent_gallery_id == parent_gallery_id,
         DerivedGalleryMembership.client_id == client_id,
     )
@@ -58,6 +61,9 @@ def operational_galleries_for_client(
 ) -> list[DerivedGallery]:
     """Lista associações ativas e, transitoriamente, privadas legadas sem backfill."""
 
+    owner = select(Client.tenant_id).join(Tenant, Tenant.id == Client.tenant_id).where(
+        Client.id == client_id, Tenant.status == "active",
+    ).scalar_subquery()
     membership_query = (
         select(DerivedGallery)
         .join(
@@ -65,6 +71,8 @@ def operational_galleries_for_client(
             DerivedGalleryMembership.derived_gallery_id == DerivedGallery.id,
         )
         .where(
+            DerivedGallery.tenant_id == owner,
+            DerivedGalleryMembership.tenant_id == owner,
             DerivedGalleryMembership.client_id == client_id,
             DerivedGalleryMembership.status == "active",
         )
@@ -80,6 +88,7 @@ def operational_galleries_for_client(
         .exists()
     )
     legacy_query = select(DerivedGallery).where(
+        DerivedGallery.tenant_id == owner,
         DerivedGallery.client_id == client_id,
         ~any_membership,
     )
@@ -99,8 +108,13 @@ def client_has_operational_membership(
 ) -> bool:
     """Autoriza associação ativa; fallback legado só vale se não há membro algum."""
 
+    client = db.get(Client, client_id)
+    tenant = db.get(Tenant, gallery.tenant_id, populate_existing=True)
+    if not client or client.tenant_id != gallery.tenant_id or not tenant or tenant.status != "active":
+        return False
     membership = db.scalar(
         select(DerivedGalleryMembership).where(
+            DerivedGalleryMembership.tenant_id == gallery.tenant_id,
             DerivedGalleryMembership.derived_gallery_id == gallery.id,
             DerivedGalleryMembership.client_id == client_id,
         )
@@ -109,6 +123,7 @@ def client_has_operational_membership(
         return membership.status == "active"
     has_any_membership = db.scalar(
         select(DerivedGalleryMembership.id).where(
+            DerivedGalleryMembership.tenant_id == gallery.tenant_id,
             DerivedGalleryMembership.derived_gallery_id == gallery.id
         )
     )
@@ -181,7 +196,9 @@ def ensure_private_membership(
 ) -> PrivateMembershipResolution:
     """Cria ou reutiliza a única associação da cliente naquela origem."""
 
-    require_parent_tenant(db, parent.id)
+    require_client_owner(db, client, parent.tenant_id)
+    if gallery and gallery.tenant_id != parent.tenant_id:
+        raise PrivateMembershipError("A galeria privada não pertence à origem informada.")
     existing = membership_for_client(
         db,
         parent_gallery_id=parent.id,
@@ -216,6 +233,7 @@ def ensure_private_membership(
     try:
         with db.begin_nested():
             membership = DerivedGalleryMembership(
+                tenant_id=parent.tenant_id,
                 derived_gallery_id=gallery.id,
                 parent_gallery_id=parent.id,
                 client_id=client.id,

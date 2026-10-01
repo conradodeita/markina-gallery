@@ -42,24 +42,24 @@ def test_shortcuts_keep_all_pending_orders_first_and_isolate_client_and_gallery(
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outro evento")
-        owner = Client(full_name="Ana", phone_e164="+5511999912345")
-        other = Client(full_name="Bia", phone_e164="+5511999912346")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Ana", phone_e164="+5511999912345")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Bia", phone_e164="+5511999912346")
         db.add_all([parent, other_parent, owner, other]); db.flush()
         deadline = now() + timedelta(days=3)
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name="Privada Ana", selection_expires_at=deadline)
         other_gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=other_parent.id, client_id=owner.id, name="Outro evento")
         db.add_all([gallery, other_gallery]); db.flush()
-        db.add(DerivedGalleryMembership(parent_gallery_id=parent.id, derived_gallery_id=gallery.id, client_id=owner.id, status="active"))
+        db.add(DerivedGalleryMembership(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, derived_gallery_id=gallery.id, client_id=owner.id, status="active"))
 
         def purchase(target, buyer, status, days, count):
-            order = SaleOrder(derived_gallery_id=target.id, client_id=buyer.id, total_cents=count * 700,
+            order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=target.id, client_id=buyer.id, total_cents=count * 700,
                               payment_status="confirmed" if status == "confirmed" else "pending",
                               frozen_at=now(), created_at=now() - timedelta(days=days))
             db.add(order); db.flush()
             for index in range(count):
-                db.add(SaleOrderItem(sale_order_id=order.id, photo_asset_id_snapshot=uuid4(), filename_snapshot=f"{index}.jpg", unit_price_cents=700))
+                db.add(SaleOrderItem(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id_snapshot=uuid4(), filename_snapshot=f"{index}.jpg", unit_price_cents=700))
             if status:
-                db.add(PaymentCommunication(sale_order_id=order.id, client_id=buyer.id, status=status,
+                db.add(PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=buyer.id, status=status,
                                            idempotency_key=str(uuid4()), created_at=order.created_at))
             db.flush()
             return str(order.id)
@@ -79,10 +79,10 @@ def test_shortcuts_keep_all_pending_orders_first_and_isolate_client_and_gallery(
     with SessionLocal() as db:
         event.listen(engine, "before_cursor_execute", count)
         try:
-            projection = build_commercial_projections(db, gallery_ids={gallery_id}, client_ids={owner_id})[(gallery_id, owner_id)]
+            projection = build_commercial_projections(db, gallery_ids={gallery_id}, client_ids={owner_id}, tenant_id=FIXTURE_TENANT_ID)[(gallery_id, owner_id)]
         finally:
             event.remove(engine, "before_cursor_execute", count)
-    assert len(statements) <= 5
+    assert len(statements) <= 7  # Duas revalidações fixas do proprietário.
     orders = projection.financial_orders
     assert [item["order_id"] for item in orders] == [newer_pending, oldest_pending, confirmed]
     assert [item["quantity"] for item in orders] == [3, 1, 2]
@@ -122,14 +122,14 @@ def test_effective_deadlines_are_individual_nullable_and_read_only(client):
         dates = [now() + timedelta(days=3), now() - timedelta(days=1), None]
         ids = []
         for index, deadline in enumerate(dates):
-            owner = Client(full_name=f"Pessoa {index}", phone_e164=f"+551188881234{index}")
+            owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name=f"Pessoa {index}", phone_e164=f"+551188881234{index}")
             db.add(owner); db.flush()
             gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name=f"Privada {index}", selection_expires_at=deadline)
             db.add(gallery); db.flush()
             db.add_all([
-                DerivedGalleryMembership(parent_gallery_id=parent.id, derived_gallery_id=gallery.id, client_id=owner.id, status="active"),
-                ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=owner.id, status="active"),
-                AuthSession(token_hash=token_hash(f"deadline-{index}"), role="client", subject_id=owner.id, expires_at=now() + timedelta(days=1)),
+                DerivedGalleryMembership(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, derived_gallery_id=gallery.id, client_id=owner.id, status="active"),
+                ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, status="active"),
+                AuthSession(token_hash=token_hash(f"deadline-{index}"), role="client", subject_id=owner.id, expires_at=now() + timedelta(days=1), tenant_id=FIXTURE_TENANT_ID, client_subject_id=owner.id),
             ])
             ids.append((gallery.id, owner.id))
         db.commit(); parent_id = parent.id

@@ -24,6 +24,8 @@ Neste requisito, diretório global SHALL significar todas as clientes da conta d
 
 O sistema SHALL permitir alterar o nome da cliente e trocar seu telefone na mesma identidade. O telefone SHALL ser normalizado, verificado pelo fluxo vigente e permanecer único; a alteração SHALL preservar vínculos e histórico e SHALL NOT criar uma segunda cliente.
 
+A solicitação administrativa da prova OTP SHALL derivar a conta do vínculo autenticado e conferir o UUID da cliente antes de emitir desafio/entrega, inclusive sem galeria. Ela MUST NOT usar entrada genérica de cliente sem contexto nem aceitar parâmetro como escolha de conta.
+
 #### Scenario: Troca de telefone
 
 - **WHEN** o fotógrafo confirma o novo telefone com a verificação exigida

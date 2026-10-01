@@ -8,10 +8,12 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
+from app.acervo_context import owned_record
 from app.auth import (
     FacialJob,
     GalleryFacialPolicy,
     MediaDerivative,
+    ParentGallery,
     PhotoAnalysis,
     PhotoAsset,
     PhotoFaceEmbedding,
@@ -47,16 +49,19 @@ def gallery_index_status(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     folder_id: UUID | None = None,
     page: int = 1,
     page_size: int = 50,
     processing_enabled: bool = False,
 ) -> FacialIndexStatus:
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialStatusError("Galeria indisponível.")
     if page < 1 or not 1 <= page_size <= 100:
         raise FacialStatusError("Paginação facial inválida.")
     policy = db.scalar(
         select(GalleryFacialPolicy).where(
-            GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
+            GalleryFacialPolicy.tenant_id == tenant_id, GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
         )
     )
     photo_ids = list(
@@ -64,7 +69,7 @@ def gallery_index_status(
             select(PhotoAsset.id)
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
-                PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.tenant_id == tenant_id, PhotoFolder.tenant_id == tenant_id, PhotoAsset.parent_gallery_id == parent_gallery_id,
                 PhotoAsset.derived_gallery_id.is_(None),
                 PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
@@ -90,7 +95,7 @@ def gallery_index_status(
                 & (protected_preview.status == "ready"),
             )
             .where(
-                PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.tenant_id == tenant_id, PhotoAsset.parent_gallery_id == parent_gallery_id,
                 PhotoAsset.derived_gallery_id.is_(None),
                 PhotoAsset.available.is_(True),
                 PhotoAsset.folder_id == folder_id if folder_id else True,
@@ -99,14 +104,14 @@ def gallery_index_status(
         )
     )
     highres_ids = list(db.scalars(select(PhotoAnalysis.photo_asset_id)
-                                 .where(PhotoAnalysis.photo_asset_id.in_(photo_ids))))
+                                 .where(PhotoAnalysis.tenant_id == tenant_id, PhotoAnalysis.photo_asset_id.in_(photo_ids))))
     eligible_photo_ids = list(set(eligible_photo_ids) | set(highres_ids))
     latest: dict[UUID, FacialJob] = {}
     if eligible_photo_ids and policy:
         for job in db.scalars(
             select(FacialJob)
             .where(
-                FacialJob.parent_gallery_id == parent_gallery_id,
+                FacialJob.tenant_id == tenant_id, FacialJob.parent_gallery_id == parent_gallery_id,
                 FacialJob.derived_gallery_id.is_(None),
                 FacialJob.photo_asset_id.in_(eligible_photo_ids),
                 FacialJob.kind == "index",
@@ -155,7 +160,7 @@ def gallery_index_status(
         photos_with_faces = int(
             db.scalar(
                 select(func.count(func.distinct(PhotoFaceEmbedding.photo_asset_id))).where(
-                    PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
+                    PhotoFaceEmbedding.tenant_id == tenant_id, PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
                     PhotoFaceEmbedding.model_version == policy.model_version,
                     PhotoFaceEmbedding.quality_version == policy.quality_version,
                     PhotoFaceEmbedding.photo_asset_id.in_(photo_ids) if folder_id else True,
@@ -166,7 +171,7 @@ def gallery_index_status(
         detected_faces = int(
             db.scalar(
                 select(func.count()).select_from(PhotoFaceEmbedding).where(
-                    PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
+                    PhotoFaceEmbedding.tenant_id == tenant_id, PhotoFaceEmbedding.parent_gallery_id == parent_gallery_id,
                     PhotoFaceEmbedding.model_version == policy.model_version,
                     PhotoFaceEmbedding.quality_version == policy.quality_version,
                     PhotoFaceEmbedding.photo_asset_id.in_(photo_ids) if folder_id else True,
@@ -196,15 +201,18 @@ def retry_failed_index_jobs(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     job_ids: set[UUID],
 ) -> int:
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialStatusError("Galeria indisponível.")
     if not job_ids or len(job_ids) > 100:
         raise FacialStatusError("Seleção de retentativa facial inválida.")
     jobs = list(
         db.scalars(
             select(FacialJob)
             .where(
-                FacialJob.id.in_(job_ids),
+                FacialJob.tenant_id == tenant_id, FacialJob.id.in_(job_ids),
                 FacialJob.parent_gallery_id == parent_gallery_id,
                 FacialJob.kind == "index",
             )
@@ -217,8 +225,8 @@ def retry_failed_index_jobs(
     for job in jobs:
         from app.folder_processing import facial_processing_allowed
 
-        photo = db.get(PhotoAsset, job.photo_asset_id) if job.photo_asset_id else None
-        if photo and not facial_processing_allowed(db, photo.folder_id):
+        photo = owned_record(db, PhotoAsset, job.photo_asset_id, tenant_id=tenant_id) if job.photo_asset_id else None
+        if photo and not facial_processing_allowed(db, photo.folder_id, tenant_id=photo.tenant_id):
             continue
         if job.status != "failed":
             continue
@@ -240,14 +248,17 @@ def retry_all_failed_index_jobs(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     folder_id: UUID | None = None,
     photo_ids: set[UUID] | None = None,
 ) -> int:
     """Recoloca todas as falhas atuais da galeria na fila, sem criar arquivos/jobs."""
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialStatusError("Galeria indisponível.")
 
     policy = db.scalar(
         select(GalleryFacialPolicy).where(
-            GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
+            GalleryFacialPolicy.tenant_id == tenant_id, GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
         )
     )
     if policy is None:
@@ -256,7 +267,7 @@ def retry_all_failed_index_jobs(
     query = (
         select(FacialJob)
         .where(
-            FacialJob.parent_gallery_id == parent_gallery_id,
+            FacialJob.tenant_id == tenant_id, FacialJob.parent_gallery_id == parent_gallery_id,
             FacialJob.kind == "index",
             FacialJob.model_version == policy.model_version,
             FacialJob.quality_version == policy.quality_version,
@@ -265,7 +276,7 @@ def retry_all_failed_index_jobs(
         .with_for_update()
     )
     if photo_ids is not None:
-        query = query.where(FacialJob.photo_asset_id.in_(photo_ids))
+        query = query.where(FacialJob.tenant_id == tenant_id, FacialJob.photo_asset_id.in_(photo_ids))
     for job in db.scalars(query):
         if job.photo_asset_id is not None:
             latest[job.photo_asset_id] = job
@@ -273,10 +284,10 @@ def retry_all_failed_index_jobs(
     for job in latest.values():
         from app.folder_processing import facial_processing_allowed
 
-        photo = db.get(PhotoAsset, job.photo_asset_id) if job.photo_asset_id else None
+        photo = owned_record(db, PhotoAsset, job.photo_asset_id, tenant_id=tenant_id) if job.photo_asset_id else None
         if folder_id is not None and (not photo or photo.folder_id != folder_id):
             continue
-        if photo and not facial_processing_allowed(db, photo.folder_id):
+        if photo and not facial_processing_allowed(db, photo.folder_id, tenant_id=photo.tenant_id):
             continue
         if job.status != "failed":
             continue
@@ -297,7 +308,7 @@ def retry_all_failed_index_jobs(
 def _prepare_highres_retry(db, job):
     from app.auth import expired
     from app.facial.lifecycle import analysis_for
-    row = analysis_for(db, job.photo_asset_id, lock=True)
+    row = analysis_for(db, job.photo_asset_id, lock=True, tenant_id=job.tenant_id)
     if not row:
         return True
     if row.deleted_at or expired(row.expires_at):

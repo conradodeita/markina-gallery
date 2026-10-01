@@ -1,4 +1,4 @@
-"""Ensaia a cadeia real Alembic em PostgreSQL descartável e SQLite."""
+"""Ensaia a fundação 0069; a transição 0070 tem suíte PostgreSQL própria."""
 
 import os
 import subprocess
@@ -20,12 +20,12 @@ def migration_database(request, tmp_path):
         url = f"sqlite:///{(tmp_path / 'migration.sqlite').as_posix()}"
         yield url
         return
-    url = os.getenv("TENANT_TEST_DATABASE_URL")
+    url = os.getenv("PHOTOGRAPHER_TEST_DATABASE_URL") or os.getenv("TENANT_TEST_DATABASE_URL")
     if not url:
         pytest.skip("TENANT_TEST_DATABASE_URL não configurada")
     parsed = sa.engine.make_url(url)
-    assert parsed.host == "127.0.0.1" and parsed.port == 55469
-    assert parsed.database == "pyp_tenant_test"
+    assert parsed.host == "127.0.0.1"
+    assert (parsed.port, parsed.database) in ((55469, "pyp_tenant_test"), (15470, "pyp_photographer_test"))
     control = sa.create_engine(parsed, isolation_level="AUTOCOMMIT")
     database = f"tenant_migration_{uuid4().hex}"
     with control.connect() as connection:
@@ -37,6 +37,9 @@ def migration_database(request, tmp_path):
 
 
 def migrate(url, *args, succeeds=True):
+    # Os três ensaios históricos comprovam a fundação específica, inclusive
+    # seu fallback SQLite; não simulam aceite da revision multitenant seguinte.
+    args = tuple("20260929_0069" if arg == "head" else arg for arg in args)
     result = subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=Path(__file__).resolve().parents[1],
@@ -128,7 +131,7 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
 
     from app import homolog_cleanup
 
-    migrate(migration_database, "upgrade", "head")
+    migrate(migration_database, "upgrade", "20261001_0071")
     engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
     monkeypatch.setenv("APP_ENV", "homolog")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
@@ -147,9 +150,10 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
         admin.tenant_memberships.append(auth.TenantAdmin(tenant_id=tenant.id))
         db.add(admin)
         db.flush()
-        session = auth.AuthSession(role="admin", subject_id=admin.id, token_hash="synthetic",
+        session = auth.AuthSession(tenant_id=tenant.id, role="admin", subject_id=admin.id,
+                                   admin_subject_id=admin.id, token_hash="synthetic",
                                    expires_at=auth.now() + timedelta(days=7))
-        channel = auth.WhatsAppChannelSettings(environment="homolog", status="ready")
+        channel = auth.WhatsAppChannelSettings(tenant_id=tenant.id, environment="homolog", status="ready")
         parent = auth.ParentGallery(name="Descartável", tenant_id=tenant.id)
         db.add_all([session, channel, parent])
         db.commit()

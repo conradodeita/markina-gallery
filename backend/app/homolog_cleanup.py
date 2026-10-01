@@ -12,18 +12,21 @@ import os
 import stat
 from pathlib import Path
 
-from sqlalchemy import delete, func, inspect, or_, select, text
+from sqlalchemy import delete, func, inspect, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from app.auth import (
     AuditEvent,
     AuthSession,
     Base,
+    ParentGallery,
     PushSubscription,
     Role,
     SessionLocal,
+    Tenant,
 )
 from app.media import derivatives_root, source_root
+from app.tenancy import require_single_tenant
 
 CONFIRMATION = "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
 WITHOUT_BACKUP_CONFIRMATION = "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS_WITHOUT_BACKUP"
@@ -38,7 +41,7 @@ EXPECTED_MEDIA_ROOTS = {
 # Lista fechada: uma migration que adicione tabela sem classificação bloqueia a limpeza.
 # As linhas mistas são tratadas separadamente para preservar sessões e push do admin.
 PRESERVED_TABLES = frozenset({
-    "admin_action_token", "admin_security_challenge", "admin_user",
+    "admin_action_token", "admin_security_challenge", "admin_user", "installation_operator",
     "branding_settings", "email_delivery", "email_delivery_attempt",
     "facial_calibration_approval", "facial_rollout_operation",
     "global_pix_settings", "notification_setting", "payment_message_template",
@@ -102,6 +105,7 @@ def _count(db: Session, model, *criteria) -> int:
 
 def admin_security_audit_criteria():
     return or_(
+        AuditEvent.event.like("installation_operator.%"),
         AuditEvent.event.like("admin_security.%"),
         AuditEvent.event.like("admin_password.%"),
         AuditEvent.event.like("admin_totp.%"),
@@ -141,6 +145,7 @@ def require_exclusive_media_roots(roots: dict[str, Path]) -> None:
 
 def inventory(db: Session) -> dict[str, object]:
     environment = require_homolog_environment()
+    require_single_tenant(db)
     require_known_schema(db)
     operational_counts = {
         name: _count(db, Base.metadata.tables[name]) for name in sorted(OPERATIONAL_TABLES)
@@ -194,21 +199,73 @@ def execute(db: Session, confirmation: str) -> dict[str, object]:
         raise RuntimeError("Confirmação literal inválida; nenhuma alteração foi aplicada.")
     if db.bind is None or db.bind.dialect.name != "postgresql":
         raise RuntimeError("A limpeza homologada exige o PostgreSQL exclusivo da Markina.")
+    # Serializar provisionamento/suspensão enquanto a operação integral decide
+    # seu único proprietário. Escritores próprios ainda exigem barreira offline.
+    connection = db.connection()
+    schema_map = connection.get_execution_options().get("schema_translate_map", {})
+    schema = schema_map.get(Tenant.__table__.schema, Tenant.__table__.schema)
+    preparer = connection.dialect.identifier_preparer
+    table_name = preparer.quote(Tenant.__tablename__)
+    qualified = f"{preparer.quote_schema(schema)}.{table_name}" if schema else table_name
+    db.execute(text(f"LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE"))
+    require_single_tenant(db)
     require_known_schema(db)
+    order = operational_delete_order()
+    if db.scalar(select(AuthSession.id).where(
+        AuthSession.role == Role.ADMIN.value, AuthSession.client_subject_id.is_not(None)
+    ).limit(1)) or db.scalar(select(PushSubscription.id).where(
+        PushSubscription.role == Role.ADMIN.value, PushSubscription.client_subject_id.is_not(None)
+    ).limit(1)):
+        raise RuntimeError("Vínculo administrativo inesperado; limpeza interrompida.")
     roots = media_roots()
     require_exclusive_media_roots(roots)
-    # RESTRICT falha antes de mutar caso uma tabela preservada passe a depender
-    # das operacionais. Nenhuma tabela nova pode entrar sem política explícita.
-    tables = ", ".join(f'"{name}"' for name in sorted(OPERATIONAL_TABLES))
-    db.execute(text(f"TRUNCATE TABLE {tables} RESTRICT"))
-    db.execute(delete(AuditEvent).where(~admin_security_audit_criteria()))
+    # As tabelas mistas conservam linhas administrativas. TRUNCATE não permite
+    # isso quando qualquer FK aponta ao cliente, mesmo com as linhas vazias.
     db.execute(delete(PushSubscription).where(PushSubscription.role == Role.CLIENT.value))
     db.execute(delete(AuthSession).where(AuthSession.role == Role.CLIENT.value))
+    db.execute(update(ParentGallery).values(cover_photo_id=None))
+    for name in order:
+        db.execute(delete(Base.metadata.tables[name]))
+    db.execute(delete(AuditEvent).where(~admin_security_audit_criteria()))
     db.commit()
 
+    # Nova transação: se houve provisionamento entre o commit e os arquivos,
+    # recusar antes de tocar a mídia. O lock fica até terminar essa fase.
+    db.execute(text(f"LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE"))
+    require_single_tenant(db)
     for root in roots.values():
         _clear_media_root(root)
+    db.commit()
     return inventory(db)
+
+
+def operational_delete_order() -> list[str]:
+    """Filhos antes dos pais; único ciclo permitido é a capa operacional nullable."""
+    dependencies = {}
+    for name in OPERATIONAL_TABLES:
+        targets = set()
+        for foreign_key in Base.metadata.tables[name].foreign_key_constraints:
+            target = foreign_key.referred_table.name
+            if target not in OPERATIONAL_TABLES or target == name:
+                continue
+            if name == "parent_gallery" and target == "photo_asset" and any(
+                item.parent.name == "cover_photo_id" for item in foreign_key.elements
+            ):
+                continue
+            targets.add(target)
+        dependencies[name] = targets
+    order = []
+    while dependencies:
+        referenced = set().union(*dependencies.values())
+        children = sorted(set(dependencies) - referenced)
+        if not children:
+            raise RuntimeError("Ciclo operacional sem política de limpeza; nenhuma alteração aplicada.")
+        order.extend(children)
+        for name in children:
+            dependencies.pop(name)
+        for targets in dependencies.values():
+            targets.difference_update(children)
+    return order
 
 
 def main() -> None:

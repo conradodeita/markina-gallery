@@ -126,19 +126,19 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
         fixed_unit_price_cents=700,
     )
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=gallery.id,
         name="Fotos sintéticas",
         status="preparing",
         purpose="content",
     )
     client = Client(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         full_name="Cliente sintética adulta",
         phone_e164="+5511999999998",
     )
     registration = ParentGalleryRegistration(
-        parent_gallery_id=gallery.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
         client_id=client.id,
         status="active",
     )
@@ -150,7 +150,7 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
             client,
             registration,
             PriceRule(
-                parent_gallery_id=gallery.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
                 minimum_quantity=1,
                 maximum_quantity=None,
                 unit_price_cents=700,
@@ -159,7 +159,7 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
     )
     db.add(
         FacialRollout(
-            environment=settings.environment,
+            tenant_id=FIXTURE_TENANT_ID, environment=settings.environment,
             parent_gallery_id=gallery.id,
             status="active",
             stage="canary",

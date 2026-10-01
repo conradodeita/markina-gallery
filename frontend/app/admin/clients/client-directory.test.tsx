@@ -68,7 +68,7 @@ describe("diretório global de clientes", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Cadastrar cliente" }));
 
-    expect(await screen.findByText("Cliente cadastrada no diretório global.")).toBeTruthy();
+    expect(await screen.findByText("Cliente cadastrada no diretório da sua conta.")).toBeTruthy();
     expect(await screen.findByText("Ana Cliente")).toBeTruthy();
   });
 

@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
-from sqlalchemy.schema import CreateSchema
+from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.auth import (
     AdminUser,
@@ -44,9 +44,13 @@ from tests.test_derived_galleries import set_test_global_pix
 
 @pytest.fixture(autouse=True)
 def isolated_cart_database():
+    schema = None
     if engine.dialect.name == "postgresql":
-        assert engine.url.host == "127.0.0.1" and engine.url.port in {55458, 55888}
-        assert engine.url.database == "markina_unified_test"
+        assert engine.url.host == "127.0.0.1"
+        assert (engine.url.port, engine.url.database) in {
+            (55458, "markina_unified_test"), (55888, "markina_unified_test"),
+            (15470, "pyp_photographer_test"),
+        }
         schema = "cart_" + uuid4().hex
         with engine.begin() as connection:
             connection.execute(CreateSchema(schema))
@@ -59,14 +63,20 @@ def isolated_cart_database():
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
             connection.commit()
         Base.metadata.create_all(engine)
-    yield
+    try:
+        yield
+    finally:
+        if schema is not None:
+            with engine.begin() as connection:
+                connection.execute(DropSchema(schema, cascade=True))
+            engine.update_execution_options(schema_translate_map=None)
 
 
 def setup_cart():
     set_test_global_pix()
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente", phone_e164="+5511999988000")
-        other = Client(full_name="Outra", phone_e164="+5511999988001")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511999988000")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra", phone_e164="+5511999988001")
         db.add_all([owner, other])
         db.flush()
         gallery_ids = []
@@ -76,7 +86,7 @@ def setup_cart():
             db.flush()
             db.add(
                 PriceRule(
-                    parent_gallery_id=parent.id,
+                    tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
                     minimum_quantity=1,
                     maximum_quantity=None,
                     unit_price_cents=700,
@@ -91,7 +101,7 @@ def setup_cart():
             gallery_ids.append(gallery.id)
             for photo_number in range(quantity):
                 folder = PhotoFolder(
-                    parent_gallery_id=parent.id,
+                    tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
                     derived_gallery_id=gallery.id,
                     name=f"Pasta {photo_number}",
                     status="released",
@@ -111,11 +121,12 @@ def setup_cart():
                 db.flush()
                 db.add(
                     PhotoSelection(
-                        derived_gallery_id=gallery.id, client_id=owner.id, photo_asset_id=photo.id
+                        tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, client_id=owner.id, photo_asset_id=photo.id
                     )
                 )
         db.add(
             AuthSession(
+                tenant_id=FIXTURE_TENANT_ID, client_subject_id=owner.id,
                 subject_id=owner.id,
                 role="client",
                 token_hash=token_hash("cart-test"),
@@ -171,11 +182,14 @@ def test_external_selection_is_frozen_without_pix_payment_or_revenue():
         assert finalize_selection(db, owner, gallery.id, group["revision"], "external").id == order.id
         assert len(list(db.scalars(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)))) == 2
         assert order_fulfillable(order) and delivery_payload(order)["can_send"]
-        set_delivery(db, order, "https://photos.app.goo.gl/selection", 0, uuid4())
+        admin = fixture_admin(AdminUser(email="external-delivery@example.test", password_hash="synthetic", email_verified=True, totp_secret="synthetic"))
+        db.add(admin)
+        db.flush()
+        set_delivery(db, order, "https://photos.app.goo.gl/selection", 0, admin.id)
         parent.payment_required = True
         db.commit()
         assert order_fulfillable(order)
-        assert not order_fulfillable(SaleOrder(payment_status="pending", payment_required_snapshot=True))
+        assert not order_fulfillable(SaleOrder(tenant_id=FIXTURE_TENANT_ID, payment_status="pending", payment_required_snapshot=True))
 
 
 def test_mixed_cart_pix_excludes_external_selection():
@@ -261,17 +275,17 @@ def test_canonical_external_selection_api_admin_export_and_history():
         db.add_all([admin, parent])
         db.flush()
         parent_id = parent.id
-        db.add(ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=owner_id, status="active"))
-        db.add(GalleryClientState(parent_gallery_id=parent.id, client_id=owner_id))
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Comum", status="released", audience_scope="all")
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner_id, status="active"))
+        db.add(GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner_id))
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Comum", status="released", audience_scope="all")
         db.add(folder)
         db.flush()
         photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=folder.id, filename="externa.jpg", storage_key="synthetic/external.jpg")
         db.add(photo)
         db.flush()
-        db.add(PhotoSelection(parent_gallery_id=parent.id, client_id=owner_id, photo_asset_id=photo.id))
+        db.add(PhotoSelection(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner_id, photo_asset_id=photo.id))
         for subject, role, key in ((admin.id, "admin", "selection-admin"), (other_id, "client", "selection-other")):
-            db.add(AuthSession(subject_id=subject, role=role, token_hash=token_hash(key), expires_at=now() + timedelta(hours=1)))
+            db.add(fixture_session(subject_id=subject, role=role, token_hash=token_hash(key), expires_at=now() + timedelta(hours=1)))
         db.commit()
     admin_browser = TestClient(app)
     admin_browser.cookies.set("markina_session", "selection-admin")
@@ -327,28 +341,29 @@ def test_external_historical_media_uses_explicit_retention_from_finalization(tmp
         order.frozen_at = now() - timedelta(days=60)
         db.flush()
         item = db.scalar(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id))
-        preview = tmp_path / "preview.jpg"
+        preview = tmp_path / "items" / str(item.id) / "preview.jpg"
+        preview.parent.mkdir(parents=True)
         preview.write_bytes(b"synthetic")
-        db.add(CommercialHistoryMedia(sale_order_item_id=item.id, preview_storage_key="preview.jpg", status="ready"))
+        db.add(CommercialHistoryMedia(tenant_id=FIXTURE_TENANT_ID, sale_order_item_id=item.id, preview_storage_key=f"items/{item.id}/preview.jpg", status="ready"))
         db.commit()
-        assert apply_commercial_media_retention(db).purged_items == 0 and preview.exists()
+        assert apply_commercial_media_retention(db, tenant_id=FIXTURE_TENANT_ID).purged_items == 0 and preview.exists()
         monkeypatch.setenv("COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS", "30")
-        assert apply_commercial_media_retention(db).purged_items == 1 and not preview.exists()
+        assert apply_commercial_media_retention(db, tenant_id=FIXTURE_TENANT_ID).purged_items == 1 and not preview.exists()
         assert order.payment_status == "not_required" and order.confirmed_at is None
 
 
 @pytest.mark.skipif(engine.dialect.name != "postgresql", reason="concorrência exige PostgreSQL descartável")
 def test_simultaneous_first_selections_create_one_canonical_state() -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Cliente concorrente", phone_e164="+5511999988333")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente concorrente", phone_e164="+5511999988333")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento concorrente")
         db.add_all([owner, parent])
         db.flush()
         db.add(ParentGalleryRegistration(
-            parent_gallery_id=parent.id, client_id=owner.id, status="active"
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, status="active"
         ))
         folder = PhotoFolder(
-            parent_gallery_id=parent.id, name="Comum", status="released",
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Comum", status="released",
             audience_scope="all",
         )
         db.add(folder)
@@ -405,13 +420,13 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
     with SessionLocal() as db:
         parent = db.get(DerivedGallery, legacy_ids[0]).parent_gallery_id
         db.add(ParentGalleryRegistration(
-            parent_gallery_id=parent, client_id=owner_id, status="active"
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, client_id=owner_id, status="active"
         ))
-        state = GalleryClientState(parent_gallery_id=parent, client_id=owner_id)
+        state = GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, client_id=owner_id)
         db.add(state)
         db.flush()
         folder = PhotoFolder(
-            parent_gallery_id=parent, name="Pasta comum", status="released",
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, name="Pasta comum", status="released",
             audience_scope="all",
         )
         db.add(folder)
@@ -424,7 +439,7 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
         db.add(photo)
         db.flush()
         db.add(PhotoSelection(
-            parent_gallery_id=parent, client_id=owner_id, photo_asset_id=photo.id
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, client_id=owner_id, photo_asset_id=photo.id
         ))
         db.commit()
         canonical_id = parent
@@ -468,7 +483,7 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
         db.add(second)
         db.flush()
         db.add(PhotoSelection(
-            parent_gallery_id=canonical_id, client_id=owner_id,
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=canonical_id, client_id=owner_id,
             photo_asset_id=second.id,
         ))
         db.commit()
@@ -489,7 +504,7 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
         db.add(AuthSession(
             subject_id=admin.id, role="admin", token_hash=token_hash("canonical-admin"),
             expires_at=now() + timedelta(hours=1),
-        ))
+        tenant_id=FIXTURE_TENANT_ID, admin_subject_id=admin.id))
         db.commit()
         first_communication_id = first_communication.id
         next_communication_id = next_communication.id
@@ -549,7 +564,7 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
         db.add(third)
         db.flush()
         db.add(PhotoSelection(
-            parent_gallery_id=canonical_id, client_id=owner_id,
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=canonical_id, client_id=owner_id,
             photo_asset_id=third.id,
         ))
         db.commit()
@@ -562,23 +577,23 @@ def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
 def test_confirmed_canonical_preview_survives_folder_revocation(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path))
     with SessionLocal() as db:
-        owner = Client(full_name="Compradora", phone_e164="+5511999988111")
-        other = Client(full_name="Outra", phone_e164="+5511999988222")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Compradora", phone_e164="+5511999988111")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra", phone_e164="+5511999988222")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([owner, other, parent])
         db.flush()
         db.add(ParentGalleryRegistration(
-            parent_gallery_id=parent.id, client_id=owner.id, status="active"
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, status="active"
         ))
-        db.add(GalleryClientState(parent_gallery_id=parent.id, client_id=owner.id))
+        db.add(GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id))
         folder = PhotoFolder(
-            parent_gallery_id=parent.id, name="Acervo", status="released",
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Acervo", status="released",
             audience_scope="selected",
         )
         db.add(folder)
         db.flush()
         grant = FolderClientGrant(
-            folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id
+            tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id
         )
         photo = PhotoAsset(
             tenant_id=FIXTURE_TENANT_ID,
@@ -591,36 +606,36 @@ def test_confirmed_canonical_preview_survives_folder_revocation(tmp_path, monkey
         preview_path.parent.mkdir(parents=True)
         preview_path.write_bytes(b"synthetic-preview")
         db.add(MediaDerivative(
-            photo_asset_id=photo.id, variant="client_preview", status="ready",
+            tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="client_preview", status="ready",
             relative_path=f"{photo.id}/client_preview.jpg", width=10, height=10,
         ))
         order = SaleOrder(
-            parent_gallery_id=parent.id, client_id=owner.id,
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id,
             payment_status="confirmed", total_cents=700, confirmed_at=now(),
         )
         db.add(order)
         db.flush()
         item = SaleOrderItem(
-            sale_order_id=order.id, photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id=photo.id,
             filename_snapshot=photo.filename, unit_price_cents=700,
         )
         db.add(item)
         pending = SaleOrder(
-            parent_gallery_id=parent.id, client_id=owner.id,
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id,
             payment_status="pending", total_cents=700,
         )
         db.add(pending)
         db.flush()
         pending_item = SaleOrderItem(
-            sale_order_id=pending.id, photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, sale_order_id=pending.id, photo_asset_id=photo.id,
             filename_snapshot=photo.filename, unit_price_cents=700,
         )
         db.add(pending_item)
         db.add_all([
             AuthSession(subject_id=owner.id, role="client", token_hash=token_hash("buyer"),
-                        expires_at=now() + timedelta(hours=1)),
+                        expires_at=now() + timedelta(hours=1), tenant_id=FIXTURE_TENANT_ID, client_subject_id=owner.id),
             AuthSession(subject_id=other.id, role="client", token_hash=token_hash("stranger"),
-                        expires_at=now() + timedelta(hours=1)),
+                        expires_at=now() + timedelta(hours=1), tenant_id=FIXTURE_TENANT_ID, client_subject_id=other.id),
         ])
         db.commit()
         parent_id, photo_id, item_id, pending_item_id = (
@@ -733,7 +748,7 @@ def test_admin_scope_history_decisions_and_correction(monkeypatch):
                 role="admin",
                 token_hash=token_hash("admin-cart-test"),
                 expires_at=now() + timedelta(hours=1),
-            )
+            tenant_id=FIXTURE_TENANT_ID, admin_subject_id=admin.id)
         )
         db.commit()
     browser.cookies.set("markina_session", "admin-cart-test")
@@ -880,7 +895,9 @@ def test_failure_during_report_rolls_back_all_orders(monkeypatch):
     engine.dialect.name != "postgresql", reason="Concorrência exige PostgreSQL isolado"
 )
 def test_concurrent_preparation_and_report_on_postgres():
-    assert engine.url.host == "127.0.0.1" and engine.url.port == 55458
+    assert engine.url.host == "127.0.0.1" and (engine.url.port, engine.url.database) in {
+        (55458, "markina_unified_test"), (15470, "pyp_photographer_test"),
+    }
     owner_id, _, _ = setup_cart()
     barrier = Barrier(2)
 
@@ -924,7 +941,9 @@ def test_concurrent_preparation_and_report_on_postgres():
 def test_concurrent_selection_and_report_on_postgres():
     from app.checkout import lock_client_commerce
 
-    assert engine.url.host == "127.0.0.1" and engine.url.port == 55458
+    assert engine.url.host == "127.0.0.1" and (engine.url.port, engine.url.database) in {
+        (55458, "markina_unified_test"), (15470, "pyp_photographer_test"),
+    }
     owner_id, _, gallery_ids = setup_cart()
     with SessionLocal() as db:
         group = prepare_group(db, db.get(Client, owner_id))
@@ -1068,7 +1087,7 @@ def test_concurrent_admin_decisions_apply_one_transition_to_all_orders():
                 role="admin",
                 token_hash=token_hash("race-admin"),
                 expires_at=now() + timedelta(hours=1),
-            )
+            tenant_id=FIXTURE_TENANT_ID, admin_subject_id=admin.id)
         )
         db.commit()
     barrier = Barrier(2)
@@ -1101,7 +1120,7 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
     owner_id, other_id, gallery_ids = setup_cart()
     with SessionLocal() as db:
         legacy = SaleOrder(
-            client_id=owner_id,
+            tenant_id=FIXTURE_TENANT_ID, client_id=owner_id,
             derived_gallery_id=gallery_ids[0],
             total_cents=500,
             payment_status="confirmed",
@@ -1112,7 +1131,7 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
         db.flush()
         db.add(
             SaleOrderItem(
-                sale_order_id=legacy.id,
+                tenant_id=FIXTURE_TENANT_ID, sale_order_id=legacy.id,
                 photo_asset_id_snapshot=uuid4(),
                 filename_snapshot="compra-anterior.jpg",
                 unit_price_cents=500,
@@ -1124,7 +1143,7 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
                 role="client",
                 token_hash=token_hash("other-cart"),
                 expires_at=now() + timedelta(hours=1),
-            )
+            tenant_id=FIXTURE_TENANT_ID, client_subject_id=other_id)
         )
         db.add(
             AuthSession(
@@ -1132,7 +1151,7 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
                 role="client",
                 token_hash=token_hash("new-login"),
                 expires_at=now() + timedelta(hours=1),
-            )
+            tenant_id=FIXTURE_TENANT_ID, client_subject_id=owner_id)
         )
         db.commit()
     browser = TestClient(app)
@@ -1158,7 +1177,7 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
         db.flush()
         db.add(
             PhotoSelection(
-                client_id=owner_id, derived_gallery_id=gallery.id, photo_asset_id=photo.id
+                tenant_id=FIXTURE_TENANT_ID, client_id=owner_id, derived_gallery_id=gallery.id, photo_asset_id=photo.id
             )
         )
         db.get(DerivedGallery, gallery_ids[1]).selection_expires_at = now() - timedelta(days=1)
@@ -1193,3 +1212,5 @@ def test_empty_cart_discards_only_unreported_group():
         ).status_code
         == 409
     )
+
+from tests.tenant_fixtures import fixture_session

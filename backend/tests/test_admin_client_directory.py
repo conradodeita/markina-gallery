@@ -96,10 +96,10 @@ def authenticate_admin(client: TestClient) -> UUID:
 
 
 def add_client(db, name: str, phone: str) -> Client:
-    item = Client(full_name=name, phone_e164=phone)
+    item = Client(tenant_id=FIXTURE_TENANT_ID, full_name=name, phone_e164=phone)
     db.add(item)
     db.flush()
-    db.add(ClientPhone(client_id=item.id, phone_e164=phone, active=True))
+    db.add(ClientPhone(tenant_id=FIXTURE_TENANT_ID, client_id=item.id, phone_e164=phone, active=True))
     return item
 
 
@@ -107,7 +107,7 @@ def add_gallery_graph(db, owner: Client, *, name: str) -> tuple[ParentGallery, D
     parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name=f"Pública {name}")
     db.add(parent)
     db.flush()
-    folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos", status="released")
+    folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos", status="released")
     db.add(folder)
     db.flush()
     photo = PhotoAsset(
@@ -124,16 +124,16 @@ def add_gallery_graph(db, owner: Client, *, name: str) -> tuple[ParentGallery, D
     db.flush()
     db.add_all(
         [
-            ParentGalleryRegistration(
+            ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id, client_id=owner.id, status="active"
             ),
-            DerivedGalleryMembership(
+            DerivedGalleryMembership(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=gallery.id,
                 parent_gallery_id=parent.id,
                 client_id=owner.id,
                 status="active",
             ),
-            DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id),
+            DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo.id),
         ]
     )
     return parent, gallery, photo
@@ -147,7 +147,7 @@ def test_directory_is_authorized_paginated_searchable_and_aggregated(client: Tes
         bia = add_client(db, "Bia Cliente", "+5511900000102")
         caio = add_client(db, "Caio Cliente", "+5511900000103")
         parent, private, _ = add_gallery_graph(db, ana, name="Privada Ana")
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=private.id,
             client_id=ana.id,
             payment_status="pending",
@@ -229,8 +229,8 @@ def test_deletion_removes_exclusive_operational_graph_and_replays_receipt(
         parent, private, photo = add_gallery_graph(db, target, name="Privada exclusiva")
         db.add_all(
             [
-                GalleryAccess(client_id=target.id, gallery_id=parent.id),
-                GalleryAccessCapability(
+                GalleryAccess(tenant_id=FIXTURE_TENANT_ID, client_id=target.id, gallery_id=parent.id, parent_gallery_id=parent.id),
+                GalleryAccessCapability(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=parent.id,
                     derived_gallery_id=private.id,
                     client_id=None,
@@ -238,7 +238,7 @@ def test_deletion_removes_exclusive_operational_graph_and_replays_receipt(
                     token_hash="a" * 64,
                     status="active",
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=private.id,
                     photo_asset_id=photo.id,
                     client_id=target.id,
@@ -248,7 +248,7 @@ def test_deletion_removes_exclusive_operational_graph_and_replays_receipt(
                     role="client",
                     subject_id=target.id,
                     expires_at=now() + timedelta(days=1),
-                ),
+                tenant_id=FIXTURE_TENANT_ID, client_subject_id=target.id),
             ]
         )
         db.commit()
@@ -308,7 +308,7 @@ def test_deletion_preserves_shared_private_gallery_and_other_member(client: Test
         survivor = add_client(db, "Membro preservado", "+5511900000402")
         parent, private, photo = add_gallery_graph(db, target, name="Privada compartilhada")
         db.add(
-            DerivedGalleryMembership(
+            DerivedGalleryMembership(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=private.id,
                 parent_gallery_id=parent.id,
                 client_id=survivor.id,
@@ -317,12 +317,12 @@ def test_deletion_preserves_shared_private_gallery_and_other_member(client: Test
         )
         db.add_all(
             [
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=private.id,
                     photo_asset_id=photo.id,
                     client_id=target.id,
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=private.id,
                     photo_asset_id=photo.id,
                     client_id=survivor.id,
@@ -377,33 +377,33 @@ def test_deletion_removes_residual_canonical_state_and_keeps_gallery_tombstone(
         db.flush()
         gallery_audit = AuditEvent(event="parent_gallery.deleted", subject=str(tombstone.id))
         db.add(gallery_audit)
-        folder = PhotoFolder(parent_gallery_id=active.id, name="Restrita")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=active.id, name="Restrita")
         db.add(folder)
         db.flush()
         target_states = [
-            GalleryClientState(parent_gallery_id=parent.id, client_id=target.id)
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=target.id)
             for parent in (tombstone, active)
         ]
         survivor_states = [
-            GalleryClientState(parent_gallery_id=parent.id, client_id=survivor.id)
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=survivor.id)
             for parent in (tombstone, active)
         ]
         db.add_all([*target_states, *survivor_states])
         db.flush()
-        target_grant = FolderClientGrant(
+        target_grant = FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
             folder_id=folder.id, parent_gallery_id=active.id, client_id=target.id
         )
-        survivor_grant = FolderClientGrant(
+        survivor_grant = FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
             folder_id=folder.id, parent_gallery_id=active.id, client_id=survivor.id
         )
-        reopening = GalleryReopeningRequest(
+        reopening = GalleryReopeningRequest(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=active.id,
             requested_by_client_id=target.id,
             idempotency_key="reopen-target-0001",
         )
         db.add_all([target_grant, survivor_grant, reopening])
         db.flush()
-        notice = GalleryReopeningNotificationOutbox(
+        notice = GalleryReopeningNotificationOutbox(tenant_id=FIXTURE_TENANT_ID,
             gallery_reopening_request_id=reopening.id,
             status="queued",
         )
@@ -464,8 +464,8 @@ def test_deletion_removes_combined_homolog_operational_inventory_and_keeps_tombs
         )
         db.add(tombstone)
         db.flush()
-        state = GalleryClientState(parent_gallery_id=tombstone.id, client_id=target.id)
-        notification = GalleryMembershipNotificationOutbox(
+        state = GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=tombstone.id, client_id=target.id)
+        notification = GalleryMembershipNotificationOutbox(tenant_id=FIXTURE_TENANT_ID,
             event_key="synthetic-client-login-deletion",
             event_type="client_logged_in",
             parent_gallery_id=tombstone.id,
@@ -479,9 +479,9 @@ def test_deletion_removes_combined_homolog_operational_inventory_and_keeps_tombs
             role="client",
             subject_id=target.id,
             expires_at=now() + timedelta(days=1),
-        )
+        tenant_id=FIXTURE_TENANT_ID, client_subject_id=target.id)
         deliveries = [
-            WhatsAppDelivery(
+            WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
                 kind="otp",
                 source_type="auth_challenge",
                 source_id=f"synthetic-challenge-{index}",
@@ -548,7 +548,7 @@ def test_deletion_blocks_payment_group_snapshot(client: TestClient) -> None:
     authenticate_admin(client)
     with SessionLocal() as db:
         target = add_client(db, "Pagamento protegido", "+5511900000413")
-        group = PaymentGroup(
+        group = PaymentGroup(tenant_id=FIXTURE_TENANT_ID,
             client_id=target.id,
             state="draft",
             revision="synthetic-revision",
@@ -584,7 +584,7 @@ def test_deletion_preserves_private_gallery_with_third_party_interaction(
         survivor = add_client(db, "Preservar seleção", "+5511900000452")
         _, private, photo = add_gallery_graph(db, target, name="Privada com interação")
         db.add(
-            PhotoSelection(
+            PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=private.id,
                 photo_asset_id=photo.id,
                 client_id=survivor.id,
@@ -620,7 +620,7 @@ def test_deletion_blocks_commercial_history_without_pii(
         target = add_client(db, "Histórico Protegido", "+5511900000501")
         _, private, _ = add_gallery_graph(db, target, name="Privada com pedido")
         db.add(
-            SaleOrder(
+            SaleOrder(tenant_id=FIXTURE_TENANT_ID,
                 derived_gallery_id=private.id,
                 client_id=target.id,
                 payment_status=payment_status,
@@ -758,7 +758,7 @@ def test_database_rollback_failure_keeps_transaction_outcome_unknown() -> None:
             raise OperationalError("connection", {}, RuntimeError("synthetic DSN"))
 
     state, receipt = main_module._client_deletion_transaction_state(
-        UnavailableDatabase(), "delete-client-database-unavailable-0001"
+        UnavailableDatabase(), "delete-client-database-unavailable-0001", tenant_id=FIXTURE_TENANT_ID
     )
 
     assert state == "unknown"
@@ -775,7 +775,7 @@ def test_verified_phone_change_preserves_uuid_revokes_session_and_refuses_duplic
         registration_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Pública identidade")
         db.add(registration_parent)
         db.flush()
-        registration = ParentGalleryRegistration(
+        registration = ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=registration_parent.id,
             client_id=target.id,
             status="active",
@@ -786,20 +786,20 @@ def test_verified_phone_change_preserves_uuid_revokes_session_and_refuses_duplic
             role="client",
             subject_id=target.id,
             expires_at=now() + timedelta(days=1),
-        )
+        tenant_id=FIXTURE_TENANT_ID, client_subject_id=target.id)
         db.add(session)
         successful = AuthChallenge(
             kind="client_otp",
             subject="+5511900000683",
             secret_hash=token_hash("123456"),
             expires_at=now() + timedelta(minutes=10),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         duplicate = AuthChallenge(
             kind="client_otp",
             subject=other.phone_e164,
             secret_hash=token_hash("654321"),
             expires_at=now() + timedelta(minutes=10),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.add_all([successful, duplicate])
         db.commit()
         target_id = target.id
@@ -844,7 +844,7 @@ def test_deletion_reclassifies_a_commercial_race_and_rolls_back(
     with SessionLocal() as db:
         target = add_client(db, "Corrida comercial", "+5511900000611")
         _, private, photo = add_gallery_graph(db, target, name="Privada corrida")
-        selection = PhotoSelection(
+        selection = PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=private.id,
             photo_asset_id=photo.id,
             client_id=target.id,
@@ -856,10 +856,10 @@ def test_deletion_reclassifies_a_commercial_race_and_rolls_back(
     original = client_lifecycle.deletion_inventory
     calls = 0
 
-    def raced_inventory(db, target):
+    def raced_inventory(db, target, *, tenant_id):
         nonlocal calls
         calls += 1
-        inventory = original(db, target)
+        inventory = original(db, target, tenant_id=tenant_id)
         if calls == 2:
             inventory["commercial_protected"]["orders"] = 1
             inventory["can_delete"] = False
@@ -887,7 +887,7 @@ def test_payment_delivery_is_protected_by_its_commercial_source(client: TestClie
     with SessionLocal() as db:
         target = add_client(db, "Entrega protegida", "+5511900000651")
         _, private, _ = add_gallery_graph(db, target, name="Privada com entrega")
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=private.id,
             client_id=target.id,
             payment_status="confirmed",
@@ -896,7 +896,7 @@ def test_payment_delivery_is_protected_by_its_commercial_source(client: TestClie
         )
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
             sale_order_id=order.id,
             client_id=target.id,
             idempotency_key="protected-payment-communication-0001",
@@ -904,7 +904,7 @@ def test_payment_delivery_is_protected_by_its_commercial_source(client: TestClie
         )
         db.add(communication)
         db.flush()
-        notification = PaymentNotificationOutbox(
+        notification = PaymentNotificationOutbox(tenant_id=FIXTURE_TENANT_ID,
             payment_communication_id=communication.id,
             recipient_phone=target.phone_e164,
             template_kind="confirmed",
@@ -913,7 +913,7 @@ def test_payment_delivery_is_protected_by_its_commercial_source(client: TestClie
         db.add(notification)
         db.flush()
         db.add(
-            WhatsAppDelivery(
+            WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
                 kind="payment",
                 source_type="payment_notification_outbox",
                 source_id=str(notification.id),
@@ -949,7 +949,7 @@ def test_deletion_never_claims_state_from_a_retired_phone_reused_by_another_clie
         previous_record.retired_at = now()
         former_owner.phone_e164 = "+5511900000672"
         db.add(
-            ClientPhone(
+            ClientPhone(tenant_id=FIXTURE_TENANT_ID,
                 client_id=former_owner.id,
                 phone_e164=former_owner.phone_e164,
                 active=True,
@@ -962,10 +962,10 @@ def test_deletion_never_claims_state_from_a_retired_phone_reused_by_another_clie
             subject=current_owner.phone_e164,
             secret_hash="synthetic",
             expires_at=now() + timedelta(minutes=10),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.add(challenge)
         db.flush()
-        delivery = WhatsAppDelivery(
+        delivery = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
             kind="otp",
             source_type="auth_challenge",
             source_id=str(challenge.id),
@@ -977,7 +977,7 @@ def test_deletion_never_claims_state_from_a_retired_phone_reused_by_another_clie
         db.add(delivery)
         db.flush()
         db.add(
-            WhatsAppDelivery(
+            WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
                 kind="payment",
                 source_type="payment_notification_outbox",
                 source_id=str(uuid4()),
@@ -1022,10 +1022,10 @@ def test_deletion_removes_otp_challenge_delivery_and_attempt(client: TestClient)
             subject_fingerprint=None,
             secret_hash="synthetic",
             expires_at=now() + timedelta(minutes=10),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.add(challenge)
         db.flush()
-        delivery = WhatsAppDelivery(
+        delivery = WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
             kind="otp",
             source_type="auth_challenge",
             source_id=str(challenge.id),
@@ -1037,7 +1037,7 @@ def test_deletion_removes_otp_challenge_delivery_and_attempt(client: TestClient)
         db.add(delivery)
         db.flush()
         db.add(
-            WhatsAppDeliveryAttempt(
+            WhatsAppDeliveryAttempt(tenant_id=FIXTURE_TENANT_ID,
                 delivery_id=delivery.id,
                 attempt_number=1,
                 result="accepted",
@@ -1066,7 +1066,7 @@ def test_deletion_removes_transient_facial_request_and_reference_file(
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Pública facial")
         db.add(parent)
         db.flush()
-        policy = GalleryFacialPolicy(
+        policy = GalleryFacialPolicy(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             status="active",
             legal_notice_version="notice-v1",
@@ -1080,7 +1080,7 @@ def test_deletion_removes_transient_facial_request_and_reference_file(
         )
         db.add(policy)
         db.flush()
-        search = FacialSearchRequest(
+        search = FacialSearchRequest(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             client_id=target.id,
             policy_id=policy.id,

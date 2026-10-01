@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id, owned_record
 from app.auth import (
     Client,
     DerivedGallery,
@@ -14,6 +15,7 @@ from app.auth import (
     DerivedGalleryPhotoOrigin,
     ParentGallery,
     ParentGalleryRegistration,
+    PhotoAsset,
     PhotoSelection,
     expired,
 )
@@ -76,19 +78,27 @@ def _insert_once(db: Session, record, lookup) -> bool:
 def ensure_private_photo_reference(
     db: Session,
     *,
+    tenant_id: UUID,
     gallery_id: UUID,
     photo_id: UUID,
     origin: str,
 ) -> bool:
     """Mantém uma referência única e registra cada justificativa que a sustenta."""
 
+    gallery = owned_record(db, DerivedGallery, gallery_id, tenant_id=tenant_id)
+    photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
+    if not gallery or not photo or photo.parent_gallery_id != gallery.parent_gallery_id:
+        raise PrivateDerivationError("Foto indisponível para esta galeria.")
+
     reference_lookup = select(DerivedGalleryPhoto.id).where(
         DerivedGalleryPhoto.derived_gallery_id == gallery_id,
+        DerivedGalleryPhoto.tenant_id == tenant_id,
         DerivedGalleryPhoto.photo_asset_id == photo_id,
     )
     reference_created = _insert_once(
         db,
         DerivedGalleryPhoto(
+            tenant_id=tenant_id,
             derived_gallery_id=gallery_id,
             photo_asset_id=photo_id,
             origin=origin,
@@ -101,10 +111,12 @@ def ensure_private_photo_reference(
     _insert_once(
         db,
         DerivedGalleryPhotoOrigin(
+            tenant_id=tenant_id,
             derived_gallery_photo_id=reference_id,
             origin=origin,
         ),
         select(DerivedGalleryPhotoOrigin.id).where(
+            DerivedGalleryPhotoOrigin.tenant_id == tenant_id,
             DerivedGalleryPhotoOrigin.derived_gallery_photo_id == reference_id,
             DerivedGalleryPhotoOrigin.origin == origin,
         ),
@@ -120,12 +132,13 @@ def derive_client_selection(
     photo_id: UUID,
 ) -> PrivateDerivationResult:
     """Cria/reutiliza privada, referência client e seleção em uma transação."""
+    tenant_id = client_tenant_id(db, client_id)
 
-    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
-    parent = db.get(ParentGallery, parent_gallery_id)
-    client = db.get(Client, client_id)
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client_id).with_for_update())
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
+    client = owned_record(db, Client, client_id, tenant_id=tenant_id)
     registration = db.scalar(
-        select(ParentGalleryRegistration).where(
+        select(ParentGalleryRegistration).where(ParentGalleryRegistration.tenant_id == tenant_id).where(
             ParentGalleryRegistration.parent_gallery_id == parent_gallery_id,
             ParentGalleryRegistration.client_id == client_id,
             ParentGalleryRegistration.status == "active",
@@ -133,7 +146,7 @@ def derive_client_selection(
     )
     if not registration:
         existing_gallery = db.scalar(
-            select(DerivedGallery).where(
+            select(DerivedGallery).where(DerivedGallery.tenant_id == tenant_id).where(
                 DerivedGallery.parent_gallery_id == parent_gallery_id,
                 DerivedGallery.client_id == client_id,
             )
@@ -181,11 +194,12 @@ def derive_client_selection(
 
     reference_created = ensure_private_photo_reference(
         db,
+        tenant_id=tenant_id,
         gallery_id=gallery.id,
         photo_id=photo.id,
         origin="client",
     )
-    selection_lookup = select(PhotoSelection.id).where(
+    selection_lookup = select(PhotoSelection.id).where(PhotoSelection.tenant_id == tenant_id).where(
         PhotoSelection.derived_gallery_id == gallery.id,
         PhotoSelection.photo_asset_id == photo.id,
         PhotoSelection.client_id == client.id,
@@ -196,7 +210,7 @@ def derive_client_selection(
             derived_gallery_id=gallery.id,
             photo_asset_id=photo.id,
             client_id=client.id,
-        ),
+         tenant_id=tenant_id),
         selection_lookup,
     )
     if selection_created:
@@ -219,9 +233,10 @@ def derive_admin_gallery(
     name: str | None = None,
 ) -> AdminPrivateDerivationResult:
     """Cria ou reutiliza uma privada administrativa vazia."""
+    tenant_id = client_tenant_id(db, client_id)
 
-    parent = db.get(ParentGallery, parent_gallery_id)
-    client = db.get(Client, client_id)
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
+    client = owned_record(db, Client, client_id, tenant_id=tenant_id)
     if not parent or parent.lifecycle_status != "active" or not parent.active or not client:
         raise PrivateDerivationError("Galeria pública ou cliente indisponível.")
 

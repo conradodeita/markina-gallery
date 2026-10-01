@@ -25,7 +25,7 @@ it("carrega apenas ao abrir, mostra escopo compartilhado e salva exposição pr�
   expect(fetcher).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: /Processamento da pasta/ }));
   expect(await screen.findByText(/todas as clientes atribuídas/)).toBeTruthy();
-  fireEvent.change(screen.getAllByLabelText("Comportamento da pasta")[1], { target: { value: "custom" } });
+  fireEvent.change((await screen.findAllByLabelText("Comportamento da pasta"))[1], { target: { value: "custom" } });
   fireEvent.change(screen.getByLabelText(/Intensidade/), { target: { value: "60" } });
   fireEvent.change(screen.getByLabelText(/Exposição/), { target: { value: "5" } });
   fireEvent.click(screen.getByRole("button", { name: "Salvar configuração" }));

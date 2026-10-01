@@ -1,3 +1,5 @@
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
+
 """Testes focados nas primitivas e fluxos de segurança administrativa."""
 import re
 from datetime import timedelta
@@ -79,7 +81,7 @@ def create_admin(*, email: str = "admin@markina.test", password: str = "Atual-fo
         ))
         db.add(admin)
         db.add(
-            WhatsAppChannelSettings(
+            WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
                 environment="development",
                 expected_phone_e164="+5511999999999",
                 status="sandbox",
@@ -443,11 +445,15 @@ def test_email_worker_accepts_once_and_minimizes_payload(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("PUBLIC_APP_ORIGIN", "http://localhost:3000")
     with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(email="admin@markina.test", email_verified=True,
+                                        password_hash="synthetic-hash", totp_secret="synthetic-totp"))
+        db.add(admin)
+        db.flush()
         delivery = enqueue_email(
             db,
             kind="security_notice",
             source_type="admin_user",
-            source_id=str(uuid4()),
+            source_id=str(admin.id),
             recipient="admin@markina.test",
             subject="Aviso de segurança",
             text_body="Sua credencial foi alterada.",
@@ -507,11 +513,15 @@ def test_email_worker_handles_failures_without_blind_retry(
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("EMAIL_RETRY_BASE_SECONDS", "30")
     with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(email="admin@markina.test", email_verified=True,
+                                        password_hash="synthetic-hash", totp_secret="synthetic-totp"))
+        db.add(admin)
+        db.flush()
         delivery = enqueue_email(
             db,
             kind="security_notice",
             source_type="admin_user",
-            source_id=str(uuid4()),
+            source_id=str(admin.id),
             recipient="admin@markina.test",
             subject="Teste",
             text_body="Teste sintético.",
@@ -673,7 +683,7 @@ def test_public_recovery_stays_neutral_when_real_whatsapp_key_is_missing(
     create_admin()
     with SessionLocal() as db:
         db.add(
-            WhatsAppChannelSettings(
+            WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
                 environment="homolog",
                 status="ready",
                 expected_phone_e164="+5511999999999",

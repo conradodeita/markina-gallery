@@ -81,7 +81,7 @@ def test_representation_migration_upgrades_clean_database_without_backfill(
     tmp_path: Path,
 ) -> None:
     database_url = f"sqlite:///{(tmp_path / 'representation-clean.sqlite').as_posix()}"
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     engine = create_engine(database_url)
     assert "facial_legal_representation" in inspect(engine).get_table_names()
     with engine.connect() as connection:

@@ -38,7 +38,7 @@ def setup_region(tmp_path):
             quality_version=settings.quality_version,
         ),
     )
-    region = PhotoFaceEmbedding(
+    region = PhotoFaceEmbedding(tenant_id=FIXTURE_TENANT_ID,
         photo_asset_id=photo.id,
         parent_gallery_id=gallery.id,
         face_ordinal=0,
@@ -257,13 +257,13 @@ def test_gallery_purge_clears_region_reference_and_proof(tmp_path):
         settings=settings,
     )
     db.commit()
-    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id)["references"] == 1
-    purge_gallery_records(db, parent_gallery_id=gallery.id)
+    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id, tenant_id=FIXTURE_TENANT_ID)["references"] == 1
+    purge_gallery_records(db, parent_gallery_id=gallery.id, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
     db.refresh(item)
     assert item.reference_region_id is None
     assert item.status == "cancelled"
-    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id)["clean"]
+    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id, tenant_id=FIXTURE_TENANT_ID)["clean"]
 
 
 def test_cancel_clears_region_even_when_cleanup_jobs_are_cancelled(tmp_path):

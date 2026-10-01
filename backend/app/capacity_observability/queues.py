@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import FacialJob, MediaJob, PhotoAnalysis, PreviewAdjustment
+from app.auth import FacialJob, MediaJob, PhotoAnalysis, PreviewAdjustment, Tenant
 from app.capacity_observability.contracts import (
     Evidence,
     MetricValue,
@@ -145,9 +145,10 @@ def collect_facial_queues(db: Session, *, instant: datetime) -> list[QueueSnapsh
         else_=None,
     ).label("queue_class")
     queued = FacialJob.status == "queued"
-    due = queued & (FacialJob.available_at <= current)
+    active_owner = select(Tenant.id).where(Tenant.id == FacialJob.tenant_id, Tenant.status == "active").exists().correlate(FacialJob)
+    due = queued & (FacialJob.available_at <= current) & active_owner
     processing = FacialJob.status == "processing"
-    reclaimable = processing & (FacialJob.lease_expires_at <= current) & (
+    reclaimable = processing & active_owner & (FacialJob.lease_expires_at <= current) & (
         FacialJob.available_at <= current
     )
     statement = (
@@ -196,13 +197,15 @@ def collect_media_queue(db: Session, *, instant: datetime) -> QueueSnapshot:
         select(PhotoAnalysis.photo_asset_id)
         .where(
             PhotoAnalysis.photo_asset_id == MediaJob.photo_asset_id,
+            PhotoAnalysis.tenant_id == MediaJob.tenant_id,
             PhotoAnalysis.state.in_(("pending", "receiving")),
         )
         .exists()
     )
     queued = MediaJob.status == "queued"
     blocked = queued & blocked_dependency.correlate(MediaJob)
-    claimable = queued & ~blocked_dependency.correlate(MediaJob)
+    active_owner = select(Tenant.id).where(Tenant.id == MediaJob.tenant_id, Tenant.status == "active").exists().correlate(MediaJob)
+    claimable = queued & active_owner & ~blocked_dependency.correlate(MediaJob)
     statement = select(
         func.count().filter(queued).label("queued_total"),
         func.count().filter(blocked).label("blocked_total"),

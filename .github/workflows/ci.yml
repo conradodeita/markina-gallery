@@ -22,8 +22,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      photographer-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: pyp_photographer_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic-test-only
+        ports:
+          - 15470:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pyp_photographer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       TENANT_TEST_DATABASE_URL: postgresql+psycopg://pyp_test:synthetic-test-only@127.0.0.1:55469/pyp_tenant_test
+      PHOTOGRAPHER_TEST_DATABASE_URL: postgresql+psycopg://postgres:synthetic-test-only@127.0.0.1:15470/pyp_photographer_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

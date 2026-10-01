@@ -61,20 +61,41 @@ describe("diagnóstico local de capacidade", () => {
     expect(screen.queryByRole("spinbutton")).toBeNull();
   });
 
-  it("remove o snapshot quando atualização perde autorização e permite nova tentativa", async () => {
+  it.each([401, 403])("remove painel, snapshot e cópia após HTTP %s", async (status) => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(snapshot()), { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 403 }));
+      .mockResolvedValueOnce(new Response(null, { status }));
     vi.stubGlobal("fetch", fetcher);
     render(<CapacityDiagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Consultar diagnóstico" }));
     await screen.findByText(/Snapshot em cache|Coletado agora/);
     expect(screen.getByRole("button", { name: "Copiar relatório" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Atualizar agora" }));
-    expect(await screen.findByRole("alert")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Capacidade e filas")).toBeNull());
     expect(screen.queryByText(/Coletado agora/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Copiar relatório" })).toBeNull();
-    expect(screen.getByText(/sessão administrativa não está mais autorizada/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Tentar novamente" })).toBeNull();
+  });
+
+  it("copia o snapshot atualizado mantendo capacity-report/v1 e timestamps de cache", async () => {
+    const first = snapshot();
+    const second = { ...snapshot(), cached: true, collection_started_at: "2026-10-01T11:00:00Z", collection_finished_at: "2026-10-01T11:00:01Z" };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(first)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(second)));
+    const writer = stubClipboard();
+    vi.stubGlobal("fetch", fetcher);
+    render(<CapacityDiagnostics />);
+    fireEvent.click(screen.getByRole("button", { name: "Consultar diagnóstico" }));
+    await screen.findByText(/Coletado agora/);
+    fireEvent.click(screen.getByRole("button", { name: "Atualizar agora" }));
+    await screen.findByText(/Snapshot em cache do processo/);
+    fireEvent.click(screen.getByRole("button", { name: "Copiar relatório" }));
+    await screen.findByRole("status");
+    expect(writer).toHaveBeenCalledWith(formatCapacityReport(second as Snapshot));
+    expect(writer.mock.calls[0][0]).toContain("capacity-report/v1");
+    expect(writer.mock.calls[0][0]).toContain("2026-10-01T11:00:00Z");
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("copia exatamente o snapshot atual sem nova consulta e impede cópias concorrentes", async () => {

@@ -74,13 +74,13 @@ def test_prepare_and_activate_require_matching_enabled_environment() -> None:
     settings = _settings()
     rollout = prepare_rollout(
         db,
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(settings),
     )
     db.commit()
     assert rollout.status == "prepared" and rollout.stage == "dark"
-    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=settings, parent_gallery_id=gallery.id) is False
 
     with pytest.raises(FacialRolloutError, match="kill switch"):
         activate_rollout(
@@ -103,7 +103,7 @@ def test_prepare_and_activate_require_matching_enabled_environment() -> None:
     )
     db.commit()
     assert activated.status == "active" and activated.stage == "canary"
-    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is True
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=settings, parent_gallery_id=gallery.id) is True
 
 
 def test_missing_rollout_uses_general_availability_only_for_eligible_gallery() -> None:
@@ -111,17 +111,17 @@ def test_missing_rollout_uses_general_availability_only_for_eligible_gallery() -
 
     assert rollout_is_active(
         db,
-        settings=_settings(),
+        tenant_id=FIXTURE_TENANT_ID, settings=_settings(),
         parent_gallery_id=gallery.id,
     ) is True
     assert rollout_is_active(
         db,
-        settings=_settings(enabled=False),
+        tenant_id=FIXTURE_TENANT_ID, settings=_settings(enabled=False),
         parent_gallery_id=gallery.id,
     ) is False
     assert rollout_is_active(
         db,
-        settings=_settings(environment="production"),
+        tenant_id=FIXTURE_TENANT_ID, settings=_settings(environment="production"),
         parent_gallery_id=gallery.id,
     ) is False
 
@@ -129,7 +129,7 @@ def test_missing_rollout_uses_general_availability_only_for_eligible_gallery() -
     db.commit()
     assert rollout_is_active(
         db,
-        settings=_settings(),
+        tenant_id=FIXTURE_TENANT_ID, settings=_settings(),
         parent_gallery_id=gallery.id,
     ) is False
 
@@ -139,12 +139,12 @@ def test_explicit_non_active_rollout_overrides_general_availability() -> None:
     settings = _settings()
     rollout = prepare_rollout(
         db,
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(settings),
     )
     assert rollout.status == "prepared"
-    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=settings, parent_gallery_id=gallery.id) is False
 
     activate_rollout(
         db,
@@ -155,7 +155,7 @@ def test_explicit_non_active_rollout_overrides_general_availability() -> None:
         stage="general",
         settings=settings,
     )
-    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is True
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=settings, parent_gallery_id=gallery.id) is True
 
     suspend_rollout(
         db,
@@ -163,7 +163,7 @@ def test_explicit_non_active_rollout_overrides_general_availability() -> None:
         parent_gallery_id=gallery.id,
         actor_admin_id=admin.id,
     )
-    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=settings, parent_gallery_id=gallery.id) is False
 
     revoke_rollout(
         db,
@@ -171,7 +171,7 @@ def test_explicit_non_active_rollout_overrides_general_availability() -> None:
         parent_gallery_id=gallery.id,
         actor_admin_id=admin.id,
     )
-    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=settings, parent_gallery_id=gallery.id) is False
 
 
 def test_transitions_are_strict_and_revocation_is_idempotent() -> None:
@@ -179,7 +179,7 @@ def test_transitions_are_strict_and_revocation_is_idempotent() -> None:
     settings = _settings()
     prepare_rollout(
         db,
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(settings),
     )
@@ -225,7 +225,7 @@ def test_transitions_are_strict_and_revocation_is_idempotent() -> None:
         actor_admin_id=admin.id,
     )
     db.commit()
-    assert rollout_is_active(db, settings=settings, parent_gallery_id=gallery.id) is False
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=settings, parent_gallery_id=gallery.id) is False
     assert db.scalar(select(func.count()).select_from(FacialRollout)) == 1
 
 
@@ -234,13 +234,13 @@ def test_prepare_reuses_single_scope_and_audit_is_minimized() -> None:
     settings = _settings()
     first = prepare_rollout(
         db,
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(settings),
     )
     second = prepare_rollout(
         db,
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(settings),
     )
@@ -267,7 +267,7 @@ def test_active_rollout_fails_closed_for_version_or_environment_drift() -> None:
     settings = _settings()
     prepare_rollout(
         db,
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(settings),
     )
@@ -283,10 +283,10 @@ def test_active_rollout_fails_closed_for_version_or_environment_drift() -> None:
     db.commit()
     drift = _settings()
     object.__setattr__(drift, "model_version", "model-v2")
-    assert rollout_is_active(db, settings=drift, parent_gallery_id=gallery.id) is False
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID, settings=drift, parent_gallery_id=gallery.id) is False
     assert rollout_is_active(
         db,
-        settings=_settings(environment="development"),
+        tenant_id=FIXTURE_TENANT_ID, settings=_settings(environment="development"),
         parent_gallery_id=gallery.id,
     ) is False
 
@@ -296,7 +296,7 @@ def test_homologation_runtime_reads_canonical_homolog_rollout() -> None:
     runtime_settings = _settings(environment="homologation")
     prepare_rollout(
         db,
-        environment="homolog",
+        tenant_id=FIXTURE_TENANT_ID, environment="homolog",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(runtime_settings),
     )
@@ -313,7 +313,7 @@ def test_homologation_runtime_reads_canonical_homolog_rollout() -> None:
 
     assert rollout_is_active(
         db,
-        settings=runtime_settings,
+        tenant_id=FIXTURE_TENANT_ID, settings=runtime_settings,
         parent_gallery_id=gallery.id,
     ) is True
 
@@ -323,7 +323,7 @@ def test_admin_payload_exposes_only_operational_rollout_state() -> None:
     settings = _settings()
     rollout = prepare_rollout(
         db,
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=gallery.id,
         draft=draft_from_settings(settings),
     )

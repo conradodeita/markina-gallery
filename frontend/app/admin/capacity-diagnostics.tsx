@@ -39,7 +39,8 @@ function metricText(metric: Metric) {
   return `${value} ${unit} · ${evidenceLabels[metric.evidence] ?? metric.evidence}`;
 }
 
-export function CapacityDiagnostics() {
+export function CapacityDiagnostics({ onAccessDenied }: { onAccessDenied?: () => void }) {
+  const [denied, setDenied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
@@ -76,7 +77,12 @@ export function CapacityDiagnostics() {
         credentials: "same-origin", cache: "no-store", signal: controller.signal,
       });
       if (!response.ok) {
-        setError(response.status === 401 || response.status === 403 ? "Sua sessão administrativa não está mais autorizada. Entre novamente para consultar." : "Não foi possível consultar o diagnóstico agora.");
+        if (response.status === 401 || response.status === 403) {
+          setDenied(true);
+          onAccessDenied?.();
+          return;
+        }
+        setError("Não foi possível consultar o diagnóstico agora.");
         return;
       }
       setSnapshot(await response.json() as Snapshot);
@@ -109,6 +115,7 @@ export function CapacityDiagnostics() {
     }
   }
 
+  if (denied) return null;
   return (
     <SurfaceCard>
       <div className="section-heading">

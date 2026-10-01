@@ -85,13 +85,13 @@ def postgres_scene(tmp_path, monkeypatch):
             parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Concorrência sintética")
             db.add(parent)
             db.flush()
-            folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos")
+            folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos")
             db.add(folder)
             db.flush()
             active = _settings(tmp_path)
-            ensure_automatic_policy(db, parent_gallery_id=parent.id, settings=active)
+            ensure_automatic_policy(db, parent_gallery_id=parent.id, settings=active, tenant_id=FIXTURE_TENANT_ID)
             db.add(
-                FacialRollout(
+                FacialRollout(tenant_id=FIXTURE_TENANT_ID,
                     environment="test",
                     parent_gallery_id=parent.id,
                     status="active",
@@ -162,7 +162,7 @@ def test_postgres_cleanup_skips_reader_lock_and_recovers_after_release(postgres_
         row.expires_at = now() - timedelta(seconds=1)
         db.commit()
     with Session(engine) as reader, Session(engine) as cleaner:
-        analysis_for(reader, ids[0], lock=True)
+        analysis_for(reader, ids[0], lock=True, tenant_id=FIXTURE_TENANT_ID)
         assert cleanup_sources(cleaner) == 0
         reader.rollback()
         assert cleanup_sources(cleaner) == 1

@@ -8,8 +8,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import AdminUser, AuditEvent, FacialCalibrationApproval, now
 from app.facial.config import FacialSettings
+from app.tenancy import require_admin_tenant
 
 OPAQUE_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$")
 
@@ -29,6 +31,7 @@ def approve_calibration(
     approved_group_count: int,
     actor_admin_id: UUID,
 ) -> FacialCalibrationApproval:
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
     if settings.environment not in {"prod", "production"}:
         raise FacialCalibrationError("Aprovação de calibração pertence à produção.")
     references = (criteria_version, corpus_reference, approval_reference)
@@ -40,6 +43,7 @@ def approve_calibration(
         raise FacialCalibrationError("Administrador aprovador indisponível.")
     for prior in db.scalars(
         select(FacialCalibrationApproval).where(
+            FacialCalibrationApproval.tenant_id == tenant_id,
             FacialCalibrationApproval.environment == settings.environment,
             FacialCalibrationApproval.model_version == settings.model_version,
             FacialCalibrationApproval.quality_version == settings.quality_version,
@@ -52,6 +56,7 @@ def approve_calibration(
         prior.revoked_at = now()
         prior.updated_at = now()
     item = FacialCalibrationApproval(
+        tenant_id=tenant_id,
         environment=settings.environment,
         model_version=settings.model_version,
         quality_version=settings.quality_version,
@@ -69,6 +74,7 @@ def approve_calibration(
     db.flush()
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event="facial.calibration_approved",
             subject=(
                 f"calibration_id:{item.id};environment:{item.environment};"
@@ -81,13 +87,15 @@ def approve_calibration(
     return item
 
 
-def calibration_is_approved(db: Session, settings: FacialSettings) -> bool:
+def calibration_is_approved(db: Session, settings: FacialSettings, *, tenant_id: UUID) -> bool:
+    require_active_owner(db, tenant_id)
     if settings.environment not in {"prod", "production"}:
         return True
     return (
         db.scalar(
             select(FacialCalibrationApproval.id).where(
-                FacialCalibrationApproval.environment == settings.environment,
+                FacialCalibrationApproval.tenant_id == tenant_id,
+            FacialCalibrationApproval.environment == settings.environment,
                 FacialCalibrationApproval.model_version == settings.model_version,
                 FacialCalibrationApproval.quality_version == settings.quality_version,
                 FacialCalibrationApproval.calibration_version

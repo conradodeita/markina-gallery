@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import ParentGallery, PriceRule
 from app.pricing import PriceTier, PricingRuleError, ProgressiveQuote, progressive_quote
 
@@ -26,20 +27,24 @@ def quote_parent_gallery(
     quantity: int,
     rules: list[PriceRule] | None = None,
 ) -> GalleryQuote:
+    require_active_owner(db, gallery.tenant_id)
+    if rules is None:
+        rules = list(db.scalars(select(PriceRule).where(
+            PriceRule.parent_gallery_id == gallery.id, PriceRule.tenant_id == gallery.tenant_id,
+        ).order_by(PriceRule.minimum_quantity)))
+    return quote_loaded_gallery(gallery=gallery, quantity=quantity, rules=rules)
+
+
+def quote_loaded_gallery(*, gallery: ParentGallery, quantity: int, rules: list[PriceRule]) -> GalleryQuote:
+    """Cálculo puro de registros carregados; autorização pertence ao chamador."""
+    if any(rule.tenant_id != gallery.tenant_id or rule.parent_gallery_id != gallery.id for rule in rules):
+        raise GalleryPricingError("Preço indisponível neste contexto.")
     if gallery.payment_required is False:
         result = progressive_quote(quantity, [PriceTier(1, None, 0)])
         return GalleryQuote(quote=result, snapshot={"mode": "external", "payment_required": False})
     if gallery.pricing_mode == "legacy_volume" or gallery.pricing_review_required:
         raise GalleryPricingError(
             "A configuração comercial desta galeria precisa ser revisada antes de novas compras."
-        )
-    if rules is None:
-        rules = list(
-            db.scalars(
-                select(PriceRule)
-                .where(PriceRule.parent_gallery_id == gallery.id)
-                .order_by(PriceRule.minimum_quantity)
-            )
         )
     tiers = [
         PriceTier(rule.minimum_quantity, rule.maximum_quantity, rule.unit_price_cents)

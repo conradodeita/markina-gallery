@@ -1,6 +1,7 @@
 import os
 import time
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, event, text
@@ -15,15 +16,14 @@ from app.capacity_observability.database import read_postgres_snapshot
 
 
 def _database_url() -> str:
-    database_url = os.environ.get("TENANT_TEST_DATABASE_URL")
+    database_url = os.environ.get("PHOTOGRAPHER_TEST_DATABASE_URL") or os.environ.get("TENANT_TEST_DATABASE_URL")
     if not database_url:
-        pytest.skip("TENANT_TEST_DATABASE_URL ausente; não procurar servidores alternativos.")
+        pytest.skip("URL PostgreSQL sintética ausente; não procurar servidores alternativos.")
 
     parsed = make_url(database_url)
     if (
         parsed.host not in {"127.0.0.1", "localhost", "::1"}
-        or parsed.port != 55469
-        or parsed.database != "pyp_tenant_test"
+        or (parsed.port, parsed.database) not in {(55469, "pyp_tenant_test"), (15470, "pyp_photographer_test")}
     ):
         pytest.fail("Integração recusa conexão fora do PostgreSQL sintético local dedicado.")
     return database_url
@@ -31,7 +31,11 @@ def _database_url() -> str:
 
 @pytest.fixture
 def postgres_engine():
-    engine = create_engine(_database_url(), pool_size=1, max_overflow=0)
+    admin_engine = create_engine(_database_url(), isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    database = "capacity_" + uuid4().hex
+    with admin_engine.connect() as connection:
+        connection.execute(text(f'CREATE DATABASE "{database}"'))
+    engine = create_engine(make_url(_database_url()).set(database=database), pool_size=1, max_overflow=0)
     statements = [
         """CREATE TABLE media_job (
             photo_asset_id uuid NOT NULL, kind varchar(32) NOT NULL,
@@ -74,6 +78,16 @@ def postgres_engine():
                    now() - make_interval(secs => gs)
             FROM generate_series(1, 480) AS gs""",
     ]
+    statements.extend([
+        "CREATE TABLE tenant (id uuid PRIMARY KEY, status varchar(16) NOT NULL)",
+        "INSERT INTO tenant VALUES ('00000000-0000-4000-8000-000000000001', 'active')",
+    ])
+    for table_name in ("media_job", "photo_analysis", "facial_job"):
+        statements.extend([
+            f"ALTER TABLE {table_name} ADD COLUMN tenant_id uuid",
+            f"UPDATE {table_name} SET tenant_id='00000000-0000-4000-8000-000000000001'",
+            f"ALTER TABLE {table_name} ALTER COLUMN tenant_id SET NOT NULL",
+        ])
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
@@ -83,9 +97,12 @@ def postgres_engine():
         with engine.begin() as connection:
             connection.execute(text(
                 "DROP TABLE IF EXISTS capacity_lock_probe, facial_job, preview_adjustment, "
-                "photo_analysis, media_job CASCADE"
+                "photo_analysis, media_job, tenant CASCADE"
             ))
         engine.dispose()
+        with admin_engine.connect() as connection:
+            connection.execute(text(f'DROP DATABASE "{database}"'))
+        admin_engine.dispose()
 
 
 def _patch_collector(monkeypatch, engine) -> None:
@@ -221,7 +238,7 @@ def test_read_session_enforces_timeouts_rolls_back_and_does_not_leak_settings(
     assert statement_elapsed < 1
     assert postgres_engine.pool.checkedout() == 0
 
-    blocker_engine = create_engine(_database_url(), poolclass=NullPool)
+    blocker_engine = create_engine(postgres_engine.url, poolclass=NullPool)
     try:
         with blocker_engine.connect() as blocker:
             transaction = blocker.begin()
@@ -252,8 +269,8 @@ def test_read_session_enforces_timeouts_rolls_back_and_does_not_leak_settings(
 def test_permission_denial_is_sanitized_while_queue_sections_survive(
     postgres_engine, monkeypatch,
 ) -> None:
-    role = "capacity_observability_limited"
-    limited_url = make_url(_database_url()).set(username=role, password="capacity-limited-only")
+    role = "capacity_limited_" + uuid4().hex
+    limited_url = postgres_engine.url.set(username=role, password="capacity-limited-only")
     with postgres_engine.begin() as connection:
         connection.execute(text(f"DROP ROLE IF EXISTS {role}"))
         connection.execute(text(
@@ -261,7 +278,7 @@ def test_permission_denial_is_sanitized_while_queue_sections_survive(
         ))
         connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
         connection.execute(text(
-            f"GRANT SELECT ON media_job, photo_analysis, preview_adjustment, facial_job TO {role}"
+            f"GRANT SELECT ON media_job, photo_analysis, preview_adjustment, facial_job, tenant TO {role}"
         ))
         connection.execute(text("REVOKE SELECT ON pg_catalog.pg_settings FROM PUBLIC"))
 

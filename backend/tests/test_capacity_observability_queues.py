@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -23,6 +23,10 @@ NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
 
 def _db() -> Session:
     engine = create_engine("sqlite:///:memory:")
+    @event.listens_for(engine, "connect")
+    def enable_fk(connection, _):
+        connection.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(engine)
     return Session(engine)
 
@@ -30,20 +34,24 @@ def _db() -> Session:
 def _gallery(db: Session) -> tuple[Tenant, ParentGallery]:
     tenant = Tenant(id=uuid4(), status="active")
     gallery = ParentGallery(id=uuid4(), tenant_id=tenant.id, name="Registro sintético")
-    db.add_all((tenant, gallery))
+    db.add(tenant)
+    db.flush()
+    db.add(gallery)
     db.flush()
     return tenant, gallery
 
 
 def _photo(db: Session, tenant: Tenant, gallery: ParentGallery, *, position: int) -> PhotoAsset:
-    folder = PhotoFolder(
+    folder = PhotoFolder(tenant_id=tenant.id,
         id=uuid4(), parent_gallery_id=gallery.id, name=f"Pasta sintética {position}", position=position
     )
     photo = PhotoAsset(
         id=uuid4(), tenant_id=tenant.id, parent_gallery_id=gallery.id, folder_id=folder.id,
         filename=f"synthetic-{position}.jpg", storage_key=f"synthetic/{position}.jpg",
     )
-    db.add_all((folder, photo))
+    db.add(folder)
+    db.flush()
+    db.add(photo)
     db.flush()
     return photo
 
@@ -52,7 +60,7 @@ def _facial_job(
     gallery: ParentGallery, *, kind: str, status: str, suffix: str,
     available: datetime, created: datetime, lease: datetime | None = None,
 ) -> FacialJob:
-    return FacialJob(
+    return FacialJob(tenant_id=gallery.tenant_id,
         id=uuid4(), kind=kind, status=status, idempotency_key=f"synthetic-{suffix}",
         priority=10, parent_gallery_id=gallery.id, available_at=available, created_at=created,
         updated_at=created, lease_expires_at=lease,
@@ -105,17 +113,17 @@ def test_media_counts_blocked_dependency_without_counting_processing_or_terminal
         missing_photo = _photo(db, tenant, gallery, position=3)
         old = NOW - timedelta(seconds=180)
         db.add_all((
-            PhotoAnalysis(photo_asset_id=blocked_photo.id, source_fingerprint="a" * 64,
+            PhotoAnalysis(tenant_id=tenant.id, photo_asset_id=blocked_photo.id, source_fingerprint="a" * 64,
                          source_bytes=1, width=1, height=1, expires_at=NOW + timedelta(hours=1),
                          state="pending"),
-            PhotoAnalysis(photo_asset_id=ready_photo.id, source_fingerprint="b" * 64,
+            PhotoAnalysis(tenant_id=tenant.id, photo_asset_id=ready_photo.id, source_fingerprint="b" * 64,
                          source_bytes=1, width=1, height=1, expires_at=NOW + timedelta(hours=1),
                          state="ready"),
-            MediaJob(photo_asset_id=blocked_photo.id, status="queued", attempts=1, created_at=old),
-            MediaJob(photo_asset_id=ready_photo.id, status="queued", attempts=2, created_at=old),
-            MediaJob(photo_asset_id=processing_photo.id, status="processing", attempts=1,
+            MediaJob(tenant_id=tenant.id, photo_asset_id=blocked_photo.id, status="queued", attempts=1, created_at=old),
+            MediaJob(tenant_id=tenant.id, photo_asset_id=ready_photo.id, status="queued", attempts=2, created_at=old),
+            MediaJob(tenant_id=tenant.id, photo_asset_id=processing_photo.id, status="processing", attempts=1,
                      created_at=old),
-            MediaJob(photo_asset_id=missing_photo.id, status="failed", attempts=3, created_at=old),
+            MediaJob(tenant_id=tenant.id, photo_asset_id=missing_photo.id, status="failed", attempts=3, created_at=old),
         ))
         db.commit()
 
@@ -138,11 +146,11 @@ def test_adjustment_uses_update_age_and_keeps_exact_eligibility_unavailable() ->
         processing_photo = _photo(db, tenant, gallery, position=1)
         failed_photo = _photo(db, tenant, gallery, position=2)
         db.add_all((
-            PreviewAdjustment(photo_asset_id=queued_photo.id, generation=1,
+            PreviewAdjustment(tenant_id=tenant.id, photo_asset_id=queued_photo.id, generation=1,
                               fingerprint="a" * 64, status="queued", updated_at=NOW - timedelta(seconds=45)),
-            PreviewAdjustment(photo_asset_id=processing_photo.id, generation=1,
+            PreviewAdjustment(tenant_id=tenant.id, photo_asset_id=processing_photo.id, generation=1,
                               fingerprint="b" * 64, status="processing", updated_at=NOW - timedelta(minutes=2)),
-            PreviewAdjustment(photo_asset_id=failed_photo.id, generation=1,
+            PreviewAdjustment(tenant_id=tenant.id, photo_asset_id=failed_photo.id, generation=1,
                               fingerprint="c" * 64, status="failed", updated_at=NOW - timedelta(minutes=3)),
         ))
         db.commit()

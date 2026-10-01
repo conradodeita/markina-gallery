@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record
 from app.auth import (
     AuditEvent,
     FacialJob,
@@ -30,13 +31,10 @@ def process_claimed_cleanup_job(
     reference_store: FacialReferenceStore | None = None,
     instant: datetime | None = None,
 ) -> FacialJob:
-    from app.tenancy import enable_domain_guard
-
-    enable_domain_guard(db)
-    job = db.get(FacialJob, claim.id)
+    job = repository._leased(db, claim)
     if job is None or job.kind != "cleanup" or job.search_request_id is None:
         raise FacialJobError("Job facial não pode ser executado.")
-    request = db.get(FacialSearchRequest, job.search_request_id)
+    request = owned_record(db, FacialSearchRequest, job.search_request_id, tenant_id=claim.tenant_id)
     if request is None:
         return repository.complete(db, claim)
     current = _utc(instant or now())
@@ -49,6 +47,7 @@ def process_claimed_cleanup_job(
     removed = 0
     if (request.reference_deleted_at is None or request.reference_region_id is not None) and _utc(request.expires_at) <= current:
         if request.reference_deleted_at is None:
+            repository._leased(db, claim)
             _delete_reference(request, store)
         request.reference_region_id = None
         removed += 1
@@ -66,6 +65,7 @@ def process_claimed_cleanup_job(
                 select(func.count())
                 .select_from(FacialSearchSnapshotItem)
                 .where(
+                    FacialSearchSnapshotItem.tenant_id == claim.tenant_id,
                     FacialSearchSnapshotItem.search_request_id == request.id,
                     FacialSearchSnapshotItem.status == "pending",
                 )
@@ -75,6 +75,7 @@ def process_claimed_cleanup_job(
             db.execute(
                 update(FacialJob)
                 .where(
+                    FacialJob.tenant_id == claim.tenant_id,
                     FacialJob.search_request_id == request.id,
                     FacialJob.kind == "search",
                     FacialJob.status.in_(("queued", "processing")),
@@ -82,9 +83,11 @@ def process_claimed_cleanup_job(
                 .values(status="cancelled", lease_token=None, lease_expires_at=None)
             )
 
+    repository._leased(db, claim)
     candidate_result = db.execute(
         delete(FacialSearchCandidate).where(
-            FacialSearchCandidate.search_request_id == request.id,
+            FacialSearchCandidate.tenant_id == claim.tenant_id,
+                    FacialSearchCandidate.search_request_id == request.id,
             FacialSearchCandidate.expires_at <= current,
         )
     )
@@ -93,6 +96,7 @@ def process_claimed_cleanup_job(
         db.add(
             AuditEvent(
                 event="facial.retention_cleaned",
+                tenant_id=claim.tenant_id,
                 subject=(
                     f"gallery_id:{request.parent_gallery_id};request_id:{request.id};"
                     f"records:{removed}"
@@ -104,7 +108,8 @@ def process_claimed_cleanup_job(
     next_expiry = (
         db.scalar(
             select(func.min(FacialSearchCandidate.expires_at)).where(
-                FacialSearchCandidate.search_request_id == request.id
+                FacialSearchCandidate.tenant_id == claim.tenant_id,
+                    FacialSearchCandidate.search_request_id == request.id
             )
         )
         if job.idempotency_key.startswith("facial-search-candidate-cleanup:")

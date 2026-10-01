@@ -20,7 +20,6 @@ from app.facial.crypto import FacialCipher
 from app.facial.jobs import FacialJobRepository
 from app.facial.search import FacialSearchError, cancel_search_request, create_search_request
 from app.facial.search_worker import process_claimed_search_job
-from app.public_gallery_access import PublicGalleryAccessDenied
 
 
 def test_region_contract_accepts_only_an_opaque_id_and_rejects_file_fields():
@@ -54,7 +53,7 @@ def test_region_has_no_upload_or_consent_and_rechecks_region(tmp_path, monkeypat
         create_search_request(**common, payload=b"", reference_region_id=uuid4())
     with pytest.raises(FacialSearchError):
         create_search_request(**common, payload=_jpeg(), reference_region_id=region.id)
-    with pytest.raises(PublicGalleryAccessDenied):
+    with pytest.raises(FacialSearchError):
         create_search_request(**{**common, "client_id": uuid4()}, payload=b"", reference_region_id=region.id)
     with pytest.raises(FacialSearchError):
         create_search_request(**{**common, "parent_gallery_id": uuid4()}, payload=b"", reference_region_id=region.id)

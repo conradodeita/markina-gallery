@@ -80,7 +80,7 @@ def test_production_rollout_requires_matching_human_calibration_approval() -> No
             environment="production",
             parent_gallery_id=gallery.id,
             draft=draft_from_settings(settings),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         with pytest.raises(FacialRolloutError, match="Calibração"):
             activate_rollout(
                 db,
@@ -124,16 +124,16 @@ def test_production_rollout_requires_matching_human_calibration_approval() -> No
         )
         db.commit()
 
-        assert calibration_is_approved(db, settings) is True
+        assert calibration_is_approved(db, settings, tenant_id=FIXTURE_TENANT_ID) is True
         assert rollout_is_active(
             db, settings=settings, parent_gallery_id=gallery.id
-        ) is True
-        assert calibration_is_approved(db, _settings(threshold=751)) is False
+        , tenant_id=FIXTURE_TENANT_ID) is True
+        assert calibration_is_approved(db, _settings(threshold=751), tenant_id=FIXTURE_TENANT_ID) is False
         approval.status = "revoked"
         db.commit()
         assert rollout_is_active(
             db, settings=settings, parent_gallery_id=gallery.id
-        ) is False
+        , tenant_id=FIXTURE_TENANT_ID) is False
         audit = " ".join(db.scalars(select(AuditEvent.subject)))
         assert "corpus-opaque-v1" not in audit
         assert "calibration-approval-opaque" not in audit

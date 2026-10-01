@@ -19,8 +19,8 @@ from app.auth import (
     Tenant,
     TenantAdmin,
 )
+from app.client_identity import ClientIdentityConflict
 from app.private_membership import ensure_private_membership
-from app.tenancy import TenantContextError
 from tests.test_tenant_foundation import tenant_db as foundation_tenant_db
 
 tenant_db = foundation_tenant_db
@@ -31,11 +31,11 @@ def admin_api(tenant_db, monkeypatch):
     tenant = Tenant()
     tenant_db.add(tenant)
     tenant_db.flush()
-    admin = AdminUser(email="admin@example.test", password_hash="synthetic", totp_secret="synthetic")
+    admin = AdminUser(email="admin@example.test", password_hash="synthetic", totp_secret="synthetic", email_verified=True)
     admin.tenant_memberships.append(TenantAdmin(tenant_id=tenant.id))
     tenant_db.add(admin)
     tenant_db.flush()
-    tenant_db.add(AuthSession(role="admin", subject_id=admin.id,
+    tenant_db.add(AuthSession(role="admin", subject_id=admin.id, tenant_id=tenant.id, admin_subject_id=admin.id,
                              token_hash=auth.token_hash("synthetic-session"),
                              expires_at=auth.now() + timedelta(days=1)))
     tenant_db.commit()
@@ -71,7 +71,7 @@ def test_origem_recebe_contexto_e_edicao_preserva_proprietario(tenant_db, admin_
 def test_privada_herda_origem_e_reusa_membros(tenant_db, admin_api):
     _, tenant, admin = admin_api
     parent = ParentGallery(name="Origem", tenant_id=tenant.id)
-    members = [Client(full_name=f"Cliente {i}", phone_e164=f"+551199999999{i}") for i in range(2)]
+    members = [Client(tenant_id=tenant.id, full_name=f"Cliente {i}", phone_e164=f"+551199999999{i}") for i in range(2)]
     tenant_db.add_all([parent, *members])
     tenant_db.commit()
     first = ensure_private_membership(tenant_db, parent=parent, client=members[0], actor_admin_id=admin.id)
@@ -83,7 +83,7 @@ def test_privada_herda_origem_e_reusa_membros(tenant_db, admin_api):
     assert not retry.gallery_created and not retry.membership_created
     tenant.status = "suspended"
     tenant_db.commit()
-    with pytest.raises(TenantContextError):
+    with pytest.raises(ClientIdentityConflict):
         ensure_private_membership(tenant_db, parent=parent, client=members[0])
     assert tenant_db.get(DerivedGallery, first.gallery.id).tenant_id == tenant.id
 
@@ -96,15 +96,15 @@ def test_foto_de_pasta_herda_origem_e_retry_preserva_id(tenant_db, admin_api, pr
     tenant_db.flush()
     gallery = None
     if private:
-        member = Client(full_name="Cliente", phone_e164="+5511999999999")
+        member = Client(tenant_id=tenant.id, full_name="Cliente", phone_e164="+5511999999999")
         tenant_db.add(member)
         tenant_db.flush()
         gallery = ensure_private_membership(tenant_db, parent=parent, client=member).gallery
-    folder = PhotoFolder(name="Lote", parent_gallery_id=parent.id,
+    folder = PhotoFolder(tenant_id=tenant.id, name="Lote", parent_gallery_id=parent.id,
                          derived_gallery_id=gallery.id if gallery else None)
     tenant_db.add(folder)
     tenant_db.commit()
-    key = f"private/{gallery.id}/fake.jpg" if gallery else "synthetic/fake.jpg"
+    key = f"private/{gallery.id}/{folder.id}/fake.jpg" if gallery else f"{parent.id}/{folder.id}/fake.jpg"
     payload = {"filename": "fake.jpg", "storage_key": key, "tenant_id": str(uuid4())}
     route = f"/admin/photo-folders/{folder.id}/photos"
     first, retry = client.post(route, json=payload), client.post(route, json=payload)
@@ -112,7 +112,7 @@ def test_foto_de_pasta_herda_origem_e_retry_preserva_id(tenant_db, admin_api, pr
     assert first.json()["id"] == retry.json()["id"]
     photo = tenant_db.get(PhotoAsset, UUID(first.json()["id"]))
     assert photo.tenant_id == tenant.id and photo.parent_gallery_id == parent.id
-    assert photo.storage_key == key and photo.derived_gallery_id == (gallery.id if gallery else None)
+    assert photo.storage_key == f"tenants/{tenant.id}/{key}" and photo.derived_gallery_id == (gallery.id if gallery else None)
 
 
 def test_capa_herda_origem_e_idempotencia(tenant_db, admin_api):

@@ -279,7 +279,7 @@ export default function AdminSettingsPage() {
         watermark_security_lines: data.has("watermark_security_lines"),
       }),
     });
-    setMessage(response.ok ? "Proteção visual global salva. As prévias serão atualizadas com segurança." : "Não foi possível salvar a proteção visual.");
+    setMessage(response.ok ? "Proteção visual da sua conta salva. As prévias serão atualizadas com segurança." : "Não foi possível salvar a proteção visual.");
     if (response.ok) {
       const updated = { ...settings, ...(await response.json()) };
       setSettings(updated);
@@ -334,7 +334,7 @@ export default function AdminSettingsPage() {
       <section className="admin-card protection-settings" aria-labelledby="visual-protection-title">
         <div className="protection-settings-heading">
           <div>
-            <p className="eyebrow">Padrão global</p>
+            <p className="eyebrow">Padrão da sua conta</p>
             <h2 id="visual-protection-title">Proteção visual das galerias</h2>
           </div>
           <span className="protection-settings-status">Aplicada pelo servidor</span>
@@ -362,7 +362,7 @@ export default function AdminSettingsPage() {
                 {watermarkPositions.map(([value, label]) => <label key={value} title={label}><input aria-label={label} type="radio" name="watermark_position" value={value} defaultChecked={settings.watermark_position === value} /><span aria-hidden="true" /></label>)}
               </fieldset>
             </fieldset>
-            <button className="primary protection-settings-save">Salvar proteção global</button>
+            <button className="primary protection-settings-save">Salvar proteção da sua conta</button>
           </div>
           <aside className="protection-settings-preview" aria-labelledby="protection-preview-title" aria-live="polite">
             <div>

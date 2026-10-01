@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import GlobalPixSettings
 from app.pix import (
     PixCodeError,
@@ -66,8 +67,11 @@ def canonical_proposal(configuration: dict | None, version: int) -> str:
     )
 
 
-def global_pix_settings(db: Session) -> GlobalPixSettings | None:
-    return db.scalar(select(GlobalPixSettings).where(GlobalPixSettings.singleton == 1))
+def global_pix_settings(db: Session, *, tenant_id: UUID) -> GlobalPixSettings | None:
+    require_active_owner(db, tenant_id)
+    return db.scalar(select(GlobalPixSettings).where(
+        GlobalPixSettings.tenant_id == tenant_id, GlobalPixSettings.singleton == 1,
+    ))
 
 
 def pix_payload(settings: GlobalPixSettings | None, *, editable: bool = False) -> dict:
@@ -103,13 +107,17 @@ def pix_payload(settings: GlobalPixSettings | None, *, editable: bool = False) -
     return result
 
 
-def apply_configuration(db: Session, *, admin_id: UUID, proposed: dict) -> GlobalPixSettings:
-    settings = global_pix_settings(db)
+def apply_configuration(db: Session, *, admin_id: UUID, proposed: dict, tenant_id: UUID) -> GlobalPixSettings:
+    from app.tenancy import require_admin_tenant
+
+    if require_admin_tenant(db, admin_id).id != tenant_id:
+        raise PixCodeError("Configuração indisponível para esta conta.")
+    settings = global_pix_settings(db, tenant_id=tenant_id)
     version = settings.version if settings else 0
     if version != proposed["version"]:
         raise PixCodeError("O PIX foi alterado em outra sessão. Recarregue e confirme novamente.")
     if not settings:
-        settings = GlobalPixSettings(admin_user_id=admin_id)
+        settings = GlobalPixSettings(tenant_id=tenant_id, admin_user_id=admin_id)
         db.add(settings)
     elif settings.admin_user_id != admin_id:
         raise PixCodeError("Configuração indisponível para esta conta.")
@@ -129,8 +137,8 @@ def proposal_preview(target: str) -> dict:
     ))
 
 
-def checkout_pix(db: Session) -> GlobalPixSettings:
-    settings = global_pix_settings(db)
+def checkout_pix(db: Session, *, tenant_id: UUID) -> GlobalPixSettings:
+    settings = global_pix_settings(db, tenant_id=tenant_id)
     if not settings or settings.status != "active" or not settings.copy_paste:
         raise PixCodeError(
             "O pagamento PIX está temporariamente indisponível. Sua seleção foi mantida."

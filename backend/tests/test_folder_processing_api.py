@@ -13,8 +13,8 @@ def test_folder_processing_api_auth_and_override(api_client):
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
         folder_id, gallery_id = photo.folder_id, photo.parent_gallery_id
-        other = PhotoFolder(parent_gallery_id=gallery_id, name="Outra", purpose="content", position=1)
-        cover = PhotoFolder(parent_gallery_id=gallery_id, name="Capa", purpose="cover_assets", position=2)
+        other = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Outra", purpose="content", position=1)
+        cover = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Capa", purpose="cover_assets", position=2)
         db.add_all((other, cover))
         db.commit()
         other_id, cover_id = other.id, cover.id
@@ -45,13 +45,13 @@ def test_folder_processing_api_auth_and_override(api_client):
     assert client.post(f"{endpoint}/preview/enqueue").json()["queued"] == 1
     assert process_one(factory, BrightEngine())
     with factory() as db:
-        assert adjusted_path(db, photo_id) is not None
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is not None
     assert client.get(endpoint).json()["comparison_photo_id"] == str(photo_id)
     off = client.patch(endpoint, json={"preview_mode": "off", "facial_mode": "off",
                                      "preview_strength": 60, "preview_exposure_tenths": 5})
     assert off.status_code == 200, off.text
     with factory() as db:
-        assert adjusted_path(db, photo_id) is None
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
     assert client.post(f"{endpoint}/preview/enqueue").status_code == 409
     assert client.get(f"/admin/photo-folders/{other_id}/processing").json()["preview_mode"] == "inherit"
 
@@ -70,10 +70,10 @@ def test_folder_override_is_independent_of_gallery_default(prepared):
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
         configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="inherit",
-                         strength=50, exposure_tenths=5)
-        assert enqueue(db, photo_id, retry=True)
+                         strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
+        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
-        configure(db, photo.parent_gallery_id, False, 50, 3)
+        configure(db, photo.parent_gallery_id, False, 50, 3, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         assert effective_preview(db, db.get(PhotoFolder, photo.folder_id)).enabled
         assert effective_preview(db, db.get(PhotoFolder, photo.folder_id)).exposure_tenths == 5
@@ -95,21 +95,21 @@ def test_repeated_folder_render_reads_conventional_preview(prepared):
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
         configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="inherit",
-                         strength=50, exposure_tenths=5)
-        assert enqueue(db, photo_id, retry=True)
+                         strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
+        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     assert process_one(factory, RecordingEngine())
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
-        configure(db, photo.parent_gallery_id, False, 50, 7)
+        configure(db, photo.parent_gallery_id, False, 50, 7, tenant_id=FIXTURE_TENANT_ID)
         configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="inherit",
-                         strength=50, exposure_tenths=6)
-        assert enqueue(db, photo_id, retry=True)
+                         strength=50, exposure_tenths=6, tenant_id=FIXTURE_TENANT_ID)
+        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     assert process_one(factory, RecordingEngine())
     assert pixels[0] == pixels[1]
     with factory() as db:
-        assert adjusted_path(db, photo_id) is not None
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is not None
 
 
 def test_folder_change_during_render_never_publishes_stale_result(prepared):
@@ -120,21 +120,21 @@ def test_folder_change_during_render_never_publishes_stale_result(prepared):
     with factory() as db:
         folder_id = db.get(PhotoAsset, photo_id).folder_id
         configure_folder(db, folder_id, preview_mode="custom", facial_mode="inherit",
-                         strength=50, exposure_tenths=5)
-        assert enqueue(db, photo_id, retry=True)
+                         strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
+        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
     class ChangedEngine(BrightEngine):
         def render(self, image, strength):
             with factory() as db:
                 configure_folder(db, folder_id, preview_mode="custom", facial_mode="inherit",
-                                 strength=50, exposure_tenths=6)
+                                 strength=50, exposure_tenths=6, tenant_id=FIXTURE_TENANT_ID)
                 db.commit()
             return super().render(image, strength)
 
     assert process_one(factory, ChangedEngine())
     with factory() as db:
-        assert adjusted_path(db, photo_id) is None
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
 
 
 def test_cleanup_refuses_active_folder_override(prepared):
@@ -147,7 +147,7 @@ def test_cleanup_refuses_active_folder_override(prepared):
     with factory() as db:
         folder_id = db.get(PhotoAsset, photo_id).folder_id
         configure_folder(db, folder_id, preview_mode="custom", facial_mode="inherit",
-                         strength=50, exposure_tenths=5)
+                         strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         with pytest.raises(ValueError, match="Desligue o módulo"):
             cleanup(db, execute=True, worker_stopped=True)

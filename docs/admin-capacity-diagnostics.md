@@ -1,5 +1,11 @@
 # Diagnóstico administrativo de capacidade
 
+## Acesso do dono da instalação
+
+Na implementação local da change `add-small-multi-photographer-pilot`, o monitor global exige permissão explícita e revogável do operador da instalação. Ser fotógrafo não concede esse acesso. A permissão não permite acessar clientes, fotos ou pedidos de outros fotógrafos. Migration/seed não a concedem automaticamente; o operador é identificado e autorizado no pacote operacional antes do provisionamento offline descrito em `openspec/changes/add-small-multi-photographer-pilot/provisioning.md`. Esta documentação não afirma que a versão já foi publicada.
+
+A Visão geral consulta a capability do backend e mostra **Capacidade e filas** somente após autorização positiva. Ao voltar à aba, revalida a capability e descarta o snapshot anterior; isso não coleta métricas automaticamente. Se detectar logout, revogação ou HTTP 401/403, remove painel e cópia. Falha na consulta da capability mantém o monitor oculto. O diagnóstico comercial do fotógrafo continua limitado à própria conta.
+
 ## Escopo e leitura
 
 O diagnóstico é uma amostra sob demanda obtida em `GET /api/admin/capacity-observability`. Cada valor traz escopo, fonte, UTC, unidade e classe de evidência (`observed`, `calculated`, `estimated` ou `unavailable`). `cached=true` indica reutilização por até 30 segundos no mesmo processo da API; timestamps descrevem a coleta original. O snapshot não representa transação atômica entre PostgreSQL, pool e filas.
@@ -23,6 +29,15 @@ Em validação local sintética de 2026-09-30, um PostgreSQL 17 efêmero em loop
 O orçamento futuro pode usar `C_aplicacao = soma(processos confirmados * teto finito por engine) + pico de conexões pontuais` e `C_utilizavel = max_connections - reservas técnicas`. A condição é `C_aplicacao + C_outros_consumidores + reserva_operacional < C_utilizavel`; reservas não podem ser descontadas duas vezes. Pools sem limite, consumidores desconhecidos ou inventário fora de data invalidam o resultado global. Esta change não faz tal cálculo.
 
 Na Visão geral administrativa, a seção começa recolhida e consulta somente quando aberta. Não há atualização automática; a pessoa administradora pode atualizar manualmente. Uma falha de rede ou autorização remove o snapshot anterior da tela. Valores zero observados são mostrados como zero; campos indisponíveis preservam o motivo, e cada valor mostra a classe de evidência. A interface usa botões nativos para teclado e uma grade que se adapta a telas estreitas.
+
+## Leitura durante o uso por vários fotógrafos
+
+1. Com permissão de operador, abra **Visão geral → Consultar diagnóstico** antes do uso e confira UTC, cache, cobertura e limitações.
+2. Durante o uso, clique **Atualizar agora** e observe filas aguardando, em processamento e idades; zeros observados e indisponibilidade têm significados distintos. Cache de até 30 segundos pode devolver a coleta anterior.
+3. Ao terminar, atualize e copie outra leitura. Compare os três momentos com o horário e as ações realizadas, quantidade aproximada de fotógrafos/clientes simultâneos e jobs que terminaram ou ficaram pendentes.
+4. Para pedir análise neste chat, cole os relatórios completos `capacity-report/v1` e descreva os momentos e sintomas. Não inclua telefone, nome de clientes, imagens, links de convite, OTP ou credenciais. O relatório já traz somente agregados sanitizados.
+
+O monitor não mede clientes simultâneos automaticamente nem identifica qual fotógrafo gerou a fila. Uma fila crescente em amostras repetidas é um sinal a investigar; não prova por si só saturação ou falha de worker. Os três momentos não substituem série histórica ou teste de carga. O ensaio pequeno só será executado após prontidão registrada e, em homologação, autorização própria.
 
 ## Copiar relatório para análise
 
@@ -55,8 +70,8 @@ Exemplo reduzido da sintaxe, sem substituir o relatório completo:
 
 O serializador usa uma lista fechada e ignora propriedades adicionais; não inclui SQL, nomes de banco, usuário ou host, IP, DSN, caminhos, identificadores de negócio, dados pessoais, fotos, tokens, mensagens ou biometria. O texto só existe quando o navegador atende ao gesto de cópia; o produto não o persiste, não cria arquivo nem mantém histórico. Se o navegador negar a área de transferência, a interface informa a falha e mantém o snapshot para nova tentativa. Se a autorização administrativa for perdida, o snapshot e a ação desaparecem.
 
-O relatório continua sendo uma leitura agregada da instalação única. Ele não separa dados por fotógrafo, não mede séries históricas, não cria alertas e não comprova throughput, capacidade futura ou cumprimento de SLO.
+O relatório continua sendo uma leitura agregada da instalação. Ele não separa dados por fotógrafo, não mede séries históricas, não cria alertas e não comprova throughput, capacidade futura ou cumprimento de SLO.
 
 ## Requisitos antes de expansão
 
-SLOs gerais e esquema métrico precisam de aprovação; carga mista PostgreSQL/API, jornadas e bytes/egress requerem evidência nos estudos B05/B06/B11 em ambiente isolado e autorizado. Este diagnóstico sozinho não promete capacidade, disponibilidade, preço ou escala. P0.2 fairness/quotas e suporte a vários fotógrafos são escopos separados.
+SLOs gerais e esquema métrico precisam de aprovação; carga mista PostgreSQL/API, jornadas e bytes/egress requerem evidência nos estudos B05/B06/B11 em ambiente isolado e autorizado. Este diagnóstico sozinho não promete capacidade, disponibilidade, preço ou escala. P0.2 fairness/quotas é escopo separado; suporte a vários fotógrafos depende da prontidão e operação autorizada da change `add-small-multi-photographer-pilot`.

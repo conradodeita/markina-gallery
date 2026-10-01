@@ -29,9 +29,9 @@ export default function GalleryPricingPage() {
   return <main className="admin-shell">
     <Link href={`/admin/galleries/${galleryId}`}>← Galeria privada</Link>
     <p className="eyebrow">Vendas · configuração herdada</p>
-    <h1>Preços pertencem à Galeria pública; PIX é global</h1>
+    <h1>Preços pertencem à Galeria pública; PIX vale para sua conta</h1>
     <p className="intro">Esta galeria privada reutiliza preços, mensagem, prazo e interações da origem. O PIX é configurado uma única vez em Configurações. Pedidos já criados mantêm os dados comerciais gravados no momento da compra.</p>
     <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${pricing.inherited_from_parent_gallery_id}/edit/vendas`}>Abrir etapa Vendas da Galeria pública</Link>
-    <Link className="mk-button mk-button--secondary" href="/admin/settings#pix">Configurar PIX global</Link>
+    <Link className="mk-button mk-button--secondary" href="/admin/settings#pix">Configurar PIX da sua conta</Link>
   </main>;
 }

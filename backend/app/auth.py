@@ -47,7 +47,8 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
-from app.messaging import WhatsAppConfigurationError, whatsapp_provider_name
+from app.messaging import WhatsAppConfigurationError
+from app.ownership_schema import apply_ownership_constraints
 from app.product_brand import DEFAULT_WATERMARK_TEXT
 from app.whatsapp_delivery import encrypt_otp, otp_encryption_key
 
@@ -99,6 +100,9 @@ class BrandingSettings(Base):
     """Configuração única e segura da marca e dos textos de entrada."""
 
     __tablename__ = "branding_settings"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "watermark_opacity BETWEEN 10 AND 100",
@@ -145,6 +149,21 @@ class AdminUser(Base):
     tenant_memberships: Mapped[list[TenantAdmin]] = relationship(cascade="all, delete-orphan")
 
 
+class InstallationOperator(Base):
+    """Privilégio técnico explícito; nenhum acesso comercial adicional."""
+    __tablename__ = "installation_operator"
+    __table_args__ = (
+        CheckConstraint("length(authorization_reference) BETWEEN 1 AND 120", name="ck_operator_reference"),
+        CheckConstraint("NOT active OR revoked_at IS NULL", name="ck_operator_active_revocation"),
+    )
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean)
+    authorization_reference: Mapped[str] = mapped_column(String(120))
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Tenant(Base):
     __tablename__ = "tenant"
     __table_args__ = (
@@ -169,6 +188,9 @@ class AdminSecurityChallenge(Base):
     """Desafio curto e finalístico para recuperação e ações sensíveis."""
 
     __tablename__ = "admin_security_challenge"
+    tenant_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tenant.id"), index=True, nullable=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp', "
@@ -262,16 +284,31 @@ class EmailDeliveryAttempt(Base):
 
 class Client(Base):
     __tablename__ = "client"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_client_id_tenant"),
+        UniqueConstraint("tenant_id", "phone_e164", name="uq_client_tenant_phone"),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     full_name: Mapped[str] = mapped_column(String(200))
-    phone_e164: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    phone_e164: Mapped[str] = mapped_column(String(16), index=True)
 
 
 class ClientPhone(Base):
     __tablename__ = "client_phone"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["client_id", "tenant_id"], ["client.id", "client.tenant_id"],
+            name="fk_client_phone_client_tenant",
+        ),
+        Index(
+            "uq_client_phone_active_reserved",
+            "tenant_id", "phone_e164", unique=True,
+            sqlite_where=text("active = 1"), postgresql_where=text("active"),
+        ),
         Index(
             "uq_client_phone_active_verified",
+            "tenant_id",
             "phone_e164",
             unique=True,
             sqlite_where=text("active = 1 AND verified_at IS NOT NULL"),
@@ -286,6 +323,7 @@ class ClientPhone(Base):
         ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     phone_e164: Mapped[str] = mapped_column(String(16), index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -298,6 +336,9 @@ class ClientDeletionReceipt(Base):
     """Resultado mínimo e reaplicável de uma exclusão global de cliente."""
 
     __tablename__ = "client_deletion_receipt"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_client_deletion_receipt_idempotency"),
         CheckConstraint(
@@ -328,10 +369,27 @@ class ClientDeletionReceipt(Base):
 
 class GalleryAccess(Base):
     __tablename__ = "gallery_access"
-    __table_args__ = (UniqueConstraint("client_id", "gallery_id"),)
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
+    __table_args__ = (
+        UniqueConstraint("client_id", "gallery_id"),
+        CheckConstraint(
+            "(parent_gallery_id IS NOT NULL AND derived_gallery_id IS NULL "
+            "AND gallery_id = parent_gallery_id) OR "
+            "(derived_gallery_id IS NOT NULL AND parent_gallery_id IS NULL "
+            "AND gallery_id = derived_gallery_id)", name="ck_gallery_access_typed_target",
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     gallery_id: Mapped[UUID] = mapped_column(index=True)
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("parent_gallery.id"), nullable=True,
+    )
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id"), nullable=True,
+    )
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
@@ -410,6 +468,9 @@ class ParentGalleryRegistration(Base):
     """Registro de entrada pelo link não listado; não concede leitura de fotos."""
 
     __tablename__ = "parent_gallery_registration"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (UniqueConstraint("parent_gallery_id", "client_id"),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     parent_gallery_id: Mapped[UUID] = mapped_column(ForeignKey("parent_gallery.id"), index=True)
@@ -469,6 +530,9 @@ class PhotoFolder(Base):
     """Lote público ou privado preparado pelo fotógrafo."""
 
     __tablename__ = "photo_folder"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("id", "parent_gallery_id", name="uq_photo_folder_id_parent"),
         UniqueConstraint(
@@ -530,6 +594,9 @@ class GalleryClientState(Base):
     """Estado individual da cliente na galeria canônica, sem galeria derivada."""
 
     __tablename__ = "gallery_client_state"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("parent_gallery_id", "client_id", name="uq_gallery_client_state_pair"),
         CheckConstraint(
@@ -553,6 +620,9 @@ class FolderClientGrant(Base):
     """Atribuição de uma pasta restrita a uma cliente da mesma galeria."""
 
     __tablename__ = "folder_client_grant"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         ForeignKeyConstraint(
             ["folder_id", "parent_gallery_id"],
@@ -618,6 +688,9 @@ class DerivedGalleryMembership(Base):
     """Associação autorizável de uma cliente ao acervo privado compartilhado."""
 
     __tablename__ = "derived_gallery_membership"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         ForeignKeyConstraint(
             ["derived_gallery_id", "parent_gallery_id"],
@@ -668,6 +741,9 @@ class DerivedGalleryPhoto(Base):
     """Referência de uma foto da Galeria pública atribuída à galeria privada."""
 
     __tablename__ = "derived_gallery_photo"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint(
             "derived_gallery_id",
@@ -691,6 +767,9 @@ class DerivedGalleryPhotoOrigin(Base):
     """Justificativa independente que mantém uma foto no acervo privado comum."""
 
     __tablename__ = "derived_gallery_photo_origin"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint(
             "derived_gallery_photo_id",
@@ -714,6 +793,9 @@ class DerivedGalleryPhotoOrigin(Base):
 
 class PhotoSelection(Base):
     __tablename__ = "photo_selection"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),
         Index("ix_photo_selection_gallery_client", "derived_gallery_id", "client_id"),
@@ -745,6 +827,9 @@ class PhotoSelection(Base):
 
 class PhotoFavorite(Base):
     __tablename__ = "photo_favorite"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("derived_gallery_id", "photo_asset_id", "client_id"),
         CheckConstraint(
@@ -775,6 +860,9 @@ class PhotoFavorite(Base):
 
 class PhotoView(Base):
     __tablename__ = "photo_view"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("derived_gallery_id", "client_id", "photo_asset_id"),
         CheckConstraint(
@@ -805,6 +893,9 @@ class PhotoView(Base):
 
 class PhotoComment(Base):
     __tablename__ = "photo_comment"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "(parent_gallery_id IS NULL AND derived_gallery_id IS NOT NULL) OR "
@@ -831,6 +922,9 @@ class PaymentGroup(Base):
     """Um PIX da cliente, com pedidos operacionais independentes por galeria."""
 
     __tablename__ = "payment_group"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("id", "client_id", name="uq_payment_group_owner"),
         CheckConstraint("state IN ('draft', 'reported', 'confirmed', 'refused', 'unavailable')",
@@ -854,6 +948,9 @@ class PaymentGroup(Base):
 
 class SaleOrder(Base):
     __tablename__ = "sale_order"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint("payment_status IN ('pending', 'confirmed', 'cancelled', 'not_required')"),
         CheckConstraint("total_cents >= 0"),
@@ -954,6 +1051,9 @@ class SaleOrder(Base):
 
 class SaleOrderItem(Base):
     __tablename__ = "sale_order_item"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("sale_order_id", "photo_asset_id"),
         CheckConstraint("unit_price_cents >= 0"),
@@ -976,6 +1076,9 @@ class RemovedPhotoMovement(Base):
     """Referência textual autorizada; nenhuma FK para o acervo removível."""
 
     __tablename__ = "removed_photo_movement"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (UniqueConstraint("kind", "source_id", name="uq_removed_photo_movement_source"),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     source_id: Mapped[UUID] = mapped_column()
@@ -996,6 +1099,9 @@ class AssetFileCleanup(Base):
     """Outbox de caminhos relativos confinados, persistida antes de apagar arquivos."""
 
     __tablename__ = "asset_file_cleanup"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     paths: Mapped[list] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
@@ -1009,6 +1115,9 @@ class GalleryLifecycleOperation(Base):
     """Operação durável e auditável sobre o ciclo de vida de uma Galeria pública."""
 
     __tablename__ = "gallery_lifecycle_operation"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_gallery_lifecycle_operation_idempotency"),
         CheckConstraint(
@@ -1059,6 +1168,9 @@ class GalleryAccessCapability(Base):
     """Capacidade opaca de acesso; somente o hash do token é persistido."""
 
     __tablename__ = "gallery_access_capability"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_gallery_access_capability_token_hash"),
         CheckConstraint(
@@ -1151,6 +1263,9 @@ class CommercialHistoryMedia(Base):
     """Manifesto mínimo de mídia preservada para um item comercial."""
 
     __tablename__ = "commercial_history_media"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("sale_order_item_id", name="uq_commercial_history_media_item"),
         CheckConstraint(
@@ -1189,11 +1304,14 @@ def _materialize_required_commercial_snapshots(
 
     for record in session.new:
         if isinstance(record, SaleOrder):
+            client = session.get(Client, record.client_id)
+            if not record.tenant_id or not client or client.tenant_id != record.tenant_id:
+                raise ValueError("Pedido sem proprietário coerente.")
             if record.derived_gallery_id is not None and record.parent_gallery_id is not None:
                 raise ValueError("Pedido não pode pertencer a duas galerias operacionais.")
             if record.parent_gallery_id is not None:
                 parent = session.get(ParentGallery, record.parent_gallery_id)
-                if not parent:
+                if not parent or parent.tenant_id != record.tenant_id:
                     raise ValueError("Não foi possível materializar o snapshot da galeria.")
                 record.parent_gallery_id_snapshot = record.parent_gallery_id_snapshot or parent.id
                 record.parent_gallery_name_snapshot = (
@@ -1221,7 +1339,8 @@ def _materialize_required_commercial_snapshots(
                 continue
             gallery = session.get(DerivedGallery, record.derived_gallery_id)
             parent = session.get(ParentGallery, gallery.parent_gallery_id) if gallery else None
-            if not gallery or not parent:
+            if (not gallery or not parent or gallery.tenant_id != record.tenant_id
+                    or parent.tenant_id != record.tenant_id):
                 raise ValueError("Não foi possível materializar o snapshot da galeria.")
             record.derived_gallery_id_snapshot = record.derived_gallery_id_snapshot or gallery.id
             record.derived_gallery_name_snapshot = (
@@ -1234,12 +1353,15 @@ def _materialize_required_commercial_snapshots(
                 record.client_name_snapshot = record.client_name_snapshot or client.full_name
                 record.client_phone_snapshot = record.client_phone_snapshot or client.phone_e164
         elif isinstance(record, SaleOrderItem):
+            order = session.get(SaleOrder, record.sale_order_id)
+            if not record.tenant_id or not order or order.tenant_id != record.tenant_id:
+                raise ValueError("Item sem proprietário coerente.")
             if record.photo_asset_id is None:
                 if not record.photo_asset_id_snapshot:
                     raise ValueError("Item sem foto operacional exige snapshot do identificador.")
                 continue
             photo = session.get(PhotoAsset, record.photo_asset_id)
-            if not photo:
+            if not photo or photo.tenant_id != record.tenant_id:
                 raise ValueError("Não foi possível materializar o snapshot da foto.")
             record.photo_asset_id_snapshot = record.photo_asset_id_snapshot or photo.id
             record.filename_snapshot = (
@@ -1249,6 +1371,9 @@ def _materialize_required_commercial_snapshots(
 
 class PriceRule(Base):
     __tablename__ = "price_rule"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("parent_gallery_id", "minimum_quantity"),
         CheckConstraint("minimum_quantity >= 1"),
@@ -1267,6 +1392,9 @@ class PriceRule(Base):
 
 class PixCheckoutSettings(Base):
     __tablename__ = "pix_checkout_settings"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "input_type IS NULL OR input_type IN ('br_code', 'cpf', 'phone', 'email')"
@@ -1292,6 +1420,9 @@ class GlobalPixSettings(Base):
     """PIX único do fotógrafo; pedidos conservam a versão efetiva em snapshot."""
 
     __tablename__ = "global_pix_settings"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint("status IN ('active', 'unconfigured', 'review_required')"),
         CheckConstraint("version >= 0"),
@@ -1316,6 +1447,9 @@ class GlobalPixSettings(Base):
 
 class PaymentCommunication(Base):
     __tablename__ = "payment_communication"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("sale_order_id", "idempotency_key"),
         CheckConstraint("status IN ('pending_review', 'confirmed', 'refused')"),
@@ -1340,6 +1474,9 @@ class PaymentConfirmationCorrection(Base):
     """Registro append-only de uma decisão financeira corrigida pelo admin."""
 
     __tablename__ = "payment_confirmation_correction"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint(
             "payment_communication_id",
@@ -1371,6 +1508,9 @@ class PaymentConfirmationCorrection(Base):
 
 class PaymentMessageTemplate(Base):
     __tablename__ = "payment_message_template"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (UniqueConstraint("kind"), CheckConstraint("kind IN ('confirmed', 'refused')"))
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     kind: Mapped[str] = mapped_column(String(16))
@@ -1380,6 +1520,9 @@ class PaymentMessageTemplate(Base):
 
 class PaymentNotificationOutbox(Base):
     __tablename__ = "payment_notification_outbox"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("idempotency_key"),
         CheckConstraint("template_kind IN ('photographer_reported', 'confirmed', 'refused')"),
@@ -1405,6 +1548,9 @@ class GalleryReopeningRequest(Base):
     """Pedido idempotente de reabertura individual, inclusive do legado."""
 
     __tablename__ = "gallery_reopening_request"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint(
             "derived_gallery_id",
@@ -1475,6 +1621,9 @@ class GalleryReopeningNotificationOutbox(Base):
     """Aviso assíncrono ao fotógrafo, independente da solicitação persistida."""
 
     __tablename__ = "gallery_reopening_notification_outbox"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("gallery_reopening_request_id"),
         Index("ix_reopening_notice_request", "gallery_reopening_request_id"),
@@ -1502,6 +1651,9 @@ class GalleryReopeningNotificationOutbox(Base):
 
 class ProgressivePricingPreset(Base):
     __tablename__ = "progressive_pricing_preset"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("code", name="uq_progressive_pricing_preset_code"),
         CheckConstraint("version >= 1", name="ck_progressive_pricing_preset_version"),
@@ -1520,6 +1672,9 @@ class ProgressivePricingPreset(Base):
 
 class ProgressivePricingTier(Base):
     __tablename__ = "progressive_pricing_tier"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint(
             "preset_id",
@@ -1548,6 +1703,9 @@ class GalleryMembershipNotificationOutbox(Base):
     """Evento administrativo e outbox externa de galerias privadas/membros."""
 
     __tablename__ = "gallery_membership_notification_outbox"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("event_key"),
         CheckConstraint(
@@ -1611,6 +1769,9 @@ class WhatsAppChannelSettings(Base):
     """Estado operacional não secreto do canal WhatsApp por ambiente."""
 
     __tablename__ = "whatsapp_channel_settings"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("environment"),
         CheckConstraint(
@@ -1632,6 +1793,9 @@ class WhatsAppDelivery(Base):
     """Entrega genérica; conteúdo sensível nunca é persistido em texto puro."""
 
     __tablename__ = "whatsapp_delivery"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("idempotency_key"),
         UniqueConstraint("external_message_id"),
@@ -1649,14 +1813,14 @@ class WhatsAppDelivery(Base):
     recipient_phone: Mapped[str | None] = mapped_column(String(16), nullable=True)
     recipient_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     template_kind: Mapped[str] = mapped_column(String(48))
-    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
     encrypted_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True, unique=True)
+    external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
     provider_status: Mapped[str | None] = mapped_column(String(48), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(
@@ -1671,6 +1835,9 @@ class WhatsAppDelivery(Base):
 
 class WhatsAppDeliveryAttempt(Base):
     __tablename__ = "whatsapp_delivery_attempt"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "result IN ('accepted', 'transient_failure', 'permanent_failure', 'unknown')"
@@ -1688,9 +1855,12 @@ class WhatsAppDeliveryAttempt(Base):
 
 class WhatsAppWebhookReceipt(Base):
     __tablename__ = "whatsapp_webhook_receipt"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (UniqueConstraint("fingerprint"),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
     event_type: Mapped[str] = mapped_column(String(64))
     external_message_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -1700,6 +1870,9 @@ class MediaDerivative(Base):
     """Derivado local de uma foto; paths nunca são recebidos do navegador."""
 
     __tablename__ = "media_derivative"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("photo_asset_id", "variant"),
         CheckConstraint("variant IN ('thumbnail', 'client_preview', 'admin_preview')"),
@@ -1721,6 +1894,9 @@ class MediaJob(Base):
     """Job retomável para geração de derivados, isolado por foto e tipo."""
 
     __tablename__ = "media_job"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("photo_asset_id", "kind"),
         CheckConstraint("kind IN ('generate_derivatives')"),
@@ -1742,6 +1918,9 @@ class PreviewAdjustmentSettings(Base):
     """Configuração legada; preservada desligada após migração por galeria."""
 
     __tablename__ = "preview_adjustment_settings"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True, primary_key=True,
+    )
     __table_args__ = (
         CheckConstraint("id = 1"),
         CheckConstraint("generation >= 1"),
@@ -1758,6 +1937,9 @@ class GalleryPreviewSettings(Base):
     """Controles do módulo isolados pela galeria de origem."""
 
     __tablename__ = "gallery_preview_settings"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint("generation >= 1"),
         CheckConstraint("strength BETWEEN 10 AND 75"),
@@ -1777,6 +1959,9 @@ class FolderProcessingSettings(Base):
     """Override opcional: ausência de linha significa herança integral da galeria."""
 
     __tablename__ = "folder_processing_settings"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint("preview_mode IN ('inherit', 'custom', 'off')"),
         CheckConstraint("facial_mode IN ('inherit', 'on', 'off')"),
@@ -1799,6 +1984,9 @@ class PreviewAdjustment(Base):
     """Fila e resultado substituíveis, sem alterar derivados convencionais."""
 
     __tablename__ = "preview_adjustment"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint("status IN ('queued', 'processing', 'ready', 'failed', 'cancelled')"),
         CheckConstraint("attempts >= 0"),
@@ -1822,6 +2010,9 @@ class GalleryFacialPolicy(Base):
     """Gate versionado de processamento facial por Galeria pública."""
 
     __tablename__ = "gallery_facial_policy"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("parent_gallery_id", name="uq_gallery_facial_policy_parent"),
         CheckConstraint(
@@ -1864,6 +2055,9 @@ class FacialRollout(Base):
     """Escopo persistente e auditável de rollout facial por ambiente/galeria."""
 
     __tablename__ = "facial_rollout"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint(
             "environment",
@@ -1930,6 +2124,9 @@ class FacialCalibrationApproval(Base):
     """Aprovação humana agregada do limiar e dos grupos avaliados."""
 
     __tablename__ = "facial_calibration_approval"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "environment IN ('prod', 'production')",
@@ -1986,6 +2183,9 @@ class FacialRolloutOperation(Base):
     """Recibo agregado da operação protegida, sem conteúdo dos gates."""
 
     __tablename__ = "facial_rollout_operation"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "environment IN ('local', 'development', 'test', 'homolog', "
@@ -2027,6 +2227,9 @@ class FacialLegalRepresentation(Base):
     """Prova não biométrica e minimizada de representação para consulta infantil."""
 
     __tablename__ = "facial_legal_representation"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint(
             "status IN ('active', 'revoked')",
@@ -2083,6 +2286,9 @@ class PhotoAnalysis(Base):
     """Lifecycle da fonte temporária; ausência da linha identifica o legado."""
 
     __tablename__ = "photo_analysis"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         CheckConstraint("state IN ('receiving', 'pending', 'ready', 'failed', 'reupload_required')",
                         name="ck_photo_analysis_state"),
@@ -2109,6 +2315,9 @@ class PhotoFaceEmbedding(Base):
     """Envelope cifrado de uma face indexada e sua qualidade técnica."""
 
     __tablename__ = "photo_face_embedding"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         ForeignKeyConstraint(
             ["photo_asset_id", "parent_gallery_id"],
@@ -2185,6 +2394,9 @@ class FacialSearchRequest(Base):
     """Consulta durável; a referência fica em armazenamento temporário cifrado."""
 
     __tablename__ = "facial_search_request"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     # Sem FK: reindexação pode remover a região; o worker falha fechado pelo UUID obsoleto.
     reference_region_id: Mapped[UUID | None] = mapped_column(nullable=True)
     reference_source: Mapped[str] = mapped_column(String(24), default="upload", server_default="upload")
@@ -2262,6 +2474,9 @@ class FacialSearchSnapshotItem(Base):
     """Foto/fingerprint congelados no início da consulta, sem inferência."""
 
     __tablename__ = "facial_search_snapshot_item"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         ForeignKeyConstraint(
             ["search_request_id", "parent_gallery_id", "client_id"],
@@ -2306,6 +2521,9 @@ class FacialSearchCandidate(Base):
     """Foto autorizada e ordenada, sem persistir similaridade ou identidade."""
 
     __tablename__ = "facial_search_candidate"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     match_class: Mapped[str] = mapped_column(String(16), default="matched")
     __table_args__ = (
         ForeignKeyConstraint(
@@ -2348,6 +2566,9 @@ class FacialJob(Base):
     """Job facial com lease, prioridade e idempotência persistentes."""
 
     __tablename__ = "facial_job"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_facial_job_idempotency"),
         CheckConstraint(
@@ -2405,6 +2626,9 @@ class FacialSearchNotificationOutbox(Base):
     """Mensagem transacional cifrada, neutra e idempotente por consulta."""
 
     __tablename__ = "facial_search_notification_outbox"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     __table_args__ = (
         ForeignKeyConstraint(
             ["search_request_id", "parent_gallery_id", "client_id"],
@@ -2455,6 +2679,9 @@ class FacialSearchNotificationOutbox(Base):
 
 class AuthChallenge(Base):
     __tablename__ = "auth_challenge"
+    tenant_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tenant.id"), index=True, nullable=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     kind: Mapped[str] = mapped_column(String(32), index=True)
     subject: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
@@ -2468,10 +2695,17 @@ class AuthChallenge(Base):
     gallery_capability_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     return_to: Mapped[str | None] = mapped_column(String(512), nullable=True)
     client_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    __table_args__ = (
+        CheckConstraint("kind != 'client_otp' OR tenant_id IS NOT NULL",
+                        name="ck_auth_challenge_client_context"),
+    )
 
 
 class NotificationSetting(Base):
     __tablename__ = "notification_setting"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True, primary_key=True,
+    )
     event_type: Mapped[str] = mapped_column(String(32), primary_key=True)
     whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     push_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -2488,6 +2722,9 @@ class NotificationSetting(Base):
 class NotificationMilestone(Base):
     """Marco canônico persistente, independente de seleção/carrinho atuais."""
     __tablename__ = "notification_milestone"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     parent_gallery_id: Mapped[UUID] = mapped_column(
         ForeignKey("parent_gallery.id", ondelete="CASCADE"), primary_key=True
     )
@@ -2503,12 +2740,17 @@ class NotificationMilestone(Base):
 class PushSubscription(Base):
     """Endpoint e chaves exclusivamente cifrados; fingerprint não reversível."""
     __tablename__ = "push_subscription"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     endpoint_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
     installation_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     encrypted_subscription: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(16))
     subject_id: Mapped[UUID] = mapped_column(index=True)
+    client_subject_id: Mapped[UUID | None] = mapped_column(ForeignKey("client.id"), nullable=True)
+    admin_subject_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
     session_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("auth_session.id", ondelete="SET NULL"), nullable=True
     )
@@ -2518,6 +2760,13 @@ class PushSubscription(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     __table_args__ = (
         CheckConstraint("role IN ('admin', 'client')"),
+        CheckConstraint(
+            "(role = 'client' AND client_subject_id IS NOT NULL "
+            "AND client_subject_id = subject_id AND admin_subject_id IS NULL) OR "
+            "(role = 'admin' AND admin_subject_id IS NOT NULL "
+            "AND admin_subject_id = subject_id AND client_subject_id IS NULL)",
+            name="ck_push_subscription_typed_subject",
+        ),
         CheckConstraint("generation >= 1"),
         Index("ix_push_subscription_owner_active", "role", "subject_id", "active"),
     )
@@ -2525,9 +2774,12 @@ class PushSubscription(Base):
 
 class NotificationEvent(Base):
     __tablename__ = "notification_event"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     event_key: Mapped[str] = mapped_column(String(192), unique=True)
-    event_type: Mapped[str] = mapped_column(ForeignKey("notification_setting.event_type"))
+    event_type: Mapped[str] = mapped_column(String(32))
     parent_gallery_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("parent_gallery.id", ondelete="CASCADE"), nullable=True
     )
@@ -2551,6 +2803,9 @@ class NotificationEvent(Base):
 
 class NotificationDelivery(Base):
     __tablename__ = "notification_delivery"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     event_id: Mapped[UUID] = mapped_column(
         ForeignKey("notification_event.id", ondelete="CASCADE"), index=True
@@ -2558,6 +2813,8 @@ class NotificationDelivery(Base):
     channel: Mapped[str] = mapped_column(String(16))
     recipient_role: Mapped[str] = mapped_column(String(16))
     recipient_id: Mapped[UUID] = mapped_column(index=True)
+    client_recipient_id: Mapped[UUID | None] = mapped_column(ForeignKey("client.id"), nullable=True)
+    admin_recipient_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
     device_key: Mapped[str] = mapped_column(String(64), default="whatsapp")
     subscription_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("push_subscription.id", ondelete="CASCADE"), nullable=True
@@ -2575,6 +2832,13 @@ class NotificationDelivery(Base):
         UniqueConstraint("event_id", "channel", "recipient_role", "recipient_id", "device_key"),
         CheckConstraint("channel IN ('push', 'whatsapp')"),
         CheckConstraint("recipient_role IN ('admin', 'client')"),
+        CheckConstraint(
+            "(recipient_role = 'client' AND client_recipient_id IS NOT NULL "
+            "AND client_recipient_id = recipient_id AND admin_recipient_id IS NULL) OR "
+            "(recipient_role = 'admin' AND admin_recipient_id IS NOT NULL "
+            "AND admin_recipient_id = recipient_id AND client_recipient_id IS NULL)",
+            name="ck_notification_delivery_typed_recipient",
+        ),
         CheckConstraint("attempts >= 0"),
         CheckConstraint("status IN ('queued', 'processing', 'accepted', 'failed', "
                         "'unknown', 'expired', 'cancelled')"),
@@ -2584,6 +2848,9 @@ class NotificationDelivery(Base):
 
 class PrivateUploadBatch(Base):
     __tablename__ = "private_upload_batch"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     derived_gallery_id: Mapped[UUID] = mapped_column(
         ForeignKey("derived_gallery.id", ondelete="CASCADE"), index=True
@@ -2599,6 +2866,9 @@ class PrivateUploadBatch(Base):
 
 class PrivateUploadBatchAsset(Base):
     __tablename__ = "private_upload_batch_asset"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id"), index=True,
+    )
     batch_id: Mapped[UUID] = mapped_column(
         ForeignKey("private_upload_batch.id", ondelete="CASCADE"), primary_key=True
     )
@@ -2609,20 +2879,42 @@ class PrivateUploadBatchAsset(Base):
 
 class AuthSession(Base):
     __tablename__ = "auth_session"
+    tenant_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tenant.id"), index=True, nullable=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     role: Mapped[str] = mapped_column(String(16), index=True)
     subject_id: Mapped[UUID] = mapped_column(index=True)
+    client_subject_id: Mapped[UUID | None] = mapped_column(ForeignKey("client.id"), nullable=True)
+    admin_subject_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'client')", name="ck_auth_session_role"),
+        CheckConstraint(
+            "revoked_at IS NOT NULL OR (tenant_id IS NOT NULL AND "
+            "((role = 'client' AND client_subject_id IS NOT NULL "
+            "AND client_subject_id = subject_id AND admin_subject_id IS NULL) OR "
+            "(role = 'admin' AND admin_subject_id IS NOT NULL "
+            "AND admin_subject_id = subject_id AND client_subject_id IS NULL)))",
+            name="ck_auth_session_typed_context",
+        ),
+    )
 
 
 class AuditEvent(Base):
     __tablename__ = "audit_event"
+    tenant_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("tenant.id"), index=True, nullable=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     event: Mapped[str] = mapped_column(String(80), index=True)
     subject: Mapped[str] = mapped_column(String(320))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+apply_ownership_constraints(Base.metadata)
 
 
 class ClientChallengeInput(BaseModel):
@@ -2633,10 +2925,12 @@ class ClientChallengeInput(BaseModel):
 class ChallengeVerification(BaseModel):
     challenge_id: UUID
     code: str = Field(pattern=r"^\d{6}$")
+    access_token: str | None = Field(default=None, min_length=32, max_length=256)
 
 
 class ChallengeResendInput(BaseModel):
     challenge_id: UUID
+    access_token: str | None = Field(default=None, min_length=32, max_length=256)
 
 
 class AdminPasswordInput(BaseModel):
@@ -2710,8 +3004,8 @@ def challenge_fingerprint(challenge: AuthChallenge) -> str:
     return token_hash(str(challenge.id))
 
 
-def audit(db: Session, event: str, subject: str) -> None:
-    db.add(AuditEvent(event=event, subject=subject))
+def audit(db: Session, event: str, subject: str, *, tenant_id: UUID | None = None) -> None:
+    db.add(AuditEvent(tenant_id=tenant_id, event=event, subject=subject))
 
 
 def enforce_rate_limit(db: Session, scope: str, subject: str, ip_address: str) -> None:
@@ -2744,21 +3038,33 @@ def neutral_error() -> HTTPException:
 
 
 def create_challenge(
-    db: Session, kind: str, subject: str, code: str | None = None
+    db: Session, kind: str, subject: str, code: str | None = None,
+    *, tenant_id: UUID | None = None, parent_gallery_id: UUID | None = None,
+    gallery_capability_id: UUID | None = None, client_name: str | None = None,
+    return_to: str | None = None,
 ) -> tuple[AuthChallenge, str]:
+    if kind == "client_otp":
+        require_client_auth_tenant(db, tenant_id)
+        require_client_channel(db, tenant_id)
     code = code or f"{secrets.randbelow(1_000_000):06d}"
     challenge = AuthChallenge(
+        tenant_id=tenant_id,
         kind=kind,
         subject=subject,
         subject_fingerprint=pii_fingerprint(subject) if kind == "client_otp" else None,
         secret_hash=token_hash(code),
         expires_at=now() + timedelta(minutes=10),
+        parent_gallery_id=parent_gallery_id,
+        gallery_capability_id=gallery_capability_id,
+        client_name=client_name,
+        return_to=return_to,
     )
     db.add(challenge)
     audit(
         db,
         f"{kind}.requested",
         challenge.subject_fingerprint if kind == "client_otp" else subject,
+        tenant_id=tenant_id,
     )
     db.commit()
     return challenge, code
@@ -2768,11 +3074,17 @@ def enqueue_client_otp_delivery(
     db: Session, challenge: AuthChallenge, code: str
 ) -> WhatsAppDelivery:
     """Persiste uma entrega OTP sem depender da rede ou guardar o código aberto."""
+    require_client_auth_tenant(db, challenge.tenant_id)
+    binding = require_client_channel(db, challenge.tenant_id)
     key = f"otp:{challenge.id}:{challenge.resend_count}"
-    existing = db.scalar(select(WhatsAppDelivery).where(WhatsAppDelivery.idempotency_key == key))
+    existing = db.scalar(select(WhatsAppDelivery).where(
+        WhatsAppDelivery.tenant_id == challenge.tenant_id,
+        WhatsAppDelivery.idempotency_key == key,
+    ))
     if existing:
         return existing
     delivery = WhatsAppDelivery(
+        tenant_id=challenge.tenant_id,
         kind="otp",
         source_type="auth_challenge",
         source_id=str(challenge.id),
@@ -2786,7 +3098,7 @@ def enqueue_client_otp_delivery(
         cipher_key = otp_encryption_key()
         delivery.encrypted_payload = encrypt_otp(code, key=cipher_key, context=key)
     except WhatsAppConfigurationError:
-        if whatsapp_provider_name() == "sandbox":
+        if binding.name == "sandbox":
             instant = now()
             delivery.status = "accepted"
             delivery.provider_status = "accepted"
@@ -2799,13 +3111,45 @@ def enqueue_client_otp_delivery(
             delivery.status = "failed"
             delivery.last_error = "Configuração segura do OTP indisponível."
     db.add(delivery)
-    audit(db, "client_otp.delivery_queued", str(challenge.id))
+    audit(db, "client_otp.delivery_queued", str(challenge.id), tenant_id=challenge.tenant_id)
     db.commit()
     return delivery
 
 
-def resend_client_challenge(db: Session, challenge_id: UUID, ip_address: str) -> AuthChallenge:
-    challenge = db.get(AuthChallenge, challenge_id)
+def require_client_channel(db: Session, tenant_id: UUID):
+    from app.whatsapp_binding import resolve_binding
+    try:
+        return resolve_binding(db, tenant_id)
+    except WhatsAppConfigurationError:
+        raise HTTPException(status_code=503, detail="Autenticação temporariamente indisponível.") from None
+
+
+def require_client_auth_tenant(db: Session, tenant_id: UUID | None) -> Tenant:
+    tenant = db.get(Tenant, tenant_id, populate_existing=True) if tenant_id else None
+    if tenant is None or tenant.status != "active":
+        raise neutral_error()
+    from app.tenancy import bind_domain_owner
+
+    bind_domain_owner(db, tenant.id)
+    return tenant
+
+
+def client_auth_rate_limit(
+    db: Session, scope: str, fingerprint: str, ip_address: str, *, tenant_id: UUID,
+) -> None:
+    require_client_auth_tenant(db, tenant_id)
+    enforce_rate_limit(db, scope, fingerprint, ip_address)
+    enforce_rate_limit(db, f"{scope}.context", f"{tenant_id}:{fingerprint}", ip_address)
+
+
+def resend_client_challenge(
+    db: Session, challenge_id: UUID, ip_address: str, *, tenant_id: UUID,
+) -> AuthChallenge:
+    require_client_auth_tenant(db, tenant_id)
+    require_client_channel(db, tenant_id)
+    challenge = db.scalar(select(AuthChallenge).where(
+        AuthChallenge.id == challenge_id, AuthChallenge.tenant_id == tenant_id,
+    ).with_for_update())
     if (
         not challenge
         or challenge.kind != "client_otp"
@@ -2821,11 +3165,13 @@ def resend_client_challenge(db: Session, challenge_id: UUID, ip_address: str) ->
         db.commit()
         raise neutral_error()
     fingerprint = challenge_fingerprint(challenge)
-    enforce_rate_limit(db, "client_otp.resend", fingerprint, ip_address)
+    client_auth_rate_limit(db, "client_otp.resend", fingerprint, ip_address, tenant_id=tenant_id)
     code = f"{secrets.randbelow(1_000_000):06d}"
     for delivery in db.scalars(
         select(WhatsAppDelivery).where(
+            WhatsAppDelivery.tenant_id == challenge.tenant_id,
             WhatsAppDelivery.kind == "otp",
+            WhatsAppDelivery.source_type == "auth_challenge",
             WhatsAppDelivery.source_id == str(challenge.id),
             WhatsAppDelivery.status.in_(("queued", "processing", "unknown")),
         )
@@ -2835,14 +3181,20 @@ def resend_client_challenge(db: Session, challenge_id: UUID, ip_address: str) ->
         delivery.updated_at = now()
     challenge.secret_hash = token_hash(code)
     challenge.resend_count += 1
-    audit(db, "client_otp.resent", fingerprint)
+    audit(db, "client_otp.resent", fingerprint, tenant_id=tenant_id)
     db.commit()
     enqueue_client_otp_delivery(db, challenge, code)
     return challenge
 
 
-def consume_challenge(db: Session, challenge_id: UUID, kind: str, code: str) -> AuthChallenge:
-    challenge = db.get(AuthChallenge, challenge_id)
+def consume_challenge(
+    db: Session, challenge_id: UUID, kind: str, code: str, *, tenant_id: UUID | None = None,
+) -> AuthChallenge:
+    query = select(AuthChallenge).where(AuthChallenge.id == challenge_id)
+    if kind == "client_otp":
+        require_client_auth_tenant(db, tenant_id)
+        query = query.where(AuthChallenge.tenant_id == tenant_id)
+    challenge = db.scalar(query.with_for_update())
     if (
         not challenge
         or challenge.kind != kind
@@ -2850,7 +3202,7 @@ def consume_challenge(db: Session, challenge_id: UUID, kind: str, code: str) -> 
         or expired(challenge.expires_at)
         or challenge.attempts >= 5
     ):
-        audit(db, f"{kind}.rejected", str(challenge_id))
+        audit(db, f"{kind}.rejected", str(challenge_id), tenant_id=tenant_id)
         db.commit()
         raise neutral_error()
     challenge.attempts += 1
@@ -2861,6 +3213,7 @@ def consume_challenge(db: Session, challenge_id: UUID, kind: str, code: str) -> 
             challenge_fingerprint(challenge)
             if kind == "client_otp"
             else challenge.subject or str(challenge.id),
+            tenant_id=challenge.tenant_id,
         )
         if kind == "client_otp" and challenge.attempts >= 5:
             minimize_client_challenge_pii(db, challenge)
@@ -2873,6 +3226,7 @@ def consume_challenge(db: Session, challenge_id: UUID, kind: str, code: str) -> 
         challenge_fingerprint(challenge)
         if kind == "client_otp"
         else challenge.subject or str(challenge.id),
+        tenant_id=challenge.tenant_id,
     )
     return challenge
 
@@ -2886,6 +3240,7 @@ def minimize_client_challenge_pii(db: Session, challenge: AuthChallenge) -> None
     instant = now()
     for delivery in db.scalars(
         select(WhatsAppDelivery).where(
+            WhatsAppDelivery.tenant_id == challenge.tenant_id,
             WhatsAppDelivery.kind == "otp",
             WhatsAppDelivery.source_type == "auth_challenge",
             WhatsAppDelivery.source_id == str(challenge.id),
@@ -2899,15 +3254,18 @@ def minimize_client_challenge_pii(db: Session, challenge: AuthChallenge) -> None
         delivery.updated_at = instant
 
 
-def cleanup_expired_client_otp_pii(db: Session, *, current_time: datetime | None = None) -> int:
+def cleanup_expired_client_otp_pii(db: Session, *, tenant_id: UUID, current_time: datetime | None = None) -> int:
     """Minimiza desafios abandonados após a janela curta configurada."""
 
+    from app.acervo_context import require_active_owner
+    require_active_owner(db, tenant_id)
     instant = current_time or now()
     retention = timedelta(minutes=max(0, int(os.getenv("AUTH_OTP_PII_RETENTION_MINUTES", "60"))))
     cutoff = instant - retention
     challenges = list(
         db.scalars(
             select(AuthChallenge).where(
+                AuthChallenge.tenant_id == tenant_id,
                 AuthChallenge.kind == "client_otp",
                 AuthChallenge.subject.is_not(None),
                 AuthChallenge.expires_at <= cutoff,
@@ -2915,42 +3273,60 @@ def cleanup_expired_client_otp_pii(db: Session, *, current_time: datetime | None
         )
     )
     for challenge in challenges:
+        require_active_owner(db, tenant_id)
         minimize_client_challenge_pii(db, challenge)
     if challenges:
-        audit(db, "client_otp.pii_cleanup", f"count:{len(challenges)}")
+        audit(db, "client_otp.pii_cleanup", f"count:{len(challenges)}", tenant_id=tenant_id)
         db.commit()
     return len(challenges)
 
 
-def create_session(db: Session, response: Response, role: Role, subject_id: UUID) -> str:
-    from app.tenancy import TenantContextError, require_admin_tenant, require_single_tenant
+def create_session(
+    db: Session, response: Response, role: Role, subject_id: UUID,
+    *, tenant_id: UUID | None = None,
+) -> str:
+    from app.tenancy import TenantContextError, require_admin_tenant
 
     try:
         if role == Role.ADMIN:
-            require_admin_tenant(db, subject_id)
+            tenant = require_admin_tenant(db, subject_id)
+            admin = db.get(AdminUser, subject_id, populate_existing=True)
+            if not admin or not admin.email_verified:
+                raise TenantContextError("Acesso negado.")
+            if tenant_id is not None and tenant.id != tenant_id:
+                raise TenantContextError("Acesso negado.")
+            tenant_id = tenant.id
+        elif role == Role.CLIENT:
+            require_client_auth_tenant(db, tenant_id)
+            if not db.scalar(select(Client.id).where(Client.id == subject_id, Client.tenant_id == tenant_id)):
+                raise neutral_error()
         else:
-            require_single_tenant(db)
+            raise neutral_error()
     except TenantContextError as exc:
         raise HTTPException(status_code=403, detail="Acesso negado.") from exc
     raw_token = secrets.token_urlsafe(48)
     active_sessions = db.scalars(
         select(AuthSession).where(
             AuthSession.role == role.value,
+            AuthSession.tenant_id == tenant_id,
             AuthSession.subject_id == subject_id,
             AuthSession.revoked_at.is_(None),
         )
     )
     for active_session in active_sessions:
         active_session.revoked_at = now()
-        audit(db, "session.rotated", str(subject_id))
+        audit(db, "session.rotated", str(subject_id), tenant_id=tenant_id)
     session = AuthSession(
+        tenant_id=tenant_id,
         token_hash=token_hash(raw_token),
         role=role.value,
         subject_id=subject_id,
+        client_subject_id=subject_id if role == Role.CLIENT else None,
+        admin_subject_id=subject_id if role == Role.ADMIN else None,
         expires_at=now() + timedelta(days=int(os.getenv("SESSION_DAYS", "7"))),
     )
     db.add(session)
-    audit(db, "session.created", str(subject_id))
+    audit(db, "session.created", str(subject_id), tenant_id=tenant_id)
     db.commit()
     response.set_cookie(
         os.getenv("SESSION_COOKIE_NAME", "markina_session"),
@@ -2965,7 +3341,7 @@ def create_session(db: Session, response: Response, role: Role, subject_id: UUID
 
 
 def current_session(request: Request, required_role: Role | None = None) -> AuthSession:
-    from app.tenancy import TenantContextError, require_admin_tenant, require_single_tenant
+    from app.tenancy import TenantContextError, require_admin_tenant
 
     token = request.cookies.get(os.getenv("SESSION_COOKIE_NAME", "markina_session"))
     if not token:
@@ -2981,10 +3357,21 @@ def current_session(request: Request, required_role: Role | None = None) -> Auth
             raise HTTPException(status_code=403, detail="Acesso negado.")
         try:
             if session.role == Role.ADMIN.value:
-                require_admin_tenant(db, session.subject_id)
+                tenant = require_admin_tenant(db, session.subject_id)
+                admin = db.get(AdminUser, session.subject_id, populate_existing=True)
+                if not admin or not admin.email_verified:
+                    raise TenantContextError("Acesso negado.")
+                if session.tenant_id != tenant.id or session.admin_subject_id != session.subject_id:
+                    raise TenantContextError("Acesso negado.")
+            elif session.role == Role.CLIENT.value:
+                require_client_auth_tenant(db, session.tenant_id)
+                if session.client_subject_id != session.subject_id or not db.scalar(select(Client.id).where(
+                    Client.id == session.subject_id, Client.tenant_id == session.tenant_id,
+                )):
+                    raise TenantContextError("Acesso negado.")
             else:
-                require_single_tenant(db)
-        except TenantContextError as exc:
+                raise TenantContextError("Acesso negado.")
+        except (TenantContextError, HTTPException) as exc:
             raise HTTPException(status_code=403, detail="Acesso negado.") from exc
         db.expunge(session)
         return session

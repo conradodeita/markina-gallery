@@ -27,7 +27,7 @@ describe("painel facial administrativo", () => {
     expect(screen.getByText("Etapa canary")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/gallery-1/facial-index",
-      { credentials: "same-origin" },
+      { credentials: "same-origin", cache: "no-store" },
     );
     expect(screen.queryByRole("button", { name: "Preparar política" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Ativar filtro" })).toBeNull();

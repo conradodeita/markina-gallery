@@ -6,7 +6,17 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.auth import Base, FacialJob, ParentGallery, now
+from app.auth import (
+    Base,
+    Client,
+    FacialJob,
+    FacialSearchRequest,
+    GalleryFacialPolicy,
+    ParentGallery,
+    PhotoAsset,
+    PhotoFolder,
+    now,
+)
 from app.facial.jobs import (
     ClaimedFacialJob,
     FacialJobDispatcher,
@@ -33,6 +43,34 @@ def _parent_id(db: Session):
     return db.query(ParentGallery.id).scalar()
 
 
+def _photo_id(db: Session):
+    parent_id = _parent_id(db)
+    folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, name="Fotos")
+    db.add(folder)
+    db.flush()
+    photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
+        folder_id=folder.id, filename="synthetic.jpg", storage_key=f"synthetic/{uuid4()}.jpg")
+    db.add(photo)
+    db.flush()
+    return photo.id
+
+
+def _request_id(db: Session):
+    parent_id = _parent_id(db)
+    client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente sintética", phone_e164="+5511999990001")
+    policy = GalleryFacialPolicy(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
+        model_version="model-v1", quality_version="quality-v1")
+    db.add_all((client, policy))
+    db.flush()
+    request = FacialSearchRequest(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
+        client_id=client.id, policy_id=policy.id, consent_version="synthetic", legal_notice_version="synthetic",
+        subject_declaration="adult", model_version="model-v1", quality_version="quality-v1",
+        index_generation=0, expires_at=now()+timedelta(minutes=15))
+    db.add(request)
+    db.flush()
+    return request.id
+
+
 def test_dispatch_is_idempotent_and_wakes_only_the_facial_queue(db: Session) -> None:
     calls = []
 
@@ -45,10 +83,10 @@ def test_dispatch_is_idempotent_and_wakes_only_the_facial_queue(db: Session) -> 
         queue_name="markina:facial:jobs",
         notifier=Notifier(),
     )
-    photo_id = uuid4()
+    photo_id = _photo_id(db)
     first, first_created = dispatcher.dispatch(
         db,
-        kind="index",
+        tenant_id=FIXTURE_TENANT_ID, kind="index",
         idempotency_key="index:gallery:photo:model:fingerprint",
         parent_gallery_id=_parent_id(db),
         photo_asset_id=photo_id,
@@ -58,7 +96,7 @@ def test_dispatch_is_idempotent_and_wakes_only_the_facial_queue(db: Session) -> 
     )
     second, second_created = dispatcher.dispatch(
         db,
-        kind="index",
+        tenant_id=FIXTURE_TENANT_ID, kind="index",
         idempotency_key="index:gallery:photo:model:fingerprint",
         parent_gallery_id=_parent_id(db),
         photo_asset_id=photo_id,
@@ -78,7 +116,7 @@ def test_claim_respects_priority_and_does_not_double_claim(db: Session) -> None:
     for key, priority in (("normal", 100), ("purge", 10)):
         repository.enqueue(
             db,
-            kind="cleanup",
+            tenant_id=FIXTURE_TENANT_ID, kind="cleanup",
             idempotency_key=key,
             parent_gallery_id=parent_id,
             priority=priority,
@@ -100,31 +138,31 @@ def test_worker_classes_claim_only_their_jobs_and_maintenance_is_not_starved(
     parent_id = _parent_id(db)
     index, _ = repository.enqueue(
         db,
-        kind="index",
+        tenant_id=FIXTURE_TENANT_ID, kind="index",
         idempotency_key="class-index",
         parent_gallery_id=parent_id,
-        photo_asset_id=uuid4(),
+        photo_asset_id=_photo_id(db),
         model_version="model-v1",
         quality_version="quality-v1",
         preview_fingerprint="a" * 64,
     )
     search, _ = repository.enqueue(
         db,
-        kind="search",
+        tenant_id=FIXTURE_TENANT_ID, kind="search",
         idempotency_key="class-search",
         parent_gallery_id=parent_id,
-        search_request_id=uuid4(),
+        search_request_id=_request_id(db),
     )
     cleanup, _ = repository.enqueue(
         db,
-        kind="cleanup",
+        tenant_id=FIXTURE_TENANT_ID, kind="cleanup",
         idempotency_key="class-cleanup",
         parent_gallery_id=parent_id,
         priority=20,
     )
     purge, _ = repository.enqueue(
         db,
-        kind="purge",
+        tenant_id=FIXTURE_TENANT_ID, kind="purge",
         idempotency_key="class-purge",
         parent_gallery_id=parent_id,
         priority=0,
@@ -159,7 +197,7 @@ def test_expired_lease_is_resumed_and_stale_worker_cannot_finish(db: Session) ->
     repository = FacialJobRepository()
     job, _ = repository.enqueue(
         db,
-        kind="cleanup",
+        tenant_id=FIXTURE_TENANT_ID, kind="cleanup",
         idempotency_key="crash-resume",
         parent_gallery_id=_parent_id(db),
     )
@@ -189,7 +227,7 @@ def test_failure_is_sanitized_and_retried_until_terminal(db: Session) -> None:
     repository = FacialJobRepository()
     _job, _ = repository.enqueue(
         db,
-        kind="cleanup",
+        tenant_id=FIXTURE_TENANT_ID, kind="cleanup",
         idempotency_key="retry-safe",
         parent_gallery_id=_parent_id(db),
     )
@@ -223,7 +261,7 @@ def test_progress_and_completion_require_the_current_lease(db: Session) -> None:
     repository = FacialJobRepository()
     job, _ = repository.enqueue(
         db,
-        kind="cleanup",
+        tenant_id=FIXTURE_TENANT_ID, kind="cleanup",
         idempotency_key="progress",
         parent_gallery_id=_parent_id(db),
     )
@@ -238,5 +276,5 @@ def test_progress_and_completion_require_the_current_lease(db: Session) -> None:
         repository.progress(db, claim, done=6, total=5, lease_seconds=60)
     with pytest.raises(FacialJobError, match="Lease"):
         repository.complete(
-            db, ClaimedFacialJob(id=job.id, lease_token="worker-incorreto")
+            db, ClaimedFacialJob(tenant_id=FIXTURE_TENANT_ID, id=job.id, lease_token="worker-incorreto")
         )

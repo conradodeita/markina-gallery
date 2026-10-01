@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id
 from app.auth import (
     Client,
     GalleryClientState,
@@ -19,6 +20,7 @@ from app.auth import (
 from app.checkout import client_photo_is_frozen_any
 from app.public_gallery_access import (
     CanonicalPhotoAccessDenied,
+    PublicGalleryAccessDenied,
     authorized_canonical_photos,
     require_authorized_canonical_photo,
     require_public_gallery_browsing,
@@ -44,11 +46,12 @@ class CanonicalUnselectionResult:
 
 
 def _selection_quantity(db: Session, *, parent_gallery_id: UUID, client_id: UUID) -> int:
+    tenant_id = client_tenant_id(db, client_id)
     allowed = authorized_canonical_photos(parent_gallery_id, client_id).with_only_columns(
         PhotoAsset.id
     )
     return db.scalar(
-        select(func.count(PhotoSelection.id)).where(
+        select(func.count(PhotoSelection.id)).where(PhotoSelection.tenant_id == tenant_id).where(
             PhotoSelection.parent_gallery_id == parent_gallery_id,
             PhotoSelection.client_id == client_id,
             PhotoSelection.photo_asset_id.in_(allowed),
@@ -59,14 +62,15 @@ def _selection_quantity(db: Session, *, parent_gallery_id: UUID, client_id: UUID
 def select_canonical_photo(
     db: Session, *, parent_gallery_id: UUID, client_id: UUID, photo_id: UUID
 ) -> CanonicalSelectionResult:
-    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
+    tenant_id = client_tenant_id(db, client_id)
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client_id).with_for_update())
     try:
         parent, _photo = require_authorized_canonical_photo(
             db, parent_gallery_id=parent_gallery_id, client_id=client_id, photo_id=photo_id
         )
-    except CanonicalPhotoAccessDenied as exc:
+    except (CanonicalPhotoAccessDenied, PublicGalleryAccessDenied) as exc:
         raise CanonicalSelectionUnavailable("Foto indisponível para esta cliente.") from exc
-    lookup = select(GalleryClientState).where(
+    lookup = select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
         GalleryClientState.parent_gallery_id == parent_gallery_id,
         GalleryClientState.client_id == client_id,
     )
@@ -83,7 +87,7 @@ def select_canonical_photo(
                         now() + timedelta(days=parent.selection_duration_days)
                         if parent.selection_duration_days else None
                     ),
-                )
+                 tenant_id=tenant_id)
                 db.add(state)
                 db.flush()
             state_created = True
@@ -98,13 +102,13 @@ def select_canonical_photo(
     if client_photo_is_frozen_any(db, client_id=client_id, photo_id=photo_id):
         raise CanonicalSelectionUnavailable("Esta foto já integra uma compra ou pagamento comunicado.")
     if state.selection_expires_at is None and parent.selection_duration_days and not db.scalar(
-        select(PhotoSelection.id).where(
+        select(PhotoSelection.id).where(PhotoSelection.tenant_id == tenant_id).where(
             PhotoSelection.parent_gallery_id == parent_gallery_id,
             PhotoSelection.client_id == client_id,
         ).limit(1)
     ):
         state.selection_expires_at = now() + timedelta(days=parent.selection_duration_days)
-    selection_lookup = select(PhotoSelection.id).where(
+    selection_lookup = select(PhotoSelection.id).where(PhotoSelection.tenant_id == tenant_id).where(
         PhotoSelection.parent_gallery_id == parent_gallery_id,
         PhotoSelection.client_id == client_id,
         PhotoSelection.photo_asset_id == photo_id,
@@ -117,7 +121,7 @@ def select_canonical_photo(
                     parent_gallery_id=parent_gallery_id,
                     client_id=client_id,
                     photo_asset_id=photo_id,
-                ))
+                 tenant_id=tenant_id))
                 db.flush()
             selection_created = True
         except IntegrityError:
@@ -134,14 +138,15 @@ def select_canonical_photo(
 def unselect_canonical_photo(
     db: Session, *, parent_gallery_id: UUID, client_id: UUID, photo_id: UUID
 ) -> CanonicalUnselectionResult:
+    tenant_id = client_tenant_id(db, client_id)
     require_public_gallery_browsing(
         db, parent_gallery_id=parent_gallery_id, client_id=client_id
     )
     require_authorized_canonical_photo(
         db, parent_gallery_id=parent_gallery_id, client_id=client_id, photo_id=photo_id
     )
-    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
-    state = db.scalar(select(GalleryClientState).where(
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client_id).with_for_update())
+    state = db.scalar(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
         GalleryClientState.parent_gallery_id == parent_gallery_id,
         GalleryClientState.client_id == client_id,
     ).with_for_update())
@@ -149,7 +154,7 @@ def unselect_canonical_photo(
         state.selection_expires_at and expired(state.selection_expires_at)
     )):
         raise CanonicalSelectionUnavailable("O prazo ou acesso desta cliente está indisponível.")
-    selection = db.scalar(select(PhotoSelection).where(
+    selection = db.scalar(select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
         PhotoSelection.parent_gallery_id == parent_gallery_id,
         PhotoSelection.client_id == client_id,
         PhotoSelection.photo_asset_id == photo_id,

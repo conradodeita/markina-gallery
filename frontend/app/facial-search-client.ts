@@ -15,6 +15,7 @@ export type FacialSearchStatus =
   | "failed";
 
 export type FacialSearchAvailability = {
+  storage_context?: string;
   state: "unavailable" | "consent_required";
   manual_selection_available: true;
   minor_search_available: boolean;
@@ -85,7 +86,7 @@ export type FacialIndexStatus = {
 };
 
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...init });
+  const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...init });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const retryAfter = Number(response.headers.get("Retry-After"));

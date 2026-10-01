@@ -88,9 +88,9 @@ def ready_photo(
     )
     db.add(photo)
     db.flush()
-    db.add(MediaJob(photo_asset_id=photo.id, status="completed", attempts=1))
+    db.add(MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, status="completed", attempts=1))
     db.add(
-        MediaDerivative(
+        MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
             photo_asset_id=photo.id,
             variant="client_preview",
             relative_path=f"{photo.id}/client_preview.jpg",
@@ -100,7 +100,7 @@ def ready_photo(
         )
     )
     db.flush()
-    db.add(MediaDerivative(photo_asset_id=photo.id, variant="admin_preview", relative_path=f"{photo.id}/admin_preview.jpg", status="ready", width=1200, height=800))
+    db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="admin_preview", relative_path=f"{photo.id}/admin_preview.jpg", status="ready", width=1200, height=800))
     return photo
 
 
@@ -117,13 +117,13 @@ def test_only_one_cover_assets_folder_exists_per_parent() -> None:
         db.flush()
         db.add_all(
             [
-                PhotoFolder(
+                PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=parent.id,
                     name="Capa A",
                     purpose="cover_assets",
                     position=-1,
                 ),
-                PhotoFolder(
+                PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=parent.id,
                     name="Capa B",
                     purpose="cover_assets",
@@ -141,8 +141,8 @@ def test_cover_assets_are_excluded_from_content_contracts(client: TestClient) ->
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
-        content = PhotoFolder(parent_gallery_id=parent.id, name="Cerimônia", status="released")
-        cover = PhotoFolder(
+        content = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Cerimônia", status="released")
+        cover = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Capa técnica",
             purpose="cover_assets",
@@ -178,7 +178,7 @@ def test_publish_promotes_only_ready_unavailable_photos_without_private_links(
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada")
         db.add(folder)
         db.flush()
         ready = ready_photo(db, parent=parent, folder=folder)
@@ -191,7 +191,7 @@ def test_publish_promotes_only_ready_unavailable_photos_without_private_links(
             available=False,
         )
         db.add(pending)
-        owner = Client(full_name="Cliente", phone_e164="+5511999999999")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511999999999")
         db.add(owner)
         db.flush()
         private = DerivedGallery(
@@ -225,8 +225,8 @@ def test_publish_ready_parent_batch_reports_pending_and_publishes_all_ready(
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento em lote")
         db.add(parent)
         db.flush()
-        first = PhotoFolder(parent_gallery_id=parent.id, name="Primeira", position=0)
-        second = PhotoFolder(parent_gallery_id=parent.id, name="Segunda", position=1)
+        first = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Primeira", position=0)
+        second = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Segunda", position=1)
         db.add_all([first, second])
         db.flush()
         ready_first = ready_photo(db, parent=parent, folder=first, filename="a.jpg")
@@ -264,7 +264,7 @@ def test_legacy_release_rejects_private_destinations_without_side_effects(
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada")
         db.add(folder)
         db.flush()
         photo = ready_photo(db, parent=parent, folder=folder)
@@ -291,7 +291,7 @@ def test_released_folder_accepts_incremental_registration_as_unavailable(
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Rodada", status="released")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada", status="released")
         db.add(folder)
         db.flush()
         previous = ready_photo(db, parent=parent, folder=folder, available=True)
@@ -302,7 +302,7 @@ def test_released_folder_accepts_incremental_registration_as_unavailable(
         f"/admin/photo-folders/{folder_id}/photos",
         json={
             "filename": "nova.jpg",
-            "storage_key": f"tests/{uuid4()}.jpg",
+            "storage_key": f"{parent.id}/{folder_id}/nova.jpg",
         },
     )
     assert registered.status_code == 201
@@ -324,11 +324,11 @@ def test_admin_private_gallery_rejects_existing_photos_and_allows_empty_creation
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem publicada")
         other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outra origem")
-        owner = Client(full_name="Cliente publicada", phone_e164="+5511999999910")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente publicada", phone_e164="+5511999999910")
         db.add_all([parent, other_parent, owner])
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Publicada", status="released")
-        other_folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Publicada", status="released")
+        other_folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=other_parent.id,
             name="Estrangeira",
             status="released",
@@ -552,7 +552,7 @@ def test_cover_orientation_preserves_current_on_rejection(client, monkeypatch, t
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Orientação")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
         db.add(folder)
         db.flush()
         old = ready_photo(db, parent=parent, folder=folder)
@@ -585,7 +585,7 @@ def test_details_returns_only_the_configured_legacy_cover_without_cataloging_con
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento legado")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Conteúdo", purpose="content")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Conteúdo", purpose="content")
         db.add(folder)
         db.flush()
         legacy_cover = ready_photo(
@@ -620,7 +620,7 @@ def test_portrait_content_upload_allowed_but_new_cover_selection_rejected(client
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Conteúdo vertical")
         db.add(parent)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos", purpose="content")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos", purpose="content")
         db.add(folder)
         db.flush()
         photo = ready_photo(db, parent=parent, folder=folder)

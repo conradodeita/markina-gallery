@@ -2,6 +2,30 @@
 
 ## MODIFIED Requirements
 
+### Requirement: Contexto administrativo vinculado à conta do fotógrafo
+
+O backend SHALL resolver o contexto do fotógrafo pela sessão administrativa persistida e seu único vínculo ativo inequívoco com uma conta ativa, revalidando conta e vínculo nas operações protegidas e antes do commit. O sistema MUST preservar os fatores de autenticação existentes e não usar identificadores enviados pelo frontend como autoridade para escolher a conta. Ausência, revogação ou ambiguidade de vínculo SHALL recusar a operação sem fallback; a presença de outra conta válida na instalação SHALL preservar o acesso independente autorizado.
+
+#### Scenario: Administrador legado vinculado
+- **WHEN** o administrador atual, migrado com vínculo ativo, conclui senha e TOTP
+- **THEN** sua sessão permite operação somente na conta vinculada sem exigir novo cadastro
+
+#### Scenario: Vínculo revogado após login
+- **WHEN** o vínculo administrativo é desativado enquanto a sessão ainda é válida
+- **THEN** a próxima operação protegida é recusada sem expor recursos ou reutilizar contexto anterior
+
+#### Scenario: Tentativa de impor proprietário
+- **WHEN** uma requisição administrativa inclui outro identificador de conta na URL, corpo ou cabeçalho
+- **THEN** esse identificador não substitui o contexto autorizado e não permite leitura, alteração ou criação para outra conta
+
+#### Scenario: Sessão sem vínculo
+- **WHEN** uma sessão administrativa válida não possui vínculo ativo inequívoco com uma conta ativa
+- **THEN** a operação protegida é recusada sem fallback para a primeira conta encontrada
+
+#### Scenario: Contas independentes
+- **WHEN** a instalação contém A e B ativas com administradores vinculados separadamente
+- **THEN** cada administrador opera sua própria conta, e suspensão ou revogação em A não concede acesso a B nem bloqueia o administrador válido de B
+
 ### Requirement: OTP de cliente por WhatsApp
 
 O sistema SHALL autenticar cliente/responsável mediante nome completo, telefone normalizado em E.164 e OTP de uso único enviado pelo adaptador WhatsApp vinculado à conta do fotógrafo. O contexto SHALL ser derivado no backend de link válido de galeria/convite ou sessão contextual válida. Desafios, reenvios, verificação e sessão resultante SHALL permanecer associados à mesma conta; um telefone não seleciona conta global. Entrada sem contexto em instalação com várias contas SHALL solicitar o link do fotógrafo, sem enumerar contas ou clientes. Rate limit SHALL incluir proteção global contra abuso e separação contextual.

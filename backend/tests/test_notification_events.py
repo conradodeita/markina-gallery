@@ -32,13 +32,13 @@ from tests.test_notification_settings import isolated_schema  # noqa: F401
 
 def scenario():
     with SessionLocal() as db:
-        person = Client(full_name="Cliente sintético", phone_e164="+5511999999999")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente sintético", phone_e164="+5511999999999")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add_all([person, parent])
         db.flush()
-        db.add(ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=person.id, status="active"))
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=person.id, status="active"))
         db.add(AuthSession(role="client", subject_id=person.id, token_hash=token_hash("synthetic"),
-                           expires_at=now() + timedelta(hours=1)))
+                           expires_at=now() + timedelta(hours=1), tenant_id=FIXTURE_TENANT_ID, client_subject_id=person.id))
         db.commit()
     return person.id, parent.id
 
@@ -55,7 +55,7 @@ def test_first_access_is_once_per_canonical_gallery_with_valid_session():
         another = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outro evento")
         db.add_all([private, another])
         db.flush()
-        db.add(ParentGalleryRegistration(parent_gallery_id=another.id, client_id=person, status="active"))
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=another.id, client_id=person, status="active"))
         db.commit()
         assert db.scalar(select(func.count(NotificationEvent.id))) == 1
     assert browser.get(f"/gallery/{private.id}").status_code == 200
@@ -70,7 +70,7 @@ def test_denied_and_legacy_baseline_do_not_generate_access_events():
     browser = TestClient(app)
     browser.cookies.set("markina_session", "synthetic")
     with SessionLocal() as db:
-        db.add(NotificationMilestone(parent_gallery_id=parent, client_id=person,
+        db.add(NotificationMilestone(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, client_id=person,
                                       kind="first_access", baseline=True))
         unauthorized = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Não autorizada")
         db.add(unauthorized)
@@ -85,7 +85,7 @@ def test_denied_and_legacy_baseline_do_not_generate_access_events():
 def test_concurrent_access_is_deduplicated_and_rollback_is_atomic():
     person, parent = scenario()
     with SessionLocal() as db:
-        setting_for(db, "first_access")
+        setting_for(db, "first_access", tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     def record(_):
         with SessionLocal() as db:
@@ -107,7 +107,7 @@ def test_first_private_selection_independent_of_creation_favorite_and_reselectio
         gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, client_id=person, name="Privada existente")
         db.add(gallery)
         db.flush()
-        folder = PhotoFolder(parent_gallery_id=parent, derived_gallery_id=gallery.id,
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent, derived_gallery_id=gallery.id,
                               name="Privadas", status="released")
         db.add(folder)
         db.flush()
@@ -137,7 +137,7 @@ def test_first_private_selection_independent_of_creation_favorite_and_reselectio
         new_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Rollback")
         db.add(new_parent)
         db.flush()
-        db.add(ParentGalleryRegistration(parent_gallery_id=new_parent.id, client_id=person, status="active"))
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=new_parent.id, client_id=person, status="active"))
         db.flush()
         assert record_gallery_milestone(db, kind="first_access", parent_gallery_id=new_parent.id,
                                         client_id=person)
@@ -149,30 +149,30 @@ def test_first_private_selection_independent_of_creation_favorite_and_reselectio
 def test_restricted_folder_ready_notifies_only_current_recipients_without_replay():
     owner_id, parent_id = scenario()
     with SessionLocal() as db:
-        other = Client(full_name="Segunda cliente", phone_e164="+5511999999997")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Segunda cliente", phone_e164="+5511999999997")
         db.add(other)
         db.flush()
-        db.add(ParentGalleryRegistration(
+        db.add(ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent_id, client_id=other.id, status="active"
         ))
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent_id, name="Acervo", status="released",
             purpose="content", audience_scope="selected",
         )
         db.add(folder)
         db.flush()
         db.add_all([
-            GalleryClientState(parent_gallery_id=parent_id, client_id=owner_id),
-            GalleryClientState(parent_gallery_id=parent_id, client_id=other.id),
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, client_id=owner_id),
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, client_id=other.id),
         ])
         db.flush()
         db.add_all([
-            FolderClientGrant(folder_id=folder.id, parent_gallery_id=parent_id, client_id=owner_id),
-            FolderClientGrant(folder_id=folder.id, parent_gallery_id=parent_id, client_id=other.id),
-            PushSubscription(endpoint_fingerprint="1" * 64, encrypted_subscription="ciphertext",
-                             role="client", subject_id=owner_id),
-            PushSubscription(endpoint_fingerprint="2" * 64, encrypted_subscription="ciphertext",
-                             role="client", subject_id=other.id),
+            FolderClientGrant(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, parent_gallery_id=parent_id, client_id=owner_id),
+            FolderClientGrant(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, parent_gallery_id=parent_id, client_id=other.id),
+            PushSubscription(tenant_id=FIXTURE_TENANT_ID, endpoint_fingerprint="1" * 64, encrypted_subscription="ciphertext",
+                             role="client", subject_id=owner_id, client_subject_id=owner_id),
+            PushSubscription(tenant_id=FIXTURE_TENANT_ID, endpoint_fingerprint="2" * 64, encrypted_subscription="ciphertext",
+                             role="client", subject_id=other.id, client_subject_id=other.id),
         ])
         db.flush()
         first_photo = uuid4()
@@ -216,7 +216,7 @@ def test_restricted_folder_ready_notifies_only_current_recipients_without_replay
         assert db.scalar(select(func.count(NotificationDelivery.id)).where(
             NotificationDelivery.recipient_id == other.id
         )) == 2
-        db.add(FolderClientGrant(
+        db.add(FolderClientGrant(tenant_id=FIXTURE_TENANT_ID,
             folder_id=folder.id, parent_gallery_id=parent_id, client_id=other.id
         ))
         db.flush()

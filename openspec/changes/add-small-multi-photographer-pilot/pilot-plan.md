@@ -1,35 +1,49 @@
-# Roteiro do piloto pequeno
+# Plano do ensaio pequeno futuro
 
-## Estado e pré-condições
+## Estado
 
-Roteiro futuro; não executado e sem solicitação de execução agora. O proprietário quer validar assim que o sistema estiver pronto e aproveitar essa ocasião para testar o monitor. A prioridade anterior é completar a preparação e o isolamento.
+Preparação 7.1 validada em 2026-10-01. Nenhuma jornada executada. Prontidão de engenharia 7.2 é pré-condição do ensaio 7.3; homologação depende ainda do pacote/autorização 8.1–8.2. Fixture não autoriza provisionamento operacional.
 
-Requer isolamento completo, matriz sem lacunas, migration ensaiada, suíte local aprovada e evidências de prontidão registradas. Homologação exige inventário e autorização de versão, contas, dados, permissão do dono e canais. Configuração externa ausente bloqueia o aceite remoto correspondente; não usar canal de outro fotógrafo nem bypass de OTP. O tamanho do corpus é uma proposta para essa etapa futura, não instrução para cadastrar participantes neste momento.
+## Corpus e confinamento
 
-## Grupo e corpus propostos
+Ferramenta `backend/tests/pilot_fixture.py`, sem API/importação de produção. Duas contas e admins sintéticos distintos; três clientes por conta, primeiro telefone igual com UUID/nome separados; uma galeria e duas pastas por conta, comum e restrita ao primeiro cadastro; três fotos por pasta, total 12 JPEGs abstratos 256 × 192 sem pessoas. Conta A tem permissão técnica sintética explícita; B não. PIX de teste é marcador sem cobrança. Credenciais constantes são somente fixtures e jamais se aplicam a conta existente.
 
-| Item | Conta A | Conta B |
-| --- | --- | --- |
-| Fotógrafo | 1 administrador próprio | 1 administrador próprio |
-| Clientes | A1, A2, A3 | B1, B2, B3 |
-| Caso de contato repetido | A1 | B1 com mesmo telefone de A1 |
-| Galeria | 1 | 1 |
-| Pastas | 1 comum e 1 restrita | 1 comum e 1 restrita |
-| JPEGs | Até 6, sintéticos e sem rostos | Até 6, sintéticos e sem rostos |
-| PIX | Configuração sintética A | Configuração sintética B |
+Preparação idempotente conserva IDs, arquivos, senha/TOTP e configurações. Não cria sessão, desafio, job ou pedido; verificações confirmam contagens zero. Adaptador `RecordingWhatsApp` implementa contrato de envio mas registra somente intenção em memória. No ensaio futuro, fornecer somente adaptadores sintéticos e impedir conexão externa; nenhum e-mail/push/WhatsApp financeiro/biométrico real.
 
-Os rótulos são referências de ensaio, sem nomes, telefones ou credenciais reais versionados. Separar contextos de navegador e autenticar cada cadastro por seu link. O operador da instalação possui permissão técnica própria, separada da autorização comercial.
+CLI aceita exatamente `PHOTOGRAPHER_TEST_DATABASE_URL` do banco próprio em `127.0.0.1:15470/pyp_photographer_test`, cria schema `pilot_preparation_<UUID>` e diretório temporário próprios; no encerramento remove somente esses recursos criados pela mesma invocação. Não edita env/secrets/configurações existentes, não remove container/volume ou recursos vizinhos.
 
-## Sequência
+## Comandos de preparação validados
 
-1. Inventariar preservados e registrar baseline do dono pelo painel: consultar e copiar `capacity-report/v1`, UTC/cache e lacunas.
-2. Ambos os fotógrafos entram com senha/TOTP, criam e preparam sua galeria/pastas e enviam o lote delimitado. Fazer leitura durante processamento; caso jobs sejam rápidos demais, registrar que o pico não foi capturado e usar evidência de conclusão separada.
-3. As seis clientes entram pelos respectivos links e OTP. Até seis jornadas podem estar ativas. Verificar pasta comum e restrita, ampliação, favoritos e seleção. Coletar diagnóstico respeitando cache de até 30 segundos.
-4. A1/B1 selecionam conjuntos distintos. Exercitar checkout com instruções PIX diferentes e confirmação sintética local; em homologação não alegar pagamento financeiro real. Exercitar também finalização sem cobrança de outra cliente, preservando o contrato vigente.
-5. Verificar Compras e entrega, depois tentativas diretas de acesso cruzado a cliente, galeria, prévia, pedido, configuração e monitor por fotógrafo comum. Qualquer vazamento interrompe o ensaio.
-6. Confirmar independência de alteração de nome/telefone, suspensão e exclusão operacional elegível com fixtures locais separadas; efeitos destrutivos remotos só se explicitamente inventariados/autorizados.
-7. Após o término, obter novo diagnóstico e comparar pool, PostgreSQL e cinco filas, confirmando finalização dos jobs por evidência própria. Registrar cache, campos indisponíveis e fontes; não inferir throughput, worker saudável, SLO ou número seguro de usuários.
+A partir de `backend/`, com URL sintética do container próprio fornecida ao processo:
 
-## Evidência a preencher na execução
+```text
+python -m pytest tests/test_tenant_pilot_preparation.py -q
+python -m tests.pilot_fixture --verify-preparation
+```
 
-Criar `pilot-results.md` somente com resultados reais: versão/schema, ambiente, autorizações, UTC de cada etapa, tamanho efetivo do corpus, concorrência efetiva, referências de testes, comparação sanitizada dos relatórios e lacunas. Declarar explicitamente se envio real, busca facial ou pico de fila não foram exercitados. Não persistir OTP, cookies, telefones, fotos, nomes ou payloads de mensagens. Eventual remoção do corpus precisa de plano e autorização específicos; não executar limpeza integral como encerramento automático.
+Saída comprovada da CLI:
+
+```json
+{"clients": 6, "journeys_executed": false, "jpeg_files": 12, "max_concurrency": 6, "photographers": 2, "same_phone_independent": true}
+```
+
+Comandos não fazem login nem chamam jornadas. Evidência XML externa em `validation.md`; não versionar mídia, banco, tokens, caches ou relatórios contendo dados reais.
+
+## Roteiro futuro condicionado a 7.2
+
+1. Iniciar instância local e PostgreSQL/mídia exclusivos; aplicar cadeia Alembic validada, preparar corpus e adaptadores sintéticos. Confirmar isolamento, permissões e ausência de envio externo.
+2. Autenticar ambos os admins com senha/TOTP sintéticos, provar monitor exclusivo de A e recusa comercial cruzada. Coletar/copy snapshot antes, registrar UTC/cache/cobertura.
+3. Autenticar cada cadastro pelo link próprio/OTP contextual em sessão independente; no máximo seis jornadas concorrentes. Conferir biblioteca/pasta comum e restrita, seleção, checkout PIX sintético/finalização, confirmação e entrega; mesmo telefone A/B mantém sessão/estado/histórico distintos.
+4. Exercitar negativas diretas de clientes, galerias, fotos/arquivos, carrinhos, pedidos e configurações entre contas. Qualquer acesso/efeito cruzado reprova e interrompe ensaio, abre correção verificável.
+5. Processar somente jobs da fixture com serviços/adaptadores locais; medir durante e depois, respeitar TTL de 30 s e distinguir cache da nova amostra. Registrar conclusão por evidência separada caso job transitório não apareça no monitor.
+6. Consolidar `pilot-results.md` com instantes UTC, origem/versão/schema, valores observados, pendências e limitações. Filas faciais vazias não comprovam worker/biometria; leituras não comprovam capacidade máxima, fairness, p95, SLO ou orçamento global.
+
+Não iniciar este roteiro enquanto 7.2 estiver pendente. A publicação remota não está autorizada por este plano.
+
+## Executor local 7.3
+
+Prontidão 7.2 registrada. O ensaio usa database UUID descartável no PostgreSQL próprio 15470, aplica Alembic até 0071 e associa explicitamente a conta vazia criada por 0069 ao fotógrafo sintético A (sem apagar/recriar o legado); B é criada pela ferramenta offline. A fixture de preparação aceita esse UUID somente como argumento do executor de teste.
+
+API Uvicorn somente em loopback 8000 e frontend Next já compilado somente em loopback 3038, portas verificadas livres antes da inicialização; se ocupadas, não interromper processos alheios. Perfis Chromium/Edge headless independentes para dois admins e seis clientes, com APIs reais locais, sem interceptar respostas do produto. Login pela interface, OTP lido exclusivamente da mensagem entregue ao adaptador sintético em memória. Nenhum segredo persistente ou configuração .env será alterado.
+
+Monitor consultado e copiado na interface de A; relatório confrontado com o formatter real capacity-report/v1. B recebe capability falsa/403 e painel ausente. Worker de mídia inicia sem atrasos artificiais; amostra durante pode estar em cache e não mostrar jobs curtos. A amostra final espera o TTL real de 30 s, com execução registrada. Artefatos somente em diretório de evidência externo explícito; processos/db próprios encerrados no finally. Ensaios sintéticos não substituem OTP/canais ou jornadas reais autorizadas em homologação.

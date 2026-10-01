@@ -270,6 +270,33 @@ describe("telas administrativas de galerias", () => {
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Lotes ainda abertos" })).toBeNull());
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/derived-galleries/private-1/upload-batches/batch-open/close", expect.objectContaining({ method: "POST" }));
   });
+
+  it("retoma foto do lote com namespace do servidor sem cadastrar outra foto", async () => {
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
+    const key = `private/private-1/folder-private/${"0".repeat(64)}.jpg`;
+    const batch = { id: "batch-open", status: "open", count: 1,
+      assets: [{ id: "photo-existing", storage_key: `tenants/owner/${key}`, upload_key: key, status: "not_imported" }] };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const data = path.endsWith("/upload-batches") ? { batches: [batch] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-private", name: "Uploads", status: "preparing", photo_count: 1 }] }
+        : path.endsWith("/photos") ? { photos: [] } : path.endsWith("/members") ? { members: [] }
+        : init?.method ? { status: "queued" }
+        : { id: "private-1", parent_gallery_id: "public-1", name: "Família", frozen: false, blocked: false };
+      return Promise.resolve(new Response(JSON.stringify(data)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar lote" }));
+    fireEvent.change(screen.getByLabelText("Pasta"), { target: { value: "folder-private" } });
+    const file = new File([new Uint8Array([0xff])], "retomada.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([0xff]).buffer });
+    fireEvent.change(screen.getByLabelText("JPEGs do dispositivo"), { target: { files: [file] } });
+    fireEvent.submit(screen.getByLabelText("JPEGs do dispositivo").closest("form")!);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/photo-assets/photo-existing/source",
+      expect.objectContaining({ method: "PUT", body: file })));
+    expect(fetchMock.mock.calls.some(([path, init]) => path.endsWith("/photos") && init?.method === "POST")).toBe(false);
+    expect(fetchMock.mock.calls.some(([path, init]) => path.endsWith("/upload-batches") && init?.method === "POST")).toBe(false);
+  });
 });
 
 

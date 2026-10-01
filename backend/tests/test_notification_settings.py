@@ -7,8 +7,8 @@ from sqlalchemy import select
 
 from app.auth import (
     AdminUser,
-    AuthSession,
     Base,
+    Client,
     NotificationDelivery,
     NotificationEvent,
     PaymentMessageTemplate,
@@ -20,7 +20,7 @@ from app.auth import (
 )
 from app.main import app
 from app.notification_settings import enqueue_event, render_text, save_setting, setting_for
-from tests.tenant_fixtures import fixture_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +46,12 @@ def authenticated(role="admin"):
             db.add(admin)
             db.flush()
             subject_id = admin.id
-        session = AuthSession(subject_id=subject_id, role=role, token_hash=token_hash(role),
+        else:
+            person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente fixture", phone_e164="+5511999999630")
+            db.add(person)
+            db.flush()
+            subject_id = person.id
+        session = fixture_session(subject_id=subject_id, role=role, token_hash=token_hash(role),
                               expires_at=now() + timedelta(hours=1))
         db.add(session)
         db.commit()
@@ -82,7 +87,7 @@ def test_configuration_api_is_admin_only_and_validates_templates():
 
 def test_payment_legacy_api_delegates_to_the_single_source():
     with SessionLocal() as db:
-        db.add(PaymentMessageTemplate(kind="confirmed", body="Texto antigo {{cliente}}"))
+        db.add(PaymentMessageTemplate(tenant_id=FIXTURE_TENANT_ID, kind="confirmed", body="Texto antigo {{cliente}}"))
         db.commit()
     client = authenticated()
     assert client.get("/admin/payment-message-templates").json()["templates"]["confirmed"] == "Texto antigo {{cliente}}"
@@ -95,34 +100,37 @@ def test_payment_legacy_api_delegates_to_the_single_source():
 
 def test_snapshot_dedupe_channels_and_no_replay():
     with SessionLocal() as db:
-        recipient = uuid4()
-        db.add(PushSubscription(endpoint_fingerprint="1" * 64, encrypted_subscription="ciphertext",
-                                role="admin", subject_id=recipient))
+        admin = fixture_admin(AdminUser(email="recipient@example.test", password_hash="synthetic", totp_secret="synthetic", email_verified=True))
+        db.add(admin)
+        db.flush()
+        recipient = admin.id
+        db.add(PushSubscription(tenant_id=FIXTURE_TENANT_ID, endpoint_fingerprint="1" * 64, encrypted_subscription="ciphertext",
+                                role="admin", subject_id=recipient, admin_subject_id=recipient))
         db.flush()
         args = {"event_type": "first_access", "event_key": "access:synthetic",
                 "values": {"cliente": "Ana", "galeria": "Evento"}, "target_path": "/admin",
                 "recipients": [recipient, recipient]}
-        first = enqueue_event(db, **args)
-        assert enqueue_event(db, **args).id == first.id
+        first = enqueue_event(db, **args, tenant_id=FIXTURE_TENANT_ID)
+        assert enqueue_event(db, **args, tenant_id=FIXTURE_TENANT_ID).id == first.id
         db.commit()
         original_text, version = first.push_body, first.template_version
         assert len(list(db.scalars(select(NotificationDelivery)))) == 2
-        save_setting(db, "first_access", {"push_enabled": False, "push_body": "Texto alterado"})
+        save_setting(db, "first_access", {"push_enabled": False, "push_body": "Texto alterado"}, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         deliveries = {row.channel: row for row in db.scalars(select(NotificationDelivery))}
         assert deliveries["push"].status == "cancelled"
         assert deliveries["whatsapp"].status == "queued"
         assert first.push_body == original_text
         assert first.template_version == version
-        save_setting(db, "first_access", {"push_enabled": True})
+        save_setting(db, "first_access", {"push_enabled": True}, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
-        assert enqueue_event(db, **args).id == first.id
+        assert enqueue_event(db, **args, tenant_id=FIXTURE_TENANT_ID).id == first.id
         assert deliveries["push"].status == "cancelled"
         assert len(list(db.scalars(select(NotificationEvent)))) == 1
-        future = enqueue_event(db, **{**args, "event_key": "access:future"})
+        future = enqueue_event(db, **{**args, "event_key": "access:future"}, tenant_id=FIXTURE_TENANT_ID)
         assert future.push_body == "Texto alterado"
         assert future.template_version > version
-        assert setting_for(db, "first_access").whatsapp_enabled
+        assert setting_for(db, "first_access", tenant_id=FIXTURE_TENANT_ID).whatsapp_enabled
 
 
 @pytest.mark.parametrize("limit", [60, 140, 500])
@@ -142,12 +150,17 @@ def test_plain_text_values_do_not_inject_markup():
 
 def test_event_rolls_back_with_business_transaction():
     with SessionLocal() as db:
-        setting_for(db, "first_access")
+        setting_for(db, "first_access", tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(email="rollback@example.test", password_hash="synthetic", totp_secret="synthetic", email_verified=True))
+        db.add(admin)
+        db.flush()
         enqueue_event(db, event_type="first_access", event_key="must-rollback", values={},
-                      target_path="/admin", recipients=[uuid4()])
+                      target_path="/admin", recipients=[admin.id], tenant_id=FIXTURE_TENANT_ID)
         db.rollback()
     with SessionLocal() as db:
         assert not list(db.scalars(select(NotificationEvent)))
         assert not list(db.scalars(select(NotificationDelivery)))
+
+from tests.tenant_fixtures import fixture_session
