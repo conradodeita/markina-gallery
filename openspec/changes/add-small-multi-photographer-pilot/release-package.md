@@ -4,7 +4,7 @@
 
 Tasks 1–7 concluídas localmente. Task 8.1 aguarda autorização explícita; nenhum deploy, conta adicional, grant operacional ou canal foi alterado. Este pacote é a proposta concreta para revisão, não um registro de execução.
 
-Implementação local: `0446177c3684ff5cb5dede54202c7b3e9b0de02e`; atualização documental com develop: `91d83bcadbaf8ea2c2d3c1b3f323929ab3499930`. Esses dois commits têm o mesmo conteúdo operacional. O SHA de publicação deverá ser o head exato do PR com CI verde aprovado pelo proprietário; commits posteriores de pacote/documentação não mudam o candidato operacional. Não publicar SHA não revisado, nem assumir autorização por aprovação antiga de outra change.
+Implementação local: `0446177c3684ff5cb5dede54202c7b3e9b0de02e`; atualização documental com develop: `91d83bcadbaf8ea2c2d3c1b3f323929ab3499930`. Esses dois commits têm o mesmo conteúdo operacional. O SHA de publicação deverá ser o head exato do PR com CI verde aprovado pelo proprietário; commits posteriores de pacote/documentação e a correção UTF-8 das expectativas de teste não mudam o candidato operacional. Não publicar SHA não revisado, nem assumir autorização por aprovação antiga de outra change.
 
 ## O que será entregue
 
@@ -63,7 +63,7 @@ Após migration bem-sucedida, preferir correção compatível com o schema novo.
 
 ## Validação e limites
 
-Backend amplo: 1.166 aprovados na execução original, 17 casos afetados pelo executor Windows repetidos e aprovados, variantes PostgreSQL/migrations/concorrência revalidadas. Frontend 398 aprovados, lint/typecheck/build; Ruff fontes/migrations novas e OpenSpec estrito aprovados. CI do PR ainda precisa executar backend/frontend/OpenSpec/gitleaks no SHA candidato, com PostgreSQL sintético exclusivo para a integração A/B.
+Backend amplo: 1.166 aprovados na execução original, 17 casos afetados pelo executor Windows repetidos e aprovados, variantes PostgreSQL/migrations/concorrência revalidadas. Frontend 398 aprovados, lint/typecheck/build; Ruff fontes/migrations novas e OpenSpec estrito aprovados. PR #134 em rascunho. A CI 36924648967 aprovou frontend/OpenSpec/gitleaks e encontrou somente duas expectativas de texto corrompidas nos testes de limpeza: backend com 1.184 passed, 2 failed e 20 skipped. Corrigidos os acentos UTF-8, sem mudar produto ou relaxar assertions; revalidação dirigida em SQLite e PostgreSQL: 8 passed/1 skipped em cada dialeto, cobrindo os nove casos entre as execuções. Uma nova CI completa no head corrigido é obrigatória antes do aceite de publicação, com PostgreSQL sintético exclusivo para a integração A/B.
 
 Piloto local completo: 2 × 3, seis sessões concorrentes, seis pedidos/oito itens, 51 negativas, 12 jobs/36 derivados e três cópias reais do monitor. Durante foi cache; depois amostra nova respeitando 30 s. Dados e pagamentos sintéticos; sem face/modelo/canal real, p95/SLO/capacidade máxima ou orçamento global. Ver `pilot-results.md` e `validation.md`.
 

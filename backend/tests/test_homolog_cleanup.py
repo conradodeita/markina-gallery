@@ -55,7 +55,7 @@ def ensure_isolated_test_schema(legacy_tenant_fixture) -> None:
 
 def test_inventory_requires_homolog_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
-    with SessionLocal() as db, pytest.raises(RuntimeError, match="homologaÃ§Ã£o"):
+    with SessionLocal() as db, pytest.raises(RuntimeError, match="homologação"):
         inventory(db)
 
 
@@ -90,10 +90,10 @@ def test_inventory_counts_folder_settings_as_operational_without_exposing_values
     synthetic = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(synthetic)
     with Session(synthetic) as db:
-        gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria sintÃ©tica")
+        gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria sintética")
         db.add(gallery)
         db.flush()
-        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id, name="Pasta sintÃ©tica")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id, name="Pasta sintética")
         db.add(folder)
         db.flush()
         settings = FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, preview_mode="custom",
@@ -151,11 +151,11 @@ def test_execute_requires_literal_confirmation_before_database_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("APP_ENV", "homologation")
-    with SessionLocal() as db, pytest.raises(RuntimeError, match="ConfirmaÃ§Ã£o literal"):
+    with SessionLocal() as db, pytest.raises(RuntimeError, match="Confirmação literal"):
         execute(db, "invalid")
 
 
-@pytest.mark.skipif(engine.dialect.name == "postgresql", reason="banco atual Ã© PostgreSQL")
+@pytest.mark.skipif(engine.dialect.name == "postgresql", reason="banco atual é PostgreSQL")
 def test_execute_rejects_non_postgresql_database(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "homolog")
     with SessionLocal() as db, pytest.raises(RuntimeError, match="PostgreSQL exclusivo"):
@@ -164,7 +164,7 @@ def test_execute_rejects_non_postgresql_database(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.skipif(
     engine.dialect.name != "postgresql",
-    reason="validaÃ§Ã£o destrutiva exige TEST_POSTGRES_DATABASE_URL descartÃ¡vel",
+    reason="validação destrutiva exige TEST_POSTGRES_DATABASE_URL descartável",
 )
 def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -216,7 +216,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
             secret_hash="otp-hash",
             expires_at=expires_at,
         tenant_id=FIXTURE_TENANT_ID)
-        branding = BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_text="PREFERÃŠNCIA PRESERVADA")
+        branding = BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_text="PREFERÊNCIA PRESERVADA")
         pix = GlobalPixSettings(tenant_id=FIXTURE_TENANT_ID, admin_user_id=admin.id, version=3)
         template = PaymentMessageTemplate(tenant_id=FIXTURE_TENANT_ID, kind="confirmed", body="Mensagem preservada")
         preset = ProgressivePricingPreset(tenant_id=FIXTURE_TENANT_ID, code="TEST", name="Tabela preservada")
@@ -337,7 +337,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
         assert all(value == 0 for value in result["database"].values())
         assert result["preserved"] == preserved_before
         assert db.scalar(select(AdminUser)).totp_secret == "TOTP-FACTOR"
-        assert db.scalar(select(BrandingSettings)).watermark_text == "PREFERÃŠNCIA PRESERVADA"
+        assert db.scalar(select(BrandingSettings)).watermark_text == "PREFERÊNCIA PRESERVADA"
         assert db.scalar(select(GlobalPixSettings)).version == 3
         assert db.scalar(select(AuthSession).where(AuthSession.role == Role.ADMIN.value))
         assert not db.scalar(select(AuthSession).where(AuthSession.role == Role.CLIENT.value))

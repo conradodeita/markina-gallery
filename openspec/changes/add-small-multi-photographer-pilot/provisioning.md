@@ -2,7 +2,7 @@
 
 ## Estado e autorização
 
-Ferramenta da task 2.4. Não é cadastro público nem habilita uso imediato de segunda conta. Branch ainda parcial: operadores só podem executar provisionamento real após completar isolamento/prontidão e obter aceite do pacote operacional das tasks 8.1–8.2. As invocações abaixo são contrato de operação futura; os testes executados usam schemas PostgreSQL exclusivos e valores sintéticos, sem dados/configuração de homologação.
+Ferramenta da task 2.4. Não é cadastro público nem habilita uso imediato de segunda conta. Isolamento/prontidão e piloto local concluídos; operadores só podem executar provisionamento real após obter aceite e validar publicação conforme o pacote operacional das tasks 8.1–8.2. As invocações abaixo são contrato de operação futura; os testes executados usam schemas PostgreSQL exclusivos e valores sintéticos, sem dados/configuração de homologação.
 
 ## Entrada e dry-run
 

@@ -322,3 +322,14 @@ Complemento de integração CI: serviço PostgreSQL 17 exclusivo de fotógrafos 
 ## Reconciliação documental posterior da fundação
 
 Fetch somente-leitura em 01/10/2026 confirmou develop 137e1e4c2e4d162d3d231b73e58b6eed75248429: PR #131 integrado, PR #132 sincronizou/arquivou a fundação e PR #133 registrou limpeza operacional autorizada. Mudanças posteriores ao ancestral são exclusivamente documentação/specs, sem código/migration. A revisão humana histórica do arquivo não valida esta change. Task histórica 6.2 da fundação permanece aberta para autoria/janela/autorização da primeira aplicação 0069; não foi reconstituída artificialmente. Conta/canal/acesso atuais preservados e schema remoto compatível com a cadeia local ensaiada. Deltas desta change agora também substituem explicitamente o gate consolidado tenant-foundation e o requisito administrativo recém-consolidado; specs principais só recebem essas alterações após revisão humana desta change.
+
+
+## PR #134 — integração CI e correção UTF-8, 2026-10-01
+
+PR em rascunho, branch `feature/plan-small-multi-photographer-pilot` para develop; push/PR não executam deploy. A CI [36924648967](https://github.com/conradodeita/markina-gallery/actions/runs/36924648967), head `2f255acbada64e71a737a7b4d91ee60918b8a882`, terminou com frontend/OpenSpec/gitleaks aprovados e deploy-homolog skipped como previsto. Backend Linux/Python 3.13: **1.184 passed, 2 failed, 20 skipped**, 925,37 s. Não declarar essa execução verde.
+
+As únicas falhas foram regexes de homologação/confirmação literal em `test_homolog_cleanup.py`: expectativas tinham mojibake introduzido durante edição local. Corrigidos explicitamente os oito locais afetados nesse arquivo para UTF-8, incluindo corpus sintético e watermark preservada; mensagens/guardas do produto e comportamento de limpeza permanecem iguais. Comparação com develop confirmou a forma original dos acentos. Busca nas fontes backend/frontend/scripts não encontrou outra ocorrência equivalente; palavras portuguesas válidas com Ã foram preservadas.
+
+Revalidação: `integration-homolog-utf8-20261001.xml`, **8 passed, 1 skipped**, 1,75 s, SQLite próprio; `integration-homolog-utf8-20261001-pg-runtime.xml`, **8 passed, 1 skipped**, 6,96 s, PostgreSQL descartável próprio em 15470. Skips complementares: limpeza PostgreSQL na execução SQLite e recusa de SQLite na execução PostgreSQL; os nove casos foram cobertos entre as duas. O executor criou/removou somente sua database UUID. Ruff dirigido aprovado. Não houve alteração em banco, conta ou serviço remoto.
+
+Nova CI completa no head corrigido é obrigatória antes de pedir aceite do pacote de publicação. Pacote pronto em `release-package.md`; tasks 8.1–8.4 continuam abertas para autorização/publicação/ensaio remoto/revisão humana. Resultado final da nova CI será vinculado no PR, sem antecipar aprovação.

@@ -2,7 +2,7 @@
 
 ## Estado
 
-Preparação 7.1 validada em 2026-10-01. Nenhuma jornada executada. Prontidão de engenharia 7.2 é pré-condição do ensaio 7.3; homologação depende ainda do pacote/autorização 8.1–8.2. Fixture não autoriza provisionamento operacional.
+Preparação 7.1, prontidão de engenharia 7.2 e jornadas locais 7.3 validadas em 2026-10-01; resultados em `pilot-results.md`. Homologação depende ainda do pacote/autorização 8.1–8.2. Fixture e ensaio local não autorizam provisionamento operacional.
 
 ## Corpus e confinamento
 
