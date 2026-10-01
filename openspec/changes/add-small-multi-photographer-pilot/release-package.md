@@ -39,7 +39,7 @@ Recursos vizinhos protegidos: Firefly (frontend público 3000, API/bot/db), Ngin
 
 Último dump existente: `/var/lib/markina-gallery/backups/predeploy-20261001T005443Z-137e1e4c2e4d.dump`, **374.943 bytes**, SHA-256 `d057fe8beeba50eb3302ad2509dd8eb3821d6a451d617c33ca40a798b2b452a4`. Leitura estrutural `pg_restore --list` aprovada, **689 entradas**. Não foi feita restauração desse dump; estrutura legível não comprova restauração completa. Dump restrito permanece no servidor, sem download/conteúdo no Git.
 
-O deploy autorizado cria novo dump próprio antes da migration pelo fluxo existente. Registrar arquivo, SHA-256, bytes, modo restrito e TOC antes de permitir Alembic. Backup pré-deploy pode anteceder a parada dos escritores: não prometer reversão de banco sem perda das escritas posteriores. Se essa janela não for aceitável, a publicação permanece bloqueada até definir/aprovar backup após quiescência. Nenhum banco será restaurado automaticamente.
+Antes do merge que dispara deploy, o operador autorizado cria novo dump próprio e registra arquivo, SHA-256, bytes, modo restrito e TOC. Somente depois dessa verificação permite o gatilho de publicação. O fluxo existente cria também seu dump pré-deploy; não depender de uma intervenção manual no meio do workflow para validar o único backup disponível. Backup pré-deploy antecede a parada dos escritores: não prometer reversão de banco sem perda das escritas posteriores. Se essa janela não for aceitável, a publicação permanece bloqueada até definir/aprovar backup após quiescência. Nenhum banco será restaurado automaticamente.
 
 0070 conserva UUIDs, relações, snapshots, valores, hashes/envelopes, configurações e storage keys. Recusa contexto ambíguo/órfãos e falha transacional ensaiada. 0071 cria privilégio técnico vazio. Cadeia alvo: **0069 → 0070 → 0071**; sem downgrade, stamp ou limpeza de dados.
 
@@ -48,8 +48,8 @@ O deploy autorizado cria novo dump próprio antes da migration pelo fluxo existe
 Janela proposta: depois da autorização, com o proprietário ciente da interrupção breve da aplicação Pick-your-Pic para migration/retomada; não há duração garantida. Imagens construídas antes da parada. Recursos de terceiros permanecem ativos.
 
 1. Conferir novamente SHA/schema, checkout, Compose efetivo/overrides, saúde, espaço e inventário imediatamente antes da execução. Qualquer divergência material cancela o início; não adaptar destino sem registrar/revisar.
-2. Exigir CI verde e SHA exato aprovado; integrar pelo PR para develop somente com autorização que reconheça o gatilho de deploy. Não usar force push nem comandos que descartem trabalho.
-3. Confirmar backup restrito novo e evidência estrutural. Conservar branding persistente, origem pública, flags e segredos já configurados.
+2. Exigir CI verde e SHA exato aprovado; criar/conferir backup restrito novo e evidência estrutural antes do merge. Conservar branding persistente, origem pública, flags e segredos já configurados.
+3. Integrar pelo PR para develop somente com autorização que reconheça o gatilho de deploy. O workflow realiza sua cópia adicional pelo fluxo existente. Não usar force push nem comandos que descartem trabalho.
 4. Parar somente os seis escritores identificados, com timeout de 60 s, e provar que nenhum continua ativo. Falha impede Alembic; jobs duráveis ficam no banco para retomada compatível.
 5. Aplicar migrations do SHA aprovado e confirmar head 0071. Subir binários compatíveis e verificar API/web/worker/Nginx, ajustes e workers faciais já ativos, preservando DB/Redis/Evolution e vizinhos.
 6. Conferir admin/vínculo/configurações legados, contagens anteriores, origem pública, health local/público e ausência de exposição comercial cruzada. Registrar SHA/schema/UTC e resultado; não chamar publicação de validada enquanto faltar aceite aplicável.
