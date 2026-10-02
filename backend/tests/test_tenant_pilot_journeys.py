@@ -222,6 +222,37 @@ def test_piloto_local_2_por_3_com_monitor_real(migration_db, monkeypatch, tmp_pa
                             return value
 
                         await snapshot("before", first=True)
+                        # A mesma UI compilada deve manter rótulos legíveis nos
+                        # cartões estreitos de tablet/desktop, além do mobile.
+                        page = admins[0][1]
+                        layout_results = []
+                        for width in (390, 768, 1280):
+                            await page.set_viewport_size({"width": width, "height": 900})
+                            await page.locator(".capacity-diagnostics").wait_for()
+                            layout = await page.evaluate("""() => ({
+                                viewport: innerWidth,
+                                documentWidth: document.documentElement.scrollWidth,
+                                labels: Array.from(document.querySelectorAll('.capacity-diagnostics dt')).map(e => {
+                                    const range = document.createRange();
+                                    range.selectNodeContents(e);
+                                    return {
+                                        text: e.textContent, width: e.getBoundingClientRect().width,
+                                        height: e.getBoundingClientRect().height,
+                                        lines: new Set(Array.from(range.getClientRects(), r => r.top)).size
+                                    };
+                                })
+                            })""")
+                            assert layout["documentWidth"] <= width, layout
+                            assert layout["labels"], "Monitor precisa exibir suas métricas"
+                            for label in layout["labels"]:
+                                assert label["width"] >= 80, label
+                                assert 1 <= label["lines"] <= 5, label
+                            layout_results.append(layout)
+                            await page.get_by_role("heading", name="Filas cobertas", exact=True).scroll_into_view_if_needed()
+                            await page.screenshot(path=str(output / f"monitor-layout-{width}.png"))
+                        (output / "monitor-layout.json").write_text(
+                            json.dumps(layout_results, indent=2), encoding="utf-8")
+                        await page.set_viewport_size({"width": 390, "height": 844})
                         before_mono = time.monotonic()
                         with Session(engine) as db:
                             for account in accounts:

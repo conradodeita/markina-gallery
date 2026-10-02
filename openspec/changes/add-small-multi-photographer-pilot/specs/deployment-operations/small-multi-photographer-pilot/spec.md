@@ -30,6 +30,18 @@ O piloto SHALL usar duas contas de fotógrafo com três clientes próprias de ca
 - **WHEN** o proprietário aprova o inventário, destino, versão, canais e plano de impacto zero
 - **THEN** somente os recursos e dados identificados do Pick-your-Pic são criados ou alterados, preservando o fotógrafo atual e recursos vizinhos
 
+### Requirement: Entrega persistente de configuração de canais
+
+O Compose SHALL disponibilizar bindings de canais por arquivo opcional não versionado somente aos serviços `api`, `worker` e `face-search-worker`. Conteúdo SHALL preservar valores literalmente sem interpolação. A ausência do arquivo SHALL conservar o funcionamento legado de conta única; o suporte MUST NOT criar conta, canal ou segredo automaticamente. Criação/alteração do arquivo real SHALL exigir autorização operacional, permissão restrita e preservação do canal atual antes da ativação de B.
+
+#### Scenario: Bindings ainda não configurados
+- **WHEN** o arquivo opcional não existe
+- **THEN** Compose resolve normalmente e conserva as variáveis legadas existentes
+
+#### Scenario: Bindings explicitamente configurados
+- **WHEN** o arquivo autorizado contém a associação e credenciais próprias por alias
+- **THEN** somente os três consumidores recebem os valores literais e deploys posteriores conservam o arquivo não versionado
+
 ### Requirement: Jornadas positivas e tentativas de acesso cruzado
 
 O ensaio SHALL exercitar login de ambos os fotógrafos, OTP contextual, pasta comum e restrita, seleção, checkout com PIX de teste ou finalização sem cobrança, confirmação sintética e entrega. SHALL comprovar que o mesmo telefone em duas contas recebe sessões, seleção e histórico separados. Requisições diretas a galerias, arquivos, clientes, carrinhos, pedidos e configurações de outra conta SHALL ser negadas. Concorrência SHALL ser limitada a seis jornadas cliente, uma por cadastro, sem aumentar infraestrutura.

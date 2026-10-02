@@ -91,6 +91,10 @@ services:
     build: ../backend
     expose:
       - "8000"
+    env_file: &whatsapp-bindings-environment
+      - path: ${WHATSAPP_BINDINGS_ENV_FILE:-.env.whatsapp-bindings}
+        required: false
+        format: raw
     environment:
       <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
@@ -308,6 +312,7 @@ services:
   worker:
     build: ../backend
     command: ["python", "-m", "app.worker"]
+    env_file: *whatsapp-bindings-environment
     environment:
       <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
@@ -375,6 +380,7 @@ services:
       dockerfile: Dockerfile.face
     command: ["python", "-m", "app.facial.search_worker_entrypoint"]
     restart: unless-stopped
+    env_file: *whatsapp-bindings-environment
     environment:
       <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}

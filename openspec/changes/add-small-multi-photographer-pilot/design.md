@@ -18,6 +18,14 @@ O PR #115 da fundação foi integrado em 29/09/2026, mas seus artefatos ainda de
 
 ## Decisions
 
+### Correção visual na validação pós-publicação
+
+Na conferência de 8.2 após PR #134, as listas do monitor em cartões estreitos comprimiram rótulos até uma letra por linha. A coluna `auto` dos valores consumia o espaço do rótulo. Correção de apresentação do comportamento já aprovado: duas colunas flexíveis com mínimo zero em desktop/tablet, conservando a coluna única móvel, campos, permissões, UTC e formato de cópia. Validar o componente real compilado em 390, 768 e 1280 px, sem overflow e sem rótulos comprimidos, antes de solicitar publicação da correção. Não alterar dados ou contrato do diagnóstico. Sessão/browser da conferência remota posterior não disponibilizou o painel; não inferir a causa nem contornar autenticação.
+
+### Entrega operacional dos bindings existentes
+
+Preparação operacional de 8.2b: o Compose usa listas explícitas e não entrega os bindings dinâmicos implementados em 5.2. Acrescentar arquivo opcional de ambiente raw exclusivamente a `api`, `worker` e `face-search-worker`, únicos consumidores de transporte externo. Caminho padrão `docker/.env.whatsapp-bindings` já ignorado; substituição técnica por `WHATSAPP_BINDINGS_ENV_FILE`. O arquivo conterá apenas `WHATSAPP_TENANT_BINDINGS` e `WHATSAPP_BINDING_<ALIAS>_*`, será restrito 0600 e somente criado após autorização. `format: raw` preserva caracteres de credenciais sem interpolação; requer Compose >= 2.30, confirmado em homologação (2.35.1) e local (5.5.1). Ausência conserva conta/canal legado. Arquivo não versionado persiste entre deploys; não alterar script de deploy, portas, volumes, perfis, canal ou segredos existentes. Conferir Compose resolvido com fixture sintética presente/ausente antes de publicar suporte. Isso completa a entrega do contrato existente de bindings; não provisiona infraestrutura ou fotógrafo.
+
 ### 1. Identidade por conta, confirmada pelo proprietário
 
 Detalhamento da task 3.1: serviços de telefone exigem `tenant_id` explícito e conta ativa, derivado pelo chamador autenticado/link autorizado; filtrar canônico, reserva ativa e histórico por esse contexto, sem fallback global. Recusar objeto cliente incompatível antes de alteração. Diretório e seus agregados consultam apenas a conta; cursor de paginação inclui marcador derivado da conta e rejeita reutilização de outra conta ou formato anterior, sem usar o cursor para ampliar autorização. Nome/telefone por UUID conferem dono antes de ler/alterar e desafio de troca de telefone precisa ser da mesma conta antes do consumo. A transação aposenta telefone anterior antes de inserir a nova reserva, com rollback integral em conflito. Esse contexto de domínio não remove o gate operacional de instalação única; autenticação/desafio/sessão completos continuam nas tasks 3.2–3.3.

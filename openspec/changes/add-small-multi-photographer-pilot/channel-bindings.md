@@ -12,6 +12,8 @@ O estado operacional de canal é próprio por conta/ambiente. Evolution exige te
 
 ## Preservação do canal existente
 
+Entrega Compose preparada localmente em 8.2b: somente `api`, `worker` e `face-search-worker` leem arquivo opcional raw `docker/.env.whatsapp-bindings`, ou caminho técnico `WHATSAPP_BINDINGS_ENV_FILE`. Exige Compose >= 2.30; homologação inventariada usa 2.35.1. Arquivo ausente conserva ambiente legado. Arquivo real é ignorado pelo Git, restrito 0600 e persiste entre deploys; não será criado/modificado sem autorização. Conter somente `WHATSAPP_TENANT_BINDINGS` e chaves `WHATSAPP_BINDING_<ALIAS>_*`; não colocar credenciais globais, banco, flags ou outras configurações nele. Valores raw sem aspas adicionais de dotenv; caracteres `$`, espaços e `#` não são interpolados. A saída canonical de `docker compose config` pode escapar `$` como `$$`: não copiar essa saída para sobrescrever o arquivo nem imprimi-la com segredos reais. Testes resolvem somente fixtures sintéticas e não criam containers.
+
 Variáveis globais legadas continuam permitidas apenas com uma única conta ativa demonstrável e igual ao alvo. Com duas contas, ausência de associação explícita impede envio; não há escolha por primeira conta nem fallback para configurações globais. Antes de provisionar B, o pacote operacional deverá mapear A para sua instância/credenciais atuais e verificar identidade/ambiente/health, preservando os valores existentes. O modo de injetar esses valores nos containers será revisado no pacote e executado somente com autorização operacional. Esta implementação não modifica `.env`, Docker de homologação ou credenciais reais, nem cria instâncias/volumes automaticamente.
 
 ## Execução e recebimento
