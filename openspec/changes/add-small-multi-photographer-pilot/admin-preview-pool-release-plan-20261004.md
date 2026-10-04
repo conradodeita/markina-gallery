@@ -6,6 +6,16 @@ Inventário preparado somente-leitura em 04/10/2026. Após apresentação deste 
 
 ## Scope
 
+### Validação final da fixture
+
+Snapshot seletiva final sem as outras correções locais: 63 testes dirigidos aprovados, zero falhas/erros/skips, 280,355s no XML `pr136-fixture-final-63-20261004.xml` externo ao Git. Inclui 22 casos de prévias, as duas negativas legadas do CI vermelho e 39 casos de acervo/autoajuste. Ruff do escopo CI (app/tests) aprovado. Catálogo global inalterado após compilação PostgreSQL da cópia; SQLite real recusa as duas associações inválidas. Não há PostgreSQL local nem suíte integral final local; execução ampla intermediária obsoleta foi interrompida e preservada, incluindo um marcador de falha não classificado. CI integrado completo continua gate humano, sem polling. A atualização da PR não autoriza upload ou deploy antes do novo verde.
+
+### Correção da fixture após backend vermelho da PR136
+
+O proprietário informou a falha do backend da PR136/head `97dfd8b`. Dois testes legados de constraints SQLite falharam depois das novas fixtures PostgreSQL, embora os testes isolados e 1206 casos do CI tenham passado. A emissão PostgreSQL de `AddConstraint` altera os objetos Constraint do metadata compartilhado e omite essas FKs no SQLite posterior. A reprodução compilando DDL PostgreSQL e executando as duas negativas reais em SQLite privado produz duas falhas; compilar a partir de `MetaData` copiado preserva as duas negativas. Não é execução SQL PostgreSQL local nem prova de falha de produção.
+
+A correção adicional é restrita ao próprio arquivo de testes da PR: fixture com cópia profunda privada do `MetaData` efetivo, mesmos bancos/queries/autenticação reais e guards de schema PostgreSQL descartável, mais duas regressões de ordem PostgreSQL→SQLite. `Table.to_metadata` recriou índices globais antigos dos flags Column além dos scoped; usar cópia exata em vez de remover constraints/índices. Não modificar dependências, aplicação, fixture comum, assertions ou servidor para esconder a falha. A aplicação continua contendo somente as duas remoções autorizadas. O CI anterior vermelho bloqueia merge/publicação: após push da correção, aguardar novo verde informado pelo proprietário, sem polling. A task 8.3i documenta a validação corretiva; a conclusão local da task 8.3h não é declaração de CI aprovado.
+
 - Base publicada e `origin/develop`: `9b72f2b900ba04d9771130800991941a90650e40`, merge da PR #135. Consulta pontual ao GitHub e inventário remoto confirmaram a mesma revisão; não houve acompanhamento de CI.
 - Aplicação: somente remover duas chamadas redundantes de `require_admin` em `admin_photo_preview` e `admin_watermarked_photo_preview`, em `backend/app/main.py`. O diff contra a base publicada contém apenas essas duas remoções.
 - Regressões: `backend/tests/test_admin_preview_pool_concurrency.py`, 20 casos, com pool limitado, cookies/SQL reais, concorrência controlada, auditoria, retorno das conexões e negativas de acesso.
@@ -63,4 +73,4 @@ O script existente guarda SHA anterior e backup lógico. Se houver falha e a rev
 5. Fazer novo preflight de acesso/configuração/fontes/filas, criar coletor independente com evidência nova e alertas antigos preservados, verificar coleta saudável e só então liberar os mesmos 50 JPEGs por A/B/C, nas pastas existentes. Não reabrir o coletor v2 ou relaxar critérios de parada.
 6. Quando explicitamente liberado, o proprietário inicia os três uploads manuais e avisa `iniciei`; acompanhar processamento/métricas durante o turno ativo. Totais previstos A166/B282/C354 são projeções, não resultados atuais. Não liberar 1000/2124, cleanup, produção, mensagens, buscas ou revisão final por esta aprovação.
 
-Task 8.3h continua concluída somente no escopo local. 8.3f permanece parcial/bloqueada; 8.3, 8.3a e 8.4 continuam pendentes. Progresso 35/39 refere-se à árvore local completa, que preserva registros do piloto não incluídos nesta PR seletiva; não é contagem de tasks da snapshot reduzida. Sem sync/archive ou conclusão do piloto.
+Tasks 8.3h e 8.3i concluídas somente no escopo local validado. 8.3f permanece parcial/bloqueada; 8.3, 8.3a e 8.4 continuam pendentes. Progresso 36/40 refere-se à árvore local completa, que preserva registros do piloto não incluídos nesta PR seletiva; snapshot reduzida 28/31. Atualização da PR não significa CI verde ou publicação. Sem sync/archive ou conclusão do piloto.

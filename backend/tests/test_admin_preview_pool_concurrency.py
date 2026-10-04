@@ -1,4 +1,6 @@
+import os
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 from threading import Barrier
@@ -6,19 +8,35 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, event, func, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import QueuePool
+from sqlalchemy import create_engine, create_mock_engine, event, func, select, text
+from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.schema import CreateTable
 
 from app import auth, main
-from app.auth import AuditEvent, AuthSession, MediaDerivative, Role, TenantAdmin, now, token_hash
-from tests.test_tenant_acervo import client_db as _client_db
+from app.auth import (
+    AuditEvent,
+    AuthSession,
+    Base,
+    Client,
+    DerivedGallery,
+    MediaDerivative,
+    ParentGallery,
+    PhotoAsset,
+    PhotoFolder,
+    Role,
+    Tenant,
+    TenantAdmin,
+    now,
+    token_hash,
+)
 from tests.test_tenant_acervo import graph as _graph
 from tests.test_tenant_client_auth import links as _links
 from tests.test_tenant_client_auth import request
 from tests.test_tenant_client_navigation import cookie
 
-client_db = _client_db
 graph = _graph
 links = _links
 
@@ -26,6 +44,89 @@ PREVIEWS = [
     ("admin_photo_preview", "admin_preview", "media_preview.admin_viewed"),
     ("admin_watermarked_photo_preview", "client_preview", "media_preview.admin_watermarked_viewed"),
 ]
+
+
+def preview_metadata():
+    return deepcopy(Base.metadata)
+
+
+@pytest.fixture
+def client_db(tmp_path):
+    url = os.getenv("PHOTOGRAPHER_TEST_DATABASE_URL", f"sqlite:///{tmp_path / 'clients.sqlite'}")
+    engine = create_engine(url, poolclass=NullPool)
+    schema = None
+    if engine.dialect.name == "postgresql":
+        assert engine.url.host == "127.0.0.1" and engine.url.port == 15470
+        assert engine.url.database == "pyp_photographer_test"
+        schema = f"preview_pool_{uuid4().hex}"
+        with engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = engine.execution_options(schema_translate_map={None: schema})
+    else:
+        @event.listens_for(engine, "connect")
+        def enable_constraints(connection, _record):
+            connection.execute("PRAGMA foreign_keys=ON")
+    try:
+        preview_metadata().create_all(engine)
+        with Session(engine) as db:
+            yield db
+    finally:
+        if schema is not None:
+            with engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        engine.dispose()
+
+
+@pytest.mark.parametrize("scope", ["public", "private"])
+def test_postgresql_preview_schema_preserves_later_sqlite_constraints(tmp_path, scope):
+    catalog = {table.name: str(CreateTable(table).compile(dialect=sqlite_dialect()))
+               for table in Base.metadata.tables.values()}
+    postgresql = create_mock_engine(
+        "postgresql://",
+        lambda statement, *_args, **_kwargs: str(statement.compile(dialect=postgresql.dialect)),
+    )
+    preview_metadata().create_all(postgresql)
+    assert {table.name: str(CreateTable(table).compile(dialect=sqlite_dialect()))
+            for table in Base.metadata.tables.values()} == catalog
+    engine = create_engine(f"sqlite:///{tmp_path / 'later.sqlite'}")
+
+    @event.listens_for(engine, "connect")
+    def enable_constraints(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
+
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            tenant = Tenant()
+            db.add(tenant)
+            db.flush()
+            first = ParentGallery(tenant_id=tenant.id, name="Primeira")
+            second = ParentGallery(tenant_id=tenant.id, name="Segunda")
+            db.add_all([first, second])
+            db.flush()
+            folder = PhotoFolder(tenant_id=tenant.id, parent_gallery_id=first.id, name="Pasta")
+            photo = PhotoAsset(tenant_id=tenant.id, parent_gallery_id=second.id,
+                               filename="cross.jpg", storage_key="synthetic/cross.jpg")
+            if scope == "private":
+                clients = [Client(tenant_id=tenant.id, full_name="Primeira", phone_e164="+5511999990001"),
+                           Client(tenant_id=tenant.id, full_name="Segunda", phone_e164="+5511999990002")]
+                db.add_all(clients)
+                db.flush()
+                galleries = [DerivedGallery(tenant_id=tenant.id, parent_gallery_id=first.id,
+                             client_id=client.id, name="Privada") for client in clients]
+                db.add_all(galleries)
+                db.flush()
+                folder.derived_gallery_id = galleries[0].id
+                photo.parent_gallery_id = first.id
+                photo.derived_gallery_id = galleries[1].id
+            db.add(folder)
+            db.flush()
+            photo.folder_id = folder.id
+            db.add(photo)
+            with pytest.raises(IntegrityError):
+                db.flush()
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture

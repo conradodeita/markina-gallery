@@ -31,3 +31,13 @@ Nas duas rotas administrativas de prévia, o sistema SHALL validar sessão admin
 #### Scenario: Sessão ou vínculo administrativo perdeu validade
 - **WHEN** uma prévia é solicitada com sessão revogada/expirada, papel não administrativo, e-mail não verificado, vínculo inativo ou conta suspensa
 - **THEN** a operação é negada antes de entrega de arquivo ou auditoria de visualização, inclusive depois da correção de concorrência
+
+## ADDED Requirements
+
+### Requirement: Isolamento do catálogo de validação das prévias
+
+As fixtures dos testes de concorrência das prévias SHALL construir seu schema a partir de metadata privado e preservar os contratos de constraints e índices efetivos do catálogo ORM usado por outras suítes, sem recriar unicidade global substituída por unicidade scoped nem gerar índices duplicados. DDL PostgreSQL dessas fixtures MUST NOT omitir posteriormente as FKs SQLite responsáveis por recusar foto de pasta/galeria incompatível, mesmo que todos os testes individuais passem em isolamento. A validação SHALL manter banco/queries reais e negativas existentes, sem desabilitar constraints ou aceitar contextos incompatíveis para passar CI.
+
+#### Scenario: DDL de prévias PostgreSQL seguido de constraints SQLite
+- **WHEN** o DDL PostgreSQL da fixture de prévias é emitido antes de criar o banco SQLite de uma suíte de isolamento
+- **THEN** as inserções de uma foto em pasta de outra galeria ou pasta privada de outra galeria derivada continuam rejeitadas por IntegrityError no SQLite real
