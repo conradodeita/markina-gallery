@@ -6,6 +6,12 @@ O objetivo imediato do planejamento é preparar o isolamento necessário para op
 
 ## What Changes
 
+Correção da fixture da PR136 após falha de CI em04/10: criar o schema dos novos testes de prévia a partir de `MetaData` privado, sem alterar o catálogo ORM compartilhado. Compilar/criar PostgreSQL primeiro com o metadata global altera regras de emissão de constraints no SQLAlchemy e enfraquece o DDL SQLite das suítes seguintes. Reproduzir as duas negativas existentes em sequência PostgreSQL→SQLite e adicionar regressão dessa fronteira; não remover asserts, desabilitar FKs, mudar dependências, autenticação ou aplicação além das duas remoções já autorizadas. Correção permanece no arquivo de testes da PR e nos registros correspondentes; sem merge/deploy enquanto CI não for novamente informado verde.
+
+Publicação seletiva autorizada em 04/10/2026: após revisão do escopo e impacto, o proprietário respondeu “autorizado” à nova PR e publicação condicionada ao CI verde que ele próprio informará. Incluir somente a correção das duas prévias administrativas, suas regressões e registros OpenSpec; preservar e excluir as outras alterações locais. Sem upload antecipado, nova migration, alteração de pool/quota/segredo ou terceiros. Plano operacional: `admin-preview-pool-release-plan-20261004.md`.
+
+Correção LOCAL autorizada em03/10/2026 após APIunhealthy/pooltimeouts nas prévias administrativas antes da rodada50: reproduzir concorrência com pool sintético pequeno, delimitar aquisição aninhada de autenticação e corrigir somente as rotas administrativas de prévia afetadas, sem mudar tamanho do pool, autenticação/isolamento/auditoria ou entrega privada. Validar sessões revogadas, conta/vínculo inativo, e-mail não verificado e recursos de outra conta com cookies reais. A autorização não inclui commit/push/deploy nem liberação antecipada dos uploads; logs remotos e latches permanecem preservados.
+
 - Permitir operação controlada de duas contas de fotógrafo após completar e testar o isolamento do domínio, sem cadastro público de fotógrafos.
 - **BREAKING**: tornar a identidade da cliente e a unicidade do telefone próprias de cada fotógrafo. Conforme decisão explícita do proprietário em 30/09/2026, o mesmo telefone pode identificar cadastros independentes, sem fusão ou compartilhamento automático de nomes, sessões, galerias, seleções, pedidos ou histórico.
 - Resolver o fotógrafo no backend a partir do vínculo administrativo ou do link autorizado da galeria; vincular desafios OTP, sessões e convites ao mesmo contexto.

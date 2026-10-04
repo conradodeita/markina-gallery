@@ -6337,7 +6337,6 @@ def admin_photo_preview(
     """Prévia sem marca para conferência administrativa; nunca é o original."""
 
     tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
@@ -6366,7 +6365,6 @@ def admin_watermarked_photo_preview(
     """Prévia marcada para organizar pastas sem expor o arquivo de origem."""
 
     tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
