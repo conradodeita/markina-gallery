@@ -19,6 +19,42 @@ afterEach(() => {
 });
 
 describe("entrada com identidade configurável", () => {
+  it.each(["/admin/settings", "//external.example.test", "/admin?access_token=synthetic"])("reauth administrativa mantém TOTP e valida retorno %s", async (returnTo) => {
+    const navigate = vi.fn();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const path = String(input);
+      if (path === "/api/auth/admin/password") return Promise.resolve(new Response(JSON.stringify({ challenge_id: "synthetic-admin", message: "Informe TOTP" }), { status: 200 }));
+      if (path === "/api/auth/admin/totp") return Promise.resolve(new Response(JSON.stringify({ destination: "/admin" }), { status: 200 }));
+      return Promise.resolve(path === "/api/auth/destination"
+        ? new Response(JSON.stringify({ destination: "/library" }), { status: 200 })
+        : new Response(null, { status: 401 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry recoveryContext="admin" initialInvitation={{ accessToken: "", returnTo }} navigate={navigate} />);
+    expect(screen.getByRole("tab", { name: "Fotógrafo" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("status").textContent).toContain("Sua sessão terminou");
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "photographer@example.test" } });
+    fireEvent.change(screen.getByLabelText("Senha"), { target: { value: "synthetic-unused-password" } });
+    fireEvent.submit(screen.getByLabelText("Senha").closest("form")!);
+    await screen.findByLabelText("Código do autenticador");
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Código do autenticador"), { target: { value: "123456" } });
+    fireEvent.submit(screen.getByLabelText("Código do autenticador").closest("form")!);
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(returnTo === "/admin/settings" ? returnTo : "/admin"));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/auth/client/"))).toBe(false);
+  });
+
+  it("cliente expirado sem link recebe orientação sem OTP ou escolha de conta por UUID", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry recoveryContext="client" initialInvitation={{ accessToken: "", returnTo: "/public-galleries/synthetic" }} navigate={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Abra o link do seu fotógrafo" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Reabra o link");
+    expect(screen.queryByLabelText("WhatsApp")).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/destination", expect.anything()));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/auth/client/challenge"))).toBe(false);
+  });
+
   it("orienta usar o link sem pesquisar telefone global e preserva entrada administrativa", async () => {
     window.history.replaceState({}, "", "/");
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));

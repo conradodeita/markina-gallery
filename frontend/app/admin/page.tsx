@@ -61,7 +61,7 @@ export default function AdminPage() {
       <SystemState
         tone="error"
         title="Acesso administrativo indisponível"
-        detail="Entre novamente ou atualize a página."
+        detail="Não foi possível carregar os dados. Recarregue a página para tentar novamente."
       />
     );
   if (!summary)

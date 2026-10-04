@@ -17,6 +17,14 @@ import AdminPage from "./page";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("falha temporária da visão geral não orienta logout ou novo login", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+  render(<AdminPage />);
+  await screen.findByText("Acesso administrativo indisponível");
+  expect(screen.queryByText(/Entre novamente/)).toBeNull();
+  expect(screen.getByText("Não foi possível carregar os dados. Recarregue a página para tentar novamente.")).toBeTruthy();
+});
+
 const summary = {
   environment: "development",
   version: "test",

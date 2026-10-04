@@ -109,24 +109,36 @@ class BrandingTransferTest(unittest.TestCase):
             output = json.dumps([{"Labels": {"com.docker.compose.project": branding.PROJECT,
                 "com.docker.compose.volume": "branding-assets"}, "Driver": "local"}]).encode()
         if args[:2] == ("exec", "-i"):
-            output = b'["logo.png",null,null]\n'
+            self.settings_reads += 1
+            if self.settings_changed and self.settings_reads == 2:
+                return subprocess.CompletedProcess(args, 0, b"", b"")
+            output = "\n".join(json.dumps(row) for row in self.rows).encode()
+        if args[:3] == ("exec", "own-api", "python") and self.unsafe_source and args[-1].startswith("["):
+            raise RuntimeError("source ancestor symlink")
         if args[0] == "cp":
             if self.copy_failure:
                 return subprocess.CompletedProcess(args, 1, b"", b"permission denied")
             if self.valid_source:
+                key = args[1].split("/branding/", 1)[1]
+                body = self.asset_bytes.get(key, b"logo")
                 output = io.BytesIO()
                 with tarfile.open(fileobj=output, mode="w") as archive:
-                    entry = tarfile.TarInfo("logo.png")
-                    entry.size = 4
-                    archive.addfile(entry, io.BytesIO(b"logo"))
+                    entry = tarfile.TarInfo(Path(key).name)
+                    entry.size = len(body)
+                    archive.addfile(entry, io.BytesIO(body))
                 return subprocess.CompletedProcess(args, 0, output.getvalue(), b"")
             return subprocess.CompletedProcess(args, 1, b"", b"Could not find the file logo.png")
         if args[0] == "run" and self.restore_failure:
             raise RuntimeError("copy failed")
         return subprocess.CompletedProcess(args, code, output, b"")
 
-    def run_preserve(self, copy_failure=False, restore_failure=False, valid_source=False):
+    def run_preserve(self, copy_failure=False, restore_failure=False, valid_source=False, rows=None,
+                     asset_bytes=None, settings_changed=False, unsafe_source=False):
         self.calls = []
+        self.rows = rows if rows is not None else [{"tenant_id": None, "keys": ["logo.png", None, None]}]
+        self.asset_bytes = asset_bytes or {}
+        self.settings_reads = 0
+        self.settings_changed, self.unsafe_source = settings_changed, unsafe_source
         self.copy_failure, self.restore_failure = copy_failure, restore_failure
         self.valid_source = valid_source
         info = {"Config": {"Env": []}, "Image": "sha256:fixture"}
@@ -137,6 +149,69 @@ class BrandingTransferTest(unittest.TestCase):
              patch.object(branding, "BACKUPS", self.root / "backups"), \
              patch.object(branding, "STATE", self.root / "state"):
             branding.preserve()
+
+    def test_settings_change_after_stop_aborts_copy_and_restarts_old_api(self):
+        with self.assertRaisesRegex(ValueError, "settings changed"):
+            self.run_preserve(settings_changed=True)
+        self.assertIn(("start", "own-api"), self.calls)
+        self.assertFalse(any(call[0] in {"cp", "run"} for call in self.calls))
+
+    def test_unsafe_source_ancestor_is_refused_before_api_stop(self):
+        with self.assertRaisesRegex(RuntimeError, "ancestor symlink"):
+            self.run_preserve(unsafe_source=True)
+        self.assertFalse(any(call[0] in {"stop", "cp", "run"} for call in self.calls))
+
+    def test_three_owners_preserve_scoped_and_legacy_assets(self):
+        owners = [str(uuid4()) for _ in range(3)]
+        files = {"logo.png": b"logo"}
+        rows = [{"tenant_id": owners[0], "keys": ["logo.png", None, None]}]
+        for owner, body in zip(owners[1:], (b"brand-b", b"brand-c")):
+            key = f"tenants/{owner}/branding/logo-{branding.digest(body)}.png"
+            files[key] = body
+            rows.append({"tenant_id": owner, "keys": [key, None, None]})
+        self.run_preserve(valid_source=True, rows=rows, asset_bytes=files)
+        backup = next((self.root / "backups").glob("branding-*"))
+        branding.transfer(backup, self.destination)
+        for key, body in files.items():
+            self.assertEqual((backup / key).read_bytes(), body)
+            self.assertEqual((self.destination / key).read_bytes(), body)
+        manifest = json.loads((backup / "manifest.json").read_text())
+        self.assertEqual(manifest["files"], {key: branding.digest(body) for key, body in files.items()})
+        self.assertNotIn(("start", "own-api"), self.calls)
+        with patch.object(branding, "docker") as run:
+            branding.restore_volume(backup, "fixture-image")
+        payload = run.call_args.kwargs["input_data"]
+        with patch.object(branding.sys, "stdin") as stdin:
+            stdin.buffer = io.BytesIO(payload)
+            branding.receive_backup(self.root / "receiver")
+        for key, body in files.items():
+            self.assertEqual((self.root / "receiver" / key).read_bytes(), body)
+
+    def test_ambiguous_owner_or_cross_owner_key_never_stops_old_api(self):
+        owner, other = str(uuid4()), str(uuid4())
+        scoped = f"tenants/{other}/branding/logo-{'a' * 64}.png"
+        candidates = [
+            [{"tenant_id": owner, "keys": []}, {"tenant_id": owner, "keys": []}],
+            [{"tenant_id": None, "keys": []}, {"tenant_id": other, "keys": []}],
+            [{"tenant_id": owner, "keys": [scoped]}],
+            [{"tenant_id": owner, "keys": ["logo.png"]}, {"tenant_id": other, "keys": ["logo.png"]}],
+        ]
+        for rows in candidates:
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                self.run_preserve(rows=rows)
+            self.assertFalse(any(call[0] == "stop" for call in self.calls))
+            self.assertFalse(any(call[0] == "run" for call in self.calls))
+
+    def test_scoped_paths_refuse_traversal_and_wrong_digest_before_transfer(self):
+        owner = str(uuid4())
+        for key in (f"tenants/{owner}/branding/../logo.png", f"tenants/{owner}/branding/logo-{'a' * 64}.png"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.run_preserve(valid_source=True, rows=[{"tenant_id": owner, "keys": [key]}])
+            if "/../" in key:
+                self.assertFalse(any(call[0] == "stop" for call in self.calls))
+            else:
+                self.assertIn(("start", "own-api"), self.calls)
+            self.assertFalse(any(call[0] == "run" for call in self.calls))
 
     def test_absent_legacy_reported_and_override_preserves_rollback(self):
         self.run_preserve()
@@ -169,6 +244,33 @@ class BrandingTransferTest(unittest.TestCase):
         payload = json.loads(run.call_args.kwargs["input_data"])
         self.assertEqual(payload["manifest"], self.manifest)
         self.assertEqual(set(payload["files"]), set(self.files))
+
+    def test_transport_limit_is_checked_before_receiver_or_container(self):
+        with patch.object(branding, "MAX_PAYLOAD_BYTES", 1), patch.object(branding, "docker") as run:
+            with self.assertRaisesRegex(ValueError, "transport limit"):
+                branding.restore_volume(self.backup, "fixture-image")
+            run.assert_not_called()
+            with patch.object(branding.sys, "stdin") as stdin:
+                stdin.buffer = io.BytesIO(b"{}")
+                with self.assertRaisesRegex(ValueError, "transport limit"):
+                    branding.receive_backup(self.destination)
+        self.assertFalse(self.destination.exists())
+
+    def test_nested_conflict_is_detected_before_any_new_asset(self):
+        body = b"brand-b"
+        key = f"tenants/{uuid4()}/branding/logo-{branding.digest(body)}.png"
+        path = self.backup / key
+        path.parent.mkdir(parents=True)
+        path.write_bytes(body)
+        self.manifest["files"][key] = branding.digest(body)
+        self.write_manifest()
+        target = self.destination / key
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"conflicting")
+        with self.assertRaises(ValueError):
+            branding.transfer(self.backup, self.destination)
+        self.assertFalse((self.destination / "logo.png").exists())
+        self.assertEqual(target.read_bytes(), b"conflicting")
 
     def test_receiver_validates_payload_and_hash_before_publication(self):
         payload = {"manifest": self.manifest, "files": {

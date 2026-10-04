@@ -1,6 +1,7 @@
 "use client";
 
 import { BrandLogo } from "./brand-logo";
+import { safeAdminReturn } from "./session-recovery";
 
 
 import { FormEvent, useEffect, useState } from "react";
@@ -16,6 +17,7 @@ const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro
 type AuthEntryProps = {
   navigate?: (destination: string) => void;
   initialInvitation?: { accessToken: string; returnTo: string };
+  recoveryContext?: Context;
 };
 
 const defaultNavigate = (destination: string) => window.location.assign(destination);
@@ -46,8 +48,9 @@ export function brazilMobileE164(value: string) {
 export function AuthEntry({
   navigate = defaultNavigate,
   initialInvitation,
+  recoveryContext,
 }: AuthEntryProps = {}) {
-  const [context, setContext] = useState<Context>("client");
+  const [context, setContext] = useState<Context>(recoveryContext ?? "client");
   const [step, setStep] = useState<Step>("details");
   const [challengeId, setChallengeId] = useState("");
   const [clientPhone, setClientPhone] = useState("");
@@ -101,6 +104,7 @@ export function AuthEntry({
   }, [branding.app_icon_url]);
   useEffect(() => {
     let active = true;
+    if (recoveryContext === "admin" && !invitation.accessToken) return;
     fetch("/api/auth/destination", { credentials: "same-origin" })
       .then(async (sessionResponse) => {
         if (!active || !sessionResponse.ok) return;
@@ -126,7 +130,7 @@ export function AuthEntry({
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [invitation, navigate]);
+  }, [invitation, navigate, recoveryContext]);
   async function requestCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -199,7 +203,8 @@ export function AuthEntry({
         }
         throw new Error();
       }
-      navigate(result.destination);
+      navigate(context === "admin" && result.destination === "/admin" && recoveryContext === "admin"
+        ? safeAdminReturn(invitation.returnTo) : result.destination);
     } catch {
       setMessage(
         context === "client"
@@ -309,6 +314,7 @@ export function AuthEntry({
         <h1 id="entry-title">{branding.login_title}</h1>
         <p className="intro">{branding.login_intro}</p>
         <p className="auth-helper">{branding.login_helper}</p>
+        {recoveryContext ? <p role="status">Sua sessão terminou ou não está disponível. Entre novamente para continuar.{recoveryContext === "client" && !invitation.accessToken ? " Reabra o link enviado pelo seu fotógrafo." : ""}</p> : null}
         <div
           className="context-tabs"
           role="tablist"
