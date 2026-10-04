@@ -1,5 +1,9 @@
 # Validação e continuidade da execução
 
+## Publicação seletiva autorizada — 04/10/2026
+
+O proprietário respondeu “autorizado” à criação da nova PR e publicação após CI verde informado por ele. Escopo: somente duas chamadas redundantes removidas das prévias administrativas, 20 regressões e registros OpenSpec correspondentes; outras correções locais preservadas/fora da release. Snapshot seletiva validada em 04/10 sem as correções excluídas: 59 testes dirigidos aprovados/zero skips em221,95s, Ruff completo backend aprovado, OpenSpec estrito completo76itens/0falhas e Gitleaks8.24.3 portátil com checksum verificado semsegredos detectados. Import do backend na snapshot e correspondência de blobs normalizados com índice/base conferidos. Relatórios privados `admin-preview-pool-release-snapshot-{tests,openspec,gitleaks}-20261004` foraGit; três avisos preexistentes, semfalhas. Reprodução anterior duas concorrências falham; SQLite privado, PostgreSQL15470 indisponível/não validado localmente. PostgreSQL/suítes completas/varredura do histórico seguem gatesCI. Merge/deploy aguardam sinal humano de CI e inventário compatível, sem polling; nenhum novo upload ou deploy realizado por este registro. Registrar SHA/PR e anexar a PR após criação. Plano/inventário sanitizado/rollback em `admin-preview-pool-release-plan-20261004.md`.
+
 ## Baseline
 
 Em 30/09/2026, o proprietário respondeu “Ok, prossiga” ao planejamento revisado. Aceite registrado para preparação e implementação local de `add-small-multi-photographer-pilot`, incluindo identidade independente por fotógrafo e validação pequena futura quando houver prontidão. Não autoriza deploy, segunda conta operacional, canais reais ou biometria.

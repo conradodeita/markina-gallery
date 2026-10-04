@@ -18,6 +18,16 @@ O PR #115 da fundação foi integrado em 29/09/2026, mas seus artefatos ainda de
 
 ## Decisions
 
+### Publicação seletiva da correção de prévias
+
+Em 04/10/2026 o proprietário autorizou commit seletivo/push/nova PR e merge/publicação condicionados ao CI verde informado por ele, após apresentação do inventário/impacto. Validar uma snapshot do índice sem as outras correções locais, não somente a árvore suja. Manter `directory_tenant_id` como fronteira de autenticação/owner e remover apenas as duas aquisições redundantes. O workflow existente publica o conjunto próprio com backup/parada controlada dos escritores e Alembic sem nova revisão; pode interromper temporariamente o site, sem alterar terceiros. Guards existentes de configuração devem permanecer válidos, sem geração/rotação implícita de segredos. Plano/reversão/gates pós-publicação em `admin-preview-pool-release-plan-20261004.md`; nenhum upload liberado pelo aceite de publicação.
+
+### Saturação nas prévias administrativas — reprodução e correção local autorizadas
+
+Em03/10 os logs publicados mostraram timeouts de aquisição do pool5+10/30s em `admin_watermarked_photo_preview` e autenticação, antes de novos uploads; API voltouhealthy, mas a rodada permanece bloqueada. Hipótese: `directory_tenant_id` autentica/fecha sua SessionLocal e depois consulta vínculo/conta na sessão da requisição; a rota chama `require_admin` outra vez com essa conexão já ocupada. Reproduzir com cookies/queries reais e poolQueuePool sintético de duas conexões semoverflow, duas requisições coordenadas depois da resolução do owner, nunca teste de carga no servidor. A coordenação controla somente o interleaving, sem mock de autenticação ou aquisição/efeitos internos do banco. O teste SHALL exigir ambas prévias próprias entregues/auditadas semtimeout e nenhuma conexão retida após as requisições; antes da correção registrar falha verificável.
+
+Se confirmada, remover só a autenticação redundante nas duas rotas administrativas de prévia, pois `directory_tenant_id` já valida cookie/papel/vínculo único/conta ativa antes de qualquer acesso ao acervo. Não tornar `current_session` global/cacheada, aceitar owner do cliente, alterar auth compartilhada ou aumentar pool/threads/infra. Preservar ownership, derivações convencionais/autoajustadas, resolução segura, auditoria/commit e headersprivate-no-store/nosniff. Validar negativas com sessão revogada/expirada, conta/vínculo inativo, e-mail não verificado, cliente/visitante e UUID alheio. Correção/validação local não é publicação ou autorização para limpar alertas/retomarupload; deploy continua gate humano próprio.
+
 ### Correção visual na validação pós-publicação
 
 Na conferência de 8.2 após PR #134, as listas do monitor em cartões estreitos comprimiram rótulos até uma letra por linha. A coluna `auto` dos valores consumia o espaço do rótulo. Correção de apresentação do comportamento já aprovado: duas colunas flexíveis com mínimo zero em desktop/tablet, conservando a coluna única móvel, campos, permissões, UTC e formato de cópia. Validar o componente real compilado em 390, 768 e 1280 px, sem overflow e sem rótulos comprimidos, antes de solicitar publicação da correção. Não alterar dados ou contrato do diagnóstico. Sessão/browser da conferência remota posterior não disponibilizou o painel; não inferir a causa nem contornar autenticação.
