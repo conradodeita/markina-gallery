@@ -336,7 +336,8 @@ def test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos(
     from app.tenancy import TenantContextError
 
     url, engine = migration_db
-    migrate(url, TRANSITION)
+    # O inventário exige o schema operacional completo usado em homologação.
+    migrate(url, "20261001_0071")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
     for root in roots.values():
         root.mkdir()
