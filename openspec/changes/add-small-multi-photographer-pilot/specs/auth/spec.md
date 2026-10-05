@@ -1,5 +1,31 @@
 # Spec Delta
 
+## ADDED Requirements
+
+### Requirement: Recuperação uniforme de sessão e timeout
+
+As superfícies protegidas de fotógrafo e cliente SHALL confirmar a sessão antes de montar conteúdo privado e ao retomar navegação/foco, periodicamente e após recusa de API. `/auth/destination` SHALL responder 401 para sessão ausente, expirada ou revogada e 403 para contexto não autorizado, sem dados pessoais ou enumeração; as demais rotas MUST preservar seu contrato existente. Perda confirmada SHALL desmontar conteúdo/cache facial privado e encaminhar à entrada com aviso e papel corretos. Destino de retorno MUST ser pathname interna permitida, sem query/token; retorno administrativo depende do destino confirmado pelo backend após senha/TOTP. Cliente sem link válido SHALL reabrir o link do fotógrafo para novo OTP, sem recuperar conta por UUID ou telefone. Falha de rede/408/5xx ou timeout da leitura SHALL permitir tentativa explícita sem logout, looping ou replay de mutação/OTP. Autorização 403 com sessão válida SHALL permanecer acesso negado, não expiração.
+
+#### Scenario: Sessão expirada na área do fotógrafo
+- **WHEN** a verificação confirma sessão expirada enquanto uma rota administrativa está aberta
+- **THEN** o conteúdo privado é desmontado e a entrada Fotógrafo informa a necessidade de senha e TOTP novamente
+
+#### Scenario: Sessão cliente expirada sem capacidade de convite
+- **WHEN** a sessão da galeria expira e não existe link válido apresentado
+- **THEN** a entrada Cliente orienta reabrir o link original, sem conceder acesso pelo UUID da galeria
+
+#### Scenario: Falha temporária não é logout
+- **WHEN** a rede falha ou a API responde 408/5xx na superfície protegida
+- **THEN** há aviso claro e retry da leitura de sessão, sem repetir uploads, pedidos ou envio de OTP e sem invalidar sessão válida
+
+#### Scenario: Permissão específica recusada
+- **WHEN** uma API responde 403 mas a sessão contextual continua válida
+- **THEN** a interface indica acesso negado sem redirecionar automaticamente para login
+
+#### Scenario: Entrada pública e URL externa
+- **WHEN** a página pública de login/recuperação está aberta ou uma requisição não pertence à API da mesma origem
+- **THEN** a fronteira protegida não intercepta esse fluxo nem transforma erro de credencial em loop de redirecionamento
+
 ## MODIFIED Requirements
 
 ### Requirement: Contexto administrativo vinculado à conta do fotógrafo

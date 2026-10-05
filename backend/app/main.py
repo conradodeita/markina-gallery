@@ -2023,7 +2023,7 @@ def confirm_admin_email(
 
 @app.get("/auth/destination")
 def destination(request: Request) -> dict[str, str]:
-    session = current_session(request)
+    session = current_session(request, invalid_session_status=401)
     if session.role == Role.ADMIN.value:
         return {"destination": "/admin"}
     with SessionLocal() as db:

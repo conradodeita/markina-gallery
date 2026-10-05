@@ -3340,20 +3340,23 @@ def create_session(
     return raw_token
 
 
-def current_session(request: Request, required_role: Role | None = None) -> AuthSession:
+def current_session(
+    request: Request, required_role: Role | None = None, *, invalid_session_status: int = 403,
+) -> AuthSession:
     from app.tenancy import TenantContextError, require_admin_tenant
 
     token = request.cookies.get(os.getenv("SESSION_COOKIE_NAME", "markina_session"))
     if not token:
-        raise HTTPException(status_code=403, detail="Acesso negado.")
+        raise HTTPException(status_code=invalid_session_status, detail="Acesso negado.")
     with SessionLocal() as db:
         session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(token)))
         if (
             not session
             or session.revoked_at
             or expired(session.expires_at)
-            or (required_role and session.role != required_role.value)
         ):
+            raise HTTPException(status_code=invalid_session_status, detail="Acesso negado.")
+        if required_role and session.role != required_role.value:
             raise HTTPException(status_code=403, detail="Acesso negado.")
         try:
             if session.role == Role.ADMIN.value:

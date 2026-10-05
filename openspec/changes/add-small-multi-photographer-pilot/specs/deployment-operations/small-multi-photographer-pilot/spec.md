@@ -6,6 +6,22 @@ Definir a validação futura de jornadas e isolamento com um grupo pequeno de fo
 
 ## ADDED Requirements
 
+### Requirement: Preservação de branding de múltiplos fotógrafos
+
+O deploy SHALL preservar todos os assets de branding referenciados por owners distintos, incluindo keys legadas de raiz e keys contextualizadas produzidas pela API, sem misturar contas ou sobrescrever arquivos conflitantes. Duplicidade de owner, chave de outro owner, traversal, symlink, arquivo irregular, hash/tamanho inválido ou transporte acima do limite seguro MUST abortar a transição e reiniciar a API anterior quando parada. O helper SHALL manter backup restrito, manifestos de integridade e indicação explícita de arquivos ausentes; não escrever SQL, apagar fontes ou alterar terceiros.
+
+#### Scenario: Três fotógrafos com configurações próprias
+- **WHEN** existem três registros de branding com owners únicos e assets válidos
+- **THEN** a transição preserva todos os assets por caminho/owner, sem rejeitar a quantidade de registros
+
+#### Scenario: Instalação legada antes da migration de owners
+- **WHEN** existe um único registro sem tenant_id com keys legadas permitidas
+- **THEN** os bytes e referências originais são preservados antes da migration, sem escolher uma conta artificialmente
+
+#### Scenario: Ambiguidade verdadeira ou cópia insegura
+- **WHEN** duas configurações disputam uma chave legada ou um asset pertence a outro owner ou a transferência falha
+- **THEN** a publicação é recusada conservadoramente, sem overwrite e com a API anterior reiniciada
+
 ### Requirement: Validação futura condicionada à prontidão
 
 O ensaio com fotógrafos e clientes SHALL ocorrer somente após completar o isolamento dos caminhos inventariados, preservar o legado e aprovar os testes de engenharia aplicáveis, com evidências de prontidão registradas. A intenção do proprietário de validar assim que possível SHALL ser tratada como objetivo futuro condicionado a esses pré-requisitos e às autorizações operacionais do ambiente. Ela MUST NOT ser tratada, por si só, como ordem de execução imediata, criação de uma segunda conta operacional ou dispensa de isolamento para antecipar a validação. O monitor SHALL ser testado durante as jornadas quando essa etapa futura puder ser executada.
