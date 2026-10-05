@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, select, text
@@ -35,6 +37,7 @@ from app.auth import (
     SaleOrder,
     SaleOrderItem,
     SessionLocal,
+    Tenant,
     WhatsAppChannelSettings,
     WhatsAppDelivery,
     engine,
@@ -72,9 +75,44 @@ def test_inventory_returns_only_counts_without_pii(
     with SessionLocal() as db:
         result = inventory(db)
     assert result["environment"] == "homolog"
-    assert set(result) == {"environment", "database", "media", "preserved"}
+    assert set(result) == {
+        "environment", "photographer_count", "destructive_cleanup",
+        "database", "media", "preserved",
+    }
+    assert result["destructive_cleanup"] == {"status": "single_photographer_only"}
     assert all(type(value) is int for value in result["database"].values())
     assert all(type(value) is int for value in result["preserved"].values())
+
+
+def test_inventory_aggregates_multiple_photographers_without_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APP_ENV", "homolog")
+    roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
+    for root in roots.values():
+        root.mkdir()
+    (roots["source"] / "source.jpg").write_bytes(b"source")
+    (roots["derivatives"] / "preview.jpg").write_bytes(b"preview")
+    monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: roots)
+    synthetic = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(synthetic)
+    second_tenant_id = uuid4()
+    with Session(synthetic) as db:
+        db.add(Tenant(id=second_tenant_id, status="active"))
+        db.commit()
+        result = inventory(db)
+    assert result["photographer_count"] == 2
+    assert result["destructive_cleanup"] == {
+        "status": "unavailable_multiple_photographers"
+    }
+    assert result["media"]["source"] == {"files": 1, "bytes": 6}
+    assert result["media"]["derivatives"] == {"files": 1, "bytes": 7}
+    assert all(type(value) is int for value in result["database"].values())
+    assert all(type(value) is int for value in result["preserved"].values())
+    rendered = str(result)
+    assert str(FIXTURE_TENANT_ID) not in rendered
+    assert str(second_tenant_id) not in rendered
+    synthetic.dispose()
 
 
 def test_inventory_counts_folder_settings_as_operational_without_exposing_values(
@@ -153,6 +191,32 @@ def test_execute_requires_literal_confirmation_before_database_change(
     monkeypatch.setenv("APP_ENV", "homologation")
     with SessionLocal() as db, pytest.raises(RuntimeError, match="Confirmação literal"):
         execute(db, "invalid")
+
+
+def test_execute_refuses_multitenant_before_reading_media_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
+
+    from app.tenancy import TenantContextError
+
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setattr(
+        homolog_cleanup, "media_roots", lambda: pytest.fail("Não ler raízes de mídia")
+    )
+    dialect = postgresql_dialect()
+    connection = SimpleNamespace(
+        get_execution_options=dict,
+        dialect=dialect,
+    )
+    db = MagicMock()
+    db.bind = SimpleNamespace(dialect=dialect)
+    db.connection.return_value = connection
+    db.scalars.return_value = [Tenant(status="active"), Tenant(status="active")]
+    with pytest.raises(TenantContextError):
+        execute(db, CONFIRMATION)
 
 
 @pytest.mark.skipif(engine.dialect.name == "postgresql", reason="banco atual é PostgreSQL")

@@ -81,3 +81,21 @@ O operador autorizado SHALL coletar e copiar diagnósticos antes, durante e depo
 #### Scenario: Comparação antes durante e depois
 - **WHEN** as jornadas terminam e os diagnósticos são comparados
 - **THEN** o executor registra os valores observados e as lacunas, além dos resultados de isolamento e das verificações de conclusão dos jobs
+
+### Requirement: Inventário de manutenção pós-deploy somente-leitura multitenant
+
+**Aceita pelo proprietário em 05/10/2026 após o run #375.** Quando um deploy normal termina sem trailer de limpeza, o workflow SHALL poder executar inventário somente-leitura em instalação com várias contas e apresentar contagens agregadas por categoria/tipo de mídia, sem PII ou identificadores por fotógrafo. O relatório SHALL sinalizar explicitamente que a limpeza destrutiva integral continua indisponível enquanto houver múltiplos fotógrafos. A ausência de trailer de limpeza MUST NOT habilitar execução ou remover dados.
+
+O modo destrutivo `execute` SHALL manter a exigência de proprietário único, confirmação literal e guardas existentes de homologação, schema, volumes e isolamento; inventário multitenant MUST NOT remover nem enfraquecer esses controles. O aceite autoriza implementação e testes locais desta task, mas não autoriza cleanup, CI, merge ou deploy. O run #375 e deploys já concluídos não são reexecutados por este requisito.
+
+#### Scenario: Deploy normal em instalação com várias contas
+- **WHEN** o workflow termina o deploy em homologação sem trailer `Homolog-Cleanup`
+- **THEN** o inventário somente-leitura informa contagens agregadas e a indisponibilidade da limpeza multitenant sem erro de conta única, PII ou alteração de dados
+
+#### Scenario: Tentativa explícita de limpeza multitenant
+- **WHEN** o modo `execute` é invocado enquanto existem várias contas
+- **THEN** o guardião de proprietário único recusa a operação antes de apagar dados ou mídia, mantendo filas e configurações intactas
+
+#### Scenario: Inventário não implica execução
+- **WHEN** não há trailer de limpeza ou existe apenas um pedido de inventário
+- **THEN** o workflow seleciona exclusivamente o modo `inventory`, sem pausa de writers, backup de limpeza, DELETE, limpeza de mídia ou FLUSHDB

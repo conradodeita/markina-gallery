@@ -20,6 +20,7 @@ from sqlalchemy.pool import NullPool
 
 from app import auth
 from app.ownership_schema import SHARED_TABLES
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.tenant_fixtures import insert_legacy_model as insert_model
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -328,20 +329,35 @@ def test_dialeto_nao_operacional_recusado_antes_de_alterar(tmp_path):
     engine.dispose()
 
 
-def test_limpeza_multitenant_recusada_antes_de_midia(migration_db, monkeypatch):
+def test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos(
+    migration_db, monkeypatch, tmp_path
+):
     from app import homolog_cleanup
     from app.tenancy import TenantContextError
 
     url, engine = migration_db
-    migrate(url, TRANSITION)
+    # O inventário exige o schema operacional completo usado em homologação.
+    migrate(url, "20261001_0071")
+    roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
+    for root in roots.values():
+        root.mkdir()
     with Session(engine) as db:
         db.add(auth.Tenant())
         db.commit()
         monkeypatch.setenv("APP_ENV", "homolog")
+        monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: roots)
+        result = homolog_cleanup.inventory(db)
+        assert result["photographer_count"] == 2
+        assert result["destructive_cleanup"] == {
+            "status": "unavailable_multiple_photographers"
+        }
+        assert all(type(value) is int for value in result["database"].values())
+        assert all(type(value) is int for value in result["preserved"].values())
+        rendered = str(result)
+        assert str(FIXTURE_TENANT_ID) not in rendered
+        assert "Tenant" not in rendered
         roots = Mock(side_effect=AssertionError("Mídia não pode ser acessada"))
         monkeypatch.setattr(homolog_cleanup, "media_roots", roots)
-        with pytest.raises(TenantContextError):
-            homolog_cleanup.inventory(db)
         with pytest.raises(TenantContextError):
             homolog_cleanup.execute(db, homolog_cleanup.CONFIRMATION)
         roots.assert_not_called()

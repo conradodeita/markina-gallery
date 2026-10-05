@@ -171,6 +171,8 @@ def test_lifecycle_operacao_status_cancel_e_retry_contextuais(client_db, commerc
 
 
 def test_cleanup_integral_recusa_multitenant_antes_de_arquivos(client_db, commerce, monkeypatch):
+    if client_db.bind.dialect.name != "postgresql":
+        pytest.skip("a guarda de proprietário único é validada no PostgreSQL sintético")
     monkeypatch.setenv("APP_ENV", "homolog")
     monkeypatch.setattr(homolog_cleanup, "_clear_media_root", lambda *_: pytest.fail("Não limpar mídia"))
     with pytest.raises(TenantContextError):

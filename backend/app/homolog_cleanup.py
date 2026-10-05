@@ -145,8 +145,8 @@ def require_exclusive_media_roots(roots: dict[str, Path]) -> None:
 
 def inventory(db: Session) -> dict[str, object]:
     environment = require_homolog_environment()
-    require_single_tenant(db)
     require_known_schema(db)
+    photographer_count = _count(db, Tenant)
     operational_counts = {
         name: _count(db, Base.metadata.tables[name]) for name in sorted(OPERATIONAL_TABLES)
     }
@@ -159,6 +159,12 @@ def inventory(db: Session) -> dict[str, object]:
     operational_counts["client_gallery_audit_events"] = _count(
         db, AuditEvent, ~admin_security_audit_criteria()
     )
+    if photographer_count == 0:
+        cleanup_status = "unavailable_no_photographers"
+    elif photographer_count > 1:
+        cleanup_status = "unavailable_multiple_photographers"
+    else:
+        cleanup_status = "single_photographer_only"
     preserved_counts = {
         name: _count(db, Base.metadata.tables[name]) for name in sorted(PRESERVED_TABLES)
     }
@@ -173,6 +179,8 @@ def inventory(db: Session) -> dict[str, object]:
     )
     return {
         "environment": environment,
+        "photographer_count": photographer_count,
+        "destructive_cleanup": {"status": cleanup_status},
         "database": operational_counts,
         "preserved": preserved_counts,
         "media": {name: _media_inventory(root) for name, root in media_roots().items()},

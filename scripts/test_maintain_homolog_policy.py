@@ -143,6 +143,8 @@ def main() -> None:
     require("redis-cli FLUSHDB", "fila exclusiva limpa", SCRIPT)
     require('before["preserved"] != after["preserved"]', "preservação verificada", SCRIPT)
     require("environment: homolog", "Environment protegido", WORKFLOW)
+    require('maintenance_mode="inventory"', "modo padrão pós-deploy somente-leitura", WORKFLOW)
+    require('python -m app.homolog_cleanup --mode inventory', "inventário no modo padrão", SCRIPT)
     require("Homolog-Cleanup: galleries-and-clients", "sinalização exata", WORKFLOW)
     no_backup_trailer = "Homolog-Cleanup: galleries-and-clients-without-backup"
     require(no_backup_trailer, "sinalização exata sem backup", WORKFLOW)
@@ -180,7 +182,8 @@ def main() -> None:
     require("ALLOWED_ENVIRONMENTS", "gate APP_ENV", MODULE)
     require('order = operational_delete_order()', "ordem explícita de filhos antes dos pais", MODULE)
     require('db.execute(delete(Base.metadata.tables[name]))', "exclusão restrita à lista operacional", MODULE)
-    require('require_single_tenant(db)', "recusa de limpeza integral multitenant", MODULE)
+    execute_body = MODULE.split("def execute(", 1)[1].split("\ndef operational_delete_order", 1)[0]
+    require('require_single_tenant(db)', "recusa de limpeza integral multitenant", execute_body)
     require('LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE', "serialização do proprietário", MODULE)
     require('require_known_schema(db)', "bloqueio de tabela desconhecida", MODULE)
     require('require_exclusive_media_roots(roots)', "raízes de mídia fixas", MODULE)
