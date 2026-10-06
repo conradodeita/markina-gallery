@@ -19,4 +19,10 @@
 - Specs principais sincronizadas em `openspec/specs/auth/spec.md` e `openspec/specs/privacy-biometric/facial-search-notifications/spec.md`; `openspec validate --specs`: **17 passaram, 0 falharam**. A validação reporta avisos de requisitos longos, incluindo requisitos em specs preexistentes.
 - `git diff --check`: passou sem erros; Git emitiu avisos de conversão LF/CRLF.
 
-Validação somente local. CI, merge, deploy, OTP/WhatsApp remoto, sync da spec principal e archive continuam fora desta execução.
+Naquela etapa, a validação foi somente local; CI, merge, deploy e OTP/WhatsApp remoto ainda não haviam sido executados.
+
+## Correção da expectativa do teste — 06/10/2026
+
+- CI da PR #139 (run `37515709171`): 1225 testes backend passaram, 20 foram ignorados e um falhou porque `test_completion_notification_is_encrypted_idempotent_and_sent_once` ainda esperava que a mensagem terminasse em `/public-galleries/{uuid}`.
+- A implementação já emitia o caminho contextual esperado pela spec: `/?reauth=client&return_to=%2Fpublic-galleries/{uuid}`. Atualizada somente a asserção do teste para refletir esse contrato.
+- Validação focal após a correção: `pytest backend/tests/test_facial_search_worker.py::test_completion_notification_is_encrypted_idempotent_and_sent_once -q` (**1 passed**). Nova execução integral do CI pendente.

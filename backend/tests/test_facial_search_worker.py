@@ -1069,7 +1069,9 @@ def test_completion_notification_is_encrypted_idempotent_and_sent_once(
     recipient, message, key = messenger.calls[0]
     assert recipient == client.phone_e164
     assert key == f"tenant:{FIXTURE_TENANT_ID}:{notification.idempotency_key}"
-    assert message.endswith(f"/public-galleries/{parent.id}")
+    assert message.endswith(
+        f"/?reauth=client&return_to=%2Fpublic-galleries%2F{parent.id}"
+    )
     assert all(word not in message.lower() for word in ("score", "rosto", "identidade", "quantidade"))
     db.refresh(notification)
     assert notification.status == "sent"
