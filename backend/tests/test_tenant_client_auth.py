@@ -108,18 +108,101 @@ def test_desafio_A_no_link_B_recusado_antes_de_consumir_ou_reenviar(client_db, l
     assert client_db.scalar(select(func.count()).select_from(AuthSession)) == 0
 
 
-@pytest.mark.parametrize("mode", ["invalid", "generic", "uuid"])
+@pytest.mark.parametrize("mode", ["invalid", "generic"])
 def test_entrada_sem_link_valido_nao_cria_desafio_ou_entrega(client_db, graph, links, mode):
     payload = {"full_name": "Cliente sintética", "phone": PHONE}
     if mode == "invalid":
         payload["access_token"] = "invalid" + "x" * 40
-    elif mode == "uuid":
-        payload["parent_gallery_id"] = graph[0]["parent"].id
     with pytest.raises(HTTPException) as exc:
         main.client_challenge(main.ClientLinkChallengeInput(**payload), request(), client_db)
     assert exc.value.status_code == 401
     assert client_db.scalar(select(func.count()).select_from(AuthChallenge)) == 0
     assert client_db.scalar(select(func.count()).select_from(WhatsAppDelivery)) == 0
+
+
+def test_reautenticacao_contextual_autoriza_somente_vinculo_existente(client_db, graph, links):
+    record = graph[0]
+    registration = ParentGalleryRegistration(
+        tenant_id=record["tenant"].id,
+        parent_gallery_id=record["parent"].id,
+        client_id=record["client"].id,
+        status="active",
+    )
+    client_db.add(registration)
+    client_db.commit()
+
+    result = main.client_challenge(main.ClientLinkChallengeInput(
+        full_name="Cliente sintética", phone=PHONE,
+        parent_gallery_id=record["parent"].id,
+        return_to=f"/public-galleries/{record['parent'].id}",
+    ), request(), client_db)
+    row = client_db.get(AuthChallenge, UUID(result["challenge_id"]))
+    assert row and row.parent_gallery_id == record["parent"].id
+    assert row.gallery_capability_id is None
+    delivery = client_db.scalar(select(WhatsAppDelivery).where(WhatsAppDelivery.source_id == str(row.id)))
+    assert delivery and delivery.recipient_phone == PHONE
+
+    response = Response()
+    verified = main.client_verify(auth.ChallengeVerification(
+        challenge_id=row.id, code=CODE, parent_gallery_id=record["parent"].id,
+    ), response, request(), client_db)
+    assert verified["destination"] == f"/public-galleries/{record['parent'].id}"
+    cookie = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    session = auth.current_session(request(cookie), Role.CLIENT)
+    assert session.subject_id == record["client"].id
+
+
+def test_reautenticacao_contextual_sem_vinculo_nao_cria_otp(client_db, graph, links):
+    parent_id = graph[0]["parent"].id
+    result = main.client_challenge(main.ClientLinkChallengeInput(
+        full_name="Pessoa não vinculada", phone="+5511999990099", parent_gallery_id=parent_id,
+        return_to=f"/public-galleries/{parent_id}",
+    ), request(), client_db)
+    assert result["message"] == "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp."
+    assert client_db.get(AuthChallenge, UUID(result["challenge_id"])) is None
+    assert client_db.scalar(select(func.count()).select_from(WhatsAppDelivery)) == 0
+    assert client_db.scalar(select(func.count()).select_from(AuthSession)) == 0
+    resent = main.client_resend(auth.ChallengeResendInput(
+        challenge_id=UUID(result["challenge_id"]), parent_gallery_id=parent_id,
+    ), request(), client_db)
+    assert resent["message"] == "Se os dados puderem receber acesso, enviaremos um novo código."
+    assert client_db.scalar(select(func.count()).select_from(WhatsAppDelivery)) == 0
+
+
+@pytest.mark.parametrize("operation", ["verify", "resend"])
+def test_reautenticacao_contextual_revalida_vinculo_revogado(client_db, graph, links, operation):
+    record = graph[0]
+    registration = ParentGalleryRegistration(
+        tenant_id=record["tenant"].id,
+        parent_gallery_id=record["parent"].id,
+        client_id=record["client"].id,
+        status="active",
+    )
+    client_db.add(registration)
+    client_db.commit()
+    result = main.client_challenge(main.ClientLinkChallengeInput(
+        full_name="Cliente sintética", phone=PHONE, parent_gallery_id=record["parent"].id,
+    ), request(), client_db)
+    row = client_db.get(AuthChallenge, UUID(result["challenge_id"]))
+    assert row
+    registration.status = "revoked"
+    client_db.commit()
+
+    if operation == "verify":
+        with pytest.raises(HTTPException) as exc:
+            main.client_verify(auth.ChallengeVerification(
+                challenge_id=row.id, code=CODE, parent_gallery_id=record["parent"].id,
+            ), Response(), request(), client_db)
+        assert exc.value.status_code == 401
+    else:
+        result = main.client_resend(auth.ChallengeResendInput(
+            challenge_id=row.id, parent_gallery_id=record["parent"].id,
+        ), request(), client_db)
+        assert result["message"] == "Se os dados puderem receber acesso, enviaremos um novo código."
+    client_db.refresh(row)
+    assert row.attempts == 0 and row.resend_count == 0 and row.used_at is None
+    assert client_db.scalar(select(func.count()).select_from(WhatsAppDelivery)) == 1
+    assert client_db.scalar(select(func.count()).select_from(AuthSession)) == 0
 
 
 def test_login_por_links_reais_cria_cookies_cadastros_e_registros_independentes(client_db, graph, links):

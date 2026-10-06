@@ -1,7 +1,7 @@
 "use client";
 
 import { BrandLogo } from "./brand-logo";
-import { safeAdminReturn } from "./session-recovery";
+import { safeAdminReturn, safeClientGalleryReturn } from "./session-recovery";
 
 
 import { FormEvent, useEffect, useState } from "react";
@@ -67,6 +67,8 @@ export function AuthEntry({
       returnTo: params.get("return_to") ?? "",
     };
   });
+  const contextualClientReauthentication = recoveryContext === "client"
+    && safeClientGalleryReturn(invitation.returnTo) !== null;
   useEffect(() => {
     const controller = new AbortController();
     const brandingUrl = invitation.accessToken
@@ -111,7 +113,10 @@ export function AuthEntry({
         if (!invitation.accessToken) {
           const session = await sessionResponse.json();
           if (active && typeof session.destination === "string" && session.destination !== "/admin") {
-            navigate(session.destination);
+            const clientReturn = recoveryContext === "client"
+              ? safeClientGalleryReturn(invitation.returnTo)
+              : null;
+            navigate(clientReturn?.path ?? session.destination);
           }
           return;
         }
@@ -142,6 +147,9 @@ export function AuthEntry({
     setLoading(true);
     setMessage("");
     try {
+      const clientGalleryReturn = context === "client"
+        ? safeClientGalleryReturn(invitation.returnTo)
+        : null;
       const response = await fetch(
         context === "client"
           ? "/api/auth/client/challenge"
@@ -156,6 +164,7 @@ export function AuthEntry({
                   phone: clientPhoneE164,
                   ...(invitation.accessToken ? { access_token: invitation.accessToken } : {}),
                   ...(invitation.returnTo ? { return_to: invitation.returnTo } : {}),
+                  ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
                 }
               : { email: data.get("email"), password: data.get("password") },
           ),
@@ -178,6 +187,9 @@ export function AuthEntry({
     setLoading(true);
     setMessage("");
     try {
+      const clientGalleryReturn = context === "client"
+        ? safeClientGalleryReturn(invitation.returnTo)
+        : null;
       const response = await fetch(
         context === "client"
           ? "/api/auth/client/verify"
@@ -188,6 +200,7 @@ export function AuthEntry({
           credentials: "same-origin",
           body: JSON.stringify({ challenge_id: challengeId, code,
             ...(context === "client" && invitation.accessToken ? { access_token: invitation.accessToken } : {}),
+            ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
           }),
         },
       );
@@ -219,11 +232,15 @@ export function AuthEntry({
     setLoading(true);
     setMessage("");
     try {
+      const clientGalleryReturn = context === "client"
+        ? safeClientGalleryReturn(invitation.returnTo)
+        : null;
       const response = await fetch("/api/auth/client/resend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ challenge_id: challengeId,
           ...(invitation.accessToken ? { access_token: invitation.accessToken } : {}),
+          ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
         }),
       });
       const result = await response.json();
@@ -314,7 +331,7 @@ export function AuthEntry({
         <h1 id="entry-title">{branding.login_title}</h1>
         <p className="intro">{branding.login_intro}</p>
         <p className="auth-helper">{branding.login_helper}</p>
-        {recoveryContext ? <p role="status">Sua sessão terminou ou não está disponível. Entre novamente para continuar.{recoveryContext === "client" && !invitation.accessToken ? " Reabra o link enviado pelo seu fotógrafo." : ""}</p> : null}
+        {recoveryContext ? <p role="status">Sua sessão terminou ou não está disponível. Entre novamente para continuar.{recoveryContext === "client" && !invitation.accessToken && !contextualClientReauthentication ? " Reabra o link enviado pelo seu fotógrafo." : ""}</p> : null}
         <div
           className="context-tabs"
           role="tablist"
@@ -337,7 +354,7 @@ export function AuthEntry({
             Fotógrafo
           </button>
         </div>
-        {step === "details" && context === "client" && !invitation.accessToken ? (
+        {step === "details" && context === "client" && !invitation.accessToken && !contextualClientReauthentication ? (
           <section className="auth-form" aria-labelledby="client-link-title">
             <h2 id="client-link-title">Abra o link do seu fotógrafo</h2>
             <p>Para acessar suas fotos, use o link enviado pelo fotógrafo. Cada fotógrafo tem seu cadastro e acesso próprios.</p>

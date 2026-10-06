@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -274,7 +275,8 @@ def _notification_message(
     if payload != {"path": expected_path, "result": notification.result_kind}:
         raise WhatsAppConfigurationError("Payload transacional inválido.")
     base_url = notification_public_origin(settings.environment)
-    link = f"{base_url}{expected_path}"
+    return_to = urlencode({"reauth": "client", "return_to": expected_path})
+    link = f"{base_url}/?{return_to}"
     if notification.result_kind == "ready":
         return f"Sua busca na galeria foi concluída. Confira as possibilidades em {link}"
     if notification.result_kind == "no_candidates":
