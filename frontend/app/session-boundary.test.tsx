@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionBoundary } from "./session-boundary";
-import { protectedContext, recoveryLocation, safeAdminReturn } from "./session-recovery";
+import { protectedContext, recoveryLocation, safeAdminReturn, safeClientGalleryReturn } from "./session-recovery";
 
 const navigation = vi.hoisted(() => ({ pathname: "/admin" }));
 vi.mock("next/navigation", () => ({ usePathname: () => navigation.pathname }));
@@ -204,6 +204,15 @@ describe("recuperação uniforme de sessão", () => {
     }
     expect(safeAdminReturn("/admin/galleries/sources/abc/edit/imagens")).toBe("/admin/galleries/sources/abc/edit/imagens");
     expect(recoveryLocation("/public-galleries/abc")).toBe("/?reauth=client");
+    const galleryId = "0f581c42-08aa-4305-9bfb-55f803d1cfc6";
+    expect(safeClientGalleryReturn(`/public-galleries/${galleryId}`)).toEqual({
+      path: `/public-galleries/${galleryId}`,
+      galleryId,
+    });
+    expect(recoveryLocation(`/public-galleries/${galleryId}`)).toBe(
+      `/?reauth=client&return_to=%2Fpublic-galleries%2F${galleryId}`,
+    );
+    expect(safeClientGalleryReturn(`/public-galleries/${galleryId}?access_token=secret`)).toBeNull();
     expect(protectedContext("/administrator")).toBeNull();
   });
 });

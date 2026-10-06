@@ -298,7 +298,8 @@ describe("entrada com identidade configurável", () => {
   });
 
   it("preserva capability e retorno interno durante o OTP", async () => {
-    window.history.replaceState({}, "", "/?access_token=token-seguro-com-mais-de-32-caracteres&return_to=%2Fpublic-galleries%2Fpublic-1");
+    const galleryId = "0f581c42-08aa-4305-9bfb-55f803d1cfc6";
+    window.history.replaceState({}, "", `/?access_token=token-seguro-com-mais-de-32-caracteres&return_to=%2Fpublic-galleries%2F${galleryId}`);
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/auth/destination")) return Promise.resolve(new Response(null, { status: 401 }));
@@ -312,8 +313,45 @@ describe("entrada com identidade configurável", () => {
     fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/auth/client/challenge",
-      expect.objectContaining({ body: JSON.stringify({ full_name: "Pessoa convidada", phone: "+5511987654321", access_token: "token-seguro-com-mais-de-32-caracteres", return_to: "/public-galleries/public-1" }) }),
+      expect.objectContaining({ body: JSON.stringify({ full_name: "Pessoa convidada", phone: "+5511987654321", access_token: "token-seguro-com-mais-de-32-caracteres", return_to: `/public-galleries/${galleryId}`, parent_gallery_id: galleryId }) }),
     ));
+  });
+
+  it("retorna à galeria contextual após o OTP sem capability", async () => {
+    const galleryId = "0f581c42-08aa-4305-9bfb-55f803d1cfc6";
+    window.history.replaceState({}, "", `/?reauth=client&return_to=%2Fpublic-galleries%2F${galleryId}`);
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/destination")) return Promise.resolve(new Response(null, { status: 401 }));
+      if (url.includes("/auth/client/challenge")) return Promise.resolve(new Response(JSON.stringify({ challenge_id: "reauth-challenge", message: "Código enviado." }), { status: 202 }));
+      if (url.includes("/auth/client/verify")) return Promise.resolve(new Response(JSON.stringify({ destination: `/public-galleries/${galleryId}` }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    const navigate = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={navigate} recoveryContext="client" initialInvitation={{ accessToken: "", returnTo: `/public-galleries/${galleryId}` }} />);
+    fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Pessoa autorizada" } });
+    fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11987654321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+    await screen.findByLabelText("Código enviado por WhatsApp");
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/challenge", expect.objectContaining({
+      body: JSON.stringify({ full_name: "Pessoa autorizada", phone: "+5511987654321", return_to: `/public-galleries/${galleryId}`, parent_gallery_id: galleryId }),
+    }));
+    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/public-galleries/${galleryId}`));
+  });
+
+  it("abre a galeria contextual diretamente quando a sessão do cliente ainda é válida", async () => {
+    const galleryId = "0f581c42-08aa-4305-9bfb-55f803d1cfc6";
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input).includes("/auth/destination")) return Promise.resolve(new Response(JSON.stringify({ destination: "/library" }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    const navigate = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry navigate={navigate} recoveryContext="client" initialInvitation={{ accessToken: "", returnTo: `/public-galleries/${galleryId}` }} />);
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/public-galleries/${galleryId}`));
   });
 
   it("aplica o link automaticamente quando a cliente já está autenticada", async () => {

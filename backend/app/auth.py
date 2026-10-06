@@ -2926,11 +2926,13 @@ class ChallengeVerification(BaseModel):
     challenge_id: UUID
     code: str = Field(pattern=r"^\d{6}$")
     access_token: str | None = Field(default=None, min_length=32, max_length=256)
+    parent_gallery_id: UUID | None = None
 
 
 class ChallengeResendInput(BaseModel):
     challenge_id: UUID
     access_token: str | None = Field(default=None, min_length=32, max_length=256)
+    parent_gallery_id: UUID | None = None
 
 
 class AdminPasswordInput(BaseModel):

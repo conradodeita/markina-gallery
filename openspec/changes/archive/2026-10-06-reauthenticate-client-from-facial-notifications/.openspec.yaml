@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-06
+goal: Abrir o login contextual da galeria e retomar os resultados após OTP
+  somente para clientes já vinculados.

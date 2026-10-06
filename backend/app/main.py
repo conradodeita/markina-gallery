@@ -1448,7 +1448,21 @@ def validate_client_capability_context(
 
 def client_challenge_context(
     db: Session, request: Request, challenge_id: UUID, access_token: str | None,
+    parent_gallery_id: UUID | None = None,
 ) -> UUID:
+    if not access_token and parent_gallery_id:
+        challenge = db.scalar(select(AuthChallenge).where(
+            AuthChallenge.id == challenge_id,
+            AuthChallenge.kind == "client_otp",
+            AuthChallenge.parent_gallery_id == parent_gallery_id,
+        ).with_for_update())
+        if not challenge or not challenge.subject:
+            raise neutral_error()
+        parent = _active_client_reauthentication_parent(db, parent_gallery_id, challenge.tenant_id)
+        if not _registered_client_for_gallery(db, parent, challenge.subject):
+            raise neutral_error()
+        return challenge.tenant_id
+
     tenant_id, presented, _parent = client_link_context(db, request, access_token)
     challenge = db.scalar(select(AuthChallenge).where(
         AuthChallenge.id == challenge_id, AuthChallenge.tenant_id == tenant_id,
@@ -1463,7 +1477,42 @@ def client_challenge_context(
         if presented is not None and presented.id != original.id:
             raise neutral_error()
         validate_client_capability_context(db, original)
+    if parent_gallery_id and challenge.parent_gallery_id != parent_gallery_id:
+        raise neutral_error()
     return tenant_id
+
+
+def _active_client_reauthentication_parent(
+    db: Session, parent_gallery_id: UUID, tenant_id: UUID | None = None,
+) -> ParentGallery:
+    parent = db.scalar(select(ParentGallery).where(
+        ParentGallery.id == parent_gallery_id,
+        ParentGallery.active.is_(True),
+        ParentGallery.lifecycle_status == "active",
+        ParentGallery.access_mode.in_(("standard", "invite_only")),
+    ))
+    if not parent or (tenant_id is not None and parent.tenant_id != tenant_id):
+        raise neutral_error()
+    require_client_auth_tenant(db, parent.tenant_id)
+    return parent
+
+
+def _registered_client_for_gallery(
+    db: Session, parent: ParentGallery, phone: str,
+) -> Client | None:
+    try:
+        client = resolve_client_by_phone(db, phone, tenant_id=parent.tenant_id)
+    except ClientIdentityConflict:
+        return None
+    if not client:
+        return None
+    try:
+        require_public_gallery_browsing(
+            db, parent_gallery_id=parent.id, client_id=client.id,
+        )
+    except PublicGalleryAccessDenied:
+        return None
+    return client
 
 
 @app.post("/auth/client/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -1477,22 +1526,46 @@ def client_challenge(
     # Proteção global precede resolução para cobrir também links inválidos.
     ip_address = request.client.host if request.client else "unknown"
     enforce_rate_limit(db, "client_otp.entry", pii_fingerprint(phone), ip_address)
-    try:
-        tenant_id, capability, parent = client_link_context(db, request, payload.access_token)
-        if payload.parent_gallery_id and (not parent or payload.parent_gallery_id != parent.id):
-            raise neutral_error()
-    except HTTPException:
-        audit(db, "client_otp.context_rejected", "invalid")
-        db.commit()
-        raise
+    contextual_reauthentication = not payload.access_token and payload.parent_gallery_id is not None
+    if contextual_reauthentication:
+        try:
+            parent = _active_client_reauthentication_parent(db, payload.parent_gallery_id)
+        except HTTPException:
+            audit(db, "client_otp.context_rejected", "invalid")
+            db.commit()
+            return {
+                "challenge_id": str(uuid4()),
+                "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
+            }
+        tenant_id, capability = parent.tenant_id, None
+    else:
+        try:
+            tenant_id, capability, parent = client_link_context(db, request, payload.access_token)
+            if payload.parent_gallery_id and (not parent or payload.parent_gallery_id != parent.id):
+                raise neutral_error()
+        except HTTPException:
+            audit(db, "client_otp.context_rejected", "invalid")
+            db.commit()
+            raise
     client_auth_rate_limit(db, "client_otp.challenge", pii_fingerprint(phone), ip_address,
                                 tenant_id=tenant_id,
                             )
+    if contextual_reauthentication and not _registered_client_for_gallery(db, parent, phone):
+        audit(db, "client_otp.context_rejected", "invalid", tenant_id=tenant_id)
+        db.commit()
+        return {
+            "challenge_id": str(uuid4()),
+            "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
+        }
     challenge, code = create_challenge(
         db, "client_otp", phone, tenant_id=tenant_id, client_name=client_name,
         parent_gallery_id=parent.id if parent else None,
         gallery_capability_id=capability.id if capability else None,
-        return_to=safe_internal_return(payload.return_to, "/library") if payload.return_to else None,
+        return_to=(
+            f"/public-galleries/{parent.id}"
+            if contextual_reauthentication and parent
+            else safe_internal_return(payload.return_to, "/library") if payload.return_to else None
+        ),
     )
     enqueue_client_otp_delivery(db, challenge, code)
     return {
@@ -1505,7 +1578,14 @@ def client_challenge(
 def client_resend(
     payload: ChallengeResendInput, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, str]:
-    tenant_id = client_challenge_context(db, request, payload.challenge_id, payload.access_token)
+    try:
+        tenant_id = client_challenge_context(
+            db, request, payload.challenge_id, payload.access_token, payload.parent_gallery_id,
+        )
+    except HTTPException:
+        if not payload.access_token and payload.parent_gallery_id:
+            return {"message": "Se os dados puderem receber acesso, enviaremos um novo código."}
+        raise
     resend_client_challenge(
         db, payload.challenge_id, request.client.host if request.client else "unknown",
         tenant_id=tenant_id,
@@ -1518,7 +1598,9 @@ def client_verify(
     payload: ChallengeVerification, response: Response, request: Request,
     db: Session = Depends(db_session)
 ) -> dict[str, str]:
-    tenant_id = client_challenge_context(db, request, payload.challenge_id, payload.access_token)
+    tenant_id = client_challenge_context(
+        db, request, payload.challenge_id, payload.access_token, payload.parent_gallery_id,
+    )
     pending = db.get(AuthChallenge, payload.challenge_id)
     client_auth_rate_limit(db, "client_otp.verify", challenge_fingerprint(pending),
                            request.client.host if request.client else "unknown", tenant_id=tenant_id)
