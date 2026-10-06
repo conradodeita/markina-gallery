@@ -52,6 +52,15 @@ jobs:
       - name: Validar mudanças e specs
         run: npx -y @fission-ai/openspec@latest validate --strict --all
 
+  homolog-inventory-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar sintaxe Bash do inventário
+        run: bash -n scripts/inventory-homolog-readonly.sh
+      - name: Testar política de escopo e SHA
+        run: python scripts/test_readonly_homolog_inventory_policy.py
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
