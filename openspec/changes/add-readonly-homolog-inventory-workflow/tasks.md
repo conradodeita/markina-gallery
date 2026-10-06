@@ -12,5 +12,5 @@
 
 ## 3. Uso operacional posterior
 
-- [ ] 3.1 Abrir PR somente para `main` e aguardar CI/revisão; mergear esta ferramenta não implanta a aplicação.
-- [ ] 3.2 Após o merge, executar o inventário contra o SHA realmente implantado e registrar seu resultado minimizado antes de propor qualquer deploy.
+- [x] 3.1 Abrir PR somente para `main` e aguardar CI/revisão; PR #140 foi mergeada em 2026-10-06 (merge `27ac530d58af5f7accbc99d6d220177c1e5a8da1`), sem disparar deploy.
+- [x] 3.2 Após o merge, executar o inventário contra o SHA realmente implantado e registrar seu resultado minimizado antes de propor qualquer deploy; run [37532440468](https://github.com/conradodeita/markina-gallery/actions/runs/37532440468), resultado em `inventory-result.md`.
