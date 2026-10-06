@@ -1,0 +1,67 @@
+name: Read-only homolog inventory
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: SHA integral atualmente implantado em homologação
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homolog-readonly-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: homolog
+    permissions:
+      contents: read
+    env:
+      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
+      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
+      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
+      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
+      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
+      EXPECTED_DEPLOYED_SHA: ${{ inputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validar branch e SHA esperado
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "Workflow permitido somente em main" >&2; exit 1; }
+          [[ "$EXPECTED_DEPLOYED_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "SHA integral inválido" >&2; exit 1; }
+          EXPECTED_DEPLOYED_SHA="${EXPECTED_DEPLOYED_SHA,,}"
+          echo "EXPECTED_DEPLOYED_SHA=$EXPECTED_DEPLOYED_SHA" >> "$GITHUB_ENV"
+      - name: Executar inventário somente leitura
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Secret obrigatório ausente: $required" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          remote_command="$(printf 'cd /opt/markina-gallery && bash -s -- --expected-sha %q' "$EXPECTED_DEPLOYED_SHA")"
+          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_hosts_file" \
+            "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" \
+            < scripts/inventory-homolog-readonly.sh
+          echo "health endpoints públicos (somente código HTTP):"
+          for endpoint in https://markina-homolog.duckdns.org/healthz https://markina-homolog.duckdns.org/api/health; do
+            status="$(curl --fail --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint")"
+            printf '%s: HTTP %s\n' "${endpoint#https://markina-homolog.duckdns.org}" "$status"
+          done
