@@ -9,7 +9,7 @@
 ## 2. Integração e evidências
 
 - [x] 2.1 Executar testes de autenticação/outbox no baseline atual, Ruff backend, OpenSpec estrito e diff-check; revisar diff e registrar evidências antes de preparar PR. Evidência: 17/17 regressões novas, 27/27 testes multitenant existentes e 18/18 regressões legadas; Ruff backend completo e OpenSpec 1.14.0 estrito (80/80) aprovados; diff limitado aos arquivos desta change.
-- [ ] 2.2 Criar commit focado e PR para develop, anexar PR e registrar estado do CI sem merge/deploy automático.
+- [x] 2.2 Criar commit focado e PR para develop, anexar PR e registrar estado do CI sem merge/deploy automático. Evidência: commit 9d182e4, PR #144 para develop criada e anexada ao chat; CI iniciado. Apenas documentação de continuidade foi alterada após os testes locais; CI verde e autorização de deploy permanecem pendentes.
 
 ## Workflow follow-up
 

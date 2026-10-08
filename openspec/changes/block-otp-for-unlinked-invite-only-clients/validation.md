@@ -54,3 +54,11 @@ Ruff completo backend passou; OpenSpec 1.14.0 estrito aprovou 80 itens, zero fal
 - Validação final do arquivo novo completo após esse ajuste: `python -m pytest -q tests/test_invite_only_otp.py --tb=short`: **17 passaram, 208,94 s**, apenas dois avisos preexistentes on_event.
 - Total de casos distintos validados no baseline atual: **62** (17 novos + 27 multitenant existentes + 18 regressões legadas). A cobertura existente foi reutilizada porque a única alteração posterior era a fixture dos três casos novos, todos reexecutados e aprovados. Docker local indisponível; PostgreSQL e a suíte integral ficam no CI. Nenhuma alteração de infraestrutura foi tentada.
 - Revisão final do diff: apenas elegibilidade antes de OTP, sua integração em solicitação/reenvio e testes/artefatos relacionados. Validação final não inclui frontend local porque nenhum arquivo frontend foi alterado; lint/testes/build frontend permanecem no CI obrigatório.
+
+## Entrega para revisão
+
+- Commit de implementação: `9d182e446dc161365c3bded423e85d5925dd0140`.
+- PR **#144**, base develop: https://github.com/conradodeita/markina-gallery/pull/144 . Criada e anexada ao chat.
+- Primeiro CI iniciado: run `37719121217`, com backend/frontend/OpenSpec/gitleaks em execução no momento do registro. A atualização documental posterior mantém todos os arquivos de aplicação/testes inalterados; exige validar o CI do HEAD mais recente antes do merge.
+- Todas as tarefas locais desta integração foram concluídas. CI verde, revisão humana, inventário/autorização operacional de deploy e ensaio remoto continuam pendentes. Merge não executado; nenhuma publicação remota ou alteração de dados de homologação.
+- Próximo executor: consultar checks da PR #144 no HEAD atual. Se falhar, investigar os logs e corrigir somente dentro desta change. Se passar, apresentar inventário/plano e obter autorização de merge/deploy porque a integração em develop publica automaticamente. Manter canais, dados e infraestrutura de terceiros intactos.
