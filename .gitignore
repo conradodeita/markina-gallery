@@ -41,6 +41,7 @@ media/
 backups/
 pgdata/
 redisdata/
+backend/*.db
 
 # ============================================================
 # Logs e sistema
