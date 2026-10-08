@@ -4,6 +4,7 @@ import { InstallApp } from "./install-app";
 import { ThemeControl } from "./theme-control";
 import { themeBootstrap } from "./theme";
 import { SessionBoundary } from "./session-boundary";
+import { AdminSessionToolbar } from "./admin-session-toolbar";
 import "./local-fonts.css";
 import "./design-tokens.css";
 import "./design-system.css";
@@ -27,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: themeBootstrap }} /></head>
-      <body><div className="appearance-toolbar"><ThemeControl /><InstallApp /></div><SessionBoundary>{children}</SessionBoundary></body>
+      <body><div className="appearance-toolbar"><ThemeControl /><AdminSessionToolbar /><InstallApp /></div><SessionBoundary>{children}</SessionBoundary></body>
     </html>
   );
 }

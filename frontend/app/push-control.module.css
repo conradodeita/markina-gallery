@@ -6,9 +6,6 @@
 .actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
 .identity { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px; max-width:min(100%, 360px); padding:8px 11px; border:1px solid var(--mk-border); border-radius:12px; color:var(--mk-ink-muted); background:var(--mk-surface-subtle); font-size:.8rem; line-height:1.35; overflow-wrap:anywhere; }
 .identity span { font-weight:700; color:var(--mk-ink); }
-.adminHeader { flex-wrap:wrap; }
-.adminHeader nav { min-width:min(100%,420px); }
-@media(max-width:1100px) { .adminHeader nav { order:3; width:100%; flex-basis:100%; } .adminHeader .actions { margin-inline-start:auto; } }
 @media(max-width:600px) { .actions { width:100%; justify-content:flex-start; } }
 
 .invitation { width:min(440px, calc(100vw - 32px)); max-height:calc(100dvh - 40px); overflow:auto; padding:24px; margin:auto; border:1px solid var(--mk-border); border-radius:20px; color:var(--mk-ink); background:var(--mk-surface, #fff); box-shadow:0 16px 60px #0003; }
