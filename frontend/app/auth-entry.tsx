@@ -12,6 +12,8 @@ const genericError =
   "Não foi possível concluir a autenticação. Confira os dados e tente novamente.";
 const brazilPhoneError =
   "Informe DDD e celular com o nono dígito: (11) 99999-9999.";
+const clientOtpGuidance =
+  "O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.";
 const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar.", logo_url: null as string | null, app_icon_url: null as string | null, favicon_url: null as string | null };
 
 type AuthEntryProps = {
@@ -173,7 +175,7 @@ export function AuthEntry({
       const result = await response.json();
       if (!response.ok) throw new Error();
       setChallengeId(result.challenge_id);
-      setMessage(result.message);
+      setMessage(context === "client" ? clientOtpGuidance : result.message);
       setStep("code");
     } catch {
       setMessage(genericError);
@@ -243,9 +245,9 @@ export function AuthEntry({
           ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
         }),
       });
-      const result = await response.json();
+      await response.json();
       if (!response.ok) throw new Error();
-      setMessage(result.message);
+      setMessage(clientOtpGuidance);
     } catch {
       setMessage(
         "Não foi possível reenviar o código agora. Tente novamente mais tarde.",
@@ -435,7 +437,7 @@ export function AuthEntry({
           <form onSubmit={verifyCode} className="auth-form">
             <label>
               {context === "client"
-                ? "Código enviado por WhatsApp"
+                ? "Código de acesso"
                 : "Código do autenticador"}
               <input
                 name="code"

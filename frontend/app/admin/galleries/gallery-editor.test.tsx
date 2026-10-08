@@ -837,7 +837,7 @@ describe("editor administrativo de galeria", () => {
   }, 15_000);
 
   it("mantém controles de apresentação próprios e direciona a proteção global", async () => {
-    const details = { available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }], cover_options: [], settings: { cover_photo_id: null, cover_preview_url: null, cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
+    const details = { cover_readiness: { status: "ready", message: "Capa pronta." }, available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }], cover_options: [{ id: "cover-1", name: "CAPA.jpg", status: "ready", preview_url: "/admin/photo-assets/cover-1/preview" }], settings: { cover_photo_id: "cover-1", cover_preview_url: "/admin/photo-assets/cover-1/preview", cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (init?.method === "PATCH") return response({});
       return path.endsWith("/editor") ? response(editor) : response(details);

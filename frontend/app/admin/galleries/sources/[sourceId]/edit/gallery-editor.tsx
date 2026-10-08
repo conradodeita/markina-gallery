@@ -20,7 +20,8 @@ import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurr
 
 type StepId = "ajustes" | "vendas" | "detalhes" | "imagens" | "clientes";
 type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | "unavailable"; available: boolean };
-type Editor = { gallery: { id: string; name: string; event_name: string; description: string; active: boolean; access_mode: "standard" | "invite_only" | "collective_protected"; unlisted_link: string | null; public_link?: { status: string; capability_id: string | null; expires_at: string | null; secret_available: boolean }; cover_photo_id: string | null; cover_preview_url: string | null; folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean } };
+type CoverReadiness = { status: "missing" | "processing" | "failed" | "ready"; message: string };
+type Editor = { cover_readiness?: CoverReadiness; gallery: { id: string; name: string; event_name: string; description: string; active: boolean; access_mode: "standard" | "invite_only" | "collective_protected"; unlisted_link: string | null; public_link?: { status: string; capability_id: string | null; expires_at: string | null; secret_available: boolean }; cover_photo_id: string | null; cover_preview_url: string | null; folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean; can_complete?: boolean } };
 type PublicationCounts = { published: number; ready_to_publish: number; processing: number; failed: number };
 type Folder = { id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null; publication_counts?: PublicationCounts };
 type Photo = { id: string; name: string; preview_url: string | null; status: string; publication_state?: "published" | "ready_to_publish" | "processing" | "failed"; available?: boolean; width?: number | null; height?: number | null; error: string | null; can_delete: boolean; is_cover: boolean };
@@ -33,7 +34,7 @@ type SalesData = { payment_required?: boolean; available: boolean; reason?: stri
 type GalleryLink = { status: "active" | "unavailable" | "legacy_unrecoverable"; capability_id: string | null; expires_at: string | null; secret_available: boolean; link: string | null };
 type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
 type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing" | "failed"; preview_url: string | null; width: number | null; height: number | null; error?: string | null };
-type DetailsData = { available: boolean; capabilities: string[]; font_options: FontOption[]; cover_options: CoverOption[]; settings: { cover_photo_id: string | null; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string } };
+type DetailsData = { cover_readiness?: CoverReadiness; available: boolean; capabilities: string[]; font_options: FontOption[]; cover_options: CoverOption[]; settings: { cover_photo_id: string | null; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string } };
 type VisualPreview = { folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string };
 type UnlinkPreview = { operation_type: "unlink_client"; target: { parent_gallery_id: string; parent_gallery_name: string; client_id: string; client_name: string }; inventory: { remove: Record<string, number>; preserve: Record<string, number | Record<string, number>> }; consequences: { gallery_relationship_removed: boolean; private_gallery_removed: boolean; client_preserved: boolean; commercial_history_preserved: boolean; other_gallery_relationships_preserved: boolean; restoration_available_after_start: boolean } };
 type LifecycleOperation = { operation_id: string; status: string; status_url: string; last_error: string | null; progress: { label: string; percent: number; failed_step: string | null }; actions: { can_cancel: boolean; can_retry: boolean; should_poll: boolean; poll_after_ms: number | null } };
@@ -268,6 +269,9 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   );
   const currentCover = details?.cover_options?.find((option) => option.id === details.settings?.cover_photo_id) ?? details?.cover_options?.[0] ?? null;
   const coverPreviewUrl = currentCover?.preview_url ?? details?.settings?.cover_preview_url ?? editor?.gallery.cover_preview_url ?? null;
+  const coverReadiness = details?.cover_readiness ?? editor?.cover_readiness;
+  const coverReady = coverReadiness?.status === "ready" && !detailsPollingError;
+  const coverRequiredMessage = coverReadiness?.message ?? "Defina uma imagem de capa para salvar Detalhes e concluir a galeria.";
   const titleFontFamily = details?.font_options?.find((option) => option.token === visualPreview?.cover_title_font)?.css_family ?? "var(--font-system-sans)";
   const activeEditableForm = currentStep === "ajustes" ? "gallery-settings-step" : currentStep === "vendas" ? "gallery-sales-step" : currentStep === "detalhes" ? "gallery-details-step" : null;
 
@@ -399,6 +403,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   async function saveVisualSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (savingStep) return;
+    if (!coverReady) {
+      setMessage(detailsPollingError || coverRequiredMessage);
+      return;
+    }
     setSavingStep(true);
     const form = new FormData(event.currentTarget);
     const saved = await mutate(`/api/admin/parent-galleries/${sourceId}/settings`, "PATCH", {
@@ -412,6 +420,25 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   function updateVisualPreview(event: FormEvent<HTMLFormElement>) {
     const form = new FormData(event.currentTarget);
     setVisualPreview({ folder_display_mode: visualPreview?.folder_display_mode ?? editor?.gallery.folder_display_mode ?? "individual", cover_title_font: String(form.get("cover_title_font") ?? "system-sans"), cover_title_color: String(form.get("cover_title_color") ?? "#FFFFFF"), cover_title_size: Number(form.get("cover_title_size") ?? 32), cover_title_position: String(form.get("cover_title_position") ?? "bottom-left") });
+  }
+
+  async function completeGallery() {
+    if (savingStep) return;
+    setSavingStep(true);
+    try {
+      const latest = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/editor`) as Editor;
+      setEditor(latest);
+      if (latest.actions.can_complete !== true || latest.cover_readiness?.status !== "ready") {
+        setMessage(latest.cover_readiness?.message ?? coverRequiredMessage);
+        return;
+      }
+      setDirty(false);
+      router.push(`/admin/galleries/sources/${sourceId}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível verificar a capa. Tente novamente.");
+    } finally {
+      setSavingStep(false);
+    }
   }
 
   async function saveSales(event: FormEvent<HTMLFormElement>) {
@@ -741,6 +768,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <div className="gallery-customization-panels">
                 <fieldset className="gallery-customization-panel">
                   <legend>Capa e título</legend>
+                  <p>A capa é obrigatória para salvar esta etapa e concluir a galeria.</p>
+                  {!coverReady ? <p className="gallery-scope-note" role="status">{coverRequiredMessage}</p> : null}
                   <p>Envie do seu dispositivo um JPEG horizontal (largura maior que a altura), sem marca-d’água nem grade, para usar como capa. As fotos das pastas não são carregadas nesta etapa.</p>
                   <input ref={coverUploadInput} type="file" accept="image/jpeg" hidden onChange={uploadCover} />
                   <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>{currentCover ? "Substituir imagem de capa" : "Enviar imagem de capa"}</MarkinaButton>
@@ -829,7 +858,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       {message ? <p className="notice" role="status">{message}</p> : null}
       <footer className="gallery-editor-footer">
         {previous ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/${previous}`} onClick={confirmDiscard}>← Voltar</Link> : <span />}
-      {next && activeEditableForm ? <MarkinaButton type="submit" form={activeEditableForm} disabled={savingStep}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : currentStep === "imagens" ? <MarkinaButton type="button" disabled={savingStep} onClick={saveImagesAndAdvance}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : next ? <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/${next}`}>Avançar →</Link> : <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}`}>Concluir</Link>}
+      {next && activeEditableForm ? <MarkinaButton type="submit" form={activeEditableForm} disabled={savingStep || (currentStep === "detalhes" && !coverReady)}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : currentStep === "imagens" ? <MarkinaButton type="button" disabled={savingStep} onClick={saveImagesAndAdvance}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : next ? <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/${next}`}>Avançar →</Link> : <MarkinaButton type="button" disabled={savingStep} onClick={completeGallery}>{savingStep ? "Verificando…" : "Concluir"}</MarkinaButton>}
       </footer>
     </main>
   );

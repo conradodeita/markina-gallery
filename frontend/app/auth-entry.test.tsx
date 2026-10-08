@@ -8,6 +8,7 @@ import {
 } from "./auth-entry";
 
 const fixtureToken = "synthetic-link-with-more-than-32-characters";
+const expectedOtpGuidance = "O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.";
 beforeEach(() => {
   window.history.replaceState({}, "", `/?access_token=${fixtureToken}`);
 });
@@ -16,6 +17,28 @@ afterEach(() => {
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
   document.head.querySelectorAll('link[data-branding-test]').forEach((element) => element.remove());
+});
+
+it.each([200, 202])("solicitação e reenvio aceitos (%s) orientam sem prometer envio ou revelar vínculo", async (status) => {
+  const fetchMock = vi.fn((input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("/auth/client/challenge") || url.includes("/auth/client/resend")) {
+      return Promise.resolve(new Response(JSON.stringify({ challenge_id: "neutral-challenge", message: "Código enviado." }), { status }));
+    }
+    return Promise.resolve(new Response(null, { status: 403 }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AuthEntry initialInvitation={{ accessToken: fixtureToken, returnTo: "/public-galleries/own-gallery" }} navigate={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Cliente Sintética" } });
+  fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11987654321" } });
+  fireEvent.submit(screen.getByRole("button", { name: "Receber código" }).closest("form")!);
+  await screen.findByLabelText("Código de acesso");
+  expect(screen.getByRole("status").textContent).toBe(expectedOtpGuidance);
+  expect(screen.queryByText("Código enviado.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Reenviar código" }));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toBe(expectedOtpGuidance));
+  expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/resend", expect.objectContaining({ body: expect.stringContaining(fixtureToken) }));
+  expect(screen.getByLabelText("Código de acesso")).toBeTruthy();
 });
 
 describe("entrada com identidade configurável", () => {
@@ -83,11 +106,11 @@ describe("entrada com identidade configurável", () => {
     fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Cliente sintética" } });
     fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11999990001" } });
     fireEvent.submit(screen.getByRole("button", { name: "Receber código" }).closest("form")!);
-    await screen.findByLabelText("Código enviado por WhatsApp");
+    await screen.findByLabelText("Código de acesso");
     fireEvent.click(screen.getByRole("button", { name: "Reenviar código" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/resend", expect.objectContaining({ body: JSON.stringify({ challenge_id: "own-challenge", access_token: token }) })));
     await waitFor(() => expect(screen.getByRole("button", { name: "Entrar" }).hasAttribute("disabled")).toBe(false));
-    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByLabelText("Código de acesso"), { target: { value: "123456" } });
     fireEvent.submit(screen.getByRole("button", { name: "Entrar" }).closest("form")!);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/verify", expect.objectContaining({ body: JSON.stringify({ challenge_id: "own-challenge", code: "123456", access_token: token }) })));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/library"));
@@ -247,8 +270,8 @@ describe("entrada com identidade configurável", () => {
       target: { value: "11987654321" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
-    await screen.findByLabelText("Código enviado por WhatsApp");
-    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), {
+    await screen.findByLabelText("Código de acesso");
+    fireEvent.change(screen.getByLabelText("Código de acesso"), {
       target: { value: "123456" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
@@ -286,8 +309,8 @@ describe("entrada com identidade configurável", () => {
       target: { value: "11987654321" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
-    await screen.findByLabelText("Código enviado por WhatsApp");
-    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), {
+    await screen.findByLabelText("Código de acesso");
+    fireEvent.change(screen.getByLabelText("Código de acesso"), {
       target: { value: "123456" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
@@ -333,11 +356,11 @@ describe("entrada com identidade configurável", () => {
     fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Pessoa autorizada" } });
     fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11987654321" } });
     fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
-    await screen.findByLabelText("Código enviado por WhatsApp");
+    await screen.findByLabelText("Código de acesso");
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/challenge", expect.objectContaining({
       body: JSON.stringify({ full_name: "Pessoa autorizada", phone: "+5511987654321", return_to: `/public-galleries/${galleryId}`, parent_gallery_id: galleryId }),
     }));
-    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByLabelText("Código de acesso"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/public-galleries/${galleryId}`));
   });
@@ -401,8 +424,8 @@ describe("entrada com identidade configurável", () => {
       target: { value: "11987654321" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
-    await screen.findByLabelText("Código enviado por WhatsApp");
-    fireEvent.change(screen.getByLabelText("Código enviado por WhatsApp"), {
+    await screen.findByLabelText("Código de acesso");
+    fireEvent.change(screen.getByLabelText("Código de acesso"), {
       target: { value: "000000" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));

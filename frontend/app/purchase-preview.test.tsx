@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { PurchasePreview, purchasePreviewUrl } from "./purchase-preview";
 
 describe("prévia protegida de compra", () => {
-  it.each(["/library/history/items/item-1/preview", "/gallery/gallery-1/photos/photo-1/preview", "/public-galleries/gallery-1/photos/photo-1/preview"])("encaminha %s uma única vez à API", (path) => {
+  it.each(["/library/purchases/items/item-1/preview", "/library/history/items/item-1/preview", "/gallery/gallery-1/photos/photo-1/preview", "/public-galleries/gallery-1/photos/photo-1/preview"])("encaminha %s uma única vez à API", (path) => {
     expect(purchasePreviewUrl(path)).toBe(`/api${path}`);
     expect(purchasePreviewUrl(`/api${path}`)).toBe(`/api${path}`);
   });
@@ -23,5 +23,16 @@ describe("prévia protegida de compra", () => {
   it("renderiza a prévia protegida da galeria canônica no carrinho", () => {
     render(<PurchasePreview path="/public-galleries/gallery-1/photos/photo-1/preview" name="Ensaio.jpg" />);
     expect(screen.getByRole("img").getAttribute("src")).toBe("/api/public-galleries/gallery-1/photos/photo-1/preview");
+  });
+  it.each([
+    "/library/purchases/items/a/original",
+    "/library/purchases/items/../preview",
+    "/library/purchases/items/a/preview?redirect=outside",
+    "/library/purchases/items/a/preview#fragment",
+    "/api/api/library/purchases/items/a/preview",
+    "https://outside.test/library/purchases/items/a/preview",
+    "//outside.test/library/purchases/items/a/preview",
+  ])("recusa alternativa comercial indevida %s", (path) => {
+    expect(purchasePreviewUrl(path)).toBeNull();
   });
 });
