@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Client,
+    DerivedGallery,
     FolderClientGrant,
     GalleryAccessCapability,
     GalleryClientState,
@@ -18,6 +19,7 @@ from app.auth import (
     Tenant,
     expired,
 )
+from app.client_identity import ClientIdentityConflict, resolve_client_by_phone
 from app.parent_registration import link_client_to_parent
 
 
@@ -72,6 +74,53 @@ def active_registration(
             ParentGalleryRegistration.status == "active",
         )
     )
+
+
+def client_otp_delivery_allowed(
+    db: Session,
+    *,
+    parent: ParentGallery | None,
+    phone_e164: str,
+    capability: GalleryAccessCapability | None,
+) -> bool:
+    """Check invite-only eligibility without creating membership or a session."""
+    if not parent or parent.access_mode != "invite_only":
+        return True
+    if capability and (
+        capability.tenant_id != parent.tenant_id
+        or capability.parent_gallery_id != parent.id
+        or capability.status != "active"
+        or (capability.expires_at and expired(capability.expires_at))
+    ):
+        return False
+    # Shared private links retain their own enrollment contract.
+    if capability and capability.scope == "private_gallery_link":
+        return True
+    try:
+        client = resolve_client_by_phone(db, phone_e164, tenant_id=parent.tenant_id)
+    except ClientIdentityConflict:
+        return False
+    if not client:
+        return False
+    if capability:
+        if capability.scope == "parent_invite":
+            return capability.client_id == client.id
+        if capability.scope in {"private_invite", "private_client_invite"}:
+            gallery = db.scalar(select(DerivedGallery).where(
+                DerivedGallery.id == capability.derived_gallery_id,
+                DerivedGallery.tenant_id == parent.tenant_id,
+                DerivedGallery.parent_gallery_id == parent.id,
+                DerivedGallery.client_id == client.id,
+                DerivedGallery.access_enabled.is_(True),
+            ))
+            return capability.client_id == client.id and gallery is not None
+        if capability.scope != "public_gallery":
+            return False
+    try:
+        require_public_gallery_browsing(db, parent_gallery_id=parent.id, client_id=client.id)
+    except PublicGalleryAccessDenied:
+        return False
+    return True
 
 
 def apply_public_gallery_access(
