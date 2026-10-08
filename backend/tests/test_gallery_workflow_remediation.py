@@ -428,6 +428,11 @@ def test_cover_font_uses_controlled_tokens_and_safe_legacy_fallback(client: Test
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento", cover_title_font="fonte-legada-desconhecida")
         db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Capa")
+        db.add(folder)
+        db.flush()
+        parent.cover_photo_id = ready_photo(db, parent=parent, folder=folder).id
         db.commit()
         parent_id = parent.id
 

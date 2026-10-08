@@ -255,6 +255,7 @@ from app.gallery_access import (
     rotate_gallery_capability,
     validate_gallery_capability_runtime_configuration,
 )
+from app.gallery_cover_readiness import gallery_cover_readiness
 from app.gallery_lifecycle import (
     client_unlink_inventory,
     gallery_deletion_inventory,
@@ -3183,7 +3184,9 @@ def parent_gallery_editor(
         db, parent_gallery_id=gallery.id, scope="public_gallery",
         tenant_id=tenant_id,
     )
+    cover_readiness = gallery_cover_readiness(db, gallery)
     return {
+        "cover_readiness": cover_readiness,
         "gallery": {
             "id": str(gallery.id),
             "name": gallery.name,
@@ -3214,7 +3217,7 @@ def parent_gallery_editor(
             {
                 "id": "detalhes",
                 "label": "Detalhes",
-                "status": "complete" if gallery.cover_photo_id else "pending",
+                "status": "complete" if cover_readiness["status"] == "ready" else "pending",
                 "available": True,
             },
             {
@@ -3241,7 +3244,11 @@ def parent_gallery_editor(
             "folder_management": True,
             "client_links": True,
         },
-        "actions": {"can_create_folder": gallery.active, "can_upload": gallery.active},
+        "actions": {
+            "can_create_folder": gallery.active,
+            "can_upload": gallery.active,
+            "can_complete": cover_readiness["status"] == "ready",
+        },
     }
 
 
@@ -3282,6 +3289,11 @@ def update_parent_gallery_settings(
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
     gallery = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
+    visual_fields = {"cover_title_font", "cover_title_color", "cover_title_size", "cover_title_position"}
+    if visual_fields.intersection(payload.model_fields_set):
+        readiness = gallery_cover_readiness(db, gallery)
+        if readiness["status"] != "ready":
+            raise HTTPException(status_code=409, detail=readiness["message"])
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(gallery, field, value.strip() if isinstance(value, str) else value)
     audit(db, "parent_gallery.settings_updated", str(gallery.id), tenant_id=tenant_id)
@@ -3464,13 +3476,8 @@ def parent_gallery_details(
     cover_job = (
         db.scalar(select(MediaJob).where(MediaJob.tenant_id == tenant_id).where(MediaJob.photo_asset_id == cover.id)) if cover else None
     )
-    cover_status = (
-        "ready"
-        if cover_derivative
-        else "failed"
-        if cover_job and cover_job.status == "failed"
-        else "processing"
-    )
+    cover_readiness = gallery_cover_readiness(db, gallery)
+    cover_status = cover_readiness["status"]
     cover_options = (
         [
             {
@@ -3492,6 +3499,7 @@ def parent_gallery_details(
     return {
         "available": True,
         "capabilities": ["cover", "title"],
+        "cover_readiness": cover_readiness,
         "font_options": list(TITLE_FONT_OPTIONS),
         "cover_options": cover_options,
         "settings": {
