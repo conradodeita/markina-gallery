@@ -2,6 +2,7 @@
 
 - [x] 1.1 Estender o seletor compartilhado para oferecer Neutro, Cinza metálico, Azul metálico e Vinho metálico em administração e área do cliente. Evidência: `ThemeControl` no layout raiz compartilhado exibe as opções nos dois contextos; `theme-control.test.tsx` cobre seleção.
 - [x] 1.2 Persistir o acabamento separadamente da preferência Claro/Escuro/Sistema, com fallback Neutro e comportamento funcional quando armazenamento local falhar. Evidência: chaves independentes, bootstrap antes da pintura, sincronização entre abas e testes de armazenamento inválido/indisponível em `theme-control.test.tsx`.
+- [x] 1.3 Consolidar modo e acabamento em um único seletor “Aparência” com rótulos de presets combinados; remover o seletor “Acabamento” separado e cobrir combinação, persistência, fallback e sincronização nos testes. Evidência: 12 presets testados em `theme-control.test.tsx`; preferência persistida e sincronizada nas duas chaves legadas; `npm test -- --run app/theme-control.test.tsx` passou (7/7).
 
 ## 2. Tokens e acessibilidade
 

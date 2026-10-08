@@ -26,26 +26,34 @@ function subscribe(onChange: () => void) {
 export function ThemeControl() {
   const preference = useSyncExternalStore(subscribe, readTheme, () => "system");
   const finish = useSyncExternalStore(subscribe, readAppearanceFinish, () => "neutral");
-  function choose(value: ThemePreference) {
-    applyTheme(value);
-    try { localStorage.setItem(THEME_KEY, value); } catch { /* Preferência da página. */ }
+  function choosePreset(value: string) {
+    const [nextPreference, nextFinish] = value.split(":") as [ThemePreference, AppearanceFinish];
+    applyTheme(nextPreference);
+    applyAppearanceFinish(nextFinish);
+    try {
+      localStorage.setItem(THEME_KEY, nextPreference);
+      localStorage.setItem(APPEARANCE_FINISH_KEY, nextFinish);
+    } catch { /* O preset continua aplicado durante a página. */ }
     window.dispatchEvent(new Event(THEME_EVENT));
   }
-  function chooseFinish(value: AppearanceFinish) {
-    applyAppearanceFinish(value);
-    try { localStorage.setItem(APPEARANCE_FINISH_KEY, value); } catch { /* Acabamento disponível durante a página. */ }
-    window.dispatchEvent(new Event(THEME_EVENT));
-  }
-  return <>
-    <label className="theme-control"><span aria-hidden="true">◐</span><span>Aparência</span>
-      <select aria-label="Aparência" value={preference} onChange={(event) => choose(event.target.value as ThemePreference)}>
-        <option value="system">Sistema</option><option value="light">Claro</option><option value="dark">Escuro</option>
-      </select>
-    </label>
-    <label className="theme-control"><span>Acabamento</span>
-      <select aria-label="Acabamento" value={finish} onChange={(event) => chooseFinish(event.target.value as AppearanceFinish)}>
-        <option value="neutral">Neutro</option><option value="silver">Cinza metálico</option><option value="blue">Azul metálico</option><option value="wine">Vinho metálico</option>
-      </select>
-    </label>
-  </>;
+  const finishes: { value: AppearanceFinish; label: string }[] = [
+    { value: "neutral", label: "Neutro" },
+    { value: "silver", label: "Cinza metálico" },
+    { value: "blue", label: "Azul metálico" },
+    { value: "wine", label: "Vinho metálico" },
+  ];
+  const modes: { value: ThemePreference; label: string }[] = [
+    { value: "system", label: "Sistema" },
+    { value: "light", label: "Claro" },
+    { value: "dark", label: "Escuro" },
+  ];
+  return <label className="theme-control"><span aria-hidden="true">◐</span><span>Aparência</span>
+    <select aria-label="Aparência" value={`${preference}:${finish}`} onChange={(event) => choosePreset(event.target.value)}>
+      {finishes.flatMap((appearanceFinish) => modes.map((mode) => (
+        <option key={`${mode.value}:${appearanceFinish.value}`} value={`${mode.value}:${appearanceFinish.value}`}>
+          {`${mode.label} · ${appearanceFinish.label}`}
+        </option>
+      )))}
+    </select>
+  </label>;
 }
