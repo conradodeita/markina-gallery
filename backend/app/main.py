@@ -2129,6 +2129,37 @@ def destination(request: Request) -> dict[str, str]:
     return {"destination": client_destination}
 
 
+@app.get("/auth/identity")
+def authenticated_identity(request: Request, db: Session = Depends(db_session)) -> dict[str, str]:
+    """Retorna somente a identidade própria da sessão autenticada e seu tenant."""
+    session = current_session(request, invalid_session_status=401)
+    if session.role == Role.ADMIN.value:
+        admin = db.get(AdminUser, session.subject_id)
+        if not admin or not admin.email_verified:
+            raise HTTPException(status_code=401, detail="Sessão inválida")
+        return {"role": "admin", "identity": admin.email}
+
+    client = db.scalar(
+        select(Client).where(
+            Client.id == session.subject_id,
+            Client.tenant_id == session.tenant_id,
+        )
+    )
+    if not client:
+        raise HTTPException(status_code=401, detail="Sessão inválida")
+    verified_phone = db.scalar(
+        select(ClientPhone.phone_e164)
+        .where(
+            ClientPhone.tenant_id == session.tenant_id,
+            ClientPhone.client_id == client.id,
+            ClientPhone.active.is_(True),
+            ClientPhone.verified_at.is_not(None),
+        )
+        .order_by(ClientPhone.created_at.desc())
+    )
+    return {"role": "client", "identity": verified_phone or client.phone_e164}
+
+
 @app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(request: Request, response: Response) -> Response:
     session = current_session(request)
