@@ -3146,6 +3146,7 @@ def client_auth_rate_limit(
 
 def resend_client_challenge(
     db: Session, challenge_id: UUID, ip_address: str, *, tenant_id: UUID,
+    deliver: bool = True,
 ) -> AuthChallenge:
     require_client_auth_tenant(db, tenant_id)
     require_client_channel(db, tenant_id)
@@ -3168,7 +3169,7 @@ def resend_client_challenge(
         raise neutral_error()
     fingerprint = challenge_fingerprint(challenge)
     client_auth_rate_limit(db, "client_otp.resend", fingerprint, ip_address, tenant_id=tenant_id)
-    code = f"{secrets.randbelow(1_000_000):06d}"
+    code = f"{secrets.randbelow(1_000_000):06d}" if deliver else secrets.token_urlsafe(32)
     for delivery in db.scalars(
         select(WhatsAppDelivery).where(
             WhatsAppDelivery.tenant_id == challenge.tenant_id,
@@ -3183,9 +3184,11 @@ def resend_client_challenge(
         delivery.updated_at = now()
     challenge.secret_hash = token_hash(code)
     challenge.resend_count += 1
-    audit(db, "client_otp.resent", fingerprint, tenant_id=tenant_id)
+    audit(db, "client_otp.resent" if deliver else "client_otp.resend_suppressed",
+          fingerprint, tenant_id=tenant_id)
     db.commit()
-    enqueue_client_otp_delivery(db, challenge, code)
+    if deliver:
+        enqueue_client_otp_delivery(db, challenge, code)
     return challenge
 
 

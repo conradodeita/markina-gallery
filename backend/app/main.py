@@ -6,6 +6,7 @@ import base64
 import csv
 import json
 import logging
+import secrets
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -352,6 +353,7 @@ from app.public_gallery_access import (
     apply_public_gallery_access,
     authorized_canonical_photo,
     authorized_canonical_photos,
+    client_otp_delivery_allowed,
     require_authorized_canonical_photo,
     require_public_gallery_browsing,
     safe_internal_return,
@@ -1557,8 +1559,10 @@ def client_challenge(
             "challenge_id": str(uuid4()),
             "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
         }
+    deliver = client_otp_delivery_allowed(db, parent=parent, phone_e164=phone, capability=capability)
     challenge, code = create_challenge(
-        db, "client_otp", phone, tenant_id=tenant_id, client_name=client_name,
+        db, "client_otp", phone, code=None if deliver else secrets.token_urlsafe(32),
+        tenant_id=tenant_id, client_name=client_name,
         parent_gallery_id=parent.id if parent else None,
         gallery_capability_id=capability.id if capability else None,
         return_to=(
@@ -1567,7 +1571,12 @@ def client_challenge(
             else safe_internal_return(payload.return_to, "/library") if payload.return_to else None
         ),
     )
-    enqueue_client_otp_delivery(db, challenge, code)
+    if deliver:
+        enqueue_client_otp_delivery(db, challenge, code)
+    else:
+        audit(db, "client_otp.delivery_suppressed", challenge_fingerprint(challenge),
+              tenant_id=tenant_id)
+        db.commit()
     return {
         "challenge_id": str(challenge.id),
         "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
@@ -1586,9 +1595,15 @@ def client_resend(
         if not payload.access_token and payload.parent_gallery_id:
             return {"message": "Se os dados puderem receber acesso, enviaremos um novo código."}
         raise
+    challenge = db.get(AuthChallenge, payload.challenge_id)
+    parent = db.get(ParentGallery, challenge.parent_gallery_id) if challenge.parent_gallery_id else None
+    capability = active_capability_by_id(db, challenge.gallery_capability_id)
+    deliver = bool(challenge.subject) and client_otp_delivery_allowed(
+        db, parent=parent, phone_e164=challenge.subject, capability=capability,
+    )
     resend_client_challenge(
         db, payload.challenge_id, request.client.host if request.client else "unknown",
-        tenant_id=tenant_id,
+        tenant_id=tenant_id, deliver=deliver,
     )
     return {"message": "Se os dados puderem receber acesso, enviaremos um novo código."}
 
