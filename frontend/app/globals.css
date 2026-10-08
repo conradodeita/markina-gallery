@@ -1146,6 +1146,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .order-album-button--available:hover { background: #14532d; color: #fff; }
 .order-album-button--available:focus-visible { outline: 3px solid #22c55e; outline-offset: 3px; }
 .order-album-button--unavailable:disabled { background: #e5e7eb; color: #4b5563; border-color: #9ca3af; opacity: 1; cursor: not-allowed; }
+.order-album-hint { margin: .5rem 0 0; color: var(--mk-muted); font-size: .9rem; line-height: 1.45; }
 .capacity-diagnostics-section { margin-top:18px; }
 .capacity-diagnostics { display:grid; gap:12px; overflow-wrap:anywhere; }
 .capacity-diagnostics h3 { margin:.5rem 0 0; }
