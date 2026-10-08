@@ -480,6 +480,82 @@ def test_invalid_totp_is_neutral_and_audited(client):
         assert db.scalar(select(AuditEvent).where(AuditEvent.event == "admin_totp.failed"))
 
 
+def test_authenticated_identity_returns_only_admin_email(client):
+    secret = pyotp.random_base32()
+    with SessionLocal() as db:
+        db.add(
+            fixture_admin(AdminUser(
+                email="fotografo@markina.test",
+                password_hash=password_hasher.hash("senha-segura"),
+                email_verified=True,
+                totp_secret=secret,
+            ))
+        )
+        db.commit()
+
+    password = client.post(
+        "/auth/admin/password",
+        json={"email": "fotografo@markina.test", "password": "senha-segura"},
+    )
+    login = client.post(
+        "/auth/admin/totp",
+        json={
+            "challenge_id": password.json()["challenge_id"],
+            "code": pyotp.TOTP(secret).now(),
+        },
+    )
+
+    assert login.status_code == 200
+    assert client.get("/auth/identity").json() == {
+        "role": "admin",
+        "identity": "fotografo@markina.test",
+    }
+
+
+def test_authenticated_identity_returns_client_verified_phone(client):
+    phone = "+5511998765432"
+    with SessionLocal() as db:
+        person = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente de teste",
+            phone_e164=phone,
+        )
+        db.add(person)
+        db.flush()
+        db.add(
+            ClientPhone(
+                tenant_id=FIXTURE_TENANT_ID,
+                client_id=person.id,
+                phone_e164=phone,
+                verified_at=now(),
+            )
+        )
+        db.commit()
+
+    challenge = linked_post(
+        client,
+        "/auth/client/challenge",
+        json={"full_name": "Cliente de teste", "phone": phone},
+    )
+    assert challenge.status_code == 202
+    otp_for(challenge.json()["challenge_id"])
+    login = linked_post(
+        client,
+        "/auth/client/verify",
+        json={"challenge_id": challenge.json()["challenge_id"], "code": "123456"},
+    )
+
+    assert login.status_code == 200
+    assert client.get("/auth/identity").json() == {
+        "role": "client",
+        "identity": phone,
+    }
+
+
+def test_authenticated_identity_requires_session(client):
+    assert client.get("/auth/identity").status_code == 401
+
+
 def test_otp_resend_expiration_and_rate_limit(client):
     response = linked_post(
         client, "/auth/client/challenge", json={"full_name": "Pessoa Teste", "phone": "+5511777777777"}

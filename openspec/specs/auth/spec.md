@@ -82,6 +82,25 @@ O backend SHALL determinar o destino e autorizar cada rota usando o papel e as r
 - **WHEN** uma sessão `client` tenta acessar `/admin` ou uma galeria sem autorização
 - **THEN** o sistema responde com acesso negado sem revelar a existência do recurso e registra o evento
 
+### Requirement: Identificação visível da sessão autenticada
+
+O sistema SHALL apresentar nas áreas autenticadas do fotógrafo e da cliente a identidade associada à sessão validada pelo backend, sem aceitar essa identidade do navegador.
+
+#### Scenario: Sessão do fotógrafo
+
+- **WHEN** o fotógrafo abre uma tela autenticada da área administrativa
+- **THEN** o cabeçalho apresenta `Logado como: [e-mail da conta autenticada]`
+
+#### Scenario: Sessão da cliente
+
+- **WHEN** a cliente abre uma tela autenticada da biblioteca ou de uma galeria
+- **THEN** o cabeçalho apresenta `Logado como: [telefone E.164 ativo e verificado da cliente autenticada]`
+
+#### Scenario: Identidade indisponível
+
+- **WHEN** a consulta autenticada de identidade falha ou não retorna sujeito válido
+- **THEN** o sistema não inventa nem reutiliza uma identidade anterior e mantém a área utilizável conforme a autorização existente
+
 ### Requirement: Contexto administrativo vinculado à conta do fotógrafo
 
 O backend SHALL resolver o contexto do fotógrafo a partir da sessão administrativa persistida e de um vínculo ativo com a conta única da instalação, revalidando esse vínculo nas operações protegidas. O sistema MUST preservar os fatores de autenticação existentes e não usar identificadores enviados pelo frontend como autoridade para escolher a conta.
