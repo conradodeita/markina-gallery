@@ -6,7 +6,7 @@ import { useState } from "react";
 export function purchasePreviewUrl(path: string | null): string | null {
   if (!path) return null;
   const local = path.startsWith("/api/") ? path.slice(4) : path;
-  if (!/^\/(?:library\/history\/items\/[\w-]+|gallery\/[\w-]+\/photos\/[\w-]+|public-galleries\/[\w-]+\/photos\/[\w-]+)\/preview$/.test(local)) return null;
+  if (!/^\/(?:library\/(?:history|purchases)\/items\/[\w-]+|gallery\/[\w-]+\/photos\/[\w-]+|public-galleries\/[\w-]+\/photos\/[\w-]+)\/preview$/.test(local)) return null;
   return `/api${local}`;
 }
 
