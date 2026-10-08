@@ -63,3 +63,7 @@ Solicitação explícita do proprietário: retirar o parágrafo “Envie do seu 
 Validação no baseline abc994bf9e7cc01d616b27f7acd0d3a0011d807b: duas suítes existentes do editor, 63 testes aprovados em 30,02 s; ESLint do componente com 0 erros/4 avisos preexistentes de img; TypeScript noEmit e build Next 16.3.2 aprovados; OpenSpec 1.14.0 da change estrito aprovado; diff-check limpo. Nenhum teste novo nem alteração backend. Aceite visual remoto ainda pendente.
 
 Branch feature/remove-gallery-cover-help. Autorização anterior de entrega do trabalho mantida; após o push, parar e aguardar o proprietário informar o resultado do CI, sem polling, merge ou deploy antecipados. Limpeza e ensaio remoto A+B não realizados.
+
+## Aceite humano parcial da capa — 08/10/2026
+
+O proprietário confirmou na homologação publicada pela PR #145: a obrigatoriedade funcionou e, após definir a capa, conseguiu avançar de etapa. Contexto informado: galeria 4acf4a83-14a3-4d1c-bc84-7ec6726fc967 em Detalhes. Este relato valida essa jornada; não comprova todos os cenários de falha/remoção, as prévias em Compras ou o ensaio A+B. A retirada do parágrafo explicativo ainda aguarda publicação própria.
