@@ -9,6 +9,7 @@ O proprietário solicitou impedir o salvamento de uma galeria sem capa e delegou
 - Exigir capa explicitamente configurada, pertencente à galeria/conta e com prévia pronta para salvar Detalhes e concluir o fluxo guiado.
 - Manter Criar e continuar, Ajustes e Vendas disponíveis sem capa, permitindo gerar o contexto necessário ao upload; esses passos não significam conclusão da galeria.
 - Mostrar orientação acionável na etapa Detalhes para capa ausente, preparando ou com falha; estado concluído somente após prontidão confirmada pelo backend.
+- Conforme revisão do proprietário em 08/10/2026, retirar o parágrafo explicativo sobre JPEG horizontal, marca-d’água, grade e carregamento das pastas; preservar a orientação de obrigatoriedade e prontidão da capa.
 - Revalidar no backend ao salvar configurações visuais e consultar a prontidão atual antes de Concluir; não confiar em identificador/estado informado pelo browser.
 - Aplicar a exigência também ao editar/concluir galerias existentes sem capa, sem preencher automaticamente nem revogar acesso já autorizado de clientes.
 

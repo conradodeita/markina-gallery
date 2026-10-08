@@ -770,7 +770,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                   <legend>Capa e título</legend>
                   <p>A capa é obrigatória para salvar esta etapa e concluir a galeria.</p>
                   {!coverReady ? <p className="gallery-scope-note" role="status">{coverRequiredMessage}</p> : null}
-                  <p>Envie do seu dispositivo um JPEG horizontal (largura maior que a altura), sem marca-d’água nem grade, para usar como capa. As fotos das pastas não são carregadas nesta etapa.</p>
                   <input ref={coverUploadInput} type="file" accept="image/jpeg" hidden onChange={uploadCover} />
                   <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>{currentCover ? "Substituir imagem de capa" : "Enviar imagem de capa"}</MarkinaButton>
                   {currentCover ? <div className={`cover-upload-current cover-upload-current--${currentCover.status}`} role="status"><strong>{currentCover.name}</strong><small>{currentCover.status === "ready" ? "Capa pronta para apresentação" : currentCover.status === "failed" ? currentCover.error ?? "O processamento falhou. Envie novamente esta capa ou escolha outro JPEG." : "Processando a capa"}</small></div> : <p className="gallery-scope-note">Nenhuma imagem de capa enviada ainda.</p>}

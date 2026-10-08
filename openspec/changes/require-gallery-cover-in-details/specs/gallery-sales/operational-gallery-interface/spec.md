@@ -6,6 +6,11 @@
 
 O sistema SHALL exigir capa explicitamente configurada da própria galeria e conta, com prévia pronta, para salvar a etapa Detalhes e concluir o fluxo guiado. Criação inicial, Ajustes e Vendas SHALL continuar disponíveis sem capa. O backend SHALL revalidar a prontidão no salvamento visual e fornecê-la à interface; somente informar um identificador não comprova a capa.
 
+#### Scenario: Orientação concisa em Detalhes
+
+- **WHEN** o fotógrafo abre Detalhes
+- **THEN** a interface apresenta a obrigatoriedade e a prontidão da capa sem o parágrafo estático sobre JPEG horizontal, marca-d’água, grade ou carregamento de fotos das pastas
+
 #### Scenario: Cadastro inicial sem capa
 
 - **WHEN** o fotógrafo informa os dados iniciais e aciona Criar e continuar sem imagem

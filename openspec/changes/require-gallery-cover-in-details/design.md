@@ -21,6 +21,8 @@ Ver `proposal.md`. A criação em `new/page.tsx` envia apenas os dados iniciais,
 
 ## Risks / Trade-offs
 
+Refinamento de texto aprovado em 08/10/2026: remover o parágrafo estático “Envie do seu dispositivo um JPEG horizontal...” de Detalhes. Preservar upload, validações de arquivo, orientação de capa obrigatória e estados da API. A remoção é apenas editorial.
+
 - Processamento assíncrono deixa o fotógrafo temporariamente sem avanço → mostrar preparar/falha e atualização real, mantendo upload e retomada disponíveis.
 - Exigência indiscriminada no PATCH bloquearia até a correção do cadastro → aplicar somente aos campos visuais da etapa Detalhes e preservar as etapas anteriores.
 - Concluir com estado antigo de browser → consultar o backend imediatamente antes da navegação; recusar avanço em falha de consulta.

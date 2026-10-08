@@ -15,7 +15,12 @@
 ## 3. Integração e entrega
 
 - [x] 3.1 Executar testes backend/frontend pertinentes, Ruff, lint, typecheck, build, OpenSpec 1.14.0 estrito e diff-check; revisar o diff e registrar evidência no baseline atual antes de declarar pronto.
-- [ ] 3.2 Preparar commit/PR focado e anexar ao chat; acompanhar CI do HEAD entregue conforme preferência do proprietário. Não publicar sem inventário/plano/autorização específicos.
+- [x] 3.2 Preparar commit/PR focado e anexar ao chat; acompanhar CI do HEAD entregue conforme preferência do proprietário. Não publicar sem inventário/plano/autorização específicos.
+
+## 4. Refinamento editorial solicitado em 08/10/2026
+
+- [x] 4.1 Retirar apenas o parágrafo explicativo indicado pelo proprietário em Detalhes, verificar a interface afetada e registrar evidência; preservar orientação de obrigatoriedade/prontidão e validações existentes.
+- [ ] 4.2 Revisar diff focado, entregar PR e parar imediatamente após o push para aguardar o resultado do CI informado pelo proprietário. Merge/deploy e aceite remoto são posteriores.
 
 ## Workflow follow-up
 
