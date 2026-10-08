@@ -1,5 +1,16 @@
 # Validação — 2026-10-06
 
+## Ajuste de seletor — 2026-10-08
+
+- “Aparência” agora é o único controle visível e lista 12 combinações explícitas de modo (Sistema/Claro/Escuro) e acabamento (Neutro/Cinza metálico/Azul metálico/Vinho metálico). O controle separado “Acabamento” foi removido.
+- O preset selecionado continua gravando as duas chaves locais existentes, mantendo bootstrap, preferência do sistema e sincronização entre abas compatíveis.
+- Teste focal `npm test -- --run app/theme-control.test.tsx`: 1 arquivo, 7 testes aprovados; cobre o único controle, seleção combinada, persistência, fallback, storage indisponível e atualização entre abas.
+- Suíte frontend `npm test`: 55 arquivos e 449 testes aprovados. Houve aviso informativo do ambiente jsdom ao tentar navegar para outro documento, sem falhas.
+- `npm exec tsc -- --noEmit`: aprovado.
+- `npm run lint`: 0 erros e 37 avisos em arquivos existentes fora da alteração.
+- `npm run build`: compilação otimizada, TypeScript e geração de 22 páginas aprovados.
+- `openspec validate add-metallic-appearance-presets --type change --strict --no-interactive`: aprovado após atualizar proposal, design, delta spec e task 1.3 antes do código.
+
 ## Implementação local
 
 - `frontend/app/theme.ts` e `theme-control.tsx`: modo claro/escuro/sistema e acabamento independente, com leitura no bootstrap antes da pintura, persistência local, fallback Neutro, suporte a armazenamento bloqueado e sincronização entre abas.

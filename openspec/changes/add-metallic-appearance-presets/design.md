@@ -16,6 +16,7 @@ A change `dark-mode-and-landscape-covers` já estabelece a preferência global C
 4. No modo Escuro, preservar a luminância escura das superfícies e usar a cor selecionada apenas em tokens compatíveis de borda/realce; não transformar fundos escuros em painéis claros.
 5. Atualizar as cores do texto principal e secundário junto com o acabamento selecionado, considerando o modo claro/escuro e a superfície onde o texto aparece. Preservar hierarquia, legibilidade, contraste e foco visível em cada combinação.
 6. Não aplicar filtros ou estilos de tema a fotografias, logos, favicons, QR Codes ou ativos protegidos. Preservar as regras de contraste e foco estabelecidas para o design system.
+7. Apresentar modo e acabamento por um único `<select>` acessível, rotulado “Aparência”. Cada opção representa um preset combinado, com nome que identifica modo e acabamento; manter as preferências armazenadas de modo e acabamento separadas e sincronizadas para preservar compatibilidade com o bootstrap existente. Não renderizar um segundo controle “Acabamento”.
 
 ## Risks / Trade-offs
 

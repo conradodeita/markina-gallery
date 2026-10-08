@@ -5,6 +5,7 @@ A aparência clara e escura atende ao uso atual, mas falta uma escolha de identi
 ## What Changes
 
 - Acrescentar ao seletor de aparência os acabamentos Cinza metálico, Azul metálico e Vinho metálico, coordenando gradientes discretos de superfície e cores de texto.
+- Manter um único controle compacto chamado “Aparência”; cada opção identifica conjuntamente o modo e o acabamento, sem seletor separado de acabamento.
 - Manter o acabamento neutro atual como opção padrão e permitir combinar o acabamento escolhido com Claro, Escuro ou Sistema.
 - Persistir a escolha no navegador, sem vinculá-la a uma conta ou galeria.
 - Restringir superfícies e cores de texto a tokens aprovados por acabamento e modo, com contraste legível e sem efeitos sobre fotografias, logos, favicons ou QR Codes.
@@ -25,7 +26,7 @@ Seletor de aparência, tokens CSS e superfícies compartilhadas do frontend. Nã
 
 ## Goals / Non-Goals
 
-**Goals:** oferecer os três acabamentos pedidos em todo o sistema, coordenar cores de superfície e texto, preservar a escolha Claro/Escuro/Sistema e manter contraste e cores de mídia.
+**Goals:** oferecer os três acabamentos pedidos em todo o sistema, coordenar cores de superfície e texto, preservar a escolha Claro/Escuro/Sistema e manter contraste e cores de mídia. Apresentar modo e acabamento em um único seletor “Aparência” com presets combinados e rótulos claros.
 
 **Non-Goals:** editor de cores ou gradientes livres, personalização por componente/galeria/conta, alteração da identidade das fotografias ou adição de acabamentos não especificados nesta change.
 

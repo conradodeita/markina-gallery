@@ -1,18 +1,27 @@
 ## ADDED Requirements
 
-### Requirement: Acabamentos metálicos controlados
+### Requirement: Seletor único de aparência
 
-O website e o PWA SHALL oferecer, junto ao seletor existente Claro/Escuro/Sistema, os acabamentos Neutro, Cinza metálico, Azul metálico e Vinho metálico. A escolha SHALL ser independente do modo de aparência, persistir localmente no mesmo navegador e aplicar-se às superfícies compartilhadas da administração e da área do cliente. Um valor ausente ou inválido SHALL resolver para Neutro. Falha de armazenamento SHALL NOT impedir o uso do seletor ou o carregamento da interface.
+O website e o PWA SHALL oferecer um único seletor acessível chamado “Aparência” na entrada, administração e área do cliente. Esse seletor SHALL conter presets que combinem o modo Sistema, Claro ou Escuro com os acabamentos Neutro, Cinza metálico, Azul metálico ou Vinho metálico. O rótulo selecionado SHALL identificar modo e acabamento, e SHALL NOT existir um seletor separado de acabamento.
 
-#### Scenario: Seleção de acabamento
+#### Scenario: Seleção de preset combinado
 
-- **WHEN** o usuário seleciona Azul metálico e navega ou recarrega o website
-- **THEN** o acabamento é mantido em todas as áreas do sistema sem alterar sua escolha Claro/Escuro/Sistema
+- **WHEN** o usuário seleciona “Claro · Azul metálico” e navega ou recarrega o website
+- **THEN** o modo Claro e o acabamento Azul metálico são mantidos em todas as áreas do sistema e o mesmo preset aparece selecionado
 
-#### Scenario: Preferências independentes
+#### Scenario: Alternância entre modos e acabamentos
 
-- **WHEN** o usuário muda de Claro para Escuro mantendo Vinho metálico
-- **THEN** a interface preserva as superfícies escuras e coordena textos e realces com a paleta vinho
+- **WHEN** o usuário seleciona “Escuro · Vinho metálico”
+- **THEN** a interface preserva as superfícies escuras e coordena textos e realces com a paleta vinho, atualizando o único seletor para o preset completo
+
+#### Scenario: Controle compacto único
+
+- **WHEN** o usuário abre os controles de aparência em qualquer área do sistema
+- **THEN** encontra um único seletor “Aparência” com modo e acabamento combinados e nenhum seletor “Acabamento” separado
+
+### Requirement: Preferências de modo e acabamento persistentes
+
+O preset escolhido SHALL persistir localmente no mesmo navegador e aplicar-se às superfícies compartilhadas da administração e da área do cliente. Um modo ausente ou inválido SHALL resolver para Sistema, e acabamento ausente ou inválido SHALL resolver para Neutro. Falha de armazenamento SHALL NOT impedir o uso do seletor ou o carregamento da interface.
 
 #### Scenario: Preferência inválida ou armazenamento indisponível
 
