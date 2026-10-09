@@ -89,12 +89,15 @@ def test_remote_browser_authentication_and_tenant_isolation():
     blocked_operations = 0
     revoked_sessions = 0
     revocation_failures = 0
+    selection_cleanup_failures = 0
     outcome = "failed"
     contexts = []
     authenticated_contexts = []
+    pending_selections = []
 
     async def exercise() -> None:
         nonlocal api_requests, blocked_operations, revoked_sessions, revocation_failures
+        nonlocal selection_cleanup_failures
         import pyotp
         from playwright.async_api import Error as PlaywrightError
         from playwright.async_api import async_playwright
@@ -282,6 +285,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 )
                 if selected_a1.status != 201:
                     raise FunctionalJourneyError("client_selection_create_failed")
+                pending_selections.append((client_a1, gallery_a["gallery"], photo_a))
                 client_a2_after = await api(client_a2, "GET", f"/api/public-galleries/{gallery_a['gallery']}/photos")
                 a2_state = (await client_a2_after.json()).get("photos", [])
                 if client_a2_after.status != 200 or next(item for item in a2_state if item["id"] == photo_a).get("selected"):
@@ -293,6 +297,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 )
                 if selected_a2.status != 201:
                     raise FunctionalJourneyError("second_client_selection_failed")
+                pending_selections.append((client_a2, gallery_a["gallery"], photo_a))
                 a1_state_response = await api(client_a1, "GET", f"/api/public-galleries/{gallery_a['gallery']}/photos")
                 a1_state = (await a1_state_response.json()).get("photos", [])
                 if a1_state_response.status != 200 or not next(item for item in a1_state if item["id"] == photo_a).get("selected"):
@@ -304,6 +309,9 @@ def test_remote_browser_authentication_and_tenant_isolation():
                     )
                     if removed.status not in {200, 204}:
                         raise FunctionalJourneyError("synthetic_selection_cleanup_failed")
+                    pending_selections[:] = [
+                        entry for entry in pending_selections if entry[0] is not context
+                    ]
                 checks.append("client_selection_isolation")
 
                 cross_tenant = await api(client_a1, "GET", f"/api/public-galleries/{gallery_b['gallery']}/photos")
@@ -344,6 +352,19 @@ def test_remote_browser_authentication_and_tenant_isolation():
                     await page_a1.screenshot(path=screenshot_path, full_page=False)
                     screenshots.append(Path(screenshot_path).name)
             finally:
+                for context, gallery_id, photo_id in pending_selections[:]:
+                    try:
+                        response = await api(
+                            context,
+                            "DELETE",
+                            f"/api/public-galleries/{gallery_id}/photos/{photo_id}/selection",
+                        )
+                        if response.status in {200, 204}:
+                            pending_selections.remove((context, gallery_id, photo_id))
+                        else:
+                            selection_cleanup_failures += 1
+                    except PlaywrightError:
+                        selection_cleanup_failures += 1
                 for context in authenticated_contexts:
                     try:
                         response = await api(context, "POST", "/api/auth/logout")
@@ -357,6 +378,8 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 await browser.close()
         if revoked_sessions != len(authenticated_contexts) or revocation_failures:
             raise FunctionalJourneyError("synthetic_session_revocation_failed")
+        if selection_cleanup_failures or pending_selections:
+            raise FunctionalJourneyError("synthetic_selection_cleanup_failed")
 
     report_path = os.getenv("PYP_FUNCTIONAL_REPORT_PATH", "").strip() or None
     source_revision = os.getenv("PYP_SOURCE_REVISION", "unknown").strip()
