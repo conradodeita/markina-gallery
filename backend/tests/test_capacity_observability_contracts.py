@@ -48,7 +48,7 @@ def test_contract_rejects_naive_timestamps_unknown_fields_and_nonfinite_numbers(
             evidence=Evidence.OBSERVED,
             scope=Scope.APPLICATION_DATABASE,
             source=Source.FACIAL_JOB,
-            collected_at=datetime(2026, 9, 30),  # noqa: DTZ001 - valida timestamp ingênuo rejeitado pelo contrato.
+            collected_at=datetime.fromisoformat("2026-09-30"),
         )
     with pytest.raises(ValidationError):
         MetricValue(
