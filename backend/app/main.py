@@ -361,6 +361,13 @@ from app.public_gallery_access import (
 )
 from app.public_origin import PublicOriginError
 from app.public_origin import public_app_origin as validated_public_origin
+from app.remote_test_otp import (
+    RemoteTestOtpError,
+    authorize_remote_test_otp,
+    consume_remote_test_otp,
+    is_remote_test_otp_tenant,
+    publish_remote_test_otp,
+)
 from app.push_subscriptions import (
     INSTALLATION_COOKIE,
     detach_previous_identity,
@@ -699,6 +706,10 @@ class ClientLinkChallengeInput(ClientChallengeInput):
     parent_gallery_id: UUID | None = None
     access_token: str | None = Field(default=None, min_length=32, max_length=256)
     return_to: str | None = Field(default=None, max_length=512)
+
+
+class RemoteTestOtpConsumeInput(BaseModel):
+    challenge_id: UUID
 
 
 class PublicGalleryAccessInput(BaseModel):
@@ -1561,19 +1572,29 @@ def client_challenge(
             "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
         }
     deliver = client_otp_delivery_allowed(db, parent=parent, phone_e164=phone, capability=capability)
-    challenge, code = create_challenge(
-        db, "client_otp", phone, code=None if deliver else secrets.token_urlsafe(32),
-        tenant_id=tenant_id, client_name=client_name,
-        parent_gallery_id=parent.id if parent else None,
-        gallery_capability_id=capability.id if capability else None,
-        return_to=(
-            f"/public-galleries/{parent.id}"
-            if contextual_reauthentication and parent
-            else safe_internal_return(payload.return_to, "/library") if payload.return_to else None
-        ),
-    )
+    try:
+        challenge, code = create_challenge(
+            db, "client_otp", phone, code=None if deliver else secrets.token_urlsafe(32),
+            tenant_id=tenant_id, client_name=client_name,
+            parent_gallery_id=parent.id if parent else None,
+            gallery_capability_id=capability.id if capability else None,
+            remote_test_otp=True,
+            return_to=(
+                f"/public-galleries/{parent.id}"
+                if contextual_reauthentication and parent
+                else safe_internal_return(payload.return_to, "/library") if payload.return_to else None
+            ),
+        )
+    except RemoteTestOtpError:
+        raise HTTPException(status_code=503, detail="Autenticação temporariamente indisponível.") from None
     if deliver:
-        enqueue_client_otp_delivery(db, challenge, code)
+        if is_remote_test_otp_tenant(tenant_id):
+            try:
+                publish_remote_test_otp(tenant_id, challenge.id, challenge.resend_count, code)
+            except RemoteTestOtpError:
+                raise HTTPException(status_code=503, detail="Autenticação temporariamente indisponível.") from None
+        else:
+            enqueue_client_otp_delivery(db, challenge, code)
     else:
         audit(db, "client_otp.delivery_suppressed", challenge_fingerprint(challenge),
               tenant_id=tenant_id)
@@ -1602,11 +1623,60 @@ def client_resend(
     deliver = bool(challenge.subject) and client_otp_delivery_allowed(
         db, parent=parent, phone_e164=challenge.subject, capability=capability,
     )
-    resend_client_challenge(
-        db, payload.challenge_id, request.client.host if request.client else "unknown",
-        tenant_id=tenant_id, deliver=deliver,
-    )
+    try:
+        resend_client_challenge(
+            db, payload.challenge_id, request.client.host if request.client else "unknown",
+            tenant_id=tenant_id, deliver=deliver,
+        )
+    except RemoteTestOtpError:
+        raise HTTPException(status_code=503, detail="Autenticação temporariamente indisponível.") from None
     return {"message": "Se os dados puderem receber acesso, enviaremos um novo código."}
+
+
+@app.post("/auth/test/client-otp/consume", include_in_schema=False)
+def consume_remote_test_client_otp(
+    payload: RemoteTestOtpConsumeInput, request: Request, response: Response,
+    db: Session = Depends(db_session),
+) -> dict[str, str]:
+    challenge = db.get(AuthChallenge, payload.challenge_id)
+    try:
+        authorized = bool(
+            challenge
+            and challenge.kind == "client_otp"
+            and is_remote_test_otp_tenant(challenge.tenant_id)
+            and authorize_remote_test_otp(
+                challenge.tenant_id,
+                request.headers.get("x-pyp-test-otp-secret", ""),
+            )
+        )
+    except RemoteTestOtpError:
+        authorized = False
+    if (
+        not authorized
+        or challenge.used_at
+        or expired(challenge.expires_at)
+        or challenge.attempts >= 5
+    ):
+        raise HTTPException(status_code=404, detail="Código de teste indisponível.")
+    client_auth_rate_limit(
+        db,
+        "client_otp.test_sink",
+        challenge_fingerprint(challenge),
+        request.client.host if request.client else "unknown",
+        tenant_id=challenge.tenant_id,
+    )
+    try:
+        code = consume_remote_test_otp(
+            challenge.tenant_id, challenge.id, challenge.resend_count,
+        )
+    except RemoteTestOtpError:
+        raise HTTPException(status_code=404, detail="Código de teste indisponível.") from None
+    if not code:
+        raise HTTPException(status_code=404, detail="Código de teste indisponível.")
+    audit(db, "client_otp.test_sink_consumed", challenge_fingerprint(challenge), tenant_id=challenge.tenant_id)
+    db.commit()
+    response.headers["cache-control"] = "private, no-store"
+    return {"code": code}
 
 
 @app.post("/auth/client/verify")

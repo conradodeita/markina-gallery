@@ -3043,11 +3043,14 @@ def create_challenge(
     db: Session, kind: str, subject: str, code: str | None = None,
     *, tenant_id: UUID | None = None, parent_gallery_id: UUID | None = None,
     gallery_capability_id: UUID | None = None, client_name: str | None = None,
-    return_to: str | None = None,
+    return_to: str | None = None, remote_test_otp: bool = False,
 ) -> tuple[AuthChallenge, str]:
     if kind == "client_otp":
         require_client_auth_tenant(db, tenant_id)
-        require_client_channel(db, tenant_id)
+        from app.remote_test_otp import is_remote_test_otp_tenant
+
+        if not (remote_test_otp and is_remote_test_otp_tenant(tenant_id)):
+            require_client_channel(db, tenant_id)
     code = code or f"{secrets.randbelow(1_000_000):06d}"
     challenge = AuthChallenge(
         tenant_id=tenant_id,
@@ -3149,7 +3152,14 @@ def resend_client_challenge(
     deliver: bool = True,
 ) -> AuthChallenge:
     require_client_auth_tenant(db, tenant_id)
-    require_client_channel(db, tenant_id)
+    from app.remote_test_otp import (
+        is_remote_test_otp_tenant,
+        publish_remote_test_otp,
+    )
+
+    remote_test_sink = is_remote_test_otp_tenant(tenant_id)
+    if not remote_test_sink:
+        require_client_channel(db, tenant_id)
     challenge = db.scalar(select(AuthChallenge).where(
         AuthChallenge.id == challenge_id, AuthChallenge.tenant_id == tenant_id,
     ).with_for_update())
@@ -3188,7 +3198,10 @@ def resend_client_challenge(
           fingerprint, tenant_id=tenant_id)
     db.commit()
     if deliver:
-        enqueue_client_otp_delivery(db, challenge, code)
+        if remote_test_sink:
+            publish_remote_test_otp(tenant_id, challenge.id, challenge.resend_count, code)
+        else:
+            enqueue_client_otp_delivery(db, challenge, code)
     return challenge
 
 

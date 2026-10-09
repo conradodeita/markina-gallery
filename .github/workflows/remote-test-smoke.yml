@@ -1,0 +1,79 @@
+name: Remote homolog smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: markina-homolog-remote-test-campaign
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  remote-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: homolog-tests
+    env:
+      PYP_REMOTE_CAMPAIGN: "1"
+      PYP_REMOTE_TARGET_URL: ${{ vars.PYP_REMOTE_TARGET_URL }}
+      PYP_REMOTE_ENVIRONMENT: homolog
+      PYP_SMOKE_AUTHORIZED: ${{ vars.PYP_SMOKE_AUTHORIZED }}
+      PYP_SMOKE_AUTHORIZATION_REFERENCE: ${{ vars.PYP_SMOKE_AUTHORIZATION_REFERENCE }}
+      PYP_AB_TEST_CLOSED: ${{ vars.PYP_AB_TEST_CLOSED }}
+      PYP_SMOKE_MAX_REQUESTS: ${{ vars.PYP_SMOKE_MAX_REQUESTS }}
+      PYP_SMOKE_REPORT_DIR: ${{ runner.temp }}/pyp-smoke-report
+    steps:
+      - name: Prepare ephemeral sanitized report directory
+        run: |
+          mkdir -m 700 -p "$PYP_SMOKE_REPORT_DIR"
+          date -u +%Y-%m-%dT%H:%M:%SZ | sed 's/^/PYP_SMOKE_STARTED_AT=/' >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install minimal test dependencies
+        run: python -m pip install "pytest==8.3.5" "httpx==0.28.1" "playwright==1.51.1"
+      - name: Verify local safety policy (no application services)
+        run: python -m pytest backend/tests/test_remote_campaign_policy.py -q
+      - name: Install frontend test dependencies without starting the app
+        working-directory: frontend
+        run: npm ci
+      - name: Run only the remote frontend health check through Vitest
+        working-directory: frontend
+        run: npm test -- --run app/api/health/remote-smoke.test.ts
+      - name: Install Chromium for the remote browser smoke
+        run: python -m playwright install chromium
+      - name: Run one-request read-only browser smoke
+        run: python -m pytest backend/tests/test_remote_browser_smoke.py -q
+      - name: Run one-request read-only backend homolog smoke
+        run: python -m pytest backend/tests/test_remote_campaign_smoke.py -q
+      - name: Build sanitized smoke report
+        if: always()
+        env:
+          PYTHONPATH: backend
+          PYP_SMOKE_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime
+          from tests.remote_smoke_reporting import write_smoke_report
+
+          started = datetime.fromisoformat(os.environ["PYP_SMOKE_STARTED_AT"])
+          report = write_smoke_report(
+              source_revision=os.environ["PYP_SMOKE_SOURCE_REVISION"],
+              started_at=started,
+          )
+          print(f"Sanitized report generated: {report.name}")
+          PY
+      - name: Upload sanitized smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyp-remote-smoke-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/pyp-smoke-report/*.json
+          if-no-files-found: warn
+          retention-days: 3

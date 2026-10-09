@@ -1,0 +1,66 @@
+name: Remote homolog read-only capacity
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Owner-approved profile configured for homolog-tests
+        type: choice
+        options:
+          - expected
+          - peak
+        required: true
+
+concurrency:
+  group: markina-homolog-remote-test-campaign
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  remote-capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: homolog-tests
+    env:
+      PYP_REMOTE_TARGET_URL: ${{ vars.PYP_REMOTE_TARGET_URL }}
+      PYP_REMOTE_ENVIRONMENT: homolog
+      PYP_PROFILE: ${{ inputs.profile }}
+      PYP_OWNER_APPROVED: ${{ vars.PYP_CAPACITY_APPROVED }}
+      PYP_AUTHORIZATION_REFERENCE: ${{ vars.PYP_CAPACITY_AUTHORIZATION_REFERENCE }}
+      PYP_AB_TEST_CLOSED: ${{ vars.PYP_AB_TEST_CLOSED }}
+      PYP_MAX_VUS: ${{ vars.PYP_CAPACITY_MAX_VUS }}
+      PYP_MAX_RPS: ${{ vars.PYP_CAPACITY_MAX_RPS }}
+      PYP_TARGET_RPS: ${{ vars.PYP_CAPACITY_TARGET_RPS }}
+      PYP_DURATION_SECONDS: ${{ vars.PYP_CAPACITY_DURATION_SECONDS }}
+      PYP_RAMP_UP_SECONDS: ${{ vars.PYP_CAPACITY_RAMP_UP_SECONDS }}
+      PYP_RAMP_DOWN_SECONDS: ${{ vars.PYP_CAPACITY_RAMP_DOWN_SECONDS }}
+      PYP_THRESHOLDS_JSON: ${{ vars.PYP_CAPACITY_THRESHOLDS_JSON }}
+      PYP_SOURCE_REVISION: ${{ github.sha }}
+      PYP_SOURCE_WORKTREE_DIRTY: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.6"
+      - name: Install pinned k6
+        env:
+          GOBIN: ${{ runner.temp }}/k6-bin
+        run: |
+          go install go.k6.io/k6@v0.54.0
+          echo "${{ runner.temp }}/k6-bin" >> "$GITHUB_PATH"
+      - name: Run approved read-only health profile
+        env:
+          K6_NO_USAGE_REPORT: "true"
+        run: k6 run k6/remote-campaign.js
+      - name: Preserve sanitized summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-capacity-summary-${{ github.run_id }}
+          path: summary.json
+          if-no-files-found: ignore
+          retention-days: 3
