@@ -1,5 +1,15 @@
 # Evidências de implementação — 09/10/2026
 
+## Correção da integração na terceira execução do CI
+
+Execução `37993782959`, commit `d925a94a5db84be60179bf3006b829f3dba25fa7`: frontend, OpenSpec, gitleaks, Ruff e verificações operacionais aprovados. Pytest executou a suíte completa e registrou **1.277 passed, 11 failed, 20 skipped**, 1.422,21 s. As onze falhas foram delimitadas em três causas:
+
+- Fixture de diagnóstico facial não indicava proprietário, retornando 403 conforme o novo contrato. Agora indica proprietário sintético explicitamente; os testes existentes de negação a não proprietário permanecem.
+- Inventário fechado de limpeza não classificava as oito tabelas novas. A política agora preserva essas tabelas e auditoria `system_monitor.*`, com registro dos modelos também no CLI independente. Nada foi acrescentado à lista de exclusão operacional. FK de atividade acompanha exclusão de sessão de cliente, conforme spec.
+- Conferência do catálogo histórico 0070 tentava ler tabelas posteriores; agora exige que elas estejam ausentes e verifica o restante do catálogo. Testes da rotina atual de inventário/limpeza migram até 0072; caso PostgreSQL de preservação verifica proprietário, grants, bucket, sinal administrativo e auditoria.
+
+Validação permitida da correção: `DATABASE_URL=sqlite:// python -m pytest tests/test_system_monitor.py tests/test_homolog_cleanup.py tests/test_capacity_observability_contracts.py -q --tb=short` na pasta backend: **43 passed, 1 skipped, 7,12 s**. Ruff completo aprovado após ajustar import; compilação Python dos arquivos afetados aprovada. `pytest tests/test_tenant_photographer_migration.py tests/test_tenant_migration.py -q -rs --tb=short`: **4 passed, 18 skipped, 32,73 s**, com casos PostgreSQL não executados localmente. OpenSpec estrito aprovado. Endpoint com TestClient e migrations PostgreSQL serão verificados no novo CI; nenhum servidor/container local ou limpeza real iniciado/executado. Pausa solicitada permanece após push, sem merge/deploy.
+
 ## Estado e escopo
 
 ### Continuação autorizada e envio ao CI — 09/10/2026

@@ -26,6 +26,12 @@ from tests.tenant_fixtures import insert_legacy_model as insert_model
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
+CURRENT_SCHEMA = "20261009_0072"
+POST_TRANSITION_TABLES = frozenset({
+    "installation_operator", "platform_owner", "system_monitor_grant",
+    "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
+    "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
+})
 
 
 def migrate(url, revision, *, downgrade=False, succeeds=True):
@@ -94,9 +100,10 @@ def assert_preserved(connection, before):
 
 def assert_catalog(connection):
     inspector = sa.inspect(connection)
+    assert not POST_TRANSITION_TABLES & set(inspector.get_table_names())
     for name, target in auth.Base.metadata.tables.items():
-        # Esta conferência é da revision 0070, anterior ao privilégio técnico 0071.
-        if name == "installation_operator":
+        # Conferência histórica 0070: tabelas técnicas 0071/0072 ainda não existem.
+        if name in POST_TRANSITION_TABLES:
             continue
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
         assert set(actual_columns) == set(target.c.keys()), name
@@ -337,7 +344,7 @@ def test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos(
 
     url, engine = migration_db
     # O inventário exige o schema operacional completo usado em homologação.
-    migrate(url, "20261001_0071")
+    migrate(url, CURRENT_SCHEMA)
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
     for root in roots.values():
         root.mkdir()
@@ -368,12 +375,18 @@ def test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos(
 def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatch, tmp_path):
     from app import homolog_cleanup
     from app.provision_installation_operator import provision_operator
+    from app.system_monitor.models import (
+        MonitorActivity,
+        MonitorBucket,
+        MonitorGrant,
+        PlatformOwner,
+    )
 
     url, engine = migration_db
     with engine.begin() as connection:
         records = legacy(connection)
-    # A rotina atual exige o catálogo completo, incluindo o privilégio técnico 0071.
-    migrate(url, "20261001_0071")
+    # A rotina atual exige o catálogo completo, incluindo o monitor 0072.
+    migrate(url, CURRENT_SCHEMA)
     monkeypatch.setenv("APP_ENV", "homolog")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
     for root in roots.values():
@@ -384,6 +397,16 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
     with Session(engine) as db:
         provision_operator(db, admin_id=records["admin"], action="grant",
                            authorization_reference="synthetic-cleanup-proof", apply=True)
+        admin_session = db.scalar(sa.select(auth.AuthSession).where(auth.AuthSession.role == "admin"))
+        minute = auth.now().replace(second=0, microsecond=0)
+        db.add_all([
+            PlatformOwner(singleton=1, admin_user_id=records["admin"], authorization_reference="synthetic"),
+            MonitorGrant(admin_user_id=records["admin"], permission="metrics", active=True,
+                         authorization_reference="synthetic"),
+            MonitorBucket(minute=minute, operation="http.read", latency_bin=100, count=1),
+            MonitorActivity(session_id=admin_session.id, last_activity=minute),
+        ])
+        auth.audit(db, "system_monitor.grants_granted", str(records["admin"]), tenant_id=records["owner"])
         db.commit()
         before = homolog_cleanup.inventory(db)
         result = homolog_cleanup.execute(db, homolog_cleanup.CONFIRMATION)
@@ -391,5 +414,11 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
         assert all(value == 0 for value in result["database"].values())
         assert all(value["files"] == 0 for value in result["media"].values())
         assert db.get(auth.InstallationOperator, records["admin"]).active
+        assert db.get(PlatformOwner, 1).admin_user_id == records["admin"]
+        assert db.get(MonitorGrant, (records["admin"], "metrics")).active
+        assert db.get(MonitorBucket, (minute, "http.read", 100)).count == 1
+        assert db.get(MonitorActivity, admin_session.id) is not None
+        assert db.scalar(sa.select(auth.AuditEvent.id).where(
+            auth.AuditEvent.event == "system_monitor.grants_granted"))
         assert db.scalar(sa.select(auth.AuditEvent.id).where(
             auth.AuditEvent.event == "installation_operator.grant"))

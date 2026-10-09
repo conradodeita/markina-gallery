@@ -1,5 +1,12 @@
 ## ADDED Requirements
 
+### Requirement: Compatibilidade com inventário e limpeza de homologação
+O inventário SHALL classificar explicitamente as oito tabelas técnicas do monitor como preservadas. Limpeza de dados operacionais MUST preservar propriedade, concessões, métricas, incidentes e auditoria administrativa do monitor. Sinais de sessões de clientes removidas SHALL acompanhar a exclusão dessas sessões por FK; sinais administrativos válidos SHALL permanecer.
+
+#### Scenario: Inventário e limpeza sintética após a migration
+- **WHEN** o schema inclui a migration do monitor e uma limpeza operacional é explicitamente autorizada
+- **THEN** o inventário continua fechado e agregado, as tabelas técnicas não entram na lista de exclusão e a propriedade e concessões permanecem
+
 ### Requirement: Monitor operacional com qualidade explícita
 O sistema SHALL apresentar monitor com HTTP, pool, banco, filas, workers, armazenamento, host e incidentes, preservando o card existente. Toda métrica SHALL distinguir origem, instante, escopo e indisponibilidade; dados antigos MUST NOT indicar saúde atual.
 

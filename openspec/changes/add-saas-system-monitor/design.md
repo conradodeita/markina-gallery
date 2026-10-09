@@ -42,6 +42,8 @@ Falhas persistentes (default 3 registros) e rejeições de autenticação são a
 
 ## Migration Plan
 
+Integração com manutenção: inventário classifica as oito tabelas técnicas como preservadas e registra os modelos mesmo no CLI sem importar a API. Auditoria `system_monitor.*` integra a segurança administrativa preservada. Atividade de cliente acompanha a exclusão de sua sessão por FK CASCADE; atividade administrativa permanece. Testes do catálogo histórico 0070 excluem explicitamente tabelas introduzidas em 0071/0072; os testes da rotina de limpeza atual migram até 0072 e verificam propriedade/grants/métricas/auditoria preservados. Nenhuma limpeza real é executada para validar essa integração.
+
 Validação CI: o teste do layout preserva botão de instalação único, toolbar global e conteúdo dentro de SessionBoundary, incluindo agora um único MonitorActivity. Após falha por quota anônima do Docker Hub no runner, os dois serviços PostgreSQL 17 Alpine do CI usam o espelho Docker Official Images no ECR Public (`public.ecr.aws/docker/library/postgres:17-alpine`). Versão principal, bancos sintéticos, portas e healthchecks permanecem iguais; nenhuma imagem de deploy é alterada.
 
 Migration aditiva cria tabelas próprias, sem concessões nem alteração do domínio. Depois de aprovação operacional: inventário vigente, backup, migration, versão exata, configuração/permiteções offline, publicação e smoke remoto com contas sintéticas independentes. Desabilitar coleta reverte instrumentação; não executar downgrade destrutivo. Sincronizar/arquivar somente após revisão humana.

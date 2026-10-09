@@ -500,3 +500,30 @@ def test_incident_permission_revoked_during_export_prevents_delivery(db, monkeyp
     with pytest.raises(HTTPException) as denied:
         routes.report(request, 60, "json")
     assert denied.value.status_code == 403
+
+
+def test_cleanup_inventory_preserves_monitor_and_security_audit(db, monkeypatch, tmp_path):
+    from app import homolog_cleanup
+    from app.auth import audit
+    tenant, admin, session = user(db, "admin")
+    db.add(MonitorGrant(admin_user_id=admin.id, permission="metrics", active=True,
+                        authorization_reference="synthetic"))
+    db.add(MonitorBucket(minute=NOW, operation="http.read", latency_bin=100, count=1))
+    db.add(MonitorActivity(session_id=session.id, last_activity=NOW))
+    audit(db, "system_monitor.grants_granted", str(admin.id), tenant_id=tenant.id)
+    db.commit()
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: {"synthetic": tmp_path})
+    expected = {"platform_owner", "system_monitor_grant", "system_monitor_activity",
+                "system_monitor_bucket", "system_monitor_sample", "system_monitor_worker",
+                "system_monitor_incident", "system_monitor_transition"}
+    assert expected <= homolog_cleanup.PRESERVED_TABLES
+    assert not expected & homolog_cleanup.OPERATIONAL_TABLES
+    result = homolog_cleanup.inventory(db)
+    assert all(name in result["preserved"] for name in expected)
+    assert not expected & result["database"].keys()
+    for name in ("platform_owner", "system_monitor_grant", "system_monitor_activity", "system_monitor_bucket"):
+        assert result["preserved"][name] == 1
+    assert result["preserved"]["admin_security_audit_events"] == 1
+    assert result["database"]["client_gallery_audit_events"] == 0
+    assert str(admin.id) not in str(result)
