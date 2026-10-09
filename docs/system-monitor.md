@@ -1,0 +1,99 @@
+# Monitor do sistema
+
+Implementação: change `add-saas-system-monitor`, migration `20261009_0072`. Este documento descreve código ainda não publicado nesta execução. O painel será acessível em **Administração → Monitor do sistema**, `/admin/system-monitor`, após publicação e concessão explícitas. Não inicia serviços nem habilita coleta automaticamente.
+
+## Autorização e privacidade
+
+O backend exige sessão administrativa válida, e-mail verificado, vínculo único ativo e concessões independentes: `metrics`, `tree`, `incidents`, `export`. Exportação exige também `metrics`; incidentes entram no relatório somente com `incidents`. `installation_operator` continua autorizando exclusivamente o cartão antigo. Nenhum grant é criado na migration.
+
+Diretriz posterior do proprietário: **somente a conta proprietária da SaaS** pode acessar monitor e diagnósticos operacionais, mesmo que outro administrador tenha grants. A tabela singleton `platform_owner` vincula propriedade ao UUID do administrador; o e-mail atual serve apenas à identificação inicial. Trocar/verificar o e-mail na mesma conta preserva a propriedade; uma nova conta com o e-mail antigo não recebe acesso. `installation_operator` também passa a exigir essa propriedade para capacidade e diagnóstico facial. A migration não elege ninguém automaticamente. Proprietário ainda precisa dos grants explícitos; o CLI recusa transferência para outro UUID, que exigiria decisão operacional própria.
+
+Árvore global é privilégio da administração SaaS: clientes são consultados por tenant, sem telefone/e-mail, com nome somente nesta superfície. Contas recebem alias de UUID público. Consulta da árvore e exportação geram auditoria do ator, sem critérios de busca, nomes consultados ou conteúdo do relatório. Respostas privadas usam `no-store`, incluindo erros via middleware. Sessão e concessão são revalidadas após consulta. Logout/revogação limpam dados da interface e cancelam downloads pendentes.
+
+Concessão offline futura, em ambiente autorizado e com configuração segura já disponível:
+
+```sh
+python -m app.system_monitor.grants --admin-id <UUID> --permission metrics --permission tree --permission incidents --permission export --authorization-reference <REFERENCIA>
+# Na indicação inicial, acrescentar --establish-owner-email <EMAIL_ATUAL_CONFIRMADO>.
+# Esse e-mail confirma a conta indicada por UUID; não se torna regra de autorização.
+# O comando acima faz dry-run e rollback. Somente após autorização:
+python -m app.system_monitor.grants --admin-id <UUID> --permission metrics --authorization-reference <REFERENCIA> --apply
+# Revogar uma concessão usa os mesmos parâmetros e --revoke --apply.
+```
+
+Não há endpoint para autoelevação. O arquivo `.env`, segredos e permissões reais não foram alterados.
+
+## Coleta, limites e semântica
+
+| Sinal | Fonte e limite | Interpretação |
+|---|---|---|
+| HTTP | ASGI até fim do corpo; operações fixas | Requisições, 5xx, 4xx e latência; não mede renderização do navegador nem erros no Nginx antes da API |
+| Pool | SQLAlchemy QueuePool da API e workers | Aquisição completa incluindo conexão; timeouts contados separadamente das demais falhas. Não representa tempo puro em fila |
+| Processamento | Ciclos instrumentados + estados agregados no SQL | Duração de ciclo/tentativa; falhas capturadas internamente aparecem nos estados de jobs, não necessariamente como exceção do ciclo |
+| Filas/banco | Coletor existente + `pg_stat_activity` | Pool instantâneo continua de um processo API; conexão PostgreSQL do banco inclui outros consumidores |
+| Workers | Heartbeat por ciclo e último ciclo com trabalho | Observado não prova capacidade; ciclo antigo não prova processo morto, inclusive em trabalhos longos |
+| Uploads/integrações | Estados agregados de lotes/entregas | Não lê destinatário, conteúdo, provedor nem texto de erro; falhas HTTP também são agregadas |
+| Arquivos | Até 1.001 registros e 1.000 verificações de metadados/hora/processo, budget cooperativo de 1 s | Originais, prévias convencionais e ajustadas cadastradas; sem leitura de conteúdo ou varredura de diretórios. Se incompleto, total é nulo e limite inferior verificado é separado. Histórico comercial, staging e biometria ficam excluídos |
+| Host | JSON fechado de até 16 KiB | CPU/RAM/filesystem/rede/I/O; ausência, sem permissão, futuro, valor inválido e idade tratados explicitamente |
+
+Buffers de até 4.096 combinações minuto/operação/faixa, flush a cada 30 s, batches de até 100 UPSERTs atômicos. Snapshot global a cada 60 s com advisory transaction lock PostgreSQL. Consultas SQL: timeout 500 ms e lock timeout 100 ms; no máximo duas consultas administrativas concorrentes por processo. Fontes têm transações independentes, sem retry agressivo. Falhas são logadas com código fixo. Contadores de perda/falha são do processo coletor; perdas em crash e perdas de outros processos podem não ser quantificadas.
+
+Histórico: buckets UTC de 1 min; HTTP agrupado em 5 min; até 120 snapshots, 200 transições e 100 alertas ativos por resposta. Relatórios JSON/texto até 1 MiB e 5–1.440 min, com minutos completos. Versão somente SHA hexadecimal de `APP_VERSION`; ambiente somente allowlist de `APP_ENV`. Percentis são limites superiores de histograma, p95 requer 20 amostras e p99, 100; overflow acima de 60 s não tem limite superior finito e fica nulo. Não somar requisições e ciclos de worker. Falta de amostras não é zero nem garantia de saúde.
+
+Os coletores existentes de arquivos carregam registros completos/varrem diretórios; por isso o monitor usa uma projeção limitada própria e reutiliza as regras de raiz/namespace. Inventário é uma observação ao longo do ciclo, não snapshot transacional de disco. O filesystem real vem do host, enquanto provisionamento/quota OCI permanecem desconhecidos até verificação própria.
+
+## Atividade e árvore
+
+O navegador consulta política uma vez ao entrar em contexto protegido e sinaliza `pointerdown`/`keydown` com página visível, no máximo uma vez por minuto. Não há heartbeat ocioso. Backend aceita somente sessão atual e cabeçalho customizado; update por sessão também é limitado a 60 s. Cliente não envia relógio/identidade. Retenção dos sinais: 24 h.
+
+- **Ativo agora:** sessão válida e sinal nos últimos 120 s.
+- **Atividade recente:** sinal de até 1.800 s com sessão ainda válida.
+- **Sessão válida:** sessão válida sem sinal nessa janela.
+- **Sem atividade recente:** sem sessão/sinal válidos sob coleta atual.
+- **Desconhecido:** coleta desligada, ausente, futura ou antiga (>180 s).
+
+Essas janelas são regras configuráveis, não presença garantida. Sinais podem estar ausentes em clientes antigos/offline. A árvore usa cursor UUID, 25 registros por página (máximo 100), pesquisa de até 80 caracteres, filtro antes do limite e carregamento dos clientes somente ao expandir. Totais globais e falhas dos tenants da página são agregados SQL; não se consulta cada cliente separadamente. A árvore não acompanha o polling das métricas.
+
+## Configuração e alertas
+
+Variáveis prefixadas por `SYSTEM_MONITOR_`, com defaults propostos para ativação aprovada:
+
+| Sufixo | Padrão | Limites |
+|---|---:|---|
+| ENABLED | false | Somente `true` habilita coleta |
+| RETENTION_DAYS | 7 | 1–30 dias |
+| ACTIVE_SECONDS / RECENT_SECONDS | 120 / 1800 | 60–300 / 600–3600 |
+| STALE_SECONDS | 180 | 120–600 |
+| ALERT_SECONDS | 120 | 60–900 |
+| ERROR_PERCENT | 5 | 1–100; mínimo 20 amostras |
+| LATENCY_MS | 2000 | 100–60000; p95 com 20 amostras |
+| QUEUE_AGE_SECONDS | 300 | 60–3600 |
+| POOL_PERCENT | 90 | 50–100 |
+| DISK_FREE_PERCENT | 10 | 1–50 |
+| FAILURE_COUNT | 3 | 1–1000 registros com falha |
+| CPU_PERCENT | 90 | 50–100 |
+| MEMORY_FREE_PERCENT | 10 | 1–50 |
+
+Alertas têm chave fixa, estado pendente/ativo/resolvido, duração mínima e transições deduplicadas. Erros/falhas registrados são evidência confirmada da operação; saturação/latência/idade são preventivos; worker/host antigo é lacuna de dados. Erro HTTP persistente >=50% indica crítico, sem concluir indisponibilidade total. Evidência ausente não resolve incidente. Falhas de jobs são estados de registros atualizados nos últimos 5 min; integração usa estado atual. Não há monitor externo de disponibilidade nesta change; queda da coleta fica desatualizada/desconhecida.
+
+Retenção remove somente tabelas do monitor: até 1.000 registros por tabela/ciclo e 10 minutos antigos de buckets/ciclo. A purga acompanha backlog gradualmente; não é prazo rígido se coleta estiver desligada. Incidentes ativos permanecem enquanto não houver recuperação observada. Não há envio de mensagens externas.
+
+## Host: integração disponível e pendências
+
+Inspeção SSH somente leitura em 09/10/2026 no servidor autorizado: `/proc/stat`, `/proc/meminfo`, `/proc/net/dev` e `/proc/diskstats` legíveis; `oracle-cloud-agent` consultado retornou `inactive`; CLI `oci` não foi encontrada. IAM/quotas e métricas OCI não foram confirmados. Treze containers do projeto foram listados; nenhuma instalação, alteração ou requisição de carga foi feita.
+
+Foi entregue `backend/app/system_monitor/host_collect.py`, executável com Python stdlib no Linux. Exemplo **para futura execução autorizada**, substituindo caminhos/dispositivo/interface verificados:
+
+```sh
+python host_collect.py --scope host --filesystem <FILESYSTEM_DA_MIDIA> --interface <INTERFACE_FISICA> --device <DISPOSITIVO> --output <DIRETORIO_PRIVADO>/host.json
+```
+
+O comando faz duas leituras separadas por 1 s e troca atômica do JSON, sem daemon, portas ou privilégios. Sem interface/dispositivo explícitos, rede/I/O ficam nulos; não agrega bridges/veth/partições duplicadas. Executar no host com `--scope host`; um container só pode declarar seu escopo real. Disco livre é o disponível ao usuário do coletor. Snapshot deve ser produzido a cada 60 s, com diretório dedicado montado somente leitura na API (montar diretório, não arquivo, devido à troca atômica). Permissões UNIX precisam permitir leitura ao UID da API; não torná-lo público. Variável `SYSTEM_MONITOR_HOST_SNAPSHOT` deve apontar ao caminho no container. Scheduler, montagem e permissões ainda **não instalados/configurados**.
+
+Overlay `docker/docker-compose.system-monitor.yml` apenas propaga configuração opt-in a API/workers; não adiciona porta, volume ou agente. Combinar com compose base e overlay existente de preview-adjustment. Nenhum comando `up`, migration real ou grant real foi executado. Integração OCI futura pode produzir o mesmo contrato `source=oci_monitoring`; não existe cliente OCI implementado nem pressuposição de IAM.
+
+## Próxima etapa operacional
+
+Publicação exige autorização separada: inventário atual de versão/containers/portas/volumes; confirmar projeto exclusivo e proxy sem mudança; backup; migration aditiva; deploy da versão revisada; concessões explícitas; habilitar coleta e, opcionalmente, fonte do host. Testar login de conta sintética isolada, negação, revogação, árvore, exportação e card pelo ambiente remoto. Sem carga, mensagens, pagamentos ou alteração da campanha A+B. Integração real PostgreSQL/advisory lock e navegação visual autenticada permanecem pendentes até essa etapa. Reversão operacional: desabilitar coleta e retirar grants, preservando tabelas; downgrade destrutivo é recusado.
+
+Evidências e comandos executados: `openspec/changes/add-saas-system-monitor/validation.md`.

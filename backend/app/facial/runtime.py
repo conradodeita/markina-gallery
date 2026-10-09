@@ -15,6 +15,7 @@ from app.facial.jobs import (
     FacialJobRepository,
     facial_queue_name,
 )
+from app.system_monitor.telemetry import heartbeat, record
 
 
 class BlockingWakeSource(Protocol):
@@ -77,7 +78,9 @@ class BlockingFacialWorker:
             claim = self._claim()
         if claim is None:
             self._unload_if_idle()
+            heartbeat(self._job_class, False)
             return False
+        observed_started = time.perf_counter()
         provider = self._provider
         if provider is None and self._provider_required(claim):
             try:
@@ -86,12 +89,21 @@ class BlockingFacialWorker:
                 if self._provider_failure is None:
                     raise
                 self._provider_failure(claim, error)
+                record(f"work.{self._job_class}", (time.perf_counter() - observed_started) * 1000, 500)
+                heartbeat(self._job_class, False)
                 self.processed_jobs += 1
                 self._last_work_at = self._clock()
                 return True
             self._provider = provider
         with self._session_factory() as db:
-            self._processor(db, claim, provider)
+            try:
+                self._processor(db, claim, provider)
+            except Exception:
+                record(f"work.{self._job_class}", (time.perf_counter() - observed_started) * 1000, 500)
+                heartbeat(self._job_class, False)
+                raise
+        record(f"work.{self._job_class}", (time.perf_counter() - observed_started) * 1000)
+        heartbeat(self._job_class, True)
         self.processed_jobs += 1
         self._last_work_at = self._clock()
         if self.processed_jobs >= self._settings.max_jobs_per_process:
@@ -99,6 +111,8 @@ class BlockingFacialWorker:
         return True
 
     def run(self) -> None:
+        from app.system_monitor.runtime import start_monitor
+        start_monitor()
         while self.processed_jobs < self._settings.max_jobs_per_process:
             self.run_cycle()
 

@@ -50,6 +50,7 @@ from sqlalchemy.orm import (
 from app.messaging import WhatsAppConfigurationError
 from app.ownership_schema import apply_ownership_constraints
 from app.product_brand import DEFAULT_WATERMARK_TEXT
+from app.system_monitor.pool import MonitoredQueuePool
 from app.whatsapp_delivery import encrypt_otp, otp_encryption_key
 
 
@@ -71,6 +72,7 @@ def database_url() -> str:
 engine = create_engine(
     database_url(),
     connect_args={"check_same_thread": False} if database_url().startswith("sqlite") else {},
+    **({"poolclass": MonitoredQueuePool} if database_url().startswith("postgresql") else {}),
 )
 
 

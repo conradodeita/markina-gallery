@@ -35,6 +35,7 @@ from app.preview_adjustment.engine import (
     RawTherapeeEngine,
     compensate_exposure,
 )
+from app.system_monitor.telemetry import observe_work
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
@@ -284,6 +285,7 @@ def presentation_path(db: Session, derivative: MediaDerivative) -> Path:
         return conventional
 
 
+@observe_work("preview_adjustment")
 def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool:
     claim, photo_id = str(uuid4()), None
     with session_factory() as db:

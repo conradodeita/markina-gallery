@@ -74,4 +74,8 @@ O relatório continua sendo uma leitura agregada da instalação. Ele não separ
 
 ## Requisitos antes de expansão
 
+### Evolução: Monitor do sistema
+
+A change `add-saas-system-monitor` adiciona página, histórico, instrumentação e exportação próprios; ver [system-monitor.md](system-monitor.md). O cartão e seu contrato permanecem preservados, inclusive a permissão `installation_operator`. As novas permissões são independentes. O novo monitor está implementado em código, mas sua migration/configuração e publicação não foram executadas nesta tarefa. Os limites e ausências descritos acima continuam válidos para este cartão.
+
 SLOs gerais e esquema métrico precisam de aprovação; carga mista PostgreSQL/API, jornadas e bytes/egress requerem evidência nos estudos B05/B06/B11 em ambiente isolado e autorizado. Este diagnóstico sozinho não promete capacidade, disponibilidade, preço ou escala. P0.2 fairness/quotas é escopo separado; suporte a vários fotógrafos depende da prontidão e operação autorizada da change `add-small-multi-photographer-pilot`.

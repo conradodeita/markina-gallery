@@ -1,0 +1,32 @@
+.monitor { display:grid; gap:24px; max-width:1500px; margin:auto; }
+.monitor h1 { margin:4px 0 12px; }
+.monitor p, .monitor small { line-height:1.6; }
+.section { min-width:0; padding:clamp(16px,3vw,28px); border:1px solid var(--line); border-radius:16px; background:var(--mk-surface); }
+.section h2 { margin-top:0; }
+.controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.controls label { display:grid; gap:6px; min-width:150px; }
+.monitor button, .monitor input, .monitor select { min-height:44px; border:1px solid var(--line); border-radius:8px; padding:8px 12px; color:inherit; background:var(--mk-surface); font:inherit; max-width:100%; }
+.monitor button { cursor:pointer; }
+.monitor button:disabled { cursor:wait; opacity:.6; }
+.monitor button:focus-visible, .monitor input:focus-visible, .monitor select:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:16px; margin:16px 0; }
+.metric { display:grid; align-content:start; gap:8px; padding:16px; border:1px solid var(--line); border-radius:12px; min-width:0; }
+.metric strong { font-size:1.5rem; overflow-wrap:anywhere; }
+.metric span, .metric small { color:var(--muted); }
+.badge { display:inline-block; font-size:.85rem; font-weight:500; border:1px solid currentColor; border-radius:20px; padding:5px 10px; color:var(--muted); }
+.badge[data-state="healthy"] { color:#25824f; }
+.badge[data-state="attention"], .badge[data-state="stale"] { color:#a16a00; }
+.badge[data-state="critical"] { color:#c33c40; }
+.table { overflow:auto; max-width:100%; }
+.table table { width:100%; border-collapse:collapse; font-size:.9rem; }
+.table th, .table td { padding:12px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+.chart { min-width:0; padding:16px; border:1px solid var(--line); border-radius:12px; }
+.chart svg { display:block; width:100%; color:var(--accent); }
+.chart h3 { margin-top:0; }
+.tree { min-width:0; }
+.tree ul { list-style:none; padding-left:0; }
+.tree li { padding:14px 0; border-bottom:1px solid var(--line); }
+.tree li .tree { margin:16px 0 0 16px; padding-left:16px; border-left:2px solid var(--line); }
+.treeRow { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:8px; }
+.treeRow span { font-size:.9rem; }
+@media(max-width:600px) { .controls label { width:100%; } .controls button { flex:1; } .tree li .tree { margin-left:4px; padding-left:8px; } }

@@ -37,6 +37,7 @@ from app.facial.observability import (
 )
 from app.main import app
 from app.provision_installation_operator import provision_operator
+from app.system_monitor.models import PlatformOwner
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
@@ -295,6 +296,8 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
             ))
             session.add(admin)
             session.flush()
+            session.add(PlatformOwner(singleton=1, admin_user_id=admin.id,
+                                      authorization_reference="synthetic-observability-owner"))
             cookie = create_session(session, Response(), Role.ADMIN, admin.id)
             person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente sintética", phone_e164="+5511999997700")
             session.add(person)

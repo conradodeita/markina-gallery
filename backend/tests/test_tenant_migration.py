@@ -131,7 +131,7 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
 
     from app import homolog_cleanup
 
-    migrate(migration_database, "upgrade", "20261001_0071")
+    migrate(migration_database, "upgrade", "20261009_0072")
     engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
     monkeypatch.setenv("APP_ENV", "homolog")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}

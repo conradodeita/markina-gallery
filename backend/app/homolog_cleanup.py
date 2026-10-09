@@ -26,6 +26,7 @@ from app.auth import (
     Tenant,
 )
 from app.media import derivatives_root, source_root
+from app.system_monitor import models as monitor_models
 from app.tenancy import require_single_tenant
 
 CONFIRMATION = "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
@@ -40,7 +41,13 @@ EXPECTED_MEDIA_ROOTS = {
 
 # Lista fechada: uma migration que adicione tabela sem classificação bloqueia a limpeza.
 # As linhas mistas são tratadas separadamente para preservar sessões e push do admin.
-PRESERVED_TABLES = frozenset({
+MONITOR_PRESERVED_TABLES = frozenset({
+    monitor_models.PlatformOwner.__tablename__, monitor_models.MonitorGrant.__tablename__,
+    monitor_models.MonitorActivity.__tablename__, monitor_models.MonitorBucket.__tablename__,
+    monitor_models.MonitorSample.__tablename__, monitor_models.MonitorWorker.__tablename__,
+    monitor_models.MonitorIncident.__tablename__, monitor_models.MonitorTransition.__tablename__,
+})
+PRESERVED_TABLES = MONITOR_PRESERVED_TABLES | frozenset({
     "admin_action_token", "admin_security_challenge", "admin_user", "installation_operator",
     "branding_settings", "email_delivery", "email_delivery_attempt",
     "facial_calibration_approval", "facial_rollout_operation",
@@ -106,6 +113,7 @@ def _count(db: Session, model, *criteria) -> int:
 def admin_security_audit_criteria():
     return or_(
         AuditEvent.event.like("installation_operator.%"),
+        AuditEvent.event.like("system_monitor.%"),
         AuditEvent.event.like("admin_security.%"),
         AuditEvent.event.like("admin_password.%"),
         AuditEvent.event.like("admin_totp.%"),

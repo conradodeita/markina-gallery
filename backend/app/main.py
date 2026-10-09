@@ -906,9 +906,11 @@ def require_admin(request: Request) -> AuthSession:
 
 def require_installation_operator(request: Request) -> None:
     from app.installation_operator import require_operator
+    from app.system_monitor.access import require_owner
 
     session = require_admin(request)
     with SessionLocal() as db:
+        require_owner(db, session.subject_id)
         require_operator(db, session.subject_id)
 
 
@@ -2705,11 +2707,12 @@ def admin_validation_summary(
 @app.get("/admin/installation-capabilities")
 def admin_installation_capabilities(request: Request, response: Response) -> dict[str, bool]:
     from app.installation_operator import operator_is_active
+    from app.system_monitor.access import is_owner
 
     response.headers["Cache-Control"] = "private, no-store"
     session = require_admin(request)
     with SessionLocal() as db:
-        return {"capacity_diagnostics": operator_is_active(db, session.subject_id)}
+        return {"capacity_diagnostics": is_owner(db, session.subject_id) and operator_is_active(db, session.subject_id)}
 
 
 @app.get("/admin/capacity-observability", response_model=CapacitySnapshot)
@@ -12241,3 +12244,21 @@ register_folder_processing_routes(
     app, db_session=db_session, require_admin=require_admin,
     require_same_origin=require_same_origin, tenant_context=directory_tenant_id,
 )
+
+# Opt-in monitor uses the existing engine; it never creates schema or grants.
+from app.system_monitor.routes import router as system_monitor_router
+from app.system_monitor.runtime import start_monitor, stop_monitor
+from app.system_monitor.telemetry import MonitorMiddleware
+
+app.include_router(system_monitor_router)
+app.add_middleware(MonitorMiddleware)
+
+
+@app.on_event("startup")
+def start_system_monitor():
+    start_monitor(collect_global=True)
+
+
+@app.on_event("shutdown")
+def stop_system_monitor():
+    stop_monitor()
