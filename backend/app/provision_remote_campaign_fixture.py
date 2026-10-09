@@ -63,8 +63,8 @@ def _verify_account(db: Session, tenant_id: UUID) -> None:
         .where(auth.TenantAdmin.tenant_id == tenant_id, auth.TenantAdmin.active.is_(True))
         .limit(2)
     ))
-    if len(admins) != 1 or not admins[0].email.lower().endswith("@example.test"):
-        raise RuntimeError("remote_campaign_synthetic_account_required")
+    if len(admins) != 1:
+        raise RuntimeError("remote_campaign_admin_account_ambiguous")
 
 
 def _ensure_fixture(db: Session, tenant_id: UUID, media_root: Path, manifest: MediaManifest) -> None:
