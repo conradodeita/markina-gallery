@@ -109,13 +109,13 @@ def test_remote_browser_authentication_and_tenant_isolation():
         async def guard_route(route):
             nonlocal api_requests, blocked_operations
             request = route.request
-                try:
-                    validate_functional_request(request.method, request.url)
-                    if "/api/" in request.url:
-                        api_requests += 1
-                        observed_api_paths.append(
-                            f"{request.method.upper()} {urlsplit(request.url).path}"
-                        )
+            try:
+                validate_functional_request(request.method, request.url)
+                if "/api/" in request.url:
+                    api_requests += 1
+                    observed_api_paths.append(
+                        f"{request.method.upper()} {urlsplit(request.url).path}"
+                    )
                 if api_requests > MAX_FUNCTIONAL_API_REQUESTS:
                     blocked_operations += 1
                     await route.abort()
