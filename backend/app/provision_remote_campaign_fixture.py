@@ -10,10 +10,12 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from PIL import Image, ImageOps
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app import auth
+from app.media import derivatives_root, watermark
 from app.remote_test_otp import is_remote_test_otp_tenant
 from tests.synthetic_media import MediaManifest, verify_pilot_media
 
@@ -185,6 +187,36 @@ def _ensure_fixture(db: Session, tenant_id: UUID, media_root: Path, manifest: Me
             or sha256(destination.read_bytes()).hexdigest() != content_hash
         ):
             raise RuntimeError("remote_campaign_photo_conflict")
+        preview_key = f"tenants/{tenant_id}/photos/{photo_id}/client_preview.jpg"
+        preview_path = (derivatives_root() / preview_key).resolve()
+        preview_root = derivatives_root().resolve()
+        if preview_root not in preview_path.parents:
+            raise RuntimeError("remote_campaign_preview_path_escape")
+        derivative = db.scalar(select(auth.MediaDerivative).where(
+            auth.MediaDerivative.tenant_id == tenant_id,
+            auth.MediaDerivative.photo_asset_id == photo_id,
+            auth.MediaDerivative.variant == "client_preview",
+        ))
+        if derivative is None:
+            with Image.open(destination) as opened:
+                rendered = watermark(ImageOps.exif_transpose(opened).convert("RGB"))
+                rendered.thumbnail((1980, 3960), Image.Resampling.LANCZOS)
+                width, height = rendered.size
+                preview_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = preview_path.with_suffix(".tmp")
+                rendered.save(temporary, format="JPEG", quality=85, optimize=True, exif=b"")
+                temporary.replace(preview_path)
+            db.add(auth.MediaDerivative(
+                tenant_id=tenant_id, photo_asset_id=photo_id,
+                variant="client_preview", relative_path=preview_key,
+                status="ready", width=width, height=height,
+            ))
+        elif (
+            derivative.status != "ready"
+            or derivative.relative_path != preview_key
+            or not preview_path.is_file()
+        ):
+            raise RuntimeError("remote_campaign_preview_conflict")
     db.flush()
 
 
@@ -226,7 +258,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         print(json.dumps(provision_fixture(args.media_root), sort_keys=True))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- diagnostics are deliberately generic and contain no row values.
         parser.exit(1, "Provisionamento sintético remoto recusado; nenhum item foi removido.\n")
 
 

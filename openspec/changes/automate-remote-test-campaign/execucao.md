@@ -46,7 +46,7 @@ Os workflows falham fechados quando variável obrigatória falta ou não corresp
 
 ## Identidades e mídia
 
-Os workflows smoke e capacidade consultam somente health endpoints e não precisam de conta. Dois fotógrafos sintéticos independentes foram provisionados, e suas senhas/TOTP estão no secret store `homolog-tests`. O sink OTP de uso único está implementado localmente, mas continua desligado e não publicado no servidor; jornadas autenticadas permanecem bloqueadas até autorização operacional para configurar segredo/allowlist e implantar o código em homologação.
+Os workflows smoke e capacidade consultam somente health endpoints e não precisam de conta. Dois fotógrafos sintéticos independentes foram provisionados, e suas senhas/TOTP estão no secret store `homolog-tests`. O sink OTP foi publicado somente na API homolog após autorização específica, com segredo fora do Git e allowlist limitada aos dois tenants sintéticos; o restante dos serviços não foi reiniciado. A validação do fluxo e a criação de galerias/clientes sintéticos devem ocorrer antes de jornadas autenticadas.
 
 Para reproduzir o perfil k6 atual a partir de um runner autorizado, com k6 v0.54.0 instalado e sem gravar segredos em histórico:
 

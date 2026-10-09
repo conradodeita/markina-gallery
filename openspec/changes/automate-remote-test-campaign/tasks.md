@@ -18,7 +18,7 @@
 - [x] 2.2 Bloquear hosts fora da allowlist de homologação e verificar no preflight que nenhum serviço de aplicação local será iniciado. Evidência: `remote_campaign_policy.py` valida a origem exata; os workflows rodam em runner hospedado sem iniciar serviços; 14 testes unitários de policy passaram em 08/10/2026.
 - [ ] 2.3 Implementar jornadas de login OTP/TOTP, leitura de galerias/pastas/prévias, seleção/desmarcação e negativas cruzadas somente com dados sintéticos.
 - [ ] 2.4 Reutilizar apenas a mídia sintética validada, executar envio apenas quando previsto e verificar preservação do hash de origem.
-- [x] 2.5 Bloquear pagamentos, mensagens externas, exclusões, configurações, biometria e demais operações não autorizadas antes do request. Evidência: o allowlist remoto só admite `GET /healthz` e `GET /api/health`; policy recusa auth, pagamentos, mutações, biometria e query strings; Playwright aplica a validação de URL completa antes de continuar a rota, e k6 só usa GET nos dois health endpoints.
+- [x] 2.5 Bloquear pagamentos, mensagens externas, exclusões, configurações, biometria e demais operações não autorizadas antes do request. Evidência: policy funcional exata permite somente leituras same-origin, os endpoints de autenticação/sink aprovados, seleção/desmarcação em UUIDs de galeria/foto e logout; pytest passou 12 casos positivos/negativos. A rota Playwright valida cada URL/método antes de liberar a requisição. k6 continua limitado a GET dos dois health endpoints.
 - [ ] 2.6 Produzir screenshot, logs e traces sanitizados em armazenamento temporário protegido; verificar ausência de segredos/PII nos artefatos publicados.
 
 ## 3. Harness de carga HTTP/API
