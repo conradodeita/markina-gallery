@@ -42,4 +42,6 @@ Falhas persistentes (default 3 registros) e rejeições de autenticação são a
 
 ## Migration Plan
 
+Validação CI: o teste do layout preserva botão de instalação único, toolbar global e conteúdo dentro de SessionBoundary, incluindo agora um único MonitorActivity. Após falha por quota anônima do Docker Hub no runner, os dois serviços PostgreSQL 17 Alpine do CI usam o espelho Docker Official Images no ECR Public (`public.ecr.aws/docker/library/postgres:17-alpine`). Versão principal, bancos sintéticos, portas e healthchecks permanecem iguais; nenhuma imagem de deploy é alterada.
+
 Migration aditiva cria tabelas próprias, sem concessões nem alteração do domínio. Depois de aprovação operacional: inventário vigente, backup, migration, versão exata, configuração/permiteções offline, publicação e smoke remoto com contas sintéticas independentes. Desabilitar coleta reverte instrumentação; não executar downgrade destrutivo. Sincronizar/arquivar somente após revisão humana.

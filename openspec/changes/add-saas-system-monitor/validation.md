@@ -10,9 +10,17 @@ Entrega para revisão preparada na worktree `C:\codex-data\worktrees\saas-system
 
 Nesta nova base, Ruff completo de `backend/app backend/tests` passou sem exceções, OpenSpec estrito passou e `git diff --check` passou. Os resultados de testes/build abaixo documentam a base anterior; o CI do PR verificará a integração com o develop atual. Não considerar esse CI aprovado até receber seu resultado. Não fazer merge automático, polling contínuo nem deploy durante a pausa solicitada.
 
+### Diagnóstico do CI do PR #151 — 09/10/2026
+
+Execução `37992103930`, commit `035197c5b29be4c913f8541f632919bd629e3631`: OpenSpec e gitleaks passaram; frontend teve 462 testes aprovados e uma falha em `app/pwa-contract.test.ts:46`. O teste exigia literalmente `SessionBoundary` contendo apenas children; a instrumentação adicionou `MonitorActivity` dentro dessa mesma fronteira. Ajustado o contrato para exigir um único componente de atividade, mantendo botão de instalação único, toolbar global, shells sem duplicação e contraste. Nenhum código de produto foi alterado para contornar o teste.
+
+Backend falhou antes do checkout/testes, ao baixar `postgres:17-alpine`: Docker Hub respondeu `toomanyrequests` nas três tentativas do runner. Os dois serviços sintéticos do CI passaram a usar `public.ecr.aws/docker/library/postgres:17-alpine`, espelho de Docker Official Images. Consulta somente leitura do manifesto retornou HTTP 200 e confirmou Linux amd64; não baixou/executou containers locais. YAML validado, OpenSpec estrito e diff check aprovados. Execução efetiva dos serviços continua dependente do novo CI. Imagens/configuração do servidor publicado não foram alteradas.
+
 ### Evidências anteriores à preparação do PR
 
-Código implementado na worktree `C:\codex-data\worktrees\invite-only-otp\Photo Delivery`, branch `codex/remote-test-campaign`, base `8d02583da8252de6f5b877128520d29d0e2428e4`, com alterações ainda sem commit. Nenhum deploy, migration real, concessão real, edição de `.env`/segredos, início de aplicação/containers local ou campanha de carga foi executado. Testes aqui são funções/ORM com SQLite sintético descartável, Vitest/jsdom e compilação estática. A leitura SSH foi exclusivamente de inventário/fontes do servidor autorizado, sem tocar em dados ou resultados A+B.
+Validação da correção na worktree do PR: `npm ci --no-audit --no-fund`, `npm test -- --maxWorkers=2` (**463 passed, 58 arquivos, 140,86 s**), `npm run lint` (**0 erros; 37 avisos em arquivos fora desta correção**) e `npm run build` (**aprovado**, TypeScript e 23 páginas, incluindo monitor). Nenhum servidor de aplicação iniciado. Novo CI após push deverá confirmar os serviços PostgreSQL no runner; manter a pausa solicitada até retorno do usuário.
+
+Código implementado na worktree `C:\codex-data\worktrees\invite-only-otp\Photo Delivery`, branch `codex/remote-test-campaign`, base `8d02583da8252de6f5b877128520d29d0e2428e4`, com alterações ainda sem commit naquele momento. Nenhum deploy, migration real, concessão real, edição de `.env`/segredos, início de aplicação/containers local ou campanha de carga foi executado. Testes aqui são funções/ORM com SQLite sintético descartável, Vitest/jsdom e compilação estática. A leitura SSH foi exclusivamente de inventário/fontes do servidor autorizado, sem tocar em dados ou resultados A+B.
 
 ## Entregas efetivas
 
