@@ -10,7 +10,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -84,6 +84,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
     started = perf_counter()
     api_requests = 0
     api_latencies: list[float] = []
+    observed_api_paths: list[str] = []
     checks: list[str] = []
     screenshots: list[str] = []
     blocked_operations = 0
@@ -108,10 +109,13 @@ def test_remote_browser_authentication_and_tenant_isolation():
         async def guard_route(route):
             nonlocal api_requests, blocked_operations
             request = route.request
-            try:
-                validate_functional_request(request.method, request.url)
-                if "/api/" in request.url:
-                    api_requests += 1
+                try:
+                    validate_functional_request(request.method, request.url)
+                    if "/api/" in request.url:
+                        api_requests += 1
+                        observed_api_paths.append(
+                            f"{request.method.upper()} {urlsplit(request.url).path}"
+                        )
                 if api_requests > MAX_FUNCTIONAL_API_REQUESTS:
                     blocked_operations += 1
                     await route.abort()
@@ -168,10 +172,16 @@ def test_remote_browser_authentication_and_tenant_isolation():
             if not await page.locator("#client-phone").evaluate("input => input.checkValidity()"):
                 raise FunctionalJourneyError("synthetic_client_phone_format_invalid")
             last_stage = f"client_{client_number}_challenge"
+            challenge_button = page.get_by_role("button", name="Receber código", exact=True)
+            if await challenge_button.count() != 1:
+                raise FunctionalJourneyError("client_challenge_button_missing")
+            if not await challenge_button.is_enabled():
+                raise FunctionalJourneyError("client_challenge_button_disabled")
             async with page.expect_response(
-                lambda response: response.url.endswith("/api/auth/client/challenge")
+                lambda response: response.url.endswith("/api/auth/client/challenge"),
+                timeout=10_000,
             ) as challenge_response:
-                await page.get_by_role("button", name="Receber código").click()
+                await challenge_button.click(timeout=5_000)
             challenge_http = await challenge_response.value
             if challenge_http.status != 202:
                 raise FunctionalJourneyError("client_challenge_failed")
@@ -429,6 +439,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 "photographers": 2,
                 "clients": 4,
                 "api_requests": api_requests,
+                "observed_api_paths": observed_api_paths,
                 "api_operations_per_second": round(api_requests / duration, 3) if duration else None,
                 "api_latency_ms": {
                     "p50": _percentile(api_latencies, 50),
