@@ -141,9 +141,9 @@ def test_remote_browser_authentication_and_tenant_isolation():
             return response
 
         async def client_login(browser, tenant_index: int, client_number: int):
+            nonlocal last_stage
             tenant_id = TENANTS[tenant_index]
             ids = _fixture_ids(tenant_id)
-            client_id = ids[f"client_{client_number}"]
             phone = (
                 ("11999991001" if client_number == 1 else "11999991002")
                 if tenant_index == 0
@@ -151,22 +151,22 @@ def test_remote_browser_authentication_and_tenant_isolation():
             )
             full_name = f"Cliente sintético {tenant_id.hex[:6]} {client_number}"
             return_to = f"/public-galleries/{ids['gallery']}"
-                context = await browser.new_context()
-                contexts.append(context)
-                await context.route("**/*", guard_route)
-                page = await context.new_page()
-                last_stage = f"client_{client_number}_navigation"
-                await page.goto(
+            context = await browser.new_context()
+            contexts.append(context)
+            await context.route("**/*", guard_route)
+            page = await context.new_page()
+            last_stage = f"client_{client_number}_navigation"
+            await page.goto(
                 f"{origin}/?reauth=client&return_to={quote(return_to, safe='/')}",
                 wait_until="domcontentloaded",
-                    timeout=30_000,
-                )
-                last_stage = f"client_{client_number}_name_field"
-                await page.get_by_label("Nome completo").fill(full_name)
-                last_stage = f"client_{client_number}_phone_field"
-                await page.get_by_label("WhatsApp").fill(phone)
-                last_stage = f"client_{client_number}_challenge"
-                async with page.expect_response(
+                timeout=30_000,
+            )
+            last_stage = f"client_{client_number}_name_field"
+            await page.get_by_label("Nome completo").fill(full_name)
+            last_stage = f"client_{client_number}_phone_field"
+            await page.get_by_label("WhatsApp").fill(phone)
+            last_stage = f"client_{client_number}_challenge"
+            async with page.expect_response(
                 lambda response: response.url.endswith("/api/auth/client/challenge")
             ) as challenge_response:
                 await page.get_by_role("button", name="Receber código").click()
@@ -174,12 +174,12 @@ def test_remote_browser_authentication_and_tenant_isolation():
             if challenge_http.status != 202:
                 raise FunctionalJourneyError("client_challenge_failed")
             challenge_id = (await challenge_http.json()).get("challenge_id")
-                if not isinstance(challenge_id, str) or not re.fullmatch(
+            if not isinstance(challenge_id, str) or not re.fullmatch(
                 r"[0-9a-fA-F-]{36}", challenge_id
             ):
-                    raise FunctionalJourneyError("client_challenge_response_invalid")
-                last_stage = f"client_{client_number}_otp_sink"
-                otp_response = await api(
+                raise FunctionalJourneyError("client_challenge_response_invalid")
+            last_stage = f"client_{client_number}_otp_sink"
+            otp_response = await api(
                 context,
                 "POST",
                 "/api/auth/test/client-otp/consume",
@@ -189,41 +189,42 @@ def test_remote_browser_authentication_and_tenant_isolation():
             if otp_response.status != 200:
                 raise FunctionalJourneyError("client_test_otp_unavailable")
             code = (await otp_response.json()).get("code")
-                if not isinstance(code, str) or not re.fullmatch(r"\d{6}", code):
-                    raise FunctionalJourneyError("client_test_otp_invalid")
-                last_stage = f"client_{client_number}_otp_verify"
-                await page.get_by_label("Código de acesso").fill(code)
+            if not isinstance(code, str) or not re.fullmatch(r"\d{6}", code):
+                raise FunctionalJourneyError("client_test_otp_invalid")
+            last_stage = f"client_{client_number}_otp_verify"
+            await page.get_by_label("Código de acesso").fill(code)
             async with page.expect_response(
                 lambda response: response.url.endswith("/api/auth/client/verify")
             ) as verify_response:
                 await page.get_by_role("button", name="Entrar", exact=True).click()
             verified = await verify_response.value
-                if verified.status != 200:
-                    raise FunctionalJourneyError("client_otp_verification_failed")
-                last_stage = f"client_{client_number}_gallery_navigation"
-                await page.wait_for_url(f"{origin}{return_to}", timeout=20_000)
+            if verified.status != 200:
+                raise FunctionalJourneyError("client_otp_verification_failed")
+            last_stage = f"client_{client_number}_gallery_navigation"
+            await page.wait_for_url(f"{origin}{return_to}", timeout=20_000)
             authenticated_contexts.append(context)
             checks.append("client_otp_login")
-            return context, page, ids, client_id
+            return context, page, ids
 
         async def photographer_login(browser, index: int):
+            nonlocal last_stage
             suffix = "A" if index == 0 else "B"
-                email = _required(f"PYP_PHOTOGRAPHER_{suffix}_EMAIL")
+            email = _required(f"PYP_PHOTOGRAPHER_{suffix}_EMAIL")
             password = _required(f"PYP_PHOTOGRAPHER_{suffix}_PASSWORD")
             totp_secret = _required(f"PYP_PHOTOGRAPHER_{suffix}_TOTP_SECRET")
             context = await browser.new_context()
             contexts.append(context)
             await context.route("**/*", guard_route)
-                page = await context.new_page()
-                last_stage = f"photographer_{suffix}_navigation"
-                await page.goto(f"{origin}/?reauth=admin", wait_until="domcontentloaded", timeout=30_000)
-                last_stage = f"photographer_{suffix}_tab"
-                await page.get_by_role("tab", name="Fotógrafo").click()
-                last_stage = f"photographer_{suffix}_password_fields"
-                await page.get_by_label("E-mail").fill(email)
-                await page.get_by_label("Senha").fill(password)
-                last_stage = f"photographer_{suffix}_password_challenge"
-                async with page.expect_response(
+            page = await context.new_page()
+            last_stage = f"photographer_{suffix}_navigation"
+            await page.goto(f"{origin}/?reauth=admin", wait_until="domcontentloaded", timeout=30_000)
+            last_stage = f"photographer_{suffix}_tab"
+            await page.get_by_role("tab", name="Fotógrafo").click()
+            last_stage = f"photographer_{suffix}_password_fields"
+            await page.get_by_label("E-mail").fill(email)
+            await page.get_by_label("Senha").fill(password)
+            last_stage = f"photographer_{suffix}_password_challenge"
+            async with page.expect_response(
                 lambda response: response.url.endswith("/api/auth/admin/password")
             ) as password_response:
                 await page.get_by_role("button", name="Continuar").click()
@@ -231,22 +232,22 @@ def test_remote_browser_authentication_and_tenant_isolation():
             if challenge_http.status != 202:
                 raise FunctionalJourneyError("photographer_password_step_failed")
             challenge_id = (await challenge_http.json()).get("challenge_id")
-                if not isinstance(challenge_id, str) or not re.fullmatch(
+            if not isinstance(challenge_id, str) or not re.fullmatch(
                 r"[0-9a-fA-F-]{36}", challenge_id
             ):
-                    raise FunctionalJourneyError("photographer_challenge_response_invalid")
-                last_stage = f"photographer_{suffix}_totp"
-                code = pyotp.TOTP(totp_secret).now()
+                raise FunctionalJourneyError("photographer_challenge_response_invalid")
+            last_stage = f"photographer_{suffix}_totp"
+            code = pyotp.TOTP(totp_secret).now()
             await page.get_by_label("Código do autenticador").fill(code)
             async with page.expect_response(
                 lambda response: response.url.endswith("/api/auth/admin/totp")
             ) as totp_response:
                 await page.get_by_role("button", name="Entrar", exact=True).click()
             verified = await totp_response.value
-                if verified.status != 200:
-                    raise FunctionalJourneyError("photographer_totp_verification_failed")
-                last_stage = f"photographer_{suffix}_admin_navigation"
-                await page.wait_for_url(f"{origin}/admin", timeout=20_000)
+            if verified.status != 200:
+                raise FunctionalJourneyError("photographer_totp_verification_failed")
+            last_stage = f"photographer_{suffix}_admin_navigation"
+            await page.wait_for_url(f"{origin}/admin", timeout=20_000)
             authenticated_contexts.append(context)
             checks.append("photographer_totp_login")
             return context, page
@@ -254,10 +255,10 @@ def test_remote_browser_authentication_and_tenant_isolation():
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=True)
             try:
-                client_a1, page_a1, gallery_a, _ = await client_login(browser, 0, 1)
-                client_a2, _page_a2, _gallery_a2, _ = await client_login(browser, 0, 2)
-                client_b1, _page_b1, gallery_b, _ = await client_login(browser, 1, 1)
-                client_b2, _page_b2, _gallery_b2, _ = await client_login(browser, 1, 2)
+                client_a1, page_a1, gallery_a = await client_login(browser, 0, 1)
+                client_a2, _page_a2, _gallery_a2 = await client_login(browser, 0, 2)
+                client_b1, _page_b1, gallery_b = await client_login(browser, 1, 1)
+                client_b2, _page_b2, _gallery_b2 = await client_login(browser, 1, 2)
 
                 photos_a1_response = await api(client_a1, "GET", f"/api/public-galleries/{gallery_a['gallery']}/photos")
                 photos_a2_response = await api(client_a2, "GET", f"/api/public-galleries/{gallery_a['gallery']}/photos")
