@@ -160,11 +160,20 @@ def test_remote_browser_authentication_and_tenant_isolation():
             await context.route("**/*", guard_route)
             page = await context.new_page()
             last_stage = f"client_{client_number}_navigation"
-            await page.goto(
-                f"{origin}/?reauth=client&return_to={quote(return_to, safe='/')}",
-                wait_until="domcontentloaded",
-                timeout=30_000,
-            )
+            last_stage = f"client_{client_number}_branding_hydration"
+            async with page.expect_response(
+                lambda response: response.request.method == "GET"
+                and urlsplit(response.url).path == "/api/branding",
+                timeout=10_000,
+            ) as branding_response:
+                await page.goto(
+                    f"{origin}/?reauth=client&return_to={quote(return_to, safe='/')}",
+                    wait_until="domcontentloaded",
+                    timeout=30_000,
+                )
+            if (await branding_response.value).status != 200:
+                raise FunctionalJourneyError("client_branding_hydration_failed")
+            checks.append("client_form_hydrated")
             last_stage = f"client_{client_number}_name_field"
             await page.get_by_label("Nome completo").fill(full_name)
             last_stage = f"client_{client_number}_phone_field"
@@ -228,8 +237,15 @@ def test_remote_browser_authentication_and_tenant_isolation():
             contexts.append(context)
             await context.route("**/*", guard_route)
             page = await context.new_page()
-            last_stage = f"photographer_{suffix}_navigation"
-            await page.goto(f"{origin}/?reauth=admin", wait_until="domcontentloaded", timeout=30_000)
+            last_stage = f"photographer_{suffix}_branding_hydration"
+            async with page.expect_response(
+                lambda response: response.request.method == "GET"
+                and urlsplit(response.url).path == "/api/branding",
+                timeout=10_000,
+            ) as branding_response:
+                await page.goto(f"{origin}/?reauth=admin", wait_until="domcontentloaded", timeout=30_000)
+            if (await branding_response.value).status != 200:
+                raise FunctionalJourneyError("photographer_branding_hydration_failed")
             last_stage = f"photographer_{suffix}_tab"
             await page.get_by_role("tab", name="Fotógrafo").click()
             last_stage = f"photographer_{suffix}_password_fields"
