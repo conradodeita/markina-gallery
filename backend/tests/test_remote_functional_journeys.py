@@ -354,6 +354,26 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 checks.extend(("client_gallery_read", "client_folder_metadata", "client_preview_read"))
 
                 photo_a = photos_a1[0]["id"]
+                for context in (client_a1, client_a2):
+                    preflight_cleanup = await api(
+                        context,
+                        "DELETE",
+                        f"/api/public-galleries/{gallery_a['gallery']}/photos/{photo_a}/selection",
+                    )
+                    if preflight_cleanup.status not in {200, 204}:
+                        raise FunctionalJourneyError("synthetic_selection_preflight_cleanup_failed")
+                for context in (client_a1, client_a2):
+                    state_response = await api(
+                        context,
+                        "GET",
+                        f"/api/public-galleries/{gallery_a['gallery']}/photos",
+                    )
+                    state_photos = (await state_response.json()).get("photos", [])
+                    if state_response.status != 200:
+                        raise FunctionalJourneyError("synthetic_selection_preflight_read_failed")
+                    if next(item for item in state_photos if item["id"] == photo_a).get("selected"):
+                        raise FunctionalJourneyError("synthetic_selection_preflight_state_invalid")
+                checks.append("synthetic_selection_preflight_clean")
                 selected_a1 = await api(
                     client_a1, "POST",
                     f"/api/public-galleries/{gallery_a['gallery']}/photos/{photo_a}/selection",
@@ -364,7 +384,9 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 pending_selections.append((client_a1, gallery_a["gallery"], photo_a))
                 client_a2_after = await api(client_a2, "GET", f"/api/public-galleries/{gallery_a['gallery']}/photos")
                 a2_state = (await client_a2_after.json()).get("photos", [])
-                if client_a2_after.status != 200 or next(item for item in a2_state if item["id"] == photo_a).get("selected"):
+                if client_a2_after.status != 200:
+                    raise FunctionalJourneyError("second_client_gallery_read_failed")
+                if next(item for item in a2_state if item["id"] == photo_a).get("selected"):
                     raise FunctionalJourneyError("client_selection_leaked_between_sessions")
                 selected_a2 = await api(
                     client_a2, "POST",
