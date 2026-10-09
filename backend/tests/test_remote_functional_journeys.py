@@ -145,9 +145,9 @@ def test_remote_browser_authentication_and_tenant_isolation():
             tenant_id = TENANTS[tenant_index]
             ids = _fixture_ids(tenant_id)
             phone = (
-                ("11999991001" if client_number == 1 else "11999991002")
+                ("(11) 99999-1001" if client_number == 1 else "(11) 99999-1002")
                 if tenant_index == 0
-                else ("11999992001" if client_number == 1 else "11999992002")
+                else ("(11) 99999-2001" if client_number == 1 else "(11) 99999-2002")
             )
             full_name = f"Cliente sintético {tenant_id.hex[:6]} {client_number}"
             return_to = f"/public-galleries/{ids['gallery']}"
@@ -165,6 +165,8 @@ def test_remote_browser_authentication_and_tenant_isolation():
             await page.get_by_label("Nome completo").fill(full_name)
             last_stage = f"client_{client_number}_phone_field"
             await page.get_by_label("WhatsApp").fill(phone)
+            if not await page.locator("#client-phone").evaluate("input => input.checkValidity()"):
+                raise FunctionalJourneyError("synthetic_client_phone_format_invalid")
             last_stage = f"client_{client_number}_challenge"
             async with page.expect_response(
                 lambda response: response.url.endswith("/api/auth/client/challenge")
