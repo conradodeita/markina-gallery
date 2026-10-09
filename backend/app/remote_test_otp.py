@@ -12,6 +12,7 @@ from app.whatsapp_delivery import decrypt_otp, encrypt_otp, otp_encryption_key
 
 _TTL_SECONDS = 600
 _KEY_PREFIX = "pyp:remote-test-otp:v1"
+_HOMOLOG_ORIGIN = "https://markina-homolog.duckdns.org"
 
 
 class RemoteTestOtpError(RuntimeError):
@@ -21,7 +22,9 @@ class RemoteTestOtpError(RuntimeError):
 def _configuration() -> tuple[str, frozenset[UUID]] | None:
     if os.getenv("PYP_REMOTE_TEST_OTP_ENABLED", "").strip() != "1":
         return None
-    if os.getenv("APP_ENV", "development").strip().lower() != "homolog":
+    app_env = os.getenv("APP_ENV", "development").strip().lower()
+    public_origin = os.getenv("PUBLIC_APP_ORIGIN", "").strip().rstrip("/")
+    if app_env not in {"homolog", "staging"} or public_origin != _HOMOLOG_ORIGIN:
         raise RemoteTestOtpError("Sink de OTP indisponível.")
     secret = os.getenv("PYP_REMOTE_TEST_OTP_SECRET", "").strip()
     raw_tenants = os.getenv("PYP_REMOTE_TEST_OTP_TENANTS", "").strip()

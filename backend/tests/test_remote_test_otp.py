@@ -40,7 +40,8 @@ class MemoryRedis:
 
 
 def enable_sink(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://markina-homolog.duckdns.org")
     monkeypatch.setenv("PYP_REMOTE_TEST_OTP_ENABLED", "1")
     monkeypatch.setenv("PYP_REMOTE_TEST_OTP_SECRET", RUNNER_SECRET)
     monkeypatch.setenv("PYP_REMOTE_TEST_OTP_TENANTS", f"{TENANT_A},{TENANT_B}")
@@ -62,6 +63,14 @@ def test_sink_is_disabled_by_default(monkeypatch):
 def test_sink_refuses_non_homolog_environment(monkeypatch):
     enable_sink(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(RemoteTestOtpError):
+        remote_test_otp.is_remote_test_otp_tenant(TENANT_A)
+
+
+def test_sink_refuses_other_staging_origins(monkeypatch):
+    enable_sink(monkeypatch)
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://production.example")
 
     with pytest.raises(RemoteTestOtpError):
         remote_test_otp.is_remote_test_otp_tenant(TENANT_A)
