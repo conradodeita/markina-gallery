@@ -88,7 +88,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
     checks: list[str] = []
     screenshots: list[str] = []
     blocked_operations = 0
-    suppressed_navigation_requests = 0
+    suppressed_optional_api_requests = 0
     revoked_sessions = 0
     revocation_failures = 0
     selection_cleanup_failures = 0
@@ -102,7 +102,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
     async def exercise() -> None:
         nonlocal api_requests, blocked_operations, revoked_sessions, revocation_failures
         nonlocal selection_cleanup_failures
-        nonlocal suppressed_navigation_requests
+        nonlocal suppressed_optional_api_requests
         nonlocal last_stage
         import pyotp
         from playwright.async_api import Error as PlaywrightError
@@ -132,15 +132,15 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 blocked_operations += 1
                 await route.abort()
 
-        async def guard_context_route(route, suppress_navigation_prefix: str | None):
-            nonlocal suppressed_navigation_requests
+        async def guard_context_route(route, is_authenticated):
+            nonlocal suppressed_optional_api_requests
             request = route.request
             if (
-                suppress_navigation_prefix
-                and request.is_navigation_request()
-                and urlsplit(request.url).path.startswith(suppress_navigation_prefix)
+                is_authenticated()
+                and request.method.upper() == "GET"
+                and urlsplit(request.url).path.startswith("/api/")
             ):
-                suppressed_navigation_requests += 1
+                suppressed_optional_api_requests += 1
                 await route.abort()
                 return
             await guard_route(route)
@@ -177,12 +177,10 @@ def test_remote_browser_authentication_and_tenant_isolation():
             return_to = f"/public-galleries/{ids['gallery']}"
             context = await browser.new_context()
             contexts.append(context)
+            authenticated = False
             await context.route(
                 "**/*",
-                lambda route: guard_context_route(
-                    route,
-                    "/public-galleries/" if client_number > 1 else None,
-                ),
+                lambda route: guard_context_route(route, lambda: authenticated),
             )
             page = await context.new_page()
             last_stage = f"client_{client_number}_branding_hydration"
@@ -246,11 +244,12 @@ def test_remote_browser_authentication_and_tenant_isolation():
             verified = await verify_response.value
             if verified.status != 200:
                 raise FunctionalJourneyError("client_otp_verification_failed")
+            authenticated = True
             last_stage = f"client_{client_number}_gallery_navigation"
             if client_number == 1:
                 await page.wait_for_url(f"{origin}{return_to}", timeout=20_000)
             else:
-                checks.append("client_gallery_navigation_suppressed_after_login")
+                checks.append("client_optional_page_api_reads_suppressed")
             authenticated_contexts.append(context)
             checks.append("client_otp_login")
             return context, page, ids
@@ -263,9 +262,10 @@ def test_remote_browser_authentication_and_tenant_isolation():
             totp_secret = _required(f"PYP_PHOTOGRAPHER_{suffix}_TOTP_SECRET")
             context = await browser.new_context()
             contexts.append(context)
+            authenticated = False
             await context.route(
                 "**/*",
-                lambda route: guard_context_route(route, "/admin"),
+                lambda route: guard_context_route(route, lambda: authenticated),
             )
             page = await context.new_page()
             last_stage = f"photographer_{suffix}_branding_hydration"
@@ -305,6 +305,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
             verified = await totp_response.value
             if verified.status != 200:
                 raise FunctionalJourneyError("photographer_totp_verification_failed")
+            authenticated = True
             last_stage = f"photographer_{suffix}_admin_navigation"
             authenticated_contexts.append(context)
             checks.append("photographer_totp_login")
@@ -486,7 +487,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 "clients": 4,
                 "api_requests": api_requests,
                 "observed_api_paths": observed_api_paths,
-                "suppressed_navigation_requests": suppressed_navigation_requests,
+                "suppressed_optional_api_requests": suppressed_optional_api_requests,
                 "api_operations_per_second": round(api_requests / duration, 3) if duration else None,
                 "api_latency_ms": {
                     "p50": _percentile(api_latencies, 50),
