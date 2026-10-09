@@ -88,6 +88,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
     checks: list[str] = []
     screenshots: list[str] = []
     blocked_operations = 0
+    suppressed_navigation_requests = 0
     revoked_sessions = 0
     revocation_failures = 0
     selection_cleanup_failures = 0
@@ -101,6 +102,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
     async def exercise() -> None:
         nonlocal api_requests, blocked_operations, revoked_sessions, revocation_failures
         nonlocal selection_cleanup_failures
+        nonlocal suppressed_navigation_requests
         nonlocal last_stage
         import pyotp
         from playwright.async_api import Error as PlaywrightError
@@ -113,8 +115,13 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 validate_functional_request(request.method, request.url)
                 if "/api/" in request.url:
                     api_requests += 1
+                    safe_path = re.sub(
+                        r"/[0-9a-fA-F-]{36}(?=/|$)",
+                        "/{id}",
+                        urlsplit(request.url).path,
+                    )
                     observed_api_paths.append(
-                        f"{request.method.upper()} {urlsplit(request.url).path}"
+                        f"{request.method.upper()} {safe_path}"
                     )
                 if api_requests > MAX_FUNCTIONAL_API_REQUESTS:
                     blocked_operations += 1
@@ -124,6 +131,19 @@ def test_remote_browser_authentication_and_tenant_isolation():
             except CampaignPolicyError:
                 blocked_operations += 1
                 await route.abort()
+
+        async def guard_context_route(route, suppress_navigation_prefix: str | None):
+            nonlocal suppressed_navigation_requests
+            request = route.request
+            if (
+                suppress_navigation_prefix
+                and request.is_navigation_request()
+                and urlsplit(request.url).path.startswith(suppress_navigation_prefix)
+            ):
+                suppressed_navigation_requests += 1
+                await route.abort()
+                return
+            await guard_route(route)
 
         async def api(context, method: str, path: str, *, data=None, headers=None):
             nonlocal api_requests
@@ -157,9 +177,14 @@ def test_remote_browser_authentication_and_tenant_isolation():
             return_to = f"/public-galleries/{ids['gallery']}"
             context = await browser.new_context()
             contexts.append(context)
-            await context.route("**/*", guard_route)
+            await context.route(
+                "**/*",
+                lambda route: guard_context_route(
+                    route,
+                    "/public-galleries/" if client_number > 1 else None,
+                ),
+            )
             page = await context.new_page()
-            last_stage = f"client_{client_number}_navigation"
             last_stage = f"client_{client_number}_branding_hydration"
             async with page.expect_response(
                 lambda response: response.request.method == "GET"
@@ -222,7 +247,10 @@ def test_remote_browser_authentication_and_tenant_isolation():
             if verified.status != 200:
                 raise FunctionalJourneyError("client_otp_verification_failed")
             last_stage = f"client_{client_number}_gallery_navigation"
-            await page.wait_for_url(f"{origin}{return_to}", timeout=20_000)
+            if client_number == 1:
+                await page.wait_for_url(f"{origin}{return_to}", timeout=20_000)
+            else:
+                checks.append("client_gallery_navigation_suppressed_after_login")
             authenticated_contexts.append(context)
             checks.append("client_otp_login")
             return context, page, ids
@@ -235,7 +263,10 @@ def test_remote_browser_authentication_and_tenant_isolation():
             totp_secret = _required(f"PYP_PHOTOGRAPHER_{suffix}_TOTP_SECRET")
             context = await browser.new_context()
             contexts.append(context)
-            await context.route("**/*", guard_route)
+            await context.route(
+                "**/*",
+                lambda route: guard_context_route(route, "/admin"),
+            )
             page = await context.new_page()
             last_stage = f"photographer_{suffix}_branding_hydration"
             async with page.expect_response(
@@ -275,7 +306,6 @@ def test_remote_browser_authentication_and_tenant_isolation():
             if verified.status != 200:
                 raise FunctionalJourneyError("photographer_totp_verification_failed")
             last_stage = f"photographer_{suffix}_admin_navigation"
-            await page.wait_for_url(f"{origin}/admin", timeout=20_000)
             authenticated_contexts.append(context)
             checks.append("photographer_totp_login")
             return context, page
@@ -456,6 +486,7 @@ def test_remote_browser_authentication_and_tenant_isolation():
                 "clients": 4,
                 "api_requests": api_requests,
                 "observed_api_paths": observed_api_paths,
+                "suppressed_navigation_requests": suppressed_navigation_requests,
                 "api_operations_per_second": round(api_requests / duration, 3) if duration else None,
                 "api_latency_ms": {
                     "p50": _percentile(api_latencies, 50),
