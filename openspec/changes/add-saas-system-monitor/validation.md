@@ -18,6 +18,12 @@ Backend falhou antes do checkout/testes, ao baixar `postgres:17-alpine`: Docker 
 
 ### Evidências anteriores à preparação do PR
 
+Correção do segundo CI validada por `pytest tests/test_capacity_observability_contracts.py -q --tb=short` (**4 passed, 0,09 s**), `ruff check app tests` (**aprovado**) e `ruff check tests/test_capacity_observability_contracts.py --select RUF100` (**aprovado**), na pasta backend. O cenário de rejeição do timestamp sem fuso permanece coberto. Aguardar próximo CI antes do merge.
+
+### Segunda execução do CI — 09/10/2026
+
+Execução `37993351340`, commit `c2edca95f68ad69542bb321ff9b8098219e65f30`: frontend completo (lint/testes/build), OpenSpec e gitleaks aprovados; serviços PostgreSQL inicializados com sucesso pelo espelho. Backend interrompido no Ruff por `RUF100` em `test_capacity_observability_contracts.py:51`: exceção `noqa: DTZ001` para regra não habilitada na configuração usada pelo CI. A configuração local habilita DTZ001; para manter o contrato nas duas configurações, o teste deriva o timestamp ingênuo de `NOW.replace(tzinfo=None)` sem exceção de lint. Preservados comentário e expectativa de rejeição. Sem mudança no comportamento do produto.
+
 Validação da correção na worktree do PR: `npm ci --no-audit --no-fund`, `npm test -- --maxWorkers=2` (**463 passed, 58 arquivos, 140,86 s**), `npm run lint` (**0 erros; 37 avisos em arquivos fora desta correção**) e `npm run build` (**aprovado**, TypeScript e 23 páginas, incluindo monitor). Nenhum servidor de aplicação iniciado. Novo CI após push deverá confirmar os serviços PostgreSQL no runner; manter a pausa solicitada até retorno do usuário.
 
 Código implementado na worktree `C:\codex-data\worktrees\invite-only-otp\Photo Delivery`, branch `codex/remote-test-campaign`, base `8d02583da8252de6f5b877128520d29d0e2428e4`, com alterações ainda sem commit naquele momento. Nenhum deploy, migration real, concessão real, edição de `.env`/segredos, início de aplicação/containers local ou campanha de carga foi executado. Testes aqui são funções/ORM com SQLite sintético descartável, Vitest/jsdom e compilação estática. A leitura SSH foi exclusivamente de inventário/fontes do servidor autorizado, sem tocar em dados ou resultados A+B.
