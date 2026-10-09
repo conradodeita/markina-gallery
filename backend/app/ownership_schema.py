@@ -12,6 +12,9 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, MetaData, U
 SHARED_TABLES = frozenset({
     "tenant", "admin_user", "admin_action_token", "email_delivery", "email_delivery_attempt",
     "installation_operator",
+    "system_monitor_grant", "system_monitor_bucket", "system_monitor_sample",
+    "system_monitor_worker", "system_monitor_activity", "system_monitor_incident",
+    "system_monitor_transition", "platform_owner",
 })
 CONTEXTUAL_TABLES = frozenset({
     "admin_security_challenge", "auth_challenge", "auth_session", "audit_event",

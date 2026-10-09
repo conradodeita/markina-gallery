@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       tenant-postgres:
-        image: postgres:17-alpine
+        # Docker Official Image mirror: avoid Docker Hub anonymous pull quotas on shared runners.
+        image: public.ecr.aws/docker/library/postgres:17-alpine
         env:
           POSTGRES_DB: pyp_tenant_test
           POSTGRES_USER: pyp_test
@@ -23,7 +24,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       photographer-postgres:
-        image: postgres:17-alpine
+        image: public.ecr.aws/docker/library/postgres:17-alpine
         env:
           POSTGRES_DB: pyp_photographer_test
           POSTGRES_USER: postgres

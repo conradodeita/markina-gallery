@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { MonitorLink } from "./system-monitor/monitor-link";
 
 const navigation = [
   { href: "/admin", label: "Visão geral" },
@@ -19,5 +20,5 @@ export function AdminNavigation() {
   return <nav aria-label="Navegação administrativa">{navigation.map(({ href, label }) => {
     const current = href === "/admin" ? pathname === href : pathname.startsWith(href);
     return <Link aria-current={current ? "page" : undefined} href={href} key={href}>{label}</Link>;
-  })}</nav>;
+  })}<MonitorLink /></nav>;
 }

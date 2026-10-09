@@ -76,6 +76,7 @@ from app.notification_settings import setting_for
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, render_template
 from app.private_upload_batches import process_ready_batches
 from app.product_brand import PRODUCT_NAME
+from app.system_monitor.telemetry import observe_work
 from app.tenancy import (
     TenantContextError,
     domain_session,
@@ -264,6 +265,7 @@ def _record_attempt(
     )
 
 
+@observe_work("media")
 def process_next_media_job() -> bool:
     """Reserva e executa um job pendente, retornando se havia trabalho."""
     with SessionLocal() as db:
@@ -841,6 +843,7 @@ def reconcile_next_unknown_delivery() -> bool:
         return True
 
 
+@observe_work("general")
 def run_cycle() -> bool:
     # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
     with domain_session(SessionLocal) as batch_db:
@@ -864,6 +867,8 @@ def run_cycle() -> bool:
 
 
 def main() -> None:
+    from app.system_monitor.runtime import start_monitor
+    start_monitor()
     print("markina-gallery-worker: pronto para filas privadas", flush=True)
     while True:
         try:
