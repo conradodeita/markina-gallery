@@ -1,3 +1,7 @@
+## Purpose
+
+Apresentar observabilidade operacional agregada e limitada, com fontes e lacunas explícitas, histórico, incidentes fundamentados e relatórios sanitizados exclusivos do proprietário.
+
 ## ADDED Requirements
 
 ### Requirement: Compatibilidade com inventário e limpeza de homologação

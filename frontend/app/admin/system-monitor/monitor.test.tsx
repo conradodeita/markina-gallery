@@ -26,12 +26,12 @@ describe("Monitor do sistema sem servidor", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       active--;
       if (refused) return json({}, 429);
-      if (url.includes("/tree")) return json({ items: [{ id: "t1", label: "Fotógrafo sintético", sessions: 0, state: "inactive", last_activity: null }], next_cursor: null, collected_at: "2026-10-09T12:00:00Z" });
+      if (url.includes("/tree")) return json({ items: [{ id: "t1", label: "Fotógrafo photographer@example.invalid", sessions: 0, state: "inactive", last_activity: null }], next_cursor: null, collected_at: "2026-10-09T12:00:00Z" });
       return json(url.includes("/incidents") ? { active: [], history: [] } : summary);
     });
     vi.stubGlobal("fetch", fetcher);
     render(<SystemMonitorPage />);
-    await screen.findByRole("button", { name: /Fotógrafo sintético/ });
+    await screen.findByRole("button", { name: /Fotógrafo photographer@example.invalid/ });
     await screen.findByText(/Sem alertas ativos registrados/);
     expect(peak).toBeLessThanOrEqual(2);
     expect(screen.queryByText(/Uma fonte não respondeu/)).toBeNull();
@@ -135,4 +135,18 @@ describe("Monitor do sistema sem servidor", () => {
     act(() => { window.dispatchEvent(new Event(PUSH_LOGOUT_EVENT)); });
     fireEvent.pointerDown(window); expect(fetcher).toHaveBeenCalledTimes(3);
   });
+});
+
+
+it("mantém o card autorizado exclusivamente no Monitor e sem coleta automática", async () => {
+  const fetcher = vi.fn((url: string) => json(
+    url.includes("system-monitor/capabilities") ? grants :
+    url.includes("installation-capabilities") ? { capacity_diagnostics: true } : summary,
+  ));
+  vi.stubGlobal("fetch", fetcher);
+  render(<SystemMonitorPage />);
+  expect(await screen.findByRole("heading", { name: "Capacidade e filas" })).toBeTruthy();
+  expect(screen.getByText("Diagnóstico sob demanda")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Consultar diagnóstico" }).getAttribute("aria-expanded")).toBe("false");
+  expect(fetcher.mock.calls.some(([url]) => url.includes("capacity-observability"))).toBe(false);
 });

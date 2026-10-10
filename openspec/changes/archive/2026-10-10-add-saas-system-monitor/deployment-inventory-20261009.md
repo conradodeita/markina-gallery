@@ -1,5 +1,9 @@
 # Inventário e publicação autorizada — 09/10/2026
 
+## Confirmação final — 10/10/2026
+
+Workflow 38047039331 SUCCESS, SHA remoto 3bdc36200ff4a83f4e894c4cc7e4e7dc44f9201c, Git limpo, schema 0072. Treze containers próprios healthy e health interno/público 200. Seis processos enabled=true; API APP_VERSION correto e snapshot read-only configurado. Timer ativo e arquivo privado 0600 fresco. Proprietário/grants revalidados. Os seis containers de terceiros mantêm o fingerprint anterior; portas/subdomínio preservados. Jornada final autenticada e relatórios JSON/texto sanitizados aprovados, sem 429 na abertura/recarga e sem alteração A+B. Task 6.2 concluída; histórico abaixo registra falhas/interrupções anteriores, não pendências atuais. Evidências detalhadas em `validation.md`.
+
 O proprietário autorizou migration, deploy, configuração, indicação inicial de propriedade/grants e validação remota da task 6.2. Pediu pausa enquanto o CI executa, retornando com o resultado.
 
 ## Inventário antes do merge

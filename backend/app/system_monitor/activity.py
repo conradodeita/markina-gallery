@@ -75,8 +75,13 @@ def page(db, instant, *, tenant_id: UUID | None = None, cursor: UUID | None = No
             (activity >= instant - timedelta(seconds=settings.recent_seconds), "recent"),
             else_="valid_session")), else_="inactive") if fresh else case((True, "unknown"))
     client_count = select(func.count()).select_from(Client).where(Client.tenant_id == Tenant.id).correlate(Tenant).scalar_subquery()
+    photographer_email = select(case(
+        (func.count(AdminUser.id) == 1, func.min(AdminUser.email)), else_=None,
+    )).select_from(TenantAdmin).join(AdminUser, AdminUser.id == TenantAdmin.admin_user_id).where(
+        TenantAdmin.tenant_id == Tenant.id, TenantAdmin.active.is_(True),
+    ).correlate(Tenant).scalar_subquery()
     columns = [model.id, sessions.label("sessions"), activity.label("activity"), status.label("state")]
-    columns += [Client.full_name.label("label")] if tenant_id else [client_count.label("clients"), Tenant.status.label("account_state")]
+    columns += [Client.full_name.label("label")] if tenant_id else [client_count.label("clients"), Tenant.status.label("account_state"), photographer_email.label("photographer_email")]
     statement = select(*columns).outerjoin(stats, stats.c.subject == model.id)
     if tenant_id:
         statement = statement.where(Client.tenant_id == tenant_id)
@@ -88,7 +93,7 @@ def page(db, instant, *, tenant_id: UUID | None = None, cursor: UUID | None = No
         if tenant_id:
             criterion = or_(criterion, Client.full_name.ilike(pattern, escape="\\"))
         else:
-            criterion = or_(criterion, select(Client.id).where(
+            criterion = or_(criterion, photographer_email.ilike(pattern, escape="\\"), select(Client.id).where(
                 Client.tenant_id == Tenant.id, Client.full_name.ilike(pattern, escape="\\"),
             ).exists())
         statement = statement.where(criterion)
@@ -105,7 +110,7 @@ def page(db, instant, *, tenant_id: UUID | None = None, cursor: UUID | None = No
             ).group_by(job.tenant_id)):
                 issues.setdefault(owner, {})[name] = count
     for row in rows[:limit]:
-        item = {"id": str(row["id"]), "label": row["label"] if tenant_id else f"Fotógrafo {str(row['id'])[:8]}",
+        item = {"id": str(row["id"]), "label": row["label"] if tenant_id else f"Fotógrafo {row['photographer_email'] or '[e-mail indisponível]'}",
                 "sessions": row["sessions"], "state": row["state"],
                 "last_activity": utc(row["activity"]).isoformat() if row["activity"] else None}
         if not tenant_id:
