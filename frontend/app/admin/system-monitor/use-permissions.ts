@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { PUSH_LOGOUT_EVENT } from "../../push-device";
+import { monitorFetch } from "./request";
 
 export type Permissions = { metrics: boolean; tree: boolean; incidents: boolean; export: boolean };
 
@@ -19,7 +20,7 @@ export function useMonitorPermissions() {
       controller = new AbortController();
       setPermissions(null);
       setLoading(true);
-      void fetch("/api/admin/system-monitor/capabilities", { credentials: "same-origin", cache: "no-store", signal: controller.signal })
+      void monitorFetch("/api/admin/system-monitor/capabilities", { credentials: "same-origin", cache: "no-store", signal: controller.signal })
         .then(async (response) => {
           if (!response.ok) return;
           const data = await response.json();

@@ -14,6 +14,10 @@ O sistema SHALL apresentar monitor com HTTP, pool, banco, filas, workers, armaze
 - **WHEN** o host não possui fonte configurada ou permitida
 - **THEN** o painel mostra a lacuna, preserva as demais fontes e não inventa valores
 
+#### Scenario: Consultas iniciais concorrentes da interface
+- **WHEN** métricas, incidentes e árvore são solicitados pela mesma interface
+- **THEN** a interface SHALL coordenar essas consultas sem exceder o limite de leituras do backend, preservar cancelamento e permitir progresso após falha, sem retentativas em loop
+
 ### Requirement: Coleta agregada persistente e limitada
 O sistema SHALL persistir contagens, erros e histogramas de operações fixas em buckets UTC, com retenção configurável e limites de consultas, memória e tempo. Falha do monitor MUST NOT falhar a operação observada. IDs de negócio, URLs completas, SQL, cookies, tokens e textos de exceção MUST NOT ser dimensões ou payloads.
 
@@ -45,3 +49,7 @@ O sistema SHALL aceitar somente snapshot de host numérico de schema fechado, fo
 #### Scenario: Snapshot inválido ou antigo
 - **WHEN** a fonte está inválida, futura ou envelhecida
 - **THEN** os dados não são tratados como medidas atuais nem usados para declarar saúde
+
+#### Scenario: Runtime do host e configuração persistente
+- **WHEN** a operação autoriza snapshot em host Linux com Python 3.8 e overlay privado de ativação
+- **THEN** o coletor stdlib executa nesse runtime, o deploy preserva a ativação somente com ambos os overlays presentes e a versão reportada acompanha o SHA efetivamente publicado

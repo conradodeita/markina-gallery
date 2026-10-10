@@ -2,6 +2,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { date, numeric, states } from "./types";
 import styles from "./monitor.module.css";
+import { monitorFetch } from "./request";
 
 type Item = { id: string; label: string; sessions: number; state: string; last_activity: string | null; clients?: number; account_state?: string; operational_issues?: Record<string, number> };
 type Page = { items: Item[]; next_cursor: string | null; collected_at: string; totals?: { photographers: number; clients: number; active_photographers: number | null; active_clients: number | null } };
@@ -20,7 +21,7 @@ export function UserTree({ tenant, denied }: { tenant?: string; denied: () => vo
     const params = new URLSearchParams({ limit: "25", q: request.query, state: request.state });
     if (tenant) params.set("tenant_id", tenant);
     if (request.cursor) params.set("cursor", request.cursor);
-    void fetch(`/api/admin/system-monitor/tree?${params}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal })
+    void monitorFetch(`/api/admin/system-monitor/tree?${params}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         if ([401, 403].includes(response.status)) { if (current) { setData(null); denied(); } return; }
         if (!response.ok) throw new Error("unavailable");

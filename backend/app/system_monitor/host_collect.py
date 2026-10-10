@@ -6,7 +6,7 @@ import re
 import shutil
 import tempfile
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -60,7 +60,7 @@ def collect(filesystem, scope, interface=None, device=None, *, proc=Path("/proc"
             memory[key] = int(value.split()[0]) * 1024
     usage = shutil.disk_usage(filesystem)
     result.update(schema_version=1, source="linux_procfs", scope=scope,
-                  collected_at=datetime.now(UTC).isoformat(),
+                  collected_at=datetime.now(timezone.utc).isoformat(),
                   memory_total_bytes=memory.get("MemTotal"), memory_available_bytes=memory.get("MemAvailable"),
                   disk_total_bytes=usage.total, disk_free_bytes=usage.free)
     return result

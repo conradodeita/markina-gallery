@@ -1,6 +1,6 @@
 # Monitor do sistema
 
-Implementação: change `add-saas-system-monitor`, migration `20261009_0072`. Este documento descreve código ainda não publicado nesta execução. O painel será acessível em **Administração → Monitor do sistema**, `/admin/system-monitor`, após publicação e concessão explícitas. Não inicia serviços nem habilita coleta automaticamente.
+Implementação: change `add-saas-system-monitor`, migration `20261009_0072`, publicada em homologação no SHA `777495b012bb98174e50c07b15dd507b329b8de4`. Painel em **Administração → Monitor do sistema**, `/admin/system-monitor`. Propriedade/grants e coleta foram ativados com autorização operacional; a configuração padrão continua opt-in. Validação visual autenticada ainda depende da sessão do proprietário.
 
 ## Autorização e privacidade
 
@@ -21,7 +21,7 @@ python -m app.system_monitor.grants --admin-id <UUID> --permission metrics --aut
 # Revogar uma concessão usa os mesmos parâmetros e --revoke --apply.
 ```
 
-Não há endpoint para autoelevação. O arquivo `.env`, segredos e permissões reais não foram alterados.
+Na ativação autorizada, a conta identificada pelo e-mail confirmado recebeu propriedade por UUID e as quatro concessões. A operação foi auditada com referência `owner-approved-monitor-20261009`. Configuração do monitor fica em overlay privado separado; `.env` e segredos não foram editados.
 
 ## Coleta, limites e semântica
 
@@ -82,18 +82,18 @@ Retenção remove somente tabelas do monitor: até 1.000 registros por tabela/ci
 
 Inspeção SSH somente leitura em 09/10/2026 no servidor autorizado: `/proc/stat`, `/proc/meminfo`, `/proc/net/dev` e `/proc/diskstats` legíveis; `oracle-cloud-agent` consultado retornou `inactive`; CLI `oci` não foi encontrada. IAM/quotas e métricas OCI não foram confirmados. Treze containers do projeto foram listados; nenhuma instalação, alteração ou requisição de carga foi feita.
 
-Foi entregue `backend/app/system_monitor/host_collect.py`, executável com Python stdlib no Linux. Exemplo **para futura execução autorizada**, substituindo caminhos/dispositivo/interface verificados:
+Foi entregue `backend/app/system_monitor/host_collect.py`, executável com Python stdlib no Linux, incluindo Python 3.8 do host Oracle. Comando efetivamente configurado no servidor autorizado:
 
 ```sh
-python host_collect.py --scope host --filesystem <FILESYSTEM_DA_MIDIA> --interface <INTERFACE_FISICA> --device <DISPOSITIVO> --output <DIRETORIO_PRIVADO>/host.json
+python3 /var/lib/markina-gallery/deploy-state/host_collect.py --scope host --filesystem / --interface enp0s6 --device sda --output /var/lib/markina-gallery/system-monitor/host.json
 ```
 
-O comando faz duas leituras separadas por 1 s e troca atômica do JSON, sem daemon, portas ou privilégios. Sem interface/dispositivo explícitos, rede/I/O ficam nulos; não agrega bridges/veth/partições duplicadas. Executar no host com `--scope host`; um container só pode declarar seu escopo real. Disco livre é o disponível ao usuário do coletor. Snapshot deve ser produzido a cada 60 s, com diretório dedicado montado somente leitura na API (montar diretório, não arquivo, devido à troca atômica). Permissões UNIX precisam permitir leitura ao UID da API; não torná-lo público. Variável `SYSTEM_MONITOR_HOST_SNAPSHOT` deve apontar ao caminho no container. Scheduler, montagem e permissões ainda **não instalados/configurados**.
+O comando faz duas leituras separadas por 1 s e troca atômica do JSON. Sem interface/dispositivo explícitos, rede/I/O ficam nulos; não agrega bridges/veth/partições duplicadas. Disco livre é o disponível ao usuário do coletor. Scheduler configurado: timer `markina-gallery-system-monitor-host.timer` a cada 60 s, arquivo 0600 em diretório 0700 e bind somente leitura na API em `/run/markina-system-monitor`. A cópia standalone corrigida instalada no estado operacional tem SHA256 `74a8163329c79a036b9d6be70d413de8fb5af1a344f973173c7ab537c28ee3c9`; seu uso preserva checkout remoto limpo durante a publicação da correção de compatibilidade. O filesystem `/` corresponde ao dispositivo da mídia nesta instalação. Outro container/instalação deve declarar seu escopo real e configurar caminhos/permissões explicitamente.
 
-Overlay `docker/docker-compose.system-monitor.yml` apenas propaga configuração opt-in a API/workers; não adiciona porta, volume ou agente. Combinar com compose base e overlay existente de preview-adjustment. Nenhum comando `up`, migration real ou grant real foi executado. Integração OCI futura pode produzir o mesmo contrato `source=oci_monitoring`; não existe cliente OCI implementado nem pressuposição de IAM.
+Overlay `docker/docker-compose.system-monitor.yml` propaga configuração opt-in a API/workers. A ativação usa também `/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml`, arquivo privado 0600 que habilita os seis processos e monta o diretório de snapshot somente leitura na API. Combinar ambos com compose base, persistência de branding e preview-adjustment. O wrapper de deploy preserva o monitor quando ambos os arquivos existem e fornece `APP_VERSION` a partir do checkout efetivo, inclusive rollback. Depois de recriar a API, recriar o Nginx próprio para atualizar a resolução do upstream e verificar health interno/público. Não adicionar portas. Integração OCI futura pode produzir o mesmo contrato `source=oci_monitoring`; não existe cliente OCI implementado nem pressuposição de IAM.
 
 ## Próxima etapa operacional
 
-Publicação exige autorização separada: inventário atual de versão/containers/portas/volumes; confirmar projeto exclusivo e proxy sem mudança; backup; migration aditiva; deploy da versão revisada; concessões explícitas; habilitar coleta e, opcionalmente, fonte do host. Testar login de conta sintética isolada, negação, revogação, árvore, exportação e card pelo ambiente remoto. Sem carga, mensagens, pagamentos ou alteração da campanha A+B. Integração real PostgreSQL/advisory lock e navegação visual autenticada permanecem pendentes até essa etapa. Reversão operacional: desabilitar coleta e retirar grants, preservando tabelas; downgrade destrutivo é recusado.
+Publicação inicial, migration, concessões e ativação foram autorizadas e executadas. Schema, lock PostgreSQL, fonte do host e negação HTTP anônima foram verificados no servidor. O proprietário realizou login normal; árvore, filtros/busca, exportação JSON/texto sanitizada e card foram exercitados. A abertura inicial expôs disputa de três consultas pelo limite de duas leituras; a interface agora coordena suas chamadas em fila serial compartilhada, sem ampliar limite no backend ou repetir pedidos automaticamente, mantendo cancelamento e progresso após falha. Restam publicar os ajustes de compatibilidade/persistência/coordenação após CI e repetir abertura inicial e preservação da coleta/versão após deploy. Nenhuma credencial foi extraída nem sessão do proprietário fabricada. Reversão operacional: desabilitar coleta no overlay privado e retirar grants por CLI autorizado, preservando tabelas; downgrade destrutivo é recusado. Campanha A+B e recursos de terceiros permanecem preservados.
 
 Evidências e comandos executados: `openspec/changes/add-saas-system-monitor/validation.md`.

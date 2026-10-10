@@ -424,6 +424,31 @@ for failure in stop active; do
 done
 
 python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
+
+# Mock the filesystem activation decision and Docker boundary: enabled config
+# survives publication/rollback; absent config does not activate the monitor.
+for monitor_enabled in true false; do
+  MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" MONITOR_ENABLED="$monitor_enabled" \
+    bash -c '
+      source "$MARKINA_DEPLOY_SCRIPT_PATH"
+      monitor_is_configured() { [[ "$MONITOR_ENABLED" == "true" ]]; }
+      git() { [[ "$*" == "rev-parse HEAD" ]] || return 1; printf "%040d\n" 7; }
+      docker() { printf "%s\n" "$@"; printf "version=%s\n" "$APP_VERSION"; }
+      PREVIEW_WORKER_ACTIVE=1
+      compose ps
+    ' >"$output" 2>&1
+  grep -Fxq 'markina-gallery' "$output"
+  grep -Fxq 'docker/docker-compose.preview-adjustment.yml' "$output"
+  grep -Fxq 'version=0000000000000000000000000000000000000007' "$output"
+  if [[ "$monitor_enabled" == "true" ]]; then
+    grep -Fxq 'docker/docker-compose.system-monitor.yml' "$output"
+    grep -Fxq '/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml' "$output"
+  elif grep -Fq 'system-monitor.compose.yml' "$output"; then
+    echo 'monitor ativado sem configuração operacional' >&2
+    exit 1
+  fi
+done
+
 python3 "$SCRIPT_DIR/test_facial_production_policy.py"
 python3 "$SCRIPT_DIR/test_facial_rollout_homolog_policy.py"
 echo "deploy-homolog shell: ok"
