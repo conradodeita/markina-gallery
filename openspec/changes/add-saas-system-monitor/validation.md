@@ -1,4 +1,30 @@
-# Evidências de implementação — 09/10/2026
+# Evidências de implementação — 09–10/10/2026
+
+## Validação final publicada — 10/10/2026
+
+Workflow `38047039331` confirmado SUCCESS em todos os jobs, incluindo deploy-homolog. Servidor no SHA `3bdc36200ff4a83f4e894c4cc7e4e7dc44f9201c`, checkout limpo, schema `20261009_0072`. Treze containers próprios healthy, health interno/público 200; seis processos (API, worker, três workers faciais e prévias) confirmados SYSTEM_MONITOR_ENABLED=true. API reporta o SHA correto e o caminho /run/markina-system-monitor/host.json. Timer ativo; arquivo 0600, snapshot real de 11:51:34,599 UTC confirmado às 11:51:35,337 UTC. Fingerprint dos seis containers de terceiros permanece `c63b9f91cb364f1ee7a2cf26a69b602734b6d8d34eaf363174695128a1c72bc6`. O wrapper corrigido preservou a ativação durante o deploy efetivo; nenhuma nova migration, carga ou alteração de dados A+B.
+
+Banco/serviço no container API: quatro grants do proprietário revalidados, relatório com coleta habilitada, staging/healthy, idade 60,13 s e host observado. Qualidade: zero observações perdidas e zero falhas de coleta; ciclos atuais em mídia, geral e prévias. O relatório em memória teve 33.602 bytes e cinco snapshots naquele instante. Repetidas quatro consultas anônimas públicas de summary/tree/incidents/report: todas 403 e private,no-store. Nenhuma sessão administrativa criada ou credencial extraída.
+
+Após a sessão expirar, o proprietário realizou login normal. No navegador, abertura inicial e posterior recarga da rota /admin/system-monitor exibiram resumo Saudável, árvore completa e incidentes, sem erros de fonte/árvore e com SHA 3bdc362. Expansão seletiva e filtro de atividade revalidados; card sob demanda exibiu pool e PostgreSQL. Uma espera anterior encontrou a Visão Geral durante a navegação; foi delimitada pela URL/estado visível, e a verificação foi repetida na rota correta, sem alterar produto. Logs resumidos de seis minutos confirmaram 200 em capabilities (9), árvore (6), resumo (4), incidentes (4) e duas exportações, sem 429; 403 presentes correspondem às verificações anônimas. Dados pessoais da árvore não foram guardados no relatório.
+
+Downloads efetivos na versão final: JSON **36.183 bytes**, texto **36.250 bytes**, limite de 1 MiB respeitado. JSON válido, staging/3bdc362/healthy, idade **31,46 s**, **sete snapshots** em janela de 60 minutos. Ambos sem e-mail, UUID de negócio ou chaves cookie/token/password/otp/phone/email. Arquivos permanecem fora do Git, na pasta de downloads do navegador. Captura visual final privada fora do Git, com clientes recolhidos.
+
+| Operação observada | Amostras | Operações/s na janela de 60 min | Falhas 5xx | Recusas 4xx | p50 / p95 / p99 (ms) |
+|---|---:|---:|---:|---:|---|
+| HTTP autenticação | 16 | 0,00444 | 0 | 3 | 25 / ausente / ausente |
+| Outras requisições HTTP | 86 | 0,02389 | 0 | 2 | 25 / 50 / ausente |
+| Aquisição de conexão | 3.565 | 0,99028 | 0 | 0 | 25 / 25 / 25 |
+
+Esses percentis são limites superiores dos histogramas; amostras insuficientes permanecem nulas. A coleta foi reativada há poucos minutos: a janela selecionada de uma hora não implica uma hora de cobertura contínua após o deploy. Não houve usuários virtuais ou campanha de carga nesta validação; esses números não determinam capacidade máxima. OCI/IAM/quotas, tempo de renderização no dispositivo, orçamento global de conexões e total de bytes do inventário incompleto continuam explicitamente ausentes. Paginação não exigida pelo lote real (5 fotógrafos/16 clientes); contrato coberto por testes existentes. Revogação e troca de e-mail cobertas no CI, sem revogar sessão/grants ou mudar o e-mail real para a validação.
+
+Task 6.2 concluída com evidência do código publicado e ambiente autorizado; oito de oito tasks implementadas e validadas. Consolidação às specs principais e arquivamento permanecem sujeitos à revisão humana exigida pelo AGENTS.md. Esta entrega final altera somente documentação; testes do SHA publicado e CI permanecem aplicáveis ao comportamento inalterado.
+
+## CI verde e merge do preflight — 10/10/2026, 08:03 BRT
+
+CI do PR #154 (`38045110934`) confirmado SUCCESS em backend, frontend, OpenSpec e gitleaks no HEAD `80508d1f62c179f19b8d609675d0f882b9179930`; deploy pulado no PR conforme fluxo. Inventário SSH antes do merge: SHA 70716c1, Git limpo, 13 containers próprios healthy, health 200, porta publicada 127.0.0.1:8080; seis containers de terceiros e fingerprint preservados. Timer ativo, monitor ainda desativado na API. Plano apresentado: backup/publicação dos serviços próprios pelo fluxo existente, mesmo subdomínio e portas, sem nova migration ou carga.
+
+PR #154 mesclado em develop com comparação explícita do HEAD verde: merge commit `3bdc36200ff4a83f4e894c4cc7e4e7dc44f9201c`. CI/deploy `38047039331` confirmado `in_progress`: https://github.com/conradodeita/markina-gallery/actions/runs/38047039331 . Aguardar conforme pausa solicitada. Task 6.2 permanece aberta até verificar publicação/SHA, flags dos seis processos, snapshot/versão/coleta atuais e abertura inicial autenticada sem 429. Estas notas permanecem locais para reconciliar na entrega final, sem novo push durante a pausa.
 
 ## Falha do deploy e correção do preflight — 10/10/2026
 
