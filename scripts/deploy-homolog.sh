@@ -47,8 +47,12 @@ compose() {
   if [[ -f "$STATE_DIR/branding.compose.yml" ]]; then
     extra=(-f "$STATE_DIR/branding.compose.yml")
   fi
+  # The monitor overlay references this optional service even during preflight,
+  # before running-worker detection. Include its definition without enabling it.
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     extra+=(-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment)
+  elif monitor_is_configured; then
+    extra+=(-f docker/docker-compose.preview-adjustment.yml)
   fi
   if monitor_is_configured; then
     extra+=(-f docker/docker-compose.system-monitor.yml -f "$STATE_DIR/system-monitor.compose.yml")
