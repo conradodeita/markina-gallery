@@ -428,17 +428,29 @@ python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
 # Mock the filesystem activation decision and Docker boundary: enabled config
 # survives publication/rollback; absent config does not activate the monitor.
 for monitor_enabled in true false; do
-  MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" MONITOR_ENABLED="$monitor_enabled" \
+ for preview_active in 0 1; do
+  MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" MONITOR_ENABLED="$monitor_enabled" PREVIEW_ACTIVE="$preview_active" \
     bash -c '
       source "$MARKINA_DEPLOY_SCRIPT_PATH"
       monitor_is_configured() { [[ "$MONITOR_ENABLED" == "true" ]]; }
       git() { [[ "$*" == "rev-parse HEAD" ]] || return 1; printf "%040d\n" 7; }
       docker() { printf "%s\n" "$@"; printf "version=%s\n" "$APP_VERSION"; }
-      PREVIEW_WORKER_ACTIVE=1
+      PREVIEW_WORKER_ACTIVE="$PREVIEW_ACTIVE"
       compose ps
     ' >"$output" 2>&1
   grep -Fxq 'markina-gallery' "$output"
-  grep -Fxq 'docker/docker-compose.preview-adjustment.yml' "$output"
+  if [[ "$preview_active" == 1 || "$monitor_enabled" == true ]]; then
+    grep -Fxq 'docker/docker-compose.preview-adjustment.yml' "$output"
+  elif grep -Fq 'docker/docker-compose.preview-adjustment.yml' "$output"; then
+    echo 'definição opcional adicionada sem monitor ou worker ativo' >&2
+    exit 1
+  fi
+  if [[ "$preview_active" == 1 ]]; then
+    grep -Fxq 'preview-adjustment' "$output"
+  elif grep -Fxq 'preview-adjustment' "$output"; then
+    echo 'profile de prévias ativado antes da detecção' >&2
+    exit 1
+  fi
   grep -Fxq 'version=0000000000000000000000000000000000000007' "$output"
   if [[ "$monitor_enabled" == "true" ]]; then
     grep -Fxq 'docker/docker-compose.system-monitor.yml' "$output"
@@ -447,6 +459,7 @@ for monitor_enabled in true false; do
     echo 'monitor ativado sem configuração operacional' >&2
     exit 1
   fi
+ done
 done
 
 python3 "$SCRIPT_DIR/test_facial_production_policy.py"

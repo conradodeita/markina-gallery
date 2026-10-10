@@ -53,3 +53,7 @@ O sistema SHALL aceitar somente snapshot de host numérico de schema fechado, fo
 #### Scenario: Runtime do host e configuração persistente
 - **WHEN** a operação autoriza snapshot em host Linux com Python 3.8 e overlay privado de ativação
 - **THEN** o coletor stdlib executa nesse runtime, o deploy preserva a ativação somente com ambos os overlays presentes e a versão reportada acompanha o SHA efetivamente publicado
+
+#### Scenario: Preflight antes da detecção de worker opcional
+- **WHEN** o monitor configurado referencia o worker opcional de prévias antes de o deploy detectar se ele está ativo
+- **THEN** a composição SHALL incluir a definição desse serviço e permanecer válida, mantendo seu profile desligado até confirmação da ativação existente, sem iniciar serviços durante a validação
