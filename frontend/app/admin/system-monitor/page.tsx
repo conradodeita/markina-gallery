@@ -5,6 +5,7 @@ import { PUSH_LOGOUT_EVENT } from "../../push-device";
 import { InstallationDiagnostics } from "../installation-diagnostics";
 import { useMonitorPermissions, type Permissions } from "./use-permissions";
 import { UserTree } from "./user-tree";
+import { monitorFetch } from "./request";
 import { bytes, date, incidentLabel, numeric, operations, states, type Incidents, type Report } from "./types";
 import styles from "./monitor.module.css";
 
@@ -65,7 +66,7 @@ function MonitorContent({ permissions, revoke, revision }: { permissions: Permis
       if (pending || document.visibilityState !== "visible") return;
       pending = true; setBusy(true); setError(null);
       async function get(path: string) {
-        const response = await fetch(`${path}?minutes=${minutes}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
+        const response = await monitorFetch(`${path}?minutes=${minutes}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
         if ([401, 403].includes(response.status)) { if (current) { current = false; setReport(null); setIncidents(null); revoke(); controller.abort(); } throw new Error("access"); }
         if (!response.ok) throw new Error("unavailable");
         return response.json();
@@ -91,7 +92,7 @@ function MonitorContent({ permissions, revoke, revision }: { permissions: Permis
     downloadController.current = controller;
     setExporting(true);
     try {
-      const response = await fetch(`/api/admin/system-monitor/report?minutes=${minutes}&format=${format}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
+      const response = await monitorFetch(`/api/admin/system-monitor/report?minutes=${minutes}&format=${format}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
       if ([401, 403].includes(response.status)) { setReport(null); setIncidents(null); revoke(); return; }
       if (!response.ok) throw new Error("unavailable");
       const blob = await response.blob();

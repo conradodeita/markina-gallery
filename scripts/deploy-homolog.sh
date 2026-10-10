@@ -37,6 +37,10 @@ fail() {
   return 1
 }
 
+monitor_is_configured() {
+  [[ -f "$STATE_DIR/system-monitor.compose.yml" && -f docker/docker-compose.system-monitor.yml ]]
+}
+
 compose() {
   local extra=()
   # Also retain persistence when rolling back to a Compose predating this volume.
@@ -46,7 +50,10 @@ compose() {
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     extra+=(-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment)
   fi
-  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${extra[@]}" "$@"
+  if monitor_is_configured; then
+    extra+=(-f docker/docker-compose.system-monitor.yml -f "$STATE_DIR/system-monitor.compose.yml")
+  fi
+  APP_VERSION="$(git rev-parse HEAD)" docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${extra[@]}" "$@"
 }
 
 prepare_branding_transition() {

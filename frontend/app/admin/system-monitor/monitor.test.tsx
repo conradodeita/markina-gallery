@@ -14,6 +14,30 @@ const summary = { collection_enabled: false, state: "unknown", last_collected_at
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Monitor do sistema sem servidor", () => {
+  it("carrega resumo, incidentes e árvore sem disputar as duas leituras disponíveis", async () => {
+    let active = 0;
+    let peak = 0;
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.includes("/capabilities")) return json({ ...grants, tree: true, incidents: true });
+      if (url.includes("installation-capabilities")) return json({});
+      active++;
+      peak = Math.max(peak, active);
+      const refused = active > 2;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      active--;
+      if (refused) return json({}, 429);
+      if (url.includes("/tree")) return json({ items: [{ id: "t1", label: "Fotógrafo sintético", sessions: 0, state: "inactive", last_activity: null }], next_cursor: null, collected_at: "2026-10-09T12:00:00Z" });
+      return json(url.includes("/incidents") ? { active: [], history: [] } : summary);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<SystemMonitorPage />);
+    await screen.findByRole("button", { name: /Fotógrafo sintético/ });
+    await screen.findByText(/Sem alertas ativos registrados/);
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(screen.queryByText(/Uma fonte não respondeu/)).toBeNull();
+    expect(screen.queryByText(/Não foi possível consultar a árvore/)).toBeNull();
+  });
+
   it("mantém máximo zero quando todas as amostras observadas são zero", () => {
     render(<Trend label="Erros" points={[{ at: "2026-10-09T12:00:00Z", value: 0 }]} />);
     expect(screen.getByRole("img", { name: "Erros: 1 amostras; máximo 0" })).toBeTruthy();
@@ -59,7 +83,7 @@ describe("Monitor do sistema sem servidor", () => {
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
     render(<SystemMonitorPage />);
     fireEvent.click(await screen.findByText("Gerar relatório JSON"));
-    expect(fetcher.mock.calls.filter(([url]) => url.includes("/report?"))).toHaveLength(1);
+    await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.includes("/report?"))).toHaveLength(1));
     act(() => { window.dispatchEvent(new Event(PUSH_LOGOUT_EVENT)); });
     expect(signal?.aborted).toBe(true);
     await act(async () => { resolveReport(new Response("{}")); });
