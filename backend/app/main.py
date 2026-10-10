@@ -25,7 +25,7 @@ from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import String, cast, delete, func, or_, select, update
+from sqlalchemy import String, and_, cast, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
@@ -5594,6 +5594,25 @@ def parent_gallery_clients(
     )
     if not client_ids:
         return {"parent_gallery_id": str(parent_gallery_id), "clients": []}
+    last_access_by_client = {
+        client_id: last_viewed_at
+        for client_id, last_viewed_at in db.execute(
+            select(PhotoView.client_id, func.max(PhotoView.last_viewed_at))
+            .outerjoin(DerivedGallery, DerivedGallery.id == PhotoView.derived_gallery_id)
+            .where(
+                PhotoView.tenant_id == tenant_id,
+                PhotoView.client_id.in_(client_ids),
+                or_(
+                    PhotoView.parent_gallery_id == parent_gallery_id,
+                    and_(
+                        DerivedGallery.parent_gallery_id == parent_gallery_id,
+                        DerivedGallery.tenant_id == tenant_id,
+                    ),
+                ),
+            )
+            .group_by(PhotoView.client_id)
+        )
+    }
     clients_by_id = {
         item.id: item for item in db.scalars(select(Client).where(Client.tenant_id == tenant_id).where(Client.id.in_(client_ids)))
     }
@@ -5767,6 +5786,9 @@ def parent_gallery_clients(
             if gallery_status == "expired"
             else "no_order"
         )
+        last_access_at = last_access_by_client.get(client_id)
+        if last_access_at is None and registration:
+            last_access_at = registration.created_at
         rows.append(
             {
                 "client_id": str(client_id),
@@ -5793,11 +5815,16 @@ def parent_gallery_clients(
                 "selection_expires_at": state.selection_expires_at.isoformat()
                 if state and state.selection_expires_at else gallery.selection_expires_at.isoformat()
                 if gallery and gallery.selection_expires_at else None,
+                "last_access_at": last_access_at.isoformat() if last_access_at else None,
             }
         )
     return {
         "parent_gallery_id": str(parent_gallery_id),
-        "clients": sorted(rows, key=lambda item: (item["name"].casefold(), item["client_id"])),
+        "clients": sorted(
+            sorted(rows, key=lambda item: (item["name"].casefold(), item["client_id"])),
+            key=lambda item: item["last_access_at"] or "",
+            reverse=True,
+        ),
     }
 
 

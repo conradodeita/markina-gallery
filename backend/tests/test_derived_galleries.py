@@ -2596,6 +2596,9 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
     assert first.json()["registration_id"] == second.json()["registration_id"]
     summary = client.get(f"/admin/parent-galleries/{parent_id}/summary").json()
     assert summary["counts"] == {"folders": 0, "photos": 0, "clients": 1}
+    registration_id = UUID(first.json()["registration_id"])
+    with SessionLocal() as db:
+        registration = db.get(ParentGalleryRegistration, registration_id)
     assert summary["clients"] == [
         {
             "client_id": str(ana_id),
@@ -2614,6 +2617,7 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
             "reopening_status": None,
             "financial_orders": [],
             "selection_expires_at": None,
+            "last_access_at": registration.created_at.isoformat(),
         }
     ]
 
@@ -2742,9 +2746,74 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
     assert clients_by_name["Sem pedido"]["commercial_status"] == "no_order"
     assert clients_by_name["Pago sem galeria"]["commercial_status"] == "paid"
     assert clients_by_name["Pago sem galeria"]["derived_gallery_id"] is None
-    # Os agregados canônicos acrescentam consultas em lote, sem depender da quantidade de clientes.
-    assert statement_count <= 22  # Inclui duas revalidações de proprietário, constantes por requisição.
+    # Os agregados canônicos e de atividade usam consultas em lote, sem depender da quantidade de clientes.
+    assert statement_count <= 23  # Inclui projeção de atividade e revalidações constantes do proprietário.
     assert context_statement_count <= 12
+
+
+def test_parent_gallery_clients_order_by_latest_preview_with_registration_fallback(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    parent_id = UUID(
+        client.post("/admin/parent-galleries", json={"name": "Ordem de acesso"}).json()["id"]
+    )
+    client_ids = {
+        name: UUID(
+            client.post(
+                "/admin/clients",
+                json={"full_name": name, "phone_e164": f"+5511977000{index:04d}"},
+            ).json()["id"]
+        )
+        for index, name in enumerate(("Cliente antiga", "Cliente recente", "Sem prévia"))
+    }
+    for client_id in client_ids.values():
+        assert client.put(
+            f"/admin/parent-galleries/{parent_id}/clients/{client_id}"
+        ).status_code == 200
+    _, photo_id = create_folder_photo(client, parent_id, storage_key="ordem/preview.jpg")
+
+    with SessionLocal() as db:
+        for index, client_id in enumerate(client_ids.values()):
+            registration = db.scalar(select(ParentGalleryRegistration).where(
+                ParentGalleryRegistration.parent_gallery_id == parent_id,
+                ParentGalleryRegistration.client_id == client_id,
+            ))
+            assert registration
+            registration.created_at = datetime(2026, 9, 1 + index, tzinfo=UTC)
+        db.add_all(
+            [
+                PhotoView(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    parent_gallery_id=parent_id,
+                    client_id=client_ids["Cliente antiga"],
+                    photo_asset_id=photo_id,
+                    first_viewed_at=datetime(2026, 10, 1, tzinfo=UTC),
+                    last_viewed_at=datetime(2026, 10, 1, tzinfo=UTC),
+                ),
+                PhotoView(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    parent_gallery_id=parent_id,
+                    client_id=client_ids["Cliente recente"],
+                    photo_asset_id=photo_id,
+                    first_viewed_at=datetime(2026, 10, 2, tzinfo=UTC),
+                    last_viewed_at=datetime(2026, 10, 2, tzinfo=UTC),
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get(f"/admin/parent-galleries/{parent_id}/clients")
+
+    assert response.status_code == 200
+    rows = response.json()["clients"]
+    assert [row["name"] for row in rows] == [
+        "Cliente recente",
+        "Cliente antiga",
+        "Sem prévia",
+    ]
+    assert rows[0]["last_access_at"] == "2026-10-02T00:00:00"
+    assert rows[2]["last_access_at"] == "2026-09-03T00:00:00"
 
 
 def test_admin_queues_empty_parent_gallery_deletion(client: TestClient) -> None:

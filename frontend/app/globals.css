@@ -338,7 +338,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .global-pix-settings label, .global-pix-settings input, .global-pix-settings textarea { min-width: 0; }
 .global-pix-settings .gallery-settings-form > h3, .global-pix-settings .gallery-settings-form > p { margin: 0; }
 .global-pix-settings .gallery-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; }
-.gallery-linked-clients { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+.gallery-linked-clients { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
 .gallery-linked-client { display:grid; gap:16px; min-width:0; padding:18px; border:1px solid var(--mk-border); border-left:5px solid var(--mk-border); border-radius:14px; background:var(--mk-surface); box-shadow:0 7px 18px #0000000a; }
 .gallery-linked-client--active { border-left-color:var(--mk-border); }
 .gallery-linked-client--pending_registration,.gallery-linked-client--no_selection,.gallery-linked-client--expired { border-left-color:var(--mk-border); }

@@ -303,6 +303,25 @@ describe("editor administrativo de galeria", () => {
     expect(within(card).queryByRole("link", { name: "Ana Cliente" })).toBeNull();
   });
 
+  it("renderiza os cards na ordem recente recebida pela projeção", async () => {
+    const linkedClients = [
+      { client_id: "recent", name: "Acesso recente", phone: "+5511999999901", registration_status: "active", derived_gallery_id: "derived-recent", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection", last_access_at: "2026-10-02T00:00:00Z" },
+      { client_id: "older", name: "Acesso anterior", phone: "+5511999999902", registration_status: "active", derived_gallery_id: "derived-older", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection", last_access_at: "2026-10-01T00:00:00Z" },
+    ];
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: linkedClients });
+      if (path.endsWith("/clients/recent/folders") || path.endsWith("/clients/older/folders")) return response({ folders: [] });
+      return response({ clients: [] });
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    const recentCard = await screen.findByRole("article", { name: "Cliente Acesso recente" });
+    const previousCard = screen.getByRole("article", { name: "Cliente Acesso anterior" });
+    expect(recentCard.parentElement?.className).toContain("gallery-linked-clients");
+    expect(recentCard.compareDocumentPosition(previousCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(recentCard).getByRole("button", { name: "Acervo da cliente" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("edita o nome da mesma cliente e recarrega a lista", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);

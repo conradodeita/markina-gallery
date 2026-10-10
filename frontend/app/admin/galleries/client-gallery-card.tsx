@@ -26,6 +26,7 @@ export type ClientGalleryRow = {
   finalized_orders?: Array<{ id: string; frozen_at: string; delivery: OrderDelivery; items: Array<{ name: string; preview_url: string | null }> }>;
   financial_orders?: FinancialOrder[];
   selection_expires_at?: string | null;
+  last_access_at?: string | null;
 };
 
 const galleryStatus = {
