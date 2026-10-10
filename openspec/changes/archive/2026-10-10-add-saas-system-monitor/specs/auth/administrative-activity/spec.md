@@ -1,3 +1,7 @@
+## Purpose
+
+Definir a autorização exclusiva do proprietário, concessões administrativas independentes e sinais limitados de atividade autenticada para a árvore de fotógrafos e clientes.
+
 ## ADDED Requirements
 
 ### Requirement: Autorizações administrativas independentes

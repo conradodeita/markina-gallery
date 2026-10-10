@@ -18,4 +18,4 @@
 Estado de 6.2: concluída em 10/10/2026 no SHA 3bdc362. PRs #151/#153/#154 publicados; migration 0072, proprietário/grants e coleta ativos e preservados pelo deploy corrigido. Compatibilidade do host, SQL/lock PostgreSQL, relatório sanitizado, negação anônima, abertura/recarga autenticadas, árvore/filtro e card verificados remotamente. As falhas de concorrência inicial e Compose foram delimitadas, corrigidas, cobertas por regressões e validadas no código publicado. Nenhuma credencial extraída ou sessão fabricada. Sem nova carga, operações de domínio ou alteração A+B/terceiros. Lacunas métricas e limites registrados em `validation.md`, inventário e `docs/system-monitor.md`.
 
 ## Workflow follow-up
-- Revisão humana antes de sincronizar specs e arquivar.
+- Revisão humana aprovada em 10/10/2026: specs consolidadas e change arquivada em `openspec/changes/archive/2026-10-10-add-saas-system-monitor/`.

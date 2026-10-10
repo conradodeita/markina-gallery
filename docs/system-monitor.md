@@ -1,6 +1,6 @@
 # Monitor do sistema
 
-Implementação: change `add-saas-system-monitor`, migration `20261009_0072`, publicada em homologação no SHA `777495b012bb98174e50c07b15dd507b329b8de4`. Painel em **Administração → Monitor do sistema**, `/admin/system-monitor`. Propriedade/grants e coleta foram ativados com autorização operacional; a configuração padrão continua opt-in. Validação visual autenticada ainda depende da sessão do proprietário.
+Implementação: change `add-saas-system-monitor`, migration `20261009_0072`, publicada em homologação no SHA `777495b012bb98174e50c07b15dd507b329b8de4`. Painel em **Administração → Monitor do sistema**, `/admin/system-monitor`. Propriedade/grants e coleta foram ativados com autorização operacional; a configuração padrão continua opt-in. Validação visual autenticada concluída no SHA 3bdc362 em 10/10/2026.
 
 ## Autorização e privacidade
 
@@ -94,8 +94,8 @@ Overlay `docker/docker-compose.system-monitor.yml` propaga configuração opt-in
 
 ## Estado final validado
 
-Em 10/10/2026, workflow 38047039331 publicou o SHA 3bdc362 com sucesso. Schema 0072, 13 containers próprios healthy, seis processos com coleta habilitada, snapshot privado atualizado e versão correta. Fingerprint de terceiros preservado. A falha anterior de preflight foi corrigida incluindo a definição do worker opcional sem habilitar seu profile antes da detecção. Abertura e recarga autenticadas carregaram resumo, árvore e incidentes sem 429. Expansão/filtro, card e downloads JSON/texto sanitizados revalidados. Task 6.2 concluída; revisão humana para consolidar/arquivar OpenSpec permanece pendente.
+Em 10/10/2026, workflow 38047039331 publicou o SHA 3bdc362 com sucesso. Schema 0072, 13 containers próprios healthy, seis processos com coleta habilitada, snapshot privado atualizado e versão correta. Fingerprint de terceiros preservado. A falha anterior de preflight foi corrigida incluindo a definição do worker opcional sem habilitar seu profile antes da detecção. Abertura e recarga autenticadas carregaram resumo, árvore e incidentes sem 429. Expansão/filtro, card e downloads JSON/texto sanitizados revalidados. Task 6.2 concluída; revisão humana aprovada em 10/10/2026, specs consolidadas e change arquivada.
 
 Publicação inicial, migration, concessões e ativação foram autorizadas e executadas. Schema, lock PostgreSQL, fonte do host e negação HTTP anônima foram verificados no servidor. O proprietário realizou login normal; árvore, filtros/busca, exportação JSON/texto sanitizada e card foram exercitados. A interface coordena chamadas em fila serial compartilhada, sem ampliar limite no backend ou repetir pedidos automaticamente, mantendo cancelamento e progresso após falha. Compatibilidade/persistência/coordenação estão publicadas e validadas na instalação autorizada. Nenhuma credencial foi extraída nem sessão do proprietário fabricada. Reversão operacional: desabilitar coleta no overlay privado e retirar grants por CLI autorizado, preservando tabelas; downgrade destrutivo é recusado. Campanha A+B e recursos de terceiros permanecem preservados. Lacunas OCI/IAM/quotas, renderização no dispositivo, orçamento global e inventário incompleto não são zeros ou evidência de capacidade máxima.
 
-Evidências e comandos executados: `openspec/changes/add-saas-system-monitor/validation.md`.
+Evidências e comandos executados: `openspec/changes/archive/2026-10-10-add-saas-system-monitor/validation.md`.

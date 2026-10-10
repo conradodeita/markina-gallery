@@ -1,5 +1,13 @@
 # Evidências de implementação — 09–10/10/2026
 
+## Consolidação e arquivamento aprovados — 10/10/2026
+
+O proprietário aprovou explicitamente consolidar e arquivar. As três delta specs foram comparadas integralmente com as specs principais: quatro requisitos de atividade, seis do monitor e um de autorização de capacidade presentes, com todos os cenários preservados. As duas capacidades novas receberam Purpose descritivo em português. Nenhum código do produto foi alterado nesta consolidação.
+
+Validações: `openspec validate add-saas-system-monitor --strict` aprovada; `openspec validate --specs` com **19 passed, 0 failed**. `--specs --strict` identifica avisos de extensão (>500 caracteres) preexistentes em cinco specs, incluindo sete requisitos antigos de capacidade; o novo requisito de propriedade e as duas novas specs não geram avisos. Preservados os requisitos não mencionados pela delta. A revisão/consolidação da change de piloto continua separada: sua delta de autorização substitui a antiga guarda de instalação única e é complementada pelo gate de proprietário deste monitor.
+
+Arquivo: `openspec/changes/archive/2026-10-10-add-saas-system-monitor/`, schema spec-driven, oito tasks concluídas. A instrução posterior de retirar o card da Visão Geral será implementada em change separada; esta evidência preserva o comportamento validado antes dessa alteração.
+
 ## Validação final publicada — 10/10/2026
 
 Workflow `38047039331` confirmado SUCCESS em todos os jobs, incluindo deploy-homolog. Servidor no SHA `3bdc36200ff4a83f4e894c4cc7e4e7dc44f9201c`, checkout limpo, schema `20261009_0072`. Treze containers próprios healthy, health interno/público 200; seis processos (API, worker, três workers faciais e prévias) confirmados SYSTEM_MONITOR_ENABLED=true. API reporta o SHA correto e o caminho /run/markina-system-monitor/host.json. Timer ativo; arquivo 0600, snapshot real de 11:51:34,599 UTC confirmado às 11:51:35,337 UTC. Fingerprint dos seis containers de terceiros permanece `c63b9f91cb364f1ee7a2cf26a69b602734b6d8d34eaf363174695128a1c72bc6`. O wrapper corrigido preservou a ativação durante o deploy efetivo; nenhuma nova migration, carga ou alteração de dados A+B.
@@ -18,7 +26,7 @@ Downloads efetivos na versão final: JSON **36.183 bytes**, texto **36.250 bytes
 
 Esses percentis são limites superiores dos histogramas; amostras insuficientes permanecem nulas. A coleta foi reativada há poucos minutos: a janela selecionada de uma hora não implica uma hora de cobertura contínua após o deploy. Não houve usuários virtuais ou campanha de carga nesta validação; esses números não determinam capacidade máxima. OCI/IAM/quotas, tempo de renderização no dispositivo, orçamento global de conexões e total de bytes do inventário incompleto continuam explicitamente ausentes. Paginação não exigida pelo lote real (5 fotógrafos/16 clientes); contrato coberto por testes existentes. Revogação e troca de e-mail cobertas no CI, sem revogar sessão/grants ou mudar o e-mail real para a validação.
 
-Task 6.2 concluída com evidência do código publicado e ambiente autorizado; oito de oito tasks implementadas e validadas. Consolidação às specs principais e arquivamento permanecem sujeitos à revisão humana exigida pelo AGENTS.md. Esta entrega final altera somente documentação; testes do SHA publicado e CI permanecem aplicáveis ao comportamento inalterado.
+Task 6.2 concluída com evidência do código publicado e ambiente autorizado; oito de oito tasks implementadas e validadas. Consolidação às specs principais e arquivamento aprovados pelo proprietário em 10/10/2026, conforme registro acima. Esta entrega final altera somente documentação; testes do SHA publicado e CI permanecem aplicáveis ao comportamento inalterado.
 
 ## CI verde e merge do preflight — 10/10/2026, 08:03 BRT
 
