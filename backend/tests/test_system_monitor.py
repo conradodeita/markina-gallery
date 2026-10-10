@@ -527,3 +527,39 @@ def test_cleanup_inventory_preserves_monitor_and_security_audit(db, monkeypatch,
     assert result["preserved"]["admin_security_audit_events"] == 1
     assert result["database"]["client_gallery_audit_events"] == 0
     assert str(admin.id) not in str(result)
+
+
+def test_photographer_tree_identifies_only_unique_active_email_and_searches_it(db):
+    tenant, admin, _session = user(db, "admin")
+    other, other_admin, _other_session = user(db, "admin", owner=False)
+    admin.email = "photographer-a@example.invalid"
+    other_admin.email = "photographer-b@example.invalid"
+    empty = Tenant(id=uuid4(), status="active")
+    db.add(empty)
+    db.flush()
+    rows = {row["id"]: row for row in activity.page(db, NOW)["items"]}
+    assert rows[str(tenant.id)]["label"] == "Fotógrafo photographer-a@example.invalid"
+    assert rows[str(other.id)]["label"] == "Fotógrafo photographer-b@example.invalid"
+    assert rows[str(empty.id)]["label"] == "Fotógrafo [e-mail indisponível]"
+    result = activity.page(db, NOW, query="photographer-a@example.invalid")
+    assert [row["id"] for row in result["items"]] == [str(tenant.id)]
+    assert other_admin.email not in json.dumps(result)
+    admin.email = "updated@example.invalid"
+    db.flush()
+    assert activity.page(db, NOW, query="updated@example.invalid")["items"][0]["label"] == "Fotógrafo updated@example.invalid"
+    report = export_report(build_report(db, NOW))
+    assert admin.email not in report and other_admin.email not in report
+
+
+def test_photographer_tree_does_not_choose_ambiguous_or_revoked_identity(db):
+    tenant, first, _session = user(db, "admin")
+    _same, second, _second_session = user(db, "admin", tenant=tenant, owner=False)
+    db.flush()
+    rows = {row["id"]: row for row in activity.page(db, NOW)["items"]}
+    assert rows[str(tenant.id)]["label"] == "Fotógrafo [e-mail indisponível]"
+    membership = db.scalar(select(TenantAdmin).where(TenantAdmin.admin_user_id == second.id))
+    membership.active = False
+    db.flush()
+    rows = {row["id"]: row for row in activity.page(db, NOW)["items"]}
+    assert rows[str(tenant.id)]["label"] == f"Fotógrafo {first.email}"
+    assert not activity.page(db, NOW, query=second.email)["items"]

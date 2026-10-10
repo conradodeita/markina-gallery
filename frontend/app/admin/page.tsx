@@ -10,7 +10,6 @@ import {
   SurfaceCard,
   SystemState,
 } from "../ui-kit";
-import { InstallationDiagnostics } from "./installation-diagnostics";
 
 type Summary = {
   storage: {
@@ -204,7 +203,6 @@ export default function AdminPage() {
           )}
         </SurfaceCard>
       </section>
-      <InstallationDiagnostics />
     </div>
   );
 }

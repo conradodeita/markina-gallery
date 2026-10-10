@@ -155,3 +155,16 @@ describe("painel operacional", () => {
     );
   });
 });
+
+
+it("mantém a Visão Geral sem card nem consultas de diagnóstico mesmo para proprietário autorizado", async () => {
+  const fetcher = vi.fn((url: string) => Promise.resolve(new Response(JSON.stringify(
+    url.includes("installation-capabilities") ? { capacity_diagnostics: true } : summary,
+  ), { status: 200 })));
+  vi.stubGlobal("fetch", fetcher);
+  render(<AdminPage />);
+  await screen.findByRole("heading", { name: "Seu próximo passo está à vista." });
+  expect(screen.queryByText("Diagnóstico sob demanda")).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Capacidade e filas" })).toBeNull();
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/admin/validation-summary"]);
+});
