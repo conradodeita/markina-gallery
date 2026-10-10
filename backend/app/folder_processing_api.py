@@ -74,10 +74,11 @@ def register_routes(app, *, db_session, require_admin, require_same_origin, tena
                                              folder_id=folder_id, processing_enabled=facial_available, tenant_id=tenant_id)
         return {
             "folder_id": str(folder_id), "folder_name": folder.name,
-            "preview_mode": row.preview_mode if row else "inherit",
-            "facial_mode": row.facial_mode if row else "inherit",
-            "preview_strength": row.preview_strength if row else 50,
-            "preview_exposure_tenths": row.preview_exposure_tenths if row else 0,
+            "private_folder": folder.audience_scope == "selected",
+            "preview_mode": "custom" if folder.audience_scope == "selected" else row.preview_mode if row else "inherit",
+            "facial_mode": "on" if folder.audience_scope == "selected" else row.facial_mode if row else "inherit",
+            "preview_strength": effective.strength if folder.audience_scope == "selected" else row.preview_strength if row else 50,
+            "preview_exposure_tenths": effective.exposure_tenths if folder.audience_scope == "selected" else row.preview_exposure_tenths if row else 0,
             "effective_preview": {"mode": effective.mode, "enabled": effective.enabled,
                                   "strength": effective.strength,
                                   "exposure_tenths": effective.exposure_tenths},

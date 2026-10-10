@@ -374,6 +374,39 @@ def test_claimed_index_job_runs_in_worker_and_finishes_durably(tmp_path: Path) -
     ) == 1
 
 
+def test_completed_private_facial_job_enqueues_preview_adjustment(tmp_path: Path, monkeypatch) -> None:
+    db = Session(create_engine("sqlite:///:memory:"))
+    Base.metadata.create_all(db.bind)
+    parent, photos = _gallery(db, tmp_path, photos=1)
+    photo = photos[0]
+    db.get(PhotoFolder, photo.folder_id).audience_scope = "selected"
+    db.flush()
+    settings = _settings(tmp_path)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    provider = Provider({str(photo.id): [_face(_vector(1.0))]})
+    repository = FacialJobRepository()
+    job, _created = repository.enqueue(
+        db, tenant_id=FIXTURE_TENANT_ID, kind="index", idempotency_key="worker-private-index",
+        parent_gallery_id=parent.id, photo_asset_id=photo.id, model_version="model-v1",
+        quality_version="quality-v1", preview_fingerprint="a" * 64,
+    )
+    db.commit()
+    claim = repository.claim_next(db, lease_seconds=60)
+    assert claim is not None and claim.id == job.id
+    enqueued = []
+    monkeypatch.setattr("app.preview_adjustment.service.enqueue",
+                        lambda _db, photo_id, *, tenant_id, retry=False: enqueued.append(
+                            (photo_id, tenant_id, retry)) or True)
+
+    completed = process_claimed_index_job(
+        db, claim, repository=repository, provider=provider, cipher=cipher,
+        settings=settings, derivatives_root=tmp_path,
+    )
+
+    assert completed.status == "completed"
+    assert enqueued == [(photo.id, FIXTURE_TENANT_ID, True)]
+
+
 def test_claimed_index_job_is_cancelled_if_rollout_is_suspended(
     tmp_path: Path,
 ) -> None:

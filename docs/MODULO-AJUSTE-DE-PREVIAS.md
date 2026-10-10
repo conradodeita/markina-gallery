@@ -12,6 +12,8 @@ Novas fotos de conteúdo recebem jobs depois das prévias convencionais, indepen
 
 Desligar impede novas admissões, cancela filas/reservas e faz próximas requisições daquela galeria usarem o derivado convencional. Outras galerias não são afetadas. Fotos já carregadas na memória de um navegador só mudam ao recarregar. Mudança da marca-d'água, fonte ou geração invalida resultados anteriores. O original, `admin_preview`, `client_preview`, miniaturas e embeddings nunca são substituídos pelo ajuste.
 
+Pastas restritas do Acervo do Cliente (`audience_scope=selected`) são sempre ajustadas individualmente, sem herdar nem desligar o módulo. O padrão efetivo é 75% e 0,0 EV; personalizações já salvas permanecem próprias da pasta. O job de prévia só entra na fila após o job facial mais recente daquela foto concluir com sucesso e sempre usa a prévia limpa baseada na fonte original. Alterar intensidade/exposição invalida a geração anterior e reenfileira as fotos com reconhecimento facial concluído. O gate facial global continua obrigatório.
+
 ## Worker opcional
 
 Após deploy da API/frontend e migration `20260913_0055`, usar o mesmo arquivo de ambiente e opções do projeto existente. A migration copia configurações anteriores para galerias existentes, preservando geração e resultados com exposição zero; não agenda fotos. Novas galerias não herdam ativação global. Não mudar segredos nem usar exemplos com defaults em servidor real. Inventariar recursos e apresentar o impacto antes de qualquer operação remota.
@@ -28,7 +30,7 @@ O serviço tem imagem própria com RawTherapee; não instalar o editor na API. O
 
 ## Desligamento e higienização
 
-1. Desmarcar “Melhorar prévias automaticamente” e salvar em todas as galerias habilitadas. Confirmar `enabled=false` em `/admin/preview-adjustment/galleries/{id}/configuration`; para inventário global, consultar `gallery_preview_settings`. A limpeza recusa execução se qualquer galeria continua habilitada.
+1. Desmarcar “Melhorar prévias automaticamente” e salvar em todas as galerias habilitadas. Confirmar `enabled=false` em `/admin/preview-adjustment/galleries/{id}/configuration`; para inventário global, consultar `gallery_preview_settings`. A limpeza recusa execução se qualquer galeria continua habilitada ou existe pasta restrita de cliente, pois essas pastas são sempre processadas.
 2. Parar exclusivamente o worker:
 
 ```powershell

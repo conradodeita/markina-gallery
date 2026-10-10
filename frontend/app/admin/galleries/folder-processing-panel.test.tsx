@@ -4,13 +4,39 @@ import { afterEach, expect, it, vi } from "vitest";
 import { FolderProcessingPanel } from "./folder-processing-panel";
 
 const payload = {
-  folder_id: "folder-1", folder_name: "Pasta restrita", preview_mode: "inherit", facial_mode: "inherit",
+  folder_id: "folder-1", folder_name: "Pasta restrita", private_folder: false,
+  preview_mode: "inherit", facial_mode: "inherit",
   preview_strength: 50, preview_exposure_tenths: 0,
   effective_preview: { mode: "inherit", enabled: true, strength: 40, exposure_tenths: 3 },
   facial_available: true, facial_allowed: true, total_photos: 2,
   preview_counts: { queued: 0, processing: 0, ready: 1, failed: 0, cancelled: 0 },
   facial_counts: { queued: 0, processing: 0, completed: 1, failed: 0 }, comparison_photo_id: null,
 };
+
+it("automaticamente configura e enfileira o ajuste da pasta privada após reconhecimento", async () => {
+  const privatePayload = { ...payload, private_folder: true, preview_mode: "custom" as const,
+    facial_mode: "on" as const, preview_strength: 75, preview_exposure_tenths: 0 };
+  const fetcher = vi.fn((_path: string, init?: RequestInit) => response(init?.method === "PATCH"
+    ? { ...privatePayload, ...JSON.parse(String(init.body)) } : privatePayload));
+  vi.stubGlobal("fetch", fetcher);
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Pasta restrita" embedded />);
+
+  expect(await screen.findByRole("button", { name: "Refazer reconhecimento" })).toBeTruthy();
+  expect(screen.queryByText(/Prévia herdada|Face herdada/)).toBeNull();
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Processar esta pasta" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Salvar configuração" })).toBeNull();
+  const cards = document.querySelector(".folder-processing--private .folder-processing__cards");
+  expect(cards?.children[0].textContent).toContain("Reconhecimento facial");
+  expect(cards?.children[1].textContent).toContain("Ajuste automático das prévias");
+
+  fireEvent.change(screen.getByLabelText(/Intensidade/), { target: { value: "60" } });
+  fireEvent.change(screen.getByLabelText(/Exposição/), { target: { value: "3" } });
+  await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true));
+  const patch = fetcher.mock.calls.find(([, init]) => init?.method === "PATCH");
+  expect(JSON.parse(String(patch?.[1]?.body))).toEqual({ preview_mode: "custom", facial_mode: "on",
+    preview_strength: 60, preview_exposure_tenths: 3 });
+});
 const response = (body: object) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
