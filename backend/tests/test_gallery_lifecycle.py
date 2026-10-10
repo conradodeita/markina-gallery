@@ -3438,7 +3438,7 @@ def test_parent_gallery_client_summary_is_batched_and_uses_status_precedence() -
                        if statement.lstrip().startswith(("SELECT tenant.", "SELECT tenant_admin."))]
     # A revalidação acrescenta custo fixo; o limite das agregações anteriores continua igual.
     assert len(context_queries) <= 12
-    assert len(statements) - len(context_queries) <= 22  # Revalidação fixa da identidade administrativa.
+    assert len(statements) - len(context_queries) <= 23  # Revalidação e agregação em lote do último acesso.
     rows = {row["name"]: row for row in response.json()["clients"]}
     assert rows["Cliente Pendente"]["gallery_status"] == "pending_registration"
     assert rows["Cliente Sem seleção"]["gallery_status"] == "no_selection"

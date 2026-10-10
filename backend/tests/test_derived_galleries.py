@@ -2596,6 +2596,9 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
     assert first.json()["registration_id"] == second.json()["registration_id"]
     summary = client.get(f"/admin/parent-galleries/{parent_id}/summary").json()
     assert summary["counts"] == {"folders": 0, "photos": 0, "clients": 1}
+    registration_id = UUID(first.json()["registration_id"])
+    with SessionLocal() as db:
+        registration = db.get(ParentGalleryRegistration, registration_id)
     assert summary["clients"] == [
         {
             "client_id": str(ana_id),
@@ -2614,6 +2617,7 @@ def test_client_binding_is_alphabetical_and_idempotent_for_same_event(client: Te
             "reopening_status": None,
             "financial_orders": [],
             "selection_expires_at": None,
+            "last_access_at": registration.created_at.isoformat(),
         }
     ]
 
