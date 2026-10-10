@@ -6,6 +6,8 @@ O proprietário aprovou explicitamente consolidar e arquivar. As três delta spe
 
 Validações: `openspec validate add-saas-system-monitor --strict` aprovada; `openspec validate --specs` com **19 passed, 0 failed**. `--specs --strict` identifica avisos de extensão (>500 caracteres) preexistentes em cinco specs, incluindo sete requisitos antigos de capacidade; o novo requisito de propriedade e as duas novas specs não geram avisos. Preservados os requisitos não mencionados pela delta. A revisão/consolidação da change de piloto continua separada: sua delta de autorização substitui a antiga guarda de instalação única e é complementada pelo gate de proprietário deste monitor.
 
+Validação final com a versão do CI, após a change de refinamento: `npx -y @fission-ai/openspec@1.14.0 validate --strict --all`: **89 passed, 0 failed**. Os avisos de extensão mencionados acima são informativos nessa versão fixada.
+
 Arquivo: `openspec/changes/archive/2026-10-10-add-saas-system-monitor/`, schema spec-driven, oito tasks concluídas. A instrução posterior de retirar o card da Visão Geral será implementada em change separada; esta evidência preserva o comportamento validado antes dessa alteração.
 
 ## Validação final publicada — 10/10/2026

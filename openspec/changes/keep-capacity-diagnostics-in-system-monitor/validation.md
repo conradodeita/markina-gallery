@@ -13,7 +13,7 @@ Retirar Diagnóstico sob demanda / Capacidade e filas da Visão Geral e manter n
 - Ruff nos dois arquivos backend alterados: aprovado. Lint frontend completo: 0 erros, 37 avisos preexistentes. Build Next/TypeScript: aprovado, 23 páginas. Nenhum servidor local iniciado; somente Vitest/jsdom, ORM SQLite em memória, funções e build estático.
 - OpenSpec da change em modo estrito: válida; git diff --check aprovado. Suite frontend completa: **470 passed**, 59 arquivos, 81,41 s; ESLint direcionado aos três arquivos frontend alterados também aprovado.
 
-Validação adicional global `openspec validate --changes --strict`: 50 changes aprovadas e 20 com avisos preexistentes de extensão de requisitos; a change atual passou isoladamente em modo estrito. Esses avisos globais não foram corrigidos fora do escopo. A consolidação anterior também documenta os avisos antigos das specs principais.
+Validação adicional global `openspec validate --changes --strict`: 50 changes aprovadas e 20 com avisos preexistentes de extensão de requisitos; a change atual passou isoladamente em modo estrito. Esses avisos globais não foram corrigidos fora do escopo. Repetido o comando exato do CI com a versão fixada: `npx -y @fission-ai/openspec@1.14.0 validate --strict --all`: **89 passed, 0 failed**; nessa versão as observações de extensão são informativas. A consolidação anterior também documenta os avisos antigos das specs principais.
 
 ## Comandos reproduzíveis
 
