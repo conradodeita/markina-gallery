@@ -699,6 +699,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .folder-processing__body { display:grid; gap:16px; padding:18px; border-top:1px solid var(--mk-border); }
 .folder-processing__scope { margin:0; color:var(--mk-ink-muted); line-height:1.5; overflow-wrap:anywhere; }
 .folder-processing__cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.folder-processing--private .folder-processing__cards { grid-template-columns:minmax(0,1fr); }
 .folder-processing__card { display:flex; flex-direction:column; gap:10px; min-width:0; padding:20px; border:1px solid var(--mk-border); border-radius:15px; background:var(--mk-surface-subtle); }
 .folder-processing__eyebrow { color:var(--mk-ink-muted); font-size:.72rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
 .folder-processing__card h4 { margin:0; font-size:1.08rem; line-height:1.2; }

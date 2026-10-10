@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select
 from app.auth import (
     FolderProcessingSettings,
     GalleryPreviewSettings,
+    PhotoFolder,
     PreviewAdjustment,
     SessionLocal,
 )
@@ -71,7 +72,10 @@ def cleanup(db, *, execute: bool = False, worker_stopped: bool = False):
     if execute:
         custom_active = db.scalar(select(FolderProcessingSettings.folder_id)
                                   .where(FolderProcessingSettings.preview_mode == "custom").limit(1))
-        if any(config.enabled for config in configs) or custom_active or not worker_stopped:
+        private_folder_active = db.scalar(select(PhotoFolder.id).where(
+            PhotoFolder.audience_scope == "selected", PhotoFolder.purpose == "content"
+        ).limit(1))
+        if any(config.enabled for config in configs) or custom_active or private_folder_active or not worker_stopped:
             raise ValueError("Desligue o módulo e pare o worker antes da limpeza.")
         for path in files:
             require_single_tenant(db)

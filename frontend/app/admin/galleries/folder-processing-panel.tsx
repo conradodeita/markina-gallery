@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AdminPhotoPreviewDialog, type AdminPhotoPreview } from "./admin-photo-preview-dialog";
 
 type Counts = { queued: number; processing: number; ready?: number; completed?: number; failed: number; cancelled?: number };
 type Processing = {
   folder_id: string; folder_name: string; preview_mode: "inherit" | "custom" | "off";
+  private_folder: boolean;
   facial_mode: "inherit" | "on" | "off"; preview_strength: number;
   preview_exposure_tenths: number;
   effective_preview: { mode: string; enabled: boolean; strength: number; exposure_tenths: number };
@@ -44,6 +45,7 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false, em
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [expandedPhoto, setExpandedPhoto] = useState<AdminPhotoPreview | null>(null);
+  const saveVersion = useRef(0);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     const result = await request<Processing>(`${folderId}/processing`, { signal });
@@ -87,6 +89,34 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false, em
     finally { setBusy(false); }
   }
 
+  useEffect(() => {
+    if (!expanded || !data?.private_folder || !draft
+      || (draft.preview_strength === data.preview_strength
+        && draft.preview_exposure_tenths === data.preview_exposure_tenths)) return;
+    const version = ++saveVersion.current;
+    const timer = window.setTimeout(() => {
+      setBusy(true); setError(""); setNotice("Aplicando novo ajuste…");
+      void request<Processing>(`${folderId}/processing`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preview_mode: "custom", facial_mode: "on",
+          preview_strength: draft.preview_strength,
+          preview_exposure_tenths: draft.preview_exposure_tenths }),
+      }).then((result) => {
+        if (version !== saveVersion.current) return;
+        setData(result); setDraft(result);
+        setNotice("Ajuste aplicado. As prévias serão refeitas após o reconhecimento facial, a partir das fotos originais.");
+      }).catch((cause: unknown) => {
+        if (version !== saveVersion.current) return;
+        setDraft(data);
+        setError(cause instanceof Error ? cause.message : "Não foi possível aplicar o ajuste.");
+        setNotice("");
+      }).finally(() => {
+        if (version === saveVersion.current) setBusy(false);
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [data, draft, expanded, folderId]);
+
   async function process(kind: "preview" | "facial") {
     if (busy) return;
     setBusy(true); setError(""); setNotice("");
@@ -112,16 +142,16 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false, em
   }
 
   const summary = data
-    ? `${data.preview_mode === "custom" ? "Prévia personalizada" : data.preview_mode === "off" ? "Prévia desligada" : "Prévia herdada"} · ${data.facial_mode === "off" ? "Face pausada" : data.facial_mode === "on" ? "Face permitida" : "Face herdada"}`
+    ? data.private_folder ? "" : `${data.preview_mode === "custom" ? "Prévia personalizada" : data.preview_mode === "off" ? "Prévia desligada" : "Prévia herdada"} · ${data.facial_mode === "off" ? "Face pausada" : data.facial_mode === "on" ? "Face permitida" : "Face herdada"}`
     : "Configuração da pasta";
-  return <section className="folder-processing" aria-label={`Processamento de ${folderName}`}>
+  return <section className={`folder-processing${data?.private_folder ? " folder-processing--private" : ""}`} aria-label={`Processamento de ${folderName}`}>
     {embedded ? <div className="folder-processing__toggle folder-processing__toggle--static">
       <span className="folder-processing__icon" aria-hidden="true">✦</span>
-      <span className="folder-processing__heading"><strong>Processamento da pasta</strong><small>{summary}</small></span>
+      <span className="folder-processing__heading"><strong>Processamento da pasta</strong>{summary ? <small>{summary}</small> : null}</span>
     </div> : <button type="button" className="folder-processing__toggle" aria-expanded={open}
       aria-controls={`${id}-content`} onClick={() => { setOpen((value) => !value); setError(""); }}>
       <span className="folder-processing__icon" aria-hidden="true">✦</span>
-      <span className="folder-processing__heading"><strong>Processamento da pasta</strong><small>{summary}</small></span>
+      <span className="folder-processing__heading"><strong>Processamento da pasta</strong>{summary ? <small>{summary}</small> : null}</span>
       <span className="folder-processing__chevron" aria-hidden="true">{open ? "▴" : "▾"}</span>
     </button>}
     {expanded ? <div id={`${id}-content`} className="folder-processing__body">
@@ -138,36 +168,40 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false, em
           <div className="folder-processing__card">
             <span className="folder-processing__eyebrow">01 · Processamento automático</span>
             <h4>Reconhecimento facial</h4>
-            <p>A pausa impede novos trabalhos nesta pasta. Índices existentes e buscas já autorizadas são preservados.</p>
-            <label htmlFor={`${id}-facial`}>Comportamento da pasta</label>
-            <select id={`${id}-facial`} value={draft.facial_mode} onChange={(event) => setDraft({ ...draft, facial_mode: event.target.value as Processing["facial_mode"] })}>
-              {facialModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
+            {data.private_folder ? <p>O reconhecimento facial começa automaticamente após o envio da foto, conforme o gate operacional global.</p> : <>
+              <p>A pausa impede novos trabalhos nesta pasta. Índices existentes e buscas já autorizadas são preservados.</p>
+              <label htmlFor={`${id}-facial`}>Comportamento da pasta</label>
+              <select id={`${id}-facial`} value={draft.facial_mode} onChange={(event) => setDraft({ ...draft, facial_mode: event.target.value as Processing["facial_mode"] })}>
+                {facialModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </>}
             <div className="folder-processing__metric"><strong>{data.facial_counts.completed ?? 0} concluído(s)</strong><span>de {data.total_photos} foto(s) · {data.facial_counts.failed} falha(s)</span></div>
             <progress value={Math.min(data.facial_counts.completed ?? 0, data.total_photos)} max={Math.max(1, data.total_photos)} />
-            <button type="button" className="secondary" disabled={busy || !data.facial_available || !data.facial_allowed || !data.total_photos} onClick={() => void process("facial")}>Retentar nesta pasta</button>
+            <button type="button" className="secondary" disabled={busy || !data.facial_available || !data.facial_allowed || !data.total_photos} onClick={() => void process("facial")}>{data.private_folder ? "Refazer reconhecimento" : "Retentar nesta pasta"}</button>
             {!data.facial_available ? <small>Reconhecimento indisponível na galeria ou no ambiente.</small> : null}
           </div>
           <div className="folder-processing__card">
             <span className="folder-processing__eyebrow">02 · Apresentação das fotos</span>
             <h4>Ajuste automático das prévias</h4>
-            <p>Parte sempre da prévia convencional; exposição e intensidade da pasta substituem as da galeria, sem somar.</p>
+            <p>{data.private_folder ? "Ajuste individual desta pasta, sempre aplicado às fotos originais." : "Parte sempre da prévia convencional; exposição e intensidade da pasta substituem as da galeria, sem somar."}</p>
+            {!data.private_folder ? <>
             <label htmlFor={`${id}-preview`}>Comportamento da pasta</label>
             <select id={`${id}-preview`} value={draft.preview_mode} onChange={(event) => setDraft({ ...draft, preview_mode: event.target.value as Processing["preview_mode"] })}>
               {previewModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
-            {draft.preview_mode === "custom" ? <div className="folder-processing__fields">
+            </> : null}
+            {data.private_folder || draft.preview_mode === "custom" ? <div className="folder-processing__fields">
               <label htmlFor={`${id}-strength`}>Intensidade <strong>{draft.preview_strength}%</strong></label>
-              <input id={`${id}-strength`} type="range" min={10} max={75} value={draft.preview_strength} onChange={(event) => setDraft({ ...draft, preview_strength: Number(event.target.value) })} />
+              <input id={`${id}-strength`} type="range" min={10} max={75} value={draft.preview_strength} disabled={data.private_folder && busy} onChange={(event) => setDraft({ ...draft, preview_strength: Number(event.target.value) })} />
               <label htmlFor={`${id}-exposure`}>Exposição <strong>{exposure(draft.preview_exposure_tenths)} EV</strong></label>
-              <input id={`${id}-exposure`} type="range" min={-20} max={20} value={draft.preview_exposure_tenths} onChange={(event) => setDraft({ ...draft, preview_exposure_tenths: Number(event.target.value) })} />
+              <input id={`${id}-exposure`} type="range" min={-20} max={20} value={draft.preview_exposure_tenths} disabled={data.private_folder && busy} onChange={(event) => setDraft({ ...draft, preview_exposure_tenths: Number(event.target.value) })} />
             </div> : <p className="folder-processing__effective">Efetivo: {data.effective_preview.enabled ? `${data.effective_preview.strength}% · ${exposure(data.effective_preview.exposure_tenths)} EV` : "desligado"}</p>}
             <div className="folder-processing__metric"><strong>{data.preview_counts.ready ?? 0} pronta(s)</strong><span>de {data.total_photos} foto(s) · {data.preview_counts.failed} falha(s)</span></div>
             <progress value={Math.min(data.preview_counts.ready ?? 0, data.total_photos)} max={Math.max(1, data.total_photos)} />
-            <button type="button" className="secondary" disabled={busy || !data.effective_preview.enabled || !data.total_photos} onClick={() => void process("preview")}>Processar esta pasta</button>
+            {!data.private_folder ? <button type="button" className="secondary" disabled={busy || !data.effective_preview.enabled || !data.total_photos} onClick={() => void process("preview")}>Processar esta pasta</button> : null}
           </div>
         </div>
-        <div className="folder-processing__footer"><span>Alterações de configuração não reprocessam fotos antigas automaticamente.</span><button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Aguarde…" : "Salvar configuração"}</button></div>
+        {!data.private_folder ? <div className="folder-processing__footer"><span>Alterações de configuração não reprocessam fotos antigas automaticamente.</span><button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Aguarde…" : "Salvar configuração"}</button></div> : null}
         {data.comparison_photo_id ? <div className="folder-processing__comparison"><h4>Antes e depois</h4>
           {(["before", "after"] as const).map((version) => {
             const label = version === "before" ? "Convencional" : "Ajustada";

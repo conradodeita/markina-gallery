@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
+    FacialJob,
     FolderProcessingSettings,
     GalleryPreviewSettings,
     ParentGallery,
@@ -39,6 +40,14 @@ def folder_settings(db: Session, folder_id: UUID, *, tenant_id: UUID, lock: bool
 
 def effective_preview(db: Session, folder: PhotoFolder, *, lock: bool = False) -> EffectivePreview:
     override = folder_settings(db, folder.id, tenant_id=folder.tenant_id, lock=lock)
+    if folder.audience_scope == "selected":
+        # Pastas privadas nunca herdam nem desligam o ajuste. Um override customizado
+        # existente continua valendo; herança/desligamento passam ao novo padrão.
+        strength = override.preview_strength if override and override.preview_mode == "custom" else 75
+        exposure_tenths = override.preview_exposure_tenths if override and override.preview_mode == "custom" else 0
+        revision = override.revision if override else 1
+        return EffectivePreview("custom", True, strength, exposure_tenths, revision,
+                                f"folder:{folder.id}:{revision}")
     if override and override.preview_mode == "custom":
         return EffectivePreview("custom", True, override.preview_strength,
                                 override.preview_exposure_tenths, override.revision,
@@ -58,6 +67,9 @@ def effective_preview(db: Session, folder: PhotoFolder, *, lock: bool = False) -
 
 
 def facial_processing_allowed(db: Session, folder_id: UUID, *, tenant_id: UUID) -> bool:
+    folder = owned_record(db, PhotoFolder, folder_id, tenant_id=tenant_id)
+    if folder and folder.audience_scope == "selected":
+        return True
     override = folder_settings(db, folder_id, tenant_id=tenant_id)
     return not override or override.facial_mode != "off"
 
@@ -75,6 +87,9 @@ def configure_folder(db: Session, folder_id: UUID, *, tenant_id: UUID, preview_m
             or facial_mode not in {"inherit", "on", "off"}
             or not 10 <= strength <= 75 or not -20 <= exposure_tenths <= 20):
         raise ValueError("Configuração de processamento inválida.")
+    is_private = folder.audience_scope == "selected"
+    if is_private:
+        preview_mode, facial_mode = "custom", "on"
     row = folder_settings(db, folder_id, tenant_id=tenant_id, lock=True)
     if row is None:
         row = FolderProcessingSettings(tenant_id=folder.tenant_id, folder_id=folder_id)
@@ -93,4 +108,22 @@ def configure_folder(db: Session, folder_id: UUID, *, tenant_id: UUID, preview_m
         ).values(status="cancelled", claim_token=None, updated_at=now()))
     row.facial_mode = facial_mode
     row.updated_at = now()
+    if changed and is_private:
+        completed_photo_ids = list(db.scalars(
+            select(PhotoAsset.id)
+            .join(FacialJob, FacialJob.photo_asset_id == PhotoAsset.id)
+            .where(
+                PhotoAsset.tenant_id == tenant_id,
+                PhotoAsset.folder_id == folder_id,
+                PhotoAsset.available.is_(True),
+                FacialJob.tenant_id == tenant_id,
+                FacialJob.kind == "index",
+                FacialJob.status == "completed",
+            )
+            .distinct()
+        ))
+        from app.preview_adjustment.service import enqueue
+
+        for photo_id in completed_photo_ids:
+            enqueue(db, photo_id, tenant_id=tenant_id, retry=True)
     return row

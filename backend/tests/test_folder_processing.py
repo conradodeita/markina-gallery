@@ -1,5 +1,5 @@
 """Substituição integral por pasta, preservando herança e revisões."""
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -56,4 +56,38 @@ def test_effective_preview_never_accumulates_exposure(tmp_path):
         override.preview_mode = "inherit"
         db.flush()
         assert not effective_preview(db, custom).enabled
+    engine.dispose()
+
+
+def test_selected_folder_defaults_are_private_and_ignore_gallery_and_local_pauses(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'private-effective.db'}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Privada")
+        db.add(gallery)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
+                             name="Cliente", purpose="content", audience_scope="selected")
+        db.add(folder)
+        db.flush()
+        db.add(GalleryPreviewSettings(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
+                                      enabled=False, strength=35, exposure_tenths=7))
+        db.add(FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id,
+                                        preview_mode="off", facial_mode="off", preview_strength=40,
+                                        preview_exposure_tenths=5))
+        db.flush()
+        effective = effective_preview(db, folder)
+        assert (effective.mode, effective.enabled, effective.strength, effective.exposure_tenths) == (
+            "custom", True, 75, 0
+        )
+        assert facial_processing_allowed(db, folder.id, tenant_id=FIXTURE_TENANT_ID)
+        gallery_config = db.scalar(select(GalleryPreviewSettings).where(
+            GalleryPreviewSettings.parent_gallery_id == gallery.id
+        ))
+        gallery_config.enabled = True
+        gallery_config.strength = 20
+        gallery_config.exposure_tenths = -10
+        db.flush()
+        assert effective_preview(db, folder).strength == 75
+        assert effective_preview(db, folder).exposure_tenths == 0
     engine.dispose()

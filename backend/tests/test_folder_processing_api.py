@@ -1,7 +1,14 @@
 """Autorização, escopo e apresentação das configurações por pasta."""
-from app.auth import ParentGallery, PhotoAsset, PhotoFolder, PreviewAdjustment
-from app.folder_processing import effective_preview
-from app.preview_adjustment.service import adjusted_path, process_one
+from app.auth import (
+    FacialJob,
+    FolderProcessingSettings,
+    ParentGallery,
+    PhotoAsset,
+    PhotoFolder,
+    PreviewAdjustment,
+)
+from app.folder_processing import effective_preview, facial_processing_allowed
+from app.preview_adjustment.service import adjusted_path, enqueue, process_one
 from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_preview_adjustment import BrightEngine
 
@@ -15,9 +22,11 @@ def test_folder_processing_api_auth_and_override(api_client):
         folder_id, gallery_id = photo.folder_id, photo.parent_gallery_id
         other = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Outra", purpose="content", position=1)
         cover = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Capa", purpose="cover_assets", position=2)
-        db.add_all((other, cover))
+        private = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Acervo", purpose="content",
+                              audience_scope="selected", position=3)
+        db.add_all((other, cover, private))
         db.commit()
-        other_id, cover_id = other.id, cover.id
+        other_id, cover_id, private_id = other.id, cover.id, private.id
     endpoint = f"/admin/photo-folders/{folder_id}/processing"
     assert client.get(endpoint).status_code == 403
     client.cookies.set("markina_session", "adjustment-client")
@@ -32,6 +41,19 @@ def test_folder_processing_api_auth_and_override(api_client):
     assert initial.json()["preview_mode"] == "inherit"
     assert initial.json()["total_photos"] == 1
     assert client.get(f"/admin/photo-folders/{cover_id}/processing").status_code == 404
+    private_endpoint = f"/admin/photo-folders/{private_id}/processing"
+    private_initial = client.get(private_endpoint)
+    assert private_initial.status_code == 200
+    assert private_initial.json()["private_folder"] is True
+    assert (private_initial.json()["preview_mode"], private_initial.json()["facial_mode"]) == ("custom", "on")
+    assert (private_initial.json()["preview_strength"], private_initial.json()["preview_exposure_tenths"]) == (75, 0)
+    private_saved = client.patch(private_endpoint, json={"preview_mode": "off", "facial_mode": "off",
+                                                         "preview_strength": 60, "preview_exposure_tenths": -3})
+    assert private_saved.status_code == 200, private_saved.text
+    assert private_saved.json()["facial_allowed"] is True
+    assert private_saved.json()["effective_preview"] == {
+        "mode": "custom", "enabled": True, "strength": 60, "exposure_tenths": -3,
+    }
     assert client.patch(endpoint, json={"preview_mode": "custom", "facial_mode": "off",
                                         "preview_strength": 80, "preview_exposure_tenths": 5}).status_code == 422
     custom = client.patch(endpoint, json={"preview_mode": "custom", "facial_mode": "off",
@@ -60,6 +82,60 @@ def test_folder_processing_api_auth_and_override(api_client):
         db.commit()
     assert client.get(endpoint).status_code == 409
     assert client.post(f"{endpoint}/preview/enqueue").status_code == 409
+
+
+def test_private_folder_settings_are_fixed_auto_and_requeue_completed_face_photos(prepared):
+    from app.folder_processing import configure_folder
+
+    factory, photo_id = prepared
+    with factory() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        folder = db.get(PhotoFolder, photo.folder_id)
+        folder.audience_scope = "selected"
+        db.add(FacialJob(tenant_id=FIXTURE_TENANT_ID, kind="index", status="completed",
+                         idempotency_key=f"private-index:{photo.id}", parent_gallery_id=photo.parent_gallery_id,
+                         photo_asset_id=photo.id, model_version="model-v1", quality_version="quality-v1",
+                         preview_fingerprint="a" * 64))
+        db.flush()
+        override = FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id,
+                                            preview_mode="off", facial_mode="off", preview_strength=50)
+        db.add(override)
+        db.flush()
+        assert effective_preview(db, folder).enabled
+        assert (effective_preview(db, folder).strength, effective_preview(db, folder).exposure_tenths) == (75, 0)
+        assert facial_processing_allowed(db, folder.id, tenant_id=FIXTURE_TENANT_ID)
+        assert enqueue(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
+        db.commit()
+
+    with factory() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        row = db.get(PreviewAdjustment, photo_id)
+        assert row.status == "queued"
+        configure_folder(db, photo.folder_id, tenant_id=FIXTURE_TENANT_ID,
+                         preview_mode="off", facial_mode="off", strength=65, exposure_tenths=-2)
+        assert effective_preview(db, db.get(PhotoFolder, photo.folder_id)).enabled
+        assert (effective_preview(db, db.get(PhotoFolder, photo.folder_id)).strength,
+                effective_preview(db, db.get(PhotoFolder, photo.folder_id)).exposure_tenths) == (65, -2)
+        assert row.status == "queued"
+        assert row.generation == 2
+        db.commit()
+    assert process_one(factory, BrightEngine())
+    with factory() as db:
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is not None
+
+
+def test_private_adjustment_worker_cancels_stale_work_until_face_index_completes(prepared):
+    factory, photo_id = prepared
+    with factory() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        db.get(PhotoFolder, photo.folder_id).audience_scope = "selected"
+        db.get(PreviewAdjustment, photo_id).status = "queued"
+        db.commit()
+
+    assert process_one(factory, BrightEngine())
+    with factory() as db:
+        assert db.get(PreviewAdjustment, photo_id).status == "cancelled"
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
 
 
 def test_folder_override_is_independent_of_gallery_default(prepared):

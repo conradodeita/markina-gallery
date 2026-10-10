@@ -17,6 +17,7 @@ from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     BrandingSettings,
     DerivedGallery,
+    FacialJob,
     FolderProcessingSettings,
     GalleryPreviewSettings,
     MediaDerivative,
@@ -174,6 +175,22 @@ def adjustment_for(db: Session, photo_id: UUID, *, tenant_id: UUID) -> PreviewAd
     ).execution_options(populate_existing=True))
 
 
+def private_facial_job_completed(db: Session, photo: PhotoAsset, folder: PhotoFolder) -> bool:
+    if folder.audience_scope != "selected":
+        return True
+    latest_status = db.scalar(
+        select(FacialJob.status)
+        .where(
+            FacialJob.tenant_id == photo.tenant_id,
+            FacialJob.photo_asset_id == photo.id,
+            FacialJob.kind == "index",
+        )
+        .order_by(FacialJob.created_at.desc(), FacialJob.id.desc())
+        .limit(1)
+    )
+    return latest_status == "completed"
+
+
 def enqueue(db: Session, photo_id: UUID, *, tenant_id: UUID, retry: bool = False) -> bool:
     from app.facial.lifecycle import media_can_proceed
     require_active_owner(db, tenant_id)
@@ -189,6 +206,8 @@ def enqueue(db: Session, photo_id: UUID, *, tenant_id: UUID, retry: bool = False
         or not folder
         or folder.purpose != "content"
     ):
+        return False
+    if not private_facial_job_completed(db, photo, folder):
         return False
     source = inputs(db, photo_id, tenant_id=tenant_id)
     if not source:
@@ -325,6 +344,11 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
             row.status, row.claim_token, row.updated_at = "cancelled", None, now()
             db.commit()
             return True
+        photo = owned_record(db, PhotoAsset, candidate.photo_asset_id, tenant_id=tenant_id)
+        if photo and not private_facial_job_completed(db, photo, folder):
+            row.status, row.claim_token, row.updated_at = "cancelled", None, now()
+            db.commit()
+            return True
         if row.attempts >= MAX_ATTEMPTS:
             row.status, row.last_error = "failed", "Processamento interrompido. Tente novamente."
             row.updated_at = now()
@@ -391,6 +415,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                 or not source
                 or effective_fingerprint(source[2], config) != fingerprint
                 or not photo_active(db, photo)
+                or (photo and folder and not private_facial_job_completed(db, photo, folder))
             ):
                 if row and row.claim_token == claim:
                     row.status, row.claim_token = "cancelled", None

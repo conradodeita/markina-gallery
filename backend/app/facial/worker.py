@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import FacialJob, GalleryFacialPolicy
+from app.auth import FacialJob, GalleryFacialPolicy, PhotoAsset, PhotoFolder
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher
 from app.facial.engine import replace_photo_index
@@ -15,6 +16,8 @@ from app.facial.jobs import ClaimedFacialJob, FacialJobError, FacialJobRepositor
 from app.facial.provider import OpenCvSFaceProvider
 from app.facial.purge import purge_gallery_records, purge_photo_records
 from app.facial.rollout import rollout_is_active
+
+logger = logging.getLogger(__name__)
 
 
 def process_claimed_index_job(
@@ -75,7 +78,21 @@ def process_claimed_index_job(
         total=indexed,
         lease_seconds=settings.job_lease_seconds,
     )
-    return repository.complete(db, claim)
+    completed = repository.complete(db, claim)
+    photo = db.get(PhotoAsset, completed.photo_asset_id) if completed.photo_asset_id else None
+    folder = db.get(PhotoFolder, photo.folder_id) if photo else None
+    if folder and folder.audience_scope == "selected":
+        try:
+            # Savepoint isolates this optional queue from the completed facial job.
+            db.flush()
+            with db.begin_nested():
+                from app.preview_adjustment.service import enqueue
+
+                enqueue(db, photo.id, tenant_id=completed.tenant_id, retry=True)
+        except Exception:  # noqa: BLE001 -- O ajuste não pode reverter o índice facial concluído.
+            logger.warning("preview_adjustment.enqueue_after_private_facial_failed",
+                           extra={"photo_id": str(photo.id)})
+    return completed
 
 
 def process_claimed_purge_job(
