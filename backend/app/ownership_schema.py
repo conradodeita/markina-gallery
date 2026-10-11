@@ -11,7 +11,7 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, MetaData, U
 # Infraestrutura técnica não contém configuração comercial de um fotógrafo.
 SHARED_TABLES = frozenset({
     "tenant", "admin_user", "admin_action_token", "email_delivery", "email_delivery_attempt",
-    "installation_operator",
+    "installation_operator", "facial_embedding_experiment_setting",
     "system_monitor_grant", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_activity", "system_monitor_incident",
     "system_monitor_transition", "platform_owner",

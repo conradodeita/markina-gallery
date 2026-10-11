@@ -253,3 +253,48 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
     assert worker.run_cycle() is True
     assert len(loads) == 2 and len(processed) == 2
     assert worker.model_loaded is False  # limite de dois jobs força reciclagem
+
+
+def test_gemma_retry_is_counted_as_error_and_not_success(tmp_path, monkeypatch):
+    from app.system_monitor import telemetry
+
+    monkeypatch.setenv("SYSTEM_MONITOR_ENABLED", "true")
+    telemetry.drain()
+    monkeypatch.setattr(telemetry, "_workers", {})
+    factory, parent_id = _database(tmp_path)
+    repository = FacialJobRepository()
+    with factory() as db:
+        photo_id = fixture_index_photo(db, parent_id)
+        repository.enqueue(db, tenant_id=FIXTURE_TENANT_ID, kind="index_gemma",
+                           idempotency_key="gemma-failure", parent_gallery_id=parent_id,
+                           photo_asset_id=photo_id, model_version="gemma-v1",
+                           quality_version="quality-v1", preview_fingerprint="f" * 64)
+        db.commit()
+    def processor(db, claim, _provider):
+        repository.fail(db, claim, ValueError("private"), max_attempts=3, retry_delay_seconds=5)
+        return False
+    worker = BlockingFacialWorker(
+        settings=_settings(tmp_path), job_class="gemma", session_factory=factory,
+        wake_source=WakeSource([0]), provider_loader=lambda: object(), processor=processor,
+    )
+    assert worker.run_cycle()
+    buckets, beats, _dropped = telemetry.drain()
+    assert {key[1] for key in buckets} == {"work.gemma"}
+    assert sum(value[0] for value in buckets.values()) == 1
+    assert sum(value[1] for value in buckets.values()) == 1
+    assert beats["gemma"][1] is None
+
+
+def test_gemma_worker_refuses_production_before_loading_assets(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    import pytest
+
+    from app.facial import face_worker
+    from app.facial.config import FacialConfigurationError
+
+    settings = replace(_settings(tmp_path), environment="production")
+    monkeypatch.setattr(face_worker, "facial_settings_from_environment", lambda **kwargs: settings)
+    monkeypatch.setattr(face_worker, "verify_models", lambda *_args: pytest.fail("Nenhum modelo deve carregar"))
+    with pytest.raises(FacialConfigurationError, match="homologação"):
+        face_worker.main("gemma")

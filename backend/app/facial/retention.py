@@ -77,7 +77,7 @@ def process_claimed_cleanup_job(
                 .where(
                     FacialJob.tenant_id == claim.tenant_id,
                     FacialJob.search_request_id == request.id,
-                    FacialJob.kind == "search",
+                    FacialJob.kind.in_(("search", "search_gemma")),
                     FacialJob.status.in_(("queued", "processing")),
                 )
                 .values(status="cancelled", lease_token=None, lease_expires_at=None)

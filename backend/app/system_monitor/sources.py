@@ -24,8 +24,11 @@ def job_counts(db, instant):
                         ("facial", FacialJob)):
         groups = [model.status]
         if model is FacialJob:
-            kind = case((FacialJob.kind == "search", "search"),
-                        (FacialJob.kind == "index", "index"), else_="maintenance")
+            kind = case(
+                (FacialJob.kind.in_(("search", "search_gemma")), "search"),
+                (FacialJob.kind.in_(("index", "index_gemma")), "index"),
+                else_="maintenance",
+            )
             groups.insert(0, kind)
         rows = db.execute(select(*groups, func.count()).where(
             model.updated_at >= instant - timedelta(minutes=5),

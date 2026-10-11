@@ -1,0 +1,2 @@
+# Coleta de recursos exclusiva do harness offline, fora do runtime SFace.
+psutil==7.2.2

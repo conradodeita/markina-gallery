@@ -27,9 +27,10 @@ from app.auth import (
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
 from app.facial.engine import search_gallery_index
+from app.facial.gemma_provider import GEMMA_EMBEDDING_DIMENSION, GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
 from app.facial.jobs import ClaimedFacialJob, FacialJobError, FacialJobRepository
 from app.facial.notifications import enqueue_search_notification
-from app.facial.provider import OpenCvSFaceProvider, analyze_query
+from app.facial.provider import analyze_query
 from app.facial.reference_store import FacialReferenceError, FacialReferenceStore
 from app.facial.rollout import rollout_is_active
 from app.public_gallery_access import (
@@ -56,7 +57,7 @@ def process_claimed_search_job(
     claim: ClaimedFacialJob,
     *,
     repository: FacialJobRepository,
-    provider: OpenCvSFaceProvider,
+    provider: object,
     cipher: FacialCipher,
     settings: FacialSettings,
     reference_store: FacialReferenceStore | None = None,
@@ -66,11 +67,14 @@ def process_claimed_search_job(
     """Executa ou retoma a consulta sem depender da presença da cliente na UI."""
 
     job = repository._leased(db, claim)
-    if job is None or job.kind != "search" or job.search_request_id is None:
+    if job is None or job.kind not in {"search", "search_gemma"} or job.search_request_id is None:
         raise FacialJobError("Job facial não pode ser executado.")
     request = owned_record(db, FacialSearchRequest, job.search_request_id, tenant_id=claim.tenant_id)
     if request is None or request.parent_gallery_id != job.parent_gallery_id:
         raise FacialJobError("Consulta facial não pode ser executada.")
+    expected_kind = "search_gemma" if request.search_engine == GEMMA_MODEL_ID else "search"
+    if job.kind != expected_kind:
+        raise FacialJobError("Engine da consulta facial diverge do job.")
     store = reference_store or FacialReferenceStore(
         settings.reference_root,
         cipher,
@@ -153,7 +157,8 @@ def process_claimed_search_job(
         if request.reference_region_id:
             from app.facial.regions import authorized_region, region_embedding
             region = authorized_region(db, gallery_id=request.parent_gallery_id, client_id=request.client_id,
-                                       region_id=request.reference_region_id, settings=settings)
+                                       region_id=request.reference_region_id, settings=settings,
+                                       model_id=request.search_engine)
             query_embedding = region_embedding(db, region, cipher, settings, tenant_id=claim.tenant_id)
         else:
             repository._leased(db, claim)
@@ -199,6 +204,17 @@ def process_claimed_search_job(
             allowed_fingerprints=fingerprints,
             ambiguous_threshold_milli=settings.ambiguous_threshold_milli,
             authorize=authorize_comparison,
+            model_id=request.search_engine,
+            model_version=(
+                GEMMA_MODEL_VERSION
+                if request.search_engine == GEMMA_MODEL_ID
+                else settings.model_version
+            ),
+            embedding_dimension=(
+                GEMMA_EMBEDDING_DIMENSION
+                if request.search_engine == GEMMA_MODEL_ID
+                else 128
+            ),
         )
         repository._leased(db, claim)
         if not _request_is_authorized(db, request, settings):
@@ -375,11 +391,19 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
         index_jobs = db.scalars(
             select(FacialJob)
             .where(
-                FacialJob.kind == "index",
+                FacialJob.kind == (
+                    "index_gemma"
+                    if request.search_engine == GEMMA_MODEL_ID
+                    else "index"
+                ),
                 FacialJob.tenant_id == request.tenant_id,
                     FacialJob.parent_gallery_id == request.parent_gallery_id,
                 FacialJob.photo_asset_id.in_(photo_ids),
-                FacialJob.model_version == request.model_version,
+                FacialJob.model_version == (
+                    GEMMA_MODEL_VERSION
+                    if request.search_engine == GEMMA_MODEL_ID
+                    else request.model_version
+                ),
                 FacialJob.quality_version == request.quality_version,
             )
             .order_by(FacialJob.created_at.desc(), FacialJob.id.desc())

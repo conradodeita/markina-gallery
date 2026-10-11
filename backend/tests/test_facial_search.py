@@ -15,6 +15,7 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryMembership,
+    FacialEmbeddingExperimentSetting,
     FacialJob,
     FacialRollout,
     FacialSearchCandidate,
@@ -196,6 +197,7 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
     assert available["index"] == {"state": "processing", "ready": 0, "total": 1}
     assert available["consent_version"] == "consent-v1"
     assert available["max_reference_bytes"] == 31_457_280
+    assert available["engine"] == "opencv-yunet-sface"
     assert available["minor_search_available"] is True
     assert unavailable == {
         "state": "unavailable",
@@ -203,6 +205,85 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
         "minor_search_available": False,
         "max_reference_bytes": 31_457_280,
     }
+
+
+@pytest.mark.parametrize(
+    ("is_new_gallery", "gemma_coverage_complete", "stale_reason"),
+    [(True, True, None), (True, False, None), (False, True, None),
+     (True, True, "generation"), (True, True, "preview"), (True, True, "future_heartbeat")],
+)
+def test_gallery_engine_uses_gemma_only_with_complete_current_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    is_new_gallery: bool,
+    gemma_coverage_complete: bool,
+    stale_reason: str | None,
+) -> None:
+    from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
+    from app.facial.indexing import index_idempotency_key
+
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    db.add(FacialEmbeddingExperimentSetting(
+            singleton=1,
+            enabled=True,
+            mode="shadow",
+            enabled_since=(
+                parent.created_at - timedelta(seconds=1)
+                if is_new_gallery
+                else parent.created_at + timedelta(seconds=1)
+            ),
+            worker_last_seen_at=datetime.now(UTC),
+        ))
+    if gemma_coverage_complete:
+        db.add(FacialJob(
+            tenant_id=FIXTURE_TENANT_ID,
+            kind="index_gemma",
+            status="completed",
+            idempotency_key=index_idempotency_key(
+                environment="test", gallery_id=parent.id, photo_id=db.scalar(select(PhotoAsset.id)),
+                model_version=GEMMA_MODEL_VERSION, quality_version="quality-v1", index_generation=1,
+                fingerprint="b" * 64,
+            ),
+            parent_gallery_id=parent.id,
+            photo_asset_id=db.scalar(select(PhotoAsset.id)),
+            model_version=GEMMA_MODEL_VERSION,
+            quality_version="quality-v1",
+            preview_fingerprint="b" * 64,
+        ))
+    db.commit()
+
+    if stale_reason == "generation":
+        db.scalar(select(GalleryFacialPolicy)).index_generation += 1
+    elif stale_reason == "preview":
+        db.scalar(select(MediaDerivative).where(MediaDerivative.variant == "admin_preview")).updated_at = datetime.now(UTC) + timedelta(seconds=1)
+    elif stale_reason == "future_heartbeat":
+        db.get(FacialEmbeddingExperimentSetting, 1).worker_last_seen_at = datetime.now(UTC) + timedelta(seconds=10)
+    db.commit()
+
+    request = create_search_request(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+
+    assert request.search_engine == (
+        GEMMA_MODEL_ID
+        if is_new_gallery and gemma_coverage_complete and stale_reason is None
+        else "opencv-yunet-sface"
+    )
+    assert db.scalar(select(FacialJob.kind).where(
+        FacialJob.search_request_id == request.id
+    )) == (
+        "search_gemma"
+        if is_new_gallery and gemma_coverage_complete and stale_reason is None
+        else "search"
+    )
 
 
 def test_search_admission_requires_gallery_in_active_rollout(
@@ -241,8 +322,9 @@ def test_search_admission_requires_gallery_in_active_rollout(
     assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 0
 
 
+@pytest.mark.parametrize("search_kind", ["search", "search_gemma"])
 def test_saturated_search_queue_refuses_before_storing_reference(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, search_kind: str
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     db, parent, client = _fixture(tmp_path, index_ready=True)
@@ -252,7 +334,7 @@ def test_saturated_search_queue_refuses_before_storing_reference(
     object.__setattr__(settings, "search_retry_after_seconds", 17)
     db.add(
         FacialJob(
-            tenant_id=FIXTURE_TENANT_ID, kind="search",
+            tenant_id=FIXTURE_TENANT_ID, kind=search_kind,
             status="queued",
             idempotency_key="saturated-search-queue",
             parent_gallery_id=parent.id,

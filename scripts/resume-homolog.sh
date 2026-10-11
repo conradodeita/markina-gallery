@@ -60,6 +60,13 @@ discover_services() {
 
   existing="$(docker ps --all --quiet \
     --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter 'label=com.docker.compose.service=face-gemma-index-worker')"
+  if [[ -n "$existing" ]]; then
+    SERVICES+=(face-gemma-index-worker)
+  fi
+
+  existing="$(docker ps --all --quiet \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
     --filter 'label=com.docker.compose.service=preview-adjustment-worker')"
   if [[ -n "$existing" ]]; then
     PREVIEW_WORKER_ACTIVE=1

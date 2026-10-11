@@ -61,9 +61,16 @@ def replace_photo_index(
 
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     from app.facial.detection import normalized_box
+    from app.facial.gemma_provider import GEMMA_MODEL_ID
     from app.facial.lifecycle import analysis_for
     from app.media import safe_source_path
-    analysis = analysis_for(db, photo_id, lock=True, tenant_id=tenant_id)
+
+    experimental = getattr(provider, "model_id", "opencv-yunet-sface") == GEMMA_MODEL_ID
+    analysis = analysis_for(db, photo_id, lock=not experimental, tenant_id=tenant_id)
+    source_identity = (
+        (analysis.source_fingerprint, analysis.expires_at, analysis.pipeline_version)
+        if analysis else None
+    )
     if not photo or (not photo.available and not analysis):
         raise FacialEngineError("Foto não está elegível para indexação facial.")
     policy = db.scalar(
@@ -112,6 +119,14 @@ def replace_photo_index(
     def revalidate():
         if authorize:
             authorize()
+        if experimental and source_identity is not None:
+            current_source = analysis_for(db, photo_id, tenant_id=tenant_id)
+            if (
+                current_source is None or current_source.deleted_at is not None
+                or (current_source.source_fingerprint, current_source.expires_at,
+                    current_source.pipeline_version) != source_identity
+            ):
+                raise FacialEngineError("A fonte experimental foi alterada ou excluída.")
         current = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
         parent = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=tenant_id)
         current_policy = db.scalar(select(GalleryFacialPolicy).where(
@@ -130,6 +145,8 @@ def replace_photo_index(
         (face.box[2] * face.box[3] for face in observations), default=0
     )
     records: list[PhotoFaceEmbedding] = []
+    engine_model_id = getattr(provider, "model_id", "opencv-yunet-sface")
+    engine_model_version = getattr(provider, "model_version", policy.model_version)
     for ordinal, face in enumerate(observations):
         try:
             assessment = assess_face_quality(
@@ -156,7 +173,7 @@ def replace_photo_index(
                 settings=settings,
                 gallery_id=photo.parent_gallery_id,
                 photo_id=photo.id,
-                model_version=policy.model_version,
+                model_version=engine_model_version,
                 quality_version=policy.quality_version,
             ),
         )
@@ -174,14 +191,14 @@ def replace_photo_index(
                 derived_gallery_id=photo.derived_gallery_id,
                 photo_asset_id=photo.id,
                 face_ordinal=ordinal,
-                model_version=policy.model_version,
+                model_version=engine_model_version,
                 quality_version=policy.quality_version,
                 preview_fingerprint=fingerprint,
                 quality_band=assessment.band,
                 payload_ciphertext=envelope.ciphertext,
                 payload_nonce=envelope.nonce,
                 key_id=envelope.key_id,
-                model_id=getattr(provider, "model_id", "opencv-yunet-sface"),
+                model_id=engine_model_id,
                 embedding_dimension=getattr(provider, "embedding_dimension", 128),
                 pipeline_version=analysis.pipeline_version if analysis else "legacy-preview-v1",
                 detection_pass=face.detection_pass,
@@ -196,10 +213,11 @@ def replace_photo_index(
                 PhotoFaceEmbedding.tenant_id == tenant_id,
                 PhotoFaceEmbedding.photo_asset_id == photo.id,
                 PhotoFaceEmbedding.parent_gallery_id == photo.parent_gallery_id,
+                PhotoFaceEmbedding.model_id == engine_model_id,
             )
         )
         db.add_all(records)
-        if analysis:
+        if analysis and engine_model_id == "opencv-yunet-sface":
             analysis.state = "ready"
             analysis.metrics = {**getattr(provider, "last_metrics", {}),
                                 "faces_accepted": len(records), "faces_rejected": len(observations)-len(records),
@@ -221,6 +239,9 @@ def search_gallery_index(
     allowed_fingerprints: dict[UUID, str] | None = None,
     ambiguous_threshold_milli: int | None = None,
     authorize: Callable[[UUID], bool] | None = None,
+    model_id: str = "opencv-yunet-sface",
+    model_version: str | None = None,
+    embedding_dimension: int = EXPECTED_EMBEDDING_DIMENSIONS,
 ) -> list[SearchMatch]:
     """Compara em memória somente embeddings autorizados da mesma galeria."""
 
@@ -230,7 +251,8 @@ def search_gallery_index(
         raise FacialEngineError("Runtime vetorial facial indisponível.") from exc
     if not owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id):
         raise FacialEngineError("Origem facial indisponível.")
-    normalized_query = normalize_embedding(query_embedding)
+    normalized_query = normalize_embedding(query_embedding, embedding_dimension)
+    selected_version = model_version or settings.model_version
     if allowed_fingerprints is not None and not allowed_fingerprints:
         return []
     rows = list(
@@ -241,9 +263,9 @@ def search_gallery_index(
                 PhotoFaceEmbedding.tenant_id == tenant_id,
                 PhotoAsset.tenant_id == tenant_id,
                 PhotoFaceEmbedding.parent_gallery_id == gallery_id,
-                PhotoFaceEmbedding.model_version == settings.model_version,
-                PhotoFaceEmbedding.model_id == "opencv-yunet-sface",
-                PhotoFaceEmbedding.embedding_dimension == EXPECTED_EMBEDDING_DIMENSIONS,
+                PhotoFaceEmbedding.model_version == selected_version,
+                PhotoFaceEmbedding.model_id == model_id,
+                PhotoFaceEmbedding.embedding_dimension == embedding_dimension,
                 PhotoFaceEmbedding.quality_version == settings.quality_version,
                 PhotoAsset.parent_gallery_id == gallery_id,
                 PhotoAsset.derived_gallery_id.is_(None),
@@ -297,7 +319,7 @@ def search_gallery_index(
         )
         try:
             decoded = json.loads(payload)
-            embedding = normalize_embedding(decoded["embedding"])
+            embedding = normalize_embedding(decoded["embedding"], row.embedding_dimension)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise FacialEngineError("Índice facial inválido.") from exc
         matrix.append(embedding)
@@ -306,7 +328,7 @@ def search_gallery_index(
         return []
     vectors = np.asarray(matrix, dtype=np.float32)
     query = np.asarray(normalized_query, dtype=np.float32)
-    if vectors.shape != (len(usable_rows), EXPECTED_EMBEDDING_DIMENSIONS):
+    if vectors.shape != (len(usable_rows), embedding_dimension):
         raise FacialEngineError("Dimensão do índice facial inválida.")
     similarities = vectors @ query
     threshold = threshold_milli / 1000

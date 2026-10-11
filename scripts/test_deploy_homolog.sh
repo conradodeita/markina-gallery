@@ -464,4 +464,5 @@ done
 
 python3 "$SCRIPT_DIR/test_facial_production_policy.py"
 python3 "$SCRIPT_DIR/test_facial_rollout_homolog_policy.py"
+bash "$SCRIPT_DIR/test_gemma_operations.sh"
 echo "deploy-homolog shell: ok"

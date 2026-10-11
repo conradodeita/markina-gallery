@@ -117,14 +117,14 @@ fi
 while IFS= read -r service; do
   case "$service" in
     nginx|web|api|worker|db|redis|evolution-api|evolution-db|evolution-redis|\
-    face-index-worker|face-search-worker|face-maintenance-worker|preview-adjustment-worker) ;;
+    face-index-worker|face-search-worker|face-maintenance-worker|face-gemma-index-worker|preview-adjustment-worker) ;;
     *) fail "serviço ativo desconhecido no projeto Markina: $service" ;;
   esac
 done < <(docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME" \
   --format '{{index .Config.Labels "com.docker.compose.service"}}')
 
 paused_services=(api worker)
-for service in face-index-worker face-search-worker face-maintenance-worker; do
+for service in face-index-worker face-search-worker face-maintenance-worker face-gemma-index-worker; do
   container="$(compose ps -q "$service")"
   if [[ -n "$container" && "$(docker inspect --format '{{.State.Running}}' "$container")" == "true" ]]; then
     paused_services+=("$service")

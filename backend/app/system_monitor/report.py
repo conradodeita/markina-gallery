@@ -14,7 +14,7 @@ from app.system_monitor.models import MonitorIncident, MonitorSample
 from app.system_monitor.sanitize import number, timestamp
 from app.system_monitor.store import http_history, operation_summary
 
-KINDS = {"media", "preview_adjustment", "facial", "index", "search", "maintenance", "general", "whatsapp", "email"}
+KINDS = {"media", "preview_adjustment", "facial", "index", "search", "gemma", "maintenance", "general", "whatsapp", "email"}
 STATES = {"queued", "processing", "completed", "failed", "cancelled", "ready", "open", "closed"}
 
 

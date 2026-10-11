@@ -134,7 +134,11 @@ def main() -> int:
         WORKFLOW,
     )
     require('deploy-homolog:', "job de deploy", WORKFLOW)
-    require('needs: [backend, frontend, openspec, gitleaks]', "dependência integral da CI", WORKFLOW)
+    require('needs: [backend, frontend, gemma-runtime, openspec, gitleaks]', "dependência integral da CI", WORKFLOW)
+    require('gemma-runtime:', "validação nativa Gemma antes do deploy", WORKFLOW)
+    require('--platform linux/amd64', "runtime Gemma em AMD64", WORKFLOW)
+    require('--memory 6g --memory-swap 6g --cpus 1', "inferência Gemma limitada", WORKFLOW)
+    require('--network none', "inferência sintética sem rede", WORKFLOW)
     require('environment: homolog', "Environment protegido", WORKFLOW)
     require('secrets.HOMOLOG_SSH_PRIVATE_KEY', "chave via secret", WORKFLOW)
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)

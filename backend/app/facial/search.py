@@ -26,11 +26,13 @@ from app.auth import (
 from app.facial.capacity import require_search_capacity
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
+from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
 from app.facial.jobs import FacialJobRepository
 from app.facial.notifications import cancel_pending_search_notifications
 from app.facial.policy import activation_inventory, read_policy
 from app.facial.reference_store import FacialReferenceStore
 from app.facial.rollout import rollout_is_active
+from app.facial.serving import gallery_search_engine
 from app.facial.status import gallery_index_status
 from app.public_gallery_access import (
     PublicGalleryAccessDenied,
@@ -117,6 +119,9 @@ def search_availability(
         "reference_retention_seconds": settings.reference_retention_seconds,
         "candidate_retention_seconds": settings.candidate_retention_seconds,
         "max_reference_bytes": settings.max_reference_bytes,
+        "engine": gallery_search_engine(
+            db, parent_gallery_id=parent_gallery_id, client_id=client_id, settings=settings
+        ),
         "index": {
             "state": index.state,
             "ready": index.ready,
@@ -168,10 +173,14 @@ def create_search_request(
         # A nova autorização é autodeclarada; nunca fabricar comprovação externa.
         representation_reference = None
     require_search_capacity(db, settings)
+    search_engine = gallery_search_engine(
+        db, parent_gallery_id=parent_gallery_id, client_id=client_id, settings=settings
+    )
     if reference_region_id:
         from app.facial.regions import authorized_region
         authorized_region(db, gallery_id=parent_gallery_id, client_id=client_id,
-                          region_id=reference_region_id, settings=settings)
+                          region_id=reference_region_id, settings=settings,
+                          model_id=search_engine)
 
     request_id = uuid4()
     snapshot = _build_snapshot(
@@ -179,8 +188,13 @@ def create_search_request(
         request_id=request_id,
         parent_gallery_id=parent_gallery_id,
         client_id=client_id,
-        model_version=policy.model_version,
+        model_version=(
+            GEMMA_MODEL_VERSION
+            if search_engine == GEMMA_MODEL_ID
+            else policy.model_version
+        ),
         quality_version=policy.quality_version,
+        search_engine=search_engine,
     )
     snapshot_ready = sum(item.status == "ready" for item in snapshot)
     snapshot_pending = any(item.status == "pending" for item in snapshot)
@@ -200,6 +214,7 @@ def create_search_request(
         subject_declaration=subject_declaration,
         representation_reference=representation_reference,
         model_version=policy.model_version,
+        search_engine=search_engine,
         quality_version=policy.quality_version,
         index_generation=policy.index_generation,
         snapshot_total=len(snapshot),
@@ -243,7 +258,7 @@ def create_search_request(
         job_repository = repository or FacialJobRepository()
         job_repository.enqueue(
             db,
-            kind="search",
+            kind="search_gemma" if item.search_engine != "opencv-yunet-sface" else "search",
             tenant_id=item.tenant_id,
             idempotency_key=f"facial-search:{item.id}",
             parent_gallery_id=parent_gallery_id,
@@ -296,6 +311,7 @@ def _build_snapshot(
     client_id: UUID,
     model_version: str,
     quality_version: str,
+    search_engine: str = "opencv-yunet-sface",
 ) -> list[FacialSearchSnapshotItem]:
     """Congela apenas os IDs elegíveis e o fingerprint já pronto no início."""
     tenant_id = _require_search_context(db, parent_gallery_id, client_id)
@@ -322,7 +338,8 @@ def _build_snapshot(
     jobs = db.scalars(
         select(FacialJob)
         .where(
-            FacialJob.tenant_id == tenant_id, FacialJob.kind == "index",
+            FacialJob.tenant_id == tenant_id,
+            FacialJob.kind == ("index_gemma" if search_engine != "opencv-yunet-sface" else "index"),
             FacialJob.parent_gallery_id == parent_gallery_id,
             FacialJob.photo_asset_id.in_(photo_ids),
             FacialJob.model_version == model_version,
