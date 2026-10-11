@@ -131,7 +131,8 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
 
     from app import homolog_cleanup
 
-    migrate(migration_database, "upgrade", "20261009_0072")
+    # Catálogo operacional atual; "head" neste helper representa a fundação 0069.
+    migrate(migration_database, "upgrade", "20261011_0074")
     engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
     monkeypatch.setenv("APP_ENV", "homolog")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
@@ -155,8 +156,13 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
                                    expires_at=auth.now() + timedelta(days=7))
         channel = auth.WhatsAppChannelSettings(tenant_id=tenant.id, environment="homolog", status="ready")
         parent = auth.ParentGallery(name="Descartável", tenant_id=tenant.id)
-        db.add_all([session, channel, parent])
+        experiment = auth.FacialEmbeddingExperimentSetting(
+            singleton=1, enabled=True, enabled_since=auth.now(),
+            updated_by_admin_id=admin.id,
+        )
+        db.add_all([session, channel, parent, experiment])
         db.commit()
+        expected_activation = experiment.enabled_since
         before = homolog_cleanup.inventory(db)
         result = homolog_cleanup.execute(db, homolog_cleanup.CONFIRMATION)
         assert result["preserved"] == before["preserved"]
@@ -167,4 +173,8 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
         assert db.get(auth.Tenant, tenant.id).status == "active"
         assert db.scalar(sa.select(auth.TenantAdmin)).active
         assert db.scalar(sa.select(auth.WhatsAppChannelSettings)) is not None
+        preserved_experiment = db.get(auth.FacialEmbeddingExperimentSetting, 1)
+        assert preserved_experiment.enabled is True
+        assert preserved_experiment.enabled_since == expected_activation
+        assert preserved_experiment.updated_by_admin_id == admin.id
     engine.dispose()
