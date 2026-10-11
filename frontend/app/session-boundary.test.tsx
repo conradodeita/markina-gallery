@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionBoundary } from "./session-boundary";
 import { protectedContext, recoveryLocation, safeAdminReturn, safeClientGalleryReturn } from "./session-recovery";
@@ -86,6 +86,8 @@ describe("recuperação uniforme de sessão", () => {
     await screen.findByText("Conteúdo privado");
     await act(async () => { await window.fetch("/api/admin/restricted"); });
     expect((await screen.findByRole("alert")).textContent).toContain("Acesso negado");
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(screen.getByRole("alert").textContent).toContain("Acesso negado");
     expect(screen.getByText("Conteúdo privado")).toBeTruthy();
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -122,35 +124,167 @@ describe("recuperação uniforme de sessão", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it.each([408, 502, "network"])("falha temporária %s preserva sessão sem replay de upload", async (failure) => {
+  it.each([408, 502, "network"])("falha temporária %s revalida a sessão automaticamente sem replay de upload", async (failure) => {
     const navigate = vi.fn();
+    let checks = 0;
     const fetchMock = vi.fn((input: string | URL | Request) => {
-      if (String(input) === "/api/auth/destination") return Promise.resolve(authorized());
+      if (String(input) === "/api/auth/destination") {
+        checks += 1;
+        return Promise.resolve(authorized());
+      }
       return failure === "network" ? Promise.reject(new TypeError("network")) : Promise.resolve(new Response(null, { status: failure as number }));
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<SessionBoundary navigate={navigate}><p>Conteúdo privado</p></SessionBoundary>);
     await screen.findByText("Conteúdo privado");
     await act(async () => { await window.fetch("/api/admin/upload", { method: "POST" }).catch(() => undefined); });
-    expect((await screen.findByRole("alert")).textContent).toContain("temporariamente indisponível");
+    await waitFor(() => expect(checks).toBe(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: /verificar conexão|reconectar/i })).toBeNull();
     expect(screen.getByText("Conteúdo privado")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Verificar conexão novamente" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Conexão confirmada"));
     expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/api/admin/upload")).toHaveLength(1);
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("falha inicial permite retry da leitura sem montar conteúdo antes da validação", async () => {
-    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("network")).mockResolvedValueOnce(authorized());
+  it("mantém o aviso enquanto a sessão falha e o limpa quando a reconexão automática funciona", async () => {
+    vi.useFakeTimers();
+    let checks = 0;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) !== "/api/auth/destination") return Promise.resolve(new Response(null, { status: 503 }));
+      checks += 1;
+      return Promise.resolve(checks === 2 ? new Response(null, { status: 503 }) : authorized());
+    });
     vi.stubGlobal("fetch", fetchMock);
     const navigate = vi.fn();
     render(<SessionBoundary navigate={navigate}><p>Conteúdo privado</p></SessionBoundary>);
-    await screen.findByRole("alert");
-    expect(screen.queryByText("Conteúdo privado")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Verificar conexão novamente" }));
-    await screen.findByText("Conteúdo privado");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => undefined);
+    await act(async () => { await window.fetch("/api/admin/orders"); });
+    await act(async () => undefined);
+    expect(screen.getByRole("alert").textContent).toContain("temporariamente indisponível");
+    expect(screen.queryByRole("button", { name: /verificar conexão|reconectar/i })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(checks).toBe(3);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Conteúdo privado")).toBeTruthy();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("não executa probes enquanto oculta e revalida ao voltar a ficar visível", async () => {
+    vi.useFakeTimers();
+    let checks = 0;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === "/api/auth/destination") {
+        checks += 1;
+        return Promise.resolve(authorized());
+      }
+      return Promise.resolve(new Response(null, { status: 503 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SessionBoundary><p>Conteúdo privado</p></SessionBoundary>);
+    await act(async () => undefined);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await act(async () => { await window.fetch("/api/admin/orders"); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(checks).toBe(1);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(checks).toBe(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("deduplica verificações simultâneas e aumenta o intervalo entre retries", async () => {
+    vi.useFakeTimers();
+    let checks = 0;
+    let finishSecondCheck: (response: Response) => void = () => undefined;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) !== "/api/auth/destination") return Promise.resolve(new Response(null, { status: 503 }));
+      checks += 1;
+      if (checks === 2) return new Promise<Response>((resolve) => { finishSecondCheck = resolve; });
+      return Promise.resolve(checks === 1 || checks >= 4 ? authorized() : new Response(null, { status: 503 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SessionBoundary><p>Conteúdo privado</p></SessionBoundary>);
+    await act(async () => undefined);
+    await act(async () => { await window.fetch("/api/admin/orders"); });
+    expect(checks).toBe(2);
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await act(async () => { window.dispatchEvent(new Event("pageshow")); });
+    expect(checks).toBe(2);
+    await act(async () => { finishSecondCheck(new Response(null, { status: 503 })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(checks).toBe(3);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_999); });
+    expect(checks).toBe(3);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(checks).toBe(4);
+  });
+
+  it("limita o backoff automático a 30 segundos", async () => {
+    vi.useFakeTimers();
+    let checks = 0;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) !== "/api/auth/destination") return Promise.resolve(new Response(null, { status: 503 }));
+      checks += 1;
+      return Promise.resolve(checks === 1 ? authorized() : new Response(null, { status: 503 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SessionBoundary><p>Conteúdo privado</p></SessionBoundary>);
+    await act(async () => undefined);
+    await act(async () => { await window.fetch("/api/admin/orders"); });
+    await act(async () => undefined);
+    await act(async () => {
+      await Promise.all([
+        window.fetch("/api/admin/orders"),
+        window.fetch("/api/admin/notifications"),
+        window.fetch("/api/admin/settings"),
+      ]);
+    });
+    expect(checks).toBe(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+    expect(checks).toBe(7);
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+    expect(checks).toBe(7);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(checks).toBe(8);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(checks).toBe(9);
+  });
+
+  it("recupera a falha inicial automaticamente e só então monta conteúdo privado", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("network"))
+      .mockImplementation(() => Promise.resolve(authorized()));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<SessionBoundary><p>Conteúdo privado</p></SessionBoundary>);
+    await act(async () => undefined);
+    expect(screen.queryByText("Conteúdo privado")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("temporariamente indisponível");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(screen.getByText("Conteúdo privado")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("detecta revogação sem interação pela revalidação periódica", async () => {
+    vi.useFakeTimers();
+    const navigate = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(authorized())
+      .mockImplementation(() => Promise.resolve(new Response(null, { status: 401 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SessionBoundary navigate={navigate}><p>Conteúdo privado</p></SessionBoundary>);
+    await act(async () => undefined);
+    expect(screen.getByText("Conteúdo privado")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(screen.queryByText("Conteúdo privado")).toBeNull();
+    expect(navigate).toHaveBeenCalledTimes(1);
   });
 
   it("timeout de verificação é temporário, não logout", async () => {
@@ -165,7 +299,7 @@ describe("recuperação uniforme de sessão", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("revalida no foco, no retorno do histórico, na periodicidade e na navegação protegida", async () => {
+  it("revalida no foco, no retorno do histórico, periodicamente e na navegação protegida", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(authorized()));
     vi.stubGlobal("fetch", fetchMock);

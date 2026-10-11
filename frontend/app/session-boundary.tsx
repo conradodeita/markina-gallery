@@ -1,11 +1,11 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { clearFacialSearchStorage } from "./facial-search-storage";
 import { protectedContext, recoveryLocation } from "./session-recovery";
 
-type Notice = "temporary" | "forbidden" | "recovered" | null;
+type Notice = "temporary" | "forbidden" | null;
 const defaultNavigate = (destination: string) => window.location.replace(destination);
 
 function ProtectedSession({ pathname, children, navigate }: {
@@ -16,7 +16,6 @@ function ProtectedSession({ pathname, children, navigate }: {
   const [authorized, setAuthorized] = useState(false);
   const [expired, setExpired] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
-  const retry = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     let active = true;
@@ -25,15 +24,41 @@ function ProtectedSession({ pathname, children, navigate }: {
     let pending: Promise<void> | null = null;
     let followUp = false;
     let controller: AbortController | null = null;
+    let retryTimer: number | null = null;
+    let retryDelay = 1_000;
     const originalFetch = window.fetch;
     const context = protectedContext(pathname);
 
-    function temporary() {
-      if (active && !blocked) setNotice("temporary");
+    function clearRetry() {
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
     }
 
-    function check(cause?: "forbidden" | "retry") {
-      if (!active || blocked) return pending;
+    function scheduleRetry() {
+      if (!active || blocked || retryTimer !== null || document.visibilityState !== "visible") return;
+      const delay = retryDelay;
+      retryDelay = Math.min(retryDelay * 2, 30_000);
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (active && !blocked && document.visibilityState === "visible") void check();
+      }, delay);
+    }
+
+    function temporary() {
+      if (active && !blocked) {
+        setNotice("temporary");
+        scheduleRetry();
+      }
+    }
+
+    function checkAfterFailure() {
+      if (retryTimer === null) void check();
+    }
+
+    function check(cause?: "forbidden") {
+      if (!active || blocked || document.visibilityState !== "visible") return pending;
       if (pending) {
         if (cause === "forbidden") followUp = true;
         return pending;
@@ -47,6 +72,7 @@ function ProtectedSession({ pathname, children, navigate }: {
           if (!active) return;
           if (response.status === 401) {
             blocked = true;
+            clearRetry();
             clearFacialSearchStorage();
             setAuthorized(false);
             setExpired(true);
@@ -55,6 +81,7 @@ function ProtectedSession({ pathname, children, navigate }: {
           }
           if (response.status === 403) {
             blocked = true;
+            clearRetry();
             clearFacialSearchStorage();
             setAuthorized(false);
             setNotice("forbidden");
@@ -72,14 +99,17 @@ function ProtectedSession({ pathname, children, navigate }: {
           }
           if ((result.destination === "/admin") !== (context === "admin")) {
             blocked = true;
+            clearRetry();
             clearFacialSearchStorage();
             setAuthorized(false);
             setNotice("forbidden");
             return;
           }
           verified = true;
+          retryDelay = 1_000;
+          clearRetry();
           setAuthorized(true);
-          setNotice((previous) => cause === "forbidden" ? "forbidden" : cause === "retry" ? "recovered" : previous);
+          setNotice((previous) => cause === "forbidden" ? "forbidden" : previous === "temporary" ? null : previous);
         } catch {
           temporary();
         } finally {
@@ -107,33 +137,34 @@ function ProtectedSession({ pathname, children, navigate }: {
         const response = await originalFetch(input, options);
         if (ownApi && active && verified && !blocked) {
           if (response.status === 401 || response.status === 403) void check("forbidden");
-          else if (response.status === 408 || response.status >= 500) temporary();
+          else if (response.status === 408 || response.status >= 500) checkAfterFailure();
         }
         return response;
       } catch (error) {
         const signal = options?.signal ?? (input instanceof Request ? input.signal : undefined);
-        if (ownApi && !signal?.aborted) temporary();
+        if (ownApi && !signal?.aborted) checkAfterFailure();
         throw error;
       }
     };
 
     window.fetch = observedFetch;
-    retry.current = () => { void check("retry"); };
     const resume = () => { if (document.visibilityState === "visible") void check(); };
     window.addEventListener("focus", resume);
     window.addEventListener("pageshow", resume);
     document.addEventListener("visibilitychange", resume);
-    const interval = window.setInterval(resume, 60_000);
+    const interval = window.setInterval(() => {
+      if (retryTimer === null) resume();
+    }, 60_000);
     void check();
     return () => {
       active = false;
       controller?.abort();
+      clearRetry();
       window.clearInterval(interval);
       window.removeEventListener("focus", resume);
       window.removeEventListener("pageshow", resume);
       document.removeEventListener("visibilitychange", resume);
       if (window.fetch === observedFetch) window.fetch = originalFetch;
-      retry.current = () => undefined;
     };
   }, [pathname, navigate]);
 
@@ -142,9 +173,7 @@ function ProtectedSession({ pathname, children, navigate }: {
     {!expired && notice ? <section className="section-card" aria-label="Estado da sessão">
       <p role="alert">{notice === "temporary"
         ? "A conexão está temporariamente indisponível. Não repita envios ou compras sem conferir se foram concluídos."
-        : notice === "forbidden" ? "Acesso negado para esta operação ou área. Confira suas permissões ou os dados informados."
-          : "Conexão confirmada. Confira o resultado da ação anterior antes de tentar novamente."}</p>
-      {notice === "temporary" ? <button type="button" onClick={() => retry.current()}>Verificar conexão novamente</button> : null}
+        : "Acesso negado para esta operação ou área. Confira suas permissões ou os dados informados."}</p>
       {notice === "forbidden" && !authorized ? <a href={recoveryLocation(pathname)}>Voltar à entrada</a> : null}
     </section> : null}
     {!authorized && !expired && !notice ? <p role="status">Verificando sua sessão…</p> : null}
