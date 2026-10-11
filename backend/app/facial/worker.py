@@ -33,7 +33,7 @@ def process_claimed_index_job(
     job = repository._leased(db, claim)
     if (
         job is None
-        or job.kind != "index"
+        or job.kind not in {"index", "index_gemma"}
         or job.photo_asset_id is None
         or job.parent_gallery_id is None
     ):
@@ -44,18 +44,47 @@ def process_claimed_index_job(
         parent_gallery_id=job.parent_gallery_id,
      tenant_id=job.tenant_id):
         from app.facial.lifecycle import analysis_for
-        analysis = analysis_for(db, job.photo_asset_id, lock=True, tenant_id=job.tenant_id)
-        if analysis:
+        analysis = analysis_for(db, job.photo_asset_id, lock=job.kind == "index", tenant_id=job.tenant_id)
+        if analysis and job.kind == "index":
             analysis.state = "failed"
         return repository.cancel(db, claim)
-    # Mantém lease/fonte serializados durante análise; outro consumidor usa SKIP LOCKED.
+    # Lease é exclusivo do job. Só SFace serializa PhotoAnalysis: Gemma não
+    # mantém lock dessa linha durante a inferência e revalida a fonte ao terminar.
     repository._leased(db, claim)
     from app.facial.lifecycle import analysis_for, source_job_key
-    analysis = analysis_for(db, job.photo_asset_id, lock=True, tenant_id=job.tenant_id)
+    analysis = analysis_for(db, job.photo_asset_id, lock=job.kind == "index", tenant_id=job.tenant_id)
     policy = db.scalar(select(GalleryFacialPolicy).where(
+        GalleryFacialPolicy.tenant_id == job.tenant_id,
         GalleryFacialPolicy.parent_gallery_id == job.parent_gallery_id))
-    if analysis and policy and job.idempotency_key != source_job_key(job.photo_asset_id, analysis, policy):
+    if (
+        analysis and policy
+        and job.idempotency_key != source_job_key(job.photo_asset_id, analysis, policy, model_version=job.model_version)
+    ):
         return repository.cancel(db, claim)  # um reupload já possui outra geração durável
+    if job.kind == "index_gemma":
+        from app.auth import FacialEmbeddingExperimentSetting
+
+        setting = db.get(FacialEmbeddingExperimentSetting, 1, populate_existing=True)
+        from app.facial.gemma_provider import GEMMA_MODEL_REVISION
+
+        if (
+            settings.environment.lower() in {"prod", "production"}
+            or setting is None
+            or not setting.enabled
+            or setting.mode != "shadow"
+            or setting.model_revision != GEMMA_MODEL_REVISION
+        ):
+            return repository.cancel(db, claim)
+        from app.auth import ParentGallery
+
+        gallery = db.get(ParentGallery, job.parent_gallery_id)
+        if (
+            gallery is None
+            or setting.enabled_since is None
+            or gallery.created_at is None
+            or gallery.created_at <= setting.enabled_since
+        ):
+            return repository.cancel(db, claim)
     if job.attempts > 3:
         return repository.fail(db, claim, TimeoutError("Orçamento de tentativas excedido."),
                                max_attempts=3, retry_delay_seconds=5)
@@ -69,7 +98,7 @@ def process_claimed_index_job(
         cipher=cipher,
         settings=settings,
     )
-    if analysis:
+    if analysis and job.kind == "index":
         analysis.metrics = {**analysis.metrics, "attempts": job.attempts}
     repository.progress(
         db,
@@ -81,7 +110,7 @@ def process_claimed_index_job(
     completed = repository.complete(db, claim)
     photo = db.get(PhotoAsset, completed.photo_asset_id) if completed.photo_asset_id else None
     folder = db.get(PhotoFolder, photo.folder_id) if photo else None
-    if folder and folder.audience_scope == "selected":
+    if completed.kind == "index" and folder and folder.audience_scope == "selected":
         try:
             # Savepoint isolates this optional queue from the completed facial job.
             db.flush()

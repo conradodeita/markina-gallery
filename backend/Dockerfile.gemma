@@ -1,0 +1,36 @@
+# Runtime experimental separado; não carrega PyTorch no worker SFace.
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    FACE_MODEL_ROOT=/opt/markina-face-models \
+    FACE_MODEL_MANIFEST=/app/facial-assets/model-manifest.json \
+    FACIAL_GEMMA_MODEL_PATH=/opt/markina-embeddinggemma-2 \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    HF_HUB_OFFLINE=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl procps \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt requirements-push.txt face-requirements.txt gemma-requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r face-requirements.txt \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.14.1 \
+    && pip install --no-cache-dir -r gemma-requirements.txt
+
+COPY app ./app
+COPY facial-assets ./facial-assets
+COPY migrations ./migrations
+COPY alembic.ini ./
+
+RUN python -m app.facial.model_assets prepare \
+    --manifest "$FACE_MODEL_MANIFEST" \
+    --model-root "$FACE_MODEL_ROOT" \
+    && HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 python -c 'from pathlib import Path; from app.facial.gemma_assets import prepare_gemma_model; prepare_gemma_model(Path("/opt/markina-embeddinggemma-2"))'
+
+# O processador de imagens Gemma exige torchvision mesmo sem uso de áudio.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torchvision==0.29.1
+
+CMD ["python", "-m", "app.facial.face_worker"]

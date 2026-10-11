@@ -166,6 +166,32 @@ class InstallationOperator(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class FacialEmbeddingExperimentSetting(Base):
+    """Chave global de indexação shadow, alterável apenas pelo operador proprietário."""
+
+    __tablename__ = "facial_embedding_experiment_setting"
+    __table_args__ = (
+        CheckConstraint("singleton = 1", name="ck_facial_embedding_experiment_singleton"),
+        CheckConstraint("mode = 'shadow'", name="ck_facial_embedding_experiment_mode"),
+    )
+
+    singleton: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    mode: Mapped[str] = mapped_column(String(16), default="shadow", server_default="shadow")
+    model_revision: Mapped[str] = mapped_column(
+        String(64), default="914f7f89142e33e77833254d9c9b90c3cef7303b",
+        server_default="914f7f89142e33e77833254d9c9b90c3cef7303b",
+    )
+    updated_by_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_user.id"), nullable=True,
+    )
+    worker_last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    enabled_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class Tenant(Base):
     __tablename__ = "tenant"
     __table_args__ = (
@@ -2436,6 +2462,10 @@ class FacialSearchRequest(Base):
             name="ck_facial_search_compare_progress",
         ),
         Index("ix_facial_search_client_gallery_expiry", "client_id", "parent_gallery_id", "expires_at"),
+        CheckConstraint(
+            "search_engine IN ('opencv-yunet-sface', 'google-embeddinggemma-2')",
+            name="ck_facial_search_engine",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -2452,6 +2482,9 @@ class FacialSearchRequest(Base):
     subject_declaration: Mapped[str | None] = mapped_column(String(16), nullable=True)
     representation_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
     model_version: Mapped[str] = mapped_column(String(120))
+    search_engine: Mapped[str] = mapped_column(
+        String(64), default="opencv-yunet-sface", server_default="opencv-yunet-sface"
+    )
     quality_version: Mapped[str] = mapped_column(String(120))
     index_generation: Mapped[int] = mapped_column(Integer)
     snapshot_total: Mapped[int] = mapped_column(Integer, default=0)
@@ -2574,7 +2607,7 @@ class FacialJob(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_facial_job_idempotency"),
         CheckConstraint(
-            "kind IN ('index', 'purge', 'search', 'cleanup')", name="ck_facial_job_kind"
+            "kind IN ('index', 'index_gemma', 'purge', 'search', 'search_gemma', 'cleanup')", name="ck_facial_job_kind"
         ),
         CheckConstraint(
             "status IN ('queued', 'processing', 'completed', 'failed', 'cancelled')",

@@ -563,3 +563,87 @@ def test_photographer_tree_does_not_choose_ambiguous_or_revoked_identity(db):
     rows = {row["id"]: row for row in activity.page(db, NOW)["items"]}
     assert rows[str(tenant.id)]["label"] == f"Fotógrafo {first.email}"
     assert not activity.page(db, NOW, query=second.email)["items"]
+
+
+def test_gemma_telemetry_is_persisted_and_exported_without_private_dimensions(db):
+    from app.system_monitor.sources import workers
+
+    telemetry.drain()
+    telemetry.heartbeat("gemma", True)
+    telemetry.record("work.gemma", 1234, 500)
+    telemetry.record("work.arbitrary-private-photo", 1234, 500)
+    buckets, beats, _dropped = telemetry.drain()
+    assert "gemma" in beats
+    assert {key[1] for key in buckets} == {"work.gemma"}
+    save_buckets(db, buckets)
+    from app.system_monitor.models import MonitorWorker
+    seen, progress = beats["gemma"]
+    db.add(MonitorWorker(instance=uuid4(), kind="gemma", last_seen=seen, last_progress=progress))
+    db.flush()
+    sample = safe_sample({"workers": workers(db, seen)})
+    assert sample["workers"][0]["kind"] == "gemma"
+    assert sample["workers"][0]["status"] == "observed"
+    metrics = operation_summary(db, seen - timedelta(minutes=2), seen + timedelta(minutes=1))
+    assert metrics[0]["operation"] == "work.gemma" and metrics[0]["errors"] == 1
+    assert sample["host"]["status"] == "unavailable"
+    assert "data" not in sample["host"] or sample["host"]["data"] is None
+
+
+@pytest.mark.parametrize("role,owner,operator", [
+    ("client", False, False), ("admin", False, True), ("admin", True, False),
+])
+def test_facial_engine_endpoints_deny_missing_owner_or_operator(db, monkeypatch, role, owner, operator):
+    from app import main
+    from app.auth import FacialEmbeddingExperimentSetting, InstallationOperator
+
+    _routes, request, _tenant, subject, _session = route_context(db, monkeypatch, role, owner=owner)
+    monkeypatch.setattr(main, "SessionLocal", lambda: Session(db.bind))
+    if operator:
+        db.add(InstallationOperator(admin_user_id=subject.id, active=True,
+                                    authorization_reference="synthetic", granted_at=NOW, updated_at=NOW))
+        db.commit()
+    for call in (
+        lambda: main.admin_facial_engine_experiment(request, Response(), db),
+        lambda: main.update_admin_facial_engine_experiment(
+            main.FacialEmbeddingExperimentInput(enabled=True), request, Response(), db),
+    ):
+        with pytest.raises(HTTPException) as denied:
+            call()
+        assert denied.value.status_code == 403
+    assert db.get(FacialEmbeddingExperimentSetting, 1) is None
+
+
+def test_facial_engine_owner_switch_is_global_reversible_and_production_denied(db, monkeypatch, tmp_path):
+    from test_facial_search_worker import _settings
+
+    from app import main
+    from app.auth import FacialEmbeddingExperimentSetting, InstallationOperator
+
+    _routes, request, _tenant, subject, _session = route_context(db, monkeypatch)
+    monkeypatch.setattr(main, "SessionLocal", lambda: Session(db.bind))
+    # Gate de origem permanece exercitado pelos testes HTTP existentes.
+    request.scope.update({"scheme": "http", "server": ("localhost", 80), "path": "/admin/facial-engine-experiment"})
+    request.scope["headers"].extend([(b"host", b"localhost"), (b"origin", b"http://localhost")])
+    db.add(InstallationOperator(admin_user_id=subject.id, active=True,
+                               authorization_reference="synthetic", granted_at=NOW, updated_at=NOW))
+    db.add(FacialEmbeddingExperimentSetting(singleton=1, enabled=False, worker_last_seen_at=NOW))
+    db.commit()
+    monkeypatch.setattr(main, "now", lambda: NOW)
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(main, "facial_settings_from_environment", lambda **_kwargs: settings)
+    response = Response()
+    state = main.update_admin_facial_engine_experiment(
+        main.FacialEmbeddingExperimentInput(enabled=True), request, response, db)
+    assert state["enabled"] and response.headers["cache-control"] == "private, no-store"
+    first_activation = db.get(FacialEmbeddingExperimentSetting, 1).enabled_since
+    main.update_admin_facial_engine_experiment(
+        main.FacialEmbeddingExperimentInput(enabled=False), request, Response(), db)
+    assert not db.get(FacialEmbeddingExperimentSetting, 1).enabled
+    assert db.get(FacialEmbeddingExperimentSetting, 1).enabled_since == first_activation
+    from dataclasses import replace
+    monkeypatch.setattr(main, "facial_settings_from_environment", lambda **_kwargs: replace(settings, environment="production"))
+    with pytest.raises(HTTPException) as rejected:
+        main.update_admin_facial_engine_experiment(
+            main.FacialEmbeddingExperimentInput(enabled=True), request, Response(), db)
+    assert rejected.value.status_code == 409
+    assert not db.get(FacialEmbeddingExperimentSetting, 1).enabled

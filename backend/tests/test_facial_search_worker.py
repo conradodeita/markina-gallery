@@ -19,6 +19,7 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryMembership,
+    FacialEmbeddingExperimentSetting,
     FacialJob,
     FacialRollout,
     FacialSearchCandidate,
@@ -271,6 +272,116 @@ def _create_request(db, parent, client, settings):
     )
     db.commit()
     return item
+
+
+@pytest.mark.parametrize("reference_source", ["upload", "indexed_region"])
+def test_gemma_query_worker_searches_the_pinned_768_dimension_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_source: str
+) -> None:
+    from app.facial.gemma_provider import (
+        GEMMA_EMBEDDING_DIMENSION,
+        GEMMA_MODEL_ID,
+        GEMMA_MODEL_VERSION,
+    )
+    from app.facial.indexing import index_idempotency_key
+
+    monkeypatch.setenv("APP_ENV", "test")
+    root = tmp_path / "derivatives"
+    engine, db, parent, client, folder = _base(tmp_path)
+    settings = _settings(tmp_path)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    photo = _add_photo(db, parent, folder, root)
+    vector = normalize_embedding([1.0, *([0.0] * (GEMMA_EMBEDDING_DIMENSION - 1))], GEMMA_EMBEDDING_DIMENSION)
+
+    class GemmaQueryProvider:
+        model_id = GEMMA_MODEL_ID
+        model_version = GEMMA_MODEL_VERSION
+        embedding_dimension = GEMMA_EMBEDDING_DIMENSION
+
+        def observe_path(self, _path: Path):
+            return [_face(vector)]
+
+        def observe_bytes(self, _payload: bytes):
+            return [_face(vector)]
+
+    provider = GemmaQueryProvider()
+    assert replace_photo_index(
+        db,
+        tenant_id=FIXTURE_TENANT_ID,
+        photo_id=photo.id,
+        derivatives_root=root,
+        provider=provider,
+        cipher=cipher,
+        settings=settings,
+    ) == 1
+    embedding = db.scalar(
+        select(PhotoFaceEmbedding).where(PhotoFaceEmbedding.photo_asset_id == photo.id)
+    )
+    assert embedding is not None
+    db.add_all((
+        FacialEmbeddingExperimentSetting(
+            singleton=1,
+            enabled=True,
+            mode="shadow",
+            enabled_since=parent.created_at - timedelta(seconds=1),
+            worker_last_seen_at=now(),
+        ),
+        FacialJob(
+            tenant_id=FIXTURE_TENANT_ID,
+            kind="index_gemma",
+            status="completed",
+            idempotency_key=index_idempotency_key(
+                environment=settings.environment, gallery_id=parent.id, photo_id=photo.id,
+                model_version=GEMMA_MODEL_VERSION, quality_version=settings.quality_version,
+                index_generation=1, fingerprint=embedding.preview_fingerprint,
+            ),
+            parent_gallery_id=parent.id,
+            photo_asset_id=photo.id,
+            model_version=GEMMA_MODEL_VERSION,
+            quality_version=settings.quality_version,
+            preview_fingerprint=embedding.preview_fingerprint,
+        ),
+    ))
+    db.commit()
+
+    if reference_source == "indexed_region":
+        embedding.bbox_x, embedding.bbox_y = .1, .1
+        embedding.bbox_width, embedding.bbox_height = .2, .2
+        db.commit()
+        request = create_search_request(
+            db, parent_gallery_id=parent.id, client_id=client.id,
+            consent_version=None, subject_declaration=None, representation_reference=None,
+            payload=b"", reference_region_id=embedding.id, settings=settings,
+        )
+        db.commit()
+    else:
+        request = _create_request(db, parent, client, settings)
+    assert request.search_engine == GEMMA_MODEL_ID
+    db.get(FacialEmbeddingExperimentSetting, 1).enabled = False
+    db.commit()  # Uma troca global não muda uma consulta já fixada.
+    repository = FacialJobRepository()
+    claim = repository.claim_next(
+        db, lease_seconds=settings.job_lease_seconds, job_class="gemma"
+    )
+    assert claim is not None and claim.kind == "search_gemma"
+    process_claimed_search_job(
+        db,
+        claim,
+        repository=repository,
+        provider=provider if reference_source == "upload" else None,
+        cipher=cipher,
+        settings=settings,
+    )
+    result, candidates = read_search_result(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        request_id=request.id,
+    )
+
+    assert result.status == "ready"
+    assert [candidate.photo_asset_id for candidate in candidates] == [photo.id]
+    engine.dispose()
 
 
 def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart(

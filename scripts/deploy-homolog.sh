@@ -26,7 +26,18 @@ FACIAL_DEPLOY_ENABLED="false"
 BRANDING_REQUIRED=0
 BRANDING_PRESERVED=0
 PREVIEW_WORKER_ACTIVE=0
+GEMMA_WORKER_ACTIVE=0
 readonly FACIAL_SERVICES=("face-search-worker" "face-index-worker" "face-maintenance-worker")
+
+discover_gemma_worker() {
+  local container
+  GEMMA_WORKER_ACTIVE=0
+  container="$(docker ps --quiet \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter 'label=com.docker.compose.service=face-gemma-index-worker')" || return 1
+  [[ -z "$container" ]] || GEMMA_WORKER_ACTIVE=1
+  return 0
+}
 
 usage() {
   echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>]" >&2
@@ -65,6 +76,9 @@ prepare_branding_transition() {
   compose build api web worker migrate
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     compose build "${FACIAL_SERVICES[@]}"
+  fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    compose build face-gemma-index-worker
   fi
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     compose build preview-adjustment-worker
@@ -407,6 +421,7 @@ verify_target() {
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
   PREVIOUS_FACIAL_ENABLED="$(read_facial_enabled)"
   FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
+  discover_gemma_worker
   verify_facial_deploy_state
   compose config --quiet
   record_predeploy_inventory
@@ -438,6 +453,9 @@ stop_application_writers() {
   local writers=(api worker)
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     writers+=("${FACIAL_SERVICES[@]}")
+  fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    writers+=(face-gemma-index-worker)
   fi
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     writers+=(preview-adjustment-worker)
@@ -534,6 +552,9 @@ wait_for_health() {
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     services+=("${FACIAL_SERVICES[@]}")
   fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    services+=(face-gemma-index-worker)
+  fi
   for service in "${services[@]}"; do
     container="$(compose ps -q "$service")"
     [[ -n "$container" ]] || fail "serviço Markina ausente após deploy: $service"
@@ -567,6 +588,9 @@ start_application_services() {
   fi
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"
+  fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    compose up -d --build --no-deps face-gemma-index-worker
   fi
   compose up -d --force-recreate --no-deps nginx
 }
@@ -618,6 +642,15 @@ rollback_code_if_safe() {
   fi
   if [[ "$SHA_SWITCHED" -eq 1 && "$MIGRATION_CHANGED" -eq 0 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 0 && -n "$PREVIOUS_SHA" ]]; then
     echo "falha antes de mudança de schema; restaurando somente código Markina para $PREVIOUS_SHA" >&2
+    if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+      compose stop --timeout 60 face-gemma-index-worker || {
+        echo "rollback bloqueado: leitor Gemma ainda pode estar ativo" >&2
+        exit "$exit_code"
+      }
+      if ! git cat-file -e "$PREVIOUS_SHA:backend/Dockerfile.gemma" 2>/dev/null; then
+        GEMMA_WORKER_ACTIVE=0
+      fi
+    fi
     git switch --detach "$PREVIOUS_SHA"
     compose up -d --build --no-deps api web worker
     if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
@@ -625,6 +658,9 @@ rollback_code_if_safe() {
     fi
     if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
       compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"
+    fi
+    if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+      compose up -d --build --no-deps face-gemma-index-worker
     fi
     compose up -d --force-recreate --no-deps nginx
     verify_facial_deploy_state

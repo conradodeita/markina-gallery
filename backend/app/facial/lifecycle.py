@@ -155,7 +155,7 @@ def _require_source_capacity(db, payload_bytes, *, exclude_photo_id=None):
         )
 
 
-def source_job_key(photo_id, row, policy):
+def source_job_key(photo_id, row, policy, *, model_version=None):
     # Normaliza timezone: o SQLite pode devolver o mesmo timestamp sem tzinfo.
     from datetime import UTC
 
@@ -165,7 +165,7 @@ def source_job_key(photo_id, row, policy):
         else row.expires_at.astimezone(UTC)
     )
     key = hashlib.sha256(
-        f"{photo_id}:{row.source_fingerprint}:{policy.model_version}:{policy.quality_version}:{policy.index_generation}:{expiry.isoformat()}".encode()
+        f"{photo_id}:{row.source_fingerprint}:{model_version or policy.model_version}:{policy.quality_version}:{policy.index_generation}:{expiry.isoformat()}".encode()
     ).hexdigest()
     return f"highres:{key}"
 
@@ -191,6 +191,13 @@ def finalize_source(db, photo, *, settings=None):
         model_version=policy.model_version,
         quality_version=policy.quality_version,
         preview_fingerprint=digest,
+    )
+    from app.facial.gemma_provider import GEMMA_MODEL_VERSION
+    from app.facial.indexing import enqueue_gemma_index_if_eligible
+
+    enqueue_gemma_index_if_eligible(
+        db, photo, policy, fingerprint=digest, settings=active,
+        idempotency_key=source_job_key(photo.id, row, policy, model_version=GEMMA_MODEL_VERSION),
     )
     row.state = "pending"
     db.flush()
@@ -255,7 +262,7 @@ def cleanup_source(db, photo_id, *, tenant_id):
         select(FacialJob.id).where(
             FacialJob.tenant_id == tenant_id,
             FacialJob.photo_asset_id == photo_id,
-            FacialJob.kind == "index",
+            FacialJob.kind.in_(("index", "index_gemma")),
             FacialJob.status == "processing",
             FacialJob.lease_expires_at > now(),
         )
@@ -274,6 +281,16 @@ def cleanup_source(db, photo_id, *, tenant_id):
         )
     )
     if not is_expired:
+        from app.auth import FacialEmbeddingExperimentSetting
+        setting = db.get(FacialEmbeddingExperimentSetting, 1, populate_existing=True)
+        if setting and setting.enabled and db.scalar(select(FacialJob.id).where(
+            FacialJob.tenant_id == tenant_id,
+            FacialJob.photo_asset_id == photo_id,
+            FacialJob.kind == "index_gemma",
+            FacialJob.status.in_(("queued", "processing")),
+            FacialJob.preview_fingerprint == row.source_fingerprint,
+        )):
+            return False
         if row.state != "ready":
             return False
         if len(derivatives) != 3:

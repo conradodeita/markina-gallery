@@ -138,9 +138,11 @@ def _queue(
 
 def collect_facial_queues(db: Session, *, instant: datetime) -> list[QueueSnapshot]:
     current = instant.astimezone(UTC)
+    search_kinds = FACIAL_JOB_KINDS_BY_CLASS["search"] | {"search_gemma"}
+    index_kinds = FACIAL_JOB_KINDS_BY_CLASS["index"] | {"index_gemma"}
     job_class = case(
-        (FacialJob.kind == "search", "search"),
-        (FacialJob.kind == "index", "index"),
+        (FacialJob.kind.in_(search_kinds), "search"),
+        (FacialJob.kind.in_(index_kinds), "index"),
         (FacialJob.kind.in_(FACIAL_JOB_KINDS_BY_CLASS["maintenance"]), "maintenance"),
         else_=None,
     ).label("queue_class")
@@ -163,8 +165,8 @@ def collect_facial_queues(db: Session, *, instant: datetime) -> list[QueueSnapsh
             func.min(FacialJob.available_at).filter(due).label("oldest_due"),
         )
         .where(FacialJob.kind.in_(
-            FACIAL_JOB_KINDS_BY_CLASS["search"]
-            | FACIAL_JOB_KINDS_BY_CLASS["index"]
+            search_kinds
+            | index_kinds
             | FACIAL_JOB_KINDS_BY_CLASS["maintenance"]
         ))
         .group_by(job_class)

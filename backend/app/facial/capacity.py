@@ -33,7 +33,7 @@ def measure_search_queue(
 ) -> FacialQueuePressure:
     depth, oldest = db.execute(
         select(func.count(), func.min(FacialJob.created_at)).where(
-            FacialJob.kind == "search",
+            FacialJob.kind.in_(("search", "search_gemma")),
             FacialJob.status.in_(("queued", "processing")),
         )
     ).one()

@@ -24,6 +24,13 @@ const branding = {
 
 afterEach(() => vi.restoreAllMocks());
 
+function stubBrandingFetch(fetcher: (path: string, init?: RequestInit) => Promise<Response>) {
+  vi.stubGlobal("fetch", (path: string, init?: RequestInit) =>
+    path === "/api/admin/facial-engine-experiment"
+      ? Promise.resolve(new Response(null, { status: 403 }))
+      : fetcher(path, init));
+}
+
 describe("configurações administrativas de marca", () => {
   it("apresenta fallback e envia cada ativo ao endpoint autorizado", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
@@ -33,7 +40,7 @@ describe("configurações administrativas de marca", () => {
       }
       return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubBrandingFetch(fetchMock);
     render(<AdminSettingsPage />);
 
     expect((await screen.findAllByText("Ainda não configurado")).length).toBe(3);
@@ -48,7 +55,7 @@ describe("configurações administrativas de marca", () => {
     const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => new Response(JSON.stringify(
       init?.method === "PUT" ? { ...branding, [`${asset.replace("-", "_")}_url`]: `/branding/${asset}` } : branding,
     ), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubBrandingFetch(fetchMock);
     render(<AdminSettingsPage />);
     const input = await screen.findByLabelText(`Enviar ${label}`);
     const file = new File(["arte oficial"], "icone.png", { type: "image/png" });
@@ -59,7 +66,7 @@ describe("configurações administrativas de marca", () => {
   });
 
   it("informa falha de rede do upload e permite tentar novamente", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (_path: string, init?: RequestInit) => {
+    stubBrandingFetch(vi.fn(async (_path: string, init?: RequestInit) => {
       if (init?.method === "PUT") throw new Error("offline");
       return new Response(JSON.stringify(branding), { status: 200 });
     }));
@@ -82,7 +89,7 @@ describe("configurações administrativas de marca", () => {
       void options;
       return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubBrandingFetch(fetchMock);
     render(<AdminSettingsPage />);
     fireEvent.change(await screen.findByLabelText("Texto da marca-d’água"), { target: { value: "MARCA GLOBAL" } });
     expect((await screen.findAllByText("MARCA GLOBAL")).length).toBe(2);
@@ -106,7 +113,7 @@ describe("configurações administrativas de marca", () => {
       void options;
       return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubBrandingFetch(fetchMock);
     const { container } = render(<AdminSettingsPage />);
     const size = await screen.findByLabelText("Cobertura da marca-d’água (%)");
     expect(size.getAttribute("min")).toBe("10");
@@ -152,7 +159,7 @@ describe("configurações administrativas de marca", () => {
     const fetchMock = vi.fn((path: string, options?: RequestInit) => Promise.resolve(
       new Response(JSON.stringify(branding), { status: path.endsWith("/protection") && options?.method === "PATCH" ? 500 : 200 }),
     ));
-    vi.stubGlobal("fetch", fetchMock);
+    stubBrandingFetch(fetchMock);
     render(<AdminSettingsPage />);
     await screen.findByLabelText("Direção");
     fireEvent.click(screen.getByRole("button", { name: "Salvar proteção da sua conta" }));
@@ -161,7 +168,7 @@ describe("configurações administrativas de marca", () => {
 
   it("não duplica o editor de mensagens nem consulta os templates antigos", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(branding))));
-    vi.stubGlobal("fetch", fetchMock);
+    stubBrandingFetch(fetchMock);
     render(<AdminSettingsPage />);
     await screen.findByLabelText("Direção");
     expect(screen.queryByText("Mensagens de pagamento")).toBeNull();

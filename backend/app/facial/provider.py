@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -30,6 +30,7 @@ class FaceObservation:
     detection_pass: str = "global"
     image_width: int | None = None
     image_height: int | None = None
+    aligned_image: Any | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -115,12 +116,14 @@ class OpenCvSFaceProvider:
         except Exception as exc:
             raise FacialProviderError("Modelos faciais não puderam ser carregados.") from exc
 
-    def observe_path(self, image_path: Path) -> list[FaceObservation]:
+    def observe_path(
+        self, image_path: Path, *, include_embedding: bool = True
+    ) -> list[FaceObservation]:
         try:
             image = self._cv2.imread(str(image_path))
         except Exception as exc:
             raise FacialProviderError("Imagem facial não pôde ser lida.") from exc
-        return self.observe_image(image)
+        return self.observe_image(image, include_embedding=include_embedding)
 
     def observe_bytes(self, payload: bytes) -> list[FaceObservation]:
         if not payload:
@@ -135,7 +138,7 @@ class OpenCvSFaceProvider:
             raise FacialProviderError("Imagem facial não pôde ser lida.") from exc
         return self.observe_image(image)
 
-    def observe_image(self, image: Any) -> list[FaceObservation]:
+    def observe_image(self, image: Any, *, include_embedding: bool = True) -> list[FaceObservation]:
         if image is None or not hasattr(image, "shape") or len(image.shape) < 2:
             raise FacialProviderError("Imagem facial não pôde ser lida.")
         height, width = int(image.shape[0]), int(image.shape[1])
@@ -151,7 +154,10 @@ class OpenCvSFaceProvider:
             observations: list[FaceObservation] = []
             for face in detected:
                 aligned = self._recognizer.alignCrop(image, face)
-                embedding = normalize_embedding(self._recognizer.feature(aligned))
+                embedding = (
+                    normalize_embedding(self._recognizer.feature(aligned))
+                    if include_embedding else ()
+                )
                 gray = self._cv2.cvtColor(aligned, self._cv2.COLOR_BGR2GRAY)
                 blur = float(self._cv2.Laplacian(gray, self._cv2.CV_64F).var())
                 observations.append(
@@ -166,6 +172,7 @@ class OpenCvSFaceProvider:
                         blur_variance=blur,
                         image_width=width,
                         image_height=height,
+                        aligned_image=aligned.copy() if not include_embedding else None,
                     )
                 )
             return observations
@@ -174,7 +181,7 @@ class OpenCvSFaceProvider:
         except Exception as exc:
             raise FacialProviderError("Processamento facial falhou.") from exc
 
-    def observe_highres_path(self, image_path: Path, *, config=None):
+    def observe_highres_path(self, image_path: Path, *, config=None, include_embedding: bool = True):
         """Pixels orientados pelo mesmo Pillow dos derivados; nenhum crop é persistido."""
         from time import perf_counter
 
@@ -239,14 +246,15 @@ class OpenCvSFaceProvider:
             for detection in kept:
                 try:
                     aligned = self._recognizer.alignCrop(image, np.asarray(detection.row, dtype=np.float32))
-                    embedding = self.embed_aligned(aligned)
+                    embedding = self.embed_aligned(aligned) if include_embedding else ()
                     gray = self._cv2.cvtColor(aligned, self._cv2.COLOR_BGR2GRAY)
                     observations.append(FaceObservation(
                         embedding=embedding, detection_confidence=detection.row[-1],
                         box=tuple(round(v) for v in detection.row[:4]),
                         landmarks=tuple((detection.row[i], detection.row[i+1]) for i in range(4, 14, 2)),
                         blur_variance=float(self._cv2.Laplacian(gray, self._cv2.CV_64F).var()),
-                        detection_pass=detection.provenance, image_width=width, image_height=height))
+                        detection_pass=detection.provenance, image_width=width, image_height=height,
+                        aligned_image=aligned.copy() if not include_embedding else None))
                 except Exception:  # noqa: BLE001 -- qualquer falha do runtime preserva a fonte para retry
                     failures += 1
             self.last_metrics = {"width": width, "height": height, "megapixels": width*height/1e6,

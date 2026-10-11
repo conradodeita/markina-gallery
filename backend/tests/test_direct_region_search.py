@@ -117,3 +117,30 @@ def test_minor_consent_runs_without_representation_and_can_be_revoked(tmp_path, 
     assert request.reference_deleted_at is not None
     db.close()
     engine.dispose()
+
+
+def test_region_query_never_exposes_unassigned_folder_in_same_gallery(tmp_path, monkeypatch):
+    from app.auth import PhotoFolder
+    from app.facial.regions import authorized_region, photo_regions
+
+    monkeypatch.setenv("APP_ENV", "test")
+    engine, db, gallery, client, folder = _base(tmp_path)
+    settings = _settings(tmp_path)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    photo = _add_photo(db, gallery, folder, tmp_path)
+    _index_photo(db, photo, tmp_path, settings, cipher)
+    region = db.scalar(select(PhotoFaceEmbedding))
+    region.bbox_x, region.bbox_y, region.bbox_width, region.bbox_height = .1, .1, .2, .2
+    hidden = PhotoFolder(tenant_id=photo.tenant_id, parent_gallery_id=gallery.id,
+                         name="Restricted", status="released", purpose="content", audience_scope="selected", position=1)
+    db.add(hidden)
+    db.flush()
+    photo.folder_id = hidden.id
+    db.commit()
+    assert photo_regions(db, gallery_id=gallery.id, client_id=client.id,
+                         photo_id=photo.id, settings=settings) == []
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        authorized_region(db, gallery_id=gallery.id, client_id=client.id,
+                          region_id=region.id, settings=settings)
+    db.close()
+    engine.dispose()

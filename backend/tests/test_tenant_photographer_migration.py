@@ -26,11 +26,12 @@ from tests.tenant_fixtures import insert_legacy_model as insert_model
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261009_0072"
+CURRENT_SCHEMA = "20261011_0074"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
+    "facial_embedding_experiment_setting",
 })
 
 
@@ -41,6 +42,136 @@ def migrate(url, revision, *, downgrade=False, succeeds=True):
     )
     assert (result.returncode == 0) == succeeds, result.stderr
     return result
+
+
+@pytest.mark.parametrize("source_change", [None, "fingerprint", "deleted", "expiry", "pipeline"])
+def test_gemma_inference_does_not_lock_primary_source_processing(
+    migration_db, tmp_path, monkeypatch, source_change,
+):
+    from dataclasses import replace
+
+    from app.facial.crypto import FacialCipher
+    from app.facial.engine import FacialEngineError
+    from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
+    from app.facial.jobs import FacialJobRepository
+    from app.facial.lifecycle import admit_source, finalize_source, media_can_proceed
+    from app.facial.worker import process_claimed_index_job
+    from app.media import safe_source_path
+    from tests.test_facial_engine import _face, _settings
+    from tests.test_highres_pipeline import HighresProvider, jpeg
+
+    url, _name = migration_db
+    migrate(url, CURRENT_SCHEMA)
+    engine = sa.create_engine(url, poolclass=NullPool)
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    monkeypatch.setenv("FACIAL_HIGHRES_ENABLED", "true")
+    monkeypatch.setattr("app.facial.lifecycle.shutil.disk_usage", lambda _path: Mock(
+        free=80_000_000_000, total=100_000_000_000,
+    ))
+    settings = _settings(tmp_path)
+    repository = FacialJobRepository()
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    try:
+        with Session(engine) as db, Session(engine) as primary:
+            if db.get(auth.Tenant, FIXTURE_TENANT_ID) is None:
+                db.execute(sa.insert(auth.Tenant).values(id=FIXTURE_TENANT_ID, status="active"))
+            parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
+            db.execute(sa.insert(auth.ParentGallery).values(
+                id=parent_id, tenant_id=FIXTURE_TENANT_ID, name="Concorrência sintética",
+            ))
+            db.execute(sa.insert(auth.PhotoFolder).values(
+                id=folder_id, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
+                name="Fotos", status="released", purpose="content",
+            ))
+            policy_values = {
+                "tenant_id": FIXTURE_TENANT_ID, "parent_gallery_id": parent_id, "status": "active",
+                "model_version": "model-v1", "quality_version": "quality-v1",
+                "calibration_version": "calibration-v1", "legal_notice_version": "notice-v1",
+                "legal_basis_reference": "synthetic-only", "retention_policy_version": "retention-v1",
+            }
+            db.execute(sa.insert(auth.GalleryFacialPolicy).values(
+                **policy_values, minor_policy_version="minor-disabled-v1",
+            ))
+            db.execute(sa.insert(auth.FacialRollout).values(
+                **policy_values, environment="test", stage="canary", consent_version="consent-v1",
+            ))
+            db.execute(sa.insert(auth.PhotoAsset).values(
+                id=photo_id, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
+                folder_id=folder_id, filename="synthetic.jpg", available=True,
+                storage_key=f"tenants/{FIXTURE_TENANT_ID}/{parent_id}/{folder_id}/synthetic.jpg",
+            ))
+            photo = db.get(auth.PhotoAsset, photo_id)
+            db.execute(sa.insert(auth.MediaDerivative).values(
+                tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id,
+                variant="client_preview", status="ready", width=640, height=480,
+                relative_path=f"tenants/{FIXTURE_TENANT_ID}/{photo_id}/client_preview.jpg",
+            ))
+            db.add(auth.FacialEmbeddingExperimentSetting(
+                singleton=1, enabled=True, enabled_since=auth.now() - timedelta(days=1),
+            ))
+            admit_source(db, photo, jpeg(), settings=settings)
+            path = safe_source_path(photo)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(jpeg())
+            finalize_source(db, photo, settings=settings)
+            db.commit()
+            sface_claim = repository.claim_next(primary, job_class="index", lease_seconds=120)
+            gemma_claim = repository.claim_next(db, job_class="gemma", lease_seconds=900)
+            assert sface_claim and gemma_claim
+
+            class ConcurrentGemmaProvider:
+                model_id = GEMMA_MODEL_ID
+                model_version = GEMMA_MODEL_VERSION
+                embedding_dimension = 768
+                @property
+                def last_metrics(self):
+                    return {}
+
+                def observe_highres_path(self, _path):
+                    # Simula SFace concorrente enquanto Gemma calcula; timeout
+                    # curto do PostgreSQL detecta lock no fluxo principal.
+                    primary.execute(sa.text("SET LOCAL lock_timeout='300ms'"))
+                    done = process_claimed_index_job(
+                        primary, sface_claim, repository=repository,
+                        provider=HighresProvider(), cipher=cipher, settings=settings,
+                        derivatives_root=tmp_path / "derivatives",
+                    )
+                    assert done.status == "completed"
+                    assert media_can_proceed(primary, photo.id, tenant_id=FIXTURE_TENANT_ID)
+                    changed = {
+                        "fingerprint": {"source_fingerprint": "f" * 64},
+                        "deleted": {"deleted_at": auth.now()},
+                        "expiry": {"expires_at": auth.now() + timedelta(days=2)},
+                        "pipeline": {"pipeline_version": "another-synthetic-pipeline"},
+                    }.get(source_change)
+                    if changed:
+                        primary.execute(sa.update(auth.PhotoAnalysis).where(
+                            auth.PhotoAnalysis.photo_asset_id == photo.id,
+                        ).values(**changed))
+                    primary.commit()
+                    return [replace(_face((1.0,) + (0.0,) * 767),
+                                    image_width=2400, image_height=1600)]
+
+            def run_gemma():
+                return process_claimed_index_job(
+                    db, gemma_claim, repository=repository, provider=ConcurrentGemmaProvider(),
+                    cipher=cipher, settings=settings, derivatives_root=tmp_path / "derivatives",
+                )
+
+            expected = {("opencv-yunet-sface", 128)}
+            if source_change:
+                with pytest.raises(FacialEngineError, match="alterada ou excluída"):
+                    run_gemma()
+            else:
+                assert run_gemma().status == "completed"
+                expected.add((GEMMA_MODEL_ID, 768))
+            assert set(db.execute(sa.select(
+                auth.PhotoFaceEmbedding.model_id, auth.PhotoFaceEmbedding.embedding_dimension,
+            ))) == expected
+            assert db.scalar(sa.select(auth.PhotoAnalysis.state)) == "ready"
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture(scope="module")
@@ -102,12 +233,15 @@ def assert_catalog(connection):
     inspector = sa.inspect(connection)
     assert not POST_TRANSITION_TABLES & set(inspector.get_table_names())
     for name, target in auth.Base.metadata.tables.items():
-        # Conferência histórica 0070: tabelas técnicas 0071/0072 ainda não existem.
+        # Contrato histórico 0070: tabelas/colunas de 0071–0074 ainda não existem.
         if name in POST_TRANSITION_TABLES:
             continue
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
-        assert set(actual_columns) == set(target.c.keys()), name
-        assert all(actual_columns[column.name]["nullable"] == column.nullable for column in target.c), name
+        historical_columns = [column for column in target.c
+                              if not (name == "facial_search_request" and column.name == "search_engine")]
+        assert set(actual_columns) == {column.name for column in historical_columns}, name
+        assert all(actual_columns[column.name]["nullable"] == column.nullable
+                   for column in historical_columns), name
         actual_fk = {
             (tuple(f["constrained_columns"]), f["referred_table"], tuple(f["referred_columns"]))
             for f in inspector.get_foreign_keys(name)
@@ -200,6 +334,78 @@ def legacy(connection):
     insert_model(connection, auth.AuthChallenge, kind="client_otp", secret_hash="synthetic-hash",
                  expires_at=auth.now() + timedelta(minutes=1))
     return {"owner": owner, "admin": admin, "client": client, "parent": parent, "gallery": gallery, "photo": photo}
+
+
+def test_gemma_postgres_upgrade_preserves_legacy_and_isolates_namespaces(migration_db):
+    """0073/0074 preservam envelopes SFace e consultas antigas, sem downgrade destrutivo."""
+    url, engine = migration_db
+    with engine.begin() as connection:
+        records = legacy(connection)
+    migrate(url, "20261009_0072")
+    embedding_id, policy_id, request_id = (uuid4() for _ in range(3))
+    envelope = {"payload_ciphertext": b"synthetic-sface-envelope", "payload_nonce": b"x" * 12,
+                "key_id": "synthetic-key"}
+    embedding_scope = {"tenant_id": records["owner"], "parent_gallery_id": records["parent"],
+                       "photo_asset_id": records["photo"], "face_ordinal": 0,
+                       "quality_version": "synthetic-quality-v1", "preview_fingerprint": "f" * 64}
+    with engine.begin() as connection:
+        insert_model(connection, auth.PhotoFaceEmbedding, id=embedding_id,
+                     model_id="opencv-yunet-sface", embedding_dimension=128,
+                     model_version="synthetic-sface-v1", **embedding_scope, **envelope)
+        insert_model(connection, auth.GalleryFacialPolicy, id=policy_id,
+                     tenant_id=records["owner"], parent_gallery_id=records["parent"],
+                     model_version="synthetic-sface-v1", quality_version="synthetic-quality-v1")
+        insert_model(connection, auth.FacialSearchRequest, id=request_id,
+                     tenant_id=records["owner"], parent_gallery_id=records["parent"],
+                     client_id=records["client"], policy_id=policy_id,
+                     consent_version="synthetic-consent-v1", legal_notice_version="synthetic-notice-v1",
+                     subject_declaration="adult", model_version="synthetic-sface-v1",
+                     quality_version="synthetic-quality-v1", index_generation=0,
+                     expires_at=auth.now() + timedelta(hours=1))
+        before = snapshot(connection)
+    migrate(url, "20261011_0074")
+    with engine.begin() as connection:
+        assert_preserved(connection, before)
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20261011_0074"
+        assert connection.scalar(sa.text("SELECT search_engine FROM facial_search_request WHERE id=:id"),
+                                 {"id": request_id}) == "opencv-yunet-sface"
+        indexes = {item["name"] for item in sa.inspect(connection).get_indexes("photo_face_embedding")}
+        assert "ix_face_embedding_gallery_engine" in indexes
+        connection.execute(sa.text(
+            "INSERT INTO facial_embedding_experiment_setting (singleton, updated_at) VALUES (1, :now)"
+        ), {"now": auth.now()})
+        setting = connection.execute(sa.text(
+            "SELECT enabled, mode, model_revision FROM facial_embedding_experiment_setting"
+        )).one()
+        assert tuple(setting) == (False, "shadow", "914f7f89142e33e77833254d9c9b90c3cef7303b")
+        insert_model(connection, auth.PhotoFaceEmbedding,
+                     model_id="google-embeddinggemma-2", embedding_dimension=768,
+                     model_version="synthetic-gemma-v1", **embedding_scope,
+                     payload_ciphertext=b"synthetic-gemma-envelope", payload_nonce=b"y" * 12,
+                     key_id="synthetic-key")
+        for kind in ("index_gemma", "search_gemma"):
+            insert_model(connection, auth.FacialJob, tenant_id=records["owner"],
+                         parent_gallery_id=records["parent"], kind=kind,
+                         idempotency_key=f"synthetic-{kind}")
+        namespaces = connection.execute(sa.text(
+            "SELECT model_id, embedding_dimension, payload_ciphertext FROM photo_face_embedding ORDER BY model_id"
+        )).all()
+        assert [tuple(row) for row in namespaces] == [
+            ("google-embeddinggemma-2", 768, b"synthetic-gemma-envelope"),
+            ("opencv-yunet-sface", 128, b"synthetic-sface-envelope"),
+        ]
+        with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
+            connection.execute(sa.text(
+                "UPDATE facial_search_request SET search_engine='unknown-engine' WHERE id=:id"
+            ), {"id": request_id})
+        connection.execute(sa.text(
+            "UPDATE facial_search_request SET search_engine='google-embeddinggemma-2' WHERE id=:id"
+        ), {"id": request_id})
+        after_upgrade = snapshot(connection)
+    migrate(url, "20261009_0072", downgrade=True, succeeds=False)
+    with engine.connect() as connection:
+        assert_preserved(connection, after_upgrade)
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20261011_0074"
 
 
 def test_upgrade_vazio_catalogo_e_defaults_preservados(migration_db):

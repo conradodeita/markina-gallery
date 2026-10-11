@@ -33,7 +33,7 @@ class BlockingFacialWorker:
         session_factory: Callable[[], Session],
         wake_source: BlockingWakeSource,
         provider_loader: Callable[[], object],
-        processor: Callable[[Session, ClaimedFacialJob, object], None],
+        processor: Callable[[Session, ClaimedFacialJob, object | None], bool | None],
         provider_required: Callable[[ClaimedFacialJob], bool] | None = None,
         provider_failure: Callable[[ClaimedFacialJob, Exception], None] | None = None,
         repository: FacialJobRepository | None = None,
@@ -97,13 +97,14 @@ class BlockingFacialWorker:
             self._provider = provider
         with self._session_factory() as db:
             try:
-                self._processor(db, claim, provider)
+                outcome = self._processor(db, claim, provider)
             except Exception:
                 record(f"work.{self._job_class}", (time.perf_counter() - observed_started) * 1000, 500)
                 heartbeat(self._job_class, False)
                 raise
-        record(f"work.{self._job_class}", (time.perf_counter() - observed_started) * 1000)
-        heartbeat(self._job_class, True)
+        record(f"work.{self._job_class}", (time.perf_counter() - observed_started) * 1000,
+               500 if outcome is False else 200)
+        heartbeat(self._job_class, outcome is not False)
         self.processed_jobs += 1
         self._last_work_at = self._clock()
         if self.processed_jobs >= self._settings.max_jobs_per_process:
