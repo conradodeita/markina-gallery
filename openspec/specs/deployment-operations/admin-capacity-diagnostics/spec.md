@@ -112,9 +112,9 @@ A coleta SHALL ser somente leitura, com consultas de agregação restritas, limi
 - **WHEN** o diagnóstico é consultado durante jobs pendentes
 - **THEN** status, leases, tentativas e configurações permanecem iguais, e os contratos do resumo administrativo e da observabilidade facial existente permanecem compatíveis
 
-### Requirement: Diagnóstico sob demanda na Visão geral
+### Requirement: Diagnóstico sob demanda no Monitor do Sistema
 
-A Visão geral administrativa SHALL apresentar seção recolhível “Diagnóstico de capacidade”, inicialmente fechada, usando os componentes e estados acessíveis existentes. Ao abrir, SHALL consultar o endpoint dedicado, mostrar escopo/UTC/classificação junto aos valores, cobertura das filas e orçamento incompleto; atualização SHALL ser manual, sem polling automático ou persistência no navegador. Falha diagnóstica SHALL manter utilizável o restante do painel. O painel SHALL explicar que esta é uma leitura parcial de capacidade, sem semáforo de expansão ou cumprimento de SLO geral.
+O Monitor do Sistema SHALL apresentar seção recolhível “Diagnóstico de capacidade”, inicialmente fechada, usando os componentes e estados acessíveis existentes. Ao abrir, SHALL consultar o endpoint dedicado, mostrar escopo/UTC/classificação junto aos valores, cobertura das filas e orçamento incompleto; atualização SHALL ser manual, sem polling automático ou persistência no navegador. Falha diagnóstica SHALL manter utilizável o restante do painel. O painel SHALL explicar que esta é uma leitura parcial de capacidade, sem semáforo de expansão ou cumprimento de SLO geral.
 
 #### Scenario: Abertura e atualização
 - **WHEN** o administrador abre a seção e depois solicita atualização
@@ -122,15 +122,20 @@ A Visão geral administrativa SHALL apresentar seção recolhível “Diagnósti
 
 #### Scenario: Falha parcial
 - **WHEN** PostgreSQL ou uma classe de fila está indisponível, mas outras informações foram coletadas
-- **THEN** a seção apresenta cada estado corretamente e o restante da Visão geral continua operacional
+- **THEN** a seção apresenta cada estado corretamente e o restante do Monitor do Sistema continua operacional
 
 #### Scenario: Sessão perde autorização
 - **WHEN** uma atualização recebe acesso negado ou o contexto administrativo é encerrado
 - **THEN** a interface retira o snapshot exibido e segue o tratamento de autenticação existente, sem mostrar dados antigos como disponíveis
 
+
+#### Scenario: Visão Geral sem duplicação
+- **WHEN** o proprietário abre a Visão Geral administrativa
+- **THEN** o card Capacidade e filas não aparece e essa página não consulta capability ou snapshot do diagnóstico
+
 ### Requirement: Relatório sanitizado copiável do snapshot atual
 
-A Visão geral administrativa SHALL oferecer a ação explícita **Copiar relatório** somente enquanto existir um snapshot de capacidade válido e autorizado na tela. A ação SHALL produzir texto UTF-8 em formato versionado, determinístico e legível, usando exclusivamente os campos permitidos do mesmo snapshot exibido e sem iniciar nova coleta. O relatório SHALL incluir versão do formato e do contrato, janela UTC da coleta, uso de cache, escopos, pool, conexões PostgreSQL, as cinco classes de fila, orçamento global, cobertura e limitações. Para cada métrica, SHALL preservar valor, unidade, fonte, escopo, instante UTC, classe de evidência e motivo de indisponibilidade; valor desconhecido MUST NOT ser omitido, convertido em zero ou apresentado como observado.
+O Monitor do Sistema SHALL oferecer a ação explícita **Copiar relatório** somente enquanto existir um snapshot de capacidade válido e autorizado na tela. A ação SHALL produzir texto UTF-8 em formato versionado, determinístico e legível, usando exclusivamente os campos permitidos do mesmo snapshot exibido e sem iniciar nova coleta. O relatório SHALL incluir versão do formato e do contrato, janela UTC da coleta, uso de cache, escopos, pool, conexões PostgreSQL, as cinco classes de fila, orçamento global, cobertura e limitações. Para cada métrica, SHALL preservar valor, unidade, fonte, escopo, instante UTC, classe de evidência e motivo de indisponibilidade; valor desconhecido MUST NOT ser omitido, convertido em zero ou apresentado como observado.
 
 A geração e a cópia SHALL ocorrer somente no navegador após gesto explícito do administrador, sem endpoint novo, persistência, histórico, download ou transmissão automática. O serializador SHALL usar allowlist fechada e MUST NOT copiar campos desconhecidos nem incluir SQL, banco, usuário, host, IP, DSN, caminho, identificador de negócio, nome pessoal, telefone, foto, token, conteúdo de mensagem ou biometria. A interface SHALL comunicar de forma acessível o sucesso ou a falha da operação; falha da área de transferência SHALL preservar o snapshot e MUST NOT ser confundida com falha da coleta.
 
@@ -164,3 +169,10 @@ O backend SHALL exigir proprietário por UUID, sessão/vínculo válidos e insta
 #### Scenario: Proprietário troca e-mail
 - **WHEN** a conta proprietária troca e verifica o novo e-mail, mantendo UUID, sessão/vínculo e concessão válidos
 - **THEN** continua acessando diagnóstico, sem transferir acesso a outra conta que use o e-mail anterior
+
+### Requirement: Dica de interpretação do diagnóstico de capacidade
+O card de capacidade SHALL oferecer dica acessível por toque/teclado que explique leitura pontual das conexões e filas, atualização manual e possibilidade de copiar o relatório para suporte. A dica SHALL informar que esse snapshot não determina capacidade máxima e não altera autorização, coleta ou serialização existentes.
+
+#### Scenario: Proprietário consulta a dica
+- **WHEN** o proprietário abre a ajuda do card de capacidade
+- **THEN** recebe a explicação em linguagem simples, mantendo as ações Consultar diagnóstico e Copiar relatório e seus contratos existentes

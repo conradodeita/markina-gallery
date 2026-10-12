@@ -14,7 +14,7 @@
 
 - [x] 3.1 Repetir suíte frontend, lint, typecheck/build, OpenSpec da versão do CI e revisão do diff/segurança para a extensão das cores aos clientes, registrando evidências para PR; evidências anteriores preservadas em validation.md.
 - [x] 3.2 Após CI/deploy verde, verificar dicas/cores dos fotógrafos/foco/navegação/relatórios no servidor autorizado com sessão normal do proprietário; registrar SHA, resultados e lacunas sem dados pessoais.
-- [ ] 3.3 Após CI/deploy verde da extensão, verificar cores dos clientes nos ramos disponíveis e temas claro/escuro no servidor autorizado; registrar SHA e estados realmente observados, sem fabricar sessões ou presumir estados ausentes.
+- [x] 3.3 Após CI/deploy verde da extensão, verificar cores dos clientes nos ramos disponíveis e temas claro/escuro no servidor autorizado; registrar SHA e estados realmente observados, sem fabricar sessões ou presumir estados ausentes.
 
 ## Workflow follow-up
 
