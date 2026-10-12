@@ -36,5 +36,5 @@
 .hint summary:focus-visible { outline:3px solid var(--accent); outline-offset:3px; border-radius:4px; }
 .hint p { margin:4px 0 12px; max-width:80ch; color:var(--muted); }
 
-.photographer { --monitor-active:#166534; --monitor-inactive:#b91c1c; overflow-wrap:anywhere; text-align:left; }
-:global(html[data-theme="dark"]) .photographer { --monitor-active:#86efac; --monitor-inactive:#fca5a5; }
+.identity { --monitor-active:#166534; --monitor-inactive:#b91c1c; overflow-wrap:anywhere; text-align:left; }
+:global(html[data-theme="dark"]) .identity { --monitor-active:#86efac; --monitor-inactive:#fca5a5; }
