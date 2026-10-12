@@ -5,6 +5,7 @@ import { PUSH_LOGOUT_EVENT } from "../../push-device";
 import { InstallationDiagnostics } from "../installation-diagnostics";
 import { useMonitorPermissions, type Permissions } from "./use-permissions";
 import { UserTree } from "./user-tree";
+import { MonitorHint } from "./monitor-hint";
 import { monitorFetch } from "./request";
 import { bytes, date, incidentLabel, numeric, operations, states, type Incidents, type Report } from "./types";
 import styles from "./monitor.module.css";
@@ -118,11 +119,12 @@ function MonitorContent({ permissions, revoke, revision }: { permissions: Permis
     {allowed && <>
       <div className={styles.controls}><label>Período<select value={minutes} onChange={(event) => setMinutes(Number(event.target.value))}><option value={15}>15 minutos</option><option value={60}>1 hora</option><option value={360}>6 horas</option><option value={1440}>24 horas</option></select></label>
         <button disabled={busy} onClick={() => setRefresh(refresh + 1)}>Atualizar métricas</button>
-        {permissions.metrics && permissions.export && <><button disabled={exporting} onClick={() => void download("json")}>Gerar relatório JSON</button><button disabled={exporting} onClick={() => void download("text")}>Relatório legível</button></>}
+        {permissions.metrics && permissions.export && <><button disabled={exporting} onClick={() => void download("json")}>Baixar relatório técnico — JSON</button><button disabled={exporting} onClick={() => void download("text")}>Baixar relatório técnico — texto</button></>}
       </div>
       {error && <p role="alert">{error}</p>}
       {permissions.metrics && <>
         <section className={styles.section} aria-label="Resumo geral"><h2>Estado geral <span className={styles.badge} data-state={state}>{states[state]}</span></h2>
+          <MonitorHint title="Estado geral" />
           <p>Última coleta: {date(report?.last_collected_at)} · Idade: {numeric(age, " s")}.</p>
           {!report?.collection_enabled && <p>A coleta contínua ainda não está habilitada. A ausência de dados não comprova indisponibilidade da aplicação.</p>}
           <div className={styles.grid}>
@@ -135,12 +137,7 @@ function MonitorContent({ permissions, revoke, revision }: { permissions: Permis
             <Metric title="Alertas ativos" value={numeric(report?.active_alerts)} detail="Alertas preventivos baseados em evidências" />
           </div>
         </section>
-        <section className={styles.section}><h2>Aplicação e experiência</h2><p>Duração no backend até terminar a resposta. Tempo de renderização no dispositivo não coletado.</p>
-          <div className={styles.grid}><Trend label="Requisições por 5 minutos" points={(report?.http_history ?? []).map((p) => ({ at: p.at, value: p.count }))} /><Trend label="Latência média" unit=" ms" points={(report?.http_history ?? []).map((p) => ({ at: p.at, value: p.mean_ms }))} /></div>
-          {!report?.operations.length ? <p>Sem amostras no período.</p> : <div className={styles.table}><table><thead><tr><th>Operação</th><th>Amostras</th><th>Por segundo</th><th>Falhas 5xx</th><th>Recusas 4xx</th><th>p50</th><th>p95</th><th>p99</th></tr></thead><tbody>{report.operations.map((row) => <tr key={row.operation}><th>{operations[row.operation] ?? row.operation}</th><td>{row.count}</td><td>{numeric(row.rate_per_second)}</td><td>{row.errors}</td><td>{row.rejected}</td><td>{numeric(row.latency.p50, " ms")}</td><td>{numeric(row.latency.p95, " ms")}</td><td>{numeric(row.latency.p99, " ms")}</td></tr>)}</tbody></table></div>}
-          <small>Percentis são limites superiores dos histogramas: p95 exige 20 amostras; p99, 100. Aquisição de conexão inclui abertura de conexão. Ciclos de trabalho não devem ser somados às requisições.</small>
-        </section>
-        <section className={styles.section}><h2>Filas, uploads e processamento</h2>
+        <section className={styles.section}><h2>Filas, uploads e processamento</h2><MonitorHint title="Filas, uploads e processamento" />
           <div className={styles.grid}>{capacity?.queues.map((queue) => <Metric key={queue.queue_class} title={operations[queue.queue_class]} value={`${numeric(queue.queued_total.value)} na fila`} detail={`${numeric(queue.processing_total.value)} em processamento · Idade: ${numeric(queue.oldest_record_age_seconds.value, " s")}`} />)}</div>
           {!capacity && <p>Filas não coletadas.</p>}
           <h3>Estado dos registros atualizados nos últimos 5 minutos</h3><p>Os estados incluem retentativas; não representam taxa de conclusões.</p>
@@ -152,7 +149,7 @@ function MonitorContent({ permissions, revoke, revision }: { permissions: Permis
           <p>Ciclo antigo significa ausência de confirmação recente. Um trabalho longo pode continuar em execução.</p>
           <h3>Uploads e integrações</h3>{!latest?.uploads && <p>Uploads não coletados.</p>}{!latest?.integrations && <p>Integrações não coletadas.</p>}<ul>{latest?.uploads?.map((row, i) => <li key={`u${i}`}>Lotes de upload: {jobStates[row.state]} — {row.count}</li>)}{latest?.integrations?.map((row, i) => <li key={`i${i}`}>{operations[row.kind ?? ""]}: {jobStates[row.state]} — {row.count}</li>)}</ul>
         </section>
-        <section className={styles.section}><h2>Servidor e armazenamento</h2><p>Fonte do host: {states[latest?.host.status ?? "not_collected"]} · {date(host?.collected_at)}. Quotas e provisionamento OCI ainda não verificados.</p>
+        <section className={styles.section}><h2>Servidor e armazenamento</h2><MonitorHint title="Servidor e armazenamento" /><p>Fonte do host: {states[latest?.host.status ?? "not_collected"]} · {date(host?.collected_at)}. Quotas e provisionamento OCI ainda não verificados.</p>
           <div className={styles.grid}><Trend label="Uso de CPU" unit="%" points={(report?.history ?? []).map((p) => ({ at: p.at, value: p.host.data?.cpu_percent ?? null }))} />
             <Metric title="Entrada de rede" value={numeric(host?.network_in_bytes_per_second, " B/s")} /><Metric title="Saída de rede" value={numeric(host?.network_out_bytes_per_second, " B/s")} />
             <Metric title="Leitura em disco" value={numeric(host?.io_read_bytes_per_second, " B/s")} /><Metric title="Escrita em disco" value={numeric(host?.io_write_bytes_per_second, " B/s")} />
@@ -162,13 +159,13 @@ function MonitorContent({ permissions, revoke, revision }: { permissions: Permis
           </div>
         </section>
       </>}
-      {permissions.tree && <section className={styles.section}><h2>Fotógrafos e clientes</h2><p>Atividade indica interação autenticada observada. Sessão válida não comprova presença. Cada conta permanece independente.</p><UserTree key={revision} denied={revoke} /></section>}
-      {permissions.incidents && <section className={styles.section}><h2>Incidentes e alertas</h2>{!incidents ? <p>Indisponível.</p> : <>
+      {permissions.tree && <section className={styles.section}><h2>Fotógrafos e clientes</h2><MonitorHint title="Fotógrafos e clientes" /><p>Atividade indica interação autenticada observada. Sessão válida não comprova presença. Cada conta permanece independente.</p><UserTree key={revision} denied={revoke} /></section>}
+      {permissions.incidents && <section className={styles.section}><h2>Incidentes e alertas</h2><MonitorHint title="Incidentes e alertas" />{!incidents ? <p>Indisponível.</p> : <>
         {!incidents.active.length && <p>Sem alertas ativos registrados. Confira também a atualidade da coleta.</p>}
         <ul>{incidents.active.map((item) => <li key={item.code}><strong>{incidentLabel(item.code)}</strong> · desde {date(item.started_at)} · observado {numeric(item.evidence.observed)}, limiar {numeric(item.evidence.threshold)}<p>Compare a operação, as filas e os recursos no mesmo período antes de atribuir causa ou expandir infraestrutura.</p></li>)}</ul>
         <details><summary>Mudanças de estado</summary><ul>{incidents.history.map((item, index) => <li key={index}>{date(item.at)} · {incidentLabel(item.code)} · {item.state === "active" ? "Alerta ativado" : states[item.state] ?? item.state}</li>)}</ul>{incidents.history_truncated && <p>Histórico limitado às 200 transições mais recentes. Reduza o período.</p>}</details>
       </>}</section>}
-      {permissions.metrics && <><InstallationDiagnostics /><section className={styles.section}><h2>Qualidade da coleta</h2><p>Versão: {report?.version ?? "Não informada"} · Ambiente: {report?.environment ?? "Não informado"}.</p><p>Observações perdidas no processo coletor: {numeric(latest?.quality.lost_observations)} · Falhas de coleta: {numeric(latest?.quality.collection_failures)}.</p><p>A coleta usa buffers limitados, sujeitos a perda em reinício. Fontes sem dados continuam desconhecidas; nenhum valor deste painel é garantia de capacidade máxima.</p></section></>}
+      {permissions.metrics && <InstallationDiagnostics />}
     </>}
   </div>;
 }
