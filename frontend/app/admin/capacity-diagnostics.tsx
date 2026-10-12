@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { MarkinaButton, SurfaceCard, SystemState } from "../ui-kit";
+import { MonitorHint } from "./system-monitor/monitor-hint";
 import { formatCapacityReport, type Metric, type Snapshot } from "./capacity-report";
 
 const labels: Record<string, string> = {
@@ -128,6 +129,7 @@ export function CapacityDiagnostics({ onAccessDenied }: { onAccessDenied?: () =>
           {expanded ? "Recolher" : "Consultar diagnóstico"}
         </MarkinaButton>
       </div>
+      <MonitorHint title="Capacidade e filas" />
       <div id="capacity-diagnostics-panel" hidden={!expanded} aria-live="polite">
         {expanded && loading && <SystemState tone="loading" title="Consultando diagnóstico" detail="A leitura é agregada e pode levar alguns instantes." />}
         {expanded && error && <div><SystemState tone="error" title="Diagnóstico indisponível" detail={error} /><MarkinaButton type="button" variant="secondary" onClick={() => void load()} disabled={loading}>Tentar novamente</MarkinaButton></div>}

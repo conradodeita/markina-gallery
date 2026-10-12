@@ -30,3 +30,11 @@
 .treeRow { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:8px; }
 .treeRow span { font-size:.9rem; }
 @media(max-width:600px) { .controls label { width:100%; } .controls button { flex:1; } .tree li .tree { margin-left:4px; padding-left:8px; } }
+
+.hint { margin:8px 0 16px; font-size:.9rem; }
+.hint summary { display:list-item; width:fit-content; min-height:44px; padding:10px 0; cursor:pointer; font-weight:600; }
+.hint summary:focus-visible { outline:3px solid var(--accent); outline-offset:3px; border-radius:4px; }
+.hint p { margin:4px 0 12px; max-width:80ch; color:var(--muted); }
+
+.photographer { --monitor-active:#166534; --monitor-inactive:#b91c1c; overflow-wrap:anywhere; text-align:left; }
+:global(html[data-theme="dark"]) .photographer { --monitor-active:#86efac; --monitor-inactive:#fca5a5; }

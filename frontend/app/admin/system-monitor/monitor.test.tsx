@@ -14,7 +14,7 @@ const summary = { collection_enabled: false, state: "unknown", last_collected_at
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Monitor do sistema sem servidor", () => {
-  it("identifica o worker e as operações Gemma no monitor", async () => {
+  it("identifica o worker Gemma no bloco de processamento", async () => {
     const report = { ...summary, operations: [{ operation: "work.gemma", count: 1, errors: 0,
       rejected: 0, timeouts: 0, error_percent: 0, rate_per_second: 1, mean_ms: 100,
       latency: { samples: 1, p50: 100, p95: null, p99: null } }], latest: {
@@ -26,8 +26,8 @@ describe("Monitor do sistema sem servidor", () => {
     vi.stubGlobal("fetch", vi.fn((url: string) => json(url.includes("system-monitor/capabilities")
       ? grants : url.includes("installation-capabilities") ? { capacity_diagnostics: false } : report)));
     render(<SystemMonitorPage />);
-    await screen.findByText("Processamento Gemma");
-    expect(screen.getByText(/Gemma — Coletado/)).toBeTruthy();
+    expect(await screen.findByText(/Gemma — Coletado/)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Aplicação e experiência" })).toBeNull();
   });
 
   it("carrega resumo, incidentes e árvore sem disputar as duas leituras disponíveis", async () => {
@@ -64,7 +64,7 @@ describe("Monitor do sistema sem servidor", () => {
     render(<SystemMonitorPage />);
     await screen.findByText(/Sem permissão para o monitor/);
     expect(fetcher.mock.calls).toHaveLength(1);
-    expect(screen.queryByText("Gerar relatório JSON")).toBeNull();
+    expect(screen.queryByText("Baixar relatório técnico — JSON")).toBeNull();
   });
 
   it("mostra lacunas sem zeros inventados e preserva o gate separado do card", async () => {
@@ -98,7 +98,7 @@ describe("Monitor do sistema sem servidor", () => {
     const createObjectURL = vi.fn();
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
     render(<SystemMonitorPage />);
-    fireEvent.click(await screen.findByText("Gerar relatório JSON"));
+    fireEvent.click(await screen.findByText("Baixar relatório técnico — JSON"));
     await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.includes("/report?"))).toHaveLength(1));
     act(() => { window.dispatchEvent(new Event(PUSH_LOGOUT_EVENT)); });
     expect(signal?.aborted).toBe(true);
@@ -165,4 +165,45 @@ it("mantém o card autorizado exclusivamente no Monitor e sem coleta automática
   expect(screen.getByText("Diagnóstico sob demanda")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Consultar diagnóstico" }).getAttribute("aria-expanded")).toBe("false");
   expect(fetcher.mock.calls.some(([url]) => url.includes("capacity-observability"))).toBe(false);
+});
+
+
+it("oferece ajuda nos seis blocos humanos e mantém relatórios como ações técnicas", async () => {
+  const fetcher = vi.fn((url: string) => json(
+    url.includes("system-monitor/capabilities") ? { metrics: true, tree: true, incidents: true, export: true } :
+    url.includes("installation-capabilities") ? { capacity_diagnostics: true } :
+    url.includes("/tree") ? { items: [], next_cursor: null, collected_at: null } :
+    url.includes("/incidents") ? { active: [], history: [] } : summary,
+  ));
+  vi.stubGlobal("fetch", fetcher);
+  render(<SystemMonitorPage />);
+  await screen.findByRole("heading", { name: "Capacidade e filas" });
+  for (const title of ["Estado geral", "Filas, uploads e processamento", "Servidor e armazenamento", "Fotógrafos e clientes", "Incidentes e alertas", "Capacidade e filas"]) {
+    const help = screen.getByLabelText(`Como interpretar: ${title}`);
+    expect(help.tagName).toBe("SUMMARY");
+    const details = help.closest("details")!;
+    expect(details.open).toBe(false);
+    fireEvent.click(help);
+    expect(details.open).toBe(true);
+  }
+  expect(screen.queryByRole("heading", { name: "Aplicação e experiência" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Qualidade da coleta" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Baixar relatório técnico — JSON" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Baixar relatório técnico — texto" })).toBeTruthy();
+  expect(fetcher.mock.calls.some(([url]) => url.includes("/report?"))).toBe(false);
+});
+
+
+it.each([
+  ["active", "var(--monitor-active)", "Ativo agora"],
+  ["inactive", "var(--monitor-inactive)", "Sem sessão válida"],
+  ["recent", "", "Atividade recente"],
+  ["valid_session", "", "Sessão válida"],
+  ["unknown", "", "Desconhecido"],
+])("identificação em %s usa a cor fundamentada e conserva o estado textual", async (state, color, label) => {
+  vi.stubGlobal("fetch", vi.fn(() => json({ items: [{ id: "photographer-1", label: "Fotógrafo color@example.invalid", sessions: state === "inactive" ? 0 : 1, state, last_activity: null }], next_cursor: null, collected_at: null })));
+  render(<UserTree denied={vi.fn()} />);
+  const identity = await screen.findByRole("button", { name: /Fotógrafo color@example.invalid/ });
+  expect(identity.style.color).toBe(color);
+  expect(screen.getByText(label, { selector: "span" })).toBeTruthy();
 });

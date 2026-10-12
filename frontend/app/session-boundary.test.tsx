@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionBoundary } from "./session-boundary";
 import { protectedContext, recoveryLocation, safeAdminReturn, safeClientGalleryReturn } from "./session-recovery";
@@ -349,4 +349,136 @@ describe("recuperação uniforme de sessão", () => {
     expect(safeClientGalleryReturn(`/public-galleries/${galleryId}?access_token=secret`)).toBeNull();
     expect(protectedContext("/administrator")).toBeNull();
   });
+});
+
+
+it("revalida nova rota no mesmo papel sem desmontar rascunho ou reabrir o gate inicial", async () => {
+  let checks = 0;
+  let complete: (response: Response) => void = () => undefined;
+  const fetcher = vi.fn(() => {
+    checks += 1;
+    return checks === 2 ? new Promise<Response>((resolve) => { complete = resolve; }) : Promise.resolve(authorized());
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const child = <input aria-label="Rascunho privado" defaultValue="" />;
+  const view = render(<SessionBoundary>{child}</SessionBoundary>);
+  const input = await screen.findByLabelText("Rascunho privado");
+  fireEvent.change(input, { target: { value: "não perder" } });
+  navigation.pathname = "/admin/settings";
+  view.rerender(<SessionBoundary>{child}</SessionBoundary>);
+  expect(screen.getByLabelText("Rascunho privado")).toBe(input);
+  expect((input as HTMLInputElement).value).toBe("não perder");
+  expect(screen.queryByText("Verificando sua sessão…")).toBeNull();
+  expect(checks).toBe(2);
+  await act(async () => complete(authorized()));
+  expect(screen.getByLabelText("Rascunho privado")).toBe(input);
+});
+
+it("novo papel exige gate inicial mesmo depois de validar administrador", async () => {
+  let complete: (response: Response) => void = () => undefined;
+  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => Promise.resolve(authorized())).mockImplementationOnce(() => new Promise<Response>((resolve) => { complete = resolve; })));
+  const view = render(<SessionBoundary><p>Privado administrador</p></SessionBoundary>);
+  await screen.findByText("Privado administrador");
+  navigation.pathname = "/library";
+  view.rerender(<SessionBoundary><p>Privado cliente</p></SessionBoundary>);
+  expect(screen.queryByText("Privado cliente")).toBeNull();
+  expect(screen.queryByText("Privado administrador")).toBeNull();
+  expect(screen.getByText("Verificando sua sessão…")).toBeTruthy();
+  await act(async () => complete(authorized("/library")));
+  expect(screen.getByText("Privado cliente")).toBeTruthy();
+});
+
+it("falha de leitura não presume compra incerta e aviso some após confirmação no foco", async () => {
+  let checks = 0;
+  const fetcher = vi.fn((input: RequestInfo | URL) => {
+    if (String(input) !== "/api/auth/destination") return Promise.resolve(new Response(null, { status: 503 }));
+    checks += 1;
+    return Promise.resolve(checks === 2 ? new Response(null, { status: 503 }) : authorized());
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SessionBoundary><p>Conteúdo privado</p></SessionBoundary>);
+  await screen.findByText("Conteúdo privado");
+  await act(async () => { await window.fetch("/api/admin/read-only"); });
+  expect(screen.getByRole("alert").textContent).not.toMatch(/envios|compras/);
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(fetcher.mock.calls.filter(([input]) => String(input) === "/api/admin/read-only")).toHaveLength(1);
+});
+
+it("confirmar a sessão após falha de mutação preserva orientação sem repetir a ação", async () => {
+  let checks = 0;
+  let complete: (response: Response) => void = () => undefined;
+  const fetcher = vi.fn((input: RequestInfo | URL) => {
+    if (String(input) !== "/api/auth/destination") return Promise.reject(new TypeError("network"));
+    checks += 1;
+    return checks === 2 ? new Promise<Response>((resolve) => { complete = resolve; }) : Promise.resolve(authorized());
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SessionBoundary><p>Conteúdo privado</p></SessionBoundary>);
+  await screen.findByText("Conteúdo privado");
+  await act(async () => { await window.fetch(new Request(new URL("/api/admin/upload", window.location.origin), { method: "POST" })).catch(() => undefined); });
+  expect(screen.getByRole("status").textContent).toContain("Confira antes de repetir envios ou compras");
+  expect(screen.queryByRole("alert")).toBeNull();
+  await act(async () => { window.dispatchEvent(new Event("focus")); complete(authorized()); });
+  expect(screen.getByRole("status").textContent).toContain("Conexão confirmada");
+  expect(screen.getByRole("status").textContent).toContain("Confira o resultado da ação anterior");
+  fireEvent.click(screen.getByRole("button", { name: "Fechar aviso" }));
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(fetcher.mock.calls.filter(([input]) => String(input) !== "/api/auth/destination")).toHaveLength(1);
+});
+
+
+it.each([401, 403])("revalidação da nova rota confirma %s e retira conteúdo do mesmo papel", async (status) => {
+  let complete: (response: Response) => void = () => undefined;
+  const fetcher = vi.fn().mockImplementationOnce(() => Promise.resolve(authorized())).mockImplementationOnce(() => new Promise<Response>((resolve) => { complete = resolve; }));
+  const navigate = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const view = render(<SessionBoundary navigate={navigate}><p>Privado</p></SessionBoundary>);
+  await screen.findByText("Privado");
+  navigation.pathname = "/admin/settings";
+  view.rerender(<SessionBoundary navigate={navigate}><p>Privado</p></SessionBoundary>);
+  expect(screen.getByText("Privado")).toBeTruthy();
+  await act(async () => complete(new Response(null, { status })));
+  expect(screen.queryByText("Privado")).toBeNull();
+  if (status === 401) expect(navigate).toHaveBeenCalledWith(recoveryLocation("/admin/settings"));
+  else { expect(screen.getByRole("alert").textContent).toContain("Acesso negado"); expect(navigate).not.toHaveBeenCalled(); }
+});
+
+it("recusa de API durante navegação continua agendando revalidação após a leitura pendente", async () => {
+  let checks = 0;
+  let complete: (response: Response) => void = () => undefined;
+  const fetcher = vi.fn((input: RequestInfo | URL) => {
+    if (String(input) !== "/api/auth/destination") return Promise.resolve(new Response(null, { status: 403 }));
+    checks += 1;
+    if (checks === 2) return new Promise<Response>((resolve) => { complete = resolve; });
+    return Promise.resolve(checks === 1 ? authorized() : new Response(null, { status: 401 }));
+  });
+  const navigate = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const view = render(<SessionBoundary navigate={navigate}><p>Privado</p></SessionBoundary>);
+  await screen.findByText("Privado");
+  navigation.pathname = "/admin/settings";
+  view.rerender(<SessionBoundary navigate={navigate}><p>Privado</p></SessionBoundary>);
+  await act(async () => { await window.fetch("/api/admin/restricted"); });
+  expect(checks).toBe(2);
+  await act(async () => complete(authorized()));
+  await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+  expect(checks).toBe(3);
+  expect(screen.queryByText("Privado")).toBeNull();
+});
+
+
+it("falha de sinal técnico de atividade não presume envio ou compra incerta", async () => {
+  let checks = 0;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    if (String(input) !== "/api/auth/destination") return Promise.reject(new TypeError("network"));
+    checks += 1;
+    return Promise.resolve(authorized());
+  }));
+  render(<SessionBoundary><p>Privado</p></SessionBoundary>);
+  await screen.findByText("Privado");
+  await act(async () => { await window.fetch("/api/auth/activity", { method: "POST" }).catch(() => undefined); });
+  expect(checks).toBe(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText(/ação anterior/)).toBeNull();
 });
