@@ -7,6 +7,10 @@ import { monitorFetch } from "./request";
 type Item = { id: string; label: string; sessions: number; state: string; last_activity: string | null; clients?: number; account_state?: string; operational_issues?: Record<string, number> };
 type Page = { items: Item[]; next_cursor: string | null; collected_at: string; totals?: { photographers: number; clients: number; active_photographers: number | null; active_clients: number | null } };
 
+function identityColor(state: string) {
+  return state === "active" ? "var(--monitor-active)" : state === "inactive" ? "var(--monitor-inactive)" : undefined;
+}
+
 export function UserTree({ tenant, denied }: { tenant?: string; denied: () => void }) {
   const [data, setData] = useState<Page | null>(null);
   const [query, setQuery] = useState("");
@@ -43,8 +47,8 @@ export function UserTree({ tenant, denied }: { tenant?: string; denied: () => vo
     {data && <small>Consulta: {date(data.collected_at)}. A árvore é atualizada sob demanda.</small>}
     {data && !data.items.length && <p>Nenhum resultado para esta consulta.</p>}
     <ul>{data?.items.map((item) => <li key={item.id}>
-      <div className={styles.treeRow}>{tenant ? <strong>{item.label}</strong> : <button className={styles.photographer} style={{ color: item.state === "active" ? "var(--monitor-active)" : item.state === "inactive" ? "var(--monitor-inactive)" : undefined }} aria-expanded={expanded === item.id} onClick={() => setExpanded(expanded === item.id ? null : item.id)}>{expanded === item.id ? "−" : "+"} {item.label}</button>}
-        <span>{!tenant && item.state === "inactive" ? "Sem sessão válida" : states[item.state] ?? "Desconhecido"}</span>{item.clients !== undefined && <span>{item.clients} clientes</span>}<span>{item.sessions} sessões válidas</span>
+      <div className={styles.treeRow}>{tenant ? <strong className={styles.identity} style={{ color: identityColor(item.state) }}>{item.label}</strong> : <button className={styles.identity} style={{ color: identityColor(item.state) }} aria-expanded={expanded === item.id} onClick={() => setExpanded(expanded === item.id ? null : item.id)}>{expanded === item.id ? "−" : "+"} {item.label}</button>}
+        <span>{item.state === "inactive" ? "Sem sessão válida" : states[item.state] ?? "Desconhecido"}</span>{item.clients !== undefined && <span>{item.clients} clientes</span>}<span>{item.sessions} sessões válidas</span>
       </div>
       <small>Última interação: {date(item.last_activity)}{item.account_state === "suspended" ? " · Conta suspensa" : ""}</small>
       {!!item.operational_issues && Object.values(item.operational_issues).some(Boolean) && <p>Falhas registradas de processamento: {Object.values(item.operational_issues).reduce((a, b) => a + b, 0)}. Consulte as filas.</p>}

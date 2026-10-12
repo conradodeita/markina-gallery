@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Cor de atividade fundamentada na árvore
-A identificação do fotógrafo SHALL ser verde em active e vermelha em inactive, conforme sinais/sessões revalidados já existentes. recent, valid_session e unknown SHALL permanecer neutros. O estado textual MUST permanecer visível; a cor MUST NOT ser a única informação nem transformar sessão válida em atividade ou dado antigo em offline. As cores SHALL ser legíveis nos temas claro/escuro.
+A identificação dos fotógrafos e dos clientes SHALL ser verde em active e vermelha em inactive, conforme sinais/sessões revalidados já existentes. recent, valid_session e unknown SHALL permanecer neutros. O estado textual MUST permanecer visível; a cor MUST NOT ser a única informação nem transformar sessão válida em atividade ou dado antigo em offline. As cores SHALL ser legíveis nos temas claro/escuro. Clientes MUST permanecer no ramo do fotógrafo correspondente, sem ampliar acesso ou coleta.
 
 #### Scenario: Atividade e ausência de sessão
 - **WHEN** a árvore recebe active com evidência atual ou inactive sem sessão válida
@@ -12,3 +12,7 @@ A identificação do fotógrafo SHALL ser verde em active e vermelha em inactive
 #### Scenario: Sessão ociosa ou dados ausentes
 - **WHEN** a árvore recebe recent, valid_session ou unknown
 - **THEN** a identificação permanece neutra, com texto que distingue atividade anterior, sessão válida e ausência de evidência
+
+#### Scenario: Cor dos clientes no ramo autorizado
+- **WHEN** o proprietário expande um fotógrafo e recebe clientes do tenant_id desse ramo
+- **THEN** cada cliente recebe a cor e o texto do seu próprio estado, seguindo os mesmos critérios dos fotógrafos, sem misturar sessões entre contas

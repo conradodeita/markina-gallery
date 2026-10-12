@@ -207,3 +207,21 @@ it.each([
   expect(identity.style.color).toBe(color);
   expect(screen.getByText(label, { selector: "span" })).toBeTruthy();
 });
+
+it.each([
+  ["active", "var(--monitor-active)", "Ativo agora"],
+  ["inactive", "var(--monitor-inactive)", "Sem sessão válida"],
+  ["recent", "", "Atividade recente"],
+  ["valid_session", "", "Sessão válida"],
+  ["unknown", "", "Desconhecido"],
+])("cliente em %s usa a mesma cor e mantém texto e escopo do fotógrafo", async (state, color, label) => {
+  const fetcher = vi.fn<(url: string) => Promise<Response>>(() => json({ items: [{ id: "client-1", label: "Cliente sintético", sessions: state === "inactive" ? 0 : 1, state, last_activity: null }], next_cursor: null, collected_at: null }));
+  vi.stubGlobal("fetch", fetcher);
+  render(<UserTree tenant="photographer-1" denied={vi.fn()} />);
+  const identity = await screen.findByText("Cliente sintético", { selector: "strong" });
+  expect(identity.style.color).toBe(color);
+  expect(screen.getByText(label, { selector: "span" })).toBeTruthy();
+  expect(fetcher).toHaveBeenCalledOnce();
+  const params = new URL(fetcher.mock.calls[0][0] as string, "https://example.invalid").searchParams;
+  expect(params.get("tenant_id")).toBe("photographer-1");
+});
