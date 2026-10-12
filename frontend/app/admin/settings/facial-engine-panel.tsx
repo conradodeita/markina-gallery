@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import styles from "./facial-engine-panel.module.css";
+
 type Experiment = {
   enabled: boolean;
   mode: "shadow";
@@ -63,20 +65,35 @@ export default function FacialEnginePanel() {
   }
 
   return (
-    <section className="admin-card" aria-labelledby="facial-engine-title">
-      <p className="eyebrow">Experimento global · somente proprietário da instalação</p>
-      <h2 id="facial-engine-title">Motor de reconhecimento facial</h2>
-      <p>A escolha vale globalmente na homologação. Galerias anteriores à ativação e galerias novas sem índice Gemma completo usam SFace. O limiar de busca Gemma ainda não foi calibrado; não ative em produção.</p>
-      <dl>
-        <div><dt>Worker</dt><dd>{state.worker_ready ? "Pronto" : "Indisponível"}</dd></div>
-        <div><dt>Faces Gemma indexadas</dt><dd>{state.indexed_faces.toLocaleString("pt-BR")}</dd></div>
-        <div><dt>Jobs Gemma aguardando</dt><dd>{state.jobs.queued ?? 0}</dd></div>
-        <div><dt>Escolha global</dt><dd>{state.enabled ? "Gemma" : "SFace"}</dd></div>
-      </dl>
-      <button className="primary" type="button" onClick={toggleExperiment} disabled={saving || (!state.enabled && !state.worker_ready)}>
-        {saving ? "Salvando…" : state.enabled ? "Usar SFace" : "Usar Gemma"}
-      </button>
-      {message ? <p role="status">{message}</p> : null}
+    <section className={`admin-card ${styles.panel}`} aria-labelledby="facial-engine-title">
+      <div className={styles.heading}>
+        <div>
+          <p className="eyebrow">Configuração global</p>
+          <h2 id="facial-engine-title">Motor de reconhecimento facial</h2>
+        </div>
+        <span className={styles.badge}>Homologação</span>
+      </div>
+      <p className={styles.description}>Para todos os fotógrafos e clientes. Galerias antigas ou sem indexação Gemma completa continuam em SFace.</p>
+      <div className={styles.selection}>
+        <div className={styles.current}>
+          <span>Motor selecionado</span>
+          <strong>{state.enabled ? "Gemma" : "SFace"}</strong>
+        </div>
+        <button className={`primary ${styles.toggle}`} type="button" onClick={toggleExperiment} disabled={saving || (!state.enabled && !state.worker_ready)}>
+          {saving ? "Salvando…" : state.enabled ? "Usar SFace" : "Usar Gemma"}
+        </button>
+      </div>
+      {!state.worker_ready ? <p className={styles.description}>O processamento Gemma está indisponível. {state.enabled ? "Você pode voltar ao SFace." : "A ativação ficará disponível quando estiver pronto."}</p> : null}
+      <details className={styles.details}>
+        <summary>Detalhes do processamento</summary>
+        <dl className={styles.metrics}>
+          <div><dt>Processamento Gemma</dt><dd>{state.worker_ready ? "Pronto" : "Indisponível"}</dd></div>
+          <div><dt>Faces Gemma indexadas</dt><dd>{state.indexed_faces.toLocaleString("pt-BR")}</dd></div>
+          <div><dt>Jobs Gemma aguardando</dt><dd>{state.jobs.queued ?? 0}</dd></div>
+        </dl>
+        <p>Somente galerias criadas após a primeira ativação podem usar Gemma. O limiar de busca Gemma ainda não foi calibrado; não ative em produção.</p>
+      </details>
+      {message ? <p className={styles.feedback} role="status">{message}</p> : null}
     </section>
   );
 }
