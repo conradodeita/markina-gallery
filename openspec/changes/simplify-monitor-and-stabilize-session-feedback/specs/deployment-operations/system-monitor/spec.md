@@ -24,4 +24,3 @@ O sistema SHALL apresentar monitor com HTTP, pool, banco, filas, workers, armaze
 #### Scenario: Exportação identificada corretamente
 - **WHEN** o proprietário escolhe baixar um relatório técnico JSON ou texto
 - **THEN** recebe o contrato sanitizado existente com fontes, versão, qualidade, histórico, operações e incidentes autorizados, mesmo com detalhes retirados da UI, sem árvore ou dados pessoais
-
