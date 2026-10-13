@@ -39,7 +39,7 @@ def test_topology_guard() -> None:
                     "APP_ENV": "staging",
                     "DATABASE_URL": "postgresql+psycopg://synthetic@db:5432/markina_gallery",
                     "MARKINA_PUBLIC_URL": "http://localhost:3000",
-                    "PUBLIC_APP_ORIGIN": "https://markina-homolog.duckdns.org",
+                    "PUBLIC_APP_ORIGIN": "https://markina.pickyourpic.com.br",
                 },
                 "volumes": [
                     {"target": f"/var/lib/markina/{target}", "source": source}
@@ -70,7 +70,7 @@ def test_topology_guard() -> None:
             PUBLIC_APP_ORIGIN="https://example.test"
         ),
         lambda value: value["services"]["api"]["environment"].update(
-            PUBLIC_APP_ORIGIN="http://markina-homolog.duckdns.org"
+            PUBLIC_APP_ORIGIN="http://markina.pickyourpic.com.br"
         ),
         lambda value: value["services"]["api"]["environment"].pop("PUBLIC_APP_ORIGIN"),
         lambda value: value["services"]["nginx"]["ports"][0].update(host_ip="0.0.0.0"),
@@ -94,7 +94,7 @@ def test_topology_guard() -> None:
             "POSTGRES_DB": "markina_gallery",
             "MARKINA_GALLERY_PORT": "127.0.0.1:8080",
             "MARKINA_PUBLIC_URL": "http://localhost:3000",
-            "PUBLIC_APP_ORIGIN": "https://markina-homolog.duckdns.org",
+            "PUBLIC_APP_ORIGIN": "https://markina.pickyourpic.com.br",
         })
         resolved = subprocess.run(
             ["docker", "compose", "--profile", "whatsapp-real", "-p", "markina-gallery", "-f",
@@ -141,7 +141,7 @@ def main() -> None:
     require("preview_compose up -d --no-deps preview-adjustment-worker", "retomada do ajuste de prévia", SCRIPT)
     require('compose --profile whatsapp-real config --format json | python3 -c', "topologia resolvida", SCRIPT)
     require('com.docker.compose.project', "rótulo do projeto exclusivo", SCRIPT)
-    require('markina-homolog.duckdns.org', "subdomínio de homologação", SCRIPT)
+    require('markina.pickyourpic.com.br', "subdomínio de homologação", SCRIPT)
     require('facial-references', "volume de referência facial", SCRIPT)
     require('compose stop "${paused_services[@]}"', "pausa somente serviços selecionados", SCRIPT)
     require("compose restart nginx", "recarga do proxy após recriar API", SCRIPT)

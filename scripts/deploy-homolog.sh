@@ -382,6 +382,72 @@ PY
   echo "$key sincronizada com a origem pública autorizada de homologação"
 }
 
+ensure_public_app_origins() {
+  local env_file="${1:-$ENV_FILE}"
+  local allowed_origins="${2:-${MARKINA_PUBLIC_APP_ORIGINS:-}}"
+  local key="PUBLIC_APP_ORIGINS" normalized occurrences temp_file line replaced=0
+
+  [[ -n "$allowed_origins" ]] || fail "MARKINA_PUBLIC_APP_ORIGINS é obrigatória durante a migração de domínio"
+  normalized="$({ PUBLIC_ORIGINS_VALUE="$allowed_origins" python3 - <<'PY'
+import os
+from urllib.parse import urlsplit
+
+raw = os.environ["PUBLIC_ORIGINS_VALUE"]
+origins = []
+for candidate in raw.split(","):
+    origin = candidate.strip()
+    parsed = urlsplit(origin)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise SystemExit("porta inválida") from exc
+    if (
+        not origin
+        or parsed.scheme != "https"
+        or not parsed.netloc
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or "*" in parsed.hostname
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise SystemExit("origem inválida")
+    normalized = f"https://{parsed.netloc.lower()}"
+    if normalized not in origins:
+        origins.append(normalized)
+if not origins:
+    raise SystemExit("lista vazia")
+print(",".join(origins))
+PY
+  } 2>/dev/null)" || fail "MARKINA_PUBLIC_APP_ORIGINS deve conter somente origens HTTPS exatas"
+
+  occurrences="$(grep -c "^${key}=" "$env_file" || true)"
+  [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  if [[ "$occurrences" -eq 1 && "$(grep "^${key}=" "$env_file")" == "$key=$normalized" ]]; then
+    echo "$key já corresponde às origens temporárias autorizadas; ambiente preservado"
+    return 0
+  fi
+  temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
+      replaced=1
+    else
+      printf '%s\n' "$line" >> "$temp_file"
+    fi
+  done < "$env_file"
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
+  fi
+  mv "$temp_file" "$env_file"
+  chmod 600 "$env_file"
+  echo "$key sincronizada com a lista temporária autorizada de homologação"
+}
+
 record_predeploy_inventory() {
   echo "inventário Markina pré-deploy"
   df -hP "$PROJECT_ROOT"
@@ -468,6 +534,7 @@ verify_target() {
   ensure_gallery_capability_signing_key
   ensure_sensitive_payload_encryption_key
   ensure_public_app_origin
+  ensure_public_app_origins
   if [[ -n "$REQUESTED_FACIAL_ENABLED" ]]; then
     set_facial_enabled "$REQUESTED_FACIAL_ENABLED"
     FACIAL_DEPLOY_ENABLED="$REQUESTED_FACIAL_ENABLED"
