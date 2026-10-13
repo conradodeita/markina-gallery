@@ -16,6 +16,7 @@
 - [x] 3.4 Confirmar acesso no domínio novo e registrar o estado do antigo e a estratégia de rollback. O host DuckDNS e o host novo estavam Online durante a transição; o proprietário dispensou a validação autenticada do endereço antigo. Em 13/10/2026, confirmou que o endereço antigo deve parar de servir o Markina após conclusão do reset e fechamento da transição. Nenhum rollback foi acionado; o host antigo segue temporariamente ativo até task 3.7.
 - [x] 3.5 Executar inventário remoto somente leitura e verificar identidade/contagens de acervo e mídia sem expor PII. Evidência do servidor: 5 tenants/admins, 13 clientes, 10 galerias, 8 pastas, 673 fotos, 11 pedidos e 4 pagamentos; proprietário coincide com `platform_owner` e tem um vínculo ativo. Source 6 arquivos/12.182.458 bytes; derivatives 2.668/533.814.018 bytes; raw-staging 28/1.281.907.745 bytes; history/facial-references vazios. A limpeza legada respondeu `unavailable_multiple_photographers`; nenhuma exclusão ocorreu. O reset compatível está na change `reset-homolog-preserving-owner`.
 - [ ] 3.6 Executar o reset no servidor por `reset-homolog-preserving-owner`, sem criar dump e mantendo somente a conta proprietária/configurações/integrações; validar contagens, preservação e Evolution. A autorização inclui remover exatamente os 164 dumps antigos depois do reset, mantendo snapshots e demais arquivos. Gate protegido e inventário final ainda pendentes.
+- [ ] 3.7 Após reset bem-sucedido e validação final, retirar DuckDNS da allowlist e dos scripts operacionais, e remover somente o host virtual antigo da Markina no NPM; verificar o domínio novo saudável e que DuckDNS não chega mais à aplicação. A conta DNS externa não será alterada.
 - [ ] 3.7 Após reset bem-sucedido e validação final, remover `markina-homolog.duckdns.org` da allowlist da aplicação e retirar somente o host virtual Markina antigo do NPM; verificar que o domínio novo continua saudável e que DuckDNS não chega mais à aplicação. A conta/registro externo DuckDNS não será modificada.
 
 ## Inventário somente de leitura — 2026-10-13
@@ -31,6 +32,8 @@
 - A árvore Git já tinha muitas modificações locais não relacionadas antes desta change; elas permanecem intocadas.
 
 ## Bloqueios atuais
+
+- Reset proprietário e retirada da origem DuckDNS estão pendentes. A limpeza legada recusa múltiplas contas; nenhum dado foi apagado. O procedimento dedicado e seus ensaios/gate estão na change `reset-homolog-preserving-owner`.
 
 - Reset proprietário e retirada da origem DuckDNS estão pendentes. A limpeza legada recusa múltiplas contas; nenhum dado foi apagado. O procedimento dedicado e seus ensaios/gate estão na change `reset-homolog-preserving-owner`.
 
