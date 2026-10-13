@@ -67,7 +67,7 @@ check(api_url.path.lstrip("/") == services["db"]["environment"]["POSTGRES_DB"], 
 # legado MARKINA_PUBLIC_URL pode continuar no default localhost sem afetar o
 # destino público; não usá-lo como identidade do host de homologação.
 public_origin = urlsplit(services["api"]["environment"].get("PUBLIC_APP_ORIGIN", ""))
-check(public_origin.scheme == "https" and public_origin.hostname == "markina-homolog.duckdns.org"
+check(public_origin.scheme == "https" and public_origin.hostname == "markina.pickyourpic.com.br"
       and public_origin.path in ("", "/") and not public_origin.query
       and not public_origin.fragment and not public_origin.username
       and not public_origin.password, "origem pública")
@@ -95,7 +95,7 @@ for service in api db redis; do
   [[ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container")" == "$PROJECT_NAME" ]] || \
     fail "contêiner fora do projeto Markina: $service"
 done
-echo "topologia: projeto=$PROJECT_NAME entrada=127.0.0.1:8080 subdomínio=markina-homolog.duckdns.org"
+echo "topologia: projeto=$PROJECT_NAME entrada=127.0.0.1:8080 subdomínio=markina.pickyourpic.com.br"
 compose ps
 
 if [[ "$MODE" == "inventory" ]]; then
