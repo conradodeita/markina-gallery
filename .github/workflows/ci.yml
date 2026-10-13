@@ -52,6 +52,9 @@ jobs:
         run: |
           python scripts/test_preserve_branding.py -v
           bash scripts/test_deploy_homolog.sh
+          bash scripts/test_reset_homolog_owner.sh
+          python scripts/test_owner_reset_policy.py
+          ruff check scripts/reset_homolog_owner.py
       - name: Testes (pytest)
         run: pytest backend/tests -q
       - name: Regressões de concorrência multi-tenant em PostgreSQL
