@@ -29,6 +29,7 @@ PREVIEW_WORKER_ACTIVE=0
 GEMMA_WORKER_ACTIVE=0
 RAW_DEVELOPMENT_DEPLOY_ENABLED=false
 RAW_DEVELOPMENT_WORKER_ACTIVE=0
+REQUESTED_RAW_DEVELOPMENT_ENABLED="auto"
 readonly FACIAL_SERVICES=("face-search-worker" "face-index-worker" "face-maintenance-worker")
 
 discover_gemma_worker() {
@@ -52,7 +53,7 @@ discover_raw_development_worker() {
 }
 
 usage() {
-  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>] [--raw-development-enabled <true|false>]" >&2
+  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>] [--raw-development-enabled <auto|true|false>]" >&2
 }
 
 fail() {
@@ -413,7 +414,7 @@ parse_arguments() {
         shift 2
         ;;
       --raw-development-enabled)
-        RAW_DEVELOPMENT_DEPLOY_ENABLED="${2:-}"
+        REQUESTED_RAW_DEVELOPMENT_ENABLED="${2:-}"
         shift 2
         ;;
       *)
@@ -427,8 +428,20 @@ parse_arguments() {
   [[ -z "$PUBLIC_BASE_URL" || "$PUBLIC_BASE_URL" =~ ^https://[^[:space:]]+$ ]] || fail "a URL pública deve usar HTTPS"
   REQUESTED_FACIAL_ENABLED="${REQUESTED_FACIAL_ENABLED,,}"
   [[ -z "$REQUESTED_FACIAL_ENABLED" || "$REQUESTED_FACIAL_ENABLED" == "true" || "$REQUESTED_FACIAL_ENABLED" == "false" ]] || fail "--facial-enabled deve ser true ou false"
-  RAW_DEVELOPMENT_DEPLOY_ENABLED="${RAW_DEVELOPMENT_DEPLOY_ENABLED,,}"
-  [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" || "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "false" ]] || fail "--raw-development-enabled deve ser true ou false"
+  REQUESTED_RAW_DEVELOPMENT_ENABLED="${REQUESTED_RAW_DEVELOPMENT_ENABLED,,}"
+  [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "auto" || "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "true" || "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "false" ]] || fail "--raw-development-enabled deve ser auto, true ou false"
+}
+
+resolve_raw_development_state() {
+  if [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "auto" ]]; then
+    if [[ "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1 ]]; then
+      RAW_DEVELOPMENT_DEPLOY_ENABLED=true
+    else
+      RAW_DEVELOPMENT_DEPLOY_ENABLED=false
+    fi
+  else
+    RAW_DEVELOPMENT_DEPLOY_ENABLED="$REQUESTED_RAW_DEVELOPMENT_ENABLED"
+  fi
 }
 
 verify_target() {
@@ -447,6 +460,7 @@ verify_target() {
   FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
   discover_gemma_worker
   discover_raw_development_worker
+  resolve_raw_development_state
   verify_facial_deploy_state
   compose config --quiet
   record_predeploy_inventory

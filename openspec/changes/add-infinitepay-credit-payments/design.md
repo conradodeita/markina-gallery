@@ -94,6 +94,10 @@ Integração inicia inativa. Mocks/fixtures sintéticos podem comprovar o compor
 
 ## Risks / Trade-offs
 
+### Preservação de workers fora do escopo
+
+O deploy desta change SHALL preservar os estados de processamento facial e RAW já operacionais. O workflow não passa flags para ligar/desligar facial: o script preserva o valor de `FACIAL_PROCESSING_ENABLED` do `.env.homolog`. Para RAW, o script usa o modo `auto`, detecta se o worker do projeto está ativo antes de preparar o Compose e somente inclui/reinicia o overlay RAW se já estiver ativo. Assim o rollout de cartão não inicia consumidores de dados de outra finalidade nem desativa um módulo existente.
+
 - [Webhook sem contrato público de assinatura] → manter webhook fora do primeiro fluxo; usar a consulta `payment_check` autorizada para o retorno. Não confiar no payload de evento até revisar contrato com o provedor.
 - [Checkout API oferecer PIX apesar da escolha cartão] → comprovar G1 por conta/ambiente antes de ativar; não aceitar captura PIX nem simular restrição por validação posterior.
 - [Recebedor digitado incorretamente] → mudança sensível, prévia/conferência do recebedor e snapshot imutável; não afirmar titularidade pela sintaxe da tag.
