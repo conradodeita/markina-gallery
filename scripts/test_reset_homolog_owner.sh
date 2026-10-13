@@ -75,8 +75,10 @@ bash -c '
   [[ "$(dump_manifest "$root")" == "164 164" ]]
   purge_approved_dumps "$root" 164 164
   [[ "$(dump_manifest "$root")" == "0 0" && -f "$root/brand.png" ]]
+  purge_approved_dumps "$root" 164 164
 ' "$temp_root/approved" >"$output" 2>&1
 grep -Fq '164 arquivos, 164 bytes' "$output"
+grep -Fq 'dumps Markina autorizados já removidos' "$output"
 
 if bash -c '
   source "$OWNER_RESET_HOST_SCRIPT"

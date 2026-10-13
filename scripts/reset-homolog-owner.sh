@@ -109,6 +109,8 @@ import os, stat, sys
 root=sys.argv[1]
 if os.path.realpath(root) != root or os.path.islink(root) or not os.path.isdir(root):
     raise SystemExit("diretório fixo de backups ausente ou inseguro")
+if not os.access(root, os.W_OK | os.X_OK):
+    raise SystemExit("diretório de backups sem permissão para excluir; nenhum reset pode começar")
 count=0; total=0
 with os.scandir(root) as entries:
     for entry in entries:
@@ -124,6 +126,17 @@ PY
 
 purge_approved_dumps() {
   local root="${1:-$BACKUP_ROOT}" expected_count="${2:-$APPROVED_DUMP_COUNT}" expected_bytes="${3:-$APPROVED_DUMP_BYTES}"
+  local manifest current_count current_bytes after_count after_bytes
+  manifest="$(dump_manifest "$root")" || return 1
+  read -r current_count current_bytes <<< "$manifest"
+  if [[ "$current_count" == 0 && "$current_bytes" == 0 ]]; then
+    echo "dumps Markina autorizados já removidos; demais tipos preservados"
+    return 0
+  fi
+  [[ "$current_count" == "$expected_count" && "$current_bytes" == "$expected_bytes" ]] || {
+    echo "owner-reset: manifesto dos dumps divergiu do inventário autorizado; nenhum dump removido" >&2
+    return 1
+  }
   python3 - "$root" "$expected_count" "$expected_bytes" <<'PY'
 import os, stat, sys
 root=sys.argv[1]; expected_count=int(sys.argv[2]); expected_bytes=int(sys.argv[3])
@@ -150,7 +163,6 @@ try:
 finally:
     os.close(fd)
 PY
-  local manifest after_count after_bytes
   manifest="$(dump_manifest "$root")" || return 1
   read -r after_count after_bytes <<< "$manifest"
   [[ "$after_count" == 0 && "$after_bytes" == 0 ]] || return 1

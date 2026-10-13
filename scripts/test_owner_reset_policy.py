@@ -75,7 +75,7 @@ def main():
     for guard in ("refs/heads/develop", "RESET_HOMOLOG_TO_OWNER_AND_DELETE_164_DUMPS_WITHOUT_BACKUP", "EXPECTED_APP_SHA", "--owner-email", "--expected-sha"):
         assert guard in WORKFLOW
     for guard in ("verify_writer_id", "writer ainda ativo", "writer ativo fora da pausa conferida", "writers mantidos pausados",
-                  "evolution_snapshot", "Evolution mudou durante a manutenção", "github\\.com/conradodeita/markina-gallery", "--no-deps", "--pull never", "flock -n", "pending.json", "MARKINA_RESET_SCRIPT_SHA256"):
+                  "evolution_snapshot", "Evolution mudou durante a manutenção", "os.W_OK | os.X_OK", "github\\.com/conradodeita/markina-gallery", "--no-deps", "--pull never", "flock -n", "pending.json", "MARKINA_RESET_SCRIPT_SHA256"):
         assert guard in SCRIPT
     for forbidden in ("pg_dump", "docker system prune", "compose down", "rm -rf", "alembic", "git checkout", "git reset"):
         assert forbidden not in SCRIPT

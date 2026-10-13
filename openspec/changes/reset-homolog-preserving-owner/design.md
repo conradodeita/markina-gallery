@@ -36,7 +36,7 @@ Conferir owner/schema/raízes e capturar em memória digests das linhas/ativos p
 
 ### Dumps antigos autorizados
 
-O proprietário autorizou excluir os 164 arquivos `.dump` anteriores (~2.077.111.921 bytes) inventariados em `/var/lib/markina-gallery/backups`. A exclusão ocorre somente depois do reset de banco, mídia e Redis concluir, enquanto os writers ainda estão pausados. O wrapper valida caminho fixo, diretório sem symlink, arquivos regulares diretamente na raiz e igualdade do manifesto de contagem/bytes; divergência bloqueia sem começar a excluir. Depois confere zero `.dump`. Não lê conteúdo, nomes ou credenciais. Snapshots de branding, configuração e todos os tipos de arquivo diferentes de `.dump` permanecem preservados.
+O proprietário autorizou excluir os 164 arquivos `.dump` anteriores (~2.077.111.921 bytes) inventariados em `/var/lib/markina-gallery/backups`. Antes de pausar writers, o inventário confirma que a pasta fixa permite excluir. A exclusão ocorre somente depois do reset de banco, mídia e Redis concluir, enquanto os writers ainda estão pausados. O wrapper valida caminho fixo, diretório sem symlink, arquivos regulares diretamente na raiz e igualdade do manifesto de contagem/bytes; divergência bloqueia sem começar a excluir. Se a remoção já terminou antes de uma falha posterior, uma repetição aceita o estado zero e prossegue. Depois confere zero `.dump`. Não lê conteúdo, nomes ou credenciais. Snapshots de branding, configuração e todos os tipos de arquivo diferentes de `.dump` permanecem preservados.
 
 ## Risks / Trade-offs
 
