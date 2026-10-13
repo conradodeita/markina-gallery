@@ -10,10 +10,10 @@
 
 ## 3. Configurar e validar domínio novo
 
-- [ ] 3.1 Depois da transição do Registro.br, criar apenas `A markina -> 132.145.193.169`; verificar resolução nos servidores autoritativos e resolvedores públicos, sem alterar a raiz, MX ou nameservers.
-- [ ] 3.2 Criar no Nginx Proxy Manager somente o host `markina.pickyourpic.com.br` apontando para `markina-homolog-nginx:80`; emitir certificado Let's Encrypt próprio e preservar o host/certificado DuckDNS.
-- [ ] 3.3 Publicar a configuração de origens pelo fluxo protegido existente, usando a URL nova como canônica e permitindo explicitamente o endereço DuckDNS antigo; verificar HTTPS, certificado, roteamento, healthchecks, login, cookies, redirecionamentos, operação sensível e logs relevantes.
-- [ ] 3.4 Confirmar acesso pelos dois endereços, documentar resultados reais e rollback. Manter o hostname antigo até revisão humana; não arquivar nem sincronizar a change sem revisão humana.
+- [x] 3.1 Depois da transição do Registro.br, criar apenas `A markina -> 132.145.193.169`; verificar resolução nos servidores autoritativos e resolvedores públicos, sem alterar a raiz, MX ou nameservers. Evidência (2026-10-13): `e.sec.dns.br` (`200.192.232.14`) e `f.sec.dns.br` (`200.189.40.14`) retornaram `132.145.193.169`; `1.1.1.1` e `8.8.8.8` retornaram o mesmo A. Os antigos `a.auto.dns.br`/`b.auto.dns.br` já não são autoritativos após a delegação e retornaram NXDOMAIN quando consultados diretamente.
+- [x] 3.2 Criar no Nginx Proxy Manager somente o host `markina.pickyourpic.com.br` apontando para `markina-homolog-nginx:80`; emitir certificado Let's Encrypt próprio e preservar o host/certificado DuckDNS. Evidência (2026-10-13): o NPM 2.15.1 mostra o novo host público `Online`, destino `http://markina-homolog-nginx:80` e SSL `Let's Encrypt`; Force SSL e HTTP/2 habilitados, HSTS desabilitado. O host `markina-homolog.duckdns.org` continuou `Online` com seu certificado existente e mesmas configurações.
+- [ ] 3.3 Publicar a configuração de origens pelo fluxo protegido existente, usando a URL nova como canônica e permitindo explicitamente o endereço DuckDNS antigo; verificar HTTPS, certificado, roteamento, healthchecks, login, cookies, redirecionamentos, operação sensível e logs relevantes. Evidência parcial (2026-10-13): sem `-k`, `curl` verificou TLS (`ssl_verify_result=0`) e HTTP 200 na raiz e em `/healthz` e `/api/health` dos dois domínios; os endpoints de saúde retornaram `ok` e `{"status":"ok","service":"api"}`. Ainda pendem integração/deploy do PR #167 e validações autenticadas de login, cookies, redirecionamentos, operação sensível e logs.
+- [ ] 3.4 Confirmar acesso pelos dois endereços, documentar resultados reais e rollback. Manter o hostname antigo até revisão humana; não arquivar nem sincronizar a change sem revisão humana. Evidência parcial (2026-10-13): os dois hosts atendem raiz, `/healthz` e `/api/health` por HTTPS; o DuckDNS foi preservado. Rollback não executado; manter o host antigo é a proteção atual enquanto a nova origem é validada.
 
 ## Inventário somente de leitura — 2026-10-13
 
@@ -29,8 +29,8 @@
 
 ## Bloqueios atuais
 
-- O painel do Registro.br informa janela de transição de aproximadamente duas horas depois de selecionar o modo avançado; a configuração da zona ainda não está liberada.
-- A inspeção visual autenticada de login e funcionalidades essenciais depende de sessão humana válida no navegador e será executada quando o novo HTTPS estiver ativo, sem compartilhar credenciais.
+- O PR #167 está aberto e sem revisão humana. O CI está verde, mas deploy/homologação foi ignorado pelo evento de PR; a configuração canônica da aplicação ainda não foi publicada. Não integrar nem contornar a proteção de branch/deploy.
+- A validação autenticada de login, cookies, redirecionamentos e operação sensível ainda depende de publicar a mudança e de sessão humana válida no navegador; não compartilhar credenciais.
 
 ## Atualização após aprovação e implementação local — 2026-10-13
 
@@ -46,3 +46,11 @@
 - A zona DNS estava vazia antes da operação. O Registro.br confirmou `Zona DNS atualizada com sucesso` depois da inclusão do único registro `A markina.pickyourpic.com.br -> 132.145.193.169`. A tabela agora contém somente essa linha; a raiz e MX não foram alterados e os nameservers continuam os automáticos do Registro.br.
 - Verificação logo após salvar: os servidores autoritativos `200.160.2.88` e `200.160.2.89` e os resolvedores `1.1.1.1` e `8.8.8.8` ainda não retornam o novo A. Portanto, a task 3.1 permanece pendente até a propagação ser observada. Nenhum host/certificado NPM, configuração `.env` ou deploy foi alterado.
 - CI do PR #167 passou integralmente em 2026-10-13: backend, frontend, runtime Gemma, gitleaks e validação OpenSpec. O PR está pronto para revisão humana; não foi integrado nem implantado.
+
+## Atualização operacional após propagação e criação do host — 2026-10-13
+
+- Após a transição do Registro.br, a delegação pública de `pickyourpic.com.br` passou para `e.sec.dns.br` e `f.sec.dns.br`. Consultas diretas aos IPs autoritativos `200.192.232.14` e `200.189.40.14`, além dos resolvedores `1.1.1.1` e `8.8.8.8`, retornaram `markina.pickyourpic.com.br A 132.145.193.169`. A raiz, o MX e a configuração de nameservers não foram modificados nesta operação.
+- Depois de confirmar a resposta nos autoritativos e públicos, foi criado somente o host público `markina.pickyourpic.com.br` no NPM para `http://markina-homolog-nginx:80`. A solicitação do certificado Let's Encrypt foi enviada com confirmação explícita do titular para aceitar os Termos de Serviço. O NPM reportou `Proxy Host has been saved`; a tabela mostra o host novo `Online`, certificado Let's Encrypt, Force SSL e HTTP/2 ativos, HSTS desativado.
+- O host antigo `markina-homolog.duckdns.org` continua presente e `Online`, com certificado Let's Encrypt próprio; o host ClearBudget também continua `Online`. Nenhuma configuração, container, rede ou porta de terceiros foi alterada.
+- Verificações externas de 2026-10-13: `curl` sem ignorar validação TLS confirmou verificação SSL (`ssl_verify_result=0`) e HTTP 200 na raiz, `/healthz` e `/api/health` do domínio novo e do DuckDNS. Os corpos dos healthchecks foram `ok` e `{"status":"ok","service":"api"}` respectivamente. Login, cookies e operações sensíveis ainda não foram exercitados porque a aplicação ainda não recebeu a nova configuração canônica da change.
+- O PR #167 continua aberto aguardando revisão humana. Todos os checks CI (backend, frontend, Gemma runtime, gitleaks e OpenSpec) passaram; o job `deploy-homolog` foi ignorado no evento de PR. Portanto, ainda não há deploy nem validação da allowlist de origens na aplicação; as tasks 3.3 e 3.4 permanecem pendentes.
