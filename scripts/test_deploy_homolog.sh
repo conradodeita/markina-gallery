@@ -152,7 +152,7 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
   ' >"$output" 2>&1
 grep -Fq 'PUBLIC_APP_ORIGIN sincronizada com a origem pública autorizada de homologação' "$output"
 
-printf 'APP_ENV=staging\nPUBLIC_APP_ORIGINS=\n' >"$origin_env"
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina-homolog.example\nPUBLIC_APP_ORIGINS=\n' >"$origin_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
