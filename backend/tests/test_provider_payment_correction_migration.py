@@ -11,7 +11,7 @@ from tests.test_tenant_infinitepay_migration import migration_database as _migra
 
 migration_database = _migration_database
 SOURCE = "20261012_0076"
-TARGET = "20261013_0078"
+TARGET = "20261014_0080"
 
 
 def test_upgrade_e_downgrade_vazios_preservam_compras(migration_database):
@@ -71,7 +71,7 @@ def test_downgrade_com_correcao_recusa_apagar_historico(migration_database):
         assert conn.scalar(sa.text("SELECT version_num FROM alembic_version")) == TARGET
 
 
-def test_migration_0078_inicia_cartao_desabilitado_para_configuracao_existente(migration_database):
+def test_migration_0080_inicia_cartao_desabilitado_para_configuracao_existente(migration_database):
     url, engine = migration_database
     alembic(url, "upgrade", SOURCE)
     with engine.begin() as conn:
@@ -90,7 +90,7 @@ def test_migration_0078_inicia_cartao_desabilitado_para_configuracao_existente(m
             "SELECT card_enabled FROM infinitepay_settings WHERE id = :id"), {"id": settings_id}) in (False, 0)
 
 
-def test_migration_0078_recusa_downgrade_que_apagaria_preferencia_habilitada(migration_database):
+def test_migration_0080_recusa_downgrade_que_apagaria_preferencia_habilitada(migration_database):
     url, engine = migration_database
     alembic(url, "upgrade", TARGET)
     with engine.begin() as conn:

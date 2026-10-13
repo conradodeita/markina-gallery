@@ -1,4 +1,4 @@
-"""Substituição integral por pasta, preservando herança e revisões."""
+"""Configuração e revisões independentes por pasta."""
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -27,10 +27,13 @@ def test_effective_preview_never_accumulates_exposure(tmp_path):
         db.flush()
         gallery_config = GalleryPreviewSettings(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id, enabled=True,
                                                 strength=40, exposure_tenths=3, generation=2)
+        snapshot = FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=inherited.id,
+                                            preview_mode="custom", preview_strength=40,
+                                            preview_exposure_tenths=3, facial_mode="on")
         override = FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=custom.id, preview_mode="custom",
                                             preview_strength=60, preview_exposure_tenths=5,
-                                            facial_mode="off", revision=2)
-        db.add_all([gallery_config, override])
+                                            facial_mode="off", revision=1)
+        db.add_all([gallery_config, snapshot, override])
         db.flush()
         assert effective_preview(db, inherited).exposure_tenths == 3
         own = effective_preview(db, custom)
@@ -41,21 +44,22 @@ def test_effective_preview_never_accumulates_exposure(tmp_path):
         assert not facial_processing_allowed(db, custom.id, tenant_id=FIXTURE_TENANT_ID)
         gallery_config.exposure_tenths = 7
         db.flush()
-        assert effective_preview(db, inherited).exposure_tenths == 7
+        assert effective_preview(db, inherited).exposure_tenths == 3
         assert effective_preview(db, custom).exposure_tenths == 5
         override.preview_exposure_tenths = 0
         db.flush()
         assert effective_preview(db, custom).exposure_tenths == 0
         gallery_config.enabled = False
         db.flush()
-        assert not effective_preview(db, inherited).enabled
+        assert effective_preview(db, inherited).enabled
         assert effective_preview(db, custom).enabled
         override.preview_mode = "off"
         db.flush()
         assert not effective_preview(db, custom).enabled
-        override.preview_mode = "inherit"
+        override.preview_mode = "inherit"  # legado é tratado como configuração local
         db.flush()
-        assert not effective_preview(db, custom).enabled
+        assert effective_preview(db, custom).enabled
+        assert effective_preview(db, custom).exposure_tenths == 0
     engine.dispose()
 
 

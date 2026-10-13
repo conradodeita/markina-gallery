@@ -19,7 +19,6 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export default function PreviewAdjustmentPanel({ galleryId: gallery }: { galleryId: string }) {
   const [config, setConfig] = useState<Configuration | null>(null);
-  const [enabled, setEnabled] = useState(false);
   const [strength, setStrength] = useState(50);
   const [exposure, setExposure] = useState(0);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -35,7 +34,7 @@ export default function PreviewAdjustmentPanel({ galleryId: gallery }: { gallery
     const controller = new AbortController();
     api<Configuration>(`/galleries/${gallery}/configuration`, { signal: controller.signal }).then((value) => {
       if (controller.signal.aborted) return;
-      setConfig(value); setEnabled(value.enabled); setStrength(value.strength); setExposure(value.exposure_tenths);
+      setConfig(value); setStrength(value.strength); setExposure(value.exposure_tenths);
     }).catch(() => { if (!controller.signal.aborted) setMessage("Ajuste de prévias indisponível."); });
     return () => { controller.abort(); queueAbort.current?.abort(); };
   }, [gallery]);
@@ -76,12 +75,10 @@ export default function PreviewAdjustmentPanel({ galleryId: gallery }: { gallery
     try {
       const value = await api<Configuration>(`/galleries/${gallery}/configuration`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, strength, exposure_tenths: exposure }),
+        body: JSON.stringify({ enabled: true, strength, exposure_tenths: exposure }),
       });
       setConfig(value); setPhoto("");
-      setMessage(value.enabled
-        ? "Ativado para novas fotos. Para fotos existentes, use Processar galeria."
-        : "Desligado. As próximas visualizações usam as prévias convencionais.");
+      setMessage("Parâmetros salvos. Novas pastas públicas os copiarão e iniciarão com ajuste ativo; pastas existentes mantêm sua própria configuração.");
     } catch { setMessage("Não foi possível salvar o ajuste de prévias."); }
     finally { setSaving(false); }
   }
@@ -121,21 +118,17 @@ export default function PreviewAdjustmentPanel({ galleryId: gallery }: { gallery
 
   return <section className={`admin-card ${styles.panel}`} aria-labelledby="preview-adjustment-title">
     <div>
-      <h2 id="preview-adjustment-title">Ajuste automático das prévias</h2>
-      <p>Melhora a apresentação para o cliente. Originais e edição final são preservados.</p>
+      <h2 id="preview-adjustment-title">Padrão para novas pastas públicas</h2>
+      <p>Novas pastas começam com ajuste automático ativo e copiam estes parâmetros. Cada pasta mantém depois sua própria configuração. Originais e edição final são preservados.</p>
     </div>
     {config ? <>
       <form className={styles.controls} onSubmit={save}>
         <fieldset className={styles.fields} disabled={saving || queuing}>
-        <label className={styles.toggle}>
-          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-          Melhorar prévias automaticamente
-        </label>
-        <label>Intensidade: {strength}%
+        <label>Intensidade inicial: {strength}%
           <input type="range" min={10} max={75} step={5} value={strength}
             onChange={(event) => setStrength(Number(event.target.value))} />
         </label>
-        <label>Exposição: {(exposure / 10).toFixed(1)} EV
+        <label>Exposição inicial: {(exposure / 10).toFixed(1)} EV
           <input type="range" min={-20} max={20} step={1} value={exposure}
             onChange={(event) => setExposure(Number(event.target.value))} />
           <small>− escurecer · 0 neutro · + clarear</small>
@@ -143,20 +136,20 @@ export default function PreviewAdjustmentPanel({ galleryId: gallery }: { gallery
         <button className="primary" disabled={saving || queuing}>{saving ? "Salvando…" : "Salvar ajuste de prévias"}</button>
         </fieldset>
       </form>
-      <p>{config.enabled ? "Ativo para novas fotos desta galeria." : "Desligado — prévias convencionais."} Salve e processe novamente para atualizar as fotos existentes.</p>
+      <p>Para ajustar fotos de uma pasta existente, use o painel “Processamento da pasta”; a ação em lote abaixo respeita a configuração própria de cada pasta.</p>
       <p>A exposição é aplicada depois do ajuste automático. Valores altos podem perder detalhes nas áreas claras.</p>
       <div className={styles.controls}>
-        <button type="button" className="secondary" disabled={!config.enabled || !gallery || queuing || saving || config.enabled !== enabled || config.strength !== strength || config.exposure_tenths !== exposure}
-          onClick={enqueueGallery}>{queuing ? "Adicionando à fila…" : "Processar galeria / tentar falhas"}</button>
+        <button type="button" className="secondary" disabled={!config.enabled || !gallery || queuing || saving || config.strength !== strength || config.exposure_tenths !== exposure}
+          onClick={enqueueGallery}>{queuing ? "Adicionando à fila…" : "Processar pastas da galeria"}</button>
         <button type="button" className="secondary" disabled={!gallery}
           onClick={() => refresh().catch(() => setMessage("Não foi possível atualizar o progresso."))}>Atualizar progresso</button>
       </div>
-      {config.enabled !== enabled || config.strength !== strength || config.exposure_tenths !== exposure
+      {config.strength !== strength || config.exposure_tenths !== exposure
         ? <p role="status">Salve os ajustes antes de processar.</p> : null}
       {progress ? <>
         <p role="status">{progress.counts.ready} prontas · {progress.counts.queued} na fila · {progress.counts.processing} processando · {progress.counts.failed} falhas</p>
         <p>Se o ajuste falhar, o cliente continua vendo a prévia convencional.</p>
-        {config.enabled && progress.photos.length ? <>
+        {progress.photos.length ? <>
           <label className={styles.photoSelect}>Comparar foto<select value={photo} onChange={(event) => setPhoto(event.target.value)}>
             <option value="">Escolha uma foto pronta</option>
             {progress.photos.map((item) => <option key={item.id} value={item.id}>{item.filename}</option>)}
@@ -164,7 +157,7 @@ export default function PreviewAdjustmentPanel({ galleryId: gallery }: { gallery
           {progress.next_cursor ? <button type="button" className="secondary" onClick={morePhotos}>Mais fotos prontas</button> : null}
         </> : null}
       </> : null}
-      {photo && config.enabled ? <div className={styles.comparison} key={`${photo}-${config.generation}`}>
+      {photo ? <div className={styles.comparison} key={`${photo}-${config.generation}`}>
         {(["before", "after"] as const).map((version) => <figure key={version}>
           <figcaption>{version === "before" ? "Antes" : "Depois"}</figcaption>
           {/* eslint-disable-next-line @next/next/no-img-element -- Prévia privada autenticada e sem cache público. */}

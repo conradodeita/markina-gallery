@@ -70,7 +70,8 @@ def test_inventory_returns_only_counts_without_pii(
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
     monkeypatch.setenv("MEDIA_HISTORY_ROOT", str(tmp_path / "history"))
     monkeypatch.setenv("FACIAL_REFERENCE_ROOT", str(tmp_path / "facial-references"))
-    for name in ("source", "derivatives", "history", "facial-references"):
+    monkeypatch.setenv("RAW_DEVELOPMENT_ROOT", str(tmp_path / "raw-staging"))
+    for name in ("source", "derivatives", "history", "facial-references", "raw-staging"):
         (tmp_path / name).mkdir()
     with SessionLocal() as db:
         result = inventory(db)
@@ -93,6 +94,7 @@ def test_inventory_aggregates_multiple_photographers_without_ids(
         root.mkdir()
     (roots["source"] / "source.jpg").write_bytes(b"source")
     (roots["derivatives"] / "preview.jpg").write_bytes(b"preview")
+    (roots["raw_staging"] / "expired-source.arw").write_bytes(b"temporary raw")
     monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: roots)
     synthetic = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(synthetic)
@@ -107,12 +109,56 @@ def test_inventory_aggregates_multiple_photographers_without_ids(
     }
     assert result["media"]["source"] == {"files": 1, "bytes": 6}
     assert result["media"]["derivatives"] == {"files": 1, "bytes": 7}
+    assert result["media"]["raw_staging"] == {"files": 1, "bytes": 13}
     assert all(type(value) is int for value in result["database"].values())
     assert all(type(value) is int for value in result["preserved"].values())
     rendered = str(result)
     assert str(FIXTURE_TENANT_ID) not in rendered
     assert str(second_tenant_id) not in rendered
     synthetic.dispose()
+
+
+def test_raw_staging_is_included_in_the_exclusive_media_roots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expected = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
+    monkeypatch.setattr(homolog_cleanup, "EXPECTED_MEDIA_ROOTS", expected)
+    for root_name, env_name in (
+        ("source", "MEDIA_SOURCE_ROOT"),
+        ("derivatives", "MEDIA_DERIVATIVES_ROOT"),
+        ("history", "MEDIA_HISTORY_ROOT"),
+        ("facial_references", "FACIAL_REFERENCE_ROOT"),
+        ("raw_staging", "RAW_DEVELOPMENT_ROOT"),
+    ):
+        root = expected[root_name]
+        root.mkdir()
+        monkeypatch.setenv(env_name, str(root))
+
+    roots = homolog_cleanup.media_roots()
+    homolog_cleanup.require_exclusive_media_roots(roots)
+    assert roots["raw_staging"] == expected["raw_staging"]
+
+
+def test_missing_optional_raw_staging_does_not_block_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expected = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
+    monkeypatch.setattr(homolog_cleanup, "EXPECTED_MEDIA_ROOTS", expected)
+    for root_name, env_name in (
+        ("source", "MEDIA_SOURCE_ROOT"),
+        ("derivatives", "MEDIA_DERIVATIVES_ROOT"),
+        ("history", "MEDIA_HISTORY_ROOT"),
+        ("facial_references", "FACIAL_REFERENCE_ROOT"),
+        ("raw_staging", "RAW_DEVELOPMENT_ROOT"),
+    ):
+        root = expected[root_name]
+        monkeypatch.setenv(env_name, str(root))
+        if root_name != "raw_staging":
+            root.mkdir()
+
+    roots = homolog_cleanup.media_roots()
+    homolog_cleanup.require_exclusive_media_roots(roots)
+    assert not roots["raw_staging"].exists()
 
 
 def test_inventory_counts_folder_settings_as_operational_without_exposing_values(
@@ -235,11 +281,16 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
 ) -> None:
     Base.metadata.create_all(engine)
     monkeypatch.setenv("APP_ENV", "homolog")
-    roots = tuple(tmp_path / name for name in ("source", "derivatives", "history", "facial-references"))
+    roots = tuple(tmp_path / name for name in (
+        "source", "derivatives", "history", "facial-references", "raw-staging"
+    ))
     monkeypatch.setattr(homolog_cleanup, "EXPECTED_MEDIA_ROOTS", dict(zip(
-        ("source", "derivatives", "history", "facial_references"), roots
+        ("source", "derivatives", "history", "facial_references", "raw_staging"), roots
     )))
-    for name, root in zip(("MEDIA_SOURCE_ROOT", "MEDIA_DERIVATIVES_ROOT", "MEDIA_HISTORY_ROOT", "FACIAL_REFERENCE_ROOT"), roots):
+    for name, root in zip((
+        "MEDIA_SOURCE_ROOT", "MEDIA_DERIVATIVES_ROOT", "MEDIA_HISTORY_ROOT",
+        "FACIAL_REFERENCE_ROOT", "RAW_DEVELOPMENT_ROOT",
+    ), roots):
         root.mkdir()
         (root / "test.jpg").write_bytes(b"photo")
         monkeypatch.setenv(name, str(root))

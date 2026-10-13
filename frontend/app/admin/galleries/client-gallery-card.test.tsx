@@ -23,9 +23,9 @@ it("abre a pasta pela prévia protegida e mantém outra pasta sem prévia acess�
       { id: "folder-2", name: "Pasta 02", status: "preparing", photo_count: 0,
         preview_url: null, assigned_client_ids: ["ana"] },
     ] } : path.endsWith("/processing") ? {
-      folder_id: "folder-1", folder_name: "Pasta 01", preview_mode: "inherit", facial_mode: "inherit",
+      folder_id: "folder-1", folder_name: "Pasta 01", preview_mode: "custom", facial_mode: "on",
       preview_strength: 50, preview_exposure_tenths: 0,
-      effective_preview: { mode: "inherit", enabled: false, strength: 50, exposure_tenths: 0 },
+      effective_preview: { mode: "custom", enabled: true, strength: 50, exposure_tenths: 0 },
       facial_available: false, facial_allowed: false, total_photos: 1,
       preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
       facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
@@ -58,9 +58,9 @@ it("mostra destinatárias legadas sem oferecer nova atribuição", async () => {
     path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Retratos", status: "released",
       photo_count: 0, assigned_client_ids: ["ana", "bia"] }] }
       : path.endsWith("/processing") ? {
-        folder_id: "folder-1", folder_name: "Retratos", preview_mode: "inherit", facial_mode: "inherit",
+        folder_id: "folder-1", folder_name: "Retratos", preview_mode: "custom", facial_mode: "on",
         preview_strength: 50, preview_exposure_tenths: 0,
-        effective_preview: { mode: "inherit", enabled: false, strength: 50, exposure_tenths: 0 },
+        effective_preview: { mode: "custom", enabled: true, strength: 50, exposure_tenths: 0 },
         facial_available: false, facial_allowed: false, total_photos: 0,
         preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
         facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
@@ -103,8 +103,8 @@ it("envia ao escolher arquivos, mostra progresso e retenta só a falha", async (
     const body = path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Retratos",
       status: "preparing", photo_count: 0, assigned_client_ids: ["ana"] }] }
       : path.endsWith("/processing") ? { folder_id: "folder-1", folder_name: "Retratos",
-        preview_mode: "inherit", facial_mode: "inherit", preview_strength: 50, preview_exposure_tenths: 0,
-        effective_preview: { mode: "inherit", enabled: false, strength: 50, exposure_tenths: 0 },
+        preview_mode: "custom", facial_mode: "on", preview_strength: 50, preview_exposure_tenths: 0,
+        effective_preview: { mode: "custom", enabled: true, strength: 50, exposure_tenths: 0 },
         facial_available: false, facial_allowed: false, total_photos: 0,
         preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
         facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null }

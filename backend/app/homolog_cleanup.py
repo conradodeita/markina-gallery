@@ -37,6 +37,7 @@ EXPECTED_MEDIA_ROOTS = {
     "derivatives": Path("/var/lib/markina/derivatives"),
     "history": Path("/var/lib/markina/history"),
     "facial_references": Path("/var/lib/markina/facial-references"),
+    "raw_staging": Path("/var/lib/markina/raw-staging"),
 }
 
 # Lista fechada: uma migration que adicione tabela sem classificação bloqueia a limpeza.
@@ -55,6 +56,7 @@ PRESERVED_TABLES = MONITOR_PRESERVED_TABLES | frozenset({
     "global_pix_settings", "infinitepay_settings", "notification_setting", "payment_message_template",
     "preview_adjustment_settings", "progressive_pricing_preset",
     "progressive_pricing_tier", "whatsapp_channel_settings", "tenant", "tenant_admin",
+    "raw_development_settings",
 })
 MIXED_TABLES = frozenset({"audit_event", "auth_session", "push_subscription"})
 OPERATIONAL_TABLES = frozenset({
@@ -78,6 +80,7 @@ OPERATIONAL_TABLES = frozenset({
     "photo_face_embedding", "photo_favorite", "photo_folder", "photo_selection",
     "photo_view", "pix_checkout_settings", "preview_adjustment", "price_rule",
     "private_upload_batch", "private_upload_batch_asset", "removed_photo_movement",
+    "raw_development_job",
     "sale_order", "sale_order_item", "whatsapp_delivery",
     "whatsapp_delivery_attempt", "whatsapp_webhook_receipt",
 })
@@ -144,13 +147,22 @@ def media_roots() -> dict[str, Path]:
         "facial_references": Path(os.getenv(
             "FACIAL_REFERENCE_ROOT", "/var/lib/markina/facial-references"
         )),
+        "raw_staging": Path(os.getenv(
+            "RAW_DEVELOPMENT_ROOT", "/var/lib/markina/raw-staging"
+        )),
     }
 
 
 def require_exclusive_media_roots(roots: dict[str, Path]) -> None:
     for name, expected in EXPECTED_MEDIA_ROOTS.items():
         root = roots[name]
-        if root.resolve() != expected.resolve() or not root.is_dir():
+        if root.resolve() != expected.resolve():
+            raise RuntimeError(f"Volume de mídia exclusivo da Markina inválido: {name}.")
+        # RAW staging is optional; a base deployment without the opt-in worker
+        # has no mount to clear. If present, it must still be the exclusive path.
+        if name == "raw_staging" and not root.exists():
+            continue
+        if not root.is_dir():
             raise RuntimeError(f"Volume de mídia exclusivo da Markina inválido: {name}.")
 
 

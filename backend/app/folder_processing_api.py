@@ -25,8 +25,8 @@ from app.preview_adjustment.service import enqueue as enqueue_preview
 
 
 class FolderProcessingInput(BaseModel):
-    preview_mode: str = Field(pattern="^(inherit|custom|off)$")
-    facial_mode: str = Field(pattern="^(inherit|on|off)$")
+    preview_mode: str = Field(pattern="^(custom|off)$")
+    facial_mode: str = Field(pattern="^(on|off)$")
     preview_strength: int = Field(ge=10, le=75, strict=True)
     preview_exposure_tenths: int = Field(ge=-20, le=20, strict=True)
 
@@ -75,10 +75,10 @@ def register_routes(app, *, db_session, require_admin, require_same_origin, tena
         return {
             "folder_id": str(folder_id), "folder_name": folder.name,
             "private_folder": folder.audience_scope == "selected",
-            "preview_mode": "custom" if folder.audience_scope == "selected" else row.preview_mode if row else "inherit",
-            "facial_mode": "on" if folder.audience_scope == "selected" else row.facial_mode if row else "inherit",
-            "preview_strength": effective.strength if folder.audience_scope == "selected" else row.preview_strength if row else 50,
-            "preview_exposure_tenths": effective.exposure_tenths if folder.audience_scope == "selected" else row.preview_exposure_tenths if row else 0,
+            "preview_mode": "custom" if folder.audience_scope == "selected" else row.preview_mode if row and row.preview_mode in {"custom", "off"} else "custom",
+            "facial_mode": "on" if folder.audience_scope == "selected" else row.facial_mode if row and row.facial_mode in {"on", "off"} else "on",
+            "preview_strength": effective.strength,
+            "preview_exposure_tenths": effective.exposure_tenths,
             "effective_preview": {"mode": effective.mode, "enabled": effective.enabled,
                                   "strength": effective.strength,
                                   "exposure_tenths": effective.exposure_tenths},

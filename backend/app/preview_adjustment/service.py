@@ -18,7 +18,6 @@ from app.auth import (
     BrandingSettings,
     DerivedGallery,
     FacialJob,
-    FolderProcessingSettings,
     GalleryPreviewSettings,
     MediaDerivative,
     ParentGallery,
@@ -96,21 +95,6 @@ def configure(
         config.enabled, config.strength, config.exposure_tenths = enabled, strength, exposure_tenths
         config.generation += 1
         config.updated_at = now()
-        db.execute(
-            update(PreviewAdjustment)
-            .where(
-                PreviewAdjustment.tenant_id == tenant_id,
-                PreviewAdjustment.status.in_(("queued", "processing")),
-                PreviewAdjustment.photo_asset_id.in_(
-                    select(PhotoAsset.id).join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
-                    .outerjoin(FolderProcessingSettings, FolderProcessingSettings.folder_id == PhotoFolder.id)
-                    .where(PhotoAsset.tenant_id == tenant_id, PhotoAsset.parent_gallery_id == gallery_id,
-                           or_(FolderProcessingSettings.folder_id.is_(None),
-                               FolderProcessingSettings.preview_mode == "inherit"))
-                ),
-            )
-            .values(status="cancelled", claim_token=None, updated_at=now())
-        )
     return config
 
 

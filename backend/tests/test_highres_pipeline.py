@@ -121,6 +121,15 @@ def test_lifecycle_analyzes_before_media_then_removes_and_never_rescans(scene, m
     assert regions[0].bbox_width == pytest.approx(180 / 2400)
     assert regions[0].pipeline_version == "highres-v1"
     generate_derivatives(db, photo)
+    assert path.exists()  # A prévia ajustada ainda está pendente.
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.preview_adjustment.service import process_one
+
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     assert not path.exists()
     assert db.get(PhotoAnalysis, photo.id).deleted_at
     assert not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
@@ -354,7 +363,7 @@ def test_folder_override_holds_source_until_its_adjustment_completes(scene):
     cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
     replace_photo_index(db, tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id, derivatives_root=tmp,
                         provider=HighresProvider(), cipher=cipher, settings=settings)
-    configure_folder(db, photo.folder_id, tenant_id=FIXTURE_TENANT_ID, preview_mode="custom", facial_mode="inherit",
+    configure_folder(db, photo.folder_id, tenant_id=FIXTURE_TENANT_ID, preview_mode="custom", facial_mode="on",
                      strength=50, exposure_tenths=5)
     db.commit()
     generate_derivatives(db, photo)
@@ -370,7 +379,7 @@ def test_folder_facial_pause_refuses_new_highres_admission(scene):
     from app.folder_processing import configure_folder
 
     db, _parent, photo, settings, _tmp = scene
-    configure_folder(db, photo.folder_id, tenant_id=FIXTURE_TENANT_ID, preview_mode="inherit", facial_mode="off",
+    configure_folder(db, photo.folder_id, tenant_id=FIXTURE_TENANT_ID, preview_mode="custom", facial_mode="off",
                      strength=50, exposure_tenths=0)
     db.commit()
     assert admit_source(db, photo, jpeg(), settings=settings) is None
@@ -659,6 +668,15 @@ def test_upload_index_media_region_query_and_purge_integrated(scene):
         derivatives_root=tmp,
     )
     generate_derivatives(db, photo)
+    assert path.exists()  # O ajuste automático ainda precisa ler os derivados.
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.preview_adjustment.service import process_one
+
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     assert not path.exists()
     client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Pessoa sintética", phone_e164="+5511999999901")
     db.add(client)
@@ -762,6 +780,13 @@ def test_gemma_highres_preserves_sface_and_bounds_source_retention(scene, end_st
         db.commit()
     db.refresh(row)
     assert row.state == "ready" and row.metrics == original_metrics
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.preview_adjustment.service import process_one
+
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
     assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     assert not path.exists()
 

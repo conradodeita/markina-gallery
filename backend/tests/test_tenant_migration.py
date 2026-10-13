@@ -133,7 +133,7 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
 
     # O inventário de limpeza precisa corresponder ao schema atual, incluindo
     # tabelas de pagamento adicionadas depois da fundação de tenants.
-    migrate(migration_database, "upgrade", "20261013_0078")
+    migrate(migration_database, "upgrade", "20261014_0080")
     engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
     monkeypatch.setenv("APP_ENV", "homolog")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
@@ -141,6 +141,7 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
     for name, setting in (
         ("source", "MEDIA_SOURCE_ROOT"), ("derivatives", "MEDIA_DERIVATIVES_ROOT"),
         ("history", "MEDIA_HISTORY_ROOT"), ("facial_references", "FACIAL_REFERENCE_ROOT"),
+        ("raw_staging", "RAW_DEVELOPMENT_ROOT"),
     ):
         roots[name].mkdir()
         (roots[name] / "fake.jpg").write_bytes(b"synthetic")

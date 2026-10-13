@@ -185,7 +185,7 @@ def test_folder_status_and_retries_do_not_cross_folder_or_paused_mode() -> None:
                                        photo_ids={photos[3].id}) == 1
     assert jobs[3].status == "queued" and jobs[4].status == "failed"
 
-    configure_folder(db, other.id, tenant_id=FIXTURE_TENANT_ID, preview_mode="inherit", facial_mode="off",
+    configure_folder(db, other.id, tenant_id=FIXTURE_TENANT_ID, preview_mode="custom", facial_mode="off",
                      strength=50, exposure_tenths=0)
     db.commit()
     assert retry_all_failed_index_jobs(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id) == 0

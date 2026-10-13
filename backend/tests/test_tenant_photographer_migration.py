@@ -26,14 +26,14 @@ from tests.tenant_fixtures import insert_legacy_model as insert_model
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261013_0078"
+CURRENT_SCHEMA = "20261014_0080"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
     "facial_embedding_experiment_setting", "infinitepay_settings",
     "provider_payment", "provider_payment_attempt", "provider_payment_receipt",
-    "provider_payment_correction",
+    "provider_payment_correction", "raw_development_settings", "raw_development_job",
 })
 
 

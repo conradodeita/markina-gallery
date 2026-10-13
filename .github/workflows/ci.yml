@@ -54,6 +54,15 @@ jobs:
           bash scripts/test_deploy_homolog.sh
       - name: Testes (pytest)
         run: pytest backend/tests -q
+      - name: Regressões de concorrência multi-tenant em PostgreSQL
+        run: |
+          export PHOTOGRAPHER_TEST_DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
+          pytest \
+            backend/tests/test_tenant_cleanup_jobs.py::test_copia_historica_suspensa_antes_publicacao_nao_publica_A \
+            backend/tests/test_tenant_media_jobs.py::test_suspensao_durante_render_nao_publica_A_e_worker_avanca_B \
+            backend/tests/test_tenant_notification_transport.py::test_suspensao_durante_consulta_canal_preserva_A_e_envia_B \
+            backend/tests/test_tenant_notification_transport.py::test_revogacao_membership_apos_consulta_canal_impede_envio \
+            -q
       - name: Regressão concorrente do checkout em PostgreSQL
         run: >-
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
@@ -152,6 +161,7 @@ jobs:
       HOMOLOG_PUBLIC_BASE_URL: ${{ secrets.HOMOLOG_PUBLIC_BASE_URL }}
       HOMOLOG_FACIAL_PROCESSING_ENABLED: "true"
       HOMOLOG_FACIAL_MAX_REFERENCE_BYTES: "31457280"
+      HOMOLOG_RAW_DEVELOPMENT_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -197,7 +207,7 @@ jobs:
             remote_command="$(printf 'cd /opt/markina-gallery && test "$(git rev-parse HEAD)" = %q && curl -fsS http://127.0.0.1:8080/healthz >/dev/null && curl -fsS http://127.0.0.1:8080/api/health >/dev/null' "$expected_sha")"
             ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" </dev/null
           else
-            remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q --facial-enabled %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA" "$HOMOLOG_FACIAL_PROCESSING_ENABLED")"
+            remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q --facial-enabled %q --raw-development-enabled %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA" "$HOMOLOG_FACIAL_PROCESSING_ENABLED" "$HOMOLOG_RAW_DEVELOPMENT_ENABLED")"
             ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
           fi
           maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
