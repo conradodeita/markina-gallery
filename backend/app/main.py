@@ -201,6 +201,7 @@ from app.commercial_removal import (
 )
 from app.email_delivery import (
     EmailConfigurationError,
+    additional_public_app_origins,
     email_channel_payload,
     public_app_origin,
 )
@@ -955,7 +956,11 @@ def require_same_origin(request: Request) -> None:
         expected = public_app_origin()
     except EmailConfigurationError:
         expected = str(request.base_url).rstrip("/")
-    if origin.rstrip("/") != expected.rstrip("/"):
+    try:
+        allowed_origins = {expected.rstrip("/"), *additional_public_app_origins()}
+    except EmailConfigurationError as exc:
+        raise HTTPException(status_code=403, detail="Origem da operação não autorizada.") from exc
+    if origin.rstrip("/") not in allowed_origins:
         raise HTTPException(status_code=403, detail="Origem da operação não autorizada.")
 
 
