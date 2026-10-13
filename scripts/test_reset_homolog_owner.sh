@@ -5,6 +5,64 @@ output="$(mktemp)"
 temp_root="$(mktemp -d)"
 trap 'rm -f -- "$output"; rm -rf -- "$temp_root"' EXIT
 
+mkdir -m 700 "$temp_root/state-private"
+bash -c 'source "$OWNER_RESET_HOST_SCRIPT"; check_state_root "$0"' "$temp_root/state-private"
+for bad_state in absent public symlink; do
+  if [[ "$bad_state" == public ]]; then mkdir -m 755 "$temp_root/state-public"; fi
+  if [[ "$bad_state" == symlink ]]; then ln -s state-private "$temp_root/state-symlink"; fi
+  if bash -c 'source "$OWNER_RESET_HOST_SCRIPT"; check_state_root "$0"; echo UNEXPECTED-RESET' "$temp_root/state-$bad_state" >"$output" 2>&1; then
+    echo "diretório de retomada inseguro aceito: $bad_state" >&2; exit 1
+  fi
+  if grep -Fq UNEXPECTED-RESET "$output"; then exit 1; fi
+done
+if bash -c '
+  source "$OWNER_RESET_HOST_SCRIPT"
+  stat() { if [[ "$2" == %u ]]; then echo 999999; else echo 700; fi; }
+  check_state_root "$0"
+  echo UNEXPECTED-RESET
+' "$temp_root/state-private" >"$output" 2>&1; then echo "outro dono de state aceito" >&2; exit 1; fi
+grep -Fq 'sem dono/permissões privados' "$output"
+if grep -Fq UNEXPECTED-RESET "$output"; then exit 1; fi
+
+bash -c '
+  source "$OWNER_RESET_HOST_SCRIPT"
+  docker() {
+    if [[ "$1" == ps ]]; then printf "%s\n" aaaaaaaaaaaa bbbbbbbbbbbb cccccccccccc dddddddddddd; return 0; fi
+    case "${@: -1}" in
+      aaaaaaaaaaaa) echo "migrate|synthetic-migrate|synthetic-image|synthetic-time|exited|none" ;;
+      bbbbbbbbbbbb) echo "evolution-api|synthetic-api|synthetic-image|synthetic-time|running|healthy" ;;
+      cccccccccccc) echo "evolution-db|synthetic-db|synthetic-image|synthetic-time|running|healthy" ;;
+      dddddddddddd) echo "evolution-redis|synthetic-redis|synthetic-image|synthetic-time|running|none" ;;
+      *) return 1 ;;
+    esac
+  }
+  snapshot="$(evolution_snapshot)"
+  [[ "$(wc -l <<< "$snapshot")" == 3 && "$snapshot" != *migrate* && "$snapshot" == *"running|none"* ]]
+' >"$output" 2>&1
+
+for failure in list inspect missing-service; do
+  if bash -c '
+    source "$OWNER_RESET_HOST_SCRIPT"
+    docker() {
+      if [[ "$1" == ps ]]; then
+        [[ "$0" != list ]] || return 1
+        printf "%s\n" bbbbbbbbbbbb cccccccccccc dddddddddddd; return 0
+      fi
+      [[ "$0" != inspect || "${@: -1}" != cccccccccccc ]] || return 1
+      case "${@: -1}" in
+        bbbbbbbbbbbb) echo "evolution-api|synthetic-api|synthetic-image|synthetic-time|running|healthy" ;;
+        cccccccccccc) echo "evolution-db|synthetic-db|synthetic-image|synthetic-time|running|healthy" ;;
+        dddddddddddd)
+          if [[ "$0" == missing-service ]]; then echo "migrate|synthetic-migrate|synthetic-image|synthetic-time|exited|none"
+          else echo "evolution-redis|synthetic-redis|synthetic-image|synthetic-time|running|healthy"; fi ;;
+      esac
+    }
+    evolution_snapshot || exit 7
+    echo UNEXPECTED-RESET
+  ' "$failure" >"$output" 2>&1; then echo "snapshot incompleto aceito: $failure" >&2; exit 1; fi
+  if grep -Fq UNEXPECTED-RESET "$output"; then exit 1; fi
+done
+
 if bash -c 'source "$OWNER_RESET_HOST_SCRIPT"; classify_service unknown-writer' >"$output" 2>&1; then
   echo "writer desconhecido aceito" >&2; exit 1
 fi
@@ -55,6 +113,23 @@ if bash -c '
 ' >"$output" 2>&1; then echo "writer novo aceito" >&2; exit 1; fi
 grep -Fq 'writer ativo fora da pausa conferida' "$output"
 if grep -Eq 'UNEXPECTED-(RESET|MUTATION)' "$output"; then exit 1; fi
+
+if bash -c '
+  source "$OWNER_RESET_HOST_SCRIPT"
+  WRITER_IDS=(abcdef123456)
+  docker() {
+    if [[ "$1" == inspect && "$*" == *com.docker.compose.project* ]]; then echo markina-gallery; return 0; fi
+    if [[ "$1" == inspect && "$*" == *com.docker.compose.service* ]]; then echo api; return 0; fi
+    if [[ "$1" == inspect ]]; then echo false; return 0; fi
+    if [[ "$1" == stop ]]; then return 0; fi
+    if [[ "$1" == ps ]]; then return 1; fi
+    echo UNEXPECTED-MUTATION
+  }
+  stop_writers
+  echo UNEXPECTED-RESET
+' >"$output" 2>&1; then echo "listagem de writers indisponível aceita" >&2; exit 1; fi
+grep -Fq 'listagem de writers não pôde ser conferida' "$output"
+if grep -Fq UNEXPECTED-RESET "$output"; then exit 1; fi
 
 if bash -c '
   source "$OWNER_RESET_HOST_SCRIPT"

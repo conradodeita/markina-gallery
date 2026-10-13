@@ -4,6 +4,17 @@ Permitir um reset inventariado dos dados de teste em homologação, preservando 
 
 ## ADDED Requirements
 
+### Requirement: Registro inerte e seleção explícita da ref de homologação
+O workflow SHALL estar registrado na branch padrão `main` com o mesmo contrato de inputs da versão operacional em `develop`. A versão em `main` SHALL recusar a manutenção sem checkout, Environment, secrets ou SSH. A versão operacional SHALL conservar o gate protegido `homolog` e exigir ref `develop` para modos `owner-*`.
+
+#### Scenario: Operador seleciona main
+- **WHEN** o operador dispara o workflow registrado na ref `main`
+- **THEN** o job encerra com orientação para selecionar `develop`, sem acesso ao servidor ou dados
+
+#### Scenario: Operador seleciona develop
+- **WHEN** o operador dispara `owner-inventory` ou `owner-execute` na ref `develop`
+- **THEN** o GitHub usa o workflow operacional daquela ref e o Environment `homolog` exige aprovação humana antes do acesso ao servidor
+
 ### Requirement: Identidade proprietária inequívoca
 O reset SHALL exigir ambiente de homologação, proprietário exato, identidade `platform_owner` correspondente e único vínculo ativo de fotógrafo. Contexto ausente, ambíguo ou incompatível MUST impedir qualquer mutação.
 
@@ -48,8 +59,20 @@ O reset SHALL conferir SHA publicado, schema, topologia, volumes, origem HTTPS e
 - **WHEN** o reset pausa os writers da Markina
 - **THEN** somente API/workers Markina inventariados são parados e retomados; Evolution e projetos vizinhos conservam containers, configuração, redes, portas e volumes
 
+#### Scenario: Metadados de retomada sem prontidão
+- **WHEN** o diretório fixo de retomada está ausente, tem symlink, dono diferente do operador, modo diferente de 0700 ou não permite escrita/acesso
+- **THEN** inventário e execute recusam a operação antes de pausar writers, excluir dados ou ampliar permissões do diretório pai
+
+#### Scenario: Snapshot Docker confiável
+- **WHEN** um contêiner não tem o campo Health ou Docker inspect falha
+- **THEN** ausência de Health é representada como none, falha de inspect impede a operação, e o snapshot só é aceito com exatamente os três serviços Evolution ativos
+
+#### Scenario: Listagem de writers indisponível
+- **WHEN** Docker não consegue listar os serviços ativos para o inventário ou para conferir a pausa
+- **THEN** a execução é recusada sem iniciar a exclusão, em vez de assumir uma lista vazia de writers
+
 ### Requirement: Execução sem novo backup, exclusão autorizada de dumps e retomada honesta
-O reset SHALL exigir autorização específica, inventário e sinalização de execução sem dump. Após a conclusão do reset, os 164 arquivos `.dump` diretamente no diretório de backup fixo da Markina SHALL ser removidos somente se contagem e bytes coincidirem com o inventário autorizado e todos forem arquivos regulares. Outros arquivos, snapshots e configurações SHALL permanecer preservados. Divergência MUST impedir a exclusão dos dumps. Falha após commit MUST ser reportada como parcial e manter writers pausados até retomada segura, sem alegar reversão dos dados.
+O reset SHALL exigir autorização específica, inventário e sinalização sem dump. Após conclusão, SHALL excluir somente os 164 `.dump` regulares na raiz fixa da Markina, com contagem e bytes iguais ao manifesto autorizado; divergência MUST bloquear. Demais arquivos e snapshots SHALL permanecer. Falha após commit MUST ser reportada como parcial e manter writers pausados para retomada segura, sem alegar reversão.
 
 #### Scenario: Reset e remoção dos dumps autorizados
 - **WHEN** o proprietário autoriza o reset sem backup e separadamente autoriza excluir os 164 dumps inventariados após publicar o domínio

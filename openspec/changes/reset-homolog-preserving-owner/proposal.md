@@ -4,6 +4,8 @@ O proprietário solicitou zerar os dados de teste no servidor Oracle após a mig
 
 ## What Changes
 
+- Registrar o workflow na branch padrão `main` com uma entrada inerte e inputs compatíveis; executar a manutenção somente pela versão operacional em `develop`, mantendo o gate protegido `homolog`. A entrada em `main` não acessa servidor nem promove código da aplicação.
+
 - Introduzir um procedimento exclusivo de reset de homologação que identifica a conta proprietária e seu único vínculo ativo antes de qualquer exclusão.
 - Remover todos os dados operacionais de todas as contas, incluindo clientes, galerias/pastas/fotos, compras/pagamentos de teste, mídia, dados faciais e filas relacionadas.
 - Remover os quatro demais fotógrafos/admins e suas configurações/vínculos, preservando integralmente conta, senha/TOTP, sessões válidas, privilégios e preferências da proprietária.
