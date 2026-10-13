@@ -19,6 +19,8 @@ from app.auth import (
     now,
 )
 from app.checkout import CheckoutError, _synchronize_order
+from app.infinitepay_settings import configuration_payload
+from app.payment_availability import lock_payment_account
 from app.payment_provider import CheckoutItem, CheckoutRequest, ProviderTransportError
 from app.unified_checkout import (
     _fingerprint,
@@ -44,6 +46,7 @@ def prepare_provider_payment(
     """
     tenant_id = client_tenant_id(db, client.id)
     require_active_owner(db, tenant_id)
+    lock_payment_account(db, tenant_id)
     if not checkout_key or len(checkout_key) > 128:
         raise CheckoutError("Chave de compra inválida.")
     db.scalar(select(Client.id).where(Client.id == client.id, Client.tenant_id == tenant_id).with_for_update())
@@ -78,8 +81,7 @@ def prepare_provider_payment(
     settings = db.scalar(select(InfinitePaySettings).where(
         InfinitePaySettings.tenant_id == tenant_id,
     ).with_for_update())
-    if (not settings or settings.status != "active" or not settings.card_enabled or not settings.handle
-            or not settings.verification_profile or settings.verified_at is None):
+    if not configuration_payload(settings)["checkout_available"]:
         raise CheckoutError("Cartão indisponível para esta conta.")
 
     eligible = [(gallery, parent, material, error) for gallery, parent, material, error in materials

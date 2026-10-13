@@ -471,7 +471,7 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
         available=False,
     )
     media_job = MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="queued", attempts=0)
-    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento"), folder, photo, media_job))
+    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento", payment_required=False), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
     derivatives_root = tmp_path / "derivatives"
@@ -516,7 +516,7 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
         available=False,
     )
     media_job = MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="queued", attempts=0)
-    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento"), folder, photo, media_job))
+    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento", payment_required=False), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
     derivatives_root = tmp_path / "derivatives"

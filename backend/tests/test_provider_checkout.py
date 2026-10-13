@@ -60,7 +60,7 @@ def configure(db, tenant_id):
     db.flush()
     settings = InfinitePaySettings(tenant_id=tenant_id, admin_user_id=admin.id, handle="synthetic_handle",
         version=4, status="active", card_enabled=True,
-        verification_profile="synthetic-only", verified_at=now())
+        verification_profile="infinitepay-public-v1", verified_at=now())
     db.add(settings)
     return settings
 
@@ -319,8 +319,14 @@ def test_perfil_de_retorno_e_payment_check_nao_exige_webhook_assinado_ou_recover
 
 
 def test_retorno_chama_payment_check_e_confirma_somente_compra_correspondente(monkeypatch):
+    class PublicProfileChecker(SyntheticPaymentProvider):
+        def check_payment(self, request):
+            # O snapshot usa o perfil público autorizado; a fronteira HTTP
+            # sintética devolve evidência desse mesmo perfil documentado.
+            return super().check_payment(request).model_copy(update={"verification_profile": "infinitepay-public-v1"})
+
     owner_id, _, _, revision = setup()
-    checker = SyntheticPaymentProvider(check_outcome="verified")
+    checker = PublicProfileChecker(check_outcome="verified")
     monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://pick.example.test")
     monkeypatch.setattr(main, "operational_provider", lambda **_kwargs: checker)
     request = Request({"type": "http", "method": "GET", "path": "/infinitepay/return",
@@ -362,7 +368,8 @@ def test_retorno_sem_order_nsu_canonico_nao_consulta_nem_confirma(monkeypatch):
         assert payment.state == "awaiting_payment" and payment.provider_transaction_nsu is None
 
 
-def test_rota_cliente_prepara_cartao_por_sessao_e_reutiliza_mesma_tentativa(monkeypatch):
+@pytest.mark.parametrize("pix_configured", [True, False])
+def test_rota_cliente_prepara_cartao_por_sessao_e_reutiliza_mesma_tentativa(monkeypatch, pix_configured):
     owner_id, _, _, revision = setup()
     provider = SyntheticPaymentProvider("accepted")
     monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://pick.example.test")
@@ -371,6 +378,9 @@ def test_rota_cliente_prepara_cartao_por_sessao_e_reutiliza_mesma_tentativa(monk
         owner = db.get(Client, owner_id)
         settings = db.scalar(select(InfinitePaySettings))
         settings.verification_profile = "infinitepay-public-v1"
+        if not pix_configured:
+            db.delete(db.scalar(select(GlobalPixSettings)))
+            db.flush()
         response = Response()
         auth.create_session(db, response, auth.Role.CLIENT, owner.id, tenant_id=owner.tenant_id)
         cookie = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
@@ -386,6 +396,7 @@ def test_rota_cliente_prepara_cartao_por_sessao_e_reutiliza_mesma_tentativa(monk
         assert len(provider.create_calls) == 1
         visible = cart_payload(db, owner)
         assert visible["card_available"] is True
+        assert visible["pix_available"] == pix_configured
         assert visible["card_payment"]["id"] == result["id"]
         assert visible["card_payment"]["checkout_url"] == result["checkout_url"]
         settings.card_enabled = False
@@ -400,3 +411,13 @@ def test_rota_cliente_prepara_cartao_por_sessao_e_reutiliza_mesma_tentativa(monk
         assert replay_after_disable["id"] == result["id"]
         assert replay_after_disable["checkout_url"] == result["checkout_url"]
         assert len(provider.create_calls) == 1
+
+
+def test_perfil_de_cartao_nao_utilizavel_recusa_nova_preparacao():
+    owner_id, _, _, revision = setup()
+    with SessionLocal() as db:
+        db.scalar(select(InfinitePaySettings)).verification_profile = "unverified"
+        db.commit()
+        with pytest.raises(CheckoutError, match="Cartão indisponível"):
+            prepare(db, owner_id, revision)
+        assert db.scalar(select(func.count()).select_from(ProviderPayment)) == 0

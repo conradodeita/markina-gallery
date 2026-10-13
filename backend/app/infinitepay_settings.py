@@ -54,7 +54,8 @@ class ConfigurationResendInput(BaseModel):
 
 def load_configuration(db: Session, *, tenant_id: UUID) -> InfinitePaySettings | None:
     require_active_owner(db, tenant_id)
-    return db.scalar(select(InfinitePaySettings).where(InfinitePaySettings.tenant_id == tenant_id))
+    return db.scalar(select(InfinitePaySettings).where(InfinitePaySettings.tenant_id == tenant_id)
+                     .execution_options(populate_existing=True))
 
 
 def configuration_payload(settings: InfinitePaySettings | None) -> dict:
@@ -90,7 +91,14 @@ def check_version(settings: InfinitePaySettings | None, version: int) -> None:
 
 
 def apply_proposal(db: Session, *, tenant_id: UUID, admin_id: UUID, target: str) -> InfinitePaySettings:
+    from app.payment_availability import (
+        has_published_paid_gallery,
+        lock_payment_account,
+        payment_methods,
+    )
+
     require_security_owner(db, admin_id, tenant_id)
+    lock_payment_account(db, tenant_id)
     proposed = json.loads(target)
     settings = load_configuration(db, tenant_id=tenant_id)
     check_version(settings, proposed["version"])
@@ -99,6 +107,12 @@ def apply_proposal(db: Session, *, tenant_id: UUID, admin_id: UUID, target: str)
     card_enabled = bool(proposed.get("card_enabled") and checkout_ready)
     if proposed.get("card_enabled") and not card_enabled:
         raise ConfigurationConflict("Confirme uma configuração InfinitePay pronta antes de habilitar cartão.")
+    if (not card_enabled and not payment_methods(db, tenant_id=tenant_id)["pix_available"]
+            and has_published_paid_gallery(db, tenant_id)):
+        raise ConfigurationConflict(
+            "Esta alteração deixaria uma galeria com pagamento obrigatório sem recebimento. "
+            "Configure o PIX ou desmarque a cobrança das galerias antes de desabilitar cartão."
+        )
     if settings is None:
         settings = InfinitePaySettings(tenant_id=tenant_id, admin_user_id=admin_id)
         db.add(settings)

@@ -645,7 +645,7 @@ describe("editor administrativo de galeria", () => {
     expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toBeUndefined();
   });
 
-  it("permite avançar sem PIX e direciona sua configuração para a página global", async () => {
+  it("bloqueia cobrança sem meio e permite avançar no modo somente seleção", async () => {
     const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { status: "unconfigured", version: 0, checkout_available: false }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
     vi.stubGlobal("fetch", fetchMock);
@@ -654,11 +654,33 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("link", { name: "Configurar PIX em Configurações" })).toHaveProperty("href", expect.stringContaining("/admin/settings#pix"));
     expect(screen.queryByLabelText("Chave PIX ou copia e cola")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    expect(await screen.findByText(/Pagamento obrigatório exige ao menos uma forma/)).toBeTruthy();
+    expect(push).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: "PUT" }));
+    fireEvent.click(screen.getByLabelText("Pagamento obrigatório?"));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/detalhes"));
   });
 
+  it("permite salvar cobrança obrigatória com somente cartão utilizável da conta", async () => {
+    const sales = { available: true, capabilities: [], payment_required: true,
+      payment_methods: { available: true, pix_available: false, card_available: true },
+      pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null,
+      pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [],
+      pix: { status: "unconfigured", version: 0, checkout_available: false },
+      sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="vendas" />);
+    expect(await screen.findByText("Recebimento disponível: Cartão de crédito.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/detalhes"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/parent-galleries/source-1/sales",
+      expect.objectContaining({ method: "PUT" }));
+  });
+
   it("preserva os dados editados e mostra o erro retornado ao falhar Vendas", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "Original", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, payment_methods: { available: true, pix_available: false, card_available: true }, sales_message: "Original", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : init?.method === "PUT" ? response({ detail: "As faixas devem ser contíguas." }, 422) : response(sales)));
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
     const message = await screen.findByLabelText("Mensagem comercial") as HTMLTextAreaElement;
@@ -670,7 +692,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("exige escolha e confirmação explícitas para converter preço legado", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "legacy_volume", fixed_unit_price_cents: null, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "legacy_volume" }, pricing_review_required: true, tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], payment_methods: { available: true, pix_available: false, card_available: true }, pricing_mode: "legacy_volume", fixed_unit_price_cents: null, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "legacy_volume" }, pricing_review_required: true, tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/pricing-presets")) return response({ presets: [] });

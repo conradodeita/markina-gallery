@@ -22,7 +22,7 @@ O sistema SHALL manter uma única configuração PIX ativa para o fotógrafo, in
 
 Neste requisito, PIX global SHALL significar configuração da conta proprietária do pedido ou galeria, nunca da instalação inteira. Leitura, desafio sensível, versão, migration legada e snapshot SHALL verificar esse mesmo proprietário. Conta sem PIX utilizável MUST NOT usar o recebedor de outra conta; pedidos e carrinhos MUST NOT combinar contas distintas.
 
-O sistema SHALL exigir sessão administrativa válida, reautenticação e OTP enviado ao WhatsApp administrativo verificado para criar, substituir ou remover a configuração PIX. Desafios SHALL expirar, possuir limite de tentativas e ser vinculados à sessão e ao conteúdo proposto; a auditoria SHALL NOT registrar a chave, o BR Code ou o OTP.
+O sistema SHALL exigir sessão administrativa válida, reautenticação e OTP enviado ao WhatsApp administrativo verificado para criar ou substituir a configuração PIX da própria conta. Desafios SHALL expirar, possuir limite de tentativas e ser vinculados à sessão e ao conteúdo proposto; a auditoria SHALL NOT registrar a chave, o BR Code ou o OTP. A interface SHALL oferecer somente criação/substituição e a API SHALL recusar remoção, inclusive por desafio anterior ainda pendente.
 
 #### Scenario: Confirmação válida
 
@@ -33,6 +33,16 @@ O sistema SHALL exigir sessão administrativa válida, reautenticação e OTP en
 
 - **WHEN** a confirmação contém configuração diferente daquela vinculada ao desafio
 - **THEN** o sistema recusa a operação e mantém a versão global anterior
+
+#### Scenario: Tentativa de remoção
+
+- **WHEN** uma chamada direta ou desafio legado tenta remover PIX já configurado
+- **THEN** a API recusa a remoção sem substituir o estado vigente e orienta usar substituição protegida
+
+#### Scenario: Substituição ainda não confirmada
+
+- **WHEN** o fotógrafo inicia a substituição e cancela, erra o código ou deixa o desafio expirar
+- **THEN** o PIX vigente continua disponível para novos pedidos e snapshots anteriores permanecem preservados
 
 ### Requirement: Etapa Vendas consulta sem editar o PIX
 

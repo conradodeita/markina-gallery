@@ -15,7 +15,7 @@ type Payment = { id: string; revision: string; total_cents: number; pix_copy_pas
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
 type CardPayment = { id: string; status: "awaiting_payment" | "verification_required" | "failed_before_issue"; checkout_url: string | null; total_cents: number };
 type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
-  card_available?: boolean; card_payment?: CardPayment | null; total_cents: number | null; payment?: Payment };
+  pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function CartPage() {
@@ -47,7 +47,9 @@ export default function CartPage() {
       const data: Cart = await response.json();
       if (sequence.current !== current) return;
       setCart(data);
-      if (!data.can_prepare) return;
+      setMethod((currentMethod) => currentMethod === "card" && data.card_available
+        ? "card" : data.pix_available !== false ? "pix" : data.card_available ? "card" : "pix");
+      if (!data.can_prepare || data.pix_available === false || data.card_payment) return;
       const prepared = await fetch("/api/library/cart/prepare", { method: "POST", credentials: "same-origin" });
       const result = await prepared.json();
       if (sequence.current !== current) return;
@@ -192,16 +194,17 @@ export default function CartPage() {
     {cart && cart.groups.some((group) => group.payment_required !== false) ? <section className="unified-payment" aria-label="Pagamento único">
       <h2>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</h2>
       <p>{cart.groups.filter((group) => group.payment_required !== false).reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</p>
+      {cart.payment_error ? <p role="alert">{cart.payment_error}</p> : null}
       {!cardCheckoutPending && cart.can_prepare && cart.card_available ? <fieldset>
         <legend>Forma de pagamento</legend>
-        <label><input type="radio" name="payment-method" checked={method === "pix"} onChange={() => setMethod("pix")} /> PIX</label>
+        {cart.pix_available !== false ? <label><input type="radio" name="payment-method" checked={method === "pix"} onChange={() => setMethod("pix")} /> PIX</label> : null}
         <label><input type="radio" name="payment-method" checked={method === "card"} onChange={() => setMethod("card")} /> Cartão de crédito</label>
       </fieldset> : null}
-      {!cardCheckoutPending && method === "card" && cart.card_available ? <>
+      {!cardCheckoutPending && cart.can_prepare && method === "card" && cart.card_available ? <>
         <p>O pagamento será feito no ambiente seguro da InfinitePay. O Pick-your-Pic não recebe dados do cartão.</p>
         <button type="button" className="primary" disabled={busy || !cart.cart_revision} onClick={() => void prepareCard()}>{busy ? "Preparando checkout…" : "Continuar com cartão de crédito"}</button>
       </> : null}
-      {!cardCheckoutPending && (method === "pix" || !cart.card_available) ? <>
+      {!cardCheckoutPending && cart.pix_available !== false && (method === "pix" || !cart.card_available) ? <>
       {cart.payment ? <>
         <h3>Pague com PIX</h3>
         {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}
