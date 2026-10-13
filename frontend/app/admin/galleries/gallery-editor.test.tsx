@@ -2,9 +2,10 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
-vi.mock("./preview-adjustment-panel", () => ({ default: ({ galleryId }: { galleryId: string }) => <div data-testid="gallery-preview-adjustment" data-gallery-id={galleryId} /> }));
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), useParams: () => ({ sourceId: "source-1" }) }));
+
+import * as sourceUpload from "../../upload-jpeg";
 
 import NewGalleryPage from "./new/page";
 import GalleryEditor, { photoBulkDeleteBatches } from "./sources/[sourceId]/edit/gallery-editor";
@@ -78,7 +79,7 @@ it("mantém o Acervo da cliente independente e inicialmente fechado em dois card
     gallery_status: "active", commercial_status: "no_order",
   }));
   const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-    if (!path.endsWith("/folders") || init?.method) throw new Error("Chamada inesperada");
+    if (!path.split("?")[0].endsWith("/folders") || init?.method) throw new Error("Chamada inesperada");
     return response({ folders: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -113,7 +114,7 @@ it("bloqueia apenas a cliente do card aberto", async () => {
   }));
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-    if (path.endsWith("/folders")) return response({ folders: [] });
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
     if (path.endsWith("/access") && init?.method === "PATCH") return response({ status: "blocked" });
     throw new Error("Chamada inesperada");
   });
@@ -186,13 +187,13 @@ describe("editor administrativo de galeria", () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (init?.method === "POST") return response({ id: "folder-1", status: "preparing", position: 0 }, 201);
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       return response({ clients: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
-    expect(screen.getByTestId("gallery-preview-adjustment").getAttribute("data-gallery-id")).toBe("source-1");
+    expect(screen.queryByTestId("gallery-preview-adjustment")).toBeNull();
     expect(screen.getAllByRole("link", { name: /Ajustes|Vendas|Detalhes|Imagens|Clientes/ })).toHaveLength(5);
     expect(screen.getByRole("link", { name: /Imagens/ }).getAttribute("aria-current")).toBe("step");
     fireEvent.change(screen.getByLabelText("Nome da nova pasta"), { target: { value: "Apresentação" } });
@@ -552,7 +553,7 @@ describe("editor administrativo de galeria", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
     fireEvent.click(await within(card).findByRole("button", { name: /Retratos/ }));
     expect(within(card).queryByLabelText("Adicionar cliente")).toBeNull();
-    expect(await within(card).findByRole("button", { name: "Salvar configuração" })).toBeTruthy();
+    expect(within(card).getByRole("link", { name: "Processamento da pasta" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens?folder=folder-1");
     expect(fetchMock.mock.calls.some(([path, init]) => String(path).includes("/folders/folder-1/clients/") && init?.method === "POST")).toBe(false);
     fireEvent.click(within(card).getByRole("button", { name: "Disponibilizar fotos prontas" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -720,7 +721,7 @@ describe("editor administrativo de galeria", () => {
   it("abre a prévia protegida sem oferecer a foto de conteúdo como capa", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: "/admin/photo-assets/photo-1/watermarked-preview", released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: "/admin/photo-assets/photo-1/watermarked-preview", released_at: null }] });
       if (path.endsWith("/clients")) return response({ clients: [] });
       if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "FOTO_001.jpg", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", status: "completed", error: null, can_delete: true, is_cover: false }] });
       return response({});
@@ -742,7 +743,7 @@ describe("editor administrativo de galeria", () => {
   it("confirma a exclusão no contexto da pasta, sem criar dados no navegador", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: null, released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: null, released_at: null }] });
       if (path.endsWith("/clients")) return response({ clients: [] });
       if (path.endsWith("/photos") && !init?.method) return response({ photos: [{ id: "photo-1", name: "FOTO_001.jpg", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", status: "completed", error: null, can_delete: true, is_cover: false }] });
       if (path.endsWith("/photos/photo-1") && init?.method === "DELETE") return response({}, 204);
@@ -782,7 +783,7 @@ describe("editor administrativo de galeria", () => {
     const deletedBatches: string[][] = [];
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote grande", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote grande", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
       if (path.endsWith("/photos") && init?.method === "DELETE") {
         const ids = JSON.parse(String(init.body)).photo_ids as string[];
         deletedBatches.push(ids);
@@ -825,7 +826,7 @@ describe("editor administrativo de galeria", () => {
     let deleteRequests = 0;
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote parcial", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote parcial", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
       if (path.endsWith("/photos") && init?.method === "DELETE") {
         deleteRequests += 1;
         if (deleteRequests === 3) return response({ detail: "Falha simulada no terceiro lote." }, 503);
@@ -1019,7 +1020,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("mantém Imagens focada em pastas e upload", async () => {
-    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.endsWith("/folders") ? response({ folders: [] }) : response({ clients: [] }));
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.split("?")[0].endsWith("/folders") ? response({ folders: [] }) : response({ clients: [] }));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     await screen.findByRole("heading", { name: "Imagens e pastas" });
@@ -1061,7 +1062,7 @@ describe("editor administrativo de galeria", () => {
     ];
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [folder] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [folder] });
       if (path.endsWith("/photos")) return response({ photos });
       if (path.endsWith("/publish") && init?.method === "POST") return response({ published_count: 1, pending_count: 1, failed_count: 1 });
       return response({});
@@ -1086,7 +1087,7 @@ describe("editor administrativo de galeria", () => {
     const folder = { id: "folder-1", name: "Rodada", status: "preparing", position: 0, photo_count: 3, preview_url: null, released_at: null, publication_counts: { published: 0, ready_to_publish: 1, processing: 1, failed: 1 } };
     const fetchMock = vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [folder] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [folder] });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1100,7 +1101,7 @@ describe("editor administrativo de galeria", () => {
 
   it("abre somente uma pasta válida recebida pelo resumo", async () => {
     const folder = { id: "folder-valid", name: "Pasta válida", status: "released", position: 0, photo_count: 0, preview_url: null, released_at: null, publication_counts: { published: 0, ready_to_publish: 0, processing: 0, failed: 0 } };
-    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.endsWith("/folders") ? response({ folders: [folder] }) : path.includes("folder-valid/photos") ? response({ photos: [] }) : response({ detail: "não deveria consultar" }, 500));
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.split("?")[0].endsWith("/folders") ? response({ folders: [folder] }) : path.includes("folder-valid/photos") ? response({ photos: [] }) : response({ detail: "não deveria consultar" }, 500));
     vi.stubGlobal("fetch", fetchMock);
     const { unmount } = render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="folder-manipulated" />);
     await screen.findByText("Pasta válida");
@@ -1113,7 +1114,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("renderiza o resumo com capa clicável, estado do link e exclusão contextual", async () => {
-    const fetchMock = vi.fn((path: string) => path.endsWith("/folders")
+    const fetchMock = vi.fn((path: string) => path.split("?")[0].endsWith("/folders")
       ? response({ folders: [{ id: "folder-1", name: "Lote inicial", status: "preparing", photo_count: 2, preview_url: "/admin/photo-assets/photo-1/watermarked-preview" }] })
       : response({ name: "Evento completo", event_name: "Festa 2026", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: "/admin/photo-assets/photo-1/watermarked-preview", counts: { folders: 1, photos: 2, clients: 1 }, clients: [{ client_id: "client-1", name: "Ana Resumo", phone: "+5511999990000", registration_status: "active", derived_gallery_id: "private-1", available_count: 4, selected_count: 2, purchased_count: 1, gallery_status: "active", commercial_status: "awaiting_payment" }] }));
     vi.stubGlobal("fetch", fetchMock);
@@ -1135,7 +1136,7 @@ describe("editor administrativo de galeria", () => {
       { client_id: "bia", name: "Bia Costa", phone: "+5511888880002", registration_status: "active",
         derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "active" },
     ];
-    const fetchMock = vi.fn((path: string) => path.endsWith("/folders")
+    const fetchMock = vi.fn((path: string) => path.split("?")[0].endsWith("/folders")
       ? response({ folders: [] })
       : response({ name: "Evento", event_name: "Festa", active: true, public_link_status: "active",
         cover_preview_url: null, counts: { folders: 0, photos: 1, clients: 2 }, clients }));
@@ -1166,7 +1167,7 @@ describe("editor administrativo de galeria", () => {
       actions: { can_cancel: true, can_retry: false, should_poll: true, poll_after_ms: 1 },
     };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       if (path.endsWith("/summary")) return response({ name: "Evento completo", event_name: "Festa", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: null, counts: { folders: 1, photos: 2, clients: 1 }, clients: [] });
       if (path.endsWith("/deletion-inventory")) return response({ operation_type: "delete_parent_gallery", target: { id: "source-1", name: "Evento completo" }, inventory: { remove: { folders: 1, photos: 1 }, preserve: { clients: 1, private_galleries: 1 } }, consequences: { private_galleries_preserved: true, private_referenced_photos_preserved: true, clients_preserved: true, commercial_history_preserved: true, restoration_available_after_start: false } });
       if (path === "/api/admin/parent-galleries/source-1" && init?.method === "DELETE") return response(queuedOperation, 202);
@@ -1193,7 +1194,7 @@ describe("editor administrativo de galeria", () => {
 
   it("mostra dentro da confirmação quando o backend impede excluir a Galeria pública", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       if (path.endsWith("/summary")) return response({ name: "Evento protegido", event_name: "Festa", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: null, counts: { folders: 0, photos: 0, clients: 0 }, clients: [] });
       if (path.endsWith("/deletion-inventory")) return response({ operation_type: "delete_parent_gallery", target: { id: "source-1", name: "Evento protegido" }, inventory: { remove: {}, preserve: { orders: 1 } }, consequences: { private_galleries_preserved: true, private_referenced_photos_preserved: true, clients_preserved: true, commercial_history_preserved: true, restoration_available_after_start: false } });
       if (path === "/api/admin/parent-galleries/source-1" && init?.method === "DELETE") return response({ detail: "Pagamento comunicado aguarda revisão administrativa." }, 409);
@@ -1217,7 +1218,7 @@ describe("editor administrativo de galeria", () => {
       actions: { can_cancel: false, can_retry: true, should_poll: false, poll_after_ms: null },
     };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       if (path.endsWith("/summary")) return response({ name: "Evento falho", event_name: "Festa", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: null, counts: { folders: 0, photos: 0, clients: 0 }, clients: [] });
       if (path.endsWith("/deletion-inventory")) return response({ operation_type: "delete_parent_gallery", target: { id: "source-1", name: "Evento falho" }, inventory: { remove: {}, preserve: {} }, consequences: { private_galleries_preserved: true, private_referenced_photos_preserved: true, clients_preserved: true, commercial_history_preserved: true, restoration_available_after_start: false } });
       if (path === "/api/admin/parent-galleries/source-1" && init?.method === "DELETE") return response(failedOperation, 202);
@@ -1253,7 +1254,7 @@ it("exclui pasta liberada com conteúdo após confirmação e preserva a tela em
       if (blocked) return response({ detail: "Há pagamento comunicado aguardando decisão administrativa." }, 409);
       deleted = true; return response({}, 204);
     }
-    if (path.endsWith("/folders")) return response({ folders: deleted ? [] : [{ id: "folder-full", name: "Festa completa", status: "released", photo_count: 12, position: 0 }] });
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders: deleted ? [] : [{ id: "folder-full", name: "Festa completa", status: "released", photo_count: 12, position: 0 }] });
     return response({ clients: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -1281,7 +1282,7 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
     actions: { can_cancel: false, can_retry: true, should_poll: false, poll_after_ms: null },
   };
   const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-    if (path.endsWith("/folders")) return response({ folders: [] });
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
     if (path.endsWith("/summary")) return response({ name: "Galeria 01", event_name: "", active: true, public_link_status: "unavailable", cover_preview_url: null, counts: { folders: 2, photos: 58, clients: 1 }, clients: [], deletion_operation: operation });
     if (path.endsWith("/deletion-inventory")) return response({ target: { id: "source-1", name: "Galeria 01" }, inventory: { remove: { photos: 58, folders: 2, private_galleries: 1 }, preserve: { orders: 3 } } });
     if (path.endsWith("/old-operation/retry") && init?.method === "POST") return response({ ...operation, status: "queued", last_error: null, progress: { label: "Na fila", percent: 0, failed_step: null }, actions: { can_cancel: false, can_retry: false, should_poll: true, poll_after_ms: 1 } });
@@ -1302,4 +1303,108 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
   await screen.findByRole("heading", { name: "Concluída" });
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+
+  it("mantém as fotos renderizadas enquanto o progresso da pasta é atualizado", async () => {
+    const folder = { id: "folder-stable", name: "Pasta estável", status: "released", position: 0, photo_count: 1, preview_url: null, publication_counts: { published: 0, ready_to_publish: 0, processing: 1, failed: 0 } };
+    let photoReads = 0;
+    let releasePhotos: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [folder] });
+      if (path.endsWith("/photos")) {
+        photoReads += 1;
+        if (photoReads >= 3) return new Promise<Response>((resolve) => { releasePhotos = resolve; });
+        return response({ photos: [{ id: "stable-photo", name: "estável.jpg", preview_url: "/protected/stable", can_delete: true, publication_state: "published" }] });
+      }
+      return response({ clients: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="folder-stable" />);
+    const photo = await screen.findByRole("button", { name: "Ampliar estável.jpg" });
+    await waitFor(() => expect(releasePhotos).toBeDefined(), { timeout: 5000 });
+    expect(screen.queryByRole("button", { name: "Ampliar estável.jpg" })).toBe(photo);
+    await act(async () => releasePhotos?.(await response({ photos: [] })));
+  });
+
+  it("mantém o lote identificado pela pasta de destino ao selecionar outra pasta", async () => {
+    let finishUpload: (() => void) | undefined;
+    vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("folder-a/file.jpg");
+    vi.spyOn(sourceUpload, "uploadPhotoSource").mockImplementation((_path, _file, _waiting, progress) => {
+      progress?.(50, 100);
+      return new Promise<void>((resolve) => { finishUpload = resolve; });
+    });
+    const folders = ["A", "B"].map((name, position) => ({ id: `folder-${name}`, name, status: "released", position, photo_count: 0, preview_url: null }));
+    vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders });
+      if (path.endsWith("/photos")) return response(init?.method === "POST" ? { id: "upload-photo" } : { photos: [] });
+      return response({ clients: [] });
+    }));
+    const { container } = render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta A" }));
+    const input = container.querySelector('input[name="jpeg"]') as HTMLInputElement;
+    const form = input.closest("form")!;
+    vi.spyOn(form, "requestSubmit").mockImplementation(() => { fireEvent.submit(form); });
+    fireEvent.change(input, { target: { files: [new File(["jpeg"], "foto.jpg", { type: "image/jpeg" })] } });
+    await waitFor(() => expect(finishUpload).toBeDefined());
+    const progress = screen.getByRole("progressbar", { name: "Progresso do upload em A" });
+    expect(progress.getAttribute("value")).toBe("0.5");
+    fireEvent.click(screen.getByRole("button", { name: "Abrir pasta B" }));
+    expect(screen.getByRole("progressbar", { name: "Progresso do upload em A" })).toBe(progress);
+    expect(screen.getByText("Enviando foto 1 de 1")).toBeTruthy();
+    await act(async () => finishUpload?.());
+    expect(await screen.findByText("Upload concluído · 1 de 1 fotos")).toBeTruthy();
+  });
+
+it("usa um painel único entre pasta pública e dez pastas privadas sem enfileirar pela seleção", async () => {
+  const folders = Array.from({ length: 11 }, (_, position) => ({ id: `folder-${position}`,
+    name: position ? `Privada ${position}` : "Pública", audience_scope: position ? "selected" : "all",
+    status: "released", position, photo_count: 30, preview_url: null }));
+  const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (init?.method) throw new Error("Seleção não pode enfileirar trabalho.");
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders });
+    if (path.endsWith("/processing")) return response({
+      revision: 1, preview_strength: path.includes("folder-0/") ? 50 : 60, preview_exposure_tenths: path.includes("folder-0/") ? 1 : 3,
+      facial_mode: "on", effective_preview: { enabled: true }, facial_available: false, facial_allowed: true, total_photos: 30,
+      preview_counts: { queued: 0, processing: 0, ready: 30, failed: 0, cancelled: 0 },
+      facial_counts: { completed: 30, queued: 0, processing: 0, failed: 0 }, comparison_photo_id: null,
+      facial_progress: { state: "completed", total: 30, waiting_previews: 0, unindexed: 0, detected_faces: 30 },
+    });
+    return response({ photos: [] });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta Pública" }));
+  await waitFor(() => expect(screen.getByLabelText("Intensidade do ajuste").getAttribute("value")).toBe("50"));
+  fireEvent.click(screen.getByRole("button", { name: "Abrir pasta Privada 10" }));
+  await waitFor(() => expect(screen.getByLabelText("Intensidade do ajuste").getAttribute("value")).toBe("60"));
+  expect(screen.getByLabelText("Exposição do ajuste").getAttribute("value")).toBe("3");
+  expect(screen.getAllByRole("region", { name: /^Processamento de/ })).toHaveLength(1);
+  expect(screen.getAllByRole("slider")).toHaveLength(2);
+  expect(screen.queryByText("Padrão da galeria")).toBeNull();
+  expect(screen.getAllByRole("button", { name: /^Abrir pasta/ })).toHaveLength(11);
+  expect(fetcher.mock.calls.some(([path]) => path.includes("include_restricted=true"))).toBe(true);
+  expect(fetcher.mock.calls.every((call) => !call[1]?.method)).toBe(true);
+});
+
+
+it("consulta as páginas de pastas sem ocultar as restritas após o limite da primeira página", async () => {
+  const fetcher = vi.fn((path: string) => {
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.includes("include_restricted=true")) {
+      const second = path.includes("offset=100");
+      return response({ total: 101, folders: Array.from({ length: second ? 1 : 100 }, (_, index) => ({
+        id: `folder-${second ? 100 : index}`, name: `Privada ${second ? 100 : index}`,
+        audience_scope: "selected", photo_count: 0, status: "released", position: second ? 100 : index,
+      })) });
+    }
+    return response({});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  expect(await screen.findByRole("button", { name: "Abrir pasta Privada 100" })).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: /^Abrir pasta/ })).toHaveLength(101);
+  expect(fetcher.mock.calls.some(([path]) => path.includes("offset=100"))).toBe(true);
 });

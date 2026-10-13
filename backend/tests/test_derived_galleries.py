@@ -1983,6 +1983,7 @@ def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient
             {
                 "id": str(folder_id),
                 "name": "Entrega inicial",
+                "audience_scope": "all",
                 "status": "preparing",
                     "position": 0,
                     "photo_count": 0,
@@ -2248,6 +2249,7 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
     assert {key: value for key, value in folders[0].items() if key != "released_at"} == {
         "id": str(first_folder_id),
         "name": "Rodada 1",
+        "audience_scope": "all",
         "status": "released",
         "position": 0,
         "photo_count": 1,
@@ -2264,6 +2266,7 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
         {
             "id": str(second_folder_id),
             "name": "Rodada 2",
+            "audience_scope": "all",
             "status": "preparing",
             "position": 1,
             "photo_count": 1,

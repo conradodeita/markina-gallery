@@ -122,22 +122,20 @@ def configure_folder(db: Session, folder_id: UUID, *, tenant_id: UUID, preview_m
         ).values(status="cancelled", claim_token=None, updated_at=now()))
     row.facial_mode = facial_mode
     row.updated_at = now()
-    if changed and is_private:
-        completed_photo_ids = list(db.scalars(
-            select(PhotoAsset.id)
-            .join(FacialJob, FacialJob.photo_asset_id == PhotoAsset.id)
-            .where(
-                PhotoAsset.tenant_id == tenant_id,
-                PhotoAsset.folder_id == folder_id,
-                PhotoAsset.available.is_(True),
+    if changed:
+        eligible_photos = select(PhotoAsset.id).where(
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoAsset.folder_id == folder_id,
+            PhotoAsset.available.is_(True),
+        )
+        if is_private:
+            eligible_photos = eligible_photos.join(FacialJob, FacialJob.photo_asset_id == PhotoAsset.id).where(
                 FacialJob.tenant_id == tenant_id,
                 FacialJob.kind == "index",
                 FacialJob.status == "completed",
-            )
-            .distinct()
-        ))
+            ).distinct()
         from app.preview_adjustment.service import enqueue
 
-        for photo_id in completed_photo_ids:
+        for photo_id in db.scalars(eligible_photos):
             enqueue(db, photo_id, tenant_id=tenant_id, retry=True)
     return row

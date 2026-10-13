@@ -105,7 +105,7 @@ def test_derivados_e_ajustes_mesma_sequencia_preservam_marca_paths_e_retry_B(cli
         strength=60,
         exposure_tenths=0,
     )
-    assert service.enqueue(client_db, first["photo"].id, tenant_id=first["tenant"].id, retry=True)
+    assert not service.enqueue(client_db, first["photo"].id, tenant_id=first["tenant"].id, retry=True)
     client_db.commit()
     assert service.process_one(factory, SyntheticEngine())
     client_db.refresh(results[1])

@@ -4321,6 +4321,7 @@ def admin_parent_gallery_folders(
     request: Request,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=30, ge=1, le=100),
+    include_restricted: bool = Query(default=False),
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
@@ -4334,7 +4335,7 @@ def admin_parent_gallery_folders(
                 PhotoFolder.parent_gallery_id == parent_gallery_id,
                 PhotoFolder.derived_gallery_id.is_(None),
                 PhotoFolder.purpose == "content",
-                or_(PhotoFolder.audience_scope == "all", PhotoFolder.audience_scope.is_(None)),
+                True if include_restricted else or_(PhotoFolder.audience_scope == "all", PhotoFolder.audience_scope.is_(None)),
             )
             .order_by(PhotoFolder.position, PhotoFolder.created_at)
         )
@@ -4385,6 +4386,7 @@ def admin_parent_gallery_folders(
             {
                 "id": str(folder.id),
                 "name": folder.name,
+                "audience_scope": folder.audience_scope or "all",
                 "status": folder.status,
                 "position": folder.position,
                 "photo_count": count,

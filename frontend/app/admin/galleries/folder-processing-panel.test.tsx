@@ -1,138 +1,124 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FolderProcessingPanel } from "./folder-processing-panel";
 
 const payload = {
-  folder_id: "folder-1", folder_name: "Pasta restrita", private_folder: false,
-  preview_mode: "custom", facial_mode: "on",
-  preview_strength: 50, preview_exposure_tenths: 0,
-  effective_preview: { mode: "custom", enabled: true, strength: 40, exposure_tenths: 3 },
+  folder_id: "folder-1", revision: 1, preview_mode: "custom", facial_mode: "on",
+  preview_strength: 50, preview_exposure_tenths: 0, effective_preview: { enabled: true },
   facial_available: true, facial_allowed: true, total_photos: 2,
   preview_counts: { queued: 0, processing: 0, ready: 1, failed: 0, cancelled: 0 },
   facial_counts: { queued: 0, processing: 0, completed: 1, failed: 0 }, comparison_photo_id: null,
+  facial_progress: { state: "completed", total: 2, waiting_previews: 0, unindexed: 0, detected_faces: 3 },
 };
-
-it("automaticamente configura e enfileira o ajuste da pasta privada após reconhecimento", async () => {
-  const privatePayload = { ...payload, private_folder: true, preview_mode: "custom" as const,
-    facial_mode: "on" as const, preview_strength: 75, preview_exposure_tenths: 0 };
-  const fetcher = vi.fn((_path: string, init?: RequestInit) => response(init?.method === "PATCH"
-    ? { ...privatePayload, ...JSON.parse(String(init.body)) } : privatePayload));
-  vi.stubGlobal("fetch", fetcher);
-  render(<FolderProcessingPanel folderId="folder-1" folderName="Pasta restrita" embedded />);
-
-  expect(await screen.findByRole("button", { name: "Refazer reconhecimento" })).toBeTruthy();
-  expect(screen.queryByText(/Prévia herdada|Face herdada/)).toBeNull();
-  expect(screen.queryByRole("combobox")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Processar esta pasta" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Salvar configuração" })).toBeNull();
-  const cards = document.querySelector(".folder-processing--private .folder-processing__cards");
-  expect(cards?.children[0].textContent).toContain("Reconhecimento facial");
-  expect(cards?.children[1].textContent).toContain("Ajuste automático das prévias");
-
-  fireEvent.change(screen.getByLabelText(/Intensidade/), { target: { value: "60" } });
-  fireEvent.change(screen.getByLabelText(/Exposição/), { target: { value: "3" } });
-  await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true));
-  const patch = fetcher.mock.calls.find(([, init]) => init?.method === "PATCH");
-  expect(JSON.parse(String(patch?.[1]?.body))).toEqual({ preview_mode: "custom", facial_mode: "on",
-    preview_strength: 60, preview_exposure_tenths: 3 });
-});
-const response = (body: object) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+const response = (body: object, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it("carrega apenas ao abrir, mostra escopo compartilhado e salva exposição própria sem somar", async () => {
-  const fetcher = vi.fn((path: string, init?: RequestInit) =>
-    response(init?.method === "PATCH"
-      ? { ...payload, ...JSON.parse(String(init.body)), effective_preview: {
-        mode: "custom", enabled: true, strength: 60, exposure_tenths: 5,
-      } } : payload));
+it.each([50, 75])("salva automaticamente parâmetros próprios com default %i, sem botões manuais", async (strength) => {
+  const initial = { ...payload, preview_strength: strength };
+  const fetcher = vi.fn((_path: string, init?: RequestInit) => response(init?.method === "PATCH"
+    ? { ...initial, revision: 2, ...JSON.parse(String(init.body)) } : initial));
   vi.stubGlobal("fetch", fetcher);
-  render(<FolderProcessingPanel folderId="folder-1" folderName="Pasta restrita" shared />);
-  expect(fetcher).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: /Processamento da pasta/ }));
-  expect(await screen.findByText(/todas as clientes atribuídas/)).toBeTruthy();
-  fireEvent.change((await screen.findAllByLabelText("Comportamento da pasta"))[1], { target: { value: "custom" } });
-  fireEvent.change(screen.getByLabelText(/Intensidade/), { target: { value: "60" } });
-  fireEvent.change(screen.getByLabelText(/Exposição/), { target: { value: "5" } });
-  fireEvent.click(screen.getByRole("button", { name: "Salvar configuração" }));
-  await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true));
-  const patch = fetcher.mock.calls.find(([, init]) => init?.method === "PATCH");
-  expect(JSON.parse(String(patch?.[1]?.body)).preview_exposure_tenths).toBe(5);
-  expect(screen.getByText(/Configuração salva/)).toBeTruthy();
-  expect(screen.queryByRole("option", { name: /Herdar da galeria/ })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: /Processamento da pasta/ }));
-  expect(screen.queryByText(/todas as clientes atribuídas/)).toBeNull();
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" />);
+  const slider = await screen.findByLabelText("Intensidade do ajuste");
+  expect(slider.getAttribute("value")).toBe(String(strength));
+  expect(screen.queryByRole("button", { name: /Salvar|Processar/ })).toBeNull();
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(fetcher.mock.calls.every(([, init]) => !init?.method)).toBe(true);
+  fireEvent.change(slider, { target: { value: "60" } });
+  fireEvent.change(screen.getByLabelText("Exposição do ajuste"), { target: { value: "3" } });
+  await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1));
+  expect(JSON.parse(String(fetcher.mock.calls.find(([, init]) => init?.method === "PATCH")?.[1]?.body))).toEqual({
+    preview_mode: "custom", facial_mode: "on", preview_strength: 60, preview_exposure_tenths: 3,
+  });
 });
 
-it("mostra o processamento embutido sem segunda seta nem gravação ao montar", async () => {
-  const fetcher = vi.fn((_path: string, _init?: RequestInit) => response(payload));
+it("serializa alterações durante uma gravação sem perder os últimos valores", async () => {
+  let finish: ((value: Response) => void) | undefined;
+  let writes = 0;
+  const fetcher = vi.fn((_path: string, init?: RequestInit) => {
+    if (init?.method === "PATCH") {
+      writes++;
+      if (writes === 1) return new Promise<Response>((resolve) => { finish = resolve; });
+      return response({ ...payload, revision: 3, ...JSON.parse(String(init.body)) });
+    }
+    return response(payload);
+  });
   vi.stubGlobal("fetch", fetcher);
-  const view = render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" embedded />);
-  expect(await screen.findByRole("button", { name: "Salvar configuração" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /Processamento da pasta/ })).toBeNull();
-  expect(fetcher.mock.calls).toHaveLength(1);
-  expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
-  view.unmount();
-  expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" />);
+  fireEvent.change(await screen.findByLabelText("Intensidade do ajuste"), { target: { value: "60" } });
+  await waitFor(() => expect(finish).toBeDefined());
+  fireEvent.change(screen.getByLabelText("Intensidade do ajuste"), { target: { value: "65" } });
+  fireEvent.change(screen.getByLabelText("Exposição do ajuste"), { target: { value: "4" } });
+  expect(writes).toBe(1);
+  await act(async () => finish?.(await response({ ...payload, revision: 2, preview_strength: 60 })));
+  await waitFor(() => expect(writes).toBe(2));
+  expect(screen.getByLabelText("Intensidade do ajuste").getAttribute("value")).toBe("65");
+  expect(screen.getByLabelText("Exposição do ajuste").getAttribute("value")).toBe("4");
 });
 
-it("amplia ambas as versões protegidas do comparativo e devolve o foco", async () => {
+it("aplica a última alteração à pasta anterior ao trocar e mantém a nova independente", async () => {
+  const fetcher = vi.fn((path: string, init?: RequestInit) => response({ ...payload,
+    folder_id: path.includes("folder-2") ? "folder-2" : "folder-1",
+    preview_strength: path.includes("folder-2") ? 75 : init?.method === "PATCH" ? 60 : 50,
+  }));
+  vi.stubGlobal("fetch", fetcher);
+  const view = render(<FolderProcessingPanel key="folder-1" folderId="folder-1" folderName="Pública" />);
+  fireEvent.change(await screen.findByLabelText("Intensidade do ajuste"), { target: { value: "60" } });
+  view.rerender(<FolderProcessingPanel key="folder-2" folderId="folder-2" folderName="Privada" />);
+  await waitFor(() => expect(screen.getByLabelText("Intensidade do ajuste").getAttribute("value")).toBe("75"));
+  const patches = fetcher.mock.calls.filter(([, init]) => init?.method === "PATCH");
+  expect(patches).toHaveLength(1);
+  expect(patches[0][0]).toBe("/api/admin/photo-folders/folder-1/processing");
+});
+
+it("mantém os dados durante falha de gravação e permite tentar novamente", async () => {
+  let fail = true;
+  vi.stubGlobal("fetch", vi.fn((_path: string, init?: RequestInit) => init?.method === "PATCH" && fail
+    ? response({ detail: "Falha temporária" }, 503) : response(payload)));
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" />);
+  fireEvent.change(await screen.findByLabelText("Intensidade do ajuste"), { target: { value: "60" } });
+  await screen.findByText("Falha temporária");
+  expect(screen.getByLabelText("Intensidade do ajuste").getAttribute("value")).toBe("50");
+  fail = false;
+  fireEvent.change(screen.getByLabelText("Exposição do ajuste"), { target: { value: "2" } });
+  await screen.findByText(/Ajuste atualizado/);
+});
+
+it("retenta reconhecimento paginado somente na pasta, mantendo o gate", async () => {
+  const fetcher = vi.fn((path: string, init?: RequestInit) => response(init?.method === "POST"
+    ? { next_cursor: path.includes("after=") ? null : "next-photo" }
+    : { ...payload, facial_counts: { ...payload.facial_counts, failed: 1 } }));
+  vi.stubGlobal("fetch", fetcher);
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Refazer reconhecimento" }));
+  await screen.findByText(/Retentativa do reconhecimento iniciada/);
+  expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST").map(([path]) => path)).toEqual([
+    "/api/admin/photo-folders/folder-1/processing/facial/reprocess",
+    "/api/admin/photo-folders/folder-1/processing/facial/reprocess?after=next-photo",
+  ]);
+});
+
+it("amplia ambas as versões protegidas e devolve o foco", async () => {
   vi.stubGlobal("fetch", vi.fn(() => response({ ...payload, comparison_photo_id: "photo-1" })));
-  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" embedded />);
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" />);
+  fireEvent.click(await screen.findByText("Comparar prévias"));
+  fireEvent.change(screen.getByLabelText("Comparar foto"), { target: { value: "photo-1" } });
   for (const [label, path] of [["convencional", "before"], ["ajustada", "after"]]) {
-    const trigger = await screen.findByRole("button", { name: `Ampliar versão ${label}` });
+    const trigger = screen.getByRole("button", { name: `Ampliar versão ${label}` });
     fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.querySelector("img")?.getAttribute("src")).toBe(`/api/admin/preview-adjustment/photos/photo-1/${path}`);
+    expect(screen.getByRole("dialog").querySelector("img")?.getAttribute("src")).toBe(`/api/admin/preview-adjustment/photos/photo-1/${path}`);
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
     expect(document.activeElement).toBe(trigger);
   }
 });
 
-it("encerra a consulta e o polling ao recolher, sem gravar configuração", async () => {
-  const fetcher = vi.fn((_path: string, _init?: RequestInit) => response({ ...payload,
-    preview_counts: { ...payload.preview_counts, queued: 1 } }));
-  const clear = vi.spyOn(window, "clearInterval");
-  vi.stubGlobal("fetch", fetcher);
-  render(<FolderProcessingPanel folderId="folder-1" folderName="Pasta restrita" />);
-  const toggle = screen.getByRole("button", { name: /Processamento da pasta/ });
-  fireEvent.click(toggle);
-  await screen.findByText(/1 pronta/);
-  await waitFor(() => expect(screen.getByRole("button", { name: /Processamento da pasta/ }).getAttribute("aria-expanded")).toBe("true"));
-  const signal = fetcher.mock.calls[0][1]?.signal;
-  fireEvent.click(toggle);
-  expect(signal?.aborted).toBe(true);
-  expect(clear).toHaveBeenCalled();
-  expect(fetcher.mock.calls.every(([, init]) => !init || !init.method || init.method === "GET")).toBe(true);
-});
-
-it("mostra erro de leitura e permite tentar novamente", async () => {
-  const fetcher = vi.fn()
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Falha temporária" }), { status: 503 }))
+it("recupera falha de leitura sem enfileirar trabalho", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Falha temporária" }), { status: 503 }))
     .mockImplementation(() => response(payload));
   vi.stubGlobal("fetch", fetcher);
-  render(<FolderProcessingPanel folderId="folder-1" folderName="Pasta restrita" />);
-  fireEvent.click(screen.getByRole("button", { name: /Processamento da pasta/ }));
-  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Falha temporária");
+  render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" />);
+  await screen.findByText("Falha temporária");
   fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
-  expect(await screen.findByRole("button", { name: "Salvar configuração" })).toBeTruthy();
-  expect(fetcher).toHaveBeenCalledTimes(2);
-});
-
-it("mantém IDs distintos e lê a mesma configuração em duas vistas da pasta", async () => {
-  const fetcher = vi.fn((_path: string) => response(payload));
-  vi.stubGlobal("fetch", fetcher);
-  render(<><FolderProcessingPanel folderId="folder-1" folderName="Pasta restrita" />
-    <FolderProcessingPanel folderId="folder-1" folderName="Pasta restrita" shared /></>);
-  expect(fetcher).not.toHaveBeenCalled();
-  const toggles = screen.getAllByRole("button", { name: /Processamento da pasta/ });
-  toggles[0].focus();
-  await userEvent.keyboard("{Enter}");
-  fireEvent.click(toggles[1]);
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
-  expect(fetcher.mock.calls.every(([path]) => String(path).endsWith("folder-1/processing"))).toBe(true);
-  const selects = screen.getAllByRole("combobox");
-  expect(selects).toHaveLength(4);
-  expect(new Set(selects.map((select) => select.id)).size).toBe(4);
-  expect(screen.getByText(/todas as clientes atribuídas/)).toBeTruthy();
+  await screen.findByLabelText("Intensidade do ajuste");
+  expect(fetcher.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });
