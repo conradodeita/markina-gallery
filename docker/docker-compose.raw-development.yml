@@ -1,0 +1,59 @@
+# Sobrescrita opcional para habilitar a fila privada de conversão RAW.
+# Uso: docker compose -p markina-gallery -f docker/docker-compose.yml -f docker/docker-compose.raw-development.yml up -d --build
+services:
+  api:
+    environment:
+      RAW_DEVELOPMENT_ROOT: /var/lib/markina/raw-staging
+      RAW_DEVELOPMENT_LIGHTCRAFT_VERSION: ${LIGHTCRAFT_VERSION:-0.6.0}
+      RAW_DEVELOPMENT_LIGHTCRAFT_FORMATS: ${RAW_DEVELOPMENT_LIGHTCRAFT_FORMATS:-.arw,.cr2,.cr3,.dng,.nef,.nrw,.raf,.rw2,.rwl,.pef,.orf}
+      RAW_DEVELOPMENT_RAWTHERAPEE_VERSION: 5.9
+      RAW_DEVELOPMENT_RAWTHERAPEE_FORMATS: ${RAW_DEVELOPMENT_RAWTHERAPEE_FORMATS:-.arw,.cr2,.cr3,.dng,.nef,.nrw,.raf,.rw2,.pef,.orf}
+    volumes:
+      - media-raw-staging:/var/lib/markina/raw-staging
+    depends_on:
+      raw-development-worker:
+        condition: service_started
+
+  raw-development-worker:
+    image: markina-gallery-raw-development:${LIGHTCRAFT_VERSION:-0.6.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.raw-development
+      args:
+        LIGHTCRAFT_VERSION: ${LIGHTCRAFT_VERSION:-0.6.0}
+    command: ["python", "-m", "app.raw_development.worker"]
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      RAW_DEVELOPMENT_ROOT: /var/lib/markina/raw-staging
+      RAW_DEVELOPMENT_LIGHTCRAFT_VERSION: ${LIGHTCRAFT_VERSION:-0.6.0}
+      RAW_DEVELOPMENT_LIGHTCRAFT_FORMATS: ${RAW_DEVELOPMENT_LIGHTCRAFT_FORMATS:-.arw,.cr2,.cr3,.dng,.nef,.nrw,.raf,.rw2,.rwl,.pef,.orf}
+      RAW_DEVELOPMENT_RAWTHERAPEE_VERSION: 5.9
+      RAW_DEVELOPMENT_RAWTHERAPEE_FORMATS: ${RAW_DEVELOPMENT_RAWTHERAPEE_FORMATS:-.arw,.cr2,.cr3,.dng,.nef,.nrw,.raf,.rw2,.pef,.orf}
+      RAW_WORKER_POLL_SECONDS: ${RAW_WORKER_POLL_SECONDS:-5}
+      RAYON_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    volumes:
+      - media-source:/var/lib/markina/source
+      - media-raw-staging:/var/lib/markina/raw-staging
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: ${RAW_WORKER_MEMORY_LIMIT:-1g}
+    cpus: ${RAW_WORKER_CPU_LIMIT:-1.0}
+    pids_limit: 64
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.raw_development.worker' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [internal]
+
+volumes:
+  media-raw-staging:

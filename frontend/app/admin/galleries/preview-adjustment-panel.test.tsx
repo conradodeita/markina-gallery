@@ -4,21 +4,21 @@ import PreviewAdjustmentPanel from "./preview-adjustment-panel";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it("permite desligar e informa retorno às prévias convencionais", async () => {
+it("salva os parâmetros iniciais sem desligar o ajuste das pastas", async () => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(
     url.endsWith("/configuration") ? {
-      enabled: init?.method === "PATCH" ? false : true, strength: 50, generation: 2, exposure_tenths: 0,
+      enabled: true, strength: 50, generation: 2, exposure_tenths: 0,
     } : { counts: {}, photos: [], next_cursor: null },
   ), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   render(<PreviewAdjustmentPanel galleryId="gallery" />);
-  const checkbox = await screen.findByLabelText("Melhorar prévias automaticamente");
-  expect((checkbox as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(checkbox);
+  expect(await screen.findByText(/Novas pastas começam com ajuste automático ativo/)).toBeTruthy();
+  const slider = await screen.findByLabelText(/Intensidade inicial/);
+  fireEvent.change(slider, { target: { value: "60" } });
   fireEvent.click(screen.getByRole("button", { name: "Salvar ajuste de prévias" }));
-  await screen.findByText("Desligado. As próximas visualizações usam as prévias convencionais.");
+  await screen.findByText(/Novas pastas públicas os copiarão e iniciarão com ajuste ativo/);
   expect(fetchMock).toHaveBeenCalledWith("/api/admin/preview-adjustment/galleries/gallery/configuration", expect.objectContaining({
-    method: "PATCH", body: JSON.stringify({ enabled: false, strength: 50, exposure_tenths: 0 }),
+    method: "PATCH", body: JSON.stringify({ enabled: true, strength: 60, exposure_tenths: 0 }),
   }));
 });
 
@@ -37,8 +37,8 @@ it("agenda páginas sem duplicar a operação e oferece antes/depois", async () 
   });
   vi.stubGlobal("fetch", fetchMock);
   render(<PreviewAdjustmentPanel galleryId="gallery" />);
-  await screen.findByLabelText("Melhorar prévias automaticamente");
-  fireEvent.click(screen.getByRole("button", { name: "Processar galeria / tentar falhas" }));
+  await screen.findByLabelText(/Intensidade inicial/);
+  fireEvent.click(screen.getByRole("button", { name: "Processar pastas da galeria" }));
   await waitFor(() => expect(enqueues).toBe(2));
   await screen.findByRole("option", { name: "foto.jpg" });
   fireEvent.change(screen.getByLabelText("Comparar foto"), { target: { value: "photo" } });
@@ -61,9 +61,9 @@ it("exige salvar a exposição da galeria antes de reprocessar", async () => {
   ), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   render(<PreviewAdjustmentPanel galleryId="only-this-gallery" />);
-  const slider = await screen.findByLabelText(/Exposição:/);
+  const slider = await screen.findByLabelText(/Exposição inicial/);
   fireEvent.change(slider, { target: { value: "12" } });
-  const process = screen.getByRole("button", { name: "Processar galeria / tentar falhas" }) as HTMLButtonElement;
+  const process = screen.getByRole("button", { name: "Processar pastas da galeria" }) as HTMLButtonElement;
   expect(process.disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Salvar ajuste de prévias" }));
   await waitFor(() => expect(process.disabled).toBe(false));

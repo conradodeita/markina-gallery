@@ -136,6 +136,8 @@ def test_templates_destinatarios_idempotencia_e_retry_A_B(client_db, graph, tran
 
 
 def test_suspensao_durante_consulta_canal_preserva_A_e_envia_B(client_db, graph, transports, monkeypatch):
+    if client_db.bind.dialect.name != "postgresql":
+        pytest.skip("Corrida entre transações exige PostgreSQL; SQLite admite um único escritor.")
     deliveries = [event(client_db, row) for row in graph]
     evolution(monkeypatch, "A")
     configure_expected_phone(client_db, graph[0]["admin_phone"], tenant_id=graph[0]["tenant"].id)
@@ -155,6 +157,8 @@ def test_suspensao_durante_consulta_canal_preserva_A_e_envia_B(client_db, graph,
 
 
 def test_revogacao_membership_apos_consulta_canal_impede_envio(client_db, graph, transports, monkeypatch):
+    if client_db.bind.dialect.name != "postgresql":
+        pytest.skip("Corrida entre transações exige PostgreSQL; SQLite admite um único escritor.")
     item = event(client_db, graph[0])
     evolution(monkeypatch, "A")
     configure_expected_phone(client_db, graph[0]["admin_phone"], tenant_id=graph[0]["tenant"].id)

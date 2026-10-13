@@ -10,7 +10,6 @@ from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     FacialJob,
     FolderProcessingSettings,
-    GalleryPreviewSettings,
     ParentGallery,
     PhotoAsset,
     PhotoFolder,
@@ -38,6 +37,24 @@ def folder_settings(db: Session, folder_id: UUID, *, tenant_id: UUID, lock: bool
     return db.scalar(query.execution_options(populate_existing=True))
 
 
+def initialize_folder_processing(db: Session, folder: PhotoFolder) -> FolderProcessingSettings:
+    """Start each content folder with its own enabled processing defaults."""
+    if folder.derived_gallery_id is not None:
+        raise ValueError("A inicialização exige uma pasta de conteúdo da galeria de origem.")
+    is_private = folder.audience_scope == "selected"
+    row = FolderProcessingSettings(
+        tenant_id=folder.tenant_id,
+        folder_id=folder.id,
+        preview_mode="custom",
+        facial_mode="on",
+        preview_strength=75 if is_private else 50,
+        preview_exposure_tenths=0,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def effective_preview(db: Session, folder: PhotoFolder, *, lock: bool = False) -> EffectivePreview:
     override = folder_settings(db, folder.id, tenant_id=folder.tenant_id, lock=lock)
     if folder.audience_scope == "selected":
@@ -55,15 +72,12 @@ def effective_preview(db: Session, folder: PhotoFolder, *, lock: bool = False) -
     if override and override.preview_mode == "off":
         return EffectivePreview("off", False, 50, 0, override.revision,
                                 f"folder-off:{folder.id}:{override.revision}")
-    query = select(GalleryPreviewSettings).where(GalleryPreviewSettings.parent_gallery_id == folder.parent_gallery_id, GalleryPreviewSettings.tenant_id == folder.tenant_id)
-    if lock:
-        query = query.with_for_update()
-    gallery = db.scalar(query.execution_options(populate_existing=True))
-    return EffectivePreview("inherit", bool(gallery and gallery.enabled),
-                            gallery.strength if gallery else 50,
-                            gallery.exposure_tenths if gallery else 0,
-                            gallery.generation if gallery else 1,
-                            f"gallery:{folder.parent_gallery_id}:{gallery.generation if gallery else 1}")
+    # Registros ausentes/herdados legados nunca consultam a galeria em tempo real.
+    revision = override.revision if override else 1
+    strength = override.preview_strength if override else 50
+    exposure_tenths = override.preview_exposure_tenths if override else 0
+    return EffectivePreview("custom", True, strength, exposure_tenths, revision,
+                            f"folder:{folder.id}:{revision}")
 
 
 def facial_processing_allowed(db: Session, folder_id: UUID, *, tenant_id: UUID) -> bool:
@@ -83,8 +97,8 @@ def configure_folder(db: Session, folder_id: UUID, *, tenant_id: UUID, preview_m
                         .with_for_update().execution_options(populate_existing=True))
     if not gallery or not gallery.active or gallery.lifecycle_status != "active":
         raise ValueError("Galeria indisponível para processamento.")
-    if (preview_mode not in {"inherit", "custom", "off"}
-            or facial_mode not in {"inherit", "on", "off"}
+    if (preview_mode not in {"custom", "off"}
+            or facial_mode not in {"on", "off"}
             or not 10 <= strength <= 75 or not -20 <= exposure_tenths <= 20):
         raise ValueError("Configuração de processamento inválida.")
     is_private = folder.audience_scope == "selected"

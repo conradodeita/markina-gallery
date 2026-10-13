@@ -189,6 +189,8 @@ def test_historico_retencao_e_minimizacao_sao_proprios_e_legado_reutilizavel(cli
 
 
 def test_copia_historica_suspensa_antes_publicacao_nao_publica_A(client_db, cleanup, tmp_path, monkeypatch):
+    if client_db.bind.dialect.name != "postgresql":
+        pytest.skip("Corrida entre transações exige PostgreSQL; SQLite admite um único escritor.")
     rows, factory = cleanup
     confirmed(client_db, rows, tmp_path)
     original = historical_media.copyfileobj

@@ -27,6 +27,8 @@ BRANDING_REQUIRED=0
 BRANDING_PRESERVED=0
 PREVIEW_WORKER_ACTIVE=0
 GEMMA_WORKER_ACTIVE=0
+RAW_DEVELOPMENT_DEPLOY_ENABLED=false
+RAW_DEVELOPMENT_WORKER_ACTIVE=0
 readonly FACIAL_SERVICES=("face-search-worker" "face-index-worker" "face-maintenance-worker")
 
 discover_gemma_worker() {
@@ -39,8 +41,18 @@ discover_gemma_worker() {
   return 0
 }
 
+discover_raw_development_worker() {
+  local container
+  RAW_DEVELOPMENT_WORKER_ACTIVE=0
+  container="$(docker ps --quiet \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter 'label=com.docker.compose.service=raw-development-worker')" || return 1
+  [[ -z "$container" ]] || RAW_DEVELOPMENT_WORKER_ACTIVE=1
+  return 0
+}
+
 usage() {
-  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>]" >&2
+  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>] [--raw-development-enabled <true|false>]" >&2
 }
 
 fail() {
@@ -58,6 +70,9 @@ compose() {
   if [[ -f "$STATE_DIR/branding.compose.yml" ]]; then
     extra=(-f "$STATE_DIR/branding.compose.yml")
   fi
+  if [[ ("$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" || "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1) && -f docker/docker-compose.raw-development.yml ]]; then
+    extra+=(-f docker/docker-compose.raw-development.yml)
+  fi
   # The monitor overlay references this optional service even during preflight,
   # before running-worker detection. Include its definition without enabling it.
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
@@ -74,6 +89,9 @@ compose() {
 prepare_branding_transition() {
   # Build while the old API is still serving. Preservation stops only that API.
   compose build api web worker migrate
+  if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" ]]; then
+    compose build raw-development-worker
+  fi
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     compose build "${FACIAL_SERVICES[@]}"
   fi
@@ -394,6 +412,10 @@ parse_arguments() {
         REQUESTED_FACIAL_ENABLED="${2:-}"
         shift 2
         ;;
+      --raw-development-enabled)
+        RAW_DEVELOPMENT_DEPLOY_ENABLED="${2:-}"
+        shift 2
+        ;;
       *)
         usage
         fail "argumento não permitido: $1"
@@ -405,6 +427,8 @@ parse_arguments() {
   [[ -z "$PUBLIC_BASE_URL" || "$PUBLIC_BASE_URL" =~ ^https://[^[:space:]]+$ ]] || fail "a URL pública deve usar HTTPS"
   REQUESTED_FACIAL_ENABLED="${REQUESTED_FACIAL_ENABLED,,}"
   [[ -z "$REQUESTED_FACIAL_ENABLED" || "$REQUESTED_FACIAL_ENABLED" == "true" || "$REQUESTED_FACIAL_ENABLED" == "false" ]] || fail "--facial-enabled deve ser true ou false"
+  RAW_DEVELOPMENT_DEPLOY_ENABLED="${RAW_DEVELOPMENT_DEPLOY_ENABLED,,}"
+  [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" || "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "false" ]] || fail "--raw-development-enabled deve ser true ou false"
 }
 
 verify_target() {
@@ -422,6 +446,7 @@ verify_target() {
   PREVIOUS_FACIAL_ENABLED="$(read_facial_enabled)"
   FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
   discover_gemma_worker
+  discover_raw_development_worker
   verify_facial_deploy_state
   compose config --quiet
   record_predeploy_inventory
@@ -457,6 +482,9 @@ stop_application_writers() {
   if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
     writers+=(face-gemma-index-worker)
   fi
+  if [[ "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1 ]]; then
+    writers+=(raw-development-worker)
+  fi
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     writers+=(preview-adjustment-worker)
   fi
@@ -473,6 +501,7 @@ stop_application_writers() {
       return 1
     }
   done
+  RAW_DEVELOPMENT_WORKER_ACTIVE=0
   echo "escritores Markina interrompidos; jobs duráveis preservados"
 }
 
@@ -555,6 +584,9 @@ wait_for_health() {
   if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
     services+=(face-gemma-index-worker)
   fi
+  if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" && -f docker/docker-compose.raw-development.yml ]]; then
+    services+=(raw-development-worker)
+  fi
   for service in "${services[@]}"; do
     container="$(compose ps -q "$service")"
     [[ -n "$container" ]] || fail "serviço Markina ausente após deploy: $service"
@@ -582,6 +614,9 @@ start_application_services() {
     fail "recriação bloqueada: branding ainda não preservado"
     return 1
   }
+  if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" && -f docker/docker-compose.raw-development.yml ]]; then
+    compose up -d --build --no-deps raw-development-worker
+  fi
   compose up -d --build --no-deps api web worker
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     compose up -d --build --no-deps preview-adjustment-worker
@@ -652,6 +687,10 @@ rollback_code_if_safe() {
       fi
     fi
     git switch --detach "$PREVIOUS_SHA"
+    if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" && -f docker/docker-compose.raw-development.yml ]]; then
+      compose build raw-development-worker
+      compose up -d --build --no-deps raw-development-worker
+    fi
     compose up -d --build --no-deps api web worker
     if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
       compose up -d --build --no-deps preview-adjustment-worker

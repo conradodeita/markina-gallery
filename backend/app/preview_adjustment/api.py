@@ -91,14 +91,10 @@ def register_routes(app, *, db_session, require_admin, preview_response, tenant_
         require_admin(request)
         if not owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id):
             raise HTTPException(404, "Galeria não encontrada.")
-        config = settings(db, gallery_id, tenant_id=tenant_id)
         query = (
             select(PreviewAdjustment.status, func.count()).where(PreviewAdjustment.tenant_id == tenant_id)
             .join(PhotoAsset, PhotoAsset.id == PreviewAdjustment.photo_asset_id)
-            .where(
-                PhotoAsset.parent_gallery_id == gallery_id,
-                PreviewAdjustment.generation == (config.generation if config else 1),
-            )
+            .where(PhotoAsset.parent_gallery_id == gallery_id)
             .group_by(PreviewAdjustment.status)
         )
         counts = {"queued": 0, "processing": 0, "ready": 0, "failed": 0, "cancelled": 0}
@@ -108,7 +104,6 @@ def register_routes(app, *, db_session, require_admin, preview_response, tenant_
             .join(PreviewAdjustment, PreviewAdjustment.photo_asset_id == PhotoAsset.id)
             .where(
                 PhotoAsset.parent_gallery_id == gallery_id,
-                PreviewAdjustment.generation == (config.generation if config else 1),
                 PreviewAdjustment.status == "ready",
             )
             .order_by(PhotoAsset.id)

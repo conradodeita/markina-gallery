@@ -161,17 +161,20 @@ def test_preferencias_templates_e_protecao_alteram_somente_A(client_db, configur
     assert main.admin_branding(second["admin_request"], client_db)["watermark_text"] != "Marca A"
 
 
-def test_processamento_heranca_e_override_nao_alteram_B(client_db, configured):
+def test_processamento_isolado_por_pasta_e_tenant(client_db, configured):
     first, second = configured
     configure_preview(client_db, first["parent"].id, True, 65, 1, tenant_id=first["tenant"].id)
     client_db.commit()
-    assert effective_preview(client_db, first["folder"]).strength == 65
-    assert effective_preview(client_db, second["folder"]).enabled is False
+    assert effective_preview(client_db, first["folder"]).strength == 50
+    assert effective_preview(client_db, first["folder"]).enabled is True
+    assert effective_preview(client_db, second["folder"]).enabled is True
+    assert effective_preview(client_db, second["folder"]).strength == 50
     configure_folder(client_db, first["folder"].id, tenant_id=first["tenant"].id,
         preview_mode="custom", facial_mode="off", strength=30, exposure_tenths=-2)
     client_db.commit()
     assert effective_preview(client_db, first["folder"]).strength == 30
-    assert effective_preview(client_db, second["folder"]).mode == "inherit"
+    assert effective_preview(client_db, second["folder"]).mode == "custom"
+    assert effective_preview(client_db, second["folder"]).enabled is True
     with pytest.raises(ValueError):
         configure_folder(client_db, second["folder"].id, tenant_id=first["tenant"].id,
             preview_mode="off", facial_mode="off", strength=30, exposure_tenths=0)

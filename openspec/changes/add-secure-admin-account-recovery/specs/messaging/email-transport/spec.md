@@ -103,3 +103,17 @@ O uso de SMTP real em homologação ou produção SHALL exigir configuração pr
 
 - **WHEN** SPF, DKIM, DMARC ou o remetente do ambiente não estão validados
 - **THEN** os fluxos locais permanecem testáveis em sandbox, mas o canal real não é declarado pronto para uso humano
+
+### Requirement: Diagnóstico administrativo das entregas de e-mail
+
+O sistema SHALL exibir ao administrador autenticado contagens agregadas das entregas vinculadas à sua própria conta e a seus tokens de ação, SHALL excluir entregas de outros administradores e SHALL NOT expor destinatários, payloads, tokens ou conteúdo. A comparação das origens por UUID MUST produzir o mesmo resultado nos dialetos de banco suportados.
+
+#### Scenario: Entrega do token próprio aparece no diagnóstico
+
+- **WHEN** existe uma entrega pendente vinculada a um token de ação do administrador autenticado
+- **THEN** a resposta administrativa inclui a contagem no estado correspondente sem revelar a origem ou os dados sensíveis da mensagem
+
+#### Scenario: Entrega de outro administrador permanece isolada
+
+- **WHEN** existem entregas vinculadas a tokens de ação de duas contas administrativas
+- **THEN** cada conta vê somente as contagens das próprias entregas
