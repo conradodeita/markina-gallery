@@ -24,7 +24,7 @@
 - `markina-homolog.duckdns.org` resolve para `132.145.193.169`, responde HTTP 200 por HTTPS e apresenta certificado Let's Encrypt válido até 2026-11-24. A origem canônica atual da API é `https://markina-homolog.duckdns.org`.
 - `pickyourpic.com.br` está publicado no Registro.br, usa DNS automático `a.auto.dns.br`/`b.auto.dns.br` e não tinha resposta A pública durante a inspeção. O subdomínio `markina.pickyourpic.com.br` não resolvia.
 - No painel do Registro.br, o modo DNS avançado foi confirmado; o domínio aparece em transição com liberação estimada em cerca de 2h05. Nenhum registro foi salvo. A zona raiz/MX permanecem sem configuração de aplicação.
-- O hostname DuckDNS é roteado pelo proxy compartilhado para o projeto Markina. O inventário dos metadados do host virtual deverá ser repetido de forma não sensível imediatamente antes da criação do novo host.
+- O host NPM `markina-homolog.duckdns.org` está em `/data/nginx/proxy_host/2.conf` e usa `forward_scheme=http`, host `markina-homolog-nginx`, porta `80`, certificado `npm-2`; a inspeção foi somente de diretivas de roteamento/certificado, sem chave privada. Repetir o inventário imediatamente antes de criar o novo host.
 - A árvore Git já tinha muitas modificações locais não relacionadas antes desta change; elas permanecem intocadas.
 
 ## Bloqueios atuais
