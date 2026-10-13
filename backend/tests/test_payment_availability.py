@@ -12,17 +12,30 @@ from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import main
-from app.auth import Base, GlobalPixSettings, InfinitePaySettings, MediaDerivative, now
+from app import auth, main
+from app.auth import Base, GlobalPixSettings, InfinitePaySettings, MediaDerivative, Role, now
 from app.global_pix import normalize_configuration
 from app.payment_availability import payment_methods
-from tests.test_tenant_configuration import configured as _configured
+from tests.test_tenant_client_auth import request
+from tests.test_tenant_client_navigation import cookie
 from tests.test_tenant_configuration import graph as _graph
 from tests.test_tenant_configuration import links as _links
 
-configured = _configured
 graph = _graph
 links = _links
+
+
+@pytest.fixture
+def configured(client_db, graph, links):
+    for row in graph:
+        row["admin"].email_verified = True
+        row["admin"].password_hash = auth.password_hasher.hash("Isolated-Configuration-2026!")
+        row["parent"].payment_required = True
+    client_db.commit()
+    for row in graph:
+        row["admin_request"] = request(cookie(client_db, row, Role.ADMIN))
+        row["customer_request"] = request(cookie(client_db, row, Role.CLIENT))
+    return graph
 
 
 @pytest.fixture

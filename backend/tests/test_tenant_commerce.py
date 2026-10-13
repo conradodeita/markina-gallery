@@ -41,6 +41,9 @@ links = _links
 def commerce(client_db, graph, links):
     for index, row in enumerate(graph):
         row["admin"].email_verified = True
+        # This fixture models paid checkout; the shared ownership graph is
+        # intentionally configured for a no-charge journey by default.
+        row["parent"].payment_required = True
         row["parent"].favorites_enabled = True
         row["parent"].comments_enabled = True
         folder = PhotoFolder(tenant_id=row["tenant"].id, parent_gallery_id=row["parent"].id,
