@@ -1,0 +1,37 @@
+name: Maintenance homolog
+
+# Registro para permitir workflow_dispatch da versão operacional em develop.
+# A main não contém scripts de reset e nunca acessa o servidor neste workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Operação controlada
+        type: choice
+        options: [inventory, execute, owner-inventory, owner-execute]
+        required: true
+      confirmation:
+        description: Execute antigo usa DELETE_HOMOLOG_GALLERIES_AND_CLIENTS; owner-execute usa RESET_HOMOLOG_TO_OWNER_AND_DELETE_164_DUMPS_WITHOUT_BACKUP
+        type: string
+        required: false
+      owner_email:
+        description: Conta proprietária a preservar no reset
+        type: string
+        default: conradodeita@gmail.com
+        required: false
+      expected_sha:
+        description: SHA de 40 caracteres publicado e inventariado (obrigatório para owner-*)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  registration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recusar operação e orientar seleção de develop
+        run: |
+          echo "::error::Selecione a ref develop para usar Maintenance homolog. Esta entrada de registro não acessa o servidor."
+          exit 1
