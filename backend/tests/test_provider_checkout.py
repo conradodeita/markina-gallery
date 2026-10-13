@@ -43,6 +43,7 @@ from app.unified_checkout import (
     prepare_group,
     report_group,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_unified_checkout import SessionLocal as _SessionLocal
 from tests.test_unified_checkout import isolated_cart_database as _isolated_cart_database
 from tests.test_unified_checkout import setup_cart
@@ -64,6 +65,10 @@ def configure(db, tenant_id):
 
 
 def setup():
+    with SessionLocal() as db:
+        if db.get(auth.Tenant, FIXTURE_TENANT_ID) is None:
+            db.add(auth.Tenant(id=FIXTURE_TENANT_ID))
+            db.commit()
     owner_id, other_id, gallery_ids = setup_cart()
     with SessionLocal() as db:
         owner = db.get(Client, owner_id)
