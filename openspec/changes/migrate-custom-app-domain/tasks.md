@@ -5,7 +5,7 @@
 
 ## 2. Registrar inventário e obter autorização operacional
 
-- [ ] 2.1 Atualizar o inventário somente de leitura antes da operação e confirmar o estado do proxy/host antigo, redes, portas, certificados, DNS público e checkout/serviços Markina.
+- [x] 2.1 Atualizar o inventário somente de leitura antes da operação e confirmar o estado do proxy/host antigo, redes, portas, certificados, DNS público e checkout/serviços Markina. Evidência atualizada em 2026-10-13 antes da configuração do proxy, detalhada abaixo.
 - [x] 2.2 Apresentar inventário, hostname, registro A, portas/subdomínio e plano de impacto zero; aguardar aprovação explícita antes de qualquer alteração em homologação/Registro.br. A aprovação explícita do proprietário foi recebida em 2026-10-13 para o escopo completo descrito na proposta; alterações externas permanecem aguardando a janela de transição do Registro.br.
 
 ## 3. Configurar e validar domínio novo
@@ -38,3 +38,11 @@
 - A implementação local da allowlist adicional passou os testes direcionados, Ruff, validação estrutural do Compose e validação OpenSpec estrita da change.
 - Nenhum código foi implantado e nenhum arquivo `.env`, registro DNS, host virtual ou certificado foi alterado até este registro.
 - A suíte completa `test_admin_security.py` foi executada também no worktree limpo baseado em `develop`: 27 testes passaram em 135,61s; foram emitidos 27 avisos de depreciação SQLAlchemy/FastAPI sem falhas.
+
+## Atualização operacional — 2026-10-13
+
+- Inventário somente de leitura repetido antes de criar o host novo: `markina-gallery-nginx-1` e serviços do projeto Compose `markina-gallery` estão saudáveis; Nginx da Markina continua publicado apenas em `127.0.0.1:8080 -> 80`; o contêiner NPM compartilhado continua nas portas públicas `80`, `81` e `443`; a rede `npm-network` contém NPM e Nginx Markina. Outros serviços, inclusive ClearBudget e Portainer, permanecem fora do escopo.
+- A interface do NPM versão 2.15.1 mostra dois hosts existentes. `markina-homolog.duckdns.org` continua `Online`, público, com certificado Let's Encrypt, encaminhando para `http://markina-homolog-nginx:80`. O host usa Force SSL e HTTP/2; HSTS, cache, bloqueio de exploits e WebSockets estão desabilitados. Nenhuma configuração existente foi salva ou alterada.
+- A zona DNS estava vazia antes da operação. O Registro.br confirmou `Zona DNS atualizada com sucesso` depois da inclusão do único registro `A markina.pickyourpic.com.br -> 132.145.193.169`. A tabela agora contém somente essa linha; a raiz e MX não foram alterados e os nameservers continuam os automáticos do Registro.br.
+- Verificação logo após salvar: os servidores autoritativos `200.160.2.88` e `200.160.2.89` e os resolvedores `1.1.1.1` e `8.8.8.8` ainda não retornam o novo A. Portanto, a task 3.1 permanece pendente até a propagação ser observada. Nenhum host/certificado NPM, configuração `.env` ou deploy foi alterado.
+- CI do PR #167 passou integralmente em 2026-10-13: backend, frontend, runtime Gemma, gitleaks e validação OpenSpec. O PR está pronto para revisão humana; não foi integrado nem implantado.
