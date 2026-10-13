@@ -13,7 +13,9 @@ type CartGroup = { payment_required?: boolean; message?: string; revision?: stri
   items: Array<{ id: string; name: string; folder_name: string | null; preview_url: string }> };
 type Payment = { id: string; revision: string; total_cents: number; pix_copy_paste: string;
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
-type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; total_cents: number | null; payment?: Payment };
+type CardPayment = { id: string; status: "awaiting_payment" | "verification_required"; checkout_url: string | null; total_cents: number };
+type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
+  card_available?: boolean; card_payment?: CardPayment | null; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function CartPage() {
@@ -22,9 +24,11 @@ export default function CartPage() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [reported, setReported] = useState<string | null>(null);
+  const [method, setMethod] = useState<"pix" | "card">("pix");
   const sequence = useRef(0);
   const locked = useRef(false);
   const requestKey = useRef<string | null>(null);
+  const cardRequestKey = useRef<string | null>(null);
   const finalizationKeys = useRef<Record<string, string>>({});
   const refresh = useCallback(async () => {
     const current = ++sequence.current;
@@ -119,13 +123,47 @@ export default function CartPage() {
     finally { locked.current = false; setBusy(false); }
   }
 
+  async function prepareCard() {
+    if (!cart?.cart_revision || !cart.can_prepare || !cart.card_available || locked.current) return;
+    locked.current = true; setBusy(true); setError("");
+    cardRequestKey.current ??= crypto.randomUUID();
+    try {
+      const response = await fetch("/api/library/cart/prepare-card", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cart_revision: cart.cart_revision, idempotency_key: cardRequestKey.current }),
+      });
+      const result = await response.json();
+      if (response.status === 401 || response.status === 403) setCart(null);
+      if (!response.ok) {
+        if (response.status === 409) cardRequestKey.current = null;
+        throw new Error(result.detail ?? "Não foi possível preparar o pagamento com cartão.");
+      }
+      setCart((previous) => previous ? { ...previous, card_payment: result } : previous);
+      if (result.status === "awaiting_payment" && result.checkout_url) {
+        setNotice("Link seguro pronto. Confira o recebedor e pague no checkout da InfinitePay.");
+      } else {
+        setNotice("A solicitação ficou em verificação. Não tente iniciar outro pagamento; atualize o histórico em instantes.");
+      }
+      notifyCartChanged();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Não foi possível preparar o cartão.");
+    } finally { locked.current = false; setBusy(false); }
+  }
+
   if (reported) return <section className="unified-cart"><h1>Pagamento informado</h1><p>Seu pagamento aguarda a confirmação do fotógrafo.</p><Link className="primary" href={`/library/purchases#payment-${reported}`}>Ver compra</Link><Link href="/library">Continuar nas galerias</Link></section>;
   return <section className="unified-cart">
-    <h1>{cart?.groups.length && cart.groups.every((group) => group.payment_required === false) ? "Revise suas fotos" : "Revise suas fotos e faça o PIX"}</h1>
+    <h1>{cart?.groups.length && cart.groups.every((group) => group.payment_required === false) ? "Revise suas fotos" : "Revise suas fotos e escolha como pagar"}</h1>
     {notice ? <p role="status">{notice} <Link href="/library/purchases">Ver histórico</Link></p> : null}
     {error ? <div role="alert"><p>{error}</p><button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Atualizar revisão</button></div> : null}
     {!cart && !error ? <SystemState tone="loading" title="Carregando carrinho" detail="Buscando suas fotos selecionadas." /> : null}
     {cart?.quantity === 0 ? <><p>Seu carrinho está vazio.</p><Link className="primary" href="/library">Escolher fotos</Link></> : null}
+    {cart?.card_payment ? <section className="unified-payment" aria-label="Pagamento por cartão em andamento">
+      <h2>Compra por cartão · {money(cart.card_payment.total_cents)}</h2>
+      {cart.card_payment.status === "awaiting_payment" && cart.card_payment.checkout_url
+        ? <><p>Continue o pagamento no checkout seguro da InfinitePay.</p><a className="primary" href={cart.card_payment.checkout_url} rel="noopener noreferrer">Continuar para pagamento com cartão</a></>
+        : <p role="status">Pagamento em verificação. A compra continua reservada; não inicie outra cobrança para essas fotos.</p>}
+      <Link href={`/library/purchases#payment-${cart.card_payment.id}`}>Acompanhar compra</Link>
+    </section> : null}
     {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
       <div className="section-heading"><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>
       {group.message?.trim() ? <p style={{ whiteSpace: "pre-wrap" }}>{group.message}</p> : null}
@@ -143,6 +181,17 @@ export default function CartPage() {
     {cart && cart.groups.some((group) => group.payment_required !== false) ? <section className="unified-payment" aria-label="Pagamento único">
       <h2>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</h2>
       <p>{cart.groups.filter((group) => group.payment_required !== false).reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</p>
+      {cart.can_prepare && cart.card_available ? <fieldset>
+        <legend>Forma de pagamento</legend>
+        <label><input type="radio" name="payment-method" checked={method === "pix"} onChange={() => setMethod("pix")} /> PIX</label>
+        <label><input type="radio" name="payment-method" checked={method === "card"} onChange={() => setMethod("card")} /> Cartão de crédito</label>
+      </fieldset> : null}
+      {method === "card" && cart.card_available ? <>
+        <p>O pagamento será feito no ambiente seguro da InfinitePay. O Pick-your-Pic não recebe dados do cartão.</p>
+        <button type="button" className="primary" disabled={busy || !cart.cart_revision} onClick={() => void prepareCard()}>{busy ? "Preparando checkout…" : "Continuar com cartão de crédito"}</button>
+        {cart.card_payment?.checkout_url ? <a className="primary" href={cart.card_payment.checkout_url} rel="noopener noreferrer">Retomar checkout InfinitePay</a> : null}
+      </> : null}
+      {method === "pix" || !cart.card_available ? <>
       {cart.payment ? <>
         <h3>Pague com PIX</h3>
         {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}
@@ -153,6 +202,7 @@ export default function CartPage() {
         <p>Após pagar {money(cart.payment.total_cents)}, informe o pagamento para o fotógrafo conferir.</p>
         <button type="button" className="primary" disabled={busy} onClick={() => void report()}>{busy ? "Salvando…" : "Informar pagamento"}</button>
       </> : !error && cart.can_prepare ? <p role="status">Preparando PIX…</p> : <p>Confira os avisos acima para continuar.</p>}
+      </> : null}
     </section> : null}
   </section>;
 }

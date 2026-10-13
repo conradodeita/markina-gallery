@@ -67,13 +67,34 @@ it("permite finalizar seleção externa quando o PIX da outra galeria falha", as
 });
 
 describe("revisão global da cliente", () => {
+  it("permite escolher cartão e prepara uma única tentativa sem exibir o PIX como comprovante", async () => {
+    const ready = { ...cart, cart_revision: "d".repeat(64), card_available: true };
+    const fetcher = vi.fn((path: string) => {
+      if (path.endsWith("/prepare-card")) return response({ id: "card-1", status: "awaiting_payment",
+        checkout_url: "https://checkout.infinitepay.io/owner/invoice", total_cents: 1400 });
+      if (path.endsWith("/prepare")) return response({ ...ready, payment });
+      return response(ready);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<CartPage />);
+    fireEvent.click(await screen.findByLabelText("Cartão de crédito"));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar com cartão de crédito" }));
+    const link = await screen.findByRole("link", { name: "Continuar para pagamento com cartão" });
+    expect(link.getAttribute("href")).toBe("https://checkout.infinitepay.io/owner/invoice");
+    const call = fetcher.mock.calls.find(([path]) => path.endsWith("/prepare-card"));
+    expect(call?.[1]?.method).toBe("POST");
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ cart_revision: "d".repeat(64) });
+    expect(screen.queryByRole("img", { name: /QR Code/ })).toBeNull();
+    expect(fetcher.mock.calls.filter(([path]) => path.endsWith("/prepare-card"))).toHaveLength(1);
+  });
+
   it("abre fotos de duas galerias e pastas com um único PIX e registra uma compra", async () => {
     const fetcher = vi.fn((path: string) => response(path.endsWith("/prepare") ? { ...cart, payment }
       : path.endsWith("/report") ? { status: "pending_review" } : cart));
     vi.stubGlobal("fetch", fetcher);
     render(<CartPage />);
     expect(await screen.findByRole("button", { name: "Informar pagamento" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Revise suas fotos e faça o PIX" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Revise suas fotos e escolha como pagar" })).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Fotos de Galeria 1" })).getByText("Pasta 1")).toBeTruthy();
     expect(screen.getAllByRole("img", { name: /QR Code/ })).toHaveLength(1);
     expect(screen.getByRole("heading", { name: /Total/ }).textContent).toContain("14,00");

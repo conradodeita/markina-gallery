@@ -33,7 +33,7 @@ type Communication = {
   client_notification: Delivery | null;
 };
 
-type FinancialStatus = "awaiting_payment" | "reported" | "confirmed" | "not_found" | "overdue";
+type FinancialStatus = "awaiting_payment" | "reported" | "confirmed" | "not_found" | "overdue" | "verifying" | "exception" | "hold";
 type Order = {
   assets_removed?: boolean;
   id: string;
@@ -41,6 +41,9 @@ type Order = {
   gallery: { id: string; name: string; removed: boolean };
   total_cents: number;
   financial_status: FinancialStatus;
+  payment_method?: "credit_card" | "pix";
+  provider_payment_state?: string;
+  provider_payment_id?: string;
   created_at: string;
   selection_expires_at: string | null;
   communications: Communication[];
@@ -101,6 +104,9 @@ const financialPresentation: Record<FinancialStatus, { label: string; tone: "neu
   confirmed: { label: "Pagamento confirmado", tone: "success" },
   not_found: { label: "Pagamento não localizado", tone: "danger" },
   overdue: { label: "Prazo expirado", tone: "dark" },
+  verifying: { label: "Verificando cartão", tone: "warning" },
+  exception: { label: "Pagamento em análise", tone: "danger" },
+  hold: { label: "Pagamento em revisão", tone: "dark" },
 };
 const decisionLabel = {
   pending_review: "Aguardando revisão",
@@ -287,12 +293,12 @@ function OrderCard({ order, onRefresh }: { order: Order; onRefresh: () => Promis
   const communication = order.communication;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.parent_gallery.name} · pedido {order.id.slice(0, 8)}</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.parent_gallery.name} · pedido {order.id.slice(0, 8)}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""}</p></div><strong>{money(order.total_cents)}</strong></div>
     <details>
       <summary>Ver pedido e entrega</summary>
       <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div>{order.selection_expires_at ? <div><dt>Prazo</dt><dd>{new Date(order.selection_expires_at).toLocaleDateString("pt-BR")}</dd></div> : null}</dl>
       {order.folders?.length ? <div>{order.folders.map((folder) => <section key={folder.id ?? folder.name}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name} · {money(item.unit_price_cents)}</li>)}</ul></section>)}</div> : null}
-      {!communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
+      {order.payment_method === "credit_card" ? <p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
         <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
       </>}

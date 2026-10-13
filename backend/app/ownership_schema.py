@@ -19,10 +19,11 @@ SHARED_TABLES = frozenset({
 CONTEXTUAL_TABLES = frozenset({
     "admin_security_challenge", "auth_challenge", "auth_session", "audit_event",
 })
-SINGLETON_TABLES = frozenset({"branding_settings", "global_pix_settings"})
+SINGLETON_TABLES = frozenset({"branding_settings", "global_pix_settings", "infinitepay_settings"})
 # Um caminho físico ou capacidade opaca não pode representar dois proprietários.
 GLOBALLY_UNIQUE_FIELDS = frozenset({
     "storage_key", "relative_path", "preview_storage_key", "delivery_storage_key", "token_hash",
+    "provider_transaction_nsu",
 })
 
 
@@ -136,5 +137,9 @@ def apply_ownership_constraints(metadata: MetaData) -> None:
     metadata.tables["admin_security_challenge"].append_constraint(CheckConstraint(
         "purpose != 'change_pix_otp' OR tenant_id IS NOT NULL",
         name="ck_admin_challenge_pix_context",
+    ))
+    metadata.tables["admin_security_challenge"].append_constraint(CheckConstraint(
+        "purpose != 'change_infinitepay_otp' OR tenant_id IS NOT NULL",
+        name="ck_admin_challenge_infinitepay_context",
     ))
     metadata.info["ownership_constraints_applied"] = True

@@ -222,7 +222,8 @@ class AdminSecurityChallenge(Base):
     __table_args__ = (
         CheckConstraint(
             "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp', "
-            "'change_pix_otp')"
+            "'change_pix_otp', 'change_infinitepay_otp')",
+            name="ck_admin_security_purpose",
         ),
         CheckConstraint("attempts >= 0"),
         CheckConstraint("resend_count >= 0"),
@@ -974,6 +975,115 @@ class PaymentGroup(Base):
     reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ProviderPayment(Base):
+    """Compra de cartão isolada do PIX; UUID público é o order_nsu."""
+
+    __tablename__ = "provider_payment"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", "client_id", name="uq_provider_payment_owner"),
+        UniqueConstraint("tenant_id", "client_id", "checkout_key", name="uq_provider_payment_checkout"),
+        UniqueConstraint("provider", "provider_transaction_nsu", name="uq_provider_payment_transaction"),
+        CheckConstraint("provider = 'infinitepay'", name="ck_provider_payment_provider"),
+        CheckConstraint("total_cents > 0 AND configuration_version > 0 AND revision_number >= 0",
+                        name="ck_provider_payment_amount_version"),
+        CheckConstraint("state IN ('creating', 'awaiting_payment', 'verification_required', 'confirmed', "
+                        "'failed_before_issue', 'exception', 'hold')", name="ck_provider_payment_state"),
+        CheckConstraint("state != 'confirmed' OR (provider_transaction_nsu IS NOT NULL "
+                        "AND confirmed_at IS NOT NULL)", name="ck_provider_payment_confirmed"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(24), default="infinitepay")
+    checkout_key: Mapped[str] = mapped_column(String(128))
+    cart_revision: Mapped[str] = mapped_column(String(64))
+    total_cents: Mapped[int] = mapped_column(Integer)
+    handle_snapshot: Mapped[str] = mapped_column(String(100))
+    configuration_version: Mapped[int] = mapped_column(Integer)
+    verification_profile: Mapped[str] = mapped_column(String(100))
+    state: Mapped[str] = mapped_column(String(32), default="creating", index=True)
+    revision_number: Mapped[int] = mapped_column(Integer, default=0)
+    checkout_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_transaction_nsu: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ProviderPaymentAttempt(Base):
+    """Uma emissão durável, sem reenvio automático de resultado incerto."""
+
+    __tablename__ = "provider_payment_attempt"
+    __table_args__ = (
+        ForeignKeyConstraint(["payment_id", "tenant_id", "client_id"],
+                             ["provider_payment.id", "provider_payment.tenant_id", "provider_payment.client_id"],
+                             name="fk_provider_attempt_payment_owner"),
+        UniqueConstraint("tenant_id", "payment_id", name="uq_provider_attempt_payment"),
+        CheckConstraint("state IN ('started', 'accepted', 'refused', 'unknown')",
+                        name="ck_provider_attempt_state"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    payment_id: Mapped[UUID] = mapped_column(index=True)
+    state: Mapped[str] = mapped_column(String(16), default="started")
+    error_category: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProviderPaymentReceipt(Base):
+    """Candidato mínimo durável; não guarda corpo bruto nem comprova pagamento."""
+
+    __tablename__ = "provider_payment_receipt"
+    __table_args__ = (
+        ForeignKeyConstraint(["payment_id", "tenant_id", "client_id"],
+                             ["provider_payment.id", "provider_payment.tenant_id", "provider_payment.client_id"],
+                             name="fk_provider_receipt_payment_owner"),
+        UniqueConstraint("tenant_id", "payment_id", "digest", name="uq_provider_receipt_digest"),
+        CheckConstraint("state IN ('queued', 'processing', 'verified', 'ignored', 'failed')",
+                        name="ck_provider_receipt_state"),
+        CheckConstraint("attempts >= 0", name="ck_provider_receipt_attempts"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    payment_id: Mapped[UUID] = mapped_column(index=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    transaction_nsu: Mapped[str] = mapped_column(String(200))
+    slug: Mapped[str] = mapped_column(String(512))
+    verification_profile: Mapped[str] = mapped_column(String(100))
+    state: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProviderPaymentCorrection(Base):
+    """Histórico append-only quando uma confirmação de cartão entra em hold."""
+
+    __tablename__ = "provider_payment_correction"
+    __table_args__ = (
+        ForeignKeyConstraint(["payment_id", "tenant_id", "client_id"],
+                             ["provider_payment.id", "provider_payment.tenant_id", "provider_payment.client_id"],
+                             name="fk_provider_correction_payment_owner"),
+        UniqueConstraint("tenant_id", "payment_id", "idempotency_key",
+                         name="uq_provider_correction_idempotency"),
+        CheckConstraint("previous_revision >= 1", name="ck_provider_correction_revision"),
+        CheckConstraint("previous_transaction_nsu <> ''", name="ck_provider_correction_transaction"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    payment_id: Mapped[UUID] = mapped_column(index=True)
+    actor_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    reason: Mapped[str] = mapped_column(String(500))
+    previous_revision: Mapped[int] = mapped_column(Integer)
+    previous_transaction_nsu: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class SaleOrder(Base):
     __tablename__ = "sale_order"
     tenant_id: Mapped[UUID] = mapped_column(
@@ -995,6 +1105,11 @@ class SaleOrder(Base):
         ForeignKeyConstraint(["payment_group_id", "client_id"],
                              ["payment_group.id", "payment_group.client_id"],
                              name="fk_sale_order_payment_group_owner"),
+        ForeignKeyConstraint(["provider_payment_id", "tenant_id", "client_id"],
+                             ["provider_payment.id", "provider_payment.tenant_id", "provider_payment.client_id"],
+                             name="fk_sale_order_provider_payment_owner"),
+        CheckConstraint("payment_group_id IS NULL OR provider_payment_id IS NULL",
+                        name="ck_sale_order_single_payment_method"),
         Index(
             "ix_sale_order_parent_payment_status",
             "parent_gallery_id_snapshot",
@@ -1074,6 +1189,7 @@ class SaleOrder(Base):
     checkout_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     assets_removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payment_group_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    provider_payment_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -1442,6 +1558,35 @@ class PixCheckoutSettings(Base):
     review_required: Mapped[bool] = mapped_column(Boolean, default=False)
     instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class InfinitePaySettings(Base):
+    """InfiniteTag por conta e autodeclaração de Checkout Integrado.
+
+    `verified_at` remains the legacy column name for the timestamp when the
+    owner attested to the setup; it does not mean remote ownership verification.
+    """
+
+    __tablename__ = "infinitepay_settings"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_infinitepay_settings_tenant"),
+        CheckConstraint("version >= 0", name="ck_infinitepay_settings_version"),
+        CheckConstraint("status IN ('pending', 'inactive', 'active')",
+                        name="ck_infinitepay_settings_status"),
+        CheckConstraint("status = 'inactive' OR handle IS NOT NULL",
+                        name="ck_infinitepay_settings_handle"),
+        CheckConstraint("status != 'active' OR (verification_profile IS NOT NULL "
+                        "AND verified_at IS NOT NULL)", name="ck_infinitepay_settings_activation"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    handle: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    verification_profile: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class GlobalPixSettings(Base):
