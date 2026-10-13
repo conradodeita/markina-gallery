@@ -63,6 +63,52 @@ for failure in list inspect missing-service; do
   if grep -Fq UNEXPECTED-RESET "$output"; then exit 1; fi
 done
 
+if ! bash -c '
+  source "$OWNER_RESET_HOST_SCRIPT"
+  WRITER_IDS=(abcdef123456)
+  reloaded=0; health_attempts=0
+  docker() {
+    if [[ "$1" == inspect && "$*" == *com.docker.compose.project* ]]; then echo markina-gallery; return 0; fi
+    if [[ "$1" == inspect && "$*" == *com.docker.compose.service* ]]; then echo api; return 0; fi
+    if [[ "$1" == inspect ]]; then echo healthy; return 0; fi
+    [[ "$1" == start ]]
+  }
+  compose() {
+    [[ "$*" != "exec -T nginx nginx -t" ]] || return 0
+    [[ "$*" == "exec -T nginx nginx -s reload" ]] || return 1
+    reloaded=1
+  }
+  curl() { health_attempts=$((health_attempts + 1)); [[ "$reloaded" == 1 && "$health_attempts" -gt 1 ]]; }
+  sleep() { :; }
+  restore_writers
+  [[ "$reloaded" == 1 && "$health_attempts" == 2 ]]
+' >"$output" 2>&1; then echo "retomada HTTP não renovou upstream" >&2; exit 1; fi
+
+for failure in config reload health; do
+  if bash -c '
+    source "$OWNER_RESET_HOST_SCRIPT"
+    WRITER_IDS=(abcdef123456)
+    docker() {
+      if [[ "$1" == inspect && "$*" == *com.docker.compose.project* ]]; then echo markina-gallery; return 0; fi
+      if [[ "$1" == inspect && "$*" == *com.docker.compose.service* ]]; then echo api; return 0; fi
+      if [[ "$1" == inspect ]]; then echo healthy; return 0; fi
+      [[ "$1" == start ]]
+    }
+    compose() {
+      if [[ "$*" == "exec -T nginx nginx -t" ]]; then [[ "$0" != config ]]; return; fi
+      [[ "$*" == "exec -T nginx nginx -s reload" ]] || return 1
+      [[ "$0" != config ]] || { echo UNEXPECTED-RELOAD; return 1; }
+      [[ "$0" != reload ]]
+    }
+    curl() { echo synthetic-health-failure >&2; return 22; }
+    sleep() { :; }
+    restore_writers
+    echo UNEXPECTED-COMPLETE
+  ' "$failure" >"$output" 2>&1; then echo "falha de retomada aceita: $failure" >&2; exit 1; fi
+  if grep -Fq UNEXPECTED "$output"; then exit 1; fi
+  if [[ "$failure" == health ]]; then [[ "$(grep -Fc synthetic-health-failure "$output")" == 15 ]]; fi
+done
+
 if bash -c 'source "$OWNER_RESET_HOST_SCRIPT"; classify_service unknown-writer' >"$output" 2>&1; then
   echo "writer desconhecido aceito" >&2; exit 1
 fi

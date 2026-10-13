@@ -17,6 +17,9 @@ MODE="" OWNER_EMAIL="" EXPECTED_SHA="" CONFIRMATION="" PAYLOAD_FILE=""
 
 fail() { echo "owner-reset: $*" >&2; exit 1; }
 compose() { docker compose "${COMPOSE_ARGS[@]}" "$@" </dev/null; }
+check_nginx_config() {
+  compose exec -T nginx nginx -t || fail "configuração do Nginx Markina inválida; reload recusado"
+}
 check_state_root() {
   local root="${1:-$STATE_ROOT}"
   [[ -d "$root" && ! -L "$root" && "$(realpath "$root")" == "$root" ]] || fail "diretório privado de retomada ausente ou inseguro"
@@ -71,7 +74,13 @@ restore_writers() {
     done
     [[ "$status" == healthy ]] || fail "writer não retomou saudável"
   done
-  curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/api/health >/dev/null
+  check_nginx_config || return 1
+  compose exec -T nginx nginx -s reload || fail "reload do Nginx Markina falhou"
+  for attempt in $(seq 1 15); do
+    if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/api/health >/dev/null; then return 0; fi
+    sleep 1
+  done
+  fail "healthcheck HTTP do proxy Markina não ficou saudável"
 }
 
 evolution_snapshot() {
@@ -254,6 +263,7 @@ print("topologia conferida: Markina/homolog/127.0.0.1:8080/markina.pickyourpic.c
   done <<< "$active_rows"
   evolution_before="$(evolution_snapshot)" || fail "estado Evolution inicial não pôde ser confirmado"
   check_state_root || return 1
+  check_nginx_config || return 1
 
   [[ -n "${MARKINA_RESET_SCRIPT_BASE64:-}" && "${MARKINA_RESET_SCRIPT_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || fail "payload revisado ausente"
   PAYLOAD_FILE="$(mktemp /tmp/markina-owner-reset.XXXXXX.py)"
