@@ -152,6 +152,27 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
   ' >"$output" 2>&1
 grep -Fq 'PUBLIC_APP_ORIGIN sincronizada com a origem pública autorizada de homologação' "$output"
 
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGINS=\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origins "$ORIGIN_ENV" "https://markina-homolog.duckdns.org"
+    [[ "$(grep -c "^PUBLIC_APP_ORIGINS=" "$ORIGIN_ENV")" -eq 1 ]]
+    grep -Fxq "PUBLIC_APP_ORIGINS=https://markina-homolog.duckdns.org" "$ORIGIN_ENV"
+    [[ "$(stat -c %a "$ORIGIN_ENV")" == "600" ]]
+  ' >"$output" 2>&1
+grep -Fq 'PUBLIC_APP_ORIGINS sincronizada com a lista temporária autorizada de homologação' "$output"
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origins "$ORIGIN_ENV" "https://*.example"
+  ' >"$output" 2>&1; then
+  echo "wildcard de origem pública foi aceito" >&2
+  exit 1
+fi
+grep -Fq 'MARKINA_PUBLIC_APP_ORIGINS deve conter somente origens HTTPS exatas' "$output"
+
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
