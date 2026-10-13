@@ -175,7 +175,7 @@ def test_publish_promotes_only_ready_unavailable_photos_without_private_links(
 ) -> None:
     authenticate_admin(client)
     with SessionLocal() as db:
-        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento", payment_required=False)
         db.add(parent)
         db.flush()
         folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada")
@@ -222,7 +222,7 @@ def test_publish_ready_parent_batch_reports_pending_and_publishes_all_ready(
 ) -> None:
     authenticate_admin(client)
     with SessionLocal() as db:
-        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento em lote")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento em lote", payment_required=False)
         db.add(parent)
         db.flush()
         first = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Primeira", position=0)

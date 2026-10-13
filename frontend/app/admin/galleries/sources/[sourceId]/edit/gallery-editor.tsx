@@ -30,7 +30,7 @@ type ClientOption = ClientDirectoryItem;
 type PricingMode = "fixed" | "progressive" | "legacy_volume";
 type PricingPreset = { id: string; code: string; name: string; label: string; version: number; active: boolean; tiers: PriceTier[] };
 type PricingQuote = { quantity: number; parcels: Array<PriceTier & { quantity: number; subtotal_cents: number }>; base_total_cents: number; savings_cents: number; total_cents: number };
-type SalesData = { payment_required?: boolean; available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
+type SalesData = { payment_methods?: { available: boolean; pix_available: boolean; card_available: boolean }; payment_required?: boolean; available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
 type GalleryLink = { status: "active" | "unavailable" | "legacy_unrecoverable"; capability_id: string | null; expires_at: string | null; secret_available: boolean; link: string | null };
 type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
 type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing" | "failed"; preview_url: string | null; width: number | null; height: number | null; error?: string | null };
@@ -506,6 +506,10 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       setSalesError("Escolha uma tabela de preço progressivo da sua conta.");
       return;
     }
+    if (sales.payment_required !== false && !(sales.payment_methods?.available ?? sales.pix.checkout_available)) {
+      setSalesError("Pagamento obrigatório exige ao menos uma forma de pagamento disponível. Configure o PIX ou habilite cartão em Configurações.");
+      return;
+    }
     setSavingStep(true);
     try {
       const saved = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/sales`, {
@@ -795,6 +799,12 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                 <legend>Jornada da cliente</legend>
                 <label className="gallery-toggle"><input type="checkbox" checked={sales.payment_required !== false} onChange={(event) => setSales((current) => current ? { ...current, payment_required: event.target.checked } : current)} /> Pagamento obrigatório?</label>
                 {sales.payment_required === false ? <p>O sistema será usado somente para seleção. A cliente finaliza sem cobrança, com preços e totais ocultos.</p> : null}
+                {sales.payment_required !== false ? <>
+                  <p role="status">{(sales.payment_methods?.available ?? sales.pix.checkout_available)
+                    ? `Recebimento disponível: ${[(sales.payment_methods?.pix_available ?? sales.pix.checkout_available) ? "PIX (padrão)" : null, sales.payment_methods?.card_available ? "Cartão de crédito" : null].filter(Boolean).join(" e ")}.`
+                    : "Configure ao menos uma forma de pagamento da sua conta para salvar esta galeria com cobrança obrigatória."}</p>
+                  <Link href="/admin/settings#pix">Configurar formas de pagamento</Link>
+                </> : null}
                 <label>Mensagem comercial<textarea name="sales_message" rows={4} value={sales.sales_message} onChange={(event) => setSales((current) => current ? { ...current, sales_message: event.target.value } : current)} /></label>
                 <label>Prazo padrão de seleção (dias)<input name="selection_duration_days" type="number" min={1} max={3650} value={sales.selection_duration_days ?? 14} onChange={(event) => setSales((current) => current ? { ...current, selection_duration_days: Number(event.target.value) } : current)} required /></label>
                 <label className="gallery-toggle"><input name="favorites_enabled" type="checkbox" checked={sales.favorites_enabled} onChange={(event) => setSales((current) => current ? { ...current, favorites_enabled: event.target.checked } : current)} /> Permitir favoritos</label>

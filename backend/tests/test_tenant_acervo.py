@@ -258,6 +258,7 @@ def test_pasta_restrita_preserva_publico_e_cliente_B_nao_recebe_atribuicao(
     from app.public_gallery_access import authorized_canonical_photos
 
     first, second = graph
+    first["parent"].payment_required = False  # Contrato de público sem cobrança financeira.
     link_client_to_parent(client_db, parent_gallery_id=first["parent"].id, client_id=first["client"].id)
     other = Client(tenant_id=first["tenant"].id, full_name="Outra sintética A", phone_e164="+5511999990080")
     client_db.add(other)

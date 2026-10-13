@@ -24,7 +24,10 @@ it("mostra mensagem comercial e finaliza sem preços nem preparar PIX", async ()
   });
   vi.stubGlobal("fetch", fetcher);
   render(<CartPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Finalizar seleção" }));
+  const finalize = await screen.findByRole("button", { name: "Finalizar seleção" });
+  expect(screen.queryByRole("region", { name: "Pagamento único" })).toBeNull();
+  expect(screen.queryByLabelText("Cartão de crédito")).toBeNull();
+  fireEvent.click(finalize);
   expect(await screen.findByText(/Seleção finalizada/)).toBeTruthy();
   expect(fetcher.mock.calls.some(([path]) => path.endsWith("/prepare"))).toBe(false);
   expect(screen.queryByText(/R\$/)).toBeNull();
@@ -67,6 +70,35 @@ it("permite finalizar seleção externa quando o PIX da outra galeria falha", as
 });
 
 describe("revisão global da cliente", () => {
+  it("oferece cartão utilizável sem preparar ou exibir PIX inexistente", async () => {
+    const ready = { ...cart, cart_revision: "d".repeat(64), pix_available: false, card_available: true };
+    const fetcher = vi.fn(() => response(ready));
+    vi.stubGlobal("fetch", fetcher);
+    render(<CartPage />);
+    expect(await screen.findByRole("button", { name: "Continuar com cartão de crédito" })).toBeTruthy();
+    expect(screen.queryByLabelText("PIX")).toBeNull();
+    expect(screen.queryByText("Preparando PIX…")).toBeNull();
+    expect(fetcher.mock.calls).toHaveLength(1);
+  });
+
+  it("inicia pelo PIX quando ambos os meios estão disponíveis", async () => {
+    const ready = { ...cart, pix_available: true, card_available: true };
+    vi.stubGlobal("fetch", vi.fn((path: string) => response(path.endsWith("/prepare") ? { ...ready, payment } : ready)));
+    render(<CartPage />);
+    await screen.findByRole("button", { name: "Informar pagamento" });
+    expect(screen.getByLabelText("PIX")).toHaveProperty("checked", true);
+    expect(screen.getByLabelText("Cartão de crédito")).toHaveProperty("checked", false);
+  });
+
+  it("preserva seleção e explica indisponibilidade quando nenhum meio é utilizável", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ ...cart, can_prepare: false, pix_available: false,
+      card_available: false, payment_error: "Pagamento indisponível. Sua seleção foi mantida." })));
+    render(<CartPage />);
+    expect(await screen.findByText("Pagamento indisponível. Sua seleção foi mantida.")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Fotos de Galeria 1" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Continuar com cartão de crédito" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Informar pagamento" })).toBeNull();
+  });
   it("permite escolher cartão e prepara uma única tentativa sem exibir o PIX como comprovante", async () => {
     const ready = { ...cart, cart_revision: "d".repeat(64), card_available: true };
     const fetcher = vi.fn((path: string, options?: RequestInit) => {

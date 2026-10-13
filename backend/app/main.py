@@ -328,6 +328,13 @@ from app.order_delivery import (
     validate_album_url,
 )
 from app.parent_registration import link_client_to_parent
+from app.payment_availability import (
+    PAYMENT_REQUIRED_MESSAGE,
+    can_publish_gallery,
+    lock_payment_account,
+    payment_methods,
+    require_payment_method,
+)
 from app.payment_provider import PaymentCheckRequest, operational_provider
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
 from app.pix import PixCodeError, pix_qr_data_url
@@ -2288,6 +2295,7 @@ def admin_global_pix_challenge(
         db.commit()
         raise neutral_error() from None
     # Serializa a emissão e a confirmação para o mesmo fotógrafo.
+    lock_payment_account(db, session.tenant_id)
     db.scalar(select(AdminUser).where(AdminUser.id == admin.id).with_for_update())
     settings = global_pix_settings(db, tenant_id=session.tenant_id)
     try:
@@ -2325,6 +2333,7 @@ def admin_global_pix_confirm(
     require_same_origin(request)
     session = current_session(request, Role.ADMIN)
     admin = active_admin_for_session(db, session)
+    lock_payment_account(db, session.tenant_id)
     db.scalar(select(AdminUser).where(AdminUser.id == admin.id).with_for_update())
     stored = db.scalar(select(AdminSecurityChallenge).where(
         AdminSecurityChallenge.id == payload.challenge_id,
@@ -2344,6 +2353,7 @@ def admin_global_pix_confirm(
     except AdminAccountError:
         raise neutral_error() from None
     except PixCodeError as exc:
+        db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from None
     challenge.encrypted_target = None
     audit(db, "pix.global_updated", f"{admin.id}:{settings.id}:{settings.version}", tenant_id=session.tenant_id)
@@ -3564,7 +3574,17 @@ def update_parent_gallery_settings(
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
+    lock_payment_account(db, tenant_id)
     gallery = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
+    if payload.active is True and not gallery.active and gallery.payment_required:
+        released = db.scalar(select(PhotoFolder.id).where(
+            PhotoFolder.tenant_id == tenant_id,
+            PhotoFolder.parent_gallery_id == gallery.id,
+            PhotoFolder.purpose == "content",
+            PhotoFolder.status == "released",
+        ).limit(1))
+        if released:
+            require_payment_method(db, tenant_id=tenant_id)
     visual_fields = {"cover_title_font", "cover_title_color", "cover_title_size", "cover_title_position"}
     if visual_fields.intersection(payload.model_fields_set):
         readiness = gallery_cover_readiness(db, gallery)
@@ -3703,6 +3723,7 @@ def parent_gallery_sales(
         ],
         "payment_required": gallery.payment_required,
         "sales_message": gallery.sales_message or "",
+        "payment_methods": payment_methods(db, tenant_id=tenant_id),
         "selection_duration_days": gallery.selection_duration_days,
         "favorites_enabled": gallery.favorites_enabled,
         "comments_enabled": gallery.comments_enabled,
@@ -3719,8 +3740,10 @@ def update_parent_gallery_sales(
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
+    lock_payment_account(db, tenant_id)
     gallery = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
     if payload.payment_required:
+        require_payment_method(db, tenant_id=tenant_id, status_code=422)
         tiers = save_parent_pricing(db, gallery.id, payload, tenant_id=tenant_id)
     else:
         tiers = []
@@ -4988,6 +5011,10 @@ def _publish_photo_folder(
     db: Session, folder: PhotoFolder, *, commit: bool = True
 ) -> dict[str, object]:
     require_active_owner(db, folder.tenant_id)
+    lock_payment_account(db, folder.tenant_id)
+    gallery = owned_record(db, ParentGallery, folder.parent_gallery_id, tenant_id=folder.tenant_id)
+    if gallery and not can_publish_gallery(db, gallery):
+        raise HTTPException(status_code=409, detail=PAYMENT_REQUIRED_MESSAGE)
     if folder.purpose != "content" or folder.status not in {"preparing", "released"}:
         raise HTTPException(status_code=409, detail="A pasta não pode ser publicada.")
     if folder.audience_scope == "selected" and folder.derived_gallery_id is None and not db.scalar(
@@ -5018,6 +5045,24 @@ def _publish_photo_folder(
     if folder.status == "preparing" and ready_ids:
         folder.status = "released"
         folder.released_at = now()
+    for photo in photos:
+        if photo.id in ready_ids:
+            analysis_preview = db.scalar(select(MediaDerivative).where(
+                MediaDerivative.tenant_id == folder.tenant_id,
+                MediaDerivative.photo_asset_id == photo.id,
+                MediaDerivative.variant == "admin_preview",
+                MediaDerivative.status == "ready",
+            ))
+            if analysis_preview and analysis_preview.relative_path:
+                from app.facial.indexing import enqueue_photo_index_if_eligible
+
+                try:
+                    enqueue_photo_index_if_eligible(
+                        db, photo, analysis_preview,
+                        derivative_path=safe_derivative_path(analysis_preview),
+                    )
+                except ValueError:
+                    logger.warning("Indexação facial adiada: caminho da prévia indisponível")
     if ready_ids and folder.audience_scope == "selected" and folder.derived_gallery_id is None:
         record_restricted_folder_ready(
             db, folder=folder, photo_ids=ready_ids, batch_key="publish"
@@ -5064,6 +5109,7 @@ def publish_photo_folder(
 
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
+    lock_payment_account(db, tenant_id)
     folder = owned_record(db, PhotoFolder, folder_id, tenant_id=tenant_id)
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
@@ -5087,7 +5133,10 @@ def publish_parent_gallery_ready_photos(
 
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
-    require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
+    lock_payment_account(db, tenant_id)
+    gallery = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
+    if not can_publish_gallery(db, gallery):
+        raise HTTPException(status_code=409, detail=PAYMENT_REQUIRED_MESSAGE)
     folders = list(
         db.scalars(
             select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id)
@@ -5120,6 +5169,7 @@ def release_photo_folder(
 
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
+    lock_payment_account(db, tenant_id)
     if payload.gallery_ids:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,

@@ -21,6 +21,7 @@ from app.auth import (
     FacialRollout,
     FacialSearchCandidate,
     GalleryFacialPolicy,
+    GlobalPixSettings,
     ParentGallery,
     ParentGalleryRegistration,
     PhotoAsset,
@@ -38,6 +39,7 @@ from app.facial.search import authorize_search_candidate_selection, create_searc
 from app.facial.search_worker import process_claimed_search_job
 from app.facial.worker import process_claimed_index_job, process_claimed_purge_job
 from app.gallery_pricing import quote_parent_gallery
+from app.global_pix import normalize_configuration
 from app.media import generate_derivatives
 from app.private_derivation import derive_client_selection
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
@@ -157,6 +159,14 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
             ),
         )
     )
+    db.add(GlobalPixSettings(
+        tenant_id=FIXTURE_TENANT_ID,
+        admin_user_id=admin.id,
+        version=1,
+        **normalize_configuration({
+            "copy_paste": "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17",
+        }),
+    ))
     db.add(
         FacialRollout(
             tenant_id=FIXTURE_TENANT_ID, environment=settings.environment,

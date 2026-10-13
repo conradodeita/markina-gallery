@@ -55,7 +55,7 @@ def graph(client_db):
         client_db.flush()
         admin = AdminUser(email=f"{label}@example.test", password_hash="synthetic", totp_secret="fake")
         client = Client(tenant_id=tenant.id, full_name=f"Sintética {label}", phone_e164="+5511999990001")
-        parent = ParentGallery(tenant_id=tenant.id, name=f"Sintética {label}")
+        parent = ParentGallery(tenant_id=tenant.id, name=f"Sintética {label}", payment_required=False)
         client_db.add_all([admin, client, parent])
         client_db.flush()
         client_db.add(TenantAdmin(tenant_id=tenant.id, admin_user_id=admin.id))

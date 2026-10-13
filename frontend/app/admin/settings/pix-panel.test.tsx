@@ -47,21 +47,22 @@ describe("PIX global em Configurações", () => {
     expect(screen.getByText("PIX configurado")).toBeTruthy();
   });
 
-  it("remove somente após confirmação e trata código expirado sem perder os dados", async () => {
+  it("permite somente substituir e trata código expirado sem perder os dados", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/challenge")) {
-        expect(JSON.parse(String(init?.body)).configuration).toBeNull();
+        expect(JSON.parse(String(init?.body)).configuration.copy_paste).toBe("foto@example.test");
         return response({ challenge_id: "expired", expires_at: new Date(Date.now() - 1).toISOString() });
       }
       return response(active);
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<PixPanel />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remover PIX" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alterar PIX" }));
+    expect(screen.queryByRole("button", { name: "Remover PIX" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Senha atual"), { target: { value: "senha" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar código de confirmação" }));
     fireEvent.change(await screen.findByLabelText("Código de confirmação"), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar remoção" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar PIX" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("O código expirou"));
     expect(fetchMock.mock.calls.some(([path]) => path.endsWith("/confirm"))).toBe(false);
     expect(screen.getByText("PIX configurado")).toBeTruthy();

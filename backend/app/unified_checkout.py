@@ -13,7 +13,6 @@ from app.auth import (
     Client,
     DerivedGallery,
     GalleryClientState,
-    InfinitePaySettings,
     ParentGallery,
     PaymentCommunication,
     PaymentGroup,
@@ -35,6 +34,7 @@ from app.checkout import (
 )
 from app.global_pix import checkout_pix
 from app.notification_events import record_payment_event
+from app.payment_availability import lock_payment_account, payment_methods
 from app.pix import PixCodeError, normalize_pix_copy_paste, pix_qr_data_url
 from app.private_membership import operational_galleries_for_client
 
@@ -223,13 +223,7 @@ def cart_payload(db: Session, client: Client):
         )
     paid = [group for group in groups if group["payment_required"]]
     valid = bool(paid) and all(not group["error"] for group in paid)
-    settings = db.scalar(select(InfinitePaySettings).where(
-        InfinitePaySettings.tenant_id == tenant_id,
-    ))
-    card_available = bool(settings and settings.status == "active"
-                          and settings.verification_profile == "infinitepay-public-v1"
-                          and settings.verified_at is not None and settings.handle
-                          and settings.card_enabled)
+    methods = payment_methods(db, tenant_id=tenant_id)
     active_card = db.scalar(select(ProviderPayment).where(
         ProviderPayment.tenant_id == tenant_id,
         ProviderPayment.client_id == client.id,
@@ -239,9 +233,15 @@ def cart_payload(db: Session, client: Client):
         "groups": groups,
         "quantity": sum(group["quantity"] for group in groups),
         "total_cents": sum(group["total_cents"] for group in paid) if valid else None,
-        "can_prepare": valid,
+        "can_prepare": valid and methods["available"],
+        "payment_error": (
+            "O pagamento está temporariamente indisponível. Sua seleção foi mantida. Contate o fotógrafo."
+            if paid and not methods["available"] else None
+        ),
         "cart_revision": _fingerprint(_valid_materials(db, client)) if valid else None,
-        "card_available": card_available,
+        "card_available": methods["card_available"],
+        "pix_available": methods["pix_available"],
+        "default_method": methods["default_method"],
         "card_payment": ({
             "id": str(active_card.id), "status": active_card.state,
             "checkout_url": active_card.checkout_url if active_card.state == "awaiting_payment" else None,
@@ -317,6 +317,7 @@ def _check_amount(code, total):
 
 def prepare_group(db: Session, client: Client):
     tenant_id = client_tenant_id(db, client.id)
+    lock_payment_account(db, tenant_id)
     db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client.id).with_for_update())
     materials = _valid_materials(db, client)
     revision = _fingerprint(materials)

@@ -40,14 +40,17 @@ def prepare_awaiting_payment():
 
 
 def verified_result(db, payment, **overrides):
-    return SyntheticPaymentProvider(check_outcome="verified").check_payment(PaymentCheckRequest(
+    result = SyntheticPaymentProvider(check_outcome="verified").check_payment(PaymentCheckRequest(
         payment_id=payment.id,
         tenant_id=payment.tenant_id,
         handle=payment.handle_snapshot,
         transaction_nsu=f"synthetic-{payment.id}",
         slug="synthetic-slug",
         expected_total_cents=payment.total_cents,
-    )).model_copy(update=overrides)
+    ))
+    # A simulação representa a fronteira pública configurada no snapshot local;
+    # incompatibilidades continuam sendo exercitadas pelos overrides explícitos.
+    return result.model_copy(update={"verification_profile": payment.verification_profile, **overrides})
 
 
 def test_evidencia_sintetica_confirma_o_aggregate_em_uma_transacao():

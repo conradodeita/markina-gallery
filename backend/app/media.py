@@ -369,10 +369,17 @@ def generate_derivatives(
         job.updated_at = now()
         folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=owner)
         if folder and folder.purpose == "content":
-            photo.available = True
-            if folder.status == "preparing":
-                folder.status = "released"
-                folder.released_at = now()
+            from app.payment_availability import can_publish_gallery, lock_payment_account
+
+            lock_payment_account(db, owner)
+            parent = owned_record(db, ParentGallery, folder.parent_gallery_id, tenant_id=owner)
+            if parent and can_publish_gallery(db, parent):
+                photo.available = True
+                if folder.status == "preparing":
+                    folder.status = "released"
+                    folder.released_at = now()
+            elif folder.status == "preparing":
+                photo.available = False
         facial_analysis_preview = next(
             (
                 derivative
