@@ -21,7 +21,7 @@ def test_public_folder_processing_migration_snapshots_existing_public_folders(tm
         connection.execute(text("INSERT INTO photo_folder VALUES ('tenant', 'configured', 'gallery', 'content', NULL, 'all'), ('tenant', 'defaulted', 'gallery', 'content', NULL, NULL), ('tenant', 'private', 'gallery', 'content', NULL, 'selected'), ('tenant', 'fallback', 'gallery-without-settings', 'content', NULL, 'all')"))
         connection.execute(text("INSERT INTO gallery_preview_settings VALUES ('tenant', 'gallery', 0, 64, 6)"))
         connection.execute(text("INSERT INTO folder_processing_settings VALUES ('tenant', 'configured', 'off', 'off', 30, -4, 1, CURRENT_TIMESTAMP)"))
-        migration_path = Path(__file__).resolve().parents[1] / "migrations/versions/20261013_0076_public_folder_processing.py"
+        migration_path = Path(__file__).resolve().parents[1] / "migrations/versions/20261014_0079_public_folder_processing.py"
         spec = importlib.util.spec_from_file_location("public_folder_processing_migration", migration_path)
         migration = importlib.util.module_from_spec(spec)
         assert spec and spec.loader

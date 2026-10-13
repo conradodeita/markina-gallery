@@ -44,7 +44,7 @@ Consulte `proposal.md` para a motivação e os deltas para o contrato. O JPEG at
 
 9. **Teto de bytes na prévia do cliente.** Cada `client_preview` novo ou regenerado SHALL ficar em até 250.000 bytes para reduzir o tráfego da galeria em redes móveis. O encoder tenta qualidade 90, 85, 80 e 75; se ainda exceder o teto, reduz as dimensões proporcionalmente e repete até caber. O ajuste se aplica depois da marca-d'água e também ao resultado final do ajuste opcional de prévia. Miniaturas e `admin_preview` mantêm seus contratos atuais. Não há teto de bytes para o JPEG temporário usado no reconhecimento facial. A publicação desta change não reescreve automaticamente derivados históricos; qualquer recodificação em lote requer plano de execução próprio, pois substitui arquivos JPEG existentes.
 
-10. **Propriedade e escopo de tenant.** `RawDevelopmentSettings` SHALL ser identificada por `(tenant_id, id=1)`; `RawDevelopmentJob` SHALL carregar `tenant_id` e referenciar `(photo_asset_id, tenant_id)` com a integridade composta disponível no schema integrado. Rotas administrativas resolvem o tenant pela sessão do fotógrafo, filtram todos os registros por esse contexto e recusam contexto ausente/inativo. Workers obtêm o tenant da linha persistida e aplicam o mesmo filtro antes de tocar em arquivos, publicar derivados ou alterar estado. A consulta informativa de release é cacheada no escopo do tenant junto da seleção de motor. A migration nova deriva do head integrado `20261011_0074`, não reutiliza a revision local divergente `20261010_0062`.
+10. **Propriedade e escopo de tenant.** `RawDevelopmentSettings` SHALL ser identificada por `(tenant_id, id=1)`; `RawDevelopmentJob` SHALL carregar `tenant_id` e referenciar `(photo_asset_id, tenant_id)` com a integridade composta disponível no schema integrado. Rotas administrativas resolvem o tenant pela sessão do fotógrafo, filtram todos os registros por esse contexto e recusam contexto ausente/inativo. Workers obtêm o tenant da linha persistida e aplicam o mesmo filtro antes de tocar em arquivos, publicar derivados ou alterar estado. A consulta informativa de release é cacheada no escopo do tenant junto da seleção de motor. Após integrar as migrations de pagamentos 0075–0077, a revisão RAW é `20261014_0078`, descendente de `20261012_0077`; não reutiliza a revision local divergente `20261010_0062`.
 
 ## Risks / Trade-offs
 
@@ -58,7 +58,7 @@ Consulte `proposal.md` para a motivação e os deltas para o contrato. O JPEG at
 
 ## Migration Plan
 
-1. Implementar schema/configuração aditivos ligados a tenant com módulo desligado, formato de motor/versionamento e status de desenvolvimento, após `20261011_0074`.
+1. Implementar schema/configuração aditivos ligados a tenant com módulo desligado, formato de motor/versionamento e status de desenvolvimento, após o head integrado de pagamentos `20261012_0077`.
 2. Construir worker e imagens com versões pinadas; validar localmente sem iniciar ou atualizar recursos remotos.
 3. Rodar contratos sintéticos, corpus de RAW autorizado e medições ARM isoladas; manter LightCraft indisponível se qualquer formato/limite não for verificado.
 4. Atualizar instruções e roadmap para substituir a proibição absoluta por recepção transitória para conversão, sem armazenamento/entrega de RAW.

@@ -54,6 +54,15 @@ jobs:
           bash scripts/test_deploy_homolog.sh
       - name: Testes (pytest)
         run: pytest backend/tests -q
+      - name: Regressões de concorrência multi-tenant em PostgreSQL
+        run: |
+          export PHOTOGRAPHER_TEST_DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
+          pytest \
+            backend/tests/test_tenant_cleanup_jobs.py::test_copia_historica_suspensa_antes_publicacao_nao_publica_A \
+            backend/tests/test_tenant_media_jobs.py::test_suspensao_durante_render_nao_publica_A_e_worker_avanca_B \
+            backend/tests/test_tenant_notification_transport.py::test_suspensao_durante_consulta_canal_preserva_A_e_envia_B \
+            backend/tests/test_tenant_notification_transport.py::test_revogacao_membership_apos_consulta_canal_impede_envio \
+            -q
       - name: Regressão concorrente do checkout em PostgreSQL
         run: >-
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"

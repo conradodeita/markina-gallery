@@ -35,4 +35,3 @@ Cada pasta pública de conteúdo SHALL ter configuração própria para ajuste a
 
 - **WHEN** uma pasta privada é criada ou configurada
 - **THEN** a prévia continua ativa em 75%/0,0 EV por padrão, o reconhecimento facial continua permitido por pasta, e nenhum valor é copiado da configuração da galeria pública
-
