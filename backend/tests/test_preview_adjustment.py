@@ -34,7 +34,7 @@ def database(tmp_path, monkeypatch):
 
 
 def make_photo(db):
-    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Amostra")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Amostra", payment_required=False)
     db.add(parent)
     db.flush()
     folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos", purpose="content")
