@@ -1,4 +1,6 @@
 """Autorização, escopo e apresentação das configurações por pasta."""
+from uuid import UUID
+
 from app.auth import (
     FacialJob,
     FolderProcessingSettings,
@@ -38,7 +40,9 @@ def test_folder_processing_api_auth_and_override(api_client):
                               "preview_strength": 50, "preview_exposure_tenths": 0}).status_code == 403
     initial = client.get(endpoint)
     assert initial.status_code == 200, initial.text
-    assert initial.json()["preview_mode"] == "inherit"
+    assert initial.json()["preview_mode"] == "custom"
+    assert initial.json()["facial_mode"] == "on"
+    assert initial.json()["effective_preview"]["enabled"] is True
     assert initial.json()["total_photos"] == 1
     assert client.get(f"/admin/photo-folders/{cover_id}/processing").status_code == 404
     private_endpoint = f"/admin/photo-folders/{private_id}/processing"
@@ -63,7 +67,7 @@ def test_folder_processing_api_auth_and_override(api_client):
     assert custom.json()["facial_allowed"] is False
     assert client.post(f"{endpoint}/facial/reprocess").status_code == 409
     with factory() as db:
-        assert effective_preview(db, db.get(PhotoFolder, other_id)).mode == "inherit"
+        assert effective_preview(db, db.get(PhotoFolder, other_id)).mode == "custom"
     assert client.post(f"{endpoint}/preview/enqueue").json()["queued"] == 1
     assert process_one(factory, BrightEngine())
     with factory() as db:
@@ -75,13 +79,42 @@ def test_folder_processing_api_auth_and_override(api_client):
     with factory() as db:
         assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
     assert client.post(f"{endpoint}/preview/enqueue").status_code == 409
-    assert client.get(f"/admin/photo-folders/{other_id}/processing").json()["preview_mode"] == "inherit"
+    assert client.get(f"/admin/photo-folders/{other_id}/processing").json()["preview_mode"] == "custom"
 
     with factory() as db:
         db.get(ParentGallery, gallery_id).active = False
         db.commit()
     assert client.get(endpoint).status_code == 409
     assert client.post(f"{endpoint}/preview/enqueue").status_code == 409
+
+
+def test_public_folder_creation_snapshots_preview_parameters_and_starts_enabled(api_client):
+    from app.preview_adjustment.service import configure as configure_gallery
+
+    client, factory, photo_id = api_client
+    with factory() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        gallery_id = photo.parent_gallery_id
+        configure_gallery(db, gallery_id, False, 63, 4, tenant_id=FIXTURE_TENANT_ID)
+        db.commit()
+    client.cookies.set("markina_session", "adjustment-admin")
+    created = client.post(f"/admin/parent-galleries/{gallery_id}/folders", json={"name": "Snapshot"})
+    assert created.status_code == 201, created.text
+    folder_id = created.json()["id"]
+    folder_uuid = UUID(folder_id)
+    with factory() as db:
+        row = db.get(FolderProcessingSettings, folder_uuid)
+        assert row is not None
+        assert (row.preview_mode, row.facial_mode, row.preview_strength, row.preview_exposure_tenths) == (
+            "custom", "on", 63, 4,
+        )
+        assert effective_preview(db, db.get(PhotoFolder, folder_uuid)).enabled
+        configure_gallery(db, gallery_id, False, 30, -7, tenant_id=FIXTURE_TENANT_ID)
+        db.commit()
+        assert effective_preview(db, db.get(PhotoFolder, folder_uuid)).enabled
+        assert (effective_preview(db, db.get(PhotoFolder, folder_uuid)).strength,
+                effective_preview(db, db.get(PhotoFolder, folder_uuid)).exposure_tenths) == (63, 4)
+    assert client.get(f"/admin/photo-folders/{folder_id}/processing").json()["preview_mode"] == "custom"
 
 
 def test_private_folder_settings_are_fixed_auto_and_requeue_completed_face_photos(prepared):
@@ -100,6 +133,10 @@ def test_private_folder_settings_are_fixed_auto_and_requeue_completed_face_photo
         override = FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id,
                                             preview_mode="off", facial_mode="off", preview_strength=50)
         db.add(override)
+        db.flush()
+        # A public adjustment queued before this fixture becomes private is not
+        # part of the private face-then-preview lifecycle.
+        db.delete(db.get(PreviewAdjustment, photo.id))
         db.flush()
         assert effective_preview(db, folder).enabled
         assert (effective_preview(db, folder).strength, effective_preview(db, folder).exposure_tenths) == (75, 0)
@@ -145,7 +182,7 @@ def test_folder_override_is_independent_of_gallery_default(prepared):
     factory, photo_id = prepared
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
-        configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="inherit",
+        configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
         assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
@@ -170,7 +207,7 @@ def test_repeated_folder_render_reads_conventional_preview(prepared):
 
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
-        configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="inherit",
+        configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
         assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
@@ -178,7 +215,7 @@ def test_repeated_folder_render_reads_conventional_preview(prepared):
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
         configure(db, photo.parent_gallery_id, False, 50, 7, tenant_id=FIXTURE_TENANT_ID)
-        configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="inherit",
+        configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=6, tenant_id=FIXTURE_TENANT_ID)
         assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
@@ -195,7 +232,7 @@ def test_folder_change_during_render_never_publishes_stale_result(prepared):
     factory, photo_id = prepared
     with factory() as db:
         folder_id = db.get(PhotoAsset, photo_id).folder_id
-        configure_folder(db, folder_id, preview_mode="custom", facial_mode="inherit",
+        configure_folder(db, folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
         assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
@@ -203,7 +240,7 @@ def test_folder_change_during_render_never_publishes_stale_result(prepared):
     class ChangedEngine(BrightEngine):
         def render(self, image, strength):
             with factory() as db:
-                configure_folder(db, folder_id, preview_mode="custom", facial_mode="inherit",
+                configure_folder(db, folder_id, preview_mode="custom", facial_mode="on",
                                  strength=50, exposure_tenths=6, tenant_id=FIXTURE_TENANT_ID)
                 db.commit()
             return super().render(image, strength)
@@ -222,7 +259,7 @@ def test_cleanup_refuses_active_folder_override(prepared):
     factory, photo_id = prepared
     with factory() as db:
         folder_id = db.get(PhotoAsset, photo_id).folder_id
-        configure_folder(db, folder_id, preview_mode="custom", facial_mode="inherit",
+        configure_folder(db, folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         with pytest.raises(ValueError, match="Desligue o módulo"):

@@ -5,9 +5,9 @@ import { FolderProcessingPanel } from "./folder-processing-panel";
 
 const payload = {
   folder_id: "folder-1", folder_name: "Pasta restrita", private_folder: false,
-  preview_mode: "inherit", facial_mode: "inherit",
+  preview_mode: "custom", facial_mode: "on",
   preview_strength: 50, preview_exposure_tenths: 0,
-  effective_preview: { mode: "inherit", enabled: true, strength: 40, exposure_tenths: 3 },
+  effective_preview: { mode: "custom", enabled: true, strength: 40, exposure_tenths: 3 },
   facial_available: true, facial_allowed: true, total_photos: 2,
   preview_counts: { queued: 0, processing: 0, ready: 1, failed: 0, cancelled: 0 },
   facial_counts: { queued: 0, processing: 0, completed: 1, failed: 0 }, comparison_photo_id: null,
@@ -59,6 +59,7 @@ it("carrega apenas ao abrir, mostra escopo compartilhado e salva exposição pr�
   const patch = fetcher.mock.calls.find(([, init]) => init?.method === "PATCH");
   expect(JSON.parse(String(patch?.[1]?.body)).preview_exposure_tenths).toBe(5);
   expect(screen.getByText(/Configuração salva/)).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /Herdar da galeria/ })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /Processamento da pasta/ }));
   expect(screen.queryByText(/todas as clientes atribuídas/)).toBeNull();
 });

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
-import { jpegStorageKey, uploadJpeg } from "./upload-jpeg";
+import { isRawFilename, jpegStorageKey, uploadJpeg, uploadPhotoSource } from "./upload-jpeg";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 it("retoma conteúdo idêntico na mesma pasta sem duplicar o ativo", async () => {
@@ -69,4 +69,26 @@ it("propaga erro de upload medido sem declarar sucesso", async () => {
   vi.stubGlobal("XMLHttpRequest", FakeXHR);
   await expect(uploadJpeg("/api/source", new File(["jpeg"], "foto.jpg"), undefined, vi.fn()))
     .rejects.toThrow("Falha sintética");
+});
+
+it("identifica ARW e envia a mesma fonte pela rota autenticada como octet-stream", async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true });
+  vi.stubGlobal("fetch", fetch);
+  const file = new File(["raw"], "evento.ARW");
+  expect(isRawFilename(file.name)).toBe(true);
+  await uploadPhotoSource("/api/source", file);
+  expect(fetch).toHaveBeenCalledWith("/api/source", expect.objectContaining({
+    method: "PUT",
+    headers: { "content-type": "application/octet-stream" },
+    body: file,
+  }));
+});
+
+it("calcula a identidade RAW em blocos, sem carregar o arquivo inteiro", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const file = new File(["raw-payload"], "evento.ARW");
+  const wholeFileRead = vi.spyOn(file, "arrayBuffer");
+  const storageKey = await jpegStorageKey("gallery", "folder", file);
+  expect(storageKey).toMatch(/^gallery\/folder\/[a-f0-9]{64}\.jpg$/);
+  expect(wholeFileRead).not.toHaveBeenCalled();
 });

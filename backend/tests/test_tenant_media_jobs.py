@@ -68,9 +68,19 @@ def suspend(factory, owner):
 
 
 def test_derivados_e_ajustes_mesma_sequencia_preservam_marca_paths_e_retry_B(client_db, jobs):
+    from app.folder_processing import configure_folder
+
     rows, factory = jobs
     for row in rows:
-        service.configure(client_db, row["parent"].id, True, 50, tenant_id=row["tenant"].id)
+        configure_folder(
+            client_db,
+            row["photo"].folder_id,
+            tenant_id=row["tenant"].id,
+            preview_mode="custom",
+            facial_mode="on",
+            strength=50,
+            exposure_tenths=0,
+        )
     client_db.commit()
     previews = []
     for row in rows:
@@ -86,7 +96,15 @@ def test_derivados_e_ajustes_mesma_sequencia_preservam_marca_paths_e_retry_B(cli
     assert all(r.status == "ready" and r.relative_path.startswith(f"tenants/{r.tenant_id}/photos/") for r in results)
     b_before = (results[1].relative_path, results[1].fingerprint, results[1].generation)
     first = rows[0]
-    service.configure(client_db, first["parent"].id, True, 60, tenant_id=first["tenant"].id)
+    configure_folder(
+        client_db,
+        first["photo"].folder_id,
+        tenant_id=first["tenant"].id,
+        preview_mode="custom",
+        facial_mode="on",
+        strength=60,
+        exposure_tenths=0,
+    )
     assert service.enqueue(client_db, first["photo"].id, tenant_id=first["tenant"].id, retry=True)
     client_db.commit()
     assert service.process_one(factory, SyntheticEngine())
@@ -97,6 +115,8 @@ def test_derivados_e_ajustes_mesma_sequencia_preservam_marca_paths_e_retry_B(cli
 
 
 def test_suspensao_durante_render_nao_publica_A_e_worker_avanca_B(client_db, jobs, monkeypatch):
+    if client_db.bind.dialect.name != "postgresql":
+        pytest.skip("Corrida entre transações exige PostgreSQL; SQLite admite um único escritor.")
     rows, factory = jobs
     first, second = rows
     original = Image.Image.save

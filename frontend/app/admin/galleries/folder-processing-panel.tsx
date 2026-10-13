@@ -5,9 +5,9 @@ import { AdminPhotoPreviewDialog, type AdminPhotoPreview } from "./admin-photo-p
 
 type Counts = { queued: number; processing: number; ready?: number; completed?: number; failed: number; cancelled?: number };
 type Processing = {
-  folder_id: string; folder_name: string; preview_mode: "inherit" | "custom" | "off";
+  folder_id: string; folder_name: string; preview_mode: "custom" | "off";
   private_folder: boolean;
-  facial_mode: "inherit" | "on" | "off"; preview_strength: number;
+  facial_mode: "on" | "off"; preview_strength: number;
   preview_exposure_tenths: number;
   effective_preview: { mode: string; enabled: boolean; strength: number; exposure_tenths: number };
   facial_available: boolean; facial_allowed: boolean; total_photos: number;
@@ -15,10 +15,10 @@ type Processing = {
 };
 
 const previewModes = [
-  ["inherit", "Herdar da galeria"], ["custom", "Personalizar esta pasta"], ["off", "Desligar nesta pasta"],
+  ["custom", "Ativar nesta pasta"], ["off", "Desligar nesta pasta"],
 ] as const;
 const facialModes = [
-  ["inherit", "Herdar da galeria"], ["on", "Permitir nesta pasta"], ["off", "Pausar novos trabalhos"],
+  ["on", "Permitir nesta pasta"], ["off", "Pausar novos trabalhos"],
 ] as const;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -142,7 +142,7 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false, em
   }
 
   const summary = data
-    ? data.private_folder ? "" : `${data.preview_mode === "custom" ? "Prévia personalizada" : data.preview_mode === "off" ? "Prévia desligada" : "Prévia herdada"} · ${data.facial_mode === "off" ? "Face pausada" : data.facial_mode === "on" ? "Face permitida" : "Face herdada"}`
+    ? data.private_folder ? "" : `${data.preview_mode === "custom" ? "Ajuste automático ativo" : "Ajuste automático desligado"} · ${data.facial_mode === "off" ? "Face pausada" : "Face permitida"}`
     : "Configuração da pasta";
   return <section className={`folder-processing${data?.private_folder ? " folder-processing--private" : ""}`} aria-label={`Processamento de ${folderName}`}>
     {embedded ? <div className="folder-processing__toggle folder-processing__toggle--static">
@@ -169,7 +169,7 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false, em
             <span className="folder-processing__eyebrow">01 · Processamento automático</span>
             <h4>Reconhecimento facial</h4>
             {data.private_folder ? <p>O reconhecimento facial começa automaticamente após o envio da foto, conforme o gate operacional global.</p> : <>
-              <p>A pausa impede novos trabalhos nesta pasta. Índices existentes e buscas já autorizadas são preservados.</p>
+              <p>A pasta começa pronta para o reconhecimento facial. A pausa impede novos trabalhos nesta pasta; índices e buscas já autorizadas são preservados.</p>
               <label htmlFor={`${id}-facial`}>Comportamento da pasta</label>
               <select id={`${id}-facial`} value={draft.facial_mode} onChange={(event) => setDraft({ ...draft, facial_mode: event.target.value as Processing["facial_mode"] })}>
                 {facialModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -183,7 +183,7 @@ export function FolderProcessingPanel({ folderId, folderName, shared = false, em
           <div className="folder-processing__card">
             <span className="folder-processing__eyebrow">02 · Apresentação das fotos</span>
             <h4>Ajuste automático das prévias</h4>
-            <p>{data.private_folder ? "Ajuste individual desta pasta, sempre aplicado às fotos originais." : "Parte sempre da prévia convencional; exposição e intensidade da pasta substituem as da galeria, sem somar."}</p>
+            <p>{data.private_folder ? "Ajuste individual desta pasta, sempre aplicado às fotos originais." : "A pasta começa com ajuste ativo. Os parâmetros copiados na criação ficam isolados da galeria e das outras pastas."}</p>
             {!data.private_folder ? <>
             <label htmlFor={`${id}-preview`}>Comportamento da pasta</label>
             <select id={`${id}-preview`} value={draft.preview_mode} onChange={(event) => setDraft({ ...draft, preview_mode: event.target.value as Processing["preview_mode"] })}>

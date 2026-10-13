@@ -125,6 +125,7 @@ from app.auth import (
     ProgressivePricingTier,
     ProviderPayment,
     PushSubscription,
+    RawDevelopmentJob,
     Role,
     SaleOrder,
     SaleOrderItem,
@@ -387,6 +388,7 @@ from app.push_subscriptions import (
 from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
+from app.raw_development.api import register_routes as register_raw_development_routes
 from app.storage_metrics import measure_owned_photo_storage
 from app.tenancy import (
     TenantContextError,
@@ -2221,14 +2223,18 @@ def admin_email_channel(request: Request, db: Session = Depends(db_session)) -> 
     session = require_admin(request)
     directory_tenant_id(db, request)
     payload: dict[str, object] = email_channel_payload()
+    normalized_source_id = func.lower(func.replace(EmailDelivery.source_id, "-", ""))
+    normalized_action_token_ids = select(func.lower(func.replace(
+        cast(AdminActionToken.id, String), "-", ""
+    ))).where(AdminActionToken.admin_id == session.subject_id)
     payload["deliveries"] = {
         delivery_status: count
         for delivery_status, count in db.execute(
             select(EmailDelivery.status, func.count())
             .where(or_(
                 (EmailDelivery.source_type == "admin_user") & (EmailDelivery.source_id == str(session.subject_id)),
-                (EmailDelivery.source_type == "admin_action_token") & EmailDelivery.source_id.in_(
-                    select(cast(AdminActionToken.id, String)).where(AdminActionToken.admin_id == session.subject_id)),
+                (EmailDelivery.source_type == "admin_action_token") & normalized_source_id.in_(
+                    normalized_action_token_ids),
             ))
             .group_by(EmailDelivery.status)
             .order_by(EmailDelivery.status)
@@ -4406,6 +4412,14 @@ def create_photo_folder(
     parent = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
     if not parent.active:
         raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas pastas.")
+    # Serializa a cópia dos parâmetros com mudanças concorrentes nos ajustes da galeria.
+    parent = db.scalar(select(ParentGallery).where(
+        ParentGallery.id == parent_gallery_id, ParentGallery.tenant_id == tenant_id,
+    ).with_for_update())
+    if not parent:
+        raise HTTPException(status_code=404, detail="Galeria pública não encontrada.")
+    if not parent.active or parent.lifecycle_status != "active":
+        raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas pastas.")
     last_position = db.scalar(
         select(func.max(PhotoFolder.position)).where(PhotoFolder.tenant_id == tenant_id).where(
             PhotoFolder.parent_gallery_id == parent_gallery_id,
@@ -4424,6 +4438,9 @@ def create_photo_folder(
     )
     db.add(folder)
     db.flush()
+    from app.folder_processing import initialize_public_folder_processing
+
+    initialize_public_folder_processing(db, folder)
     audit(db, "photo_folder.created", str(folder.id), tenant_id=tenant_id)
     db.commit()
     return {"id": str(folder.id), "status": folder.status, "position": folder.position}
@@ -4967,6 +4984,9 @@ def _publish_photo_folder(
         select(FolderClientGrant.id).where(FolderClientGrant.tenant_id == folder.tenant_id).where(FolderClientGrant.folder_id == folder.id).limit(1)
     ):
         raise HTTPException(status_code=409, detail="Atribua a pasta a uma cliente antes de publicá-la.")
+    from app.raw_development.state import pending_raw_photo_ids
+    if pending_raw_photo_ids(db, folder.id, tenant_id=folder.tenant_id):
+        raise HTTPException(status_code=409, detail="Aguarde a conversão RAW e os derivados obrigatórios antes de liberar a pasta.")
     photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == folder.tenant_id).where(PhotoAsset.folder_id == folder.id)))
     unpublished_ids = [photo.id for photo in photos if not photo.available]
     ready_ids = (
@@ -5003,7 +5023,11 @@ def _publish_photo_folder(
         )
         if unpublished_ids
         else set()
-    )
+    ) | (set(db.scalars(select(RawDevelopmentJob.photo_asset_id).where(
+        RawDevelopmentJob.tenant_id == folder.tenant_id,
+        RawDevelopmentJob.photo_asset_id.in_(unpublished_ids),
+        RawDevelopmentJob.status.in_(("failed", "reupload_required")),
+    ))) if unpublished_ids else set())
     audit(db, "photo_folder.published", f"{folder.id}:{len(ready_ids)}", tenant_id=folder.tenant_id)
     if commit:
         db.commit()
@@ -6592,18 +6616,7 @@ async def import_photo_source(
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
-    if not (request.headers.get("content-type") or "").lower().startswith("image/jpeg"):
-        raise HTTPException(status_code=415, detail="Envie uma imagem JPEG.")
-    body = await read_bounded_body(request, max_bytes=25 * 1024 * 1024,
-                                   error_detail="A imagem excede o limite permitido.")
-    if not body:
-        raise HTTPException(status_code=413, detail="A imagem excede o limite permitido.")
-    try:
-        with Image.open(BytesIO(body)) as image:
-            if image.format != "JPEG":
-                raise ValueError
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
+    content_type = (request.headers.get("content-type") or "").lower()
     folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=tenant_id)
     if not folder or folder.parent_gallery_id != photo.parent_gallery_id:
         raise HTTPException(status_code=409, detail="A foto não possui uma pasta válida.")
@@ -6621,6 +6634,33 @@ async def import_photo_source(
     ) or (folder.purpose == "cover_assets" and folder.status == "preparing")
     if not accepts_upload:
         raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
+    if not content_type.startswith("image/jpeg"):
+        if content_type != "application/octet-stream":
+            raise HTTPException(status_code=415, detail="Envie uma imagem JPEG ou um RAW compatível.")
+        from app.raw_development.state import RawDevelopmentStateError, receive_raw_upload
+        try:
+            result = await receive_raw_upload(db, photo, request)
+        except RawDevelopmentStateError as exc:
+            message = str(exc)
+            status_code = 503 if "fila" in message.lower() else 413 if "limite" in message.lower() else 422
+            raise HTTPException(status_code=status_code, detail=message,
+                                headers={"Retry-After": "15"} if status_code == 503 else None) from exc
+        except (OSError, ValueError) as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Arquivo RAW inválido ou indisponível.") from exc
+        audit(db, "raw_development.upload_accepted", str(photo.id), tenant_id=tenant_id)
+        db.commit()
+        return result
+    body = await read_bounded_body(request, max_bytes=25 * 1024 * 1024,
+                                   error_detail="A imagem excede o limite permitido.")
+    if not body:
+        raise HTTPException(status_code=413, detail="A imagem excede o limite permitido.")
+    try:
+        with Image.open(BytesIO(body)) as image:
+            if image.format != "JPEG":
+                raise ValueError
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
     if folder.purpose == "cover_assets":
         try:
             with Image.open(BytesIO(body)) as image:
@@ -6699,7 +6739,9 @@ def photo_media_status(
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
     job = db.scalar(select(MediaJob).where(MediaJob.tenant_id == tenant_id).where(MediaJob.photo_asset_id == photo_id))
     if not job:
-        return {"status": "not_imported"}
+        raw_job = db.scalar(select(RawDevelopmentJob).where(
+            RawDevelopmentJob.photo_asset_id == photo_id, RawDevelopmentJob.tenant_id == tenant_id))
+        return {"status": raw_job.status if raw_job else "not_imported"}
     return {"status": job.status}
 
 
@@ -12632,6 +12674,10 @@ register_preview_adjustment_routes(
     preview_response=protected_preview_response, tenant_context=directory_tenant_id,
 )
 register_folder_processing_routes(
+    app, db_session=db_session, require_admin=require_admin,
+    require_same_origin=require_same_origin, tenant_context=directory_tenant_id,
+)
+register_raw_development_routes(
     app, db_session=db_session, require_admin=require_admin,
     require_same_origin=require_same_origin, tenant_context=directory_tenant_id,
 )

@@ -517,8 +517,10 @@ def test_cleanup_inventory_preserves_monitor_and_security_audit(db, monkeypatch,
     expected = {"platform_owner", "system_monitor_grant", "system_monitor_activity",
                 "system_monitor_bucket", "system_monitor_sample", "system_monitor_worker",
                 "system_monitor_incident", "system_monitor_transition"}
+    expected.add("raw_development_settings")
     assert expected <= homolog_cleanup.PRESERVED_TABLES
     assert not expected & homolog_cleanup.OPERATIONAL_TABLES
+    assert "raw_development_job" in homolog_cleanup.OPERATIONAL_TABLES
     result = homolog_cleanup.inventory(db)
     assert all(name in result["preserved"] for name in expected)
     assert not expected & result["database"].keys()

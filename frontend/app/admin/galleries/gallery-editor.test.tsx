@@ -533,9 +533,9 @@ describe("editor administrativo de galeria", () => {
       if (path.endsWith("/clients/client-1/folders")) return response({ folders: [{ id: "folder-1", name: "Retratos", status: "preparing", photo_count: 1, assigned_client_ids: ["client-1"] }] });
       if (path.endsWith("/clients/client-2/folders")) return response({ folders: [] });
       if (path.endsWith("/photo-folders/folder-1/processing")) return response({
-        folder_id: "folder-1", folder_name: "Retratos", preview_mode: "inherit", facial_mode: "inherit",
+        folder_id: "folder-1", folder_name: "Retratos", preview_mode: "custom", facial_mode: "on",
         preview_strength: 50, preview_exposure_tenths: 0,
-        effective_preview: { mode: "inherit", enabled: false, strength: 50, exposure_tenths: 0 },
+        effective_preview: { mode: "custom", enabled: true, strength: 50, exposure_tenths: 0 },
         facial_available: false, facial_allowed: false, total_photos: 0,
         preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
         facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
@@ -955,6 +955,7 @@ describe("editor administrativo de galeria", () => {
     let detailsCalls = 0;
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/raw-development/capabilities")) return response({ enabled: false, formats: [] });
       detailsCalls += 1;
       if (detailsCalls === 2) return Promise.reject(new Error("Conexão temporariamente indisponível."));
       return response(detailsCalls === 1 ? processingDetails : readyDetails);
