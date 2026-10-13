@@ -42,6 +42,12 @@ Executar um script Python revisado em contêiner efêmero da imagem API já publ
 
 O wrapper inventaria containers Markina e recusa serviço desconhecido. Parar e conferir todos os writers ativos: API, worker, faciais/SFace/Gemma, preview-adjustment e raw-development. Evolution, bancos e proxy compartilhado ficam ativos. Salvar somente metadados de retomada (IDs dos containers originalmente ativos, SHA e fase) em diretório privado da Markina; isso não contém dump nem dados de negócio. Reiniciar somente esses containers após pós-condições completas.
 
+### Renovação do upstream HTTP na retomada
+
+O run `38478392215` completou banco/mídia/dumps e preservação, mas falhou no HTTP 502 após retomar writers: a API mudou de `172.21.0.6` para `172.21.0.13`, enquanto o proxy_pass literal do Nginx Markina conservou o endereço resolvido antes da pausa. API interna e DNS Docker estavam corretos. O reload gracioso do Nginx Markina, com `nginx -t` aprovado, resolveu o healthcheck sem modificar configuração, deploy ou serviço compartilhado.
+
+O wrapper SHALL conferir `nginx -t` na prontidão e novamente após iniciar os writers, recarregar somente o Nginx do Compose `markina-gallery` e verificar o healthcheck HTTP com até 15 tentativas, timeout de 5 segundos por tentativa e intervalo de 1 segundo. Não substituir o roteamento por arquitetura nova nem reiniciar NPM. Erro de configuração, reload ou healthcheck conserva os metadados pendentes; recuperação manual após pós-condições confirmadas não repete a exclusão.
+
 ### Transação e retomada
 
 Conferir owner/schema/raízes e capturar em memória digests das linhas/ativos preservados antes de excluir. Usar PostgreSQL real e locks para serializar provisão/alterações durante a transação; comparar preservação antes do commit. Após commit, limpar mídia e Redis exclusivos e conferir novamente as invariantes. Falha de mídia após commit é estado parcial, sem alegação de rollback: manter writers pausados, registrar fase sanitizada e permitir retomada idempotente para o mesmo owner/SHA. A rotina não restaura dados porque a operação foi autorizada sem dump novo.

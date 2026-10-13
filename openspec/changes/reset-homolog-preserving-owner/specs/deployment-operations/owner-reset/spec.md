@@ -71,6 +71,17 @@ O reset SHALL conferir SHA publicado, schema, topologia, volumes, origem HTTPS e
 - **WHEN** Docker não consegue listar os serviços ativos para o inventário ou para conferir a pausa
 - **THEN** a execução é recusada sem iniciar a exclusão, em vez de assumir uma lista vazia de writers
 
+### Requirement: Retomada HTTP após mudança de IP da API
+O wrapper SHALL validar a configuração do Nginx Markina antes da pausa e após retomar writers, e recarregar somente esse proxy para renovar o upstream. O healthcheck HTTP SHALL ter tentativas limitadas. Falha de configuração, reload ou saúde MUST conservar metadados de recuperação, sem repetir a exclusão após pós-condições confirmadas.
+
+#### Scenario: API ganha outro IP na retomada
+- **WHEN** os writers estão saudáveis, mas o Nginx conserva o IP anterior da API
+- **THEN** o wrapper valida a configuração, recarrega somente o Nginx Markina e confirma HTTP saudável antes de finalizar
+
+#### Scenario: Proxy não pode ser retomado
+- **WHEN** a configuração é inválida, o reload falha ou o healthcheck esgota as tentativas
+- **THEN** a operação reporta retomada parcial e conserva os metadados, sem alterar o NPM compartilhado ou repetir a exclusão concluída
+
 ### Requirement: Execução sem novo backup, exclusão autorizada de dumps e retomada honesta
 O reset SHALL exigir autorização específica, inventário e sinalização sem dump. Após conclusão, SHALL excluir somente os 164 `.dump` regulares na raiz fixa da Markina, com contagem e bytes iguais ao manifesto autorizado; divergência MUST bloquear. Demais arquivos e snapshots SHALL permanecer. Falha após commit MUST ser reportada como parcial e manter writers pausados para retomada segura, sem alegar reversão.
 
