@@ -73,6 +73,15 @@ Limites mantidos: sem webhook até documentar assinatura e autenticação; pagam
 
 O escopo foi revisado e registrado em Conventional Commit `e9274d994800950e7f30a43435bb484973241cb5`. O branch foi atualizado sem conflito com `origin/develop` `ef6dc99df21ef72d9f610c564a451f85390ac4e8`, por merge `23908137036204440cc6315bf4a2484c5a806304`; a árvore está limpa e esse commit incorpora a atualização documental mais recente de `develop`. O SHA de pacote para CI será o HEAD final depois desta atualização de prontidão. Tarefas 6.2–6.4 permanecem pendentes; a publicação está autorizada pelo titular, mas ainda não foi iniciada.
 
+## Correções após a CI do PR — 13/10/2026
+
+A CI `38336262062` do HEAD `2d6a5867d721ca36a093a726bc3481318e6faf40` aprovou frontend, OpenSpec, Gitleaks e Gemma runtime, mas o backend falhou em dois testes (1.464 passaram, 20 foram pulados):
+
+- `test_clique_concorrente_com_mesma_chave_produz_uma_reserva` concorria em SQLite, cujo dialeto ignora `SELECT ... FOR UPDATE`; isso permite colisão na constraint única e não simula a serialização de checkout suportada por PostgreSQL. O teste agora pula explicitamente em SQLite e permanece executável em PostgreSQL. A CI precisa confirmar a execução PostgreSQL em ambiente próprio; não declarar a propriedade concorrente validada somente pelo skip SQLite.
+- `test_limpeza_preserva_admin_conta_sessao_e_canal[postgresql]` migrava apenas até `20261011_0074`, mas validava o catálogo atual, que inclui configurações/tabelas adicionadas nas revisions 0075–0077. A fixture foi alinhada à revision `20261012_0077` para que o teste percorra o schema corrente e verifique as cinco tabelas InfinityPay/provider.
+
+Validação local pós-correção: `python -m pytest tests/test_provider_checkout.py tests/test_tenant_migration.py::test_limpeza_preserva_admin_conta_sessao_e_canal -q` — **18 passaram, 3 foram pulados em 143,80 s**; os skips de migração PostgreSQL indicam que este host não forneceu a URL PostgreSQL do ensaio. `ruff check app tests` passou; OpenSpec da change estrito e `git diff --check` passaram. Essa validação não substitui a reexecução completa do backend PostgreSQL/GitHub Actions. Novo CI e todos os seus checks verdes continuam como gate antes do merge/deploy.
+
 Validação executada com a versão de CLI fixada pela CI, `@fission-ai/openspec@1.14.0`:
 
 ```text

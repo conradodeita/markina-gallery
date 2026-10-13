@@ -189,6 +189,8 @@ def test_pix_comunicado_permanece_fechado_e_nao_e_convertido_para_cartao():
 
 
 def test_clique_concorrente_com_mesma_chave_produz_uma_reserva():
+    if auth.engine.dialect.name != "postgresql":
+        pytest.skip("Concorrência do checkout depende dos locks de linha do PostgreSQL")
     owner_id, _, _, revision = setup()
     key = str(uuid4())
     barrier = Barrier(2)
