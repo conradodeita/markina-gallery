@@ -16,6 +16,10 @@ Implementado em `backend/app/payment_provider.py` `InfinitePayHttpProvider` para
 
 Validações locais atualizadas: testes HTTP do provider **26 passed**; cenários de retorno/rota e preparação de cartão **4 passed**; UI do carrinho/configuração **19 passed**; `npx tsc --noEmit` e `npm run build` passaram; Ruff nos módulos/testes alterados e `py_compile` passaram. Esses testes mockam transporte externo; não demonstram cobrança, API Key, webhook nem recebimento bancário. A execução PostgreSQL não é repetida para cada teste de rota nesta rodada; os casos de reserva/domínio registrados abaixo foram executados em PostgreSQL sintético. O teste de concorrência em SQLite não passou por limitação do backend de teste; concorrência real depende do checkpoint PostgreSQL já documentado, sem alegar que SQLite valide esse contrato.
 
+## Correção da CI do PR — 12/10/2026
+
+A primeira CI do PR #163 passou Gitleaks e OpenSpec, mas o build frontend falhou em `cart.test.tsx`: a implementação do mock declarava só o argumento `path`, enquanto a asserção lê também as opções de `fetch` em `mock.calls`. O parâmetro `RequestInit` foi restaurado e explicitamente consumido para manter o lint limpo. Reexecução local: **19 testes de carrinho/configuração aprovados**, `npx tsc --noEmit` e `npm run build` aprovados. A execução original do PR permanece falha; o novo commit precisa de CI verde antes do merge.
+
 ## Base e autorizações
 
 Aplicação autorizada pelo proprietário com “ótimo! Então vamos prosseguir”, após proposta e explicação do crédito com confirmação automática, e decisão posterior de prosseguir sem API Key usando a consulta no retorno. O checkout próprio foi atualizado por fast-forward para `c17b9e0d991bdc82199c0c0e10a6220928a5d6c2`, CI 38255005139 verde. O delta intermediário entre a base planejada e a aplicada afeta somente monitor/artefatos; configuração PIX e comércio não mudaram. Ancestral da migration nova confirmado como `20261011_0074`. Implementação local inclui pagamento configurável por fotógrafo; publicação, conta externa e compra real permanecem pendentes.

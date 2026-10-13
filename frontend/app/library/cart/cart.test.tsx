@@ -69,7 +69,8 @@ it("permite finalizar seleção externa quando o PIX da outra galeria falha", as
 describe("revisão global da cliente", () => {
   it("permite escolher cartão e prepara uma única tentativa sem exibir o PIX como comprovante", async () => {
     const ready = { ...cart, cart_revision: "d".repeat(64), card_available: true };
-    const fetcher = vi.fn((path: string) => {
+    const fetcher = vi.fn((path: string, options?: RequestInit) => {
+      void options;
       if (path.endsWith("/prepare-card")) return response({ id: "card-1", status: "awaiting_payment",
         checkout_url: "https://checkout.infinitepay.io/owner/invoice", total_cents: 1400 });
       if (path.endsWith("/prepare")) return response({ ...ready, payment });
