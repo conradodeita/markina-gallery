@@ -9,7 +9,7 @@
 ## 2. Integração
 
 - [x] 2.1 Validar lint/build e OpenSpec, revisar diff e registrar comandos/resultados antes do PR, sem iniciar aplicação local.
-- [ ] 2.2 Após CI/deploy verde, confirmar no servidor a ausência na Visão Geral, presença autorizada no Monitor e identificação por e-mail na árvore; registrar SHA e evidência verificável.
+- [x] 2.2 Após CI/deploy verde, confirmar no servidor a ausência na Visão Geral, presença autorizada no Monitor e identificação por e-mail na árvore; registrar SHA e evidência verificável.
 
 ## Workflow follow-up
 
