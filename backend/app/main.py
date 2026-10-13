@@ -2372,7 +2372,7 @@ def admin_infinitepay_challenge(
     except infinitepay_settings.ConfigurationConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     target = infinitepay_settings.canonical_proposal(
-        payload.configuration, payload.expected_version, payload.checkout_ready,
+        payload.configuration, payload.expected_version, payload.checkout_ready, payload.card_enabled,
     )
     try:
         challenge, _code, queued = create_security_challenge(

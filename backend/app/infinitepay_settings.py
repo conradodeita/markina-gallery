@@ -38,6 +38,7 @@ class ConfigurationChallengeInput(BaseModel):
     expected_version: int = Field(ge=0, strict=True)
     configuration: ReceiverInput | None
     checkout_ready: bool = False
+    card_enabled: bool = False
 
 
 class ConfigurationConfirmInput(BaseModel):
@@ -57,22 +58,28 @@ def load_configuration(db: Session, *, tenant_id: UUID) -> InfinitePaySettings |
 
 
 def configuration_payload(settings: InfinitePaySettings | None) -> dict:
-    available = bool(settings and settings.status == "active"
-                     and settings.verification_profile == "infinitepay-public-v1"
-                     and settings.verified_at is not None and settings.handle)
+    ready = bool(settings and settings.status == "active"
+                 and settings.verification_profile == "infinitepay-public-v1"
+                 and settings.verified_at is not None and settings.handle)
+    card_enabled = bool(settings and settings.card_enabled)
+    available = ready and card_enabled
     return {
         "status": settings.status if settings else "unconfigured",
         "version": settings.version if settings else 0,
         "handle": settings.handle if settings else None,
+        "card_enabled": card_enabled,
         "checkout_available": available,
         "ownership_verified": False,
-        "message": ("Cartão habilitado por autodeclaração do fotógrafo; confirme o recebedor no checkout de teste."
-                    if available else "Cartão indisponível até o fotógrafo confirmar sua tag e as opções do Checkout Integrado."),
+        "message": ("Cartão habilitado para novos pedidos por autodeclaração do fotógrafo."
+                    if available else "InfinitePay está pronta, mas cartão está desabilitado para novos pedidos."
+                    if ready else "Cartão indisponível até o fotógrafo habilitar uma configuração pronta."),
     }
 
 
-def canonical_proposal(configuration: ReceiverInput | None, version: int, checkout_ready: bool = False) -> str:
+def canonical_proposal(configuration: ReceiverInput | None, version: int, checkout_ready: bool = False,
+                       card_enabled: bool = False) -> str:
     return json.dumps({"checkout_ready": bool(checkout_ready and configuration),
+                       "card_enabled": bool(card_enabled and configuration),
                        "handle": configuration.handle if configuration else None, "version": version},
                       sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -89,6 +96,9 @@ def apply_proposal(db: Session, *, tenant_id: UUID, admin_id: UUID, target: str)
     check_version(settings, proposed["version"])
     handle = ReceiverInput(handle=proposed["handle"]).handle if proposed["handle"] is not None else None
     checkout_ready = bool(proposed.get("checkout_ready") and handle)
+    card_enabled = bool(proposed.get("card_enabled") and checkout_ready)
+    if proposed.get("card_enabled") and not card_enabled:
+        raise ConfigurationConflict("Confirme uma configuração InfinitePay pronta antes de habilitar cartão.")
     if settings is None:
         settings = InfinitePaySettings(tenant_id=tenant_id, admin_user_id=admin_id)
         db.add(settings)
@@ -96,6 +106,7 @@ def apply_proposal(db: Session, *, tenant_id: UUID, admin_id: UUID, target: str)
     settings.handle = handle
     settings.version = proposed["version"] + 1
     settings.status = "active" if checkout_ready else "pending" if handle else "inactive"
+    settings.card_enabled = card_enabled
     settings.verification_profile = "infinitepay-public-v1" if checkout_ready else None
     settings.verified_at = now() if checkout_ready else None
     settings.updated_at = now()

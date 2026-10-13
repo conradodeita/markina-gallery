@@ -59,7 +59,8 @@ def configure(db, tenant_id):
     db.add(TenantAdmin(tenant_id=tenant_id, admin_user_id=admin.id))
     db.flush()
     settings = InfinitePaySettings(tenant_id=tenant_id, admin_user_id=admin.id, handle="synthetic_handle",
-        version=4, status="active", verification_profile="synthetic-only", verified_at=now())
+        version=4, status="active", card_enabled=True,
+        verification_profile="synthetic-only", verified_at=now())
     db.add(settings)
     return settings
 
@@ -387,3 +388,15 @@ def test_rota_cliente_prepara_cartao_por_sessao_e_reutiliza_mesma_tentativa(monk
         assert visible["card_available"] is True
         assert visible["card_payment"]["id"] == result["id"]
         assert visible["card_payment"]["checkout_url"] == result["checkout_url"]
+        settings.card_enabled = False
+        db.flush()
+        disabled = cart_payload(db, owner)
+        assert disabled["card_available"] is False
+        assert disabled["card_payment"]["id"] == result["id"]
+        assert disabled["card_payment"]["checkout_url"] == result["checkout_url"]
+        # A replay of the original key still returns the issued checkout even
+        # after the photographer disables new card purchases.
+        replay_after_disable = main.prepare_unified_card(request, payload, db)
+        assert replay_after_disable["id"] == result["id"]
+        assert replay_after_disable["checkout_url"] == result["checkout_url"]
+        assert len(provider.create_calls) == 1

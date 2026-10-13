@@ -6,11 +6,12 @@ O fotógrafo precisa oferecer cartão de crédito pela própria conta InfinitePa
 
 ## What Changes
 
-- Adicionar uma configuração InfinitePay por conta de fotógrafo em Configurações, com InfiniteTag, estado de preparação/ativação e alteração sensível protegida; não solicitar senha da InfinitePay nem dados de cartão.
+- Adicionar uma configuração InfinitePay por conta de fotógrafo em Configurações, com InfiniteTag, estado de preparação/ativação e controle explícito para habilitar ou desabilitar cartão aos clientes; proteger alterações sensíveis e não solicitar senha da InfinitePay nem dados de cartão.
 - Oferecer `PIX` e `Cartão de crédito` separadamente na revisão de compras que exigem pagamento. Cartão será habilitado apenas para a conta configurada e após comprovar que o link externo oferece somente crédito.
 - Criar cobrança de cartão no servidor com recebedor, itens e valor congelados por compra; conservar a configuração PIX, sua confirmação manual e seus snapshots existentes.
 - Confirmar cartão somente após consulta autoritativa à InfinitePay, vinculada a conta, compra e transação, com valor correto e método `credit_card`; redirecionamento e notificação isolados não confirmam pagamento.
 - Acrescentar idempotência, proteção contra cobrança duplicada, retomada de compra pendente, auditoria e integração com os eventos existentes de confirmação e entrega.
+- Desabilitar cartão somente para novos checkouts; links já emitidos continuam visíveis e retomáveis enquanto permanecerem pendentes, pois a plataforma não cancela links remotos.
 - Condicionar implementação/ativação aos gates registrados em `provider-contract.md` e `readiness.md`. A exigência vigente de webhook assinado não é substituída automaticamente pela consulta de status.
 
 ## Capabilities
@@ -36,3 +37,5 @@ PIX da InfinitePay, substituição do PIX manual, divisão de recebíveis, comis
 ## Review
 
 Escopo confirmado pelo proprietário em 12/10/2026: PIX existente isolado por fotógrafo e InfinitePay exclusivamente para cartão de crédito. Após a apresentação dos artefatos e esclarecimento da confirmação automática do cartão, o proprietário autorizou a implementação com “ótimo! Então vamos prosseguir”. O requisito de assinatura de webhook permanece vigente; o aceite não autoriza substituí-lo nem habilitar cobranças/deploy reais.
+
+Complemento aprovado pelo proprietário em 13/10/2026: adicionar em Configurações um controle explícito para habilitar/desabilitar pagamentos com cartão para clientes da conta do fotógrafo.

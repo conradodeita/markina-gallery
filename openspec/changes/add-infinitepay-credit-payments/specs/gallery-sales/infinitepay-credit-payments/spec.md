@@ -86,6 +86,25 @@ A revisão SHALL oferecer os meios utilizáveis da conta proprietária. PIX SHAL
 - **WHEN** a cliente finaliza uma galeria que não exige pagamento
 - **THEN** o fluxo existente conclui a seleção sem receita e sem chamada à InfinitePay
 
+### Requirement: Habilitação explícita de cartão por fotógrafo
+
+Cada fotógrafo SHALL poder habilitar ou desabilitar a oferta de cartão aos clientes em Configurações, independentemente de manter seus dados InfinitePay salvos. A disponibilidade para novos checkouts SHALL exigir configuração ativa/pronta e `card_enabled=true`; o valor inicial SHALL ser falso. A alteração SHALL usar a confirmação sensível existente e incrementar a versão da configuração. Desabilitar cartão MUST NOT cancelar, ocultar ou liberar fotos de links de checkout já emitidos que ainda possam ser pagos.
+
+#### Scenario: Cartão desabilitado
+- **WHEN** o fotógrafo desabilita cartão em Configurações
+- **THEN** o cartão deixa de ser oferecido para novas compras desse fotógrafo
+- **AND** PIX manual e compras sem pagamento continuam funcionando
+
+#### Scenario: Link existente após desativar novos checkouts
+- **WHEN** o fotógrafo desabilita cartão enquanto há uma compra pendente com link emitido
+- **THEN** o link continua acessível em Compras até confirmação ou conciliação
+- **AND** as fotos continuam reservadas enquanto o link puder ser pago
+
+#### Scenario: Reativação protegida
+- **WHEN** o fotógrafo habilita novamente cartão com configuração InfinitePay ativa
+- **THEN** a alteração exige reautenticação/confirmação local e novas compras podem oferecer cartão
+- **AND** a configuração PIX permanece inalterada
+
 ### Requirement: Compra de cartão imutável e restrita ao proprietário
 
 Antes de emitir cobrança, o sistema SHALL validar autorização, prazo, elegibilidade e revisão no servidor e congelar conta, cliente, recebedor/versionamento, composição, valores em centavos e condições comerciais. Uma compra MUST NOT combinar fotógrafos. Fotos com cobrança externa ainda pagável SHALL ficar protegidas contra outra cobrança, sem perda do restante do carrinho.
@@ -113,6 +132,17 @@ Repetição ou concorrência SHALL reutilizar a mesma tentativa para a mesma com
 #### Scenario: Resposta perdida
 - **WHEN** a chamada pode ter sido aceita e a resposta não chega
 - **THEN** a compra fica aguardando verificação com orientação recuperável, sem confirmação ou retry cego
+
+#### Scenario: Link utilizável não retornado
+- **WHEN** a API não devolve um URL de checkout utilizável
+- **THEN** o sistema informa que não abriu o checkout, conserva a compra reservada e não inicia outra emissão enquanto o resultado remoto permanecer incerto
+- **AND** a cliente não é informada que houve pagamento
+
+#### Scenario: Retomada após comprovação de que o link não foi criado
+- **WHEN** a InfinitePay confirma que o checkout não foi criado e a tentativa assume `failed_before_issue`
+- **THEN** o sistema restaura no carrinho os mesmos itens comerciais elegíveis e permite à cliente iniciar uma nova tentativa de cartão
+- **AND** não mantém a interface presa à tentativa encerrada nem duplica pedido ou seleção
+- **AND** essa retomada MUST NOT ser oferecida para `verification_required`, timeout, resposta inválida ou outro resultado incerto
 
 #### Scenario: Troca de meio após emissão
 - **WHEN** a cliente tenta pagar por PIX fotos de uma cobrança de cartão ainda pagável

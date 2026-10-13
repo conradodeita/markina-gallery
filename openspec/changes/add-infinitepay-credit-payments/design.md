@@ -26,7 +26,7 @@ InfiniteTag é identificador público e não comprova titularidade. Não usar se
 
 Alternativa rejeitada: uma InfiniteTag global ou associação por `admin_user_id` apenas; login não equivale à conta comercial proprietária.
 
-Configuração: `GET /admin/settings/infinitepay`, `POST /challenge`, `/confirm` e `/resend` sob o mesmo prefixo. A proposta contém InfiniteTag, autodeclaração de configuração pronta ou remoção, mais `expected_version`; fica cifrada no desafio. Confirmação recebe apenas UUID/código, sem aceitar configuração substituta. Locks da conta serializam emissão/confirmação/reenvio; sessão e vínculo são revalidados. Configuração pronta grava o perfil `infinitepay-public-v1` e timestamp de declaração; mudança da tag volta a pendente até nova confirmação. Nenhuma rota verifica titularidade remotamente nem armazena chave do provedor.
+Configuração: `GET /admin/settings/infinitepay`, `POST /challenge`, `/confirm` e `/resend` sob o mesmo prefixo. A proposta contém InfiniteTag, autodeclaração de configuração pronta ou remoção, controle explícito `card_enabled` e `expected_version`; fica cifrada no desafio. Confirmação recebe apenas UUID/código, sem aceitar configuração substituta. Locks da conta serializam emissão/confirmação/reenvio; sessão e vínculo são revalidados. Configuração pronta grava o perfil `infinitepay-public-v1` e timestamp de declaração; mudança da tag volta a pendente e desabilita novos checkouts até nova confirmação. `card_enabled` começa falso e só fica efetivo com uma configuração ativa e pronta. Desabilitá-lo oculta cartão de novos checkouts, sem cancelar ou esconder links de compras já emitidas; esses links continuam retomáveis até confirmação/conciliação, porque não há cancelamento remoto documentado. Nenhuma rota verifica titularidade remotamente nem armazena chave do provedor.
 
 ### 2. Porta de provedor limitada ao contrato verificado
 
@@ -53,6 +53,8 @@ Sob os locks comerciais existentes, validar revisão, prazo, fotos e cotação a
 Itens reservados aparecem em uma compra `Aguardando pagamento`/`Verificando pagamento` e não são oferecidos em outro PIX/cartão. Novas fotos elegíveis continuam compráveis; nenhuma seleção fora do snapshot é consumida. Compras antigas, comunicadas ou já confirmadas não são recalculadas. A preparação de cartão recusa sobreposição com PIX comunicado e trata rascunho PIX não comunicado sob o mesmo lock, preservando snapshots/pedidos históricos.
 
 Falha comprovada antes de emissão externa pode liberar a reserva de forma explícita e atômica, sem restaurar fotos já removidas/inelegíveis. Timeout possivelmente aceito fica `verification_required`, sem reenvio cego. Após link emitido, voltar à tela não cancela a cobrança. Cancelar/mudar de meio exige comprovação de que o link deixou de ser pagável; a ausência dessa capacidade mantém a compra em conciliação. TTL local não invalida link remoto.
+
+Quando o adaptador retorna a recusa tipada `not_created`, o servidor restaura os itens elegíveis na seleção da cliente e encerra o agregado como `failed_before_issue`. A interface limpa a tentativa concluída e permite iniciar outra cobrança com os mesmos itens; uma nova chave de idempotência é gerada para essa nova emissão. Isso não é retry para `unknown`: timeout, resposta não-2xx, JSON inválido ou URL rejeitada continuam reservados e sem botão de reemissão.
 
 Alternativa rejeitada: manter a mesma seleção livre para PIX enquanto um link de cartão imutável existe, pois isso permite dois pagamentos das mesmas fotos.
 

@@ -26,7 +26,7 @@ from tests.tenant_fixtures import insert_legacy_model as insert_model
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261012_0077"
+CURRENT_SCHEMA = "20261013_0078"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",

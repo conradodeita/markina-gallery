@@ -19,3 +19,7 @@ Também encontramos um cURL em https://www.infinitepay.io/checkout enviando some
 5. **Homologação:** há sandbox, cartões de teste ou procedimento oficial para validar aprovação, recusa e notificações sem cobrança real? Há restrições para uma plataforma com fotógrafos independentes usando suas próprias chaves/contas? Como consultar estornos/chargebacks aplicáveis a esse checkout?
 
 Solicitamos documentação técnica ou encaminhamento à equipe de integrações. A documentação pública consultada é https://www.infinitepay.io/checkout-documentacao.
+
+Complemento pendente (não enviado):
+
+6. **Valor mínimo e rejeição de link:** uma tentativa local com total de R$ 0,10 não devolveu URL consumível pelo cliente; a aplicação entrou em estado de verificação e o gateway hospedado não abriu. Qual é o menor total aceito em `POST /links`? Quais códigos HTTP/corpos documentados comprovam que nenhum link foi criado e que é seguro liberar a compra e tentar novamente? Há uma forma oficial de consultar uma emissão pelo `order_nsu` quando a resposta de `/links` não contém a URL?

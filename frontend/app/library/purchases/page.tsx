@@ -51,7 +51,7 @@ export default function PurchasesPage() {
         <h2>Compra {group.id.slice(0, 8)}</h2>
         <p>Cartão de crédito · {cardStateLabel[group.state] ?? "Pagamento em análise"} · {group.total_cents ? (group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : ""}</p>
         {group.state === "awaiting_payment" && group.checkout_url ? <a className="order-album-button order-album-button--available" href={group.checkout_url} target="_blank" rel="noopener noreferrer">Continuar pagamento</a> : null}
-        {group.state === "verification_required" ? <p>Estamos verificando a resposta do pagamento. Não tente pagar novamente enquanto a compra estiver em conferência.</p> : null}
+        {group.state === "verification_required" ? <p>A InfinitePay não devolveu um link utilizável. O checkout não foi aberto e nenhum pagamento foi iniciado por esta tela. A compra permanece reservada enquanto verificamos se o link chegou a ser criado. Não tente iniciar outro pagamento enquanto estiver em conferência.</p> : null}
         {group.state === "hold" || group.state === "exception" ? <p>Esta compra está em conferência; o acesso às fotos permanece suspenso.</p> : null}
         {group.orders.map((order) => <LibraryOrderCard key={order.id} order={order} />)}
       </section>)}

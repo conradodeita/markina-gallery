@@ -11,7 +11,7 @@ from tests.test_tenant_infinitepay_migration import migration_database as _migra
 
 migration_database = _migration_database
 SOURCE = "20261012_0076"
-TARGET = "20261012_0077"
+TARGET = "20261013_0078"
 
 
 def test_upgrade_e_downgrade_vazios_preservam_compras(migration_database):
@@ -69,3 +69,41 @@ def test_downgrade_com_correcao_recusa_apagar_historico(migration_database):
     with engine.connect() as conn:
         assert conn.scalar(sa.text("SELECT COUNT(*) FROM provider_payment_correction")) == 1
         assert conn.scalar(sa.text("SELECT version_num FROM alembic_version")) == TARGET
+
+
+def test_migration_0078_inicia_cartao_desabilitado_para_configuracao_existente(migration_database):
+    url, engine = migration_database
+    alembic(url, "upgrade", SOURCE)
+    with engine.begin() as conn:
+        tenant_id, admin_id = uuid4(), uuid4()
+        insert_legacy_model(conn, auth.Tenant, id=tenant_id)
+        insert_legacy_model(conn, auth.AdminUser, id=admin_id, email="settings@example.test",
+                            password_hash="synthetic", totp_secret="synthetic")
+        insert_legacy_model(conn, auth.TenantAdmin, tenant_id=tenant_id, admin_user_id=admin_id)
+        settings_id = uuid4()
+        insert_legacy_model(conn, auth.InfinitePaySettings, id=settings_id, tenant_id=tenant_id,
+            admin_user_id=admin_id, version=1, status="active", handle="synthetic",
+            verification_profile="infinitepay-public-v1", verified_at=auth.now(), updated_at=auth.now())
+    alembic(url, "upgrade", TARGET)
+    with engine.connect() as conn:
+        assert conn.scalar(sa.text(
+            "SELECT card_enabled FROM infinitepay_settings WHERE id = :id"), {"id": settings_id}) in (False, 0)
+
+
+def test_migration_0078_recusa_downgrade_que_apagaria_preferencia_habilitada(migration_database):
+    url, engine = migration_database
+    alembic(url, "upgrade", TARGET)
+    with engine.begin() as conn:
+        tenant_id, admin_id = uuid4(), uuid4()
+        insert_legacy_model(conn, auth.Tenant, id=tenant_id)
+        insert_legacy_model(conn, auth.AdminUser, id=admin_id, email="enabled@example.test",
+                            password_hash="synthetic", totp_secret="synthetic")
+        insert_legacy_model(conn, auth.TenantAdmin, tenant_id=tenant_id, admin_user_id=admin_id)
+        insert_legacy_model(conn, auth.InfinitePaySettings, tenant_id=tenant_id, admin_user_id=admin_id,
+            version=1, status="active", handle="synthetic", card_enabled=True,
+            verification_profile="infinitepay-public-v1", verified_at=auth.now(), updated_at=auth.now())
+    result = alembic(url, "downgrade", "20261012_0077", succeeds=False)
+    assert "preserve as preferências de disponibilidade de cartão" in result.stderr
+    with engine.connect() as conn:
+        assert conn.scalar(sa.text("SELECT COUNT(*) FROM infinitepay_settings WHERE card_enabled")) == 1
+        assert "card_enabled" in {column["name"] for column in sa.inspect(conn).get_columns("infinitepay_settings")}

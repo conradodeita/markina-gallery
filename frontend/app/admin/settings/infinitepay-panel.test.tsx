@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import InfinitePayPanel from "./infinitepay-panel";
 
-const empty = { status: "unconfigured", handle: null, version: 0, checkout_available: false };
-const pending = { status: "pending", handle: "synthetic_a", version: 1, checkout_available: false };
-const challenge = { challenge_id: "synthetic", expires_at: new Date(Date.now() + 600000).toISOString(), proposal: { handle: "synthetic_a", version: 0, checkout_ready: true } };
+const empty = { status: "unconfigured", handle: null, version: 0, card_enabled: false, checkout_available: false };
+const pending = { status: "pending", handle: "synthetic_a", version: 1, card_enabled: false, checkout_available: false };
+const active = { status: "active", handle: "synthetic_a", version: 1, card_enabled: true, checkout_available: true };
+const challenge = { challenge_id: "synthetic", expires_at: new Date(Date.now() + 600000).toISOString(), proposal: { handle: "synthetic_a", version: 0, checkout_ready: true, card_enabled: true } };
 const response = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -21,12 +22,12 @@ describe("Preparação InfinitePay individual", () => {
   it("usa teclado, vincula a autodeclaração ao desafio e não pede API Key", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/challenge")) {
-        expect(JSON.parse(String(init?.body))).toEqual({ current_password: "synthetic-password", expected_version: 0, configuration: { handle: "$synthetic_a" }, checkout_ready: true });
+        expect(JSON.parse(String(init?.body))).toEqual({ current_password: "synthetic-password", expected_version: 0, configuration: { handle: "$synthetic_a" }, checkout_ready: true, card_enabled: true });
         return response(challenge);
       }
       if (path.endsWith("/confirm")) {
         expect(JSON.parse(String(init?.body))).toEqual({ challenge_id: "synthetic", code: "123456" });
-        return response(pending);
+        return response({ ...pending, status: "active", card_enabled: true, checkout_available: true });
       }
       return response(empty);
     });
@@ -44,6 +45,9 @@ describe("Preparação InfinitePay individual", () => {
     expect(document.activeElement).toBe(screen.getByLabelText(/Conferi que esta InfiniteTag/));
     await user.keyboard(" ");
     await user.tab();
+    expect(document.activeElement).toBe(screen.getByLabelText(/Habilitar pagamento por cartão de crédito/));
+    await user.keyboard(" ");
+    await user.tab();
     expect(document.activeElement).toBe(screen.getByLabelText("Senha atual do Pick-your-Pic"));
     await user.keyboard("synthetic-password{Enter}");
     const otp = await screen.findByLabelText("Código de confirmação InfinitePay");
@@ -51,8 +55,8 @@ describe("Preparação InfinitePay individual", () => {
     expect(screen.getByText("synthetic_a")).toBeTruthy();
     expect(screen.queryByLabelText(/API Key/i)).toBeNull();
     await user.keyboard("123456{Enter}");
-    expect(await screen.findByText(/InfinitePay habilitada conforme sua declaração/)).toBeTruthy();
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Alterar InfiniteTag" })));
+    expect(await screen.findByText(/Cartão habilitado para novas compras/)).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Alterar InfiniteTag ou disponibilidade do cartão" })));
     expect(fetchMock.mock.calls.every(([path]) => path.startsWith("/api/admin/settings/infinitepay"))).toBe(true);
   });
 
@@ -72,6 +76,33 @@ describe("Preparação InfinitePay individual", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enviar código InfinitePay" }));
     await screen.findByText("Use o código enviado ao WhatsApp administrativo do Pick-your-Pic. Ele confirma somente esta alteração e é válido por 10 minutos.");
     expect(screen.getByText("Cartão indisponível")).toBeTruthy();
+  });
+
+  it("desabilita apenas novos checkouts de cartão após a confirmação sensível", async () => {
+    const disablingChallenge = { ...challenge, proposal: { handle: "synthetic_a", version: 1,
+      checkout_ready: true, card_enabled: false } };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/challenge")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ current_password: "synthetic-password",
+          expected_version: 1, configuration: { handle: "synthetic_a" }, checkout_ready: true, card_enabled: false });
+        return response(disablingChallenge);
+      }
+      if (path.endsWith("/confirm")) return response({ ...active, card_enabled: false, checkout_available: false });
+      return response(active);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<InfinitePayPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "Alterar InfiniteTag ou disponibilidade do cartão" }));
+    const cardToggle = screen.getByLabelText(/Habilitar pagamento por cartão de crédito/);
+    expect(cardToggle).toHaveProperty("checked", true);
+    fireEvent.click(cardToggle);
+    fireEvent.change(screen.getByLabelText("Senha atual do Pick-your-Pic"), { target: { value: "synthetic-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar código InfinitePay" }));
+    await screen.findByText(/Esta alteração manterá cartão desabilitado para novos pedidos/);
+    fireEvent.change(screen.getByLabelText("Código de confirmação InfinitePay"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar configuração InfinitePay" }));
+    expect(await screen.findByText(/InfinitePay está configurada, mas cartão está desabilitado/)).toBeTruthy();
+    expect(screen.getByText("Cartão desabilitado para novos pedidos")).toBeTruthy();
   });
 
   it("trata concorrência recarregando versão, sem reaplicar proposta", async () => {

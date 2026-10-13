@@ -59,6 +59,18 @@ describe("biblioteca e compras da cliente", () => {
     expect(screen.queryByText(/transaction_nsu|slug/)).toBeNull();
   });
 
+  it("explica compra de cartão sem URL e não oferece continuação até a conciliação", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({
+      orders: [], payment_groups: [], removed_movements: [],
+      provider_payment_groups: [{ id: "payment-card-unknown", state: "verification_required",
+        checkout_url: null, total_cents: 10, orders: [] }],
+    })));
+    render(<PurchasesPage />);
+    expect(await screen.findByText(/A InfinitePay não devolveu um link utilizável/)).toBeTruthy();
+    expect(screen.getByText(/nenhum pagamento foi iniciado por esta tela/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
+  });
+
   it("abre a mesma galeria pela capa e pelo botão e mantém navegação após falha", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ journeys: [{
       id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active",
