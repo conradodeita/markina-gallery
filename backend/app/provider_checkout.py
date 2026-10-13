@@ -78,7 +78,7 @@ def prepare_provider_payment(
     settings = db.scalar(select(InfinitePaySettings).where(
         InfinitePaySettings.tenant_id == tenant_id,
     ).with_for_update())
-    if (not settings or settings.status != "active" or not settings.handle
+    if (not settings or settings.status != "active" or not settings.card_enabled or not settings.handle
             or not settings.verification_profile or settings.verified_at is None):
         raise CheckoutError("Cartão indisponível para esta conta.")
 

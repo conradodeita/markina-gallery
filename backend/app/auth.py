@@ -1642,6 +1642,7 @@ class InfinitePaySettings(Base):
     version: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     handle: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    card_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_profile: Mapped[str | None] = mapped_column(String(100), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

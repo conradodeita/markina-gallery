@@ -36,10 +36,10 @@ def synthetic_recipient(monkeypatch):
     monkeypatch.setattr(admin_account, "_admin_whatsapp_phone", lambda _db, *, tenant_id: "+5511999990010")
 
 
-def issue(db, row, handle="synthetic_a", version=0, checkout_ready=False):
+def issue(db, row, handle="synthetic_a", version=0, checkout_ready=False, card_enabled=False):
     result = main.admin_infinitepay_challenge(ConfigurationChallengeInput(current_password=PASSWORD,
         expected_version=version, configuration=ReceiverInput(handle=handle) if handle else None,
-        checkout_ready=checkout_ready),
+        checkout_ready=checkout_ready, card_enabled=card_enabled),
         row["admin_request"], db)
     return db.get(AdminSecurityChallenge, UUID(result["challenge_id"]))
 
@@ -58,8 +58,8 @@ def test_configurar_alterar_remover_preserva_PIX_e_conta_B(client_db, configured
     assert challenge.secret_hash != "123456"
     result = confirm(client_db, first, challenge)
     assert result == {"handle": "synthetic_a", "status": "pending", "version": 1,
-        "ownership_verified": False, "checkout_available": False,
-        "message": "Cartão indisponível até o fotógrafo confirmar sua tag e as opções do Checkout Integrado."}
+        "card_enabled": False, "ownership_verified": False, "checkout_available": False,
+        "message": "Cartão indisponível até o fotógrafo habilitar uma configuração pronta."}
     assert challenge.encrypted_target is None and challenge.used_at is not None
     assert confirm(client_db, first, issue(client_db, first, "synthetic_new", 1))["version"] == 2
     removed = confirm(client_db, first, issue(client_db, first, None, 2))
@@ -70,11 +70,17 @@ def test_configurar_alterar_remover_preserva_PIX_e_conta_B(client_db, configured
 
 def test_ativacao_e_autodeclaracao_vinculada_e_nao_prova_titularidade(client_db, configured):
     first = configured[0]
-    saved = confirm(client_db, first, issue(client_db, first, checkout_ready=True))
+    saved = confirm(client_db, first, issue(client_db, first, checkout_ready=True, card_enabled=True))
     assert saved["status"] == "active" and saved["checkout_available"] is True
+    assert saved["card_enabled"] is True
     assert saved["ownership_verified"] is False
     assert client_db.scalar(select(InfinitePaySettings)).verification_profile == "infinitepay-public-v1"
-    pending = confirm(client_db, first, issue(client_db, first, "changed_tag", version=1))
+    disabled = confirm(client_db, first, issue(client_db, first, version=1,
+        checkout_ready=True, card_enabled=False))
+    assert disabled["status"] == "active" and disabled["card_enabled"] is False
+    assert disabled["checkout_available"] is False
+    assert disabled["handle"] == saved["handle"]
+    pending = confirm(client_db, first, issue(client_db, first, "changed_tag", version=2))
     assert pending["status"] == "pending" and pending["checkout_available"] is False
 
 

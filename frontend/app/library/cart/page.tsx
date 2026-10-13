@@ -13,7 +13,7 @@ type CartGroup = { payment_required?: boolean; message?: string; revision?: stri
   items: Array<{ id: string; name: string; folder_name: string | null; preview_url: string }> };
 type Payment = { id: string; revision: string; total_cents: number; pix_copy_paste: string;
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
-type CardPayment = { id: string; status: "awaiting_payment" | "verification_required"; checkout_url: string | null; total_cents: number };
+type CardPayment = { id: string; status: "awaiting_payment" | "verification_required" | "failed_before_issue"; checkout_url: string | null; total_cents: number };
 type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
   card_available?: boolean; card_payment?: CardPayment | null; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -25,6 +25,10 @@ export default function CartPage() {
   const [busy, setBusy] = useState(false);
   const [reported, setReported] = useState<string | null>(null);
   const [method, setMethod] = useState<"pix" | "card">("pix");
+  const cardCheckoutIssued = cart?.card_payment?.status === "awaiting_payment"
+    && Boolean(cart.card_payment.checkout_url);
+  const cardCheckoutUncertain = cart?.card_payment?.status === "verification_required";
+  const cardCheckoutPending = cardCheckoutIssued || cardCheckoutUncertain;
   const sequence = useRef(0);
   const locked = useRef(false);
   const requestKey = useRef<string | null>(null);
@@ -138,11 +142,18 @@ export default function CartPage() {
         if (response.status === 409) cardRequestKey.current = null;
         throw new Error(result.detail ?? "Não foi possível preparar o pagamento com cartão.");
       }
+      if (result.status === "failed_before_issue") {
+        cardRequestKey.current = null;
+        setCart((previous) => previous ? { ...previous, card_payment: null } : previous);
+        setNotice("A InfinitePay confirmou que não criou o checkout. Suas fotos continuam selecionadas; você pode tentar o cartão novamente ou escolher PIX.");
+        notifyCartChanged();
+        return;
+      }
       setCart((previous) => previous ? { ...previous, card_payment: result } : previous);
       if (result.status === "awaiting_payment" && result.checkout_url) {
         setNotice("Link seguro pronto. Confira o recebedor e pague no checkout da InfinitePay.");
       } else {
-        setNotice("A solicitação ficou em verificação. Não tente iniciar outro pagamento; atualize o histórico em instantes.");
+        setNotice("A InfinitePay não devolveu um link utilizável. O checkout não foi aberto e nenhum pagamento foi iniciado por esta tela. A compra segue reservada enquanto verificamos a resposta; não tente iniciar outro pagamento. Acompanhe em Compras.");
       }
       notifyCartChanged();
     } catch (failure) {
@@ -160,8 +171,8 @@ export default function CartPage() {
     {cart?.card_payment ? <section className="unified-payment" aria-label="Pagamento por cartão em andamento">
       <h2>Compra por cartão · {money(cart.card_payment.total_cents)}</h2>
       {cart.card_payment.status === "awaiting_payment" && cart.card_payment.checkout_url
-        ? <><p>Continue o pagamento no checkout seguro da InfinitePay.</p><a className="primary" href={cart.card_payment.checkout_url} rel="noopener noreferrer">Continuar para pagamento com cartão</a></>
-        : <p role="status">Pagamento em verificação. A compra continua reservada; não inicie outra cobrança para essas fotos.</p>}
+        ? <><p>Continue o pagamento no checkout seguro da InfinitePay.</p><a className="primary" href={cart.card_payment.checkout_url} target="_blank" rel="noopener noreferrer">Continuar para pagamento com cartão</a></>
+        : <p role="status">Pagamento em verificação; esta compra permanece reservada. Acompanhe em Compras e não inicie outra cobrança para essas fotos.</p>}
       <Link href={`/library/purchases#payment-${cart.card_payment.id}`}>Acompanhar compra</Link>
     </section> : null}
     {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
@@ -181,17 +192,16 @@ export default function CartPage() {
     {cart && cart.groups.some((group) => group.payment_required !== false) ? <section className="unified-payment" aria-label="Pagamento único">
       <h2>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</h2>
       <p>{cart.groups.filter((group) => group.payment_required !== false).reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</p>
-      {cart.can_prepare && cart.card_available ? <fieldset>
+      {!cardCheckoutPending && cart.can_prepare && cart.card_available ? <fieldset>
         <legend>Forma de pagamento</legend>
         <label><input type="radio" name="payment-method" checked={method === "pix"} onChange={() => setMethod("pix")} /> PIX</label>
         <label><input type="radio" name="payment-method" checked={method === "card"} onChange={() => setMethod("card")} /> Cartão de crédito</label>
       </fieldset> : null}
-      {method === "card" && cart.card_available ? <>
+      {!cardCheckoutPending && method === "card" && cart.card_available ? <>
         <p>O pagamento será feito no ambiente seguro da InfinitePay. O Pick-your-Pic não recebe dados do cartão.</p>
         <button type="button" className="primary" disabled={busy || !cart.cart_revision} onClick={() => void prepareCard()}>{busy ? "Preparando checkout…" : "Continuar com cartão de crédito"}</button>
-        {cart.card_payment?.checkout_url ? <a className="primary" href={cart.card_payment.checkout_url} rel="noopener noreferrer">Retomar checkout InfinitePay</a> : null}
       </> : null}
-      {method === "pix" || !cart.card_available ? <>
+      {!cardCheckoutPending && (method === "pix" || !cart.card_available) ? <>
       {cart.payment ? <>
         <h3>Pague com PIX</h3>
         {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}

@@ -96,13 +96,16 @@ def test_downgrade_recusa_configuracao_existente(migration_database):
         db.flush()
         db.add(auth.TenantAdmin(tenant_id=tenant.id, admin_user_id=admin.id))
         db.flush()
-        setting = auth.InfinitePaySettings(tenant_id=tenant.id, admin_user_id=admin.id,
-                                          handle="synthetic", version=2)
-        db.add(setting)
+        setting_id = uuid4()
+        # TARGET intentionally predates card_enabled; reflect the historical
+        # table so current ORM metadata does not insert a future column.
+        insert_legacy_model(db.connection(), auth.InfinitePaySettings, id=setting_id,
+            tenant_id=tenant.id, admin_user_id=admin.id, handle="synthetic", version=2,
+            status="pending", updated_at=auth.now())
         db.commit()
-        setting_id = setting.id
     result = alembic(url, "downgrade", SOURCE, succeeds=False)
     assert "preserve configurações e desafios InfinitePay auditáveis" in result.stderr
-    with Session(engine) as db:
-        assert db.get(auth.InfinitePaySettings, setting_id).version == 2
-        assert db.scalar(sa.text("SELECT version_num FROM alembic_version")) == TARGET
+    with engine.connect() as connection:
+        settings = sa.Table("infinitepay_settings", sa.MetaData(), autoload_with=connection)
+        assert connection.scalar(sa.select(settings.c.version).where(settings.c.id == setting_id)) == 2
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == TARGET

@@ -228,7 +228,8 @@ def cart_payload(db: Session, client: Client):
     ))
     card_available = bool(settings and settings.status == "active"
                           and settings.verification_profile == "infinitepay-public-v1"
-                          and settings.verified_at is not None and settings.handle)
+                          and settings.verified_at is not None and settings.handle
+                          and settings.card_enabled)
     active_card = db.scalar(select(ProviderPayment).where(
         ProviderPayment.tenant_id == tenant_id,
         ProviderPayment.client_id == client.id,

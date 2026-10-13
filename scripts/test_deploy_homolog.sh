@@ -39,14 +39,27 @@ set -e
 grep -Fq 'deploy-homolog: falha sintética pós-switch' "$output"
 grep -Fq 'trapped' "$err_probe"
 
-# RAW overlay is an explicit deploy option and leaves the default stack unchanged.
+# Optional modules are preserved by default; explicit deploy overrides remain available.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
-    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled true
+    parse_arguments --sha 1111111111111111111111111111111111111111
+    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == auto ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=0
+    resolve_raw_development_state
+    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == false ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=1
+    resolve_raw_development_state
     [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == true ]]
-    RAW_DEVELOPMENT_DEPLOY_ENABLED=false
+    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled true
+    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == true ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=0
+    resolve_raw_development_state
+    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == true ]]
     parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled false
+    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == false ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=1
+    resolve_raw_development_state
     [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == false ]]
   ' >"$output" 2>&1
 

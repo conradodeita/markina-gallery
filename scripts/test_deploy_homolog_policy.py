@@ -144,10 +144,12 @@ def main() -> int:
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
     require('MARKINA_PUBLIC_BASE_URL=%q', "origem pública encaminhada ao deploy", WORKFLOW)
-    require('HOMOLOG_FACIAL_PROCESSING_ENABLED: "true"', "homologação facial persistentemente habilitada", WORKFLOW)
-    require('--facial-enabled %q', "estado facial explícito encaminhado ao deploy", WORKFLOW)
-    require('HOMOLOG_RAW_DEVELOPMENT_ENABLED: "true"', "worker RAW instalado em homologação", WORKFLOW)
-    require('--raw-development-enabled %q', "estado do worker RAW explícito encaminhado ao deploy", WORKFLOW)
+    forbid(r'HOMOLOG_FACIAL_PROCESSING_ENABLED:\s*"true"|--facial-enabled\s+%q',
+           "deploy InfinitePay não deve habilitar processamento facial", WORKFLOW)
+    forbid(r'HOMOLOG_RAW_DEVELOPMENT_ENABLED:\s*"true"|--raw-development-enabled\s+%q',
+           "deploy InfinitePay não deve habilitar o worker RAW", WORKFLOW)
+    require('REQUESTED_RAW_DEVELOPMENT_ENABLED="auto"', "RAW preservado automaticamente por padrão", SCRIPT)
+    require('resolve_raw_development_state', "estado RAW resolvido após detectar worker ativo", SCRIPT)
     require('extra+=(-f docker/docker-compose.raw-development.yml)', "overlay RAW restrito ao deploy autorizado", SCRIPT)
     require('"$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1', "overlay RAW mantido para parar worker ativo", SCRIPT)
     require('compose up -d --build --no-deps raw-development-worker', "worker RAW iniciado antes da API", SCRIPT)
