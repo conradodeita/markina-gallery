@@ -36,6 +36,8 @@ O run de execute `38472862716` abortou em 13/10/2026 antes de pausar writers ou 
 
 No mesmo run, Docker recusou `.State.Health` para o contêiner one-shot `migrate` sem healthcheck. A leitura do snapshot SHALL tratar ausência do campo como `none` e propagar explicitamente falhas de inspect, inclusive quando invocada sob uma condição shell. O snapshot continua exigindo exatamente os três serviços Evolution ativos e compara IDs/imagens/início/estado antes e depois.
 
+A mesma regra de propagação vale para listagem de writers: evitar process substitution que oculta falha de `docker ps`. A regressão simulada reproduziu aceitação indevida de lista indisponível na conferência posterior à pausa; capturar e verificar o resultado do comando antes de iterar, tanto no inventário quanto na conferência da pausa. Sem lista confirmada, nenhuma exclusão pode começar.
+
 Executar um script Python revisado em contêiner efêmero da imagem API já publicada, fornecido pelo workflow protegido em arquivo temporário de código montado somente leitura. O script usa os modelos publicados, mas possui sua própria classificação fechada. Conferir SHA esperado, schema, origem canônica e topologia antes de executar; não refazer deploy nem migration para limpar.
 
 O wrapper inventaria containers Markina e recusa serviço desconhecido. Parar e conferir todos os writers ativos: API, worker, faciais/SFace/Gemma, preview-adjustment e raw-development. Evolution, bancos e proxy compartilhado ficam ativos. Salvar somente metadados de retomada (IDs dos containers originalmente ativos, SHA e fase) em diretório privado da Markina; isso não contém dump nem dados de negócio. Reiniciar somente esses containers após pós-condições completas.

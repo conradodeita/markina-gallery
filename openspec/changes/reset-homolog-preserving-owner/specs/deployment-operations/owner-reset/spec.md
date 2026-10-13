@@ -67,6 +67,10 @@ O reset SHALL conferir SHA publicado, schema, topologia, volumes, origem HTTPS e
 - **WHEN** um contêiner não tem o campo Health ou Docker inspect falha
 - **THEN** ausência de Health é representada como none, falha de inspect impede a operação, e o snapshot só é aceito com exatamente os três serviços Evolution ativos
 
+#### Scenario: Listagem de writers indisponível
+- **WHEN** Docker não consegue listar os serviços ativos para o inventário ou para conferir a pausa
+- **THEN** a execução é recusada sem iniciar a exclusão, em vez de assumir uma lista vazia de writers
+
 ### Requirement: Execução sem novo backup, exclusão autorizada de dumps e retomada honesta
 O reset SHALL exigir autorização específica, inventário e sinalização sem dump. Após conclusão, SHALL excluir somente os 164 `.dump` regulares na raiz fixa da Markina, com contagem e bytes iguais ao manifesto autorizado; divergência MUST bloquear. Demais arquivos e snapshots SHALL permanecer. Falha após commit MUST ser reportada como parcial e manter writers pausados para retomada segura, sem alegar reversão.
 

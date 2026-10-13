@@ -116,6 +116,23 @@ if grep -Eq 'UNEXPECTED-(RESET|MUTATION)' "$output"; then exit 1; fi
 
 if bash -c '
   source "$OWNER_RESET_HOST_SCRIPT"
+  WRITER_IDS=(abcdef123456)
+  docker() {
+    if [[ "$1" == inspect && "$*" == *com.docker.compose.project* ]]; then echo markina-gallery; return 0; fi
+    if [[ "$1" == inspect && "$*" == *com.docker.compose.service* ]]; then echo api; return 0; fi
+    if [[ "$1" == inspect ]]; then echo false; return 0; fi
+    if [[ "$1" == stop ]]; then return 0; fi
+    if [[ "$1" == ps ]]; then return 1; fi
+    echo UNEXPECTED-MUTATION
+  }
+  stop_writers
+  echo UNEXPECTED-RESET
+' >"$output" 2>&1; then echo "listagem de writers indisponível aceita" >&2; exit 1; fi
+grep -Fq 'listagem de writers não pôde ser conferida' "$output"
+if grep -Fq UNEXPECTED-RESET "$output"; then exit 1; fi
+
+if bash -c '
+  source "$OWNER_RESET_HOST_SCRIPT"
   run_payload() { echo attempted-reset; return 1; }
   compose() { echo UNEXPECTED-QUEUE-CLEAR; }
   restore_writers() { echo UNEXPECTED-RESUME; }

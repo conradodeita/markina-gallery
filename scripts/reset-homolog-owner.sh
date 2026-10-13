@@ -44,17 +44,18 @@ verify_writer_id() {
 }
 
 stop_writers() {
-  local identity
+  local identity service listed
   for identity in "${WRITER_IDS[@]}"; do verify_writer_id "$identity" || return 1; done
   docker stop "${WRITER_IDS[@]}" >/dev/null || return 1
   for identity in "${WRITER_IDS[@]}"; do
     [[ "$(docker inspect --format '{{.State.Running}}' "$identity")" == false ]] || fail "writer ainda ativo"
   done
+  listed="$(docker ps --filter label=com.docker.compose.project=markina-gallery --format '{{.ID}} {{.Label "com.docker.compose.service"}}')" || fail "listagem de writers não pôde ser conferida"
   while read -r identity service; do
     [[ -n "$identity" ]] || continue
     classify_service "$service"
     if is_writer "$service"; then fail "writer ativo fora da pausa conferida"; fi
-  done < <(docker ps --filter label=com.docker.compose.project=markina-gallery --format '{{.ID}} {{.Label "com.docker.compose.service"}}')
+  done <<< "$listed"
 }
 
 restore_writers() {
@@ -196,7 +197,7 @@ main() {
   [[ -z "$(git status --porcelain)" ]] || fail "checkout remoto alterado"
   [[ "$(git remote get-url origin)" =~ ^(https://github\.com/conradodeita/markina-gallery(\.git)?|git@github\.com:conradodeita/markina-gallery(\.git)?|ssh://git@github\.com/conradodeita/markina-gallery(\.git)?)$ ]] || fail "repositório divergente"
 
-  local api_id raw_mount identity service pending_ids active_ids evolution_before evolution_after
+  local api_id raw_mount identity service pending_ids active_ids active_rows evolution_before evolution_after
   mapfile -t api_ids < <(docker ps -aq --filter label=com.docker.compose.project=markina-gallery --filter label=com.docker.compose.service=api)
   [[ "${#api_ids[@]}" -eq 1 ]] || fail "API ausente ou ambígua"
   api_id="${api_ids[0]}"
@@ -245,11 +246,12 @@ print("topologia conferida: Markina/homolog/127.0.0.1:8080/markina.pickyourpic.c
 ' || fail "topologia recusada antes da operação"
 
   active_ids=()
+  active_rows="$(docker ps --filter label=com.docker.compose.project=markina-gallery --format '{{.ID}} {{.Label "com.docker.compose.service"}}')" || fail "listagem inicial de writers não pôde ser conferida"
   while read -r identity service; do
     [[ -n "$identity" ]] || continue
     classify_service "$service" || return 1
     if is_writer "$service"; then active_ids+=("$identity"); fi
-  done < <(docker ps --filter label=com.docker.compose.project=markina-gallery --format '{{.ID}} {{.Label "com.docker.compose.service"}}')
+  done <<< "$active_rows"
   evolution_before="$(evolution_snapshot)" || fail "estado Evolution inicial não pôde ser confirmado"
   check_state_root || return 1
 
