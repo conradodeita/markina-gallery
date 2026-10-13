@@ -2,24 +2,24 @@
 
 ## ADDED Requirements
 
-### Requirement: Configuração independente de processamento para pastas públicas
+### Requirement: Configuração própria pronta para processamento por pasta
 
-Cada pasta pública de conteúdo SHALL ter configuração própria para ajuste automático de prévias e permissão local de reconhecimento facial. Ao criar uma pasta pública, o sistema SHALL iniciar o ajuste automático ligado, copiando a intensidade e a exposição atuais da galeria, ou usando 50%/0,0 EV quando não houver configuração explícita; SHALL iniciar a permissão facial local como ativa. Os gates globais, de galeria, de autorização e privacidade facial SHALL continuar aplicáveis.
+Cada pasta de conteúdo, pública ou privada, SHALL ter configuração própria para ajuste automático de prévias e reconhecimento facial. Ao criar uma pasta, o sistema SHALL iniciar o ajuste automático ligado e SHALL iniciar a permissão facial como ativa, sem copiar configurações da galeria ou de outra pasta. Pastas públicas SHALL iniciar em 50%/0,0 EV e pastas privadas SHALL iniciar em 75%/0,0 EV. Os gates globais, de galeria, de autorização e privacidade facial SHALL continuar aplicáveis às pastas públicas.
 
-#### Scenario: Nova pasta com parâmetros configurados na galeria
+#### Scenario: Nova pasta pública sem herança da galeria
 
-- **WHEN** uma pasta pública é criada enquanto a galeria tem parâmetros de ajuste definidos, com o ajuste ligado ou desligado
-- **THEN** a pasta inicia com ajuste ativo e com a intensidade e exposição vigentes na galeria
+- **WHEN** uma pasta pública é criada enquanto a galeria tem parâmetros diferentes dos defaults da pasta
+- **THEN** a pasta inicia com ajuste ativo em 50% e 0,0 EV e reconhecimento facial local permitido
 
-#### Scenario: Nova pasta sem parâmetros explícitos na galeria
+#### Scenario: Nova pasta privada sem herança da galeria
 
-- **WHEN** uma pasta pública é criada enquanto não há configuração explícita de parâmetros na galeria
-- **THEN** a pasta inicia com ajuste ligado em 50% e 0,0 EV
+- **WHEN** uma pasta privada é criada enquanto a galeria pública tem parâmetros de ajuste diferentes
+- **THEN** a pasta inicia com ajuste ativo em 75% e 0,0 EV e reconhecimento facial permitido
 
 #### Scenario: Alteração posterior na galeria
 
 - **WHEN** o fotógrafo altera os controles de ajuste da galeria após criar uma pasta
-- **THEN** as configurações e filas das pastas já existentes permanecem inalteradas; somente pastas criadas depois recebem os novos parâmetros, sempre com ajuste ligado
+- **THEN** as configurações e filas das pastas existentes permanecem inalteradas e pastas futuras continuam usando seus próprios defaults, sempre com ajuste ligado
 
 #### Scenario: Isolamento entre pastas
 

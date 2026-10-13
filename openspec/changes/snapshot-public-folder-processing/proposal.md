@@ -6,8 +6,8 @@ Pastas públicas sem configuração própria continuam lendo em tempo real os co
 
 ## What Changes
 
-- Ao criar uma pasta pública, iniciar o ajuste automático ligado e copiar para a configuração própria a intensidade e a exposição atuais da galeria; se não houver configuração explícita, usar 50%/0,0 EV.
-- Inicializar a permissão facial da pasta pública como permitida, respeitando os gates globais e de galeria existentes.
+- Ao criar qualquer pasta de conteúdo, pública ou privada, persistir configuração própria com ajuste automático ligado e reconhecimento facial permitido.
+- Iniciar pastas públicas em 50%/0,0 EV e pastas privadas em 75%/0,0 EV, sem copiar parâmetros da galeria ou de outra pasta.
 - Isolar e ativar o ajuste em pastas públicas existentes por meio de snapshot aditivo dos valores vigentes durante a migration.
 - Impedir que mudanças posteriores na configuração da galeria alterem configuração ou filas das pastas públicas já isoladas.
 - Manter o contrato de pasta privada: reconhecimento facial permitido e ajuste sempre ativo em 75%/0,0 EV por padrão, independente da galeria pública.

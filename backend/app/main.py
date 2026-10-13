@@ -4412,7 +4412,7 @@ def create_photo_folder(
     parent = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
     if not parent.active:
         raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas pastas.")
-    # Serializa a cópia dos parâmetros com mudanças concorrentes nos ajustes da galeria.
+    # Serializa a criação da pasta com mudanças concorrentes na galeria.
     parent = db.scalar(select(ParentGallery).where(
         ParentGallery.id == parent_gallery_id, ParentGallery.tenant_id == tenant_id,
     ).with_for_update())
@@ -4438,9 +4438,9 @@ def create_photo_folder(
     )
     db.add(folder)
     db.flush()
-    from app.folder_processing import initialize_public_folder_processing
+    from app.folder_processing import initialize_folder_processing
 
-    initialize_public_folder_processing(db, folder)
+    initialize_folder_processing(db, folder)
     audit(db, "photo_folder.created", str(folder.id), tenant_id=tenant_id)
     db.commit()
     return {"id": str(folder.id), "status": folder.status, "position": folder.position}
@@ -4560,6 +4560,9 @@ def create_admin_client_restricted_folder(
         client_id=client_id,
         tenant_id=tenant_id,
     ))
+    from app.folder_processing import initialize_folder_processing
+
+    initialize_folder_processing(db, folder)
     audit(db, "photo_folder.restricted_created", str(folder.id), tenant_id=tenant_id)
     db.commit()
     return {"id": str(folder.id), "status": folder.status, "position": folder.position}

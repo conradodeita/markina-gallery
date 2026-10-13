@@ -88,7 +88,7 @@ def test_folder_processing_api_auth_and_override(api_client):
     assert client.post(f"{endpoint}/preview/enqueue").status_code == 409
 
 
-def test_public_folder_creation_snapshots_preview_parameters_and_starts_enabled(api_client):
+def test_public_folder_creation_uses_independent_defaults_without_gallery_inheritance(api_client):
     from app.preview_adjustment.service import configure as configure_gallery
 
     client, factory, photo_id = api_client
@@ -106,15 +106,45 @@ def test_public_folder_creation_snapshots_preview_parameters_and_starts_enabled(
         row = db.get(FolderProcessingSettings, folder_uuid)
         assert row is not None
         assert (row.preview_mode, row.facial_mode, row.preview_strength, row.preview_exposure_tenths) == (
-            "custom", "on", 63, 4,
+            "custom", "on", 50, 0,
         )
         assert effective_preview(db, db.get(PhotoFolder, folder_uuid)).enabled
         configure_gallery(db, gallery_id, False, 30, -7, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         assert effective_preview(db, db.get(PhotoFolder, folder_uuid)).enabled
         assert (effective_preview(db, db.get(PhotoFolder, folder_uuid)).strength,
-                effective_preview(db, db.get(PhotoFolder, folder_uuid)).exposure_tenths) == (63, 4)
+                effective_preview(db, db.get(PhotoFolder, folder_uuid)).exposure_tenths) == (50, 0)
     assert client.get(f"/admin/photo-folders/{folder_id}/processing").json()["preview_mode"] == "custom"
+
+
+def test_private_folder_creation_persists_independent_ready_defaults(api_client):
+    from app.auth import Client, ParentGalleryRegistration
+
+    client, factory, photo_id = api_client
+    with factory() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        gallery_id = photo.parent_gallery_id
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente da pasta", phone_e164="+5511999999988")
+        db.add(person)
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id,
+            client_id=person.id, status="active",
+        ))
+        client_id = person.id
+        db.commit()
+    client.cookies.set("markina_session", "adjustment-admin")
+    created = client.post(
+        f"/admin/parent-galleries/{gallery_id}/clients/{client_id}/folders",
+        json={"name": "Acervo independente"},
+    )
+    assert created.status_code == 201, created.text
+    with factory() as db:
+        row = db.get(FolderProcessingSettings, UUID(created.json()["id"]))
+        assert row is not None
+        assert (row.preview_mode, row.facial_mode, row.preview_strength, row.preview_exposure_tenths) == (
+            "custom", "on", 75, 0,
+        )
 
 
 def test_private_folder_settings_are_fixed_auto_and_requeue_completed_face_photos(prepared):

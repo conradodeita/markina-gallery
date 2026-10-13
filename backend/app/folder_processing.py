@@ -10,7 +10,6 @@ from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     FacialJob,
     FolderProcessingSettings,
-    GalleryPreviewSettings,
     ParentGallery,
     PhotoAsset,
     PhotoFolder,
@@ -38,21 +37,18 @@ def folder_settings(db: Session, folder_id: UUID, *, tenant_id: UUID, lock: bool
     return db.scalar(query.execution_options(populate_existing=True))
 
 
-def initialize_public_folder_processing(db: Session, folder: PhotoFolder) -> FolderProcessingSettings:
-    """Snapshot gallery parameters while the caller holds the gallery row lock."""
-    if folder.audience_scope == "selected" or folder.derived_gallery_id is not None:
-        raise ValueError("A inicialização pública exige uma pasta pública de origem.")
-    gallery = db.scalar(select(GalleryPreviewSettings).where(
-        GalleryPreviewSettings.parent_gallery_id == folder.parent_gallery_id,
-        GalleryPreviewSettings.tenant_id == folder.tenant_id,
-    ).with_for_update())
+def initialize_folder_processing(db: Session, folder: PhotoFolder) -> FolderProcessingSettings:
+    """Start each content folder with its own enabled processing defaults."""
+    if folder.derived_gallery_id is not None:
+        raise ValueError("A inicialização exige uma pasta de conteúdo da galeria de origem.")
+    is_private = folder.audience_scope == "selected"
     row = FolderProcessingSettings(
         tenant_id=folder.tenant_id,
         folder_id=folder.id,
         preview_mode="custom",
         facial_mode="on",
-        preview_strength=gallery.strength if gallery else 50,
-        preview_exposure_tenths=gallery.exposure_tenths if gallery else 0,
+        preview_strength=75 if is_private else 50,
+        preview_exposure_tenths=0,
     )
     db.add(row)
     db.flush()
