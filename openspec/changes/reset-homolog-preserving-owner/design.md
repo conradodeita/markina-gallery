@@ -10,6 +10,12 @@ Ver `proposal.md`. O SHA publicado no servidor é `0ef80fdf912e8f9cbde730d061b69
 
 ## Decisions
 
+### Registro do workflow na branch padrão
+
+O GitHub recusou `workflow_dispatch` de `maintenance-homolog.yml` em `develop` com HTTP 404 porque o arquivo não existe na branch padrão `main`. Registrar na `main` somente um workflow inerte de mesmo caminho, nome e contrato de inputs: ele recusa operações e orienta selecionar `develop`, sem checkout, Environment, secrets ou SSH. Ao disparar com ref `develop`, o GitHub usa a versão completa revisada no PR #170, com gate `homolog` e guardas de SHA/proprietário. Os scripts e a aplicação não são promovidos para `main`; este registro não executa deploy nem reset. Os artefatos desta change acompanham o registro para documentar a operação implementada em `develop`.
+
+O PR #170 foi aprovado pelo proprietário e integrado em `develop` como `97eacae36eed3a3ab491e46823761ca0b031c7f0`; o CI do PR (`38464341510`) passou integralmente após retry do download Gemma limitado por HTTP 429. O CI automático do push (`38469477183`) foi cancelado antes do gate remoto para evitar redeploy e dump adicional: a manutenção usa a imagem já publicada `0ef80fdf912e8f9cbde730d061b69b73d46ff5aa`.
+
 ### Identidade e preservação explícitas
 
 Resolver e-mail exato para admin, conferir `platform_owner`, operador ativo e único vínculo de tenant ativo. Preservar IDs, credenciais, TOTP, sessões/push administrativos da conta, privilégios, configuração global do experimento e configurações vinculadas ao tenant proprietário. Atribuição global que referencie admin a remover ou FK de linha preservada para linha elegível impede execução; não reatribuir nem inventar proprietário.
@@ -25,6 +31,10 @@ Manter listas independentes de tabelas operacionais, configurações do tenant, 
 Zerar somente source, derivatives, history, facial-references e raw-staging da Markina. Na raiz branding, preservar bytes de todos os ativos referenciados pelo proprietário e seu namespace; os três ativos atuais pertencem ao proprietário. Validar caminhos absolutos/mounts sem symlinks de raiz, percorrer sem seguir links e jamais excluir alvos de links externos. Não apagar volumes ou imagens Docker.
 
 ### Manutenção com o código publicado estável
+
+O run de execute `38472862716` abortou em 13/10/2026 antes de pausar writers ou excluir dados: `/var/lib/markina-gallery` pertence a root e o operador ubuntu não pôde criar `owner-reset`. O inventário havia validado dumps, mas não a prontidão do diretório de retomada. Provisionar somente esse diretório vazio, canônico, com modo 0700 e dono do operador; inventory e execute SHALL conferir existência, dono, modo e escrita/acesso antes da pausa. Não ampliar permissões do diretório pai nem mover o estado para o checkout.
+
+No mesmo run, Docker recusou `.State.Health` para o contêiner one-shot `migrate` sem healthcheck. A leitura do snapshot SHALL tratar ausência do campo como `none` e propagar explicitamente falhas de inspect, inclusive quando invocada sob uma condição shell. O snapshot continua exigindo exatamente os três serviços Evolution ativos e compara IDs/imagens/início/estado antes e depois.
 
 Executar um script Python revisado em contêiner efêmero da imagem API já publicada, fornecido pelo workflow protegido em arquivo temporário de código montado somente leitura. O script usa os modelos publicados, mas possui sua própria classificação fechada. Conferir SHA esperado, schema, origem canônica e topologia antes de executar; não refazer deploy nem migration para limpar.
 

@@ -17,6 +17,11 @@ MODE="" OWNER_EMAIL="" EXPECTED_SHA="" CONFIRMATION="" PAYLOAD_FILE=""
 
 fail() { echo "owner-reset: $*" >&2; exit 1; }
 compose() { docker compose "${COMPOSE_ARGS[@]}" "$@" </dev/null; }
+check_state_root() {
+  local root="${1:-$STATE_ROOT}"
+  [[ -d "$root" && ! -L "$root" && "$(realpath "$root")" == "$root" ]] || fail "diretório privado de retomada ausente ou inseguro"
+  [[ "$(stat -c %u "$root")" == "$(id -u)" && "$(stat -c %a "$root")" == 700 && -w "$root" && -x "$root" ]] || fail "diretório de retomada sem dono/permissões privados do operador"
+}
 is_writer() {
   case "$1" in
     api|worker|face-index-worker|face-search-worker|face-maintenance-worker|face-gemma-index-worker|preview-adjustment-worker|raw-development-worker) return 0 ;;
@@ -59,7 +64,7 @@ restore_writers() {
   for identity in "${WRITER_IDS[@]}"; do
     status=unknown
     for attempt in $(seq 1 30); do
-      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$identity")"
+      status="$(docker inspect --format '{{with index .State "Health"}}{{.Status}}{{else}}{{.State.Status}}{{end}}' "$identity")" || fail "estado do writer não pôde ser inspecionado"
       [[ "$status" == healthy ]] && break
       sleep 2
     done
@@ -71,9 +76,12 @@ restore_writers() {
 evolution_snapshot() {
   local identity row service count=0
   local -a identities rows
-  mapfile -t identities < <(docker ps -aq --filter label=com.docker.compose.project=markina-gallery)
+  local listed
+  listed="$(docker ps -aq --filter label=com.docker.compose.project=markina-gallery)" || fail "lista de containers Evolution não pôde ser inspecionada"
+  identities=()
+  [[ -z "$listed" ]] || mapfile -t identities <<< "$listed"
   for identity in "${identities[@]}"; do
-    row="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}|{{.Id}}|{{.Image}}|{{.State.StartedAt}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$identity")"
+    row="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}|{{.Id}}|{{.Image}}|{{.State.StartedAt}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{else}}none{{end}}' "$identity")" || fail "container do snapshot Evolution não pôde ser inspecionado"
     service="${row%%|*}"
     case "$service" in
       evolution-api|evolution-db|evolution-redis)
@@ -243,6 +251,7 @@ print("topologia conferida: Markina/homolog/127.0.0.1:8080/markina.pickyourpic.c
     if is_writer "$service"; then active_ids+=("$identity"); fi
   done < <(docker ps --filter label=com.docker.compose.project=markina-gallery --format '{{.ID}} {{.Label "com.docker.compose.service"}}')
   evolution_before="$(evolution_snapshot)" || fail "estado Evolution inicial não pôde ser confirmado"
+  check_state_root || return 1
 
   [[ -n "${MARKINA_RESET_SCRIPT_BASE64:-}" && "${MARKINA_RESET_SCRIPT_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || fail "payload revisado ausente"
   PAYLOAD_FILE="$(mktemp /tmp/markina-owner-reset.XXXXXX.py)"
@@ -257,10 +266,7 @@ print("topologia conferida: Markina/homolog/127.0.0.1:8080/markina.pickyourpic.c
   echo "backups Markina: $dump_count arquivos .dump, $dump_bytes bytes; somente esses arquivos estão no escopo de exclusão autorizado"
   [[ "$MODE" == execute ]] || return 0
 
-  [[ ! -L "$STATE_ROOT" ]] || fail "diretório de retomada inseguro"
-  [[ "$(realpath -m "$STATE_ROOT")" == "$STATE_ROOT" ]] || fail "ancestral do diretório de retomada inseguro"
-  mkdir -p "$STATE_ROOT"; chmod 700 "$STATE_ROOT"
-  [[ "$(realpath "$STATE_ROOT")" == "$STATE_ROOT" ]] || fail "diretório de retomada divergente"
+  check_state_root || return 1
   exec 9>"$STATE_ROOT/operation.lock"
   flock -n 9 || fail "outra manutenção proprietária está em andamento"
   local state_file="$STATE_ROOT/pending.json"
