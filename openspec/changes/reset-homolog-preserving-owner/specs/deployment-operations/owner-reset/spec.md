@@ -60,7 +60,7 @@ O reset SHALL conferir SHA publicado, schema, topologia, volumes, origem HTTPS e
 - **THEN** somente API/workers Markina inventariados são parados e retomados; Evolution e projetos vizinhos conservam containers, configuração, redes, portas e volumes
 
 ### Requirement: Execução sem novo backup, exclusão autorizada de dumps e retomada honesta
-O reset SHALL exigir autorização específica, inventário e sinalização de execução sem dump. Após a conclusão do reset, os 164 arquivos `.dump` diretamente no diretório de backup fixo da Markina SHALL ser removidos somente se contagem e bytes coincidirem com o inventário autorizado e todos forem arquivos regulares. Outros arquivos, snapshots e configurações SHALL permanecer preservados. Divergência MUST impedir a exclusão dos dumps. Falha após commit MUST ser reportada como parcial e manter writers pausados até retomada segura, sem alegar reversão dos dados.
+O reset SHALL exigir autorização específica, inventário e sinalização sem dump. Após conclusão, SHALL excluir somente os 164 `.dump` regulares na raiz fixa da Markina, com contagem e bytes iguais ao manifesto autorizado; divergência MUST bloquear. Demais arquivos e snapshots SHALL permanecer. Falha após commit MUST ser reportada como parcial e manter writers pausados para retomada segura, sem alegar reversão.
 
 #### Scenario: Reset e remoção dos dumps autorizados
 - **WHEN** o proprietário autoriza o reset sem backup e separadamente autoriza excluir os 164 dumps inventariados após publicar o domínio
