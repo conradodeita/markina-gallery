@@ -5,7 +5,6 @@ import { jpegStorageKey, uploadJpeg } from "../../upload-jpeg";
 import { FinancialOrderShortcuts, type FinancialOrder } from "../payments/payment-actions";
 import { OrderDeliveryForm, type OrderDelivery } from "../payments/order-delivery";
 import { SelectionDeadline } from "../../selection-deadline";
-import { FolderProcessingPanel } from "./folder-processing-panel";
 import { AdminPhotoPreviewDialog, type AdminPhotoPreview } from "./admin-photo-preview-dialog";
 
 export type ClientGalleryRow = {
@@ -296,7 +295,7 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
           <span className="client-collection-folder__chevron" aria-hidden="true">{activeFolder === folder.id ? "▲" : "▼"}</span>
         </button>
         {activeFolder === folder.id ? <div>
-          <FolderProcessingPanel key={folder.id} folderId={folder.id} folderName={folder.name} shared={folder.assigned_client_ids.length > 1} embedded />
+          <a className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${parentGalleryId}/edit/imagens?folder=${folder.id}`}>Processamento da pasta</a>
           <button type="button" className="secondary" disabled={busy} onClick={() => { void publishFolder(folder); }}>Disponibilizar fotos prontas</button>
           <button type="button" className="link-button" disabled={busy} onClick={() => { void removeFolder(folder); }}>Excluir pasta</button>
           {folder.assigned_client_ids.length > 1 ? <div className="client-collection-recipients">

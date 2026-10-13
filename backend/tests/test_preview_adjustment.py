@@ -187,7 +187,7 @@ def test_exposure_reprocessing_always_uses_clean_source(prepared):
         with factory() as db:
             configure_folder(db, db.get(PhotoAsset, photo_id).folder_id, preview_mode="custom", facial_mode="on",
                              strength=50, exposure_tenths=exposure, tenant_id=FIXTURE_TENANT_ID)
-            assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
+            assert not enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
             db.commit()
         assert process_one(factory, RecordingEngine())
         with factory() as db:

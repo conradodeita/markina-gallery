@@ -67,24 +67,6 @@ export class FacialApiError extends Error {
   }
 }
 
-export type FacialIndexStatus = {
-  state: "processing" | "completed" | "failed";
-  rollout: {
-    status: "prepared" | "active" | "suspended" | "revoked" | "unavailable";
-    stage: "dark" | "canary" | "limited" | "general" | null;
-    available: boolean;
-  };
-  progress: { ready: number; total: number };
-  queued: number;
-  processing: number;
-  failed: number;
-  coverage: { photos_with_faces: number; total: number; percent: number; detected_faces: number };
-  waiting_previews: number;
-  unindexed: number;
-  failures: Array<{ job_id: string; photo_id: string; attempts: number; error_category: string }>;
-  pagination: { page: number; page_size: number; total: number };
-};
-
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...init });
   const payload = await response.json().catch(() => null);
@@ -138,19 +120,4 @@ export const facialSearchApi = {
     jsonRequest<{ rejected: true }>(`/api/public-galleries/${galleryId}/facial-searches/${requestId}/candidates/${photoId}`, { method: "DELETE" }),
   select: (galleryId: string, requestId: string, photoId: string) =>
     jsonRequest<Record<string, unknown>>(`/api/public-galleries/${galleryId}/facial-searches/${requestId}/candidates/${photoId}/selection`, { method: "POST" }),
-};
-
-export const facialAdminApi = {
-  index: (galleryId: string) =>
-    jsonRequest<FacialIndexStatus>(`/api/admin/parent-galleries/${galleryId}/facial-index`),
-  retry: (galleryId: string, jobIds: string[]) =>
-    jsonRequest<{ retried: number }>(`/api/admin/parent-galleries/${galleryId}/facial-index/retry`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ job_ids: jobIds }),
-    }),
-  reprocess: (galleryId: string) =>
-    jsonRequest<{ photos_scanned: number; retried: number }>(`/api/admin/parent-galleries/${galleryId}/facial-index/reprocess`, {
-      method: "POST",
-    }),
 };

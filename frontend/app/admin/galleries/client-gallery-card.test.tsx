@@ -57,14 +57,7 @@ it("mostra destinatárias legadas sem oferecer nova atribuição", async () => {
     return Promise.resolve(new Response(JSON.stringify(
     path.endsWith("/folders") ? { folders: [{ id: "folder-1", name: "Retratos", status: "released",
       photo_count: 0, assigned_client_ids: ["ana", "bia"] }] }
-      : path.endsWith("/processing") ? {
-        folder_id: "folder-1", folder_name: "Retratos", preview_mode: "custom", facial_mode: "on",
-        preview_strength: 50, preview_exposure_tenths: 0,
-        effective_preview: { mode: "custom", enabled: true, strength: 50, exposure_tenths: 0 },
-        facial_available: false, facial_allowed: false, total_photos: 0,
-        preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
-        facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
-      } : { photos: [{ id: "photo-1", name: "retrato.jpg", preview_url: "/admin/photos/photo-1/preview",
+      : { photos: [{ id: "photo-1", name: "retrato.jpg", preview_url: "/admin/photos/photo-1/preview",
         publication_state: "available", can_delete: true }] },
     ), { status: 200 }));
   });
@@ -76,7 +69,7 @@ it("mostra destinatárias legadas sem oferecer nova atribuição", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Retratos/ }));
   expect(await screen.findByText(/Pasta compartilhada anterior/)).toBeTruthy();
   expect(screen.getByText("Bia")).toBeTruthy();
-  expect(await screen.findByRole("button", { name: "Salvar configuração" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Processamento da pasta" }).getAttribute("href")).toBe("/admin/galleries/sources/gallery-1/edit/imagens?folder=folder-1");
   expect(screen.queryByRole("button", { name: /Processamento da pasta/ })).toBeNull();
   expect(screen.getAllByRole("button", { name: "Remover acesso" })).toHaveLength(2);
   expect(screen.queryByText("Adicionar cliente")).toBeNull();

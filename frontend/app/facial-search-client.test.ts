@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FacialApiError, facialAdminApi, facialSearchApi } from "./facial-search-client";
+import { FacialApiError, facialSearchApi } from "./facial-search-client";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -107,13 +107,4 @@ describe("contratos HTTP faciais", () => {
     }));
   });
 
-  it("envia somente IDs de jobs na retentativa administrativa", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ retried: 2 }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-    await facialAdminApi.retry("gallery-1", ["job-1", "job-2"]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/gallery-1/facial-index/retry",
-      expect.objectContaining({ body: JSON.stringify({ job_ids: ["job-1", "job-2"] }) }),
-    );
-  });
 });

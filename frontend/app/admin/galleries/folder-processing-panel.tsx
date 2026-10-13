@@ -1,220 +1,221 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AdminPhotoPreviewDialog, type AdminPhotoPreview } from "./admin-photo-preview-dialog";
+import { MarkinaButton, StatusBadge } from "../../ui-kit";
 
-type Counts = { queued: number; processing: number; ready?: number; completed?: number; failed: number; cancelled?: number };
+type Configuration = { enabled?: boolean; strength: number; exposure_tenths: number; generation: number; facial_mode: "on" | "off" };
+type FacialIndex = {
+  state: "waiting" | "processing" | "completed" | "failed";
+  progress: { ready: number; total: number };
+  queued: number; processing: number; failed: number; waiting_previews?: number; unindexed: number;
+  rollout_available?: boolean; rollout?: { available: boolean };
+  detected_faces: number;
+};
+type AdjustmentProgress = {
+  total?: number;
+  generation?: number;
+  counts: { queued: number; processing: number; ready: number; failed: number; cancelled: number };
+  photos?: { id: string; filename: string; status: string }[];
+};
+type Parameters = Pick<Configuration, "strength" | "exposure_tenths">;
+
 type Processing = {
-  folder_id: string; folder_name: string; preview_mode: "custom" | "off";
-  private_folder: boolean;
-  facial_mode: "on" | "off"; preview_strength: number;
-  preview_exposure_tenths: number;
-  effective_preview: { mode: string; enabled: boolean; strength: number; exposure_tenths: number };
-  facial_available: boolean; facial_allowed: boolean; total_photos: number;
-  preview_counts: Counts; facial_counts: Counts; comparison_photo_id: string | null;
+  revision: number; facial_mode: "on" | "off"; preview_strength: number; preview_exposure_tenths: number;
+  effective_preview: { enabled: boolean }; facial_available: boolean; facial_allowed: boolean; total_photos: number;
+  preview_counts: AdjustmentProgress["counts"]; facial_counts: { completed: number; queued: number; processing: number; failed: number };
+  comparison_photo_id: string | null;
+  facial_progress: { state: FacialIndex["state"]; total: number; waiting_previews: number; unindexed: number; detected_faces: number };
 };
 
-const previewModes = [
-  ["custom", "Ativar nesta pasta"], ["off", "Desligar nesta pasta"],
-] as const;
-const facialModes = [
-  ["on", "Permitir nesta pasta"], ["off", "Pausar novos trabalhos"],
-] as const;
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/admin/photo-folders/${path}`, {
-    credentials: "same-origin", cache: "no-store", ...init,
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.detail ?? "Não foi possível concluir a operação.");
-  return body as T;
+function presentation(result: Processing) {
+  return {
+    config: { enabled: result.effective_preview.enabled, strength: result.preview_strength,
+      exposure_tenths: result.preview_exposure_tenths, generation: result.revision, facial_mode: result.facial_mode },
+    face: { state: result.facial_progress.state, progress: { ready: result.facial_counts.completed, total: result.facial_progress.total },
+      ...result.facial_counts, waiting_previews: result.facial_progress.waiting_previews, unindexed: result.facial_progress.unindexed,
+      rollout_available: result.facial_available && result.facial_allowed,
+      detected_faces: result.facial_progress.detected_faces },
+    preview: { generation: result.revision, total: result.total_photos, counts: result.preview_counts,
+      photos: result.comparison_photo_id ? [{ id: result.comparison_photo_id, filename: "Prévia pronta", status: "ready" }] : [] },
+  };
 }
 
-function exposure(value: number) {
-  return `${value > 0 ? "+" : ""}${(value / 10).toFixed(1).replace(".", ",")}`;
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...init });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(payload?.detail ?? "Não foi possível concluir. Tente novamente.");
+  return payload as T;
 }
 
-export function FolderProcessingPanel({ folderId, folderName, shared = false, embedded = false }:
-  { folderId: string; folderName: string; shared?: boolean; embedded?: boolean }) {
-  const id = useId();
-  const [open, setOpen] = useState(false);
-  const expanded = embedded || open;
-  const [data, setData] = useState<Processing | null>(null);
-  const [draft, setDraft] = useState<Processing | null>(null);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+/** O chamador usa key=folderId para que respostas e rascunhos não migrem entre pastas. */
+export function FolderProcessingPanel({ folderId, folderName, uploading = false }: {
+  folderId: string; folderName: string; uploading?: boolean;
+}) {
+  const [configuration, setConfiguration] = useState<Configuration | null>(null);
+  const [facial, setFacial] = useState<FacialIndex | null>(null);
+  const [adjustment, setAdjustment] = useState<AdjustmentProgress | null>(null);
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [comparison, setComparison] = useState("");
   const [expandedPhoto, setExpandedPhoto] = useState<AdminPhotoPreview | null>(null);
-  const saveVersion = useRef(0);
+  const active = useRef(true);
+  const saved = useRef<Configuration | null>(null);
+  const draft = useRef<Configuration | null>(null);
+  const pending = useRef<Parameters | null>(null);
+  const running = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistNext = useRef<() => void>(() => {});
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    const result = await request<Processing>(`${folderId}/processing`, { signal });
-    if (signal?.aborted) return;
-    setData(result);
-    setDraft((current) => current ?? result);
+    const result = await api<Processing>(`/api/admin/photo-folders/${folderId}/processing`, { signal });
+    const { config, face, preview } = presentation(result);
+    if (!active.current || signal?.aborted) return;
+    if (!pending.current && !running.current && config.generation >= (saved.current?.generation ?? 0)) {
+      saved.current = config; draft.current = config; setConfiguration(config);
+    }
+    if (config.generation < (saved.current?.generation ?? 0) || pending.current || running.current) return;
+    setFacial(face);
+    if (preview.generation === undefined || preview.generation >= (saved.current?.generation ?? 0)) setAdjustment(preview);
   }, [folderId]);
 
+  const persist = useCallback(async () => {
+    if (running.current || !pending.current) return;
+    const parameters = pending.current;
+    pending.current = null;
+    running.current = true;
+    if (active.current) { setBusy(true); setMessage("Aplicando ajuste às fotos desta pasta…"); setComparison(""); }
+    try {
+      const result = await api<Processing>(`/api/admin/photo-folders/${folderId}/processing`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preview_mode: "custom", facial_mode: saved.current?.facial_mode ?? "on", preview_strength: parameters.strength, preview_exposure_tenths: parameters.exposure_tenths }),
+      });
+      const { config: value, preview } = presentation(result);
+      saved.current = value;
+      if (active.current) {
+        if (!pending.current) { draft.current = value; setConfiguration(value); setAdjustment(preview); }
+        setMessage("Ajuste atualizado. As prévias estão sendo refeitas a partir das fotos originais.");
+      }
+    } catch (error) {
+      if (active.current) {
+        if (!pending.current) { draft.current = saved.current; setConfiguration(saved.current); }
+        setMessage(error instanceof Error ? error.message : "Não foi possível salvar o ajuste.");
+      }
+    } finally {
+      running.current = false;
+      if (active.current) { setBusy(false); void load().catch(() => {}); }
+      if (pending.current) persistNext.current();
+    }
+  }, [folderId, load]);
+
   useEffect(() => {
-    if (!expanded) return;
+    persistNext.current = () => { void persist(); };
+    active.current = true;
+    return () => {
+      active.current = false;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      // A troca de pasta não perde a última alteração já feita pelo fotógrafo.
+      void persist();
+    };
+  }, [persist]);
+
+  useEffect(() => {
     const controller = new AbortController();
-    void Promise.resolve().then(() => load(controller.signal)).catch((cause) => {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Não foi possível carregar o processamento.");
+    void load(controller.signal).catch((error: unknown) => {
+      if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Processamento indisponível.");
     });
     return () => controller.abort();
-  }, [expanded, load]);
+  }, [load, uploading]);
 
-  const pending = (data?.preview_counts.queued ?? 0) + (data?.preview_counts.processing ?? 0)
-    + (data?.facial_counts.queued ?? 0) + (data?.facial_counts.processing ?? 0);
+  const facialAvailable = facial?.rollout_available ?? facial?.rollout?.available ?? false;
+  const hasPendingWork = uploading || Boolean(
+    facial?.queued || facial?.processing || facial?.waiting_previews
+    || (facial?.unindexed && facialAvailable) || adjustment?.counts?.queued || adjustment?.counts?.processing,
+  );
   useEffect(() => {
-    if (!expanded || !pending) return;
+    if (!hasPendingWork) return;
     const controller = new AbortController();
-    const timer = window.setInterval(() => {
-      void load(controller.signal).catch(() => {});
-    }, 5000);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [expanded, pending, load]);
+    let inFlight = false;
+    const timer = setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      void load(controller.signal).catch(() => {
+        if (!controller.signal.aborted) setMessage("Não foi possível atualizar o progresso. Tentaremos novamente.");
+      }).finally(() => { inFlight = false; });
+    }, 3000);
+    return () => { clearInterval(timer); controller.abort(); };
+  }, [hasPendingWork, load]);
 
-  async function save() {
-    if (!draft || busy) return;
-    setBusy(true); setError(""); setNotice("");
-    try {
-      const result = await request<Processing>(`${folderId}/processing`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preview_mode: draft.preview_mode, facial_mode: draft.facial_mode,
-          preview_strength: draft.preview_strength, preview_exposure_tenths: draft.preview_exposure_tenths }),
-      });
-      setData(result); setDraft(result);
-      setNotice("Configuração salva. Fotos existentes podem ser processadas nesta pasta.");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível salvar."); }
-    finally { setBusy(false); }
+  function change(parameters: Parameters) {
+    if (!draft.current) return;
+    const value = { ...draft.current, ...parameters };
+    draft.current = value; setConfiguration(value); pending.current = parameters; setComparison("");
+    setAdjustment((current) => current ? { ...current, photos: [] } : current);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { void persist(); }, 300);
   }
 
-  useEffect(() => {
-    if (!expanded || !data?.private_folder || !draft
-      || (draft.preview_strength === data.preview_strength
-        && draft.preview_exposure_tenths === data.preview_exposure_tenths)) return;
-    const version = ++saveVersion.current;
-    const timer = window.setTimeout(() => {
-      setBusy(true); setError(""); setNotice("Aplicando novo ajuste…");
-      void request<Processing>(`${folderId}/processing`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preview_mode: "custom", facial_mode: "on",
-          preview_strength: draft.preview_strength,
-          preview_exposure_tenths: draft.preview_exposure_tenths }),
-      }).then((result) => {
-        if (version !== saveVersion.current) return;
-        setData(result); setDraft(result);
-        setNotice("Ajuste aplicado. As prévias serão refeitas após o reconhecimento facial, a partir das fotos originais.");
-      }).catch((cause: unknown) => {
-        if (version !== saveVersion.current) return;
-        setDraft(data);
-        setError(cause instanceof Error ? cause.message : "Não foi possível aplicar o ajuste.");
-        setNotice("");
-      }).finally(() => {
-        if (version === saveVersion.current) setBusy(false);
-      });
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [data, draft, expanded, folderId]);
-
-  async function process(kind: "preview" | "facial") {
-    if (busy) return;
-    setBusy(true); setError(""); setNotice("");
+  async function retryFacial() {
+    setRetrying(true);
     try {
       let cursor: string | null = null;
-      let queued = 0;
-      let retried = 0;
       do {
-        const result: { queued: number; retried?: number; next_cursor: string | null } = await request(
-          `${folderId}/processing/${kind}/${kind === "preview" ? "enqueue" : "reprocess"}${cursor ? `?after=${cursor}` : ""}`,
-          { method: "POST" },
-        );
-        queued += result.queued;
-        retried += result.retried ?? 0;
+        const result: { next_cursor: string | null } = await api(`/api/admin/photo-folders/${folderId}/processing/facial/reprocess${cursor ? `?after=${cursor}` : ""}`, { method: "POST" });
         cursor = result.next_cursor;
       } while (cursor);
-      await load();
-      setNotice(kind === "preview"
-        ? `${queued} trabalho(s) de ajuste adicionados à fila desta pasta.`
-        : `${queued} novo(s) trabalho(s) facial(is) e ${retried} retentativa(s) nesta pasta.`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível processar a pasta."); }
-    finally { setBusy(false); }
+      if (active.current) { setMessage("Retentativa do reconhecimento iniciada."); await load(); }
+    } catch (error) { if (active.current) setMessage(error instanceof Error ? error.message : "Não foi possível refazer o reconhecimento."); }
+    finally { if (active.current) setRetrying(false); }
   }
 
-  const summary = data
-    ? data.private_folder ? "" : `${data.preview_mode === "custom" ? "Ajuste automático ativo" : "Ajuste automático desligado"} · ${data.facial_mode === "off" ? "Face pausada" : "Face permitida"}`
-    : "Configuração da pasta";
-  return <section className={`folder-processing${data?.private_folder ? " folder-processing--private" : ""}`} aria-label={`Processamento de ${folderName}`}>
-    {embedded ? <div className="folder-processing__toggle folder-processing__toggle--static">
-      <span className="folder-processing__icon" aria-hidden="true">✦</span>
-      <span className="folder-processing__heading"><strong>Processamento da pasta</strong>{summary ? <small>{summary}</small> : null}</span>
-    </div> : <button type="button" className="folder-processing__toggle" aria-expanded={open}
-      aria-controls={`${id}-content`} onClick={() => { setOpen((value) => !value); setError(""); }}>
-      <span className="folder-processing__icon" aria-hidden="true">✦</span>
-      <span className="folder-processing__heading"><strong>Processamento da pasta</strong>{summary ? <small>{summary}</small> : null}</span>
-      <span className="folder-processing__chevron" aria-hidden="true">{open ? "▴" : "▾"}</span>
-    </button>}
-    {expanded ? <div id={`${id}-content`} className="folder-processing__body">
-      <p className="folder-processing__scope">Ajustes e ações valem somente para “{folderName}”{shared ? " e para todas as clientes atribuídas a esta pasta" : ""}.</p>
-      {error ? <p role="alert" className="folder-processing__feedback folder-processing__feedback--error">{error}</p> : null}
-      {notice ? <p role="status" className="folder-processing__feedback">{notice}</p> : null}
-      {!draft || !data ? error
-        ? <button type="button" className="secondary" onClick={() => {
-          setError("");
-          void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Não foi possível carregar o processamento."));
-        }}>Tentar novamente</button>
-        : <p role="status">Carregando configuração…</p> : <>
-        <div className="folder-processing__cards">
-          <div className="folder-processing__card">
-            <span className="folder-processing__eyebrow">01 · Processamento automático</span>
-            <h4>Reconhecimento facial</h4>
-            {data.private_folder ? <p>O reconhecimento facial começa automaticamente após o envio da foto, conforme o gate operacional global.</p> : <>
-              <p>A pasta começa pronta para o reconhecimento facial. A pausa impede novos trabalhos nesta pasta; índices e buscas já autorizadas são preservados.</p>
-              <label htmlFor={`${id}-facial`}>Comportamento da pasta</label>
-              <select id={`${id}-facial`} value={draft.facial_mode} onChange={(event) => setDraft({ ...draft, facial_mode: event.target.value as Processing["facial_mode"] })}>
-                {facialModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-            </>}
-            <div className="folder-processing__metric"><strong>{data.facial_counts.completed ?? 0} concluído(s)</strong><span>de {data.total_photos} foto(s) · {data.facial_counts.failed} falha(s)</span></div>
-            <progress value={Math.min(data.facial_counts.completed ?? 0, data.total_photos)} max={Math.max(1, data.total_photos)} />
-            <button type="button" className="secondary" disabled={busy || !data.facial_available || !data.facial_allowed || !data.total_photos} onClick={() => void process("facial")}>{data.private_folder ? "Refazer reconhecimento" : "Retentar nesta pasta"}</button>
-            {!data.facial_available ? <small>Reconhecimento indisponível na galeria ou no ambiente.</small> : null}
-          </div>
-          <div className="folder-processing__card">
-            <span className="folder-processing__eyebrow">02 · Apresentação das fotos</span>
-            <h4>Ajuste automático das prévias</h4>
-            <p>{data.private_folder ? "Ajuste individual desta pasta, sempre aplicado às fotos originais." : "A pasta começa com ajuste ativo. Os parâmetros copiados na criação ficam isolados da galeria e das outras pastas."}</p>
-            {!data.private_folder ? <>
-            <label htmlFor={`${id}-preview`}>Comportamento da pasta</label>
-            <select id={`${id}-preview`} value={draft.preview_mode} onChange={(event) => setDraft({ ...draft, preview_mode: event.target.value as Processing["preview_mode"] })}>
-              {previewModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-            </> : null}
-            {data.private_folder || draft.preview_mode === "custom" ? <div className="folder-processing__fields">
-              <label htmlFor={`${id}-strength`}>Intensidade <strong>{draft.preview_strength}%</strong></label>
-              <input id={`${id}-strength`} type="range" min={10} max={75} value={draft.preview_strength} disabled={data.private_folder && busy} onChange={(event) => setDraft({ ...draft, preview_strength: Number(event.target.value) })} />
-              <label htmlFor={`${id}-exposure`}>Exposição <strong>{exposure(draft.preview_exposure_tenths)} EV</strong></label>
-              <input id={`${id}-exposure`} type="range" min={-20} max={20} value={draft.preview_exposure_tenths} disabled={data.private_folder && busy} onChange={(event) => setDraft({ ...draft, preview_exposure_tenths: Number(event.target.value) })} />
-            </div> : <p className="folder-processing__effective">Efetivo: {data.effective_preview.enabled ? `${data.effective_preview.strength}% · ${exposure(data.effective_preview.exposure_tenths)} EV` : "desligado"}</p>}
-            <div className="folder-processing__metric"><strong>{data.preview_counts.ready ?? 0} pronta(s)</strong><span>de {data.total_photos} foto(s) · {data.preview_counts.failed} falha(s)</span></div>
-            <progress value={Math.min(data.preview_counts.ready ?? 0, data.total_photos)} max={Math.max(1, data.total_photos)} />
-            {!data.private_folder ? <button type="button" className="secondary" disabled={busy || !data.effective_preview.enabled || !data.total_photos} onClick={() => void process("preview")}>Processar esta pasta</button> : null}
-          </div>
-        </div>
-        {!data.private_folder ? <div className="folder-processing__footer"><span>Alterações de configuração não reprocessam fotos antigas automaticamente.</span><button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Aguarde…" : "Salvar configuração"}</button></div> : null}
-        {data.comparison_photo_id ? <div className="folder-processing__comparison"><h4>Antes e depois</h4>
-          {(["before", "after"] as const).map((version) => {
-            const label = version === "before" ? "Convencional" : "Ajustada";
-            const src = `/api/admin/preview-adjustment/photos/${data.comparison_photo_id}/${version}`;
-            return <figure key={version}><button type="button" className="photo-preview-button"
-              aria-label={`Ampliar versão ${label.toLowerCase()}`} onClick={(event) => setExpandedPhoto({
-                src, alt: `Prévia ${label.toLowerCase()} protegida`, name: `${folderName} · ${label}`,
-                trigger: event.currentTarget,
-              })}><img src={src} alt={`Prévia ${label.toLowerCase()} protegida`} /></button><figcaption>{label}</figcaption></figure>;
-          })}
-        </div> : null}
-      </>}
-    </div> : null}
+  const total = facial?.progress?.total ?? 0;
+  const ready = facial?.progress?.ready ?? 0;
+  const counts = adjustment?.counts;
+  const adjustmentTotal = adjustment?.total ?? (counts ? counts.ready + counts.queued + counts.processing + counts.failed : 0);
+  const readyPhotos = adjustment?.photos?.filter((photo) => photo.status === "ready") ?? [];
+
+  return <section className="admin-card folder-processing" aria-label={`Processamento de ${folderName}`}>
+    <header className="section-heading"><div><p className="eyebrow">Processamento da pasta</p><h3>{folderName}</h3></div>
+      <StatusBadge tone={facial?.failed || counts?.failed ? "warning" : "neutral"}>{busy ? "Atualizando ajuste" : !facial ? "Carregando" : hasPendingWork ? "Em andamento" : !facialAvailable && ready < total ? "Aguardando disponibilidade" : "Atualizado"}</StatusBadge>
+    </header>
+    <div className="folder-processing__mechanism">
+      <h4>Reconhecimento facial</h4>
+      <progress max={100} value={total ? Math.round(ready * 100 / total) : 0} aria-label="Progresso do reconhecimento facial" />
+      <p><strong>{ready} de {total} fotos prontas</strong>{facial ? ` · ${facial.detected_faces} rostos detectados` : ""}</p>
+      {facial && !facialAvailable && ready < total ? <p>O reconhecimento aguarda disponibilidade operacional global.</p> : null}
+      {facial?.failed ? <p>{facial.failed} falha(s) aguardam retentativa.</p> : null}
+      {facial?.failed && facialAvailable ? <MarkinaButton type="button" variant="secondary" disabled={retrying} onClick={() => void retryFacial()}>Refazer reconhecimento</MarkinaButton> : null}
+    </div>
+    <div className="folder-processing__mechanism">
+      <h4>Ajuste automático das prévias</h4>
+      {configuration?.enabled === false ? <p>O ajuste está desligado para esta pasta. Alterar os parâmetros o ativa.</p> : null}
+      {configuration ? <div className="folder-preview-controls">
+        <label>Intensidade: {configuration.strength}%<input aria-label="Intensidade do ajuste" type="range" min={10} max={75} step={5} value={configuration.strength}
+          onChange={(event) => change({ strength: Number(event.target.value), exposure_tenths: configuration.exposure_tenths })} /></label>
+        <label>Exposição: {(configuration.exposure_tenths / 10).toFixed(1)} EV<input aria-label="Exposição do ajuste" type="range" min={-20} max={20} step={1} value={configuration.exposure_tenths}
+          onChange={(event) => change({ strength: configuration.strength, exposure_tenths: Number(event.target.value) })} /></label>
+      </div> : <p role="status">Carregando configuração…</p>}
+      <progress max={100} value={adjustmentTotal ? Math.round((counts?.ready ?? 0) * 100 / adjustmentTotal) : 0} aria-label="Progresso do ajuste automático das prévias" />
+      <p><strong>{counts?.ready ?? 0} de {adjustmentTotal} prévias prontas</strong></p>
+      {counts?.failed ? <p>{counts.failed} falha(s); a prévia convencional permanece disponível.</p> : null}
+      <small>Alterações são aplicadas automaticamente somente a esta pasta.</small>
+    </div>
+    {readyPhotos.length ? <details><summary>Comparar prévias</summary>
+      <label>Comparar foto<select value={comparison} onChange={(event) => setComparison(event.target.value)}><option value="">Escolha uma foto pronta</option>{readyPhotos.map((photo) => <option key={photo.id} value={photo.id}>{photo.filename}</option>)}</select></label>
+      {comparison ? <div className="folder-preview-comparison">{(["before", "after"] as const).map((version) => <figure key={version}>
+        <figcaption>{version === "before" ? "Convencional" : "Ajustada"}</figcaption>
+        <button type="button" className="photo-preview-button" aria-label={`Ampliar versão ${version === "before" ? "convencional" : "ajustada"}`} onClick={(event) => setExpandedPhoto({
+          src: `/api/admin/preview-adjustment/photos/${comparison}/${version}`,
+          alt: version === "before" ? "Prévia convencional protegida" : "Prévia ajustada protegida",
+          name: folderName, trigger: event.currentTarget,
+        })}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- Comparação autenticada. */}
+          <img src={`/api/admin/preview-adjustment/photos/${comparison}/${version}`} alt={version === "before" ? "Prévia convencional protegida" : "Prévia ajustada protegida"} />
+        </button>
+      </figure>)}</div> : null}
+    </details> : null}
+    {message ? <p className="form-message" role="status">{message}</p> : null}
+    {!configuration && message ? <MarkinaButton type="button" onClick={() => void load().catch((error: unknown) => setMessage(error instanceof Error ? error.message : "Processamento indisponível."))}>Tentar novamente</MarkinaButton> : null}
     {expandedPhoto ? <AdminPhotoPreviewDialog preview={expandedPhoto} onClose={() => setExpandedPhoto(null)} /> : null}
   </section>;
 }

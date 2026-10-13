@@ -17,6 +17,67 @@ from tests.test_preview_adjustment import BrightEngine
 pytest_plugins = ["tests.test_preview_adjustment"]
 
 
+def test_public_autosave_requeues_only_its_folder_and_monitor_counts_real_work(api_client, monkeypatch):
+    from sqlalchemy import select
+
+    from app.auth import Tenant, now
+    from app.system_monitor import telemetry
+    from app.system_monitor.sources import job_counts
+
+    monkeypatch.setattr(telemetry, "enabled", lambda: True)
+    client, factory, photo_id = api_client
+    with factory() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        folder_id = photo.folder_id
+        other_tenant = Tenant()
+        db.add(other_tenant)
+        db.flush()
+        other_gallery = ParentGallery(tenant_id=other_tenant.id, name="Outro fotógrafo")
+        db.add(other_gallery)
+        db.flush()
+        other_folder = PhotoFolder(tenant_id=other_tenant.id, parent_gallery_id=other_gallery.id,
+                                   name="Pasta alheia", purpose="content", position=0)
+        db.add(other_folder)
+        db.flush()
+        other_photo = PhotoAsset(tenant_id=other_tenant.id, parent_gallery_id=other_gallery.id,
+                                 folder_id=other_folder.id, filename="alheia.jpg", storage_key="alheia.jpg", available=True)
+        db.add(other_photo)
+        db.flush()
+        db.add(PreviewAdjustment(tenant_id=other_tenant.id, photo_asset_id=other_photo.id,
+                                 status="queued", generation=7, fingerprint="b" * 64))
+        db.commit()
+        other_folder_id, other_photo_id = other_folder.id, other_photo.id
+    client.cookies.set("markina_session", "adjustment-admin")
+    endpoint = f"/admin/photo-folders/{folder_id}/processing"
+    foreign = f"/admin/photo-folders/{other_folder_id}/processing"
+    payload = {"preview_mode": "custom", "facial_mode": "on",
+               "preview_strength": 60, "preview_exposure_tenths": 3}
+    telemetry.drain()
+    for _ in range(3):
+        assert client.get(endpoint).status_code == 200
+    assert client.get(foreign).status_code == 404
+    assert client.patch(foreign, json=payload).status_code == 404
+    for suffix in ("preview/enqueue", "facial/reprocess"):
+        assert client.post(f"{foreign}/{suffix}").status_code == 404
+    with factory() as db:
+        assert len(list(db.scalars(select(PreviewAdjustment)))) == 2
+        assert db.get(PreviewAdjustment, photo_id).generation == 1
+    result = client.patch(endpoint, json=payload)
+    assert result.status_code == 200, result.text
+    with factory() as db:
+        row = db.get(PreviewAdjustment, photo_id)
+        assert (row.status, row.generation) == ("queued", 2)
+        foreign_job = db.get(PreviewAdjustment, other_photo_id)
+        assert (foreign_job.status, foreign_job.generation, foreign_job.fingerprint) == ("queued", 7, "b" * 64)
+        counts = job_counts(db, now())["counts"]
+        assert {"kind": "preview_adjustment", "state": "queued", "count": 2} in counts
+    buckets, _, _ = telemetry.drain()
+    assert not any(bucket[1].startswith("work.") for bucket in buckets)
+    assert process_one(factory, BrightEngine())
+    buckets, _, _ = telemetry.drain()
+    assert sum(value[0] for key, value in buckets.items() if key[1] == "work.preview_adjustment") == 1
+
+
 def test_folder_processing_api_auth_and_override(api_client):
     client, factory, photo_id = api_client
     with factory() as db:
@@ -49,6 +110,11 @@ def test_folder_processing_api_auth_and_override(api_client):
     private_initial = client.get(private_endpoint)
     assert private_initial.status_code == 200
     assert private_initial.json()["private_folder"] is True
+    public_listing = client.get(f"/admin/parent-galleries/{gallery_id}/folders").json()["folders"]
+    assert str(private_id) not in {item["id"] for item in public_listing}
+    all_listing = client.get(f"/admin/parent-galleries/{gallery_id}/folders?include_restricted=true").json()["folders"]
+    private_summary = next(item for item in all_listing if item["id"] == str(private_id))
+    assert private_summary["audience_scope"] == "selected"
     assert (private_initial.json()["preview_mode"], private_initial.json()["facial_mode"]) == ("custom", "on")
     assert (private_initial.json()["preview_strength"], private_initial.json()["preview_exposure_tenths"]) == (75, 0)
     private_saved = client.patch(private_endpoint, json={"preview_mode": "off", "facial_mode": "off",
@@ -68,7 +134,7 @@ def test_folder_processing_api_auth_and_override(api_client):
     assert client.post(f"{endpoint}/facial/reprocess").status_code == 409
     with factory() as db:
         assert effective_preview(db, db.get(PhotoFolder, other_id)).mode == "custom"
-    assert client.post(f"{endpoint}/preview/enqueue").json()["queued"] == 1
+    assert client.post(f"{endpoint}/preview/enqueue").json()["queued"] == 0
     assert process_one(factory, BrightEngine())
     with factory() as db:
         assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is not None
@@ -214,7 +280,7 @@ def test_folder_override_is_independent_of_gallery_default(prepared):
         photo = db.get(PhotoAsset, photo_id)
         configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
-        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
+        assert not enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         configure(db, photo.parent_gallery_id, False, 50, 3, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
@@ -239,7 +305,7 @@ def test_repeated_folder_render_reads_conventional_preview(prepared):
         photo = db.get(PhotoAsset, photo_id)
         configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
-        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
+        assert not enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     assert process_one(factory, RecordingEngine())
     with factory() as db:
@@ -247,7 +313,7 @@ def test_repeated_folder_render_reads_conventional_preview(prepared):
         configure(db, photo.parent_gallery_id, False, 50, 7, tenant_id=FIXTURE_TENANT_ID)
         configure_folder(db, photo.folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=6, tenant_id=FIXTURE_TENANT_ID)
-        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
+        assert not enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     assert process_one(factory, RecordingEngine())
     assert pixels[0] == pixels[1]
@@ -264,7 +330,7 @@ def test_folder_change_during_render_never_publishes_stale_result(prepared):
         folder_id = db.get(PhotoAsset, photo_id).folder_id
         configure_folder(db, folder_id, preview_mode="custom", facial_mode="on",
                          strength=50, exposure_tenths=5, tenant_id=FIXTURE_TENANT_ID)
-        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
+        assert not enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
     class ChangedEngine(BrightEngine):

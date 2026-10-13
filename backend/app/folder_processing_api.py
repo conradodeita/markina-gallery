@@ -54,7 +54,8 @@ def register_routes(app, *, db_session, require_admin, require_same_origin, tena
                                                                   PhotoAsset.available.is_(True))) or 0
         preview_counts = dict(db.execute(select(PreviewAdjustment.status, func.count()).where(PreviewAdjustment.tenant_id == tenant_id)
                                          .join(PhotoAsset, PhotoAsset.id == PreviewAdjustment.photo_asset_id)
-                                         .where(PhotoAsset.folder_id == folder_id)
+                                         .where(PhotoAsset.folder_id == folder_id,
+                                                PreviewAdjustment.generation == effective.generation)
                                          .group_by(PreviewAdjustment.status)).all())
         comparison_photo_id = None
         for photo_id in db.scalars(select(PhotoAsset.id).where(PhotoAsset.tenant_id == tenant_id).join(
@@ -78,6 +79,7 @@ def register_routes(app, *, db_session, require_admin, require_same_origin, tena
             "preview_mode": "custom" if folder.audience_scope == "selected" else row.preview_mode if row and row.preview_mode in {"custom", "off"} else "custom",
             "facial_mode": "on" if folder.audience_scope == "selected" else row.facial_mode if row and row.facial_mode in {"on", "off"} else "on",
             "preview_strength": effective.strength,
+            "revision": effective.generation,
             "preview_exposure_tenths": effective.exposure_tenths,
             "effective_preview": {"mode": effective.mode, "enabled": effective.enabled,
                                   "strength": effective.strength,
@@ -90,6 +92,10 @@ def register_routes(app, *, db_session, require_admin, require_same_origin, tena
                                ("queued", "processing", "ready", "failed", "cancelled")},
             "facial_counts": {"queued": facial_status.queued, "processing": facial_status.processing,
                               "completed": facial_status.ready, "failed": facial_status.failed},
+            "facial_progress": {"state": facial_status.state, "total": facial_status.total,
+                                "waiting_previews": facial_status.waiting_previews,
+                                "unindexed": facial_status.unindexed,
+                                "detected_faces": facial_status.detected_faces},
         }
 
     @app.patch("/admin/photo-folders/{folder_id}/processing")
