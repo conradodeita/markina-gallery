@@ -141,6 +141,7 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
     for name, setting in (
         ("source", "MEDIA_SOURCE_ROOT"), ("derivatives", "MEDIA_DERIVATIVES_ROOT"),
         ("history", "MEDIA_HISTORY_ROOT"), ("facial_references", "FACIAL_REFERENCE_ROOT"),
+        ("raw_staging", "RAW_DEVELOPMENT_ROOT"),
     ):
         roots[name].mkdir()
         (roots[name] / "fake.jpg").write_bytes(b"synthetic")
