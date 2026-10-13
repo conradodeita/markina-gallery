@@ -71,7 +71,7 @@ Limites mantidos: sem webhook até documentar assinatura e autenticação; pagam
 - **Migrations:** 0075–0077 adicionam configuração/tabelas/coluna e histórico; downgrades recusam apagar registros. Depois que uma migration altera schema, o deploy script não faz rollback automático do código nem restaura DB: exige manter dados e corrigir para frente ou plano humano de restauração a partir do backup. Validar o estado remoto e ensaiar contingência no preflight antes de autorizar.
 - **Janela e reversão:** janela e acompanhamento humano a combinar antes da autorização. Se falhar antes de mudança de schema, o script pode restaurar somente o código; depois de schema avançado, não executar downgrade nem restaurar automaticamente. Preservar pagamentos pendentes e confirmar healthchecks/retorno ao SHA saudável via processo controlado.
 
-O pacote exato ainda não foi produzido porque o worktree não tem SHA de commit e inclui alterações locais que precisam de revisão de escopo. Tarefas 6.2–6.4 seguem pendentes e não autorizadas por esta preparação.
+O escopo foi revisado e registrado em Conventional Commit `e9274d994800950e7f30a43435bb484973241cb5`. O branch foi atualizado sem conflito com `origin/develop` `ef6dc99df21ef72d9f610c564a451f85390ac4e8`, por merge `23908137036204440cc6315bf4a2484c5a806304`; a árvore está limpa e esse commit incorpora a atualização documental mais recente de `develop`. O SHA de pacote para CI será o HEAD final depois desta atualização de prontidão. Tarefas 6.2–6.4 permanecem pendentes; a publicação está autorizada pelo titular, mas ainda não foi iniciada.
 
 Validação executada com a versão de CLI fixada pela CI, `@fission-ai/openspec@1.14.0`:
 
