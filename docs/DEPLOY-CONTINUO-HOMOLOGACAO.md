@@ -32,7 +32,7 @@ No host, com a autorização operacional aplicável e após conferir que a execu
 
 ```bash
 cd /opt/markina-gallery
-bash scripts/resume-homolog.sh --public-base-url https://markina-homolog.duckdns.org
+bash scripts/resume-homolog.sh --public-base-url https://markina.pickyourpic.com.br
 ```
 
 O script verifica que está no diretório da Markina, que PostgreSQL e Redis exclusivos estão saudáveis, e que a revisão Alembic do banco é o único head presente no checkout. Só então inicia os contêineres da aplicação que já existem usando `docker compose up -d --no-deps --no-recreate`; isso evita seguir a dependência `migrate` antiga. Espera healthchecks de todos os serviços selecionados e HTTP 200 em `/healthz` e `/api/health`, local e publicamente.

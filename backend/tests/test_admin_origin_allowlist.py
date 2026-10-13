@@ -48,6 +48,18 @@ def test_unconfigured_origin_is_rejected(monkeypatch) -> None:
         raise AssertionError("origem não configurada deveria ser recusada")
 
 
+def test_retired_duckdns_origin_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://markina.pickyourpic.com.br")
+    monkeypatch.delenv("PUBLIC_APP_ORIGINS", raising=False)
+
+    try:
+        require_same_origin(make_request("https://markina-homolog.duckdns.org"))
+    except HTTPException as exc:
+        assert exc.status_code == 403
+    else:
+        raise AssertionError("origem DuckDNS aposentada deveria ser recusada")
+
+
 def test_invalid_additional_origin_fails_closed(monkeypatch) -> None:
     monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://markina.pickyourpic.com.br")
     monkeypatch.setenv("PUBLIC_APP_ORIGINS", "https://*.example.invalid")

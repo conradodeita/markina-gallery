@@ -7,7 +7,7 @@ Este procedimento é exclusivo da Markina Gallery. Ele só pode começar depois 
 Crie `/opt/markina-gallery/docker/.env.homolog` fora do Git, com permissões restritas. Use valores novos, próprios de homologação, para:
 
 - `APP_ENV=staging`
-- `DOMAIN=markina-homolog.duckdns.org`
+- `DOMAIN=markina.pickyourpic.com.br`
 - `MARKINA_GALLERY_PORT=127.0.0.1:8080`
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` e `DATABASE_URL`
 - `SECRET_KEY` e `SESSION_COOKIE_NAME`
@@ -21,12 +21,12 @@ Não copie banco, senha, TOTP, token DuckDNS, token WhatsApp ou segredo de produ
 2. Executar `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml config`.
 3. Construir e subir somente a Markina Gallery. O serviço `migrate` executa `alembic upgrade head` antes da API e do worker.
 4. Criar o administrador inicial uma única vez com `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml --profile bootstrap run --rm seed-admin`. A senha e o TOTP ficam disponíveis apenas durante esse container temporário, nunca na API em execução.
-5. Conectar somente o serviço `nginx` da Markina à rede externa `npm-network`, sob o alias `markina-homolog-nginx`. Configurar no Nginx Proxy Manager apenas o host `markina-homolog.duckdns.org` apontando para `markina-homolog-nginx:80`, com certificado HTTPS para esse host. Não editar hosts existentes nem conectar serviços da Markina à rede do ClearBudget.
+5. Conectar somente o serviço `nginx` da Markina à rede externa `npm-network`, sob o alias `markina-homolog-nginx`. Configurar no Nginx Proxy Manager o host `markina.pickyourpic.com.br` apontando para `markina-homolog-nginx:80`, com certificado HTTPS para esse host. Não editar hosts existentes nem conectar serviços da Markina à rede do ClearBudget.
 
 ## Smoke test
 
-- `curl -fsS https://markina-homolog.duckdns.org/healthz`
-- `curl -fsS https://markina-homolog.duckdns.org/api/health`
+- `curl -fsS https://markina.pickyourpic.com.br/healthz`
+- `curl -fsS https://markina.pickyourpic.com.br/api/health`
 - Abrir a tela inicial e confirmar os contextos Cliente e Fotógrafo.
 - Confirmar senha + TOTP do administrador inicial; o WhatsApp continua em sandbox e não envia mensagem real.
 - Conferir `docker compose -p markina-gallery -f docker/docker-compose.yml ps` e os logs da Markina Gallery, sem exibir segredos.

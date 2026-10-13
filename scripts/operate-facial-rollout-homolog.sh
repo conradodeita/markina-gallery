@@ -10,7 +10,7 @@ readonly COMPOSE_FILE="docker/docker-compose.yml"
 readonly ENV_FILE="docker/.env.homolog"
 readonly BACKUP_DIR="/var/lib/markina-gallery/backups"
 readonly REQUIRED_GATES="security,privacy,legal_basis,calibration,capacity,recovery,human_approval"
-readonly PUBLIC_BASE_URL="https://markina-homolog.duckdns.org"
+readonly PUBLIC_BASE_URL="https://markina.pickyourpic.com.br"
 
 ACTION=""
 GALLERY_ID=""
@@ -70,7 +70,7 @@ deployed_sha="$(git rev-parse HEAD)"
 [[ "$deployed_sha" == "$EXPECTED_SHA" ]] || fail "SHA publicado diverge do escopo aprovado"
 [[ -z "$(git status --porcelain)" ]] || fail "checkout remoto possui alterações locais"
 
-echo "topologia: projeto=$PROJECT_NAME entrada=127.0.0.1:8080 subdomínio=markina-homolog.duckdns.org"
+echo "topologia: projeto=$PROJECT_NAME entrada=127.0.0.1:8080 subdomínio=markina.pickyourpic.com.br"
 topology="$(docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Names}}|{{.Status}}|{{.Ports}}')"
 [[ -n "$topology" ]] || fail "containers Markina ausentes"
 if grep -Eq '(^|[|,[:space:]])(0\.0\.0\.0|::):[0-9]+->' <<<"$topology"; then
