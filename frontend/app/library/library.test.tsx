@@ -36,6 +36,29 @@ const privateGallery = {
 };
 
 describe("biblioteca e compras da cliente", () => {
+  it("agrupa uma compra de cartão e mostra apenas o link hospedado enquanto aguarda pagamento", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({
+      orders: [], payment_groups: [], removed_movements: [],
+      provider_payment_groups: [{
+        id: "payment-card-1", state: "awaiting_payment",
+        checkout_url: "https://checkout.example.invalid/synthetic",
+        total_cents: 2100,
+        orders: [1, 2].map((id) => ({
+          id: `order-${id}`, gallery_name: `Galeria ${id}`, parent_gallery_name: "Evento",
+          gallery_status_label: "Galeria ativa", gallery_removed: false,
+          confirmed_at: null, commercial_state: "awaiting_payment", total_cents: 700,
+          payment_method: "credit_card", provider_payment_state: "awaiting_payment", items: [],
+        })),
+      }],
+    })));
+    render(<PurchasesPage />);
+    expect(await screen.findByText(/Cartão de crédito · Aguardando pagamento/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Continuar pagamento" }).getAttribute("href"))
+      .toBe("https://checkout.example.invalid/synthetic");
+    expect(screen.getAllByText(/Aguardando pagamento no cartão/)).toHaveLength(2);
+    expect(screen.queryByText(/transaction_nsu|slug/)).toBeNull();
+  });
+
   it("abre a mesma galeria pela capa e pelo botão e mantém navegação após falha", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ journeys: [{
       id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active",

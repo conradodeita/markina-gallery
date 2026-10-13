@@ -131,8 +131,9 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
 
     from app import homolog_cleanup
 
-    # Catálogo operacional atual; "head" neste helper representa a fundação 0069.
-    migrate(migration_database, "upgrade", "20261011_0074")
+    # O inventário de limpeza precisa corresponder ao schema atual, incluindo
+    # tabelas de pagamento adicionadas depois da fundação de tenants.
+    migrate(migration_database, "upgrade", "20261012_0077")
     engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
     monkeypatch.setenv("APP_ENV", "homolog")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}

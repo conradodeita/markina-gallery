@@ -17,6 +17,8 @@ export type Order = {
   communication_status?: "pending_review" | "confirmed" | "refused" | null;
   total_cents: number | null;
   payment_required?: boolean;
+  payment_method?: "credit_card" | "pix";
+  provider_payment_state?: string;
   delivery_album_url?: string | null;
   items: Array<{ photo_id: string; name: string; preview_url: string | null; delivery_url: string | null; delivery_reference_available: boolean }>;
 };
@@ -30,6 +32,17 @@ function orderState(order: Order) {
 }
 
 function orderLabel(order: Order) {
+  if (order.payment_method === "credit_card") {
+    return {
+      creating: "Preparando checkout",
+      awaiting_payment: "Aguardando pagamento no cartão",
+      verification_required: "Verificando pagamento",
+      confirmed: "Pagamento por cartão confirmado",
+      failed_before_issue: "Checkout não iniciado",
+      exception: "Pagamento em análise",
+      hold: "Pagamento em revisão",
+    }[order.provider_payment_state ?? ""] ?? "Pagamento por cartão em conferência";
+  }
   const state = orderState(order);
   if (state === "selection_finalized") return "Seleção finalizada";
   return state === "payment_reported" ? "Pagamento informado" : state === "cancelled" ? "Pagamento não localizado" : state === "awaiting_payment" ? "Aguardando pagamento" : "Pagamento confirmado";

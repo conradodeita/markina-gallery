@@ -15,7 +15,10 @@ OUTPUT = CHANGE / "ownership-inventory.md"
 # I: infraestrutura técnica; M: registro misto, exige discriminador de contexto.
 TABLE_GROUPS = {
     ("I", "A"): "AdminUser Tenant AdminActionToken EmailDelivery EmailDeliveryAttempt",
-    ("I", "O"): "InstallationOperator",
+    ("I", "O"): (
+        "InstallationOperator FacialEmbeddingExperimentSetting PlatformOwner MonitorGrant "
+        "MonitorBucket MonitorSample MonitorWorker MonitorActivity MonitorIncident MonitorTransition"
+    ),
     ("D", "A"): "TenantAdmin",
     ("M", "A"): "AdminSecurityChallenge AuthChallenge AuthSession AuditEvent",
     ("R", "C"): "Client ClientDeletionReceipt",
@@ -26,13 +29,14 @@ TABLE_GROUPS = {
         "DerivedGalleryMembership DerivedGalleryPhoto DerivedGalleryPhotoOrigin "
         "GalleryAccessCapability PrivateUploadBatch PrivateUploadBatchAsset"
     ),
-    ("R", "S"): "PaymentGroup SaleOrder RemovedPhotoMovement CommercialHistoryMedia",
+    ("R", "S"): "PaymentGroup ProviderPayment SaleOrder RemovedPhotoMovement CommercialHistoryMedia",
     ("D", "S"): (
         "PhotoSelection PhotoFavorite PhotoView PhotoComment SaleOrderItem "
-        "PaymentCommunication PaymentConfirmationCorrection GalleryReopeningRequest"
+        "PaymentCommunication PaymentConfirmationCorrection GalleryReopeningRequest "
+        "ProviderPaymentAttempt ProviderPaymentReceipt ProviderPaymentCorrection"
     ),
     ("R", "K"): (
-        "BrandingSettings GlobalPixSettings PaymentMessageTemplate ProgressivePricingPreset "
+        "BrandingSettings GlobalPixSettings InfinitePaySettings PaymentMessageTemplate ProgressivePricingPreset "
         "WhatsAppChannelSettings PreviewAdjustmentSettings NotificationSetting"
     ),
     ("D", "K"): (
@@ -67,13 +71,13 @@ MODULE_GROUPS = {
     "C": "client_identity",
     "G": (
         "gallery_access public_gallery_access parent_registration private_derivation "
-        "private_membership private_upload_batches gallery_visuals acervo_context"
+        "private_membership private_upload_batches gallery_visuals gallery_cover_readiness acervo_context"
     ),
     "S": (
-        "checkout client_commerce unified_checkout canonical_selection commercial_projection "
-        "commercial_history order_delivery pricing pix"
+        "checkout client_commerce unified_checkout canonical_selection commercial_projection provider_checkout "
+        "commercial_history order_delivery pricing pix provider_confirmation"
     ),
-    "K": "global_pix gallery_pricing payment_templates notification_settings branding_context",
+    "K": "global_pix infinitepay_settings payment_provider gallery_pricing payment_templates notification_settings branding_context",
     "L": (
         "asset_removal client_lifecycle commercial_removal commercial_retention gallery_cleanup "
         "gallery_lifecycle homolog_cleanup private_gallery_lifecycle"
@@ -117,7 +121,7 @@ STATE_PATTERN = re.compile(
 
 def module_group(path: Path) -> str:
     relative = path.relative_to(ROOT).as_posix()
-    if "/capacity_observability/" in relative:
+    if "/capacity_observability/" in relative or "/system_monitor/" in relative:
         return "O"
     if "/facial/" in relative:
         return "F"
@@ -142,7 +146,11 @@ def owner_function(functions: list, node: ast.AST) -> str:
 def route_group(route: str, method: str) -> tuple[str, str]:
     if route == "/health":
         return "I", "I"
+    if route == "/infinitepay/return":
+        return "R", "S"  # Retorno público contém apenas candidatos de uma compra vinculada.
     if route in {"/admin/capacity-observability", "/admin/installation-capabilities", "/admin/facial-observability"}:
+        return "I", "O"
+    if route.startswith("/admin/system-monitor") or route == "/admin/facial-engine-experiment":
         return "I", "O"
     if route.startswith("/auth/"):
         return "M", "A"
@@ -155,7 +163,7 @@ def route_group(route: str, method: str) -> tuple[str, str]:
     if "branding" in route:
         return "M", "K"  # Público exige capacidade/contexto; admin exige membership.
     if any(part in route for part in (
-        "settings/pix", "pricing", "notification-settings", "payment-message-templates",
+        "settings/pix", "settings/infinitepay", "pricing", "notification-settings", "payment-message-templates",
     )):
         return "R", "K"
     if any(part in route for part in (

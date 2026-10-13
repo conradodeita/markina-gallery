@@ -13,11 +13,13 @@ from app.auth import (
     Client,
     DerivedGallery,
     GalleryClientState,
+    InfinitePaySettings,
     ParentGallery,
     PaymentCommunication,
     PaymentGroup,
     PhotoFolder,
     PhotoSelection,
+    ProviderPayment,
     SaleOrder,
     SaleOrderItem,
     audit,
@@ -221,11 +223,29 @@ def cart_payload(db: Session, client: Client):
         )
     paid = [group for group in groups if group["payment_required"]]
     valid = bool(paid) and all(not group["error"] for group in paid)
+    settings = db.scalar(select(InfinitePaySettings).where(
+        InfinitePaySettings.tenant_id == tenant_id,
+    ))
+    card_available = bool(settings and settings.status == "active"
+                          and settings.verification_profile == "infinitepay-public-v1"
+                          and settings.verified_at is not None and settings.handle)
+    active_card = db.scalar(select(ProviderPayment).where(
+        ProviderPayment.tenant_id == tenant_id,
+        ProviderPayment.client_id == client.id,
+        ProviderPayment.state.in_(("awaiting_payment", "verification_required")),
+    ).order_by(ProviderPayment.created_at.desc()).limit(1))
     return {
         "groups": groups,
         "quantity": sum(group["quantity"] for group in groups),
         "total_cents": sum(group["total_cents"] for group in paid) if valid else None,
         "can_prepare": valid,
+        "cart_revision": _fingerprint(_valid_materials(db, client)) if valid else None,
+        "card_available": card_available,
+        "card_payment": ({
+            "id": str(active_card.id), "status": active_card.state,
+            "checkout_url": active_card.checkout_url if active_card.state == "awaiting_payment" else None,
+            "total_cents": active_card.total_cents,
+        } if active_card else None),
     }
 
 

@@ -26,6 +26,7 @@ from app.auth import (
     PaymentGroup,
     PaymentNotificationOutbox,
     PhotoFolder,
+    ProviderPayment,
     PushSubscription,
     SaleOrder,
     SessionLocal,
@@ -138,6 +139,22 @@ def recipient_allowed(db, event, item) -> bool:
         order = owned_record(db, SaleOrder, event.sale_order_id, tenant_id=owner)
         if not order or order.client_id != event.client_id:
             return False
+        if event.event_key.startswith("provider-payment-confirmed:"):
+            if event.event_type != "payment_confirmed":
+                return False
+            try:
+                parts = event.event_key.split(":")
+                payment_id, revision = UUID(parts[1]), int(parts[2])
+                if len(parts) != 3:
+                    return False
+            except (ValueError, IndexError):
+                return False
+            payment = owned_record(db, ProviderPayment, payment_id, tenant_id=owner)
+            return bool(payment and payment.state == "confirmed" and
+                        payment.revision_number == revision and
+                        payment.client_id == order.client_id and
+                        order.provider_payment_id == payment.id and
+                        order.payment_status == "confirmed")
         parts = event.event_key.split(":")
         try:
             communication = owned_record(db, PaymentCommunication, UUID(parts[1]), tenant_id=owner)

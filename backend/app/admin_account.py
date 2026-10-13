@@ -133,7 +133,7 @@ def create_security_challenge(
     target: str | None = None,
     tenant_id: UUID | None = None,
 ) -> tuple[AdminSecurityChallenge, str, bool]:
-    if purpose == "change_pix_otp":
+    if purpose in {"change_pix_otp", "change_infinitepay_otp"}:
         require_security_owner(db, admin.id if admin else None, tenant_id)
         resolve_binding(db, tenant_id)
     elif admin and tenant_id is None:
@@ -194,7 +194,7 @@ def verify_security_challenge(
     tenant_id: UUID | None = None,
 ) -> AdminSecurityChallenge:
     challenge = db.get(AdminSecurityChallenge, challenge_id, populate_existing=True)
-    if purpose == "change_pix_otp":
+    if purpose in {"change_pix_otp", "change_infinitepay_otp"}:
         if not challenge or tenant_id is None or challenge.tenant_id != tenant_id:
             raise AdminAccountError("Não foi possível confirmar o código.")
         require_security_owner(db, challenge.admin_id, tenant_id)
@@ -222,10 +222,11 @@ def verify_security_challenge(
 
 
 def resend_security_challenge(
-    db: Session, *, challenge_id: UUID, purpose: str, tenant_id: UUID | None = None
+    db: Session, *, challenge_id: UUID, purpose: str, tenant_id: UUID | None = None,
+    session_id: UUID | None = None,
 ) -> AdminSecurityChallenge:
     challenge = db.get(AdminSecurityChallenge, challenge_id, populate_existing=True)
-    if purpose == "change_pix_otp":
+    if purpose in {"change_pix_otp", "change_infinitepay_otp"}:
         if not challenge or tenant_id is None or challenge.tenant_id != tenant_id:
             raise AdminAccountError("Não foi possível reenviar o código.")
         require_security_owner(db, challenge.admin_id, tenant_id)
@@ -235,10 +236,11 @@ def resend_security_challenge(
         or challenge.used_at
         or expired(challenge.expires_at)
         or challenge.resend_count >= 3
+        or (session_id is not None and challenge.session_id != session_id)
     ):
         raise AdminAccountError("Não foi possível reenviar o código.")
     recipient = _admin_whatsapp_phone(db, tenant_id=challenge.tenant_id) if challenge.admin_id else None
-    if not recipient and purpose == "change_pix_otp":
+    if not recipient and purpose in {"change_pix_otp", "change_infinitepay_otp"}:
         raise WhatsAppConfigurationError("Canal de confirmação indisponível.")
     if not recipient:
         code = f"{secrets.randbelow(1_000_000):06d}"

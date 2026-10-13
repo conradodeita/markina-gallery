@@ -26,12 +26,14 @@ from tests.tenant_fixtures import insert_legacy_model as insert_model
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261011_0074"
+CURRENT_SCHEMA = "20261012_0077"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
-    "facial_embedding_experiment_setting",
+    "facial_embedding_experiment_setting", "infinitepay_settings",
+    "provider_payment", "provider_payment_attempt", "provider_payment_receipt",
+    "provider_payment_correction",
 })
 
 
@@ -233,12 +235,12 @@ def assert_catalog(connection):
     inspector = sa.inspect(connection)
     assert not POST_TRANSITION_TABLES & set(inspector.get_table_names())
     for name, target in auth.Base.metadata.tables.items():
-        # Contrato histórico 0070: tabelas/colunas de 0071–0074 ainda não existem.
+        # Contrato histórico 0070: tabelas/colunas de revisions posteriores ainda não existem.
         if name in POST_TRANSITION_TABLES:
             continue
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
-        historical_columns = [column for column in target.c
-                              if not (name == "facial_search_request" and column.name == "search_engine")]
+        future_columns = {"facial_search_request": {"search_engine"}, "sale_order": {"provider_payment_id"}}
+        historical_columns = [column for column in target.c if column.name not in future_columns.get(name, set())]
         assert set(actual_columns) == {column.name for column in historical_columns}, name
         assert all(actual_columns[column.name]["nullable"] == column.nullable
                    for column in historical_columns), name
@@ -249,6 +251,7 @@ def assert_catalog(connection):
         expected_fk = {
             (tuple(e.parent.name for e in f.elements), f.referred_table.name, tuple(e.column.name for e in f.elements))
             for f in target.foreign_key_constraints
+            if not any(e.parent.name in future_columns.get(name, set()) for e in f.elements)
         }
         assert actual_fk == expected_fk, name
         assert set(inspector.get_pk_constraint(name)["constrained_columns"]) == set(target.primary_key.columns.keys())
@@ -258,7 +261,8 @@ def assert_catalog(connection):
         assert actual_unique == expected_unique, name
         actual_indexes = {i["name"]: (tuple(i["column_names"]), i["unique"])
                           for i in inspector.get_indexes(name) if not i.get("duplicates_constraint")}
-        expected_indexes = {i.name: (tuple(column.name for column in i.columns), i.unique) for i in target.indexes}
+        expected_indexes = {i.name: (tuple(column.name for column in i.columns), i.unique) for i in target.indexes
+                            if not any(column.name in future_columns.get(name, set()) for column in i.columns)}
         assert expected_indexes.items() <= actual_indexes.items(), name
         # Índices legados não únicos podem ser preservados mesmo quando não
         # declarados no ORM; nenhuma unicidade global extra pode sobreviver.
@@ -429,7 +433,7 @@ def test_upgrade_preserva_todas_colunas_legadas_e_owner_duravel(migration_db):
     with engine.connect() as connection:
         assert_preserved(connection, before)
         assert_catalog(connection)
-        for name in set(auth.Base.metadata.tables) - SHARED_TABLES:
+        for name in set(auth.Base.metadata.tables) - SHARED_TABLES - POST_TRANSITION_TABLES:
             assert connection.scalar(sa.text(f'SELECT count(*) FROM "{name}" WHERE tenant_id IS NULL')) == 0, name
             assert connection.scalar(sa.text(f'SELECT count(*) FROM "{name}" WHERE tenant_id != :owner'),
                                      {"owner": records["owner"]}) == 0, name
@@ -603,6 +607,34 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
     with Session(engine) as db:
         provision_operator(db, admin_id=records["admin"], action="grant",
                            authorization_reference="synthetic-cleanup-proof", apply=True)
+        infinitepay_settings = auth.InfinitePaySettings(
+            tenant_id=records["owner"], admin_user_id=records["admin"],
+            handle="synthetic_handle", version=2, status="pending",
+        )
+        provider_payment = auth.ProviderPayment(
+            tenant_id=records["owner"], client_id=records["client"],
+            checkout_key="synthetic-cleanup-payment", cart_revision="c" * 64,
+            total_cents=12345, handle_snapshot="synthetic_handle",
+            configuration_version=2, verification_profile="synthetic-only",
+            state="awaiting_payment", checkout_url="https://checkout.example.invalid/synthetic",
+        )
+        db.add_all([infinitepay_settings, provider_payment])
+        db.flush()
+        db.add_all([
+            auth.ProviderPaymentAttempt(tenant_id=records["owner"], client_id=records["client"],
+                                        payment_id=provider_payment.id, state="accepted"),
+            auth.ProviderPaymentReceipt(tenant_id=records["owner"], client_id=records["client"],
+                                        payment_id=provider_payment.id, digest="d" * 64,
+                                        transaction_nsu="synthetic-cleanup-nsu", slug="synthetic-slug",
+                                        verification_profile="synthetic-only"),
+            auth.ProviderPaymentCorrection(tenant_id=records["owner"], client_id=records["client"],
+                                          payment_id=provider_payment.id, actor_admin_id=records["admin"],
+                                          idempotency_key="synthetic-cleanup-correction",
+                                          reason="Teste sintético de limpeza", previous_revision=1,
+                                          previous_transaction_nsu="synthetic-cleanup-nsu"),
+        ])
+        infinitepay_settings_id = infinitepay_settings.id
+        provider_payment_id = provider_payment.id
         admin_session = db.scalar(sa.select(auth.AuthSession).where(auth.AuthSession.role == "admin"))
         minute = auth.now().replace(second=0, microsecond=0)
         db.add_all([
@@ -621,6 +653,8 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
         assert all(value["files"] == 0 for value in result["media"].values())
         assert db.get(auth.InstallationOperator, records["admin"]).active
         assert db.get(PlatformOwner, 1).admin_user_id == records["admin"]
+        assert db.get(auth.InfinitePaySettings, infinitepay_settings_id).handle == "synthetic_handle"
+        assert db.get(auth.ProviderPayment, provider_payment_id) is None
         assert db.get(MonitorGrant, (records["admin"], "metrics")).active
         assert db.get(MonitorBucket, (minute, "http.read", 100)).count == 1
         assert db.get(MonitorActivity, admin_session.id) is not None
