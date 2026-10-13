@@ -23,3 +23,8 @@ O operador SHALL adicionar um hostname HTTPS da Markina Gallery sem remover o ho
 
 - **WHEN** o novo hostname falha na validação
 - **THEN** o operador remove somente o registro, host virtual e certificado criados para a mudança e restaura a configuração da Markina, preservando serviços compartilhados e o hostname anterior
+
+#### Scenario: Encerramento da origem temporária
+
+- **WHEN** a origem nova foi autenticada e validada e o proprietário encerra a transição
+- **THEN** a aplicação deixa de aceitar a origem DuckDNS e o operador remove somente o host virtual Markina antigo do proxy; a conta DNS DuckDNS externa não é alterada
