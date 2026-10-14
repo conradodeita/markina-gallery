@@ -132,6 +132,36 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.queryByRole("button", { name: "Tentar enviar novamente" })).toBeNull();
   });
 
+  it("mostra o download HTML ao confirmar e o remove após corrigir a confirmação", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let current = dashboard();
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      if (options?.method === "POST" && path.endsWith("/decision")) {
+        const confirmed = { ...communication, status: "confirmed", can_decide: false, can_correct: true };
+        current = dashboard();
+        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: "confirmed", communication: confirmed, communications: [confirmed] };
+        return Promise.resolve(new Response(JSON.stringify({ status: "confirmed" })));
+      }
+      if (options?.method === "POST" && path.endsWith("/correction")) {
+        const pending = { ...communication, status: "pending_review", can_decide: true, can_correct: false };
+        current = dashboard();
+        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: "reported", communication: pending, communications: [pending] };
+        return Promise.resolve(new Response(JSON.stringify({ status: "pending_review" })));
+      }
+      return Promise.resolve(new Response(JSON.stringify(current)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar pagamento" }));
+    const download = await screen.findByRole("link", { name: "Baixar fotos compradas" });
+    expect(download.getAttribute("href")).toBe("/api/admin/parent-galleries/gallery-public-1/clients/client-Ana/selection/export.html");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Corrigir confirmação" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Baixar fotos compradas" })).toBeNull());
+  });
+
   it("omite o cartão de mensagens globais e preserva filtros e estado vazio", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : emptyDashboard,
