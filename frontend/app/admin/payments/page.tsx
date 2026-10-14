@@ -276,7 +276,7 @@ function PaymentsDashboard() {
       {dashboard.groups.map((group) => <section className="admin-card payment-client-card" key={group.client.id}>
         <header><div><p className="eyebrow">Cliente</p><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
-          {group.orders.map((order) => <OrderCard key={order.id} order={order} onRefresh={() => load(filters)} />)}
+          {group.orders.map((order) => <OrderCard key={order.id} order={order} clientId={group.client.id} onRefresh={() => load(filters)} />)}
         </div>
       </section>)}
     </div>
@@ -286,7 +286,7 @@ function PaymentsDashboard() {
   </section>;
 }
 
-function OrderCard({ order, onRefresh }: { order: Order; onRefresh: () => Promise<void> }) {
+function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void> }) {
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
@@ -298,7 +298,10 @@ function OrderCard({ order, onRefresh }: { order: Order; onRefresh: () => Promis
       {order.folders?.length ? <div>{order.folders.map((folder) => <section key={folder.id ?? folder.name}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name} · {money(item.unit_price_cents)}</li>)}</ul></section>)}</div> : null}
       {!communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
-        <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
+        <div className="dashboard-actions">
+          <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
+          {order.financial_status === "confirmed" && !order.assets_removed && !order.gallery.removed ? <a className="mk-button mk-button--secondary" href={`/api/admin/derived-galleries/${encodeURIComponent(order.gallery.id)}/selection/export.html?client_id=${encodeURIComponent(clientId)}`}>Baixar fotos compradas</a> : null}
+        </div>
       </>}
       <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
     </details>

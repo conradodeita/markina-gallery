@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import secrets
+import unicodedata
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -14,6 +16,7 @@ from io import BytesIO
 from os import getenv
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import quote
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -5100,6 +5103,16 @@ def _selection_html_preview(db: Session, item: SaleOrderItem) -> str:
     return f'<img src="data:image/jpeg;base64,{encoded}" alt="Prévia de {escape(item.filename_snapshot)}">'
 
 
+def _purchased_photos_content_disposition(client_name: str | None) -> str:
+    safe_name = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', "", client_name or "")
+    safe_name = re.sub(r"\s+", " ", safe_name).strip(" .")[:120].strip(" .") or "Cliente"
+    unicode_filename = f"fotos-compradas-{safe_name}.html"
+    ascii_name = unicodedata.normalize("NFKD", safe_name).encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "-", ascii_name).strip(".-_") or "Cliente"
+    fallback = f"fotos-compradas-{ascii_name[:120]}.html"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(unicode_filename, safe='')}"
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/selection/export.{format}")
 def export_selection(
     gallery_id: UUID,
@@ -5172,7 +5185,7 @@ h1 {{ margin: 0 0 10px; font-size: 25px; }} p {{ margin: 5px 0; color: #5f5a53; 
         db.commit()
         return HTMLResponse(
             content,
-            headers={"Content-Disposition": 'attachment; filename="fotos-compradas.html"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+            headers={"Content-Disposition": _purchased_photos_content_disposition(owner.full_name if owner else None), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
         )
     rows = []
     for selection in db.scalars(

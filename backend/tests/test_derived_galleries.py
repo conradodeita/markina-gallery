@@ -48,7 +48,7 @@ from app.checkout import create_pending_checkout
 from app.client_commerce import client_carts_by_gallery_payload
 from app.gallery_access import issue_gallery_capability
 from app.global_pix import normalize_configuration
-from app.main import app
+from app.main import _purchased_photos_content_disposition, app
 from app.media import generate_derivatives
 from app.private_derivation import ensure_private_photo_reference
 
@@ -1507,7 +1507,7 @@ def test_confirmed_purchase_download_embeds_preview_without_server_export(
     after = {path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file()}
     assert exported.status_code == 200
     assert exported.headers["content-type"].startswith("text/html")
-    assert exported.headers["content-disposition"] == 'attachment; filename="fotos-compradas.html"'
+    assert exported.headers["content-disposition"] == 'attachment; filename="fotos-compradas-Ana-Bia.html"; filename*=UTF-8\'\'fotos-compradas-Ana%20%26%20Bia.html'
     assert exported.headers["cache-control"] == "private, no-store"
     assert "Ana &amp; Bia" in exported.text
     assert "FOTO_001.jpg" in exported.text
@@ -1515,6 +1515,14 @@ def test_confirmed_purchase_download_embeds_preview_without_server_export(
     assert base64.b64encode(image.getvalue()).decode("ascii") in exported.text
     assert "<img src=\"data:image/jpeg;base64," in exported.text
     assert before == after
+
+
+def test_purchased_photos_filename_safely_supports_unicode_and_special_characters():
+    disposition = _purchased_photos_content_disposition('Ána / Bia:*? "Equipe" <foto>|\x01')
+
+    assert disposition == 'attachment; filename="fotos-compradas-Ana-Bia-Equipe-foto.html"; filename*=UTF-8\'\'fotos-compradas-%C3%81na%20Bia%20Equipe%20foto.html'
+    assert "\r" not in disposition and "\n" not in disposition
+    assert disposition.endswith(".html")
 
 
 def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
