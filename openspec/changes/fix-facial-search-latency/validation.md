@@ -20,6 +20,7 @@ Worktree isolada baseada na versão implantada; Python 3.12, Windows, SQLite e N
 - `python -m pytest tests/test_facial_search_worker.py tests/test_face_region_search.py tests/test_facial_search_latency.py -q -s`: 38 aprovados com autorização do worker condensada, 340,19 s com processos de teste concorrentes na máquina.
 - `python -m pytest tests/test_facial_search_latency.py -q -s`: 12 aprovados em 157,54 s, incluindo cancelamento durante descriptografia, perda/retomada de lease, bloqueio de publicação após invalidar índice, progresso com comparação simulada de 320 s, paginação atravessando fotos e volume equivalente.
 - `python -m pytest tests/test_facial_search_latency.py -k condensed_request_guard tests/test_facial_calibration.py tests/test_facial_rollout.py -q`: nove negativos aprovados, 22 deselected; este comando NÃO executou os testes de calibração/rollout.
+- `python -m pytest tests/test_facial_calibration.py tests/test_facial_rollout.py tests/test_tenant_facial_maintenance.py -q`: 24 aprovados em 140,42 s, somente os seis avisos preexistentes de on_event.
 - `python -m ruff check backend/app/facial/engine.py backend/app/facial/search_worker.py backend/tests/test_facial_search_latency.py`: aprovado.
 - `git diff --check`: aprovado; diff restrito aos dois módulos, novo teste e change.
 - `npx -y @fission-ai/openspec@latest validate fix-facial-search-latency --type change --strict --no-interactive`: válida.
@@ -35,3 +36,11 @@ Worktree isolada baseada na versão implantada; Python 3.12, Windows, SQLite e N
 ## Limitações
 
 Não foi executado build Docker ARM nesta etapa local. Importação no runtime real, saúde, recursos e consulta autenticada ainda dependem da aprovação operacional e da task 3.3. Não medir precisão/recall nem alterar modelo, threshold, gates ou dados. Totais das suítes se sobrepõem; não somar como testes únicos. Frontend não foi alterado e seus lint/typecheck/build não são necessários para este diff.
+
+## Fonte publicada e continuidade
+
+- Commit de implementação `cb95a5d4191154b60d2c78a26b21d86c0717c4b1`, branch `feature/fix-facial-search-latency`, PR em rascunho: https://github.com/conradodeita/markina-gallery/pull/176.
+- SHA256 local engine: `484db1d8385d9b016f6487815fbc3cece736066ce6f0a979f3231de3f37c9a59`; search_worker: `0815a272d5ac62923be86dc0ee6a7f77808f2f3a13ee88fea70803136bdf6abf`.
+- Primeira consulta CI: OpenSpec e Gitleaks SUCCESS; backend, frontend e gemma-runtime ainda IN_PROGRESS. Não declarar CI inteiro aprovado com essa evidência.
+- Autorização para implantação restrita foi solicitada ao proprietário nesta conversa, com inventário e justificativa do AGENTS.md. Enquanto não houver resposta explícita, não escrever no servidor nem marcar tasks 3.2/3.3. Navegador do Codex permanece com sessão cliente para validação posterior.
+- Árvore original em `C:/Users/Conrado/Documents/Photo Delivery` permanece preservada; trabalhar nesta worktree/branch, sem misturar arquivos preexistentes.
