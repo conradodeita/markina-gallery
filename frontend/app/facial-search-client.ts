@@ -56,6 +56,12 @@ export type FacialSearchResult = {
   candidates?: FacialCandidate[];
 };
 
+export function facialProgressPercent(done: number, total: number): number | undefined {
+  if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return undefined;
+  const boundedDone = Math.max(0, Math.min(total, done));
+  return Math.floor((boundedDone / total) * 100);
+}
+
 export class FacialApiError extends Error {
   constructor(
     message: string,

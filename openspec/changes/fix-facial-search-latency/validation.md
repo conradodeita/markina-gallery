@@ -35,12 +35,14 @@ Worktree isolada baseada na versão implantada; Python 3.12, Windows, SQLite e N
 
 ## Limitações
 
-Não foi executado build Docker ARM nesta etapa local. Importação no runtime real, saúde, recursos e consulta autenticada ainda dependem da aprovação operacional e da task 3.3. Não medir precisão/recall nem alterar modelo, threshold, gates ou dados. Totais das suítes se sobrepõem; não somar como testes únicos. Frontend não foi alterado e seus lint/typecheck/build não são necessários para este diff.
+Não foi executado build Docker ARM nesta etapa local. Importação no runtime real, saúde, recursos e consulta autenticada ainda dependem da task 3.3. Não medir precisão/recall nem alterar modelo, threshold, gates ou dados. Totais das suítes se sobrepõem; não somar como testes únicos. Na etapa UI, `npx vitest run ...` não iniciou porque as dependências `vitest`/`vitest/config` não estão instaladas nesta worktree; `npx eslint ...` também não encontrou `eslint-config-next`. Não instalar dependências flutuantes; validar estes arquivos no CI com lockfile.
+
+O indicador apresenta o número exato de fotos da etapa, usa arredondamento para baixo e não mostra 100% antes de todas as fotos serem concluídas. Testes específicos adicionados; resultado aguardando CI após push.
 
 ## Fonte publicada e continuidade
 
 - Commit de implementação `cb95a5d4191154b60d2c78a26b21d86c0717c4b1`, branch `feature/fix-facial-search-latency`, PR em rascunho: https://github.com/conradodeita/markina-gallery/pull/176.
 - SHA256 local engine: `484db1d8385d9b016f6487815fbc3cece736066ce6f0a979f3231de3f37c9a59`; search_worker: `0815a272d5ac62923be86dc0ee6a7f77808f2f3a13ee88fea70803136bdf6abf`.
-- Primeira consulta CI: OpenSpec e Gitleaks SUCCESS; backend, frontend e gemma-runtime ainda IN_PROGRESS. Não declarar CI inteiro aprovado com essa evidência.
-- Autorização para implantação restrita foi solicitada ao proprietário nesta conversa, com inventário e justificativa do AGENTS.md. Enquanto não houver resposta explícita, não escrever no servidor nem marcar tasks 3.2/3.3. Navegador do Codex permanece com sessão cliente para validação posterior.
+- Primeira consulta CI: OpenSpec e Gitleaks SUCCESS; backend, frontend e gemma-runtime ainda IN_PROGRESS. Esta consulta corresponde ao commit anterior à correção de exibição; aguardar o novo CI.
+- O proprietário autorizou explicitamente push, merge e deploy. O inventário/portas/plano de impacto zero estão acima; ainda repetir preflight antes da troca e registrar a execução em 3.3. Navegador do Codex permanece com sessão cliente para validação posterior.
 - Árvore original em `C:/Users/Conrado/Documents/Photo Delivery` permanece preservada; trabalhar nesta worktree/branch, sem misturar arquivos preexistentes.

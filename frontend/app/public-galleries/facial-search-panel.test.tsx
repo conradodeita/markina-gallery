@@ -155,7 +155,7 @@ describe("polling da busca facial", () => {
     render(<Harness />);
     await act(async () => { await Promise.resolve(); });
 
-    expect(screen.getByText(/2 itens restantes/)).toBeTruthy();
+    expect(screen.getByText(/0 de 2 fotos nesta etapa/)).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(reads).toBe(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(1499); });

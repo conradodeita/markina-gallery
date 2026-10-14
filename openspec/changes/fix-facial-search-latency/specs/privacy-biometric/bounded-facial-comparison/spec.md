@@ -28,6 +28,10 @@ Antes de cada descriptografia o worker SHALL revalidar owner ativo, origem, pol�
 - **WHEN** uma comparação autorizada dura mais que o lease originalmente reservado
 - **THEN** renovações demonstráveis mantêm o claim válido e o progresso conta cada foto somente depois de comparar todos os seus rostos
 
+#### Scenario: Percentual de progresso corresponde às fotos concluídas
+- **WHEN** a interface apresenta o progresso da comparação
+- **THEN** exibe a quantidade real de fotos comparadas e arredonda a porcentagem para baixo, mostrando 100% somente quando todas as fotos da etapa forem concluídas
+
 #### Scenario: Consulta cancelada ou lease perdido
 - **WHEN** o consumidor deixa de possuir o claim durante a comparação
 - **THEN** impede nova descriptografia/publicação, libera somente o lease próprio quando ainda existir e permanece disponível para o próximo job
