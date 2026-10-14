@@ -11843,7 +11843,7 @@ def admin_removed_photo_movements(
 def list_payment_communications(
     request: Request,
     query: str | None = Query(default=None, max_length=200),
-    client_id: UUID | None = Query(default=None),
+    client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
     financial_status: Literal[
         "awaiting_payment", "reported", "confirmed", "not_found", "overdue",

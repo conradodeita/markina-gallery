@@ -18,6 +18,7 @@
 ## Evidências de validação
 
 - Backend: `pytest backend/tests/test_derived_galleries.py -q -k 'admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_without_n_plus_one or admin_payment_dashboard_combines_validated_filters or admin_payment_dashboard_searches_phone_and_exact_client_without_exposing_phone'` — 3 passaram. Inclui paginação existente, busca por dígitos do telefone, identidade exata nas seleções/pedidos e ausência do telefone na resposta.
+- Compatibilidade: o primeiro CI encontrou chamadas existentes que invocam a rota diretamente sem injetor FastAPI; `client_id` agora usa default Python `None`. Os três casos do CI e a regressão desta change passaram juntos em validação direcionada: 4 testes.
 - Frontend na branch atual de `develop`: `npm test -- --run app/admin/payments/page.test.tsx --reporter=dot` — 10 passaram. Cobrem debounce/cancelamento, sugestões por nome e telefone, seleção/edição, teclado, Escape, vazio/erro, campo único, posição no DOM e ajuste ao cabeçalho medido.
 - Qualidade frontend: `npx eslint app/admin/payments/page.tsx app/admin/payments/page.test.tsx` e `npx tsc --noEmit` — passaram.
 - Build na branch atual de `develop`: `npm run build` — passou, incluindo compilação, TypeScript e geração das 23 páginas estáticas.
