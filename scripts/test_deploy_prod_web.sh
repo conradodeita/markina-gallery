@@ -13,6 +13,14 @@ if bash "$SCRIPT" --mode deploy --sha 1111111111111111111111111111111111111111 >
 fi
 grep -Fq -- "--mode deve ser inventory, release, rollback-inventory ou rollback" "$output"
 
+# Bootstrap a partir de git show também deve executar a mesma validação.
+if bash -s -- --mode deploy --sha 1111111111111111111111111111111111111111 < "$SCRIPT" > "$output" 2>&1; then
+  echo "entrada por stdin não validou os argumentos" >&2
+  exit 1
+fi
+grep -Fq -- "--mode deve ser inventory, release, rollback-inventory ou rollback" "$output"
+
+
 if bash "$SCRIPT" --mode release --sha 1111111111111111111111111111111111111111 >"$output" 2>&1; then
   echo "release sem código de aprovação foi aceito" >&2
   exit 1

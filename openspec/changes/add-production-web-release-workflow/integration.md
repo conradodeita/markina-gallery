@@ -23,3 +23,5 @@ O PR é de revisão, não autoriza merge nem publicação. As validações devem
 ## Regressão de integração detectada pelo CI
 
 O primeiro CI da candidata final (`38587606414`) recusou a reintrodução de `.github/workflows/facial-homolog.yml` na política `test_facial_production_policy.py`. A cópia havia sido adicionada automaticamente pelo merge de main. A evidência vigente em `productionize-facial-search/design.md` e task 7.4 determina sua aposentadoria; a resolução remove somente esse workflow legado, mantendo o inventário e o rollout facial vigente. Nenhum workflow remoto foi executado pela correção.
+
+O runbook cobre o bootstrap da primeira publicação e o rollback para checkout sem o novo script: executa por stdin o procedimento obtido de `git show` no commit revisado, mantendo o SHA do procedimento separado do alvo de rollback. O teste shell verifica que a entrada por stdin executa a validação de argumentos.

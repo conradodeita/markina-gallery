@@ -46,11 +46,14 @@ O job `.github/workflows/ci.yml:deploy-homolog` atualmente é um fluxo mais ampl
 
    A árvore deve estar limpa. Não execute este fluxo se o inventário revelar outro projeto, arquivo Compose, arquivo de ambiente ou host.
 
-3. Gere o inventário do SHA alvo aprovado. `MARKINA_EXPECTED_REPOSITORY` deve conter o owner/repositório correspondente ao `origin` já configurado; não use uma URL de outro projeto.
+3. Gere o inventário do SHA candidato. Na primeira publicação, o checkout ativo ainda não contém o script novo; leia o script do objeto Git aprovado e execute por stdin, sem trocar o checkout. `MARKINA_EXPECTED_REPOSITORY` deve conter o owner/repositório correspondente ao `origin` já configurado.
 
    ```bash
-   MARKINA_EXPECTED_REPOSITORY=owner/repo \
-     bash scripts/deploy-prod-web.sh --mode inventory --sha <sha-completo>
+   release_sha=<sha-completo>
+   set -o pipefail
+   git show "$release_sha:scripts/deploy-prod-web.sh" | \
+     MARKINA_EXPECTED_REPOSITORY=owner/repo bash -s -- \
+       --mode inventory --sha "$release_sha"
    ```
 
 4. Apresente a saída sem acrescentar valores de segredos. A saída inclui `approval_code`; aguarde aprovação explícita do proprietário para esse inventário e código, domínio e SHA exatos. Se o plano mudar, gere inventário novo e solicite aprovação novamente.
@@ -60,9 +63,9 @@ O job `.github/workflows/ci.yml:deploy-homolog` atualmente é um fluxo mais ampl
 Após a aprovação específica do inventário, execute exatamente o SHA e código aprovados:
 
 ```bash
-MARKINA_EXPECTED_REPOSITORY=owner/repo \
-  bash scripts/deploy-prod-web.sh --mode release \
-  --sha <sha-completo> --approval-code <codigo-aprovado>
+git show "$release_sha:scripts/deploy-prod-web.sh" | \
+  MARKINA_EXPECTED_REPOSITORY=owner/repo bash -s -- \
+    --mode release --sha "$release_sha" --approval-code <codigo-aprovado>
 ```
 
 O fluxo seleciona o SHA aprovado, compara novamente a configuração efetiva do web, preserva a imagem web atualmente saudável sob uma tag vinculada ao SHA, constrói `web`, executa `up -d --no-deps --no-build web` e valida o healthcheck do contêiner e as rotas HTTPS `/healthz`, `/api/health` e `/`. O código de sucesso registra `web-last-healthy.sha`, `web-previous.sha` e um histórico no diretório de estado da Markina. Uma falha deixa o erro visível e não inicia rollback automático; o registro `web-in-flight.sha` orienta o inventário de rollback.
@@ -72,18 +75,19 @@ O fluxo seleciona o SHA aprovado, compara novamente a configuração efetiva do 
 Após uma falha, examine o resultado e gere o inventário somente-leitura de rollback para apresentar o impacto ao proprietário:
 
 ```bash
-MARKINA_EXPECTED_REPOSITORY=owner/repo \
-  bash scripts/deploy-prod-web.sh --mode rollback-inventory --sha <sha-anterior>
+git show "$release_sha:scripts/deploy-prod-web.sh" | \
+  MARKINA_EXPECTED_REPOSITORY=owner/repo bash -s -- \
+    --mode rollback-inventory --sha <sha-anterior>
 ```
 
-Use `--mode rollback-inventory`; o SHA deve ser exatamente o valor registrado em `web-previous.sha`. Esse inventário aceita web unhealthy após falha de smoke test. Apresente o inventário/código e obtenha aprovação explícita do rollback.
+Mantenha `release_sha` apontando para o commit do procedimento revisado, mesmo quando o alvo do rollback for mais antigo e não contiver o script. Essa referência identifica o código do procedimento, enquanto `--sha` identifica a versão web a restaurar. Use `--mode rollback-inventory`; o SHA deve ser exatamente o valor registrado em `web-previous.sha`. Esse inventário aceita web unhealthy após falha de smoke test. Apresente o inventário/código e obtenha aprovação explícita do rollback.
 
 Depois da aprovação explícita:
 
 ```bash
-MARKINA_EXPECTED_REPOSITORY=owner/repo \
-  bash scripts/deploy-prod-web.sh --mode rollback \
-  --sha <sha-anterior> --approval-code <codigo-aprovado>
+git show "$release_sha:scripts/deploy-prod-web.sh" | \
+  MARKINA_EXPECTED_REPOSITORY=owner/repo bash -s -- \
+    --mode rollback --sha <sha-anterior> --approval-code <codigo-aprovado>
 ```
 
 O rollback restaura a imagem anterior preservada e recria somente `web`, repete healthcheck e smoke tests e atualiza o estado web. As tags de imagem ficam restritas às versões do serviço web; não há limpeza automática de imagens. O procedimento não restaura banco, não executa migrations e não reinicia dependências. Se o healthcheck ou qualquer smoke test falhar, pare e registre o diagnóstico; não tente corrigir o proxy compartilhado por este procedimento.
