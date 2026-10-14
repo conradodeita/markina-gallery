@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { FacialApiError, facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
+import { FacialApiError, facialProgressPercent, facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
 import { clearFacialSearchStorage, facialSearchStorageKey, readFacialSearchStorage, rememberFacialSearch } from "../facial-search-storage";
 import { PUSH_LOGOUT_EVENT } from "../push-device";
 import { MarkinaButton, StatusBadge, SystemState } from "../ui-kit";
@@ -241,7 +241,7 @@ export function FacialSearchPanel({
   if (availability.state === "unavailable") return null;
   const progressTotal = result?.status === "waiting_index" ? result.progress.index.total : result?.progress.comparison.total ?? 0;
   const progressDone = result?.status === "waiting_index" ? result.progress.index.ready : result?.progress.comparison.done ?? 0;
-  const progressValue = progressTotal ? Math.round(progressDone / progressTotal * 100) : 0;
+  const progressValue = facialProgressPercent(progressDone, progressTotal) ?? 0;
   const referenceRetentionMinutes = Math.ceil((availability.reference_retention_seconds ?? 900) / 60);
   const candidateRetentionHours = Math.ceil((availability.candidate_retention_seconds ?? 86400) / 3600);
   return (
@@ -250,7 +250,7 @@ export function FacialSearchPanel({
       {!result ? <MarkinaButton type="button" onClick={() => { setDialogOpen(true); setError(""); }}>Enviar foto para procurar</MarkinaButton> : (
         <div className="facial-search-status" aria-live="polite">
           <div><StatusBadge tone={result.status === "ready" ? "success" : result.status === "failed" ? "danger" : "neutral"}>{stateLabels[result.status] ?? result.status}</StatusBadge><span>{result.reference_deleted ? "Sem imagem temporária nesta busca" : "Foto protegida temporariamente"}</span></div>
-          {!terminalStates.has(result.status) ? <><progress value={progressValue} max={100} aria-label="Progresso da busca facial" /><small>{progressValue}% concluído · {result.estimate?.remaining_items ?? 0} itens restantes. Tempo restante ainda não disponível. Você pode fechar esta tela; avisaremos quando terminar.</small></> : null}
+          {!terminalStates.has(result.status) ? <><progress value={progressValue} max={100} aria-label="Progresso da busca facial" /><small>{progressValue}% concluído · {progressDone} de {progressTotal} fotos nesta etapa. Tempo restante ainda não disponível. Você pode fechar esta tela; avisaremos quando terminar.</small></> : null}
           {result.status === "no_face" ? <p>Tente uma foto frontal, bem iluminada e com o rosto inteiro.</p> : null}
           {result.status === "multiple_faces" ? <p>Recorte a imagem para manter somente a pessoa procurada.</p> : null}
           {result.status === "low_quality" ? <p>Envie outra foto com mais nitidez e melhor iluminação.</p> : null}

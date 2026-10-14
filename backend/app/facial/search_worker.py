@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from time import monotonic
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -12,10 +13,12 @@ from sqlalchemy.orm import Session
 from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     AuditEvent,
+    Client,
     FacialJob,
     FacialSearchCandidate,
     FacialSearchRequest,
     FacialSearchSnapshotItem,
+    GalleryClientState,
     GalleryFacialPolicy,
     MediaDerivative,
     ParentGallery,
@@ -34,9 +37,7 @@ from app.facial.provider import analyze_query
 from app.facial.reference_store import FacialReferenceError, FacialReferenceStore
 from app.facial.rollout import rollout_is_active
 from app.public_gallery_access import (
-    PublicGalleryAccessDenied,
     authorized_canonical_photos,
-    require_public_gallery_browsing,
 )
 
 _TERMINAL_STATES = {
@@ -176,7 +177,6 @@ def process_claimed_search_job(
             query_embedding = analysis.observation.embedding
 
         repository._leased(db, claim)
-        _refresh_snapshot(db, request)
         request.status = "searching"
         db.commit()
         fingerprints = {
@@ -184,14 +184,29 @@ def process_claimed_search_job(
             for item in _snapshot_items(db, request.id, tenant_id=request.tenant_id)
             if item.status == "ready" and item.preview_fingerprint is not None
         }
+        compared_photos = 0
+        last_progress_at = monotonic()
+
+        def publish_progress(done):
+            nonlocal compared_photos, last_progress_at
+            compared_photos = done
+            current = monotonic()
+            if current - last_progress_at >= min(5, settings.job_lease_seconds / 3):
+                request.compare_done = min(compared_photos, request.compare_total)
+                repository.progress(
+                    db, claim, done=request.compare_done, total=request.compare_total,
+                    lease_seconds=settings.job_lease_seconds,
+                )
+                last_progress_at = current
 
         def authorize_comparison(photo_id):
+            publish_progress(compared_photos)
             repository._leased(db, claim)
             if not _request_is_authorized(db, request, settings):
                 raise FacialJobError("Consulta facial indisponível.")
-            _refresh_snapshot(db, request)
-            return any(item.photo_asset_id == photo_id and item.status == "ready"
-                       for item in _snapshot_items(db, request.id, tenant_id=request.tenant_id))
+            return _comparison_photo_is_current(
+                db, request, photo_id, fingerprints.get(photo_id),
+            )
 
         matches = search_gallery_index(
             db,
@@ -204,6 +219,7 @@ def process_claimed_search_job(
             allowed_fingerprints=fingerprints,
             ambiguous_threshold_milli=settings.ambiguous_threshold_milli,
             authorize=authorize_comparison,
+            on_progress=publish_progress,
             model_id=request.search_engine,
             model_version=(
                 GEMMA_MODEL_VERSION
@@ -219,6 +235,19 @@ def process_claimed_search_job(
         repository._leased(db, claim)
         if not _request_is_authorized(db, request, settings):
             raise FacialJobError("Consulta facial indisponível.")
+        _refresh_snapshot(db, request)
+        current_fingerprints = {
+            item.photo_asset_id: item.preview_fingerprint
+            for item in _snapshot_items(db, request.id, tenant_id=request.tenant_id)
+            if item.status == "ready"
+        }
+        matches = [
+            match for match in matches
+            if current_fingerprints.get(match.photo_id) == fingerprints.get(match.photo_id)
+            and _comparison_photo_is_current(
+                db, request, match.photo_id, fingerprints.get(match.photo_id),
+            )
+        ]
         request.compare_done = request.compare_total
         request.status = "ranking"
         db.commit()
@@ -273,11 +302,9 @@ def process_claimed_search_job(
             lease_seconds=settings.job_lease_seconds,
         )
         return repository.complete(db, claim)
-    except HTTPException:
+    except (HTTPException, FacialJobError):
         repository.release_denied(db, claim)
         return db.get(FacialJob, claim.id)
-    except FacialJobError:
-        raise
     # A fronteira do worker transforma qualquer falha inesperada em categoria
     # sanitizada; detalhes nunca são persistidos nem devolvidos à cliente.
     except Exception as error:  # noqa: BLE001
@@ -310,10 +337,6 @@ def _request_is_authorized(
     db: Session, request: FacialSearchRequest, settings: FacialSettings
 ) -> bool:
     require_active_owner(db, request.tenant_id)
-    try:
-        require_public_gallery_browsing(db, parent_gallery_id=request.parent_gallery_id, client_id=request.client_id)
-    except PublicGalleryAccessDenied:
-        return False
     if request.status in {"cancelled", "expired"}:
         return False
     if request.authorization_method != "direct_region" and request.consent_version != settings.consent_version:
@@ -329,36 +352,48 @@ def _request_is_authorized(
                 terms_version=settings.minor_policy_version)
         except FacialLegalRepresentationError:
             return False
-    gallery = owned_record(db, ParentGallery, request.parent_gallery_id, tenant_id=request.tenant_id)
-    registration = db.scalar(
-        select(ParentGalleryRegistration.id).where(
-            ParentGalleryRegistration.tenant_id == request.tenant_id,
-                    ParentGalleryRegistration.parent_gallery_id == request.parent_gallery_id,
-            ParentGalleryRegistration.client_id == request.client_id,
-            ParentGalleryRegistration.status == "active",
+    registration = select(ParentGalleryRegistration.id).join(
+        Client, Client.id == ParentGalleryRegistration.client_id,
+    ).where(
+        Client.id == request.client_id,
+        Client.tenant_id == request.tenant_id,
+        ParentGalleryRegistration.tenant_id == request.tenant_id,
+        ParentGalleryRegistration.parent_gallery_id == request.parent_gallery_id,
+        ParentGalleryRegistration.client_id == request.client_id,
+        ParentGalleryRegistration.status == "active",
+    ).exists()
+    blocked = select(GalleryClientState.id).where(
+        GalleryClientState.parent_gallery_id == request.parent_gallery_id,
+        GalleryClientState.client_id == request.client_id,
+        GalleryClientState.status != "active",
+    ).exists()
+    policy_id = db.scalar(
+        select(GalleryFacialPolicy.id)
+        .join(ParentGallery, ParentGallery.id == GalleryFacialPolicy.parent_gallery_id)
+        .where(
+            ParentGallery.id == request.parent_gallery_id,
+            ParentGallery.tenant_id == request.tenant_id,
+            ParentGallery.active.is_(True),
+            ParentGallery.lifecycle_status == "active",
+            ParentGallery.access_mode != "collective_protected",
+            GalleryFacialPolicy.id == request.policy_id,
+            GalleryFacialPolicy.tenant_id == request.tenant_id,
+            GalleryFacialPolicy.status == "active",
+            GalleryFacialPolicy.legal_notice_version == request.legal_notice_version,
+            GalleryFacialPolicy.model_version == request.model_version,
+            GalleryFacialPolicy.model_version == settings.model_version,
+            GalleryFacialPolicy.quality_version == request.quality_version,
+            GalleryFacialPolicy.quality_version == settings.quality_version,
+            GalleryFacialPolicy.index_generation == request.index_generation,
+            registration,
+            ~blocked,
         )
     )
-    policy = owned_record(db, GalleryFacialPolicy, request.policy_id, tenant_id=request.tenant_id)
-    return bool(
-        gallery
-        and gallery.active
-        and gallery.lifecycle_status == "active"
-        and registration
-        and policy
-        and policy.parent_gallery_id == request.parent_gallery_id
-        and policy.status == "active"
-        and request.legal_notice_version == policy.legal_notice_version
-        and rollout_is_active(
-            db,
-            settings=settings,
-            parent_gallery_id=request.parent_gallery_id,
-            tenant_id=request.tenant_id,
-        )
-        and request.model_version == settings.model_version == policy.model_version
-        and request.quality_version
-        == settings.quality_version
-        == policy.quality_version
-        and request.index_generation == policy.index_generation
+    return policy_id is not None and rollout_is_active(
+        db,
+        settings=settings,
+        parent_gallery_id=request.parent_gallery_id,
+        tenant_id=request.tenant_id,
     )
 
 
@@ -429,8 +464,59 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
     request.snapshot_ready = sum(item.status == "ready" for item in items)
     request.compare_total = request.snapshot_ready
     request.updated_at = now()
+    pending = any(item.status == "pending" for item in items)
     db.commit()
-    return any(item.status == "pending" for item in items)
+    return pending
+
+
+def _comparison_photo_is_current(
+    db: Session, request: FacialSearchRequest, photo_id: UUID, fingerprint: str | None,
+) -> bool:
+    """Revalida somente a foto corrente; nunca atualiza o snapshot na comparação."""
+
+    if fingerprint is None:
+        return False
+    latest_index = (
+        select(FacialJob.preview_fingerprint, FacialJob.status)
+        .where(
+            FacialJob.tenant_id == request.tenant_id,
+            FacialJob.parent_gallery_id == request.parent_gallery_id,
+            FacialJob.photo_asset_id == photo_id,
+            FacialJob.kind == ("index_gemma" if request.search_engine == GEMMA_MODEL_ID else "index"),
+            FacialJob.model_version == (
+                GEMMA_MODEL_VERSION if request.search_engine == GEMMA_MODEL_ID else request.model_version
+            ),
+            FacialJob.quality_version == request.quality_version,
+        )
+        .order_by(FacialJob.created_at.desc(), FacialJob.id.desc())
+        .limit(1)
+        .subquery()
+    )
+    eligible = authorized_canonical_photos(
+        request.parent_gallery_id, request.client_id,
+    ).where(PhotoAsset.id == photo_id).with_only_columns(PhotoAsset.id).exists()
+    preview_ready = select(MediaDerivative.id).where(
+        MediaDerivative.tenant_id == request.tenant_id,
+        MediaDerivative.photo_asset_id == photo_id,
+        MediaDerivative.variant == "client_preview",
+        MediaDerivative.status == "ready",
+    ).exists()
+    return db.scalar(select(FacialSearchSnapshotItem.id).join(
+        latest_index,
+        latest_index.c.preview_fingerprint == FacialSearchSnapshotItem.preview_fingerprint,
+    ).where(
+        FacialSearchSnapshotItem.tenant_id == request.tenant_id,
+        FacialSearchSnapshotItem.search_request_id == request.id,
+        FacialSearchSnapshotItem.parent_gallery_id == request.parent_gallery_id,
+        FacialSearchSnapshotItem.client_id == request.client_id,
+        FacialSearchSnapshotItem.photo_asset_id == photo_id,
+        FacialSearchSnapshotItem.status == "ready",
+        FacialSearchSnapshotItem.preview_fingerprint == fingerprint,
+        latest_index.c.preview_fingerprint == fingerprint,
+        latest_index.c.status == "completed",
+        eligible,
+        preview_ready,
+    )) is not None
 
 
 def _snapshot_items(

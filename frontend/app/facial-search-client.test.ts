@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FacialApiError, facialSearchApi } from "./facial-search-client";
+import { FacialApiError, facialProgressPercent, facialSearchApi } from "./facial-search-client";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("contratos HTTP faciais", () => {
+  it("mantém o percentual abaixo de 100 até concluir todas as fotos", () => {
+    expect(facialProgressPercent(999, 1000)).toBe(99);
+    expect(facialProgressPercent(1000, 1000)).toBe(100);
+    expect(facialProgressPercent(1200, 1000)).toBe(100);
+    expect(facialProgressPercent(0, 0)).toBeUndefined();
+  });
+
   it("envia somente JPEG e recibo explícito ao criar consulta", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "request-1" }), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
