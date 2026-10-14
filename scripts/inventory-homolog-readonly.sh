@@ -10,6 +10,7 @@ readonly COMPOSE_FILE="docker/docker-compose.yml"
 readonly ENV_FILE="docker/.env.homolog"
 
 EXPECTED_SHA=""
+EXPECTED_PUBLIC_BASE_URL=""
 
 fail() {
   echo "inventory-homolog-readonly: $*" >&2
@@ -19,12 +20,14 @@ fail() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --expected-sha) EXPECTED_SHA="${2:-}"; shift 2 ;;
+    --expected-public-base-url) EXPECTED_PUBLIC_BASE_URL="${2:-}"; shift 2 ;;
     *) fail "argumento não permitido: $1" ;;
   esac
 done
 
 [[ "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || fail "SHA integral esperado inválido"
 EXPECTED_SHA="${EXPECTED_SHA,,}"
+[[ -n "$EXPECTED_PUBLIC_BASE_URL" ]] || fail "origem pública esperada ausente ou inválida"
 [[ "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "execução permitida somente em $PROJECT_ROOT"
 [[ -d .git ]] || fail "checkout Git da Markina ausente"
 
@@ -44,6 +47,16 @@ import json, sys
 from urllib.parse import urlsplit
 
 config = json.load(sys.stdin)
+expected_value = sys.argv[1]
+try:
+    expected = urlsplit(expected_value)
+    expected_port = expected.port
+except ValueError:
+    raise SystemExit("origem pública esperada ausente ou inválida")
+if (expected.scheme.lower() != "https" or not expected.hostname or expected_port is not None
+        or expected.username or expected.password or expected.path not in ("", "/")
+        or expected.query or expected.fragment or expected.netloc.lower() != expected.hostname.lower()):
+    raise SystemExit("origem pública esperada ausente ou inválida")
 services = config.get("services", {})
 def check(condition, label):
     if not condition:
@@ -59,9 +72,11 @@ db_environment = services["db"].get("environment", {})
 check(database.hostname == "db", "host do banco")
 check(database.path.lstrip("/") == db_environment.get("POSTGRES_DB", ""), "nome do banco")
 origin = urlsplit(api_environment.get("PUBLIC_APP_ORIGIN", ""))
-check(origin.scheme == "https" and origin.hostname == "markina-homolog.duckdns.org"
-      and origin.path in ("", "/") and not origin.query and not origin.fragment
-      and not origin.username and not origin.password, "subdomínio público")
+if not (origin.scheme == "https" and origin.hostname
+        and origin.hostname.lower() == expected.hostname.lower()
+        and origin.path in ("", "/") and not origin.query and not origin.fragment
+        and not origin.username and not origin.password):
+    raise SystemExit(20)
 ports = services["nginx"].get("ports", [])
 check(any(str(port.get("published")) == "8080" and port.get("host_ip") == "127.0.0.1"
           for port in ports), "porta local")
@@ -90,8 +105,12 @@ for target, source in {
 check_volume("db", "/var/lib/postgresql/data", "pgdata")
 check_volume("redis", "/data", "redisdata")
 print("projeto=markina-gallery ambiente=homolog entrada=127.0.0.1:8080 "
-      "subdomínio=markina-homolog.duckdns.org banco/redis=internos volumes=exclusivos")
-')" || fail "configuração Compose inválida ou fora do escopo homolog"
+      f"subdomínio={expected.hostname.lower()} banco/redis=internos volumes=exclusivos")
+' "$EXPECTED_PUBLIC_BASE_URL")" || {
+  status=$?
+  [[ "$status" -eq 20 ]] && fail "origem esperada diverge da configuração pública da Markina"
+  fail "configuração Compose inválida ou fora do escopo homolog"
+}
 
 printf 'versão implantada: %s\n' "$DEPLOYED_SHA"
 printf 'topologia: %s\n' "$topology"
