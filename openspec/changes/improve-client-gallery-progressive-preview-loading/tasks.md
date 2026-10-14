@@ -20,3 +20,6 @@ Regressão da candidata: antes da ativação, o teste de navegação de pastas f
 
 
 Diff revisado contra `aa7119c`: apenas uma linha de código de produto (`deferGridImages` na coleção canônica) e dois arquivos de testes frontend. `backend/`, `docker/`, dependências e a rota legada continuam idênticos à versão ativa. A candidata está em `feature/production-gallery-integration`, baseada no merge local de produção com main; PR draft e aprovação de merge/release são os próximos gates. OpenSpec 1.14.0: 101/101 itens aprovados. Não há publicação remota do serviço nesta preparação.
+
+
+Candidata publicada para revisão no PR draft https://github.com/conradodeita/markina-gallery/pull/179; correção no commit `6e32486ccbb960971b60ccc79029cf09deecabcc`. A integração permanece aguardando revisão/merge e posterior aprovação de release, sem alteração dos serviços no servidor.

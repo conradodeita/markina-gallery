@@ -14,9 +14,12 @@
 
 - [x] 3.1 Preparar branch isolada a partir de `aa7119c`, incorporar `main` preservando o histórico e os contratos de manutenção/inventário; verificar que a aplicação e Compose ainda são idênticos ao SHA ativo antes da otimização.
 - [x] 3.2 Portar o procedimento e validar scripts, políticas, OpenSpec e CI na árvore integrada; registrar limitações concretas.
-- [ ] 3.3 Publicar PR em draft para main com comparação explícita contra a produção, sem merge/deploy.
+- [x] 3.3 Publicar PR em draft para main com comparação explícita contra a produção, sem merge/deploy.
 
 A decisão posterior do proprietário autoriza a preparação descrita em `integration.md`; substitui o bloqueio anterior de autorização para preparar a reconciliação. Merge, revisão humana e release permanecem gates separados.
 
 
 Evidência da preparação em 2026-10-14: merge local `a2523eb` conserva os pais `aa7119c` e `e0b29dd`. Antes da correção, `git diff --cached --name-only -- frontend backend docker` ficou vazio. Testes de política do inventário (3), de manutenção e do procedimento web passaram; o script recusa portas/configuração/aprovação divergentes. O procedimento também valida host, origin exato e igualdade de `docker/` antes de trocar checkout. `@fission-ai/openspec@1.14.0` (versão do CI) validou todos os 101 itens. A execução por `@latest` não representa o contrato do CI e produziu os mesmos 29 avisos em candidata e baseline; nenhuma alteração em specs alheias foi necessária.
+
+
+PR draft criado: https://github.com/conradodeita/markina-gallery/pull/179, branch `feature/production-gallery-integration`, alvo `main`. Correção de produto no commit `6e32486ccbb960971b60ccc79029cf09deecabcc`; procedimento em `8c15647`; integração em `a2523eb`. Os checks do SHA corrente são registrados pelo GitHub no PR, com backend, frontend, OpenSpec, gitleaks, política de inventário e runtime Gemma. Abertura do PR não executa deploy: o job de deploy exige push em develop. Merge/release não foram executados nesta preparação.
