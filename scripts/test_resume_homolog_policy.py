@@ -42,7 +42,7 @@ for fragment, reason in forbidden.items():
     forbid(fragment, reason)
 
 for fragment in (
-    "bash scripts/resume-homolog.sh --public-base-url https://markina-homolog.duckdns.org",
+    "bash scripts/resume-homolog.sh --public-base-url https://markina.pickyourpic.com.br",
     "--no-deps --no-recreate",
     "não faz deploy, rebuild, recriação, limpeza nem alteração de banco",
     "Evolution",

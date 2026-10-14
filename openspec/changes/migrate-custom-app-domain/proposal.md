@@ -5,8 +5,8 @@ O Pick-your-Pic está acessível pelo endereço temporário `markina-homolog.duc
 ## What Changes
 
 - Publicar somente o subdomínio `markina.pickyourpic.com.br` para a aplicação atual, com HTTPS válido.
-- Manter o hostname DuckDNS e seu proxy/certificado durante a validação da migração.
-- Permitir temporariamente as origens HTTPS nova e antiga nas verificações de origem de operações sensíveis; usar a nova origem como destino canônico de links gerados.
+- Manter o hostname DuckDNS e seu proxy/certificado somente durante a validação da migração; depois da revisão do proprietário, retirar a origem adicional e o host virtual antigo da Markina.
+- Permitir temporariamente a origem DuckDNS nas verificações de origem de operações sensíveis; usar a nova origem como destino canônico e, ao encerrar a transição, somente ela permanece permitida.
 - Não configurar destino ou serviço para `pickyourpic.com.br` neste momento.
 
 ## Capabilities
@@ -24,4 +24,4 @@ Nenhuma.
 
 - Registro.br: um registro A para `markina.pickyourpic.com.br` apontando para o IP já usado por `markina-homolog.duckdns.org`; nenhum registro raiz, MX ou servidor DNS será substituído.
 - Nginx Proxy Manager: um novo host virtual para o subdomínio, usando o alias existente `markina-homolog-nginx` na rede `npm-network` e certificado Let's Encrypt próprio.
-- Markina Gallery: variável de origem canônica e lista restrita de origens transitórias; nenhum serviço, porta, volume, banco ou recurso de terceiros será alterado.
+- Markina Gallery: variável de origem canônica e lista adicional restrita somente à transição; ao encerrar, remover a variável da allowlist, sem alterar bancos, volumes, credenciais ou serviços de terceiros.

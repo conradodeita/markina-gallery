@@ -32,12 +32,20 @@ Implementar e validar o suporte local antes de alterar o servidor. Após aprova�
 ## Migration Plan
 
 1. Implementar e testar a configuração restrita de origens e validar OpenSpec.
-2. Obter aprovação explícita do inventário, portas, hostname e plano de impacto zero antes de qualquer mudança externa.
+2. Obter aprovação explícita do inventário, portas, hostname e do impacto operacional previsto antes de qualquer mudança externa. Se uma etapa exigir interrupção breve, obter aprovação específica após apresentar a janela e os serviços afetados.
 3. Após a transição do Registro.br, configurar e verificar somente o A de `markina`.
 4. Criar o virtual host/certificado dedicado no proxy e testar TLS, roteamento e healthchecks pelos dois hostnames.
 5. Publicar a origem canônica nova mantendo a origem anterior permitida; validar login, cookies, redirecionamentos e operações essenciais.
-6. Manter a configuração antiga até validação humana da nova URL; não desativar o DuckDNS nesta mudança.
+6. Manter a configuração antiga até validação humana da nova URL e do reset. Depois que o proprietário revisar e encerrar a transição, executar a task 3.7 para remover DuckDNS das origens adicionais e do proxy da Markina.
 
 ## Rollback
 
 Se a validação falhar, remover o host virtual/certificado criado para `markina.pickyourpic.com.br`, remover somente o registro A `markina` criado nesta mudança e reverter a origem canônica/allowlist da Markina ao estado anterior. Preservar o hostname DuckDNS e não executar `docker compose down`, prunes, restauração de banco, reinicialização do proxy compartilhado ou mudança em outros recursos.
+
+## Encerramento da transição depois do reset — 2026-10-13
+
+- O reset de homologação terminou e seu resultado foi revisado/aprovado pelo proprietário. Ele manteve `conradodeita@gmail.com`, a configuração do proprietário, branding e Evolution; removeu dados operacionais e exatamente os 164 dumps autorizados sem criar dump. Seu registro foi sincronizado e arquivado separadamente.
+- `https://markina.pickyourpic.com.br` é a origem canônica publicada; o host novo e o antigo compartilham somente o alias existente `markina-homolog-nginx:80` da Markina. O NPM compartilhado continua na versão 2.15.1. ClearBudget e os demais hosts ficam fora do escopo.
+- Após a validação, remover `PUBLIC_APP_ORIGINS` do `.env.homolog`, mantendo `PUBLIC_APP_ORIGIN` novo. O deploy deverá tratar a lista adicional vazia como removida, não criar uma allowlist redundante com a origem canônica. Recriar somente a API da Markina com a mesma imagem/SHA, sem `build`, `pull`, dependências, migration ou backup; depois validar seu healthcheck e recarregar graciosamente somente o Nginx Markina para renovar o upstream se o IP mudar.
+- Excluir no NPM somente o proxy host `markina-homolog.duckdns.org`. Manter o host e certificado de `markina.pickyourpic.com.br`, o host ClearBudget, o serviço/versão/rede/portas do NPM e a conta/DNS externa DuckDNS. O encerramento não remove o registro externo DuckDNS.
+- Validar HTTPS/TLS e `/healthz`, `/api/health` do domínio novo; no endpoint DuckDNS confirmar que a resposta não corresponde à Markina. A janela da recriação única da API pode interromper requisições administrativas por alguns segundos; banco/Redis e workers não serão reiniciados. Nenhum dump será criado.

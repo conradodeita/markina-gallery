@@ -161,7 +161,29 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
     grep -Fxq "PUBLIC_APP_ORIGINS=https://markina-homolog.duckdns.org" "$ORIGIN_ENV"
     [[ "$(stat -c %a "$ORIGIN_ENV")" == "600" ]]
   ' >"$output" 2>&1
-grep -Fq 'PUBLIC_APP_ORIGINS sincronizada com a lista temporária autorizada de homologação' "$output"
+grep -Fq 'PUBLIC_APP_ORIGINS sincronizada com as origens HTTPS adicionais autorizadas' "$output"
+
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina.pickyourpic.com.br\nPUBLIC_APP_ORIGINS=https://markina-homolog.duckdns.org\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origins "$ORIGIN_ENV" ""
+    [[ "$(grep -c "^PUBLIC_APP_ORIGINS=" "$ORIGIN_ENV" || true)" -eq 0 ]]
+    grep -Fxq "PUBLIC_APP_ORIGIN=https://markina.pickyourpic.com.br" "$ORIGIN_ENV"
+    [[ "$(stat -c %a "$ORIGIN_ENV")" == "600" ]]
+  ' >"$output" 2>&1
+grep -Fq 'PUBLIC_APP_ORIGINS removida para usar somente a origem canônica' "$output"
+
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina.pickyourpic.com.br\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    mktemp() { echo UNEXPECTED-ENV-WRITE >&2; return 90; }
+    chmod() { echo UNEXPECTED-ENV-WRITE >&2; return 91; }
+    ensure_public_app_origins "$ORIGIN_ENV" ""
+  ' >"$output" 2>&1
+grep -Fq 'PUBLIC_APP_ORIGINS já está ausente; ambiente preservado' "$output"
+if grep -Fq 'UNEXPECTED-ENV-WRITE' "$output"; then exit 1; fi
 
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
   bash -c '
@@ -173,6 +195,7 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
 fi
 grep -Fq 'MARKINA_PUBLIC_APP_ORIGINS deve conter somente origens HTTPS exatas' "$output"
 
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina-homolog.example\n' >"$origin_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"

@@ -384,15 +384,17 @@ PY
 
 ensure_public_app_origins() {
   local env_file="${1:-$ENV_FILE}"
-  local allowed_origins="${2:-${MARKINA_PUBLIC_APP_ORIGINS:-}}"
+  local allowed_origins="${2-${MARKINA_PUBLIC_APP_ORIGINS:-}}"
   local key="PUBLIC_APP_ORIGINS" normalized occurrences temp_file line replaced=0
 
-  [[ -n "$allowed_origins" ]] || fail "MARKINA_PUBLIC_APP_ORIGINS é obrigatória durante a migração de domínio"
   normalized="$({ PUBLIC_ORIGINS_VALUE="$allowed_origins" python3 - <<'PY'
 import os
 from urllib.parse import urlsplit
 
 raw = os.environ["PUBLIC_ORIGINS_VALUE"]
+if not raw:
+    print("")
+    raise SystemExit(0)
 origins = []
 for candidate in raw.split(","):
     origin = candidate.strip()
@@ -426,26 +428,36 @@ PY
 
   occurrences="$(grep -c "^${key}=" "$env_file" || true)"
   [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
-  if [[ "$occurrences" -eq 1 && "$(grep "^${key}=" "$env_file")" == "$key=$normalized" ]]; then
-    echo "$key já corresponde às origens temporárias autorizadas; ambiente preservado"
+  if [[ "$occurrences" -eq 1 && -n "$normalized" && "$(grep "^${key}=" "$env_file")" == "$key=$normalized" ]]; then
+    echo "$key já corresponde às origens adicionais autorizadas; ambiente preservado"
+    return 0
+  fi
+  if [[ "$occurrences" -eq 0 && -z "$normalized" ]]; then
+    echo "$key já está ausente; ambiente preservado"
     return 0
   fi
   temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
   chmod 600 "$temp_file"
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" == "${key}="* ]]; then
-      printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
       replaced=1
+      if [[ -n "$normalized" ]]; then
+        printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
+      fi
     else
       printf '%s\n' "$line" >> "$temp_file"
     fi
   done < "$env_file"
-  if [[ "$replaced" -eq 0 ]]; then
+  if [[ "$replaced" -eq 0 && -n "$normalized" ]]; then
     printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
   fi
   mv "$temp_file" "$env_file"
   chmod 600 "$env_file"
-  echo "$key sincronizada com a lista temporária autorizada de homologação"
+  if [[ -n "$normalized" ]]; then
+    echo "$key sincronizada com as origens HTTPS adicionais autorizadas"
+  else
+    echo "$key removida para usar somente a origem canônica"
+  fi
 }
 
 record_predeploy_inventory() {

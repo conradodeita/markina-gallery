@@ -26,6 +26,10 @@ O workflow encaminha somente código revisado de manutenção. A imagem API usad
 
 Antes de execute, revisar o inventário novo, os itens preservados e a autorização registrada. Há uma breve pausa exclusiva da API/workers Markina. Evolution, banco, Redis, Nginx Proxy Manager e projetos vizinhos permanecem ativos. O wrapper compara IDs, imagens, início e estado dos três containers Evolution antes/depois. Todos os writers inventariados (incluindo RAW, preview e Gemma) precisam estar parados antes da exclusão.
 
+## Revisão humana do resultado
+
+Em 13/10/2026, o proprietário revisou a evidência de zero dados/mídia operacionais e dumps, conta única, preservação de configurações/marca/Evolution e acesso autenticado pelo domínio novo, e respondeu `Aprovo o resultado`. A spec principal `deployment-operations/owner-reset` foi sincronizada e validada estritamente (20 specs aprovadas). PR #173 foi integrado em `develop` como `97d24167307f4bdcd3dccb5f317e3b03909f4cf0` depois do CI `38480800131` passar integralmente; `deploy-homolog` foi ignorado. O CI de push `38485940792` recebeu cancelamento antes de qualquer job remoto, pois a aplicação já publicada e a configuração não precisavam ser implantadas. Nenhuma segunda limpeza foi executada ou é necessária.
+
 ## Falha e retomada
 
 Se execute falhar, não declarar rollback. Os writers permanecem pausados e seus IDs originais ficam em `/var/lib/markina-gallery/owner-reset/pending.json`, junto do SHA/owner, sem dados de negócio. Inspecionar o resultado sanitizado e a fase (`preflight` ou `database_committed`). Para retomar, repetir o mesmo procedimento com o mesmo proprietário/SHA: as exclusões são idempotentes e as configurações já preservadas são novamente conferidas.
