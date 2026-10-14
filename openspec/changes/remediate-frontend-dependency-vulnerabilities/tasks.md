@@ -7,5 +7,5 @@
 
 ## Publicação e operação
 
-- [ ] 3.1 Publicar a branch de correção em PR para `develop` e acompanhar todos os checks de CI. Evidência: URL do PR e resultado final dos checks.
-- [ ] 3.2 Atualizar a aplicação em produção somente após o CI e revisão exigida pelo processo. Bloqueio atual: o inventário remoto não pôde ser confirmado; a conexão SSH somente-leitura ao servidor `132.145.193.169` foi recusada por chave pública. Não iniciar deploy com o inventário incompleto.
+- [x] 3.1 Publicar a branch de correção em PR para `develop` e acompanhar todos os checks de CI. Evidência inicial do commit `406e376`: PR #177; frontend, backend, OpenSpec, gitleaks e runtime Gemma passaram; `deploy-homolog` foi ignorado em evento pull_request. Os achados restantes no lint de frontend são avisos existentes, não falhas.
+- [ ] 3.2 Atualizar somente o frontend após CI, revisão exigida pelo processo e execução de um plano `web`-only. O inventário anterior de `fix-facial-search-latency/deployment-plan.md` confirma que este host atende o domínio real e contém dados reais, apesar do nome `.env.homolog`; preservar todos os dados. A automação de merge em `develop` executa `deploy-homolog.sh`, que constrói `api`, `web`, `worker` e `migrate`, pode parar escritores e aplica migrations; não usar esse caminho para esta mudança estritamente de dependências do frontend.
