@@ -12,18 +12,22 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
+from app.acervo_context import owned_record
 from app.auth import (
+    FacialEmbeddingExperimentSetting,
     FacialJob,
     GalleryFacialPolicy,
     MediaDerivative,
     ParentGallery,
     PhotoAsset,
+    Tenant,
 )
 from app.facial.config import (
     FacialConfigurationError,
     FacialSettings,
     facial_settings_from_environment,
 )
+from app.facial.gemma_provider import GEMMA_MODEL_REVISION, GEMMA_MODEL_VERSION
 from app.facial.jobs import FacialJobError, FacialJobRepository
 from app.facial.policy import FacialPolicyError, ensure_automatic_policy
 from app.facial.rollout import rollout_is_active
@@ -102,9 +106,19 @@ def enqueue_photo_index_if_eligible(
 ) -> FacialJob | None:
     """Enfileira um único evento; jamais torna a prévia dependente da face."""
 
+    from app.media import safe_derivative_path
+    photo = owned_record(db, PhotoAsset, photo.id, tenant_id=photo.tenant_id)
+    if photo is None or derivative.tenant_id != photo.tenant_id or derivative.photo_asset_id != photo.id:
+        raise FacialJobError("Origem facial indisponível.")
+    if derivative_path.resolve() != safe_derivative_path(derivative):
+        raise FacialJobError("Prévia facial indisponível.")
     from app.facial.lifecycle import analysis_for
+    from app.folder_processing import facial_processing_allowed
 
-    if analysis_for(db, photo.id):
+    if not facial_processing_allowed(db, photo.folder_id, tenant_id=photo.tenant_id):
+        return None
+
+    if analysis_for(db, photo.id, tenant_id=photo.tenant_id):
         return None  # opt-in persistido: nunca reescaneia prévia, mesmo após rollback da flag
 
     try:
@@ -119,10 +133,11 @@ def enqueue_photo_index_if_eligible(
             db,
             settings=active,
             parent_gallery_id=photo.parent_gallery_id,
-        ):
+         tenant_id=photo.tenant_id):
             return None
         protected_preview_ready = db.scalar(
             select(MediaDerivative.id).where(
+                MediaDerivative.tenant_id == photo.tenant_id,
                 MediaDerivative.photo_asset_id == photo.id,
                 MediaDerivative.variant == CLIENT_PRESENTATION_VARIANT,
                 MediaDerivative.status == "ready",
@@ -132,6 +147,7 @@ def enqueue_photo_index_if_eligible(
             return None
         policy, _changed = ensure_automatic_policy(
             db,
+            tenant_id=photo.tenant_id,
             parent_gallery_id=photo.parent_gallery_id,
             settings=active,
         )
@@ -140,6 +156,7 @@ def enqueue_photo_index_if_eligible(
             item, _created = (repository or FacialJobRepository()).enqueue(
                 db,
                 kind="index",
+                tenant_id=photo.tenant_id,
                 idempotency_key=index_idempotency_key(
                     environment=active.environment,
                     gallery_id=photo.parent_gallery_id,
@@ -156,6 +173,9 @@ def enqueue_photo_index_if_eligible(
                 quality_version=policy.quality_version,
                 preview_fingerprint=fingerprint,
             )
+        enqueue_gemma_index_if_eligible(
+            db, photo, policy, fingerprint=fingerprint, settings=active, repository=repository
+        )
         return item
     except (
         FacialConfigurationError,
@@ -168,18 +188,73 @@ def enqueue_photo_index_if_eligible(
         return None
 
 
+def enqueue_gemma_index_if_eligible(
+    db: Session, photo: PhotoAsset, policy: GalleryFacialPolicy, *,
+    fingerprint: str, settings: FacialSettings,
+    repository: FacialJobRepository | None = None,
+    idempotency_key: str | None = None,
+) -> None:
+    """Fila opcional isolada, compartilhada pelos caminhos legado e high-res."""
+    experiment = db.get(FacialEmbeddingExperimentSetting, 1)
+    gallery = owned_record(
+        db, ParentGallery, photo.parent_gallery_id, tenant_id=photo.tenant_id
+    )
+    if (
+        settings.environment.lower() not in {"prod", "production"}
+        and experiment is not None
+        and experiment.enabled
+        and experiment.mode == "shadow"
+        and experiment.model_revision == GEMMA_MODEL_REVISION
+        and experiment.enabled_since is not None
+        and gallery is not None
+        and gallery.created_at is not None
+        and gallery.created_at > experiment.enabled_since
+    ):
+        # O índice principal SFace é independente; uma falha na fila experimental
+        # não deve desfazer nem ocultar o job de produto já enfileirado.
+        try:
+            with db.begin_nested():
+                (repository or FacialJobRepository()).enqueue(
+                    db,
+                    kind="index_gemma",
+                    tenant_id=photo.tenant_id,
+                    idempotency_key=idempotency_key or index_idempotency_key(
+                        environment=settings.environment,
+                        gallery_id=photo.parent_gallery_id,
+                        photo_id=photo.id,
+                        model_version=GEMMA_MODEL_VERSION,
+                        quality_version=policy.quality_version,
+                        index_generation=policy.index_generation,
+                        fingerprint=fingerprint,
+                    ),
+                    parent_gallery_id=photo.parent_gallery_id,
+                    derived_gallery_id=photo.derived_gallery_id,
+                    photo_asset_id=photo.id,
+                    model_version=GEMMA_MODEL_VERSION,
+                    quality_version=policy.quality_version,
+                    preview_fingerprint=fingerprint,
+                )
+        except (FacialJobError, SQLAlchemyError, OSError) as error:
+            logger.warning("Indexação shadow Gemma ignorada: %s", type(error).__name__)
+
+
 def enqueue_gallery_backfill_page(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
+    folder_id: UUID | None = None,
     derivatives_root: Path,
     cursor: UUID | None = None,
+    end_cursor: UUID | None = None,
     limit: int = 100,
     settings: FacialSettings | None = None,
     repository: FacialJobRepository | None = None,
 ) -> BackfillPage:
     """Varre uma página somente quando chamada por reconciliação/retentativa."""
 
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialJobError("Galeria indisponível.")
     if not 1 <= limit <= 500:
         raise FacialJobError("Página de backfill facial inválida.")
     protected_preview = aliased(MediaDerivative)
@@ -198,6 +273,9 @@ def enqueue_gallery_backfill_page(
             & (protected_preview.status == "ready"),
         )
         .where(
+            PhotoAsset.tenant_id == tenant_id,
+            MediaDerivative.tenant_id == tenant_id,
+            protected_preview.tenant_id == tenant_id,
             PhotoAsset.parent_gallery_id == parent_gallery_id,
             PhotoAsset.derived_gallery_id.is_(None),
             PhotoAsset.available.is_(True),
@@ -207,6 +285,10 @@ def enqueue_gallery_backfill_page(
     )
     if cursor is not None:
         query = query.where(PhotoAsset.id > cursor)
+    if end_cursor is not None:
+        query = query.where(PhotoAsset.id <= end_cursor)
+    if folder_id is not None:
+        query = query.where(PhotoAsset.folder_id == folder_id)
     rows = list(db.execute(query))
     page = rows[:limit]
     queued = 0
@@ -241,6 +323,7 @@ def reconcile_gallery_index(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     derivatives_root: Path,
     settings: FacialSettings,
     page_size: int = 100,
@@ -251,7 +334,7 @@ def reconcile_gallery_index(
         db,
         settings=settings,
         parent_gallery_id=parent_gallery_id,
-    ):
+     tenant_id=tenant_id):
         raise FacialJobError("Rollout facial ativo não encontrado para a galeria.")
     pages = scanned = eligible = 0
     cursor = None
@@ -259,6 +342,7 @@ def reconcile_gallery_index(
         page = enqueue_gallery_backfill_page(
             db,
             parent_gallery_id=parent_gallery_id,
+            tenant_id=tenant_id,
             derivatives_root=derivatives_root,
             cursor=cursor,
             limit=page_size,
@@ -290,9 +374,11 @@ def reconcile_automatic_gallery_policies(
     if not settings.enabled:
         return AutomaticReconciliation(0, 0, 0, 0)
     gallery_ids = list(
-        db.scalars(
-            select(ParentGallery.id)
+        db.execute(
+            select(ParentGallery.id, ParentGallery.tenant_id)
+            .join(Tenant, Tenant.id == ParentGallery.tenant_id)
             .where(
+                Tenant.status == "active",
                 ParentGallery.active.is_(True),
                 ParentGallery.lifecycle_status == "active",
             )
@@ -300,15 +386,17 @@ def reconcile_automatic_gallery_policies(
         )
     )
     changed_count = scanned_photos = queued_jobs = 0
-    for gallery_id in gallery_ids:
+    for gallery_id, tenant_id in gallery_ids:
         if not rollout_is_active(
             db,
             settings=settings,
             parent_gallery_id=gallery_id,
+            tenant_id=tenant_id,
         ):
             continue
         _policy, changed = ensure_automatic_policy(
             db,
+            tenant_id=tenant_id,
             parent_gallery_id=gallery_id,
             settings=settings,
         )
@@ -320,6 +408,7 @@ def reconcile_automatic_gallery_policies(
             page = enqueue_gallery_backfill_page(
                 db,
                 parent_gallery_id=gallery_id,
+                tenant_id=tenant_id,
                 derivatives_root=derivatives_root,
                 cursor=cursor,
                 limit=page_size,

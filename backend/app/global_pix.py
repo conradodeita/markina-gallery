@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import GlobalPixSettings
 from app.pix import (
     PixCodeError,
@@ -32,7 +33,7 @@ def normalize_configuration(configuration: dict | None) -> dict:
         receiver_city=configuration.get("receiver_city"),
     )
     if not normalized:
-        raise PixCodeError("Informe uma chave PIX ou copia e cola, ou escolha remover o PIX.")
+        raise PixCodeError("Informe uma chave PIX ou copia e cola válido para substituir os dados.")
     # Nome/cidade do BR Code pertencem ao próprio código, nunca a campos concorrentes.
     fields = {}
     position = 0
@@ -58,6 +59,8 @@ def normalize_configuration(configuration: dict | None) -> dict:
 
 
 def canonical_proposal(configuration: dict | None, version: int) -> str:
+    if configuration is None:
+        raise PixCodeError("O PIX não pode ser removido. Use a substituição dos dados de recebimento.")
     return json.dumps(
         {"configuration": normalize_configuration(configuration), "version": version},
         ensure_ascii=False,
@@ -66,8 +69,11 @@ def canonical_proposal(configuration: dict | None, version: int) -> str:
     )
 
 
-def global_pix_settings(db: Session) -> GlobalPixSettings | None:
-    return db.scalar(select(GlobalPixSettings).where(GlobalPixSettings.singleton == 1))
+def global_pix_settings(db: Session, *, tenant_id: UUID) -> GlobalPixSettings | None:
+    require_active_owner(db, tenant_id)
+    return db.scalar(select(GlobalPixSettings).where(
+        GlobalPixSettings.tenant_id == tenant_id, GlobalPixSettings.singleton == 1,
+    ).execution_options(populate_existing=True))
 
 
 def pix_payload(settings: GlobalPixSettings | None, *, editable: bool = False) -> dict:
@@ -103,17 +109,27 @@ def pix_payload(settings: GlobalPixSettings | None, *, editable: bool = False) -
     return result
 
 
-def apply_configuration(db: Session, *, admin_id: UUID, proposed: dict) -> GlobalPixSettings:
-    settings = global_pix_settings(db)
+def apply_configuration(db: Session, *, admin_id: UUID, proposed: dict, tenant_id: UUID) -> GlobalPixSettings:
+    from app.payment_availability import lock_payment_account
+    from app.tenancy import require_admin_tenant
+
+    lock_payment_account(db, tenant_id)
+    if require_admin_tenant(db, admin_id).id != tenant_id:
+        raise PixCodeError("Configuração indisponível para esta conta.")
+    settings = global_pix_settings(db, tenant_id=tenant_id)
     version = settings.version if settings else 0
     if version != proposed["version"]:
         raise PixCodeError("O PIX foi alterado em outra sessão. Recarregue e confirme novamente.")
+    configuration = proposed["configuration"]
+    if not configuration or configuration.get("status") != "active" or not configuration.get("copy_paste"):
+        raise PixCodeError("O PIX não pode ser removido. Use a substituição dos dados de recebimento.")
+    normalize_pix_copy_paste(configuration["copy_paste"])
     if not settings:
-        settings = GlobalPixSettings(admin_user_id=admin_id)
+        settings = GlobalPixSettings(tenant_id=tenant_id, admin_user_id=admin_id)
         db.add(settings)
     elif settings.admin_user_id != admin_id:
         raise PixCodeError("Configuração indisponível para esta conta.")
-    for key, value in proposed["configuration"].items():
+    for key, value in configuration.items():
         setattr(settings, key, value)
     settings.version = version + 1
     settings.legacy_group_count = 0
@@ -129,8 +145,8 @@ def proposal_preview(target: str) -> dict:
     ))
 
 
-def checkout_pix(db: Session) -> GlobalPixSettings:
-    settings = global_pix_settings(db)
+def checkout_pix(db: Session, *, tenant_id: UUID) -> GlobalPixSettings:
+    settings = global_pix_settings(db, tenant_id=tenant_id)
     if not settings or settings.status != "active" or not settings.copy_paste:
         raise PixCodeError(
             "O pagamento PIX está temporariamente indisponível. Sua seleção foi mantida."

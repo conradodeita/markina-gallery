@@ -2,13 +2,15 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
-vi.mock("./preview-adjustment-panel", () => ({ default: ({ galleryId }: { galleryId: string }) => <div data-testid="gallery-preview-adjustment" data-gallery-id={galleryId} /> }));
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), useParams: () => ({ sourceId: "source-1" }) }));
+
+import * as sourceUpload from "../../upload-jpeg";
 
 import NewGalleryPage from "./new/page";
 import GalleryEditor, { photoBulkDeleteBatches } from "./sources/[sourceId]/edit/gallery-editor";
 import SourceGalleryDetailPage from "./sources/[sourceId]/page";
+import { ClientGalleryCard, type ClientGalleryRow } from "./client-gallery-card";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -30,9 +32,135 @@ const editor = {
   actions: { can_create_folder: true, can_upload: true },
 };
 
+it("preserva modo protegido legado ao salvar outro campo", async () => {
+  const fetcher = vi.fn((path: string, init?: RequestInit) => init?.method === "PATCH"
+    ? response({}) : response(path.endsWith("/editor")
+      ? { ...editor, gallery: { ...editor.gallery, access_mode: "collective_protected" } } : {}));
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="ajustes" />);
+  expect(await screen.findByText(/Modo protegido legado:/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([_path, init]) => init?.method === "PATCH")).toBe(true));
+  const payload = JSON.parse(fetcher.mock.calls.find(([_path, init]) => init?.method === "PATCH")![1]!.body as string);
+  expect(payload).not.toHaveProperty("access_mode");
+});
+
 function response(value: object, status = 200) {
   return Promise.resolve(new Response(status === 204 ? null : JSON.stringify(value), { status, headers: { "content-type": "application/json" } }));
 }
+
+it("exige preço positivo com cobrança e permite salvar seleção externa", async () => {
+  const sales = { available: true, capabilities: [], payment_required: true, pricing_mode: "fixed",
+    fixed_unit_price_cents: 0, progressive_pricing_preset_id: null, pricing_snapshot: null,
+    pricing_review_required: false, tiers: [], pix: { status: "unconfigured", checkout_available: false },
+    sales_message: "", selection_duration_days: 14, favorites_enabled: false, comments_enabled: false };
+  const fetcher = vi.fn((path: string, init?: RequestInit) => response(path.endsWith("/editor") ? editor
+    : init?.method === "PUT" ? { ...sales, ...JSON.parse(String(init.body)) } : sales));
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="vendas" />);
+  const checkbox = await screen.findByRole("checkbox", { name: "Pagamento obrigatório?" });
+  expect((checkbox as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+  expect(fetcher.mock.calls.some(([_path, init]) => init?.method === "PUT")).toBe(false);
+  fireEvent.click(checkbox);
+  expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("required", false);
+  fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([_path, init]) => init?.method === "PUT")).toBe(true));
+  const saved = JSON.parse(String(fetcher.mock.calls.find(([_path, init]) => init?.method === "PUT")![1]!.body));
+  expect(saved.payment_required).toBe(false);
+  expect(saved.pricing_mode).toBeNull();
+});
+
+it("mantém o Acervo da cliente independente e inicialmente fechado em dois cards", async () => {
+  const people: ClientGalleryRow[] = ["Ana", "Bia"].map((name, index) => ({
+    client_id: `client-${index + 1}`, name, phone: "+5511999999999",
+    registration_status: "active", derived_gallery_id: null,
+    available_count: 0, selected_count: index === 0 ? 1 : 0, purchased_count: 0,
+    gallery_status: "active", commercial_status: "no_order",
+  }));
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (!path.split("?")[0].endsWith("/folders") || init?.method) throw new Error("Chamada inesperada");
+    return response({ folders: [] });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<>{people.map((person) => <ClientGalleryCard
+    key={person.client_id} person={person} parentGalleryId="source-1" linkedClients={people}
+  />)}</>);
+  const cards = people.map((person) => screen.getByRole("article", { name: `Cliente ${person.name}` }));
+  const toggles = cards.map((card) => within(card).getByRole("button", { name: "Acervo da cliente" }));
+  expect(toggles.map((toggle) => toggle.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
+  expect(fetchMock).not.toHaveBeenCalled();
+  fireEvent.click(toggles[0]);
+  await waitFor(() => expect(toggles[0].getAttribute("aria-expanded")).toBe("true"));
+  expect(within(cards[0]).getByRole("link", { name: "Baixar seleção atual (CSV)" }).getAttribute("href")).toBe(
+    "/api/admin/parent-galleries/source-1/clients/client-1/selection/export.csv",
+  );
+  expect(toggles[1].getAttribute("aria-expanded")).toBe("false");
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/admin/parent-galleries/source-1/clients/client-1/folders",
+    expect.objectContaining({ credentials: "same-origin" }),
+  );
+  expect(fetchMock.mock.calls.every(([, init]) => !init || init.method === undefined)).toBe(true);
+  fireEvent.click(toggles[0]);
+  expect(toggles[0].getAttribute("aria-expanded")).toBe("false");
+});
+
+it("bloqueia apenas a cliente do card aberto", async () => {
+  const people: ClientGalleryRow[] = ["Ana", "Bia"].map((name, index) => ({
+    client_id: `client-${index + 1}`, name, phone: "+5511999999999",
+    registration_status: "active", derived_gallery_id: null,
+    available_count: 0, selected_count: 0, purchased_count: 0,
+    gallery_status: "active", access_status: "active",
+  }));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
+    if (path.endsWith("/access") && init?.method === "PATCH") return response({ status: "blocked" });
+    throw new Error("Chamada inesperada");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<>{people.map((person) => <ClientGalleryCard key={person.client_id}
+    person={person} parentGalleryId="source-1" linkedClients={people} />)}</>);
+  const ana = screen.getByRole("article", { name: "Cliente Ana" });
+  const bia = screen.getByRole("article", { name: "Cliente Bia" });
+  fireEvent.click(within(ana).getByRole("button", { name: "Acervo da cliente" }));
+  fireEvent.click(await within(ana).findByRole("button", { name: "Bloquear acesso" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/api/admin/parent-galleries/source-1/clients/client-1/access",
+    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "blocked" }) }),
+  ));
+  expect(within(ana).getByText("Acesso individual bloqueado.")).toBeTruthy();
+  expect(within(bia).getByRole("button", { name: "Acervo da cliente" }).getAttribute("aria-expanded")).toBe("false");
+});
+
+it("oferece exclusão protegida de foto e pasta no Acervo da cliente", async () => {
+  const person: ClientGalleryRow = {
+    client_id: "client-1", name: "Ana", phone: "+5511999999999",
+    registration_status: "active", derived_gallery_id: null,
+    available_count: 1, selected_count: 0, purchased_count: 0,
+    gallery_status: "active",
+  };
+  let deletedPhoto = false;
+  let deletedFolder = false;
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/clients/client-1/folders")) return response({ folders: deletedFolder ? [] : [{ id: "folder-1", name: "Retratos", status: "released", photo_count: deletedPhoto ? 0 : 1, assigned_client_ids: ["client-1"] }] });
+    if (path.endsWith("/photo-folders/folder-1/photos/photo-1") && init?.method === "DELETE") { deletedPhoto = true; return response({}, 204); }
+    if (path.endsWith("/photo-folders/folder-1") && init?.method === "DELETE") { deletedFolder = true; return response({}, 204); }
+    if (path.endsWith("/photo-folders/folder-1/photos")) return response({ photos: deletedPhoto ? [] : [{ id: "photo-1", name: "Retrato", preview_url: "/preview", publication_state: "available", can_delete: true }] });
+    throw new Error("Chamada inesperada");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ClientGalleryCard person={person} parentGalleryId="source-1" linkedClients={[person]} />);
+  const card = screen.getByRole("article", { name: "Cliente Ana" });
+  fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
+  fireEvent.click(await within(card).findByRole("button", { name: /Retratos/ }));
+  fireEvent.click(await within(card).findByRole("button", { name: "Excluir foto" }));
+  await waitFor(() => expect(deletedPhoto).toBe(true));
+  fireEvent.click(within(card).getByRole("button", { name: "Excluir pasta" }));
+  await waitFor(() => expect(deletedFolder).toBe(true));
+  expect(within(card).queryByRole("button", { name: /Retratos/ })).toBeNull();
+});
 
 describe("editor administrativo de galeria", () => {
   it("decide no card do editor e revalida a mesma compra após refoco", async () => {
@@ -40,12 +168,14 @@ describe("editor administrativo de galeria", () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/decision") && init?.method === "POST") { confirmed = true; return response({ status: "confirmed" }); }
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [] });
       if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [{ client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: confirmed ? 0 : 1, purchased_count: confirmed ? 1 : 0, gallery_status: "active", commercial_status: confirmed ? "paid" : "pending_review", financial_orders: [{ id: "communication-1", order_id: "order-1", gallery_name: "Festa escolar", quantity: 1, total_cents: 700, created_at: "2026-09-19T12:00:00Z", status: confirmed ? "confirmed" : "pending_review", can_decide: !confirmed, can_correct: confirmed }] }] });
       return response({ clients: [], members: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Acervo da cliente" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirmar pagamento" }));
     expect(await screen.findByRole("button", { name: "Corrigir confirmação" })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/payment-communications/communication-1/decision", expect.objectContaining({ body: JSON.stringify({ decision: "confirmed" }) }));
@@ -57,13 +187,13 @@ describe("editor administrativo de galeria", () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (init?.method === "POST") return response({ id: "folder-1", status: "preparing", position: 0 }, 201);
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       return response({ clients: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
-    expect(screen.getByTestId("gallery-preview-adjustment").getAttribute("data-gallery-id")).toBe("source-1");
+    expect(screen.queryByTestId("gallery-preview-adjustment")).toBeNull();
     expect(screen.getAllByRole("link", { name: /Ajustes|Vendas|Detalhes|Imagens|Clientes/ })).toHaveLength(5);
     expect(screen.getByRole("link", { name: /Imagens/ }).getAttribute("aria-current")).toBe("step");
     fireEvent.change(screen.getByLabelText("Nome da nova pasta"), { target: { value: "Apresentação" } });
@@ -100,12 +230,11 @@ describe("editor administrativo de galeria", () => {
       "/api/admin/parent-galleries/source-1/settings",
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"access_mode":"standard"') }),
     ));
-    expect(screen.getByRole("option", { name: /Coletivo protegido/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /Coletivo protegido/ })).toBeNull();
     const accessHints = screen.getByRole("region", { name: "Como funcionam os modos de acesso" });
     expect(within(accessHints).getByText("Padrão")).toBeTruthy();
     expect(within(accessHints).getByText("Somente convite individual")).toBeTruthy();
-    expect(within(accessHints).getByText("Coletivo protegido")).toBeTruthy();
-    expect(within(accessHints).getByText(/não ativa reconhecimento facial/i)).toBeTruthy();
+    expect(within(accessHints).getByText(/pastas comuns e somente as exclusivas/)).toBeTruthy();
     expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/vendas");
   });
 
@@ -151,6 +280,7 @@ describe("editor administrativo de galeria", () => {
     const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 3, gallery_status: "no_selection", commercial_status: "paid" };
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [] });
       if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
       return response({ clients: [{ id: "client-1", name: "Ana Cliente", phone: "+5511999999999" }] });
     }));
@@ -161,14 +291,36 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("button", { name: "Editar cadastro de Ana Cliente" })).toBeTruthy();
     const card = screen.getByRole("article", { name: "Cliente Ana Cliente" });
     expect(within(card).getByText("Sem seleção")).toBeTruthy();
-    expect(within(card).getByText("Fotos no acervo privado")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Acervo da cliente" }).getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
+    expect(within(card).getByText("Fotos disponíveis")).toBeTruthy();
     expect(within(card).getByText("Fotos selecionadas")).toBeTruthy();
     expect(within(card).getByText("Fotos compradas")).toBeTruthy();
+    expect(within(card).getByRole("link", { name: "Baixar fotos compradas" }).getAttribute("href")).toBe(
+      "/api/admin/parent-galleries/source-1/clients/client-1/selection/export.html",
+    );
     expect(within(card).getByText("Pago")).toBeTruthy();
     expect(within(card).getByText("Sem seleção")).toBeTruthy();
-    const galleryLink = within(card).getByRole("link", { name: "Ana Cliente" });
-    galleryLink.focus();
-    expect(document.activeElement).toBe(galleryLink);
+    expect(within(card).queryByRole("link", { name: "Ana Cliente" })).toBeNull();
+  });
+
+  it("renderiza os cards na ordem recente recebida pela projeção", async () => {
+    const linkedClients = [
+      { client_id: "recent", name: "Acesso recente", phone: "+5511999999901", registration_status: "active", derived_gallery_id: "derived-recent", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection", last_access_at: "2026-10-02T00:00:00Z" },
+      { client_id: "older", name: "Acesso anterior", phone: "+5511999999902", registration_status: "active", derived_gallery_id: "derived-older", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection", last_access_at: "2026-10-01T00:00:00Z" },
+    ];
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: linkedClients });
+      if (path.endsWith("/clients/recent/folders") || path.endsWith("/clients/older/folders")) return response({ folders: [] });
+      return response({ clients: [] });
+    }));
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    const recentCard = await screen.findByRole("article", { name: "Cliente Acesso recente" });
+    const previousCard = screen.getByRole("article", { name: "Cliente Acesso anterior" });
+    expect(recentCard.parentElement?.className).toContain("gallery-linked-clients");
+    expect(recentCard.compareDocumentPosition(previousCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(recentCard).getByRole("button", { name: "Acervo da cliente" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("edita o nome da mesma cliente e recarrega a lista", async () => {
@@ -200,7 +352,7 @@ describe("editor administrativo de galeria", () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
-      if (path === "/api/auth/client/challenge" && init?.method === "POST") return response({ challenge_id: "challenge-phone", message: "Código enviado." }, 202);
+      if (path === "/api/admin/clients/client-2/phone/challenge" && init?.method === "POST") return response({ challenge_id: "challenge-phone", message: "Código enviado." }, 202);
       if (path === "/api/admin/clients/client-2/phone" && init?.method === "POST") return response({ id: "client-2" });
       if (path.startsWith("/api/admin/clients")) return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
       return response({ photos: [] });
@@ -213,8 +365,8 @@ describe("editor administrativo de galeria", () => {
     fireEvent.change(within(dialog).getByLabelText("Número do WhatsApp"), { target: { value: "+55 11 97777-6666" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Enviar código" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/auth/client/challenge",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ full_name: "Beatriz Cliente", phone: "+55 11 97777-6666" }) }),
+      "/api/admin/clients/client-2/phone/challenge",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ phone_e164: "+55 11 97777-6666" }) }),
     ));
     fireEvent.change(await within(dialog).findByLabelText("Código enviado ao novo WhatsApp"), { target: { value: "123456" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Salvar cadastro" }));
@@ -341,151 +493,95 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("article", { name: "Cliente Cliente Pendente" })).toBeTruthy();
   });
 
-  it("cria galeria privada vazia sem montagem administrativa por catálogo", async () => {
-    const linkedClient = { client_id: "client-1", name: "Cliente Administrativa", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+  it("abre e recolhe o Acervo da cliente sem escrita e cria pasta restrita no card", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    let folderCreated = false;
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/available-photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", folder_name: "Lote liberado", preview_url: "/preview" }] });
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path === "/api/admin/derived-galleries" && init?.method === "POST") return response({ id: "private-1", selected_count: 0 }, 201);
-      return response({ clients: [] });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
-    expect(await screen.findByRole("dialog", { name: "Galeria privada de Cliente Administrativa" })).toBeTruthy();
-    expect(screen.queryByRole("checkbox")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Criar galeria vazia" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/derived-galleries",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ parent_gallery_id: "source-1", client_id: "client-1", name: "Festa escolar · Cliente Administrativa", photo_ids: [], create_empty_private: true }) }),
-    ));
-    expect(await screen.findByText(/carregar fotos do dispositivo/)).toBeTruthy();
-  });
-
-  it("permite criar a galeria privada mesmo sem fotos públicas publicadas", async () => {
-    const linkedClient = { client_id: "client-1", name: "Cliente Sem Fotos", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    vi.stubGlobal("fetch", vi.fn((path: string) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      return response({ clients: [] });
-    }));
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
-    const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Sem Fotos" });
-    expect(within(dialog).getByText(/será criada vazia/)).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: "Criar galeria vazia" })).toBeTruthy();
-  });
-
-  it("mantém no modal o erro ao disponibilizar fotos", async () => {
-    const linkedClient = { client_id: "client-1", name: "Cliente Bloqueada", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/available-photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", folder_name: "Publicadas", preview_url: "/preview" }] });
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path === "/api/admin/derived-galleries" && init?.method === "POST") return response({ detail: "A cliente já possui uma galeria privada nesta Galeria pública." }, 409);
-      return response({ clients: [] });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Criar galeria privada" }));
-    fireEvent.click(screen.getByRole("button", { name: "Criar galeria vazia" }));
-    const dialog = await screen.findByRole("dialog", { name: "Galeria privada de Cliente Bloqueada" });
-    expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "A cliente já possui uma galeria privada nesta Galeria pública.");
-  });
-
-  it("separa vinculados, busca e novo cadastro em blocos responsivos", async () => {
-    vi.stubGlobal("fetch", vi.fn((path: string) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.includes("/parent-galleries/source-1/clients")) return response({ clients: [] });
-      return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
-    }));
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-    expect(await screen.findByRole("region", { name: "Clientes vinculadas" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Vincular cliente" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Cadastrar e vincular" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Vincular Beatriz Cliente" })).toBeTruthy();
-    expect(screen.getByText("Nenhuma galeria privada criada")).toBeTruthy();
-  });
-
-  it("mostra e copia links permanentes sem oferecer regeneração e gerencia membros", async () => {
-    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 2, selected_count: 1, purchased_count: 0, gallery_status: "active" };
-    const member = { membership_id: "membership-1", client_id: "client-1", client_name: "Ana Cliente", phone_e164: "+5511999999999", status: "active", selected_count: 1, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" };
-    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboardWrite } });
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/clients/client-1/folders") && init?.method === "POST") { folderCreated = true; return response({ id: "folder-1" }, 201); }
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: folderCreated ? [{ id: "folder-1", name: "Retratos", status: "preparing", photo_count: 0, assigned_client_ids: ["client-1"] }] : [] });
       if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
       if (path === "/api/admin/clients") return response({ clients: [] });
-      if (path.endsWith("/public-link")) return response({ status: "active", capability_id: "public-1", expires_at: null, secret_available: true, link: "https://example.test/a/public" });
-      if (path.endsWith("/derived-galleries/derived-1/link")) return response({ status: "active", capability_id: "private-1", expires_at: null, secret_available: true, link: "https://example.test/a/private" });
-      if (path.endsWith("/members/client-1/block") && init?.method === "POST") return response({ ...member, status: "blocked" });
-      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [member] });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-
-    const publicInput = await screen.findByLabelText("Link da Galeria pública") as HTMLInputElement;
-    expect(publicInput.value).toBe("https://example.test/a/public");
-    expect(await screen.findByLabelText("Link privado de Ana Cliente")).toHaveProperty("value", "https://example.test/a/private");
-    expect(screen.getByText("Ana Cliente", { selector: ".private-member-row strong" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("https://example.test/a/public"));
-    expect(screen.queryByRole("button", { name: /Regenerar/ })).toBeNull();
-    expect(screen.getByText(/permanece o mesmo enquanto a galeria existir/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Bloquear" }));
+    const card = await screen.findByRole("article", { name: "Cliente Ana Cliente" });
+    const toggle = within(card).getByRole("button", { name: "Acervo da cliente" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(within(card).queryByLabelText("Nova pasta restrita")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(await within(card).findByLabelText("Nova pasta restrita")).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    fireEvent.change(within(card).getByLabelText("Nova pasta restrita"), { target: { value: "Retratos" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Criar pasta" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/derived-galleries/derived-1/members/client-1/block",
+      "/api/admin/parent-galleries/source-1/clients/client-1/folders",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Retratos" }) }),
+    ));
+    expect(await within(card).findByRole("button", { name: /Retratos/ })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/derived-galleries"))).toBe(false);
+  });
+
+  it("mantém a pasta exclusiva e disponibiliza fotos prontas", async () => {
+    const linkedClients = ["Ana", "Beatriz"].map((name, index) => ({ client_id: `client-${index + 1}`, name, phone: `+551199999999${index}`, registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" }));
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/clients/client-1/folders")) return response({ folders: [{ id: "folder-1", name: "Retratos", status: "preparing", photo_count: 1, assigned_client_ids: ["client-1"] }] });
+      if (path.endsWith("/clients/client-2/folders")) return response({ folders: [] });
+      if (path.endsWith("/photo-folders/folder-1/processing")) return response({
+        folder_id: "folder-1", folder_name: "Retratos", preview_mode: "custom", facial_mode: "on",
+        preview_strength: 50, preview_exposure_tenths: 0,
+        effective_preview: { mode: "custom", enabled: true, strength: 50, exposure_tenths: 0 },
+        facial_available: false, facial_allowed: false, total_photos: 0,
+        preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0 },
+        facial_counts: { queued: 0, processing: 0, completed: 0, failed: 0 }, comparison_photo_id: null,
+      });
+      if (path.endsWith("/photo-folders/folder-1/photos")) return response({ photos: [] });
+      if (path.endsWith("/photo-folders/folder-1/publish") && init?.method === "POST") return response({ published_count: 1, pending_count: 0, failed_count: 0 });
+      if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: linkedClients });
+      if (path === "/api/admin/clients") return response({ clients: [] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="clientes" />);
+    const card = await screen.findByRole("article", { name: "Cliente Ana" });
+    fireEvent.click(within(card).getByRole("button", { name: "Acervo da cliente" }));
+    fireEvent.click(await within(card).findByRole("button", { name: /Retratos/ }));
+    expect(within(card).queryByLabelText("Adicionar cliente")).toBeNull();
+    expect(within(card).getByRole("link", { name: "Processamento da pasta" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens?folder=folder-1");
+    expect(fetchMock.mock.calls.some(([path, init]) => String(path).includes("/folders/folder-1/clients/") && init?.method === "POST")).toBe(false);
+    fireEvent.click(within(card).getByRole("button", { name: "Disponibilizar fotos prontas" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/photo-folders/folder-1/publish",
       expect.objectContaining({ method: "POST" }),
     ));
+    expect(await within(card).findByText(/1 foto\(s\) disponibilizada\(s\)/)).toBeTruthy();
   });
 
-  it("preserva a etapa e mostra conflito ao adicionar cliente já vinculada a outra privada", async () => {
-    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    const member = { membership_id: "membership-1", client_id: "client-1", client_name: "Ana Cliente", phone_e164: "+5511999999999", status: "active", selected_count: 0, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" };
-    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+  it("mantém apenas o link da galeria pública, sem criar ou buscar link privado", async () => {
+    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboardWrite } });
+    const fetchMock = vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
-      if (path === "/api/admin/clients") return response({ clients: [{ id: "client-2", name: "Beatriz Cliente", phone: "+5511888888888" }] });
-      if (path.endsWith("/public-link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
-      if (path.endsWith("/derived-galleries/derived-1/link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
-      if (path.endsWith("/derived-galleries/derived-1/members") && init?.method === "POST") return response({ detail: "A cliente já pertence a outra galeria privada desta origem." }, 409);
-      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [member] });
+      if (path.endsWith("/public-link")) return response({ status: "active", capability_id: "public-1", expires_at: null, secret_available: true, link: "https://example.test/a/public" });
+      if (path === "/api/admin/clients") return response({ clients: [] });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="clientes" />);
-
-    fireEvent.change(await screen.findByLabelText("Adicionar cliente à galeria de Ana Cliente"), { target: { value: "client-2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar membro" }));
-    expect(await screen.findByText("A cliente já pertence a outra galeria privada desta origem.")).toBeTruthy();
-    expect(screen.getByRole("article", { name: "Galeria privada Ana Cliente" })).toBeTruthy();
-  });
-
-  it("expõe carregamento e erro isolado da galeria privada", async () => {
-    const linkedClient = { client_id: "client-1", name: "Ana Cliente", phone: "+5511999999999", registration_status: "active", membership_status: "active", derived_gallery_id: "derived-1", available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "no_selection" };
-    let finishPrivateLink!: (value: Response) => void;
-    const pendingPrivateLink = new Promise<Response>((resolve) => { finishPrivateLink = resolve; });
-    vi.stubGlobal("fetch", vi.fn((path: string) => {
-      if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/parent-galleries/source-1/clients")) return response({ clients: [linkedClient] });
-      if (path.endsWith("/available-photos")) return response({ photos: [] });
-      if (path === "/api/admin/clients") return response({ clients: [] });
-      if (path.endsWith("/public-link")) return response({ status: "unavailable", capability_id: null, expires_at: null, secret_available: false, link: null });
-      if (path.endsWith("/derived-galleries/derived-1/link")) return pendingPrivateLink;
-      if (path.endsWith("/derived-galleries/derived-1/members")) return response({ members: [] });
-      return response({});
-    }));
-    render(<GalleryEditor sourceId="source-1" step="clientes" />);
-
-    expect(await screen.findByText("Carregando acesso")).toBeTruthy();
-    finishPrivateLink(new Response(JSON.stringify({ detail: "Falha ao consultar link privado." }), { status: 500, headers: { "content-type": "application/json" } }));
-    expect(await screen.findByText("Acesso indisponível")).toBeTruthy();
-    expect(screen.getByText("Falha ao consultar link privado.")).toBeTruthy();
+    const publicInput = await screen.findByLabelText("Link da Galeria pública") as HTMLInputElement;
+    expect(publicInput.value).toBe("https://example.test/a/public");
+    fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("https://example.test/a/public"));
+    expect(screen.queryByText(/galeria privada/i)).toBeNull();
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/derived-galleries"))).toBe(false);
   });
 
   it("mostra capacidade comercial indisponível sem inventar configuração", async () => {
@@ -525,7 +621,7 @@ describe("editor administrativo de galeria", () => {
     fireEvent.change(screen.getByLabelText("Valor unitário da foto"), { target: { value: "700000" } });
     expect(screen.getByLabelText("Valor unitário da foto")).toHaveProperty("value", expect.stringMatching(/7\.000,00/));
     expect(screen.queryByLabelText("Payload do QR Code")).toBeNull();
-    expect(screen.getByAltText("QR Code PIX global")).toBeTruthy();
+    expect(screen.getByAltText("QR Code PIX da sua conta")).toBeTruthy();
     expect(screen.queryByLabelText("Chave PIX ou copia e cola")).toBeNull();
     fireEvent.change(screen.getByLabelText("Mensagem comercial"), { target: { value: "Mensagem atualizada" } });
     fireEvent.change(screen.getByLabelText("Prazo padrão de seleção (dias)"), { target: { value: "21" } });
@@ -549,7 +645,7 @@ describe("editor administrativo de galeria", () => {
     expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toBeUndefined();
   });
 
-  it("permite avançar sem PIX e direciona sua configuração para a página global", async () => {
+  it("bloqueia cobrança sem meio e permite avançar no modo somente seleção", async () => {
     const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { status: "unconfigured", version: 0, checkout_available: false }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
     vi.stubGlobal("fetch", fetchMock);
@@ -558,11 +654,33 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByRole("link", { name: "Configurar PIX em Configurações" })).toHaveProperty("href", expect.stringContaining("/admin/settings#pix"));
     expect(screen.queryByLabelText("Chave PIX ou copia e cola")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    expect(await screen.findByText(/Pagamento obrigatório exige ao menos uma forma/)).toBeTruthy();
+    expect(push).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: "PUT" }));
+    fireEvent.click(screen.getByLabelText("Pagamento obrigatório?"));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/detalhes"));
   });
 
+  it("permite salvar cobrança obrigatória com somente cartão utilizável da conta", async () => {
+    const sales = { available: true, capabilities: [], payment_required: true,
+      payment_methods: { available: true, pix_available: false, card_available: true },
+      pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null,
+      pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [],
+      pix: { status: "unconfigured", version: 0, checkout_available: false },
+      sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="vendas" />);
+    expect(await screen.findByText("Recebimento disponível: Cartão de crédito.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/galleries/sources/source-1/edit/detalhes"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/parent-galleries/source-1/sales",
+      expect.objectContaining({ method: "PUT" }));
+  });
+
   it("preserva os dados editados e mostra o erro retornado ao falhar Vendas", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "Original", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, payment_methods: { available: true, pix_available: false, card_available: true }, sales_message: "Original", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : init?.method === "PUT" ? response({ detail: "As faixas devem ser contíguas." }, 422) : response(sales)));
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
     const message = await screen.findByLabelText("Mensagem comercial") as HTMLTextAreaElement;
@@ -574,7 +692,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("exige escolha e confirmação explícitas para converter preço legado", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "legacy_volume", fixed_unit_price_cents: null, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "legacy_volume" }, pricing_review_required: true, tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], payment_methods: { available: true, pix_available: false, card_available: true }, pricing_mode: "legacy_volume", fixed_unit_price_cents: null, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "legacy_volume" }, pricing_review_required: true, tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/pricing-presets")) return response({ presets: [] });
@@ -625,7 +743,7 @@ describe("editor administrativo de galeria", () => {
   it("abre a prévia protegida sem oferecer a foto de conteúdo como capa", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: "/admin/photo-assets/photo-1/watermarked-preview", released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: "/admin/photo-assets/photo-1/watermarked-preview", released_at: null }] });
       if (path.endsWith("/clients")) return response({ clients: [] });
       if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "FOTO_001.jpg", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", status: "completed", error: null, can_delete: true, is_cover: false }] });
       return response({});
@@ -647,7 +765,7 @@ describe("editor administrativo de galeria", () => {
   it("confirma a exclusão no contexto da pasta, sem criar dados no navegador", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: null, released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Apresentação", status: "preparing", position: 0, photo_count: 1, preview_url: null, released_at: null }] });
       if (path.endsWith("/clients")) return response({ clients: [] });
       if (path.endsWith("/photos") && !init?.method) return response({ photos: [{ id: "photo-1", name: "FOTO_001.jpg", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", status: "completed", error: null, can_delete: true, is_cover: false }] });
       if (path.endsWith("/photos/photo-1") && init?.method === "DELETE") return response({}, 204);
@@ -687,7 +805,7 @@ describe("editor administrativo de galeria", () => {
     const deletedBatches: string[][] = [];
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote grande", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote grande", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
       if (path.endsWith("/photos") && init?.method === "DELETE") {
         const ids = JSON.parse(String(init.body)).photo_ids as string[];
         deletedBatches.push(ids);
@@ -730,7 +848,7 @@ describe("editor administrativo de galeria", () => {
     let deleteRequests = 0;
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote parcial", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{ id: "folder-1", name: "Lote parcial", status: "preparing", position: 0, photo_count: remainingPhotos.length, preview_url: null, released_at: null }] });
       if (path.endsWith("/photos") && init?.method === "DELETE") {
         deleteRequests += 1;
         if (deleteRequests === 3) return response({ detail: "Falha simulada no terceiro lote." }, 503);
@@ -761,7 +879,7 @@ describe("editor administrativo de galeria", () => {
   }, 15_000);
 
   it("mantém controles de apresentação próprios e direciona a proteção global", async () => {
-    const details = { available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }], cover_options: [], settings: { cover_photo_id: null, cover_preview_url: null, cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
+    const details = { cover_readiness: { status: "ready", message: "Capa pronta." }, available: true, capabilities: ["cover", "title"], font_options: [{ token: "system-sans", label: "Sistema", category: "sans", css_family: "var(--font-system-sans)" }], cover_options: [{ id: "cover-1", name: "CAPA.jpg", status: "ready", preview_url: "/admin/photo-assets/cover-1/preview" }], settings: { cover_photo_id: "cover-1", cover_preview_url: "/admin/photo-assets/cover-1/preview", cover_title_font: "system-sans", cover_title_color: "#FFFFFF", cover_title_size: 32, cover_title_position: "bottom-left" } };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (init?.method === "PATCH") return response({});
       return path.endsWith("/editor") ? response(editor) : response(details);
@@ -771,7 +889,7 @@ describe("editor administrativo de galeria", () => {
     expect(await screen.findByRole("heading", { name: "Detalhes e apresentação" })).toBeTruthy();
     expect(screen.getByLabelText("Tipografia do título")).toBeInstanceOf(HTMLSelectElement);
     expect(screen.queryByLabelText("Tipografia da marca-d’água")).toBeNull();
-    expect(screen.getByText(/marca-d’água continua global/i)).toBeTruthy();
+    expect(screen.getByText(/marca-d’água vale para as galerias da sua conta/i)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Tamanho do título"), { target: { value: "40" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -860,6 +978,7 @@ describe("editor administrativo de galeria", () => {
     let detailsCalls = 0;
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
+      if (path.endsWith("/raw-development/capabilities")) return response({ enabled: false, formats: [] });
       detailsCalls += 1;
       if (detailsCalls === 2) return Promise.reject(new Error("Conexão temporariamente indisponível."));
       return response(detailsCalls === 1 ? processingDetails : readyDetails);
@@ -923,7 +1042,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("mantém Imagens focada em pastas e upload", async () => {
-    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.endsWith("/folders") ? response({ folders: [] }) : response({ clients: [] }));
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.split("?")[0].endsWith("/folders") ? response({ folders: [] }) : response({ clients: [] }));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="imagens" />);
     await screen.findByRole("heading", { name: "Imagens e pastas" });
@@ -965,7 +1084,7 @@ describe("editor administrativo de galeria", () => {
     ];
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [folder] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [folder] });
       if (path.endsWith("/photos")) return response({ photos });
       if (path.endsWith("/publish") && init?.method === "POST") return response({ published_count: 1, pending_count: 1, failed_count: 1 });
       return response({});
@@ -990,7 +1109,7 @@ describe("editor administrativo de galeria", () => {
     const folder = { id: "folder-1", name: "Rodada", status: "preparing", position: 0, photo_count: 3, preview_url: null, released_at: null, publication_counts: { published: 0, ready_to_publish: 1, processing: 1, failed: 1 } };
     const fetchMock = vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/folders")) return response({ folders: [folder] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [folder] });
       return response({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1004,7 +1123,7 @@ describe("editor administrativo de galeria", () => {
 
   it("abre somente uma pasta válida recebida pelo resumo", async () => {
     const folder = { id: "folder-valid", name: "Pasta válida", status: "released", position: 0, photo_count: 0, preview_url: null, released_at: null, publication_counts: { published: 0, ready_to_publish: 0, processing: 0, failed: 0 } };
-    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.endsWith("/folders") ? response({ folders: [folder] }) : path.includes("folder-valid/photos") ? response({ photos: [] }) : response({ detail: "não deveria consultar" }, 500));
+    const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : path.split("?")[0].endsWith("/folders") ? response({ folders: [folder] }) : path.includes("folder-valid/photos") ? response({ photos: [] }) : response({ detail: "não deveria consultar" }, 500));
     vi.stubGlobal("fetch", fetchMock);
     const { unmount } = render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="folder-manipulated" />);
     await screen.findByText("Pasta válida");
@@ -1017,18 +1136,47 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("renderiza o resumo com capa clicável, estado do link e exclusão contextual", async () => {
-    const fetchMock = vi.fn((path: string) => path.endsWith("/folders")
+    const fetchMock = vi.fn((path: string) => path.split("?")[0].endsWith("/folders")
       ? response({ folders: [{ id: "folder-1", name: "Lote inicial", status: "preparing", photo_count: 2, preview_url: "/admin/photo-assets/photo-1/watermarked-preview" }] })
       : response({ name: "Evento completo", event_name: "Festa 2026", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: "/admin/photo-assets/photo-1/watermarked-preview", counts: { folders: 1, photos: 2, clients: 1 }, clients: [{ client_id: "client-1", name: "Ana Resumo", phone: "+5511999990000", registration_status: "active", derived_gallery_id: "private-1", available_count: 4, selected_count: 2, purchased_count: 1, gallery_status: "active", commercial_status: "awaiting_payment" }] }));
     vi.stubGlobal("fetch", fetchMock);
     render(<SourceGalleryDetailPage />);
     expect(await screen.findByRole("heading", { name: "Evento completo" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Pastas Públicas" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Capa da galeria" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/preview");
     expect(screen.getByText("ativo")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Abrir pasta Lote inicial" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens?folder=folder-1");
     expect(screen.getByRole("article", { name: "Cliente Ana Resumo" })).toBeTruthy();
     expect(screen.getByText("Aguardando pagamento")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Excluir Galeria pública" })).toBeTruthy();
+  });
+
+  it("filtra clientes da galeria aberta por nome ou telefone sem nova consulta", async () => {
+    const clients = [
+      { client_id: "ana", name: "Ana Lívia", phone: "+5511999990001", registration_status: "active",
+        derived_gallery_id: null, available_count: 1, selected_count: 0, purchased_count: 0, gallery_status: "active" },
+      { client_id: "bia", name: "Bia Costa", phone: "+5511888880002", registration_status: "active",
+        derived_gallery_id: null, available_count: 0, selected_count: 0, purchased_count: 0, gallery_status: "active" },
+    ];
+    const fetchMock = vi.fn((path: string) => path.split("?")[0].endsWith("/folders")
+      ? response({ folders: [] })
+      : response({ name: "Evento", event_name: "Festa", active: true, public_link_status: "active",
+        cover_preview_url: null, counts: { folders: 0, photos: 1, clients: 2 }, clients }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SourceGalleryDetailPage />);
+    const search = await screen.findByRole("searchbox", { name: "Buscar cliente nesta galeria por nome ou telefone" });
+    expect(screen.getAllByRole("article", { name: /^Cliente / })).toHaveLength(2);
+    fireEvent.change(search, { target: { value: "livia" } });
+    expect(screen.getByRole("article", { name: "Cliente Ana Lívia" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Cliente Bia Costa" })).toBeNull();
+    fireEvent.change(search, { target: { value: "88 88" } });
+    expect(screen.getByRole("article", { name: "Cliente Bia Costa" })).toBeTruthy();
+    fireEvent.change(search, { target: { value: "sem resultado" } });
+    expect(screen.getByText("Nenhuma cliente encontrada nesta galeria")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Limpar busca" }));
+    expect(screen.getAllByRole("article", { name: /^Cliente / })).toHaveLength(2);
+    expect(screen.getByText(/2 clientes vinculadas/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("confirma uma vez com inventário e acompanha a exclusão até o sucesso", async () => {
@@ -1041,7 +1189,7 @@ describe("editor administrativo de galeria", () => {
       actions: { can_cancel: true, can_retry: false, should_poll: true, poll_after_ms: 1 },
     };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       if (path.endsWith("/summary")) return response({ name: "Evento completo", event_name: "Festa", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: null, counts: { folders: 1, photos: 2, clients: 1 }, clients: [] });
       if (path.endsWith("/deletion-inventory")) return response({ operation_type: "delete_parent_gallery", target: { id: "source-1", name: "Evento completo" }, inventory: { remove: { folders: 1, photos: 1 }, preserve: { clients: 1, private_galleries: 1 } }, consequences: { private_galleries_preserved: true, private_referenced_photos_preserved: true, clients_preserved: true, commercial_history_preserved: true, restoration_available_after_start: false } });
       if (path === "/api/admin/parent-galleries/source-1" && init?.method === "DELETE") return response(queuedOperation, 202);
@@ -1068,7 +1216,7 @@ describe("editor administrativo de galeria", () => {
 
   it("mostra dentro da confirmação quando o backend impede excluir a Galeria pública", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       if (path.endsWith("/summary")) return response({ name: "Evento protegido", event_name: "Festa", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: null, counts: { folders: 0, photos: 0, clients: 0 }, clients: [] });
       if (path.endsWith("/deletion-inventory")) return response({ operation_type: "delete_parent_gallery", target: { id: "source-1", name: "Evento protegido" }, inventory: { remove: {}, preserve: { orders: 1 } }, consequences: { private_galleries_preserved: true, private_referenced_photos_preserved: true, clients_preserved: true, commercial_history_preserved: true, restoration_available_after_start: false } });
       if (path === "/api/admin/parent-galleries/source-1" && init?.method === "DELETE") return response({ detail: "Pagamento comunicado aguarda revisão administrativa." }, 409);
@@ -1092,7 +1240,7 @@ describe("editor administrativo de galeria", () => {
       actions: { can_cancel: false, can_retry: true, should_poll: false, poll_after_ms: null },
     };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-      if (path.endsWith("/folders")) return response({ folders: [] });
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
       if (path.endsWith("/summary")) return response({ name: "Evento falho", event_name: "Festa", active: true, unlisted_link: null, public_link_status: "active", cover_preview_url: null, counts: { folders: 0, photos: 0, clients: 0 }, clients: [] });
       if (path.endsWith("/deletion-inventory")) return response({ operation_type: "delete_parent_gallery", target: { id: "source-1", name: "Evento falho" }, inventory: { remove: {}, preserve: {} }, consequences: { private_galleries_preserved: true, private_referenced_photos_preserved: true, clients_preserved: true, commercial_history_preserved: true, restoration_available_after_start: false } });
       if (path === "/api/admin/parent-galleries/source-1" && init?.method === "DELETE") return response(failedOperation, 202);
@@ -1128,7 +1276,7 @@ it("exclui pasta liberada com conteúdo após confirmação e preserva a tela em
       if (blocked) return response({ detail: "Há pagamento comunicado aguardando decisão administrativa." }, 409);
       deleted = true; return response({}, 204);
     }
-    if (path.endsWith("/folders")) return response({ folders: deleted ? [] : [{ id: "folder-full", name: "Festa completa", status: "released", photo_count: 12, position: 0 }] });
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders: deleted ? [] : [{ id: "folder-full", name: "Festa completa", status: "released", photo_count: 12, position: 0 }] });
     return response({ clients: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -1156,7 +1304,7 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
     actions: { can_cancel: false, can_retry: true, should_poll: false, poll_after_ms: null },
   };
   const fetchMock = vi.fn((path: string, init?: RequestInit) => {
-    if (path.endsWith("/folders")) return response({ folders: [] });
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
     if (path.endsWith("/summary")) return response({ name: "Galeria 01", event_name: "", active: true, public_link_status: "unavailable", cover_preview_url: null, counts: { folders: 2, photos: 58, clients: 1 }, clients: [], deletion_operation: operation });
     if (path.endsWith("/deletion-inventory")) return response({ target: { id: "source-1", name: "Galeria 01" }, inventory: { remove: { photos: 58, folders: 2, private_galleries: 1 }, preserve: { orders: 3 } } });
     if (path.endsWith("/old-operation/retry") && init?.method === "POST") return response({ ...operation, status: "queued", last_error: null, progress: { label: "Na fila", percent: 0, failed_step: null }, actions: { can_cancel: false, can_retry: false, should_poll: true, poll_after_ms: 1 } });
@@ -1177,4 +1325,108 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
   await screen.findByRole("heading", { name: "Concluída" });
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+
+  it("mantém as fotos renderizadas enquanto o progresso da pasta é atualizado", async () => {
+    const folder = { id: "folder-stable", name: "Pasta estável", status: "released", position: 0, photo_count: 1, preview_url: null, publication_counts: { published: 0, ready_to_publish: 0, processing: 1, failed: 0 } };
+    let photoReads = 0;
+    let releasePhotos: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [folder] });
+      if (path.endsWith("/photos")) {
+        photoReads += 1;
+        if (photoReads >= 3) return new Promise<Response>((resolve) => { releasePhotos = resolve; });
+        return response({ photos: [{ id: "stable-photo", name: "estável.jpg", preview_url: "/protected/stable", can_delete: true, publication_state: "published" }] });
+      }
+      return response({ clients: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="folder-stable" />);
+    const photo = await screen.findByRole("button", { name: "Ampliar estável.jpg" });
+    await waitFor(() => expect(releasePhotos).toBeDefined(), { timeout: 5000 });
+    expect(screen.queryByRole("button", { name: "Ampliar estável.jpg" })).toBe(photo);
+    await act(async () => releasePhotos?.(await response({ photos: [] })));
+  });
+
+  it("mantém o lote identificado pela pasta de destino ao selecionar outra pasta", async () => {
+    let finishUpload: (() => void) | undefined;
+    vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("folder-a/file.jpg");
+    vi.spyOn(sourceUpload, "uploadPhotoSource").mockImplementation((_path, _file, _waiting, progress) => {
+      progress?.(50, 100);
+      return new Promise<void>((resolve) => { finishUpload = resolve; });
+    });
+    const folders = ["A", "B"].map((name, position) => ({ id: `folder-${name}`, name, status: "released", position, photo_count: 0, preview_url: null }));
+    vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders });
+      if (path.endsWith("/photos")) return response(init?.method === "POST" ? { id: "upload-photo" } : { photos: [] });
+      return response({ clients: [] });
+    }));
+    const { container } = render(<GalleryEditor sourceId="source-1" step="imagens" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta A" }));
+    const input = container.querySelector('input[name="jpeg"]') as HTMLInputElement;
+    const form = input.closest("form")!;
+    vi.spyOn(form, "requestSubmit").mockImplementation(() => { fireEvent.submit(form); });
+    fireEvent.change(input, { target: { files: [new File(["jpeg"], "foto.jpg", { type: "image/jpeg" })] } });
+    await waitFor(() => expect(finishUpload).toBeDefined());
+    const progress = screen.getByRole("progressbar", { name: "Progresso do upload em A" });
+    expect(progress.getAttribute("value")).toBe("0.5");
+    fireEvent.click(screen.getByRole("button", { name: "Abrir pasta B" }));
+    expect(screen.getByRole("progressbar", { name: "Progresso do upload em A" })).toBe(progress);
+    expect(screen.getByText("Enviando foto 1 de 1")).toBeTruthy();
+    await act(async () => finishUpload?.());
+    expect(await screen.findByText("Upload concluído · 1 de 1 fotos")).toBeTruthy();
+  });
+
+it("usa um painel único entre pasta pública e dez pastas privadas sem enfileirar pela seleção", async () => {
+  const folders = Array.from({ length: 11 }, (_, position) => ({ id: `folder-${position}`,
+    name: position ? `Privada ${position}` : "Pública", audience_scope: position ? "selected" : "all",
+    status: "released", position, photo_count: 30, preview_url: null }));
+  const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (init?.method) throw new Error("Seleção não pode enfileirar trabalho.");
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.split("?")[0].endsWith("/folders")) return response({ folders });
+    if (path.endsWith("/processing")) return response({
+      revision: 1, preview_strength: path.includes("folder-0/") ? 50 : 60, preview_exposure_tenths: path.includes("folder-0/") ? 1 : 3,
+      facial_mode: "on", effective_preview: { enabled: true }, facial_available: false, facial_allowed: true, total_photos: 30,
+      preview_counts: { queued: 0, processing: 0, ready: 30, failed: 0, cancelled: 0 },
+      facial_counts: { completed: 30, queued: 0, processing: 0, failed: 0 }, comparison_photo_id: null,
+      facial_progress: { state: "completed", total: 30, waiting_previews: 0, unindexed: 0, detected_faces: 30 },
+    });
+    return response({ photos: [] });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Abrir pasta Pública" }));
+  await waitFor(() => expect(screen.getByLabelText("Intensidade do ajuste").getAttribute("value")).toBe("50"));
+  fireEvent.click(screen.getByRole("button", { name: "Abrir pasta Privada 10" }));
+  await waitFor(() => expect(screen.getByLabelText("Intensidade do ajuste").getAttribute("value")).toBe("60"));
+  expect(screen.getByLabelText("Exposição do ajuste").getAttribute("value")).toBe("3");
+  expect(screen.getAllByRole("region", { name: /^Processamento de/ })).toHaveLength(1);
+  expect(screen.getAllByRole("slider")).toHaveLength(2);
+  expect(screen.queryByText("Padrão da galeria")).toBeNull();
+  expect(screen.getAllByRole("button", { name: /^Abrir pasta/ })).toHaveLength(11);
+  expect(fetcher.mock.calls.some(([path]) => path.includes("include_restricted=true"))).toBe(true);
+  expect(fetcher.mock.calls.every((call) => !call[1]?.method)).toBe(true);
+});
+
+
+it("consulta as páginas de pastas sem ocultar as restritas após o limite da primeira página", async () => {
+  const fetcher = vi.fn((path: string) => {
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.includes("include_restricted=true")) {
+      const second = path.includes("offset=100");
+      return response({ total: 101, folders: Array.from({ length: second ? 1 : 100 }, (_, index) => ({
+        id: `folder-${second ? 100 : index}`, name: `Privada ${second ? 100 : index}`,
+        audience_scope: "selected", photo_count: 0, status: "released", position: second ? 100 : index,
+      })) });
+    }
+    return response({});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  expect(await screen.findByRole("button", { name: "Abrir pasta Privada 100" })).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: /^Abrir pasta/ })).toHaveLength(101);
+  expect(fetcher.mock.calls.some(([path]) => path.includes("offset=100"))).toBe(true);
 });

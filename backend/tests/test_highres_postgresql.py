@@ -1,5 +1,4 @@
 """Concorrência real opcional; cria somente schema próprio em PostgreSQL descartável."""
-
 import multiprocessing
 import os
 import subprocess
@@ -26,6 +25,7 @@ from app.auth import (
 )
 from app.facial.lifecycle import admit_source, analysis_for, cleanup_sources, finalize_source
 from app.facial.policy import ensure_automatic_policy
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, LEGACY_SCHEMA_HEAD
 
 
 def _engine(url, schema):
@@ -82,16 +82,16 @@ def postgres_scene(tmp_path, monkeypatch):
     )
     try:
         with Session(engine) as db:
-            parent = ParentGallery(name="Concorrência sintética")
+            parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Concorrência sintética")
             db.add(parent)
             db.flush()
-            folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos")
+            folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos")
             db.add(folder)
             db.flush()
             active = _settings(tmp_path)
-            ensure_automatic_policy(db, parent_gallery_id=parent.id, settings=active)
+            ensure_automatic_policy(db, parent_gallery_id=parent.id, settings=active, tenant_id=FIXTURE_TENANT_ID)
             db.add(
-                FacialRollout(
+                FacialRollout(tenant_id=FIXTURE_TENANT_ID,
                     environment="test",
                     parent_gallery_id=parent.id,
                     status="active",
@@ -107,6 +107,7 @@ def postgres_scene(tmp_path, monkeypatch):
             )
             photos = [
                 PhotoAsset(
+                    tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=parent.id,
                     folder_id=folder.id,
                     filename=f"synthetic-{i}.jpg",
@@ -161,7 +162,7 @@ def test_postgres_cleanup_skips_reader_lock_and_recovers_after_release(postgres_
         row.expires_at = now() - timedelta(seconds=1)
         db.commit()
     with Session(engine) as reader, Session(engine) as cleaner:
-        analysis_for(reader, ids[0], lock=True)
+        analysis_for(reader, ids[0], lock=True, tenant_id=FIXTURE_TENANT_ID)
         assert cleanup_sources(cleaner) == 0
         reader.rollback()
         assert cleanup_sources(cleaner) == 1
@@ -178,9 +179,9 @@ def test_postgres_migration_upgrade_downgrade_in_separate_schema(postgres_scene)
         environment = {**os.environ, "DATABASE_URL": url, "PGOPTIONS": f"-c search_path={schema}"}
         root = Path(__file__).resolve().parents[1]
         for action, revision in (
-            ("upgrade", "head"),
+            ("upgrade", LEGACY_SCHEMA_HEAD),
             ("downgrade", "20260914_0056"),
-            ("upgrade", "head"),
+            ("upgrade", LEGACY_SCHEMA_HEAD),
         ):
             result = subprocess.run(
                 [sys.executable, "-m", "alembic", action, revision],
@@ -195,7 +196,7 @@ def test_postgres_migration_upgrade_downgrade_in_separate_schema(postgres_scene)
         with admin.connect() as connection:
             assert (
                 connection.scalar(text(f'SELECT version_num FROM "{schema}".alembic_version'))
-                == "20260919_0057"
+                == LEGACY_SCHEMA_HEAD
             )
     finally:
         with admin.begin() as connection:

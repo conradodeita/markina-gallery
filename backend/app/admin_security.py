@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import (
     AdminActionToken,
     AdminSecurityChallenge,
@@ -157,30 +158,38 @@ def invalidate_admin_security_material(db: Session, admin_id: UUID) -> None:
         item.encrypted_target = None
 
 
-def cleanup_admin_security_material(db: Session) -> int:
-    """Minimiza material terminal sem apagar a trilha de auditoria."""
+def cleanup_admin_security_material(db: Session, *, tenant_id: UUID | None = None) -> int:
+    """Minimiza contexto explícito ou material técnico sem apagar auditoria."""
 
+    if tenant_id is not None:
+        require_active_owner(db, tenant_id)
     changed = 0
     instant = now()
-    for challenge in db.scalars(select(AdminSecurityChallenge)):
+    challenges = select(AdminSecurityChallenge).where(
+        AdminSecurityChallenge.tenant_id == tenant_id if tenant_id is not None
+        else AdminSecurityChallenge.tenant_id.is_(None))
+    for challenge in db.scalars(challenges):
         if (challenge.used_at or expired(challenge.expires_at)) and challenge.encrypted_target:
             challenge.encrypted_target = None
             changed += 1
-    for item in db.scalars(select(AdminActionToken)):
-        if (item.used_at or expired(item.expires_at)) and item.encrypted_target:
-            item.encrypted_target = None
-            changed += 1
-    for delivery in db.scalars(select(EmailDelivery)):
-        if delivery.status in {"accepted", "failed", "unknown", "expired"}:
-            if delivery.encrypted_payload:
-                delivery.encrypted_payload = None
+    if tenant_id is None:
+        for item in db.scalars(select(AdminActionToken)):
+            if (item.used_at or expired(item.expires_at)) and item.encrypted_target:
+                item.encrypted_target = None
                 changed += 1
-        elif expired(delivery.expires_at):
-            delivery.status = "expired"
-            delivery.encrypted_payload = None
-            delivery.last_error = "Entrega expirada antes da aceitação."
-            delivery.updated_at = instant
-            changed += 1
+        for delivery in db.scalars(select(EmailDelivery)):
+            if delivery.status in {"accepted", "failed", "unknown", "expired"}:
+                if delivery.encrypted_payload:
+                    delivery.encrypted_payload = None
+                    changed += 1
+            elif expired(delivery.expires_at):
+                delivery.status = "expired"
+                delivery.encrypted_payload = None
+                delivery.last_error = "Entrega expirada antes da aceitação."
+                delivery.updated_at = instant
+                changed += 1
     if changed:
+        if tenant_id is not None:
+            require_active_owner(db, tenant_id)
         db.commit()
     return changed

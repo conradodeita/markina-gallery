@@ -1,14 +1,15 @@
 """Indexação facial nasce somente de eventos explícitos e elegíveis."""
-
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from PIL import Image
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
     Base,
+    FacialEmbeddingExperimentSetting,
     FacialJob,
     FacialRollout,
     GalleryFacialPolicy,
@@ -24,6 +25,7 @@ from app.facial.indexing import (
     reconcile_automatic_gallery_policies,
 )
 from app.media import generate_derivatives
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _settings(tmp_path: Path, *, enabled: bool = True) -> FacialSettings:
@@ -64,6 +66,11 @@ def _session() -> Session:
     return Session(engine)
 
 
+@pytest.fixture(autouse=True)
+def owned_derivative_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path))
+
+
 def _eligible_photo(
     db: Session,
     tmp_path: Path,
@@ -74,13 +81,14 @@ def _eligible_photo(
 ):
     parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
     folder = PhotoFolder(
-        id=folder_id,
+        tenant_id=FIXTURE_TENANT_ID, id=folder_id,
         parent_gallery_id=parent_id,
         name="Fotos",
         status="released",
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=photo_id,
         parent_gallery_id=parent_id,
         folder_id=folder_id,
@@ -88,20 +96,22 @@ def _eligible_photo(
         storage_key="event/foto.jpg",
         available=True,
     )
+    from app.media import derivatives_root, safe_derivative_path
+    prefix = tmp_path.relative_to(derivatives_root())
     protected_derivative = MediaDerivative(
-        photo_asset_id=photo_id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id,
         variant="client_preview",
         status="ready",
-        relative_path=f"{photo_id}/client_preview.jpg",
+        relative_path=(prefix / str(photo_id) / "client_preview.jpg").as_posix(),
     )
     derivative = MediaDerivative(
-        photo_asset_id=photo_id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id,
         variant="admin_preview",
         status="ready",
-        relative_path=f"{photo_id}/admin_preview.jpg",
+        relative_path=(prefix / str(photo_id) / "admin_preview.jpg").as_posix(),
     )
     policy = GalleryFacialPolicy(
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         status=status,
         legal_notice_version="notice-v1",
         legal_basis_reference="synthetic-only",
@@ -111,12 +121,12 @@ def _eligible_photo(
         quality_version="quality-v1",
         calibration_version="calibration-v1",
     )
-    db.add(ParentGallery(id=parent_id, name="Evento sintético"))
+    db.add(ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento sintético"))
     db.add_all((folder, photo, protected_derivative, derivative))
     if include_rollout:
         db.add(
             FacialRollout(
-                environment="test",
+                tenant_id=FIXTURE_TENANT_ID, environment="test",
                 parent_gallery_id=parent_id,
                 status="active",
                 stage="canary",
@@ -132,7 +142,7 @@ def _eligible_photo(
     if include_policy:
         db.add(policy)
     db.commit()
-    path = tmp_path / derivative.relative_path
+    path = safe_derivative_path(derivative)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"protected-preview")
     return photo, derivative, path
@@ -178,6 +188,40 @@ def test_ready_preview_enqueues_once_and_activates_internal_policy_automatically
     assert automatic_policy is not None
     assert automatic_policy.status == "active"
     assert automatic_policy.actor_admin_id is None
+
+
+@pytest.mark.parametrize("is_new_gallery", [False, True])
+def test_gemma_enqueues_only_galleries_created_after_activation(
+    tmp_path: Path, is_new_gallery: bool
+) -> None:
+    from datetime import timedelta
+
+    from app.facial.gemma_provider import GEMMA_MODEL_REVISION
+
+    db = _session()
+    photo, derivative, path = _eligible_photo(db, tmp_path)
+    gallery = db.get(ParentGallery, photo.parent_gallery_id)
+    assert gallery is not None
+    db.add(FacialEmbeddingExperimentSetting(
+        singleton=1,
+        enabled=True,
+        mode="shadow",
+        model_revision=GEMMA_MODEL_REVISION,
+        enabled_since=(
+            gallery.created_at - timedelta(seconds=1)
+            if is_new_gallery
+            else gallery.created_at + timedelta(seconds=1)
+        ),
+    ))
+
+    enqueue_photo_index_if_eligible(
+        db, photo, derivative, derivative_path=path, settings=_settings(tmp_path)
+    )
+    db.commit()
+
+    job_kinds = set(db.scalars(select(FacialJob.kind)))
+    assert "index" in job_kinds
+    assert ("index_gemma" in job_kinds) is is_new_gallery
 
 
 def test_disabled_global_gate_neither_creates_policy_nor_job(tmp_path: Path) -> None:
@@ -283,6 +327,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
     folder_id = first.folder_id
     for index in range(3):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=parent_id,
             folder_id=folder_id,
@@ -291,13 +336,13 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
             available=True,
         )
         protected_derivative = MediaDerivative(
-            photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
             variant="client_preview",
             status="ready",
             relative_path=f"{photo.id}/client_preview.jpg",
         )
         derivative = MediaDerivative(
-            photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
             variant="admin_preview",
             status="ready",
             relative_path=f"{photo.id}/admin_preview.jpg",
@@ -310,7 +355,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
 
     first_page = enqueue_gallery_backfill_page(
         db,
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         derivatives_root=tmp_path,
         limit=2,
         settings=settings,
@@ -318,7 +363,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
     db.commit()
     second_page = enqueue_gallery_backfill_page(
         db,
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         derivatives_root=tmp_path,
         cursor=first_page.next_cursor,
         limit=2,
@@ -332,7 +377,7 @@ def test_backfill_is_explicit_paginated_and_idempotent(tmp_path: Path) -> None:
 
     repeated = enqueue_gallery_backfill_page(
         db,
-        parent_gallery_id=parent_id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
         derivatives_root=tmp_path,
         limit=500,
         settings=settings,
@@ -410,13 +455,14 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
 
     parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
     folder = PhotoFolder(
-        id=folder_id,
+        tenant_id=FIXTURE_TENANT_ID, id=folder_id,
         parent_gallery_id=parent_id,
         name="Upload",
         status="preparing",
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=photo_id,
         parent_gallery_id=parent_id,
         folder_id=folder_id,
@@ -424,8 +470,8 @@ def test_media_remains_available_when_facial_configuration_is_invalid(
         storage_key="event/foto.jpg",
         available=False,
     )
-    media_job = MediaJob(photo_asset_id=photo_id, status="queued", attempts=0)
-    db.add_all((ParentGallery(id=parent_id, name="Evento"), folder, photo, media_job))
+    media_job = MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="queued", attempts=0)
+    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento", payment_required=False), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
     derivatives_root = tmp_path / "derivatives"
@@ -454,13 +500,14 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
 
     parent_id, folder_id, photo_id = uuid4(), uuid4(), uuid4()
     folder = PhotoFolder(
-        id=folder_id,
+        tenant_id=FIXTURE_TENANT_ID, id=folder_id,
         parent_gallery_id=parent_id,
         name="Upload",
         status="preparing",
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=photo_id,
         parent_gallery_id=parent_id,
         folder_id=folder_id,
@@ -468,8 +515,8 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
         storage_key="event/foto.jpg",
         available=False,
     )
-    media_job = MediaJob(photo_asset_id=photo_id, status="queued", attempts=0)
-    db.add_all((ParentGallery(id=parent_id, name="Evento"), folder, photo, media_job))
+    media_job = MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo_id, status="queued", attempts=0)
+    db.add_all((ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Evento", payment_required=False), folder, photo, media_job))
     db.commit()
     source_root = tmp_path / "source"
     derivatives_root = tmp_path / "derivatives"
@@ -490,7 +537,7 @@ def test_media_dispatches_clean_admin_preview_to_facial_index(
 
     generate_derivatives(db, photo, media_job)
 
-    admin_path = derivatives_root / str(photo_id) / "admin_preview.jpg"
-    protected_path = derivatives_root / str(photo_id) / "client_preview.jpg"
+    admin_path = derivatives_root / f"tenants/{FIXTURE_TENANT_ID}/photos/{photo_id}/admin_preview.jpg"
+    protected_path = derivatives_root / f"tenants/{FIXTURE_TENANT_ID}/photos/{photo_id}/client_preview.jpg"
     assert observed == {"variant": "admin_preview", "path": admin_path.resolve()}
     assert admin_path.read_bytes() != protected_path.read_bytes()

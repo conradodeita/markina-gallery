@@ -97,7 +97,7 @@ export function ClientDirectory() {
           </p>
           <ClientCreateForm
             onCreated={() => {
-              setMessage("Cliente cadastrada no diretório global.");
+              setMessage("Cliente cadastrada no diretório da sua conta.");
               setRefresh((value) => value + 1);
             }}
           />
@@ -105,7 +105,7 @@ export function ClientDirectory() {
         <section className="client-directory-results" aria-labelledby="client-directory-title">
           <div className="client-directory-toolbar">
             <div>
-              <p className="eyebrow">Cadastro global</p>
+              <p className="eyebrow">Cadastro da sua conta</p>
               <h2 id="client-directory-title">Pessoas cadastradas</h2>
             </div>
             <label>
@@ -205,10 +205,14 @@ export function ClientDirectory() {
             setEditing(null);
             setMessage("Cadastro atualizado sem alterar seus vínculos ou histórico.");
           }}
-          onDeleted={(clientId) => {
+          onDeleted={(clientId, pendingCleanupRequestId) => {
             setClients((current) => current.filter((item) => item.id !== clientId));
             setEditing(null);
-            setMessage("Cadastro e estado operacional excluídos. O histórico comercial permaneceu protegido.");
+            setMessage(
+              pendingCleanupRequestId
+                ? `Cadastro excluído; uma etapa auxiliar precisa de reconciliação. Referência de diagnóstico: ${pendingCleanupRequestId}.`
+                : "Cadastro e estado operacional excluídos. O histórico comercial permaneceu protegido.",
+            );
           }}
         />
       ) : null}

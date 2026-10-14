@@ -28,6 +28,7 @@ from app.notification_settings import save_setting
 from app.order_delivery import lock_delivery_order, set_delivery
 from app.push_subscriptions import subscribe
 from app.web_push import PushFailure
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_notification_settings import isolated_schema  # noqa: F401
 from tests.test_private_upload_batches import setup_private
 from tests.test_push_subscriptions import subscription
@@ -41,20 +42,20 @@ def setup_order(status="confirmed", grouped=False):
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
         client = db.get(Client, gallery.client_id)
-        db.add(ClientPhone(client_id=client.id, phone_e164=client.phone_e164, active=True, verified_at=now()))
+        db.add(ClientPhone(tenant_id=FIXTURE_TENANT_ID, client_id=client.id, phone_e164=client.phone_e164, active=True, verified_at=now()))
         orders = []
         for _ in range(2 if grouped else 1):
-            order = SaleOrder(client_id=client.id, derived_gallery_id=gallery.id,
+            order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, client_id=client.id, derived_gallery_id=gallery.id,
                               derived_gallery_id_snapshot=gallery.id, derived_gallery_name_snapshot="Privada",
                               parent_gallery_id_snapshot=gallery.parent_gallery_id, parent_gallery_name_snapshot="Evento",
                               payment_status=status, total_cents=1200, confirmed_at=now() if status == "confirmed" else None)
             db.add(order)
             db.flush()
             orders.append(order.id)
-        communication = PaymentCommunication(client_id=client.id, idempotency_key="synthetic-payment-1",
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, client_id=client.id, idempotency_key="synthetic-payment-1",
                                                sale_order_id=orders[0], status="confirmed" if status == "confirmed" else "pending_review")
         db.add(communication)
-        db.add(AuthSession(subject_id=client.id, role="client", token_hash=token_hash("delivery-client"), expires_at=now() + timedelta(hours=1)))
+        db.add(AuthSession(subject_id=client.id, role="client", token_hash=token_hash("delivery-client"), expires_at=now() + timedelta(hours=1), tenant_id=FIXTURE_TENANT_ID, client_subject_id=client.id))
         db.commit()
         communication_id = communication.id
     browser = TestClient(app)
@@ -97,10 +98,11 @@ def test_delivery_persistence_scope_validation_and_audit():
         log = db.scalar(select(AuditEvent).where(AuditEvent.event == "order.delivery_available"))
         assert str(order) in log.subject and ":admin:" in log.subject and ALBUM not in log.subject
         owner = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash("delivery-client")))
-        other = Client(full_name="Outra", phone_e164="+5511888877777")
+        other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra", phone_e164="+5511888877777")
         db.add(other)
         db.flush()
         owner.subject_id = other.id
+        owner.client_subject_id = other.id
         db.commit()
     assert client.get("/library/purchases").json()["orders"] == []
 
@@ -124,7 +126,7 @@ def test_resend_idempotency_current_templates_and_removed_link():
     order = orders[0]
     send(admin, order)
     with SessionLocal() as db:
-        save_setting(db, "order_delivery_ready", {"whatsapp_body": "Texto atualizado", "push_enabled": False})
+        save_setting(db, "order_delivery_ready", {"whatsapp_body": "Texto atualizado", "push_enabled": False}, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     path = f"/admin/orders/{order}/delivery/resend"
     payload = {"version": 1, "operation_id": str(uuid4())}
@@ -146,7 +148,7 @@ def test_rollback_cannot_publish_or_queue():
     admin, _, orders, _ = setup_order()
     with SessionLocal() as db:
         actor = db.scalar(select(AuthSession).where(AuthSession.role == "admin")).subject_id
-        set_delivery(db, lock_delivery_order(db, orders[0]), ALBUM, 0, actor)
+        set_delivery(db, lock_delivery_order(db, orders[0], tenant_id=FIXTURE_TENANT_ID), ALBUM, 0, actor)
         db.rollback()
     assert events() == []
     assert send(admin, orders[0]).json()["delivery"]["version"] == 1
@@ -193,12 +195,12 @@ def test_worker_failure_and_removed_operational_gallery(monkeypatch):
 def test_disabled_channels_do_not_replay():
     admin, _, orders, _ = setup_order()
     with SessionLocal() as db:
-        save_setting(db, "order_delivery_ready", {"whatsapp_enabled": False, "push_enabled": False})
+        save_setting(db, "order_delivery_ready", {"whatsapp_enabled": False, "push_enabled": False}, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     response = send(admin, orders[0])
     assert response.json()["notification"]["channels"] == []
     with SessionLocal() as db:
-        save_setting(db, "order_delivery_ready", {"whatsapp_enabled": True})
+        save_setting(db, "order_delivery_ready", {"whatsapp_enabled": True}, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         assert list(db.scalars(select(NotificationDelivery))) == []
     assert len(events()) == 1
@@ -208,7 +210,7 @@ def test_grouped_correction_invalidates_each_delivery_without_combining_links():
     admin, client, orders, communication_id = setup_order(grouped=True)
     with SessionLocal() as db:
         first = db.get(SaleOrder, orders[0])
-        group = PaymentGroup(client_id=first.client_id, state="confirmed", revision="synthetic",
+        group = PaymentGroup(tenant_id=FIXTURE_TENANT_ID, client_id=first.client_id, state="confirmed", revision="synthetic",
                              total_cents=2400, pix_copy_paste_snapshot="synthetic", pix_configuration_snapshot={})
         db.add(group)
         db.flush()
@@ -246,7 +248,11 @@ def test_obsolete_or_expired_notice_never_reaches_provider(monkeypatch, mutation
             if mutation == "expire":
                 db.get(NotificationEvent, event.id).expires_at = now() - timedelta(seconds=1)
             else:
-                db.scalar(select(NotificationDelivery)).recipient_id = uuid4()
+                other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Destinatário alheio", phone_e164="+5511999999632")
+                db.add(other)
+                db.flush()
+                delivery = db.scalar(select(NotificationDelivery))
+                delivery.recipient_id = delivery.client_recipient_id = other.id
             db.commit()
     class NeverSend(SandboxWhatsAppProvider):
         def send_transactional(self, *_a, **_k):

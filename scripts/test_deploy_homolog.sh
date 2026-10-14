@@ -39,6 +39,39 @@ set -e
 grep -Fq 'deploy-homolog: falha sintética pós-switch' "$output"
 grep -Fq 'trapped' "$err_probe"
 
+# Optional modules are preserved by default; explicit deploy overrides remain available.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    parse_arguments --sha 1111111111111111111111111111111111111111
+    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == auto ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=0
+    resolve_raw_development_state
+    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == false ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=1
+    resolve_raw_development_state
+    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == true ]]
+    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled true
+    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == true ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=0
+    resolve_raw_development_state
+    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == true ]]
+    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled false
+    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == false ]]
+    RAW_DEVELOPMENT_WORKER_ACTIVE=1
+    resolve_raw_development_state
+    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == false ]]
+  ' >"$output" 2>&1
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled yes
+  ' >"$output" 2>&1; then
+  echo "o deploy aceitou estado RAW inválido" >&2
+  exit 1
+fi
+
 dirty_output="$(mktemp)"
 migration_output="$(mktemp)"
 health_output="$(mktemp)"
@@ -118,6 +151,60 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
     [[ "$(stat -c %a "$ORIGIN_ENV")" == "600" ]]
   ' >"$output" 2>&1
 grep -Fq 'PUBLIC_APP_ORIGIN sincronizada com a origem pública autorizada de homologação' "$output"
+
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina-homolog.example\nPUBLIC_APP_ORIGINS=\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origins "$ORIGIN_ENV" "https://markina-homolog.duckdns.org"
+    [[ "$(grep -c "^PUBLIC_APP_ORIGINS=" "$ORIGIN_ENV")" -eq 1 ]]
+    grep -Fxq "PUBLIC_APP_ORIGINS=https://markina-homolog.duckdns.org" "$ORIGIN_ENV"
+    [[ "$(stat -c %a "$ORIGIN_ENV")" == "600" ]]
+  ' >"$output" 2>&1
+grep -Fq 'PUBLIC_APP_ORIGINS sincronizada com as origens HTTPS adicionais autorizadas' "$output"
+
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina.pickyourpic.com.br\nPUBLIC_APP_ORIGINS=https://markina-homolog.duckdns.org\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origins "$ORIGIN_ENV" ""
+    [[ "$(grep -c "^PUBLIC_APP_ORIGINS=" "$ORIGIN_ENV" || true)" -eq 0 ]]
+    grep -Fxq "PUBLIC_APP_ORIGIN=https://markina.pickyourpic.com.br" "$ORIGIN_ENV"
+    [[ "$(stat -c %a "$ORIGIN_ENV")" == "600" ]]
+  ' >"$output" 2>&1
+grep -Fq 'PUBLIC_APP_ORIGINS removida para usar somente a origem canônica' "$output"
+
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina.pickyourpic.com.br\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    mktemp() { echo UNEXPECTED-ENV-WRITE >&2; return 90; }
+    chmod() { echo UNEXPECTED-ENV-WRITE >&2; return 91; }
+    ensure_public_app_origins "$ORIGIN_ENV" ""
+  ' >"$output" 2>&1
+grep -Fq 'PUBLIC_APP_ORIGINS já está ausente; ambiente preservado' "$output"
+if grep -Fq 'UNEXPECTED-ENV-WRITE' "$output"; then exit 1; fi
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    ensure_public_app_origins "$ORIGIN_ENV" "https://*.example"
+  ' >"$output" 2>&1; then
+  echo "wildcard de origem pública foi aceito" >&2
+  exit 1
+fi
+grep -Fq 'MARKINA_PUBLIC_APP_ORIGINS deve conter somente origens HTTPS exatas' "$output"
+
+printf 'APP_ENV=staging\nPUBLIC_APP_ORIGIN=https://markina-homolog.example\n' >"$origin_env"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    mktemp() { echo UNEXPECTED-ENV-WRITE >&2; return 90; }
+    chmod() { echo UNEXPECTED-ENV-WRITE >&2; return 91; }
+    ensure_public_app_origin "$ORIGIN_ENV" "https://markina-homolog.example/"
+  ' >"$output" 2>&1
+grep -Fq 'ambiente preservado' "$output"
+if grep -Fq 'UNEXPECTED-ENV-WRITE' "$output"; then exit 1; fi
 
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" ORIGIN_ENV="$origin_env" \
   bash -c '
@@ -206,6 +293,7 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
       [[ "$*" == "run --rm --no-deps migrate" ]] && return 42
       return 0
     }
+    docker() { return 0; }
     apply_target_migrations "20260829_0014 (head)"
   ' >"$migration_output" 2>&1; then
   echo "migration sintética falha não interrompeu a publicação" >&2
@@ -324,16 +412,20 @@ set -e
 grep -Fq 'banco não foi restaurado' "$output"
 
 python3 "$SCRIPT_DIR/test_deploy_homolog_policy.py"
-# The optional worker lives in its own Compose file/profile, not the base file.
+# Optional workers live in separate Compose files and are added only when authorized.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     docker() { printf "%s\n" "$*"; }
+    RAW_DEVELOPMENT_DEPLOY_ENABLED=true
+    compose config --services
+    RAW_DEVELOPMENT_DEPLOY_ENABLED=false
     PREVIEW_WORKER_ACTIVE=1
     compose config --services
     PREVIEW_WORKER_ACTIVE=0
     compose config --services
   ' >"$output" 2>&1
+[[ "$(grep -c -- '-f docker/docker-compose.raw-development.yml' "$output")" -eq 1 ]]
 [[ "$(grep -c -- '-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment' "$output")" -eq 1 ]]
 # A failed preservation must never allow recreation, even through the ERR rollback.
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
@@ -366,7 +458,108 @@ set -e
 [[ "$branding_status" -eq 31 ]]
 grep -Fq 'containers antigos mantidos' "$output"
 if grep -Fq 'UNEXPECTED-RECREATION' "$output"; then exit 1; fi
+# A migration nunca concorre com escritores antigos nem para outros projetos.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    FACIAL_DEPLOY_ENABLED=true
+    PREVIEW_WORKER_ACTIVE=1
+    RAW_DEVELOPMENT_WORKER_ACTIVE=1
+    stopped=0
+    compose() {
+      if [[ "$1" == "stop" ]]; then
+        [[ "$*" == "stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker raw-development-worker preview-adjustment-worker" ]] || return 80
+        stopped=1
+      fi
+      if [[ "$1" == "run" ]]; then
+        [[ "$stopped" -eq 1 ]] || return 81
+      fi
+      return 0
+    }
+    docker() {
+      [[ "$*" == *"project=markina-gallery"* ]] || return 82
+      [[ "$*" != *"evolution"* ]] || return 83
+      return 0
+    }
+    current_revision() { echo "20260929_0069 (head)"; }
+    apply_target_migrations "20260928_0068 (head)"
+    [[ "$MIGRATION_CHANGED" -eq 1 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 1 && "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 0 ]]
+  ' >"$output" 2>&1
+
+# When opted in, the RAW reader starts before the API consumes the overlay.
+START_LOG="$rollback_log" MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    BRANDING_REQUIRED=1
+    BRANDING_PRESERVED=1
+    RAW_DEVELOPMENT_DEPLOY_ENABLED=true
+    compose() { printf "%s\n" "$*" >> "$START_LOG"; }
+    start_application_services
+  ' >"$output" 2>&1
+raw_worker_line="$(grep -nF 'up -d --build --no-deps raw-development-worker' "$rollback_log" | head -n 1 | cut -d: -f1)"
+api_line="$(grep -nF 'up -d --build --no-deps api web worker' "$rollback_log" | head -n 1 | cut -d: -f1)"
+[[ -n "$raw_worker_line" && -n "$api_line" ]]
+(( raw_worker_line < api_line ))
+
+for failure in stop active; do
+  if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FAILURE="$failure" \
+    bash -c '
+      source "$MARKINA_DEPLOY_SCRIPT_PATH"
+      compose() {
+        [[ "$1" == "run" ]] && { echo UNEXPECTED-MIGRATION; return 0; }
+        [[ "$1" == "stop" && "$FAILURE" == "stop" ]] && return 42
+        return 0
+      }
+      docker() { echo synthetic-still-running; }
+      apply_target_migrations "20260928_0068 (head)"
+    ' >"$output" 2>&1; then
+    echo "falha de parada permitiu migration" >&2
+    exit 1
+  fi
+  grep -Fq 'migration bloqueada' "$output"
+  if grep -Fq 'UNEXPECTED-MIGRATION' "$output"; then exit 1; fi
+done
+
 python3 "$SCRIPT_DIR/test_maintain_homolog_policy.py"
+
+# Mock the filesystem activation decision and Docker boundary: enabled config
+# survives publication/rollback; absent config does not activate the monitor.
+for monitor_enabled in true false; do
+ for preview_active in 0 1; do
+  MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" MONITOR_ENABLED="$monitor_enabled" PREVIEW_ACTIVE="$preview_active" \
+    bash -c '
+      source "$MARKINA_DEPLOY_SCRIPT_PATH"
+      monitor_is_configured() { [[ "$MONITOR_ENABLED" == "true" ]]; }
+      git() { [[ "$*" == "rev-parse HEAD" ]] || return 1; printf "%040d\n" 7; }
+      docker() { printf "%s\n" "$@"; printf "version=%s\n" "$APP_VERSION"; }
+      PREVIEW_WORKER_ACTIVE="$PREVIEW_ACTIVE"
+      compose ps
+    ' >"$output" 2>&1
+  grep -Fxq 'markina-gallery' "$output"
+  if [[ "$preview_active" == 1 || "$monitor_enabled" == true ]]; then
+    grep -Fxq 'docker/docker-compose.preview-adjustment.yml' "$output"
+  elif grep -Fq 'docker/docker-compose.preview-adjustment.yml' "$output"; then
+    echo 'definição opcional adicionada sem monitor ou worker ativo' >&2
+    exit 1
+  fi
+  if [[ "$preview_active" == 1 ]]; then
+    grep -Fxq 'preview-adjustment' "$output"
+  elif grep -Fxq 'preview-adjustment' "$output"; then
+    echo 'profile de prévias ativado antes da detecção' >&2
+    exit 1
+  fi
+  grep -Fxq 'version=0000000000000000000000000000000000000007' "$output"
+  if [[ "$monitor_enabled" == "true" ]]; then
+    grep -Fxq 'docker/docker-compose.system-monitor.yml' "$output"
+    grep -Fxq '/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml' "$output"
+  elif grep -Fq 'system-monitor.compose.yml' "$output"; then
+    echo 'monitor ativado sem configuração operacional' >&2
+    exit 1
+  fi
+ done
+done
+
 python3 "$SCRIPT_DIR/test_facial_production_policy.py"
 python3 "$SCRIPT_DIR/test_facial_rollout_homolog_policy.py"
+bash "$SCRIPT_DIR/test_gemma_operations.sh"
 echo "deploy-homolog shell: ok"

@@ -26,7 +26,7 @@ it("exibe sete eventos, prévias e dois interruptores sem a caixa de entrada ant
   expect(screen.getAllByText("Olá Cliente")).toHaveLength(7);
   expect(screen.queryByLabelText("Leitura")).toBeNull();
   expect(screen.queryByText("Marcar como lida")).toBeNull();
-  expect(screen.getByText(/As alterações são globais/)).toBeTruthy();
+  expect(screen.getByText(/As alterações afetam os clientes da sua conta/)).toBeTruthy();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
@@ -62,7 +62,7 @@ it("salva somente o evento escolhido com versão e canais independentes", async 
   fireEvent.click(form.getByLabelText("Enviar notificação Push"));
   fireEvent.change(form.getByLabelText(/Mensagem do WhatsApp/), { target: { value: "Novo texto {{cliente}}" } });
   fireEvent.click(form.getByRole("button", { name: "Salvar evento" }));
-  expect(await form.findByText("Configuração global salva.")).toBeTruthy();
+  expect(await form.findByText("Configuração da sua conta salva.")).toBeTruthy();
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(fetch).toHaveBeenLastCalledWith("/api/admin/notification-settings/first_access", expect.objectContaining({ method: "PUT", body: JSON.stringify({ version: 1, whatsapp_enabled: true, push_enabled: false, whatsapp_body: "Novo texto {{cliente}}", push_title: "Aviso", push_body: "Olá {{cliente}}" }) }));
 });

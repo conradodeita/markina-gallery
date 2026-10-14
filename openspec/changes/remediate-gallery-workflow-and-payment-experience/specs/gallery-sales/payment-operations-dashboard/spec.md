@@ -18,6 +18,15 @@ O sistema SHALL apresentar comunicações de pagamento, pedidos relacionados e e
 - **WHEN** o pedido pertence a galeria já removida
 - **THEN** o painel usa snapshots comerciais, identifica “Galeria removida” e mantém a decisão e o histórico acessíveis
 
+### Requirement: Edição de mensagens globais centralizada
+
+A edição e a prévia de modelos globais de mensagens SHALL permanecer na área Notificações. O painel Vendas e pagamentos SHALL NOT duplicar essa configuração em um cartão próprio; filtros, resumo, pedidos e ações financeiras SHALL permanecer disponíveis sem esse cartão.
+
+#### Scenario: Fotógrafo abre Vendas e pagamentos sem pedidos
+
+- **WHEN** o fotógrafo autenticado abre o painel e não há pedidos
+- **THEN** a tela apresenta filtros e estado vazio, sem o cartão de mensagens globais ou suas prévias
+
 ### Requirement: Estados visuais inequívocos
 
 O sistema SHALL usar cards e badges com texto e contraste, além de cor, para distinguir `aguardando pagamento`, `pagamento comunicado`, `confirmado`, `não localizado`, `prazo expirado` e falha de mensagem. A cor SHALL NOT ser a única forma de comunicação do estado.

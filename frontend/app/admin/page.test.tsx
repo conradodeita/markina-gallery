@@ -17,6 +17,14 @@ import AdminPage from "./page";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("falha temporária da visão geral não orienta logout ou novo login", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+  render(<AdminPage />);
+  await screen.findByText("Acesso administrativo indisponível");
+  expect(screen.queryByText(/Entre novamente/)).toBeNull();
+  expect(screen.getByText("Não foi possível carregar os dados. Recarregue a página para tentar novamente.")).toBeTruthy();
+});
+
 const summary = {
   environment: "development",
   version: "test",
@@ -37,14 +45,14 @@ const summary = {
     {
       id: "gallery-1",
       name: "Festa da escola",
-      access_enabled: true,
-      selection_expires_at: null,
+      active: true,
+      event_name: "Formatura",
     },
     {
       id: "gallery-2",
       name: "Ensaio bloqueado",
-      access_enabled: false,
-      selection_expires_at: "2026-09-30T23:59:59Z",
+      active: false,
+      event_name: null,
     },
   ],
 };
@@ -73,13 +81,15 @@ describe("painel operacional", () => {
     expect(screen.queryByText(/responsável/i)).toBeNull();
     expect(
       screen.getByRole("link", { name: "Festa da escola" }).getAttribute("href"),
-    ).toBe("/admin/galleries/gallery-1");
+    ).toBe("/admin/galleries/sources/gallery-1");
     expect(
       screen.getByRole("link", { name: "Ensaio bloqueado" }).getAttribute("href"),
-    ).toBe("/admin/galleries/gallery-2");
+    ).toBe("/admin/galleries/sources/gallery-2");
     expect(screen.getByText("Ativa")).toBeTruthy();
     expect(screen.getByText("Bloqueada")).toBeTruthy();
-    expect(screen.getByText("Prazo configurado")).toBeTruthy();
+    expect(screen.getByText("Formatura")).toBeTruthy();
+    expect(screen.getByText("Galerias recentes")).toBeTruthy();
+    expect(screen.queryByText("Galerias privadas")).toBeNull();
   });
 
   it.each([
@@ -144,4 +154,17 @@ describe("painel operacional", () => {
       ),
     );
   });
+});
+
+
+it("mantém a Visão Geral sem card nem consultas de diagnóstico mesmo para proprietário autorizado", async () => {
+  const fetcher = vi.fn((url: string) => Promise.resolve(new Response(JSON.stringify(
+    url.includes("installation-capabilities") ? { capacity_diagnostics: true } : summary,
+  ), { status: 200 })));
+  vi.stubGlobal("fetch", fetcher);
+  render(<AdminPage />);
+  await screen.findByRole("heading", { name: "Seu próximo passo está à vista." });
+  expect(screen.queryByText("Diagnóstico sob demanda")).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Capacidade e filas" })).toBeNull();
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/admin/validation-summary"]);
 });

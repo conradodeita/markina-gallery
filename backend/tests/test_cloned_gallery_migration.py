@@ -16,6 +16,8 @@ from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(database_url: str, *arguments: str) -> None:
     backend = Path(__file__).resolve().parents[1]
@@ -530,7 +532,7 @@ def test_shared_private_membership_migration_aborts_on_owner_conflict(tmp_path: 
     backend = Path(__file__).resolve().parents[1]
     environment = {**os.environ, "DATABASE_URL": database_url}
     result = run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", LEGACY_SCHEMA_HEAD],
         cwd=backend,
         env=environment,
         capture_output=True,
@@ -641,7 +643,7 @@ def test_progressive_pricing_migration_preserves_legacy_semantics_and_orders(
             },
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as connection:
         single = connection.execute(
             text(
@@ -702,7 +704,7 @@ def test_pix_source_migration_converges_safe_values_and_flags_divergence(tmp_pat
                 },
             )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as connection:
         migrated = connection.execute(
             text(
@@ -801,7 +803,7 @@ def test_auto_publish_migration_reconciles_only_ready_protected_content(tmp_path
                 },
             )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as connection:
         availability = dict(
             connection.execute(
@@ -852,7 +854,7 @@ def test_private_photo_origins_backfill_existing_justification(tmp_path: Path) -
             {"id": reference_id.hex, "gallery_id": gallery_id.hex, "photo_id": photo_id.hex, "created_at": timestamp},
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as connection:
         origin = connection.execute(
             text("SELECT origin FROM derived_gallery_photo_origin WHERE derived_gallery_photo_id = :reference_id"),
@@ -872,7 +874,7 @@ def test_parent_gallery_cover_migration_is_reversible(tmp_path: Path):
             text("INSERT INTO parent_gallery (id, name, active, created_at) VALUES (:id, :name, :active, :created_at)"),
             {"id": parent_id.hex, "name": "Evento legado", "active": True, "created_at": datetime.now(UTC)},
         )
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as connection:
         columns = {row[1] for row in connection.execute(text("PRAGMA table_info(parent_gallery)"))}
         assert connection.execute(

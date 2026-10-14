@@ -91,8 +91,13 @@ services:
     build: ../backend
     expose:
       - "8000"
+    env_file: &whatsapp-bindings-environment
+      - path: ${WHATSAPP_BINDINGS_ENV_FILE:-.env.whatsapp-bindings}
+        required: false
+        format: raw
     environment:
       <<: *facial-environment
+      PUBLIC_APP_ORIGINS: ${PUBLIC_APP_ORIGINS:-}
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-markina_session}
@@ -308,6 +313,7 @@ services:
   worker:
     build: ../backend
     command: ["python", "-m", "app.worker"]
+    env_file: *whatsapp-bindings-environment
     environment:
       <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
@@ -375,6 +381,7 @@ services:
       dockerfile: Dockerfile.face
     command: ["python", "-m", "app.facial.search_worker_entrypoint"]
     restart: unless-stopped
+    env_file: *whatsapp-bindings-environment
     environment:
       <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
@@ -438,6 +445,45 @@ services:
       start_period: 30s
     mem_limit: ${FACIAL_INDEX_WORKER_MEMORY_LIMIT:-768m}
     cpus: ${FACIAL_INDEX_WORKER_CPU_LIMIT:-1.0}
+    networks:
+      - internal
+
+  face-gemma-index-worker:
+    profiles: ["facial-gemma"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.gemma
+    command: ["python", "-m", "app.facial.face_worker"]
+    restart: unless-stopped
+    environment:
+      <<: *facial-environment
+      APP_ENV: ${APP_ENV:-development}
+      FACIAL_WORKER_CLASS: gemma
+      FACIAL_JOB_LEASE_SECONDS: ${FACIAL_GEMMA_JOB_LEASE_SECONDS:-900}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      FACIAL_GEMMA_MODEL_PATH: /opt/markina-embeddinggemma-2
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+    volumes:
+      - media-derivatives:/var/lib/markina/derivatives:ro
+      - media-source:/var/lib/markina/source:ro
+      - facial-references:/var/lib/markina/facial-references
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.facial.face_worker' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    mem_limit: ${FACIAL_GEMMA_WORKER_MEMORY_LIMIT:-6g}
+    cpus: ${FACIAL_GEMMA_WORKER_CPU_LIMIT:-1.0}
     networks:
       - internal
 

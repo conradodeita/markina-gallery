@@ -6,12 +6,14 @@ import hashlib
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
 from pathlib import Path
+from uuid import UUID
 
 PROJECT = "markina-gallery"
 VOLUME = "markina-gallery_branding-assets"
@@ -23,6 +25,10 @@ ALLOWED = {
     **{f"app-icon.{ext}": 1024 * 1024 for ext in ("png", "jpg", "webp", "ico")},
     **{f"favicon.{ext}": 512 * 1024 for ext in ("png", "ico")},
 }
+MAX_PAYLOAD_BYTES = 24 * 1024 * 1024
+SCOPED_KEY = re.compile(
+    r"tenants/([0-9a-f-]{36})/branding/(logo|app-icon|favicon)-([0-9a-f]{64})\.(png|jpg|webp|ico)"
+)
 OVERRIDE = """services:
   api:
     environment:
@@ -37,9 +43,50 @@ volumes:
 
 
 def key_valid(key):
-    if key not in ALLOWED:
+    if isinstance(key, str) and key in ALLOWED:
+        return key
+    match = SCOPED_KEY.fullmatch(key) if isinstance(key, str) else None
+    if not match or str(UUID(match[1])) != match[1] or f"{match[2]}.{match[4]}" not in ALLOWED:
         raise ValueError("invalid branding key")
     return key
+
+
+def asset_limit(key):
+    key_valid(key)
+    match = SCOPED_KEY.fullmatch(key)
+    return ALLOWED[f"{match[2]}.{match[4]}" if match else key]
+
+
+def validate_body(key, body):
+    if not 0 < len(body) <= asset_limit(key):
+        raise ValueError("invalid branding size")
+    match = SCOPED_KEY.fullmatch(key)
+    if match and digest(body) != match[3]:
+        raise ValueError("scoped branding integrity failure")
+    return body
+
+
+def settings_keys(rows):
+    owners, keys = set(), []
+    for row in rows:
+        owner = row["tenant_id"]
+        if owner is None:
+            if len(rows) != 1:
+                raise ValueError("ambiguous legacy branding settings")
+        elif not isinstance(owner, str) or str(UUID(owner)) != owner:
+            raise ValueError("invalid branding owner")
+        if owner in owners:
+            raise ValueError("ambiguous branding owner")
+        owners.add(owner)
+        for key in row["keys"]:
+            if key is None:
+                continue
+            key_valid(key)
+            match = SCOPED_KEY.fullmatch(key)
+            if (match and match[1] != owner) or key in keys:
+                raise ValueError("ambiguous branding key ownership")
+            keys.append(key)
+    return keys
 
 
 def digest(body):
@@ -58,9 +105,9 @@ def read_asset(path, key):
     key_valid(key)
     safe_directory(path.parent)
     info = path.lstat()
-    if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= ALLOWED[key]:
+    if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= asset_limit(key):
         raise ValueError("invalid branding file")
-    return path.read_bytes()
+    return validate_body(key, path.read_bytes())
 
 
 def transfer(backup, destination):
@@ -73,6 +120,7 @@ def transfer(backup, destination):
         if digest(body) != expected:
             raise ValueError("backup integrity failure")
         target = destination / key
+        safe_directory(target.parent)
         if target.exists() or target.is_symlink():
             if digest(read_asset(target, key)) != expected:
                 raise ValueError("destination conflict; no files overwritten")
@@ -80,7 +128,9 @@ def transfer(backup, destination):
             pending.append((key, body))
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     for key, body in pending:
-        fd, temporary = tempfile.mkstemp(prefix=".branding-", dir=destination)
+        parent = safe_directory((destination / key).parent)
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, temporary = tempfile.mkstemp(prefix=".branding-", dir=parent)
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(body)
@@ -128,14 +178,17 @@ def extract_asset(archive, key):
         if len(members) != 1:
             raise ValueError("unexpected archive entries")
         entry = members[0]
-        if entry.name != key or not entry.isfile() or not 0 < entry.size <= ALLOWED[key]:
+        if entry.name != Path(key).name or not entry.isfile() or not 0 < entry.size <= asset_limit(key):
             raise ValueError("invalid archived asset")
-        return source.extractfile(entry).read()
+        return validate_body(key, source.extractfile(entry).read())
 
 
 def receive_backup(destination):
     """Receive only validated branding bytes, never mount private host directories."""
-    payload = json.loads(sys.stdin.buffer.read(24 * 1024 * 1024 + 1))
+    raw = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
+    if len(raw) > MAX_PAYLOAD_BYTES:
+        raise ValueError("branding transport limit exceeded")
+    payload = json.loads(raw)
     manifest = payload["manifest"]
     if set(payload["files"]) != set(manifest["files"]):
         raise ValueError("backup entries mismatch")
@@ -144,8 +197,8 @@ def receive_backup(destination):
         for key, encoded in payload["files"].items():
             key_valid(key)
             body = base64.b64decode(encoded, validate=True)
-            if not 0 < len(body) <= ALLOWED[key]:
-                raise ValueError("invalid branding size")
+            validate_body(key, body)
+            (backup / key).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             (backup / key).write_bytes(body)
         (backup / "manifest.json").write_text(json.dumps(manifest))
         transfer(backup, destination)
@@ -161,12 +214,15 @@ def restore_volume(backup, image, volume=VOLUME):
         files[key] = base64.b64encode(body).decode("ascii")
     # The host owner reads its 0700/0600 backup. Bytes go through stdin, not argv,
     # logs, permissive chmod or a bind mount inaccessible to root with cap-drop ALL.
+    payload = json.dumps({"manifest": manifest, "files": files}).encode()
+    if len(payload) > MAX_PAYLOAD_BYTES:
+        raise ValueError("branding transport limit exceeded")
     docker("run", "--rm", "-i", "--network", "none", "--read-only", "--cap-drop", "ALL",
            "--security-opt", "no-new-privileges", "--entrypoint", "python",
            "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m,mode=1777",
            "--mount", f"type=volume,source={volume},target={ROOT}",
            image, "-c", Path(__file__).read_text(), "receive", ROOT,
-           input_data=json.dumps({"manifest": manifest, "files": files}).encode())
+           input_data=payload)
 
 
 def preserve():
@@ -203,15 +259,26 @@ def preserve():
     backup = Path(tempfile.mkdtemp(prefix="branding-", dir=BACKUPS))
     stopped = False
     try:
+        sql = (
+            "SELECT json_build_object('tenant_id',to_jsonb(settings)->>'tenant_id',"
+            "'keys',json_build_array(logo_key,app_icon_key,favicon_key)) "
+            "FROM branding_settings settings ORDER BY id;"
+        )
+        def read_settings():
+            return docker("exec", "-i", db, "sh", "-ceu",
+                          'exec psql -XAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"',
+                          input_data=sql.encode()).stdout.decode().splitlines()
+
+        raw = read_settings()
+        keys = settings_keys([json.loads(row) for row in raw])
+        docker("exec", api, "python", "-c",
+               "from pathlib import Path; import json,sys; root=Path(sys.argv[1]); "
+               "assert all(not parent.is_symlink() for key in json.loads(sys.argv[2]) "
+               "for parent in (root/key,*(root/key).parents))", root, json.dumps(keys))
         stopped = True
         docker("stop", "--time", "30", api)
-        sql = "SELECT json_build_array(logo_key,app_icon_key,favicon_key) FROM branding_settings;"
-        raw = docker("exec", "-i", db, "sh", "-ceu",
-                     'exec psql -XAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"',
-                     input_data=sql.encode()).stdout.decode().splitlines()
-        if len(raw) > 1:
-            raise ValueError("ambiguous branding settings")
-        keys = [key_valid(key) for key in (json.loads(raw[0]) if raw else []) if key]
+        if read_settings() != raw:
+            raise ValueError("branding settings changed during preservation")
         manifest = {"files": {}, "missing": []}
         for key in keys:
             result = docker("cp", f"{api}:{root}/{key}", "-", check=False)
@@ -223,6 +290,7 @@ def preserve():
                 manifest["missing"].append(key)
                 continue
             body = extract_asset(result.stdout, key)
+            (backup / key).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with (backup / key).open("xb") as stream:
                 stream.write(body)
             manifest["files"][key] = digest(body)

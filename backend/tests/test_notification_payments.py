@@ -17,6 +17,7 @@ from app.notification_delivery import process_next_notification
 from app.notification_events import record_payment_event
 from app.notification_settings import save_setting
 from app.worker import materialize_next_payment_notification
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_notification_settings import isolated_schema  # noqa: F401
 from tests.test_private_upload_batches import setup_private
 
@@ -27,13 +28,13 @@ def test_payment_decisions_unique_and_correction_silent(monkeypatch, first_decis
     browser, gallery_id, _ = setup_private()
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
-        order = SaleOrder(derived_gallery_id=gallery_id, client_id=gallery.client_id,
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, client_id=gallery.client_id,
                           derived_gallery_id_snapshot=gallery_id, derived_gallery_name_snapshot="Privada",
                           parent_gallery_id_snapshot=gallery.parent_gallery_id,
                           parent_gallery_name_snapshot="Evento", total_cents=500)
         db.add(order)
         db.flush()
-        communication = PaymentCommunication(sale_order_id=order.id, client_id=order.client_id,
+        communication = PaymentCommunication(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, client_id=order.client_id,
                                              idempotency_key="reported")
         db.add(communication)
         db.flush()
@@ -75,7 +76,7 @@ def test_payment_decisions_unique_and_correction_silent(monkeypatch, first_decis
         assert db.get(PaymentCommunication, UUID(str(communication_id))).status == final_decision
         assert db.get(SaleOrder, order.id).payment_status == ("confirmed" if final_decision == "confirmed" else "cancelled")
         assert db.scalar(select(func.count(PaymentNotificationOutbox.id))) >= 2
-        save_setting(db, f"payment_{final_decision}", {"whatsapp_enabled": False})
+        save_setting(db, f"payment_{final_decision}", {"whatsapp_enabled": False}, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         projection = db.scalar(select(PaymentNotificationOutbox).where(PaymentNotificationOutbox.template_kind == final_decision))
         assert projection.status == "failed" and projection.last_error == "channel_disabled"

@@ -23,6 +23,7 @@ from app.push_subscriptions import (
     fingerprint,
     subscribe,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_notification_settings import isolated_schema  # noqa: F401
 from tests.test_private_upload_batches import setup_private
 
@@ -63,7 +64,7 @@ def test_auth_origin_encryption_state_and_logout():
         item = db.scalar(select(PushSubscription))
         assert payload["subscription"]["endpoint"] not in item.encrypted_subscription
         assert decrypt_subscription(item) == payload["subscription"]
-    assert browser.post("/auth/logout").status_code == 204
+    assert browser.post("/auth/logout", headers={"origin": "http://testserver"}).status_code == 204
     with SessionLocal() as db:
         assert db.scalar(select(PushSubscription)).active is False
 
@@ -86,11 +87,11 @@ def test_account_switch_revocation_global_and_cipher_binding():
     browser.post("/push/subscription", json={"subscription": payload}, headers={"origin": "http://testserver"})
     raw_cookie = browser.cookies.get("pick_push_installation")
     with SessionLocal() as db:
-        owner = Client(full_name="Outra conta", phone_e164="+5511888888888")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra conta", phone_e164="+5511888888888")
         db.add(owner)
         db.flush()
         session = AuthSession(role="client", subject_id=owner.id, token_hash=token_hash("new-owner"),
-                              expires_at=now() + timedelta(days=1))
+                              expires_at=now() + timedelta(days=1), tenant_id=FIXTURE_TENANT_ID, client_subject_id=owner.id)
         db.add(session)
         db.flush()
         request = Request({"type": "http", "headers": [(b"cookie", f"pick_push_installation={raw_cookie}".encode())]})

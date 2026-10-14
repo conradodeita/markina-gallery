@@ -8,9 +8,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record
 from app.auth import AuditEvent, GalleryFacialPolicy, ParentGallery, now
 from app.facial.config import FacialSettings
 from app.facial.purge import enqueue_gallery_purge
+from app.tenancy import require_admin_tenant
 
 
 class FacialPolicyError(RuntimeError):
@@ -29,11 +31,14 @@ class FacialPolicyDraft:
     similarity_threshold_milli: int
 
 
-def read_policy(db: Session, parent_gallery_id: UUID) -> GalleryFacialPolicy | None:
+def read_policy(db: Session, parent_gallery_id: UUID, *, tenant_id: UUID) -> GalleryFacialPolicy | None:
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialPolicyError("Galeria indisponível.")
     return db.scalar(
         select(GalleryFacialPolicy).where(
+            GalleryFacialPolicy.tenant_id == tenant_id,
             GalleryFacialPolicy.parent_gallery_id == parent_gallery_id
-        )
+        ).execution_options(populate_existing=True)
     )
 
 
@@ -41,6 +46,7 @@ def ensure_automatic_policy(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     settings: FacialSettings,
 ) -> tuple[GalleryFacialPolicy, bool]:
     """Garante a política interna sem exigir ação do fotógrafo.
@@ -51,7 +57,7 @@ def ensure_automatic_policy(
 
     if not settings.enabled:
         raise FacialPolicyError("O processamento facial está desligado no ambiente.")
-    parent = db.get(ParentGallery, parent_gallery_id)
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if (
         not parent
         or not parent.active
@@ -60,7 +66,7 @@ def ensure_automatic_policy(
         raise FacialPolicyError("Galeria pública indisponível para indexação facial.")
     draft = _draft_from_settings(settings)
     _validate_draft(draft)
-    policy = read_policy(db, parent_gallery_id)
+    policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     previous_signature = _signature(policy)
     was_active = bool(policy and policy.status == "active")
     changed = not was_active or previous_signature != tuple(draft.__dict__.values())
@@ -71,6 +77,7 @@ def ensure_automatic_policy(
     instant = now()
     if policy is None:
         policy = GalleryFacialPolicy(
+            tenant_id=tenant_id,
             parent_gallery_id=parent_gallery_id,
             status="active",
             actor_admin_id=None,
@@ -84,6 +91,7 @@ def ensure_automatic_policy(
             enqueue_gallery_purge(
                 db,
                 parent_gallery_id=parent_gallery_id,
+                tenant_id=policy.tenant_id,
                 reason=f"automatic-policy-version-change:{instant.isoformat()}",
             )
         for field_name, value in draft.__dict__.items():
@@ -96,6 +104,7 @@ def ensure_automatic_policy(
         policy.updated_at = instant
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event="facial.policy_activated_automatically",
             subject=(
                 f"gallery_id:{parent_gallery_id};generation:{policy.index_generation};"
@@ -114,15 +123,17 @@ def prepare_policy(
     actor_admin_id: UUID,
     draft: FacialPolicyDraft,
 ) -> GalleryFacialPolicy:
-    parent = db.get(ParentGallery, parent_gallery_id)
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
+    parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if not parent or parent.lifecycle_status in {"deleting", "deleted"}:
         raise FacialPolicyError("Galeria pública indisponível para política facial.")
     _validate_draft(draft)
-    policy = read_policy(db, parent_gallery_id)
+    policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     previous_signature = _signature(policy) if policy else None
     was_active = bool(policy and policy.status == "active")
     if policy is None:
         policy = GalleryFacialPolicy(
+            tenant_id=tenant_id,
             parent_gallery_id=parent_gallery_id,
             status="pending",
             actor_admin_id=actor_admin_id,
@@ -140,10 +151,12 @@ def prepare_policy(
         enqueue_gallery_purge(
             db,
             parent_gallery_id=parent_gallery_id,
+            tenant_id=policy.tenant_id,
             reason=f"policy-version-change:{policy.updated_at.isoformat()}",
         )
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event="facial.policy_prepared",
             subject=f"gallery_id:{parent_gallery_id};actor_id:{actor_admin_id}",
         )
@@ -186,7 +199,8 @@ def activate_policy(
     actor_admin_id: UUID,
     settings: FacialSettings,
 ) -> GalleryFacialPolicy:
-    policy = read_policy(db, parent_gallery_id)
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
+    policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     missing = activation_inventory(policy, settings)
     if missing:
         raise FacialPolicyError(
@@ -201,6 +215,7 @@ def activate_policy(
     policy.updated_at = now()
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event="facial.policy_activated",
             subject=(
                 f"gallery_id:{parent_gallery_id};actor_id:{actor_admin_id};"
@@ -218,7 +233,8 @@ def suspend_policy(
     parent_gallery_id: UUID,
     actor_admin_id: UUID,
 ) -> GalleryFacialPolicy:
-    policy = read_policy(db, parent_gallery_id)
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
+    policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     if policy is None:
         raise FacialPolicyError("Política facial não encontrada.")
     if policy.status != "suspended":
@@ -229,11 +245,13 @@ def suspend_policy(
         enqueue_gallery_purge(
             db,
             parent_gallery_id=parent_gallery_id,
+            tenant_id=policy.tenant_id,
             reason=f"policy-suspended:{policy.updated_at.isoformat()}",
         )
         db.add(
             AuditEvent(
-                event="facial.policy_suspended",
+            tenant_id=tenant_id,
+            event="facial.policy_suspended",
                 subject=f"gallery_id:{parent_gallery_id};actor_id:{actor_admin_id}",
             )
         )
@@ -247,7 +265,8 @@ def revoke_policy(
     parent_gallery_id: UUID,
     actor_admin_id: UUID,
 ) -> GalleryFacialPolicy:
-    policy = read_policy(db, parent_gallery_id)
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
+    policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     if policy is None:
         raise FacialPolicyError("Política facial não encontrada.")
     if policy.status != "disabled":
@@ -258,11 +277,13 @@ def revoke_policy(
         enqueue_gallery_purge(
             db,
             parent_gallery_id=parent_gallery_id,
+            tenant_id=policy.tenant_id,
             reason=f"purpose-revoked:{policy.updated_at.isoformat()}",
         )
         db.add(
             AuditEvent(
-                event="facial.policy_revoked",
+            tenant_id=tenant_id,
+            event="facial.policy_revoked",
                 subject=f"gallery_id:{parent_gallery_id};actor_id:{actor_admin_id}",
             )
         )

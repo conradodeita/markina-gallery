@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import (
     WhatsAppChannelSettings,
     WhatsAppDelivery,
@@ -61,11 +63,13 @@ def _delivery_state(data: dict[str, Any]) -> str | None:
 
 
 def process_whatsapp_webhook(
-    db: Session, payload: dict[str, Any]
+    db: Session, payload: dict[str, Any], *, tenant_id: UUID
 ) -> tuple[bool, str]:
+    require_active_owner(db, tenant_id)
     fingerprint = webhook_fingerprint(payload)
     if db.scalar(
         select(WhatsAppWebhookReceipt).where(
+            WhatsAppWebhookReceipt.tenant_id == tenant_id,
             WhatsAppWebhookReceipt.fingerprint == fingerprint
         )
     ):
@@ -75,7 +79,7 @@ def process_whatsapp_webhook(
     external_id = _external_message_id(data)
     db.add(
         WhatsAppWebhookReceipt(
-            fingerprint=fingerprint,
+            tenant_id=tenant_id, fingerprint=fingerprint,
             event_type=event or "ignored",
             external_message_id=external_id,
         )
@@ -84,11 +88,13 @@ def process_whatsapp_webhook(
     if event in MESSAGE_EVENTS and external_id:
         delivery = db.scalar(
             select(WhatsAppDelivery).where(
+                WhatsAppDelivery.tenant_id == tenant_id,
                 WhatsAppDelivery.external_message_id == external_id
             )
         )
         requested = _delivery_state(data)
         if delivery and requested:
+            require_active_owner(db, tenant_id)
             apply_delivery_status(delivery, requested, at=now())
             delivery.provider_status = str(
                 data.get("status")
@@ -103,6 +109,7 @@ def process_whatsapp_webhook(
     elif event in CONNECTION_EVENTS:
         settings = db.scalar(
             select(WhatsAppChannelSettings).where(
+                WhatsAppChannelSettings.tenant_id == tenant_id,
                 WhatsAppChannelSettings.environment == app_environment()
             )
         )
@@ -127,5 +134,6 @@ def process_whatsapp_webhook(
                 settings.status = "disconnected"
             db.commit()
             return True, "connection_updated"
+    require_active_owner(db, tenant_id)
     db.commit()
     return False, "ignored"

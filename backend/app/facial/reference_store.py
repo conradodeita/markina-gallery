@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -73,7 +74,10 @@ class FacialReferenceStore:
         model_version: str,
         data_version: str,
         payload: bytes,
+        authorize: Callable[[], object] | None = None,
     ) -> StoredReference:
+        if authorize:
+            authorize()
         width, height = self._validate_jpeg(payload)
         self._root.mkdir(parents=True, exist_ok=True)
         target = self._target(request_id)
@@ -101,6 +105,8 @@ class FacialReferenceStore:
         try:
             partial.write_bytes(serialized)
             partial.chmod(0o600)
+            if authorize:
+                authorize()
             os.replace(partial, target)
         except OSError as exc:
             raise FacialReferenceError("Referência facial não pôde ser armazenada.") from exc

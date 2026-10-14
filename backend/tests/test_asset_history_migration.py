@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 from tests.test_global_pix_migration import alembic
 
 
@@ -19,12 +20,12 @@ def test_asset_history_upgrade_and_guarded_downgrade(tmp_path):
         maintenance.dispose()
         url = parsed.set(database=database).render_as_string(hide_password=False)
     alembic(url, "upgrade", "20260920_0058")
-    alembic(url, "upgrade", "head")
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     engine = sa.create_engine(url)
     assert "removed_photo_movement" in sa.inspect(engine).get_table_names()
     assert "assets_removed_at" in {c['name'] for c in sa.inspect(engine).get_columns('sale_order')}
     alembic(url, "downgrade", "20260920_0058")
-    alembic(url, "upgrade", "head")
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.begin() as db:
         db.execute(sa.text("INSERT INTO asset_file_cleanup "
             "(id, paths, status, attempts, created_at) VALUES "

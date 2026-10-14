@@ -1,14 +1,15 @@
-"""Migration aditiva em banco descartável; nenhum banco de operação é acessado."""
 
+"""Migration aditiva em banco descartável; nenhum banco de operação é acessado."""
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app.auth import ParentGallery, PhotoAsset, PhotoFaceEmbedding, PhotoFolder
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD, insert_legacy_model
 
 
 def test_highres_upgrade_downgrade_upgrade(tmp_path):
@@ -16,7 +17,7 @@ def test_highres_upgrade_downgrade_upgrade(tmp_path):
     url = f"sqlite:///{(tmp_path / 'migration.db').as_posix()}"
     env = {**os.environ, "DATABASE_URL": url}
     region_id = None
-    for revision in ("head", "20260914_0056", "head"):
+    for revision in (LEGACY_SCHEMA_HEAD, "20260914_0056", LEGACY_SCHEMA_HEAD):
         command = "downgrade" if revision.endswith("0056") else "upgrade"
         subprocess.run(
             [sys.executable, "-m", "alembic", command, revision],
@@ -32,23 +33,15 @@ def test_highres_upgrade_downgrade_upgrade(tmp_path):
         if command == "upgrade":
             with Session(engine) as db:
                 if region_id is None:
-                    parent = ParentGallery(name="Legado sintético")
-                    db.add(parent)
-                    db.flush()
-                    folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos")
-                    db.add(folder)
-                    db.flush()
-                    photo = PhotoAsset(
-                        parent_gallery_id=parent.id,
-                        folder_id=folder.id,
-                        filename="legacy.jpg",
-                        storage_key="synthetic/legacy.jpg",
-                    )
-                    db.add(photo)
-                    db.flush()
-                    region = PhotoFaceEmbedding(
-                        parent_gallery_id=parent.id,
-                        photo_asset_id=photo.id,
+                    parent_id = insert_legacy_model(db.connection(), ParentGallery, name="Legado sintético")
+                    folder_id = insert_legacy_model(db.connection(), PhotoFolder,
+                                                   parent_gallery_id=parent_id, name="Fotos")
+                    photo_id = insert_legacy_model(db.connection(), PhotoAsset,
+                                                  parent_gallery_id=parent_id, folder_id=folder_id,
+                                                  filename="legacy.jpg", storage_key="synthetic/legacy.jpg")
+                    region_id = insert_legacy_model(db.connection(), PhotoFaceEmbedding,
+                        parent_gallery_id=parent_id,
+                        photo_asset_id=photo_id,
                         face_ordinal=0,
                         model_version="legacy-model",
                         quality_version="legacy-quality",
@@ -57,11 +50,9 @@ def test_highres_upgrade_downgrade_upgrade(tmp_path):
                         payload_nonce=b"synthetic-nonce",
                         key_id="synthetic-key",
                     )
-                    db.add(region)
                     db.commit()
-                    region_id = region.id
                 else:
-                    region = db.get(PhotoFaceEmbedding, region_id)
+                    region = db.execute(text("SELECT payload_ciphertext, model_version, bbox_x, pipeline_version FROM photo_face_embedding WHERE id=:id"), {"id": region_id.hex}).one()
                     assert region.payload_ciphertext == b"synthetic-ciphertext"
                     assert region.model_version == "legacy-model"
                     assert region.bbox_x is None and region.pipeline_version == "legacy-preview-v1"

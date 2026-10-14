@@ -83,7 +83,7 @@ export function FinancialOrderShortcuts({ orders = [], clientName, onRefresh }: 
       <PaymentActions order={order} clientName={clientName} onRefresh={onRefresh} />
     </section>)}
     <details onToggle={(event) => { if (event.currentTarget.open) void loadTemplates(); }}>
-      <summary>Prévia das mensagens globais</summary>
+      <summary>Prévia das mensagens da sua conta</summary>
       {templates ? <><p>Confirmado: {templates.confirmed}</p><p>Não localizado: {templates.refused}</p></> : <p>{previewError ? "Prévia indisponível. Consulte Notificações." : "Carregando prévia…"}</p>}
       <a className="gallery-client-open" href="/admin/notifications#payment_confirmed">Editar em Notificações · afeta todos os clientes</a>
     </details>

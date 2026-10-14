@@ -29,6 +29,10 @@ O sistema SHALL entregar qualquer prévia fotográfica somente após autenticaç
 - **WHEN** uma cliente autenticada solicita fotos de uma Galeria pública `collective_protected`
 - **THEN** o sistema não enumera nem entrega fotos, mesmo que a cliente possua o link da origem
 
+#### Scenario: Prévia de compra confirmada após revogação da pasta
+- **WHEN** uma cliente acessa o item do próprio pedido canônico confirmado após perder a atribuição à pasta
+- **THEN** o sistema entrega a prévia protegida desse item, mas nega a prévia operacional da pasta e nega o item a outra cliente ou a pedido não confirmado
+
 ### Requirement: Proteção visual aplicada ao conteúdo
 
 O sistema SHALL aplicar marca-d'água e demais proteção configurada à imagem de prévia entregue ao cliente, e não somente como camada visual do navegador. A configuração efetiva da Galeria pública SHALL ser usada por suas privadas sem override privado. A prévia histórica SHALL ser a menor representação protegida suficiente para identificação do item comprado e SHALL NOT justificar retenção de todo original.

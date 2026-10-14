@@ -1,5 +1,4 @@
 """Gates administrativos da política facial."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,6 +20,7 @@ from app.facial.policy import (
     suspend_policy,
 )
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _settings(tmp_path: Path, *, enabled: bool) -> FacialSettings:
@@ -74,13 +74,13 @@ def _fixture():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento sintético")
-    admin = AdminUser(
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético")
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin@example.test",
         password_hash="not-used",
         totp_secret="not-used",
-    )
+    ))
     db.add_all((parent, admin))
     db.commit()
     return db, parent, admin
@@ -124,12 +124,12 @@ def test_automatic_policy_is_created_once_without_admin_actor(tmp_path: Path) ->
 
     first, first_changed = ensure_automatic_policy(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         settings=settings,
     )
     second, second_changed = ensure_automatic_policy(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         settings=settings,
     )
     db.commit()
@@ -194,7 +194,15 @@ def test_suspend_and_active_version_change_enqueue_idempotent_purge() -> None:
     assert all("embedding" not in subject and "phone" not in subject for subject in subjects)
 
 
-def test_facial_policy_admin_routes_reject_anonymous_access() -> None:
+def test_facial_policy_admin_routes_reject_anonymous_access(monkeypatch) -> None:
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app import main
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(main, "SessionLocal", sessionmaker(bind=engine))
     client = TestClient(app)
     gallery_id = uuid4()
     assert client.get(

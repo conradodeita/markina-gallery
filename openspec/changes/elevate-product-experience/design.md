@@ -10,7 +10,7 @@ As telas atuais distribuem decisões visuais em páginas e possuem pouca hierarq
 
 ## Decisions
 
-Tokens e componentes compartilhados substituirão estilos isolados; o painel priorizará pendências e a cliente priorizará fotografia e decisão de compra.
+Tokens e componentes compartilhados substituirão estilos isolados; o painel priorizará pendências e atalhos operacionais, sem exibir rótulos técnicos do ambiente/versão nem mensagens de orientação de teste; a cliente priorizará fotografia e decisão de compra.
 
 ## Risks / Trade-offs
 

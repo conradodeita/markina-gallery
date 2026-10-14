@@ -12,8 +12,6 @@ import {
 } from "../ui-kit";
 
 type Summary = {
-  environment: string;
-  version: string;
   storage: {
     photo_count: number;
     bytes: number | null;
@@ -30,8 +28,8 @@ type Summary = {
   recent_galleries: Array<{
     id: string;
     name: string;
-    access_enabled: boolean;
-    selection_expires_at?: string | null;
+    active: boolean;
+    event_name?: string | null;
   }>;
 };
 
@@ -62,7 +60,7 @@ export default function AdminPage() {
       <SystemState
         tone="error"
         title="Acesso administrativo indisponível"
-        detail="Entre novamente ou atualize a página."
+        detail="Não foi possível carregar os dados. Recarregue a página para tentar novamente."
       />
     );
   if (!summary)
@@ -92,18 +90,6 @@ export default function AdminPage() {
           </>
         }
       />
-      <section className="dashboard-context" aria-label="Contexto do ambiente">
-        <div>
-          <span>Ambiente de trabalho</span>
-          <strong>{summary.environment}</strong>
-          <small>versão {summary.version}</small>
-        </div>
-        <p>
-          {processing
-            ? `${processing} importação(ões) em processamento. Confira as pastas antes de liberar.`
-            : "Nenhuma importação em andamento. Você pode revisar e liberar as pastas prontas."}
-        </p>
-      </section>
       <section className="dashboard-metrics">
         <MetricCard
           label="Galerias públicas"
@@ -111,9 +97,9 @@ export default function AdminPage() {
           detail="eventos sob seu controle"
         />
         <MetricCard
-          label="Galerias privadas"
-          value={summary.counts.derived_galleries}
-          detail="históricos individuais ativos"
+          label="Clientes"
+          value={summary.counts.clients}
+          detail="cadastros no sistema"
           tone="success"
         />
         <MetricCard
@@ -182,7 +168,7 @@ export default function AdminPage() {
           <div className="section-heading">
             <div>
               <p className="eyebrow">Acesso recente</p>
-              <h2>Galerias privadas</h2>
+              <h2>Galerias recentes</h2>
             </div>
             <MarkinaLink href="/admin/galleries" variant="quiet">
               Todas →
@@ -194,21 +180,17 @@ export default function AdminPage() {
                 <div key={gallery.id}>
                   <div>
                     <MarkinaLink
-                      href={`/admin/galleries/${gallery.id}`}
+                      href={`/admin/galleries/sources/${gallery.id}`}
                       variant="quiet"
                     >
                       {gallery.name}
                     </MarkinaLink>
-                    <small>
-                      {gallery.selection_expires_at
-                        ? "Prazo configurado"
-                        : "Sem prazo definido"}
-                    </small>
+                    <small>{gallery.event_name || "Galeria pública"}</small>
                   </div>
                   <StatusBadge
-                    tone={gallery.access_enabled ? "success" : "danger"}
+                    tone={gallery.active ? "success" : "danger"}
                   >
-                    {gallery.access_enabled ? "Ativa" : "Bloqueada"}
+                    {gallery.active ? "Ativa" : "Bloqueada"}
                   </StatusBadge>
                 </div>
               ))}

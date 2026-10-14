@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import timedelta
-from ipaddress import ip_address
-from urllib.parse import urlsplit
+from urllib.parse import urlencode
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record, require_active_owner
 from app.auth import (
     Client,
     FacialSearchNotificationOutbox,
     FacialSearchRequest,
+    ParentGallery,
     ParentGalleryRegistration,
+    Tenant,
     now,
 )
 from app.facial.config import FacialSettings
@@ -27,6 +29,8 @@ from app.messaging import (
     WhatsAppDeliveryError,
     WhatsAppProvider,
 )
+from app.public_origin import PublicOriginError, public_app_origin
+from app.whatsapp_binding import provider_for
 from app.whatsapp_channel import require_ready_channel
 
 
@@ -38,12 +42,16 @@ def enqueue_search_notification(
     cipher: FacialCipher,
     settings: FacialSettings,
 ) -> FacialSearchNotificationOutbox | None:
+    require_active_owner(db, request.tenant_id)
+    if not owned_record(db, FacialSearchRequest, request.id, tenant_id=request.tenant_id):
+        raise ValueError("Origem da notificação indisponível.")
     result_kind = _result_kind(result_status)
     if result_kind is None:
         return None
     idempotency_key = f"facial-search:{request.id}:{result_kind}"
     existing = db.scalar(
         select(FacialSearchNotificationOutbox).where(
+            FacialSearchNotificationOutbox.tenant_id == request.tenant_id,
             FacialSearchNotificationOutbox.idempotency_key == idempotency_key
         )
     )
@@ -62,7 +70,7 @@ def enqueue_search_notification(
         scope=_notification_scope(request, settings),
     )
     notification = FacialSearchNotificationOutbox(
-        search_request_id=request.id,
+        tenant_id=request.tenant_id, search_request_id=request.id,
         parent_gallery_id=request.parent_gallery_id,
         client_id=request.client_id,
         result_kind=result_kind,
@@ -80,7 +88,8 @@ def enqueue_search_notification(
     except IntegrityError:
         return db.scalar(
             select(FacialSearchNotificationOutbox).where(
-                FacialSearchNotificationOutbox.idempotency_key == idempotency_key
+                FacialSearchNotificationOutbox.tenant_id == request.tenant_id,
+            FacialSearchNotificationOutbox.idempotency_key == idempotency_key
             )
         )
     return notification
@@ -89,7 +98,7 @@ def enqueue_search_notification(
 def process_next_search_notification(
     db: Session,
     *,
-    provider: WhatsAppProvider,
+    provider: WhatsAppProvider | None = None,
     cipher: FacialCipher,
     settings: FacialSettings,
     max_attempts: int = 3,
@@ -97,8 +106,8 @@ def process_next_search_notification(
     current = now()
     recovered_interrupted = False
     for interrupted in db.scalars(
-        select(FacialSearchNotificationOutbox).where(
-            FacialSearchNotificationOutbox.status == "processing",
+        select(FacialSearchNotificationOutbox).join(Tenant, Tenant.id == FacialSearchNotificationOutbox.tenant_id).where(
+            Tenant.status == "active", FacialSearchNotificationOutbox.status == "processing",
             FacialSearchNotificationOutbox.lease_expires_at <= current,
         )
     ):
@@ -113,15 +122,15 @@ def process_next_search_notification(
     db.commit()
 
     notification = db.scalar(
-        select(FacialSearchNotificationOutbox)
+        select(FacialSearchNotificationOutbox).join(Tenant, Tenant.id == FacialSearchNotificationOutbox.tenant_id)
         .where(
-            FacialSearchNotificationOutbox.status == "queued",
+            Tenant.status == "active", FacialSearchNotificationOutbox.status == "queued",
             FacialSearchNotificationOutbox.attempts < max_attempts,
             FacialSearchNotificationOutbox.available_at <= current,
         )
         .order_by(FacialSearchNotificationOutbox.available_at)
         .limit(1)
-        .with_for_update(skip_locked=True)
+        .with_for_update(of=FacialSearchNotificationOutbox, skip_locked=True)
     )
     if notification is None:
         return recovered_interrupted
@@ -131,36 +140,27 @@ def process_next_search_notification(
     notification.updated_at = current
     db.commit()
 
-    request = db.get(FacialSearchRequest, notification.search_request_id)
-    client = db.get(Client, notification.client_id)
-    registration = db.scalar(
-        select(ParentGalleryRegistration.id).where(
-            ParentGalleryRegistration.parent_gallery_id
-            == notification.parent_gallery_id,
-            ParentGalleryRegistration.client_id == notification.client_id,
-            ParentGalleryRegistration.status == "active",
-        )
-    )
-    if (
-        request is None
-        or request.status == "cancelled"
-        or request.parent_gallery_id != notification.parent_gallery_id
-        or request.client_id != notification.client_id
-        or client is None
-        or not registration
-    ):
-        _cancel(notification)
-        db.commit()
-        return True
     try:
+        request, client = notification_origin(db, notification)
+        if request is None:
+            _cancel(notification)
+            db.commit()
+            return True
+        active_provider = provider_for(db, tenant_id=notification.tenant_id, adapter=provider)
+        require_ready_channel(db, active_provider, tenant_id=notification.tenant_id)
+        request, client = notification_origin(db, notification)
+        if request is None:
+            _cancel(notification)
+            db.commit()
+            return True
         message = _notification_message(
             notification,
             request=request,
             cipher=cipher,
             settings=settings,
         )
-        require_ready_channel(db, provider)
-        result = provider.send_transactional(
+        require_active_owner(db, notification.tenant_id)
+        result = active_provider.send_transactional(
             client.phone_e164,
             message,
             idempotency_key=notification.idempotency_key,
@@ -171,6 +171,13 @@ def process_next_search_notification(
                 transient=False,
                 ambiguous=True,
             )
+    except HTTPException:
+        notification.status = "queued"
+        notification.attempts -= 1
+        notification.lease_expires_at = None
+        notification.updated_at = now()
+        db.commit()
+        return True
     except (WhatsAppConfigurationError, WhatsAppDeliveryError) as error:
         ambiguous = isinstance(error, WhatsAppDeliveryError) and error.ambiguous
         transient = isinstance(error, WhatsAppDeliveryError) and error.transient
@@ -210,11 +217,31 @@ def process_next_search_notification(
     return True
 
 
+def notification_origin(db, notification):
+    owner = notification.tenant_id
+    require_active_owner(db, owner)
+    request = owned_record(db, FacialSearchRequest, notification.search_request_id, tenant_id=owner)
+    client = owned_record(db, Client, notification.client_id, tenant_id=owner)
+    parent = owned_record(db, ParentGallery, notification.parent_gallery_id, tenant_id=owner)
+    registration = db.scalar(select(ParentGalleryRegistration.id).where(
+        ParentGalleryRegistration.tenant_id == owner,
+        ParentGalleryRegistration.parent_gallery_id == notification.parent_gallery_id,
+        ParentGalleryRegistration.client_id == notification.client_id,
+        ParentGalleryRegistration.status == "active"))
+    if (not request or request.status == "cancelled" or request.parent_gallery_id != notification.parent_gallery_id
+            or request.client_id != notification.client_id or not client or not registration
+            or not parent or not parent.active or parent.lifecycle_status != "active"):
+        return None, None
+    return request, client
+
+
 def cancel_pending_search_notifications(
-    db: Session, *, request_id: UUID
+    db: Session, *, request_id: UUID, tenant_id: UUID
 ) -> None:
+    require_active_owner(db, tenant_id)
     for notification in db.scalars(
         select(FacialSearchNotificationOutbox).where(
+            FacialSearchNotificationOutbox.tenant_id == tenant_id,
             FacialSearchNotificationOutbox.search_request_id == request_id,
             FacialSearchNotificationOutbox.status.in_(("queued", "processing")),
         )
@@ -229,6 +256,8 @@ def _notification_message(
     cipher: FacialCipher,
     settings: FacialSettings,
 ) -> str:
+    if notification.tenant_id != request.tenant_id:
+        raise WhatsAppConfigurationError("Origem da notificação indisponível.")
     envelope = FacialEnvelope(
         ciphertext=notification.payload_ciphertext,
         nonce=notification.payload_nonce,
@@ -246,7 +275,8 @@ def _notification_message(
     if payload != {"path": expected_path, "result": notification.result_kind}:
         raise WhatsAppConfigurationError("Payload transacional inválido.")
     base_url = notification_public_origin(settings.environment)
-    link = f"{base_url}{expected_path}"
+    return_to = urlencode({"reauth": "client", "return_to": expected_path})
+    link = f"{base_url}/?{return_to}"
     if notification.result_kind == "ready":
         return f"Sua busca na galeria foi concluída. Confira as possibilidades em {link}"
     if notification.result_kind == "no_candidates":
@@ -255,39 +285,10 @@ def _notification_message(
 
 
 def notification_public_origin(environment: str) -> str:
-    # A mesma origem que o deploy configura para links sensíveis tem precedência.
-    origin = os.getenv("PUBLIC_APP_ORIGIN", "").strip() or os.getenv("MARKINA_PUBLIC_URL", "").strip()
-    error = "URL pública da aplicação indisponível ou inválida para este ambiente."
     try:
-        parsed = urlsplit(origin)
-        hostname = (parsed.hostname or "").lower().rstrip(".")
-        port = parsed.port
-    except ValueError as exc:
-        raise WhatsAppConfigurationError(error) from exc
-    if (
-        not hostname
-        or parsed.scheme not in {"http", "https"}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query or parsed.fragment
-        or any(char.isspace() for char in origin)
-        or "\\" in origin or "%" in hostname
-        or (port is not None and not 1 <= port <= 65535)
-    ):
-        raise WhatsAppConfigurationError(error)
-    if environment.strip().lower() not in {"development", "test", "local"}:
-        try:
-            public_host = ip_address(hostname).is_global
-        except ValueError:
-            public_host = (
-                "." in hostname
-                and not hostname.endswith((".localhost", ".local", ".internal"))
-                and not all(part.isdigit() for part in hostname.split("."))
-            )
-        if parsed.scheme != "https" or not public_host:
-            raise WhatsAppConfigurationError(error)
-    return origin.rstrip("/")
+        return public_app_origin(environment)
+    except PublicOriginError as exc:
+        raise WhatsAppConfigurationError(str(exc)) from exc
 
 
 def _notification_scope(

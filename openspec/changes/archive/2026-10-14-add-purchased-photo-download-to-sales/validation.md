@@ -36,5 +36,6 @@
 - `openspec validate add-purchased-photo-download-to-sales --strict --json` — passou nesta worktree antes do arquivamento. Após sincronizar manualmente os dois requisitos à spec principal, `openspec validate --specs` passou (10/10) e a change foi arquivada com `openspec archive --yes --skip-specs --json add-purchased-photo-download-to-sales` (`specsUpdated: false`, pois a sincronização já havia sido feita).
 - `git diff --check` — passou.
 - `npm ci` instalou as dependências conforme o lockfile; o npm reportou 11 vulnerabilidades na árvore (10 high, 1 critical). Nenhuma atualização automática de dependência foi aplicada.
-- Escopo preparado somente para a funcionalidade do botão; push, merge e deploy não foram executados.
+- Na integração com `origin/develop`, a tela recebeu autocomplete e estado de cartão de crédito recentes. O link foi ajustado para chamar exatamente o export canônico do acervo (`/admin/parent-galleries/.../clients/.../selection/export.html`), e esse endpoint também recebe o nome seguro da cliente. A validação e os testes pós-merge são registrados no PR.
+- Escopo da feature preparado e commit `5673965` enviado para `codex/add-purchased-photo-download-to-sales`; PR #182 para `develop` criado. A branch foi atualizada com `origin/develop` para resolver conflitos e preservar a nova tela de filtros e o fluxo de cartão. O merge do PR e deploy não foram executados nesta etapa.
 

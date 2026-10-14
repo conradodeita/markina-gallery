@@ -1,5 +1,4 @@
 """Execução retomável da busca facial sem depender da tela aberta."""
-
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
@@ -20,6 +19,7 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryMembership,
+    FacialEmbeddingExperimentSetting,
     FacialJob,
     FacialRollout,
     FacialSearchCandidate,
@@ -58,6 +58,7 @@ from app.facial.search import (
 from app.facial.search_worker import process_claimed_search_job
 from app.messaging import WhatsAppDeliveryError, WhatsAppDeliveryResult
 from app.private_derivation import derive_client_selection
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _vector(first: float, second: float = 0.0) -> tuple[float, ...]:
@@ -144,20 +145,20 @@ def _base(tmp_path: Path):
     engine = create_engine(f"sqlite:///{tmp_path / 'worker.db'}")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento sintético")
-    client = Client(id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético")
+    client = Client(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
     registration = ParentGalleryRegistration(
-        parent_gallery_id=parent.id, client_id=client.id, status="active"
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, status="active"
     )
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Fotos",
         status="released",
         purpose="content",
     )
     policy = GalleryFacialPolicy(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         status="active",
         legal_notice_version="notice-v1",
@@ -170,7 +171,7 @@ def _base(tmp_path: Path):
         index_generation=1,
     )
     rollout = FacialRollout(
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=parent.id,
         status="active",
         stage="canary",
@@ -189,6 +190,7 @@ def _base(tmp_path: Path):
 
 def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=folder.id,
@@ -197,7 +199,7 @@ def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
         available=True,
     )
     protected_derivative = MediaDerivative(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         variant="client_preview",
         status="ready",
         relative_path=f"{photo.id}/client_preview.jpg",
@@ -205,7 +207,7 @@ def _add_photo(db: Session, parent, folder, root: Path) -> PhotoAsset:
         height=480,
     )
     derivative = MediaDerivative(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         variant="admin_preview",
         status="ready",
         relative_path=f"{photo.id}/admin_preview.jpg",
@@ -232,7 +234,7 @@ def _index_photo(
 ) -> None:
     replace_photo_index(
         db,
-        photo_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
         derivatives_root=root,
         provider=Provider([]),
         cipher=cipher,
@@ -244,7 +246,7 @@ def _index_photo(
     assert embedding is not None
     db.add(
         FacialJob(
-            kind="index",
+            tenant_id=FIXTURE_TENANT_ID, kind="index",
             status="completed",
             idempotency_key=f"index:{photo.id}:{embedding.preview_fingerprint}",
             parent_gallery_id=photo.parent_gallery_id,
@@ -272,6 +274,116 @@ def _create_request(db, parent, client, settings):
     return item
 
 
+@pytest.mark.parametrize("reference_source", ["upload", "indexed_region"])
+def test_gemma_query_worker_searches_the_pinned_768_dimension_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_source: str
+) -> None:
+    from app.facial.gemma_provider import (
+        GEMMA_EMBEDDING_DIMENSION,
+        GEMMA_MODEL_ID,
+        GEMMA_MODEL_VERSION,
+    )
+    from app.facial.indexing import index_idempotency_key
+
+    monkeypatch.setenv("APP_ENV", "test")
+    root = tmp_path / "derivatives"
+    engine, db, parent, client, folder = _base(tmp_path)
+    settings = _settings(tmp_path)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    photo = _add_photo(db, parent, folder, root)
+    vector = normalize_embedding([1.0, *([0.0] * (GEMMA_EMBEDDING_DIMENSION - 1))], GEMMA_EMBEDDING_DIMENSION)
+
+    class GemmaQueryProvider:
+        model_id = GEMMA_MODEL_ID
+        model_version = GEMMA_MODEL_VERSION
+        embedding_dimension = GEMMA_EMBEDDING_DIMENSION
+
+        def observe_path(self, _path: Path):
+            return [_face(vector)]
+
+        def observe_bytes(self, _payload: bytes):
+            return [_face(vector)]
+
+    provider = GemmaQueryProvider()
+    assert replace_photo_index(
+        db,
+        tenant_id=FIXTURE_TENANT_ID,
+        photo_id=photo.id,
+        derivatives_root=root,
+        provider=provider,
+        cipher=cipher,
+        settings=settings,
+    ) == 1
+    embedding = db.scalar(
+        select(PhotoFaceEmbedding).where(PhotoFaceEmbedding.photo_asset_id == photo.id)
+    )
+    assert embedding is not None
+    db.add_all((
+        FacialEmbeddingExperimentSetting(
+            singleton=1,
+            enabled=True,
+            mode="shadow",
+            enabled_since=parent.created_at - timedelta(seconds=1),
+            worker_last_seen_at=now(),
+        ),
+        FacialJob(
+            tenant_id=FIXTURE_TENANT_ID,
+            kind="index_gemma",
+            status="completed",
+            idempotency_key=index_idempotency_key(
+                environment=settings.environment, gallery_id=parent.id, photo_id=photo.id,
+                model_version=GEMMA_MODEL_VERSION, quality_version=settings.quality_version,
+                index_generation=1, fingerprint=embedding.preview_fingerprint,
+            ),
+            parent_gallery_id=parent.id,
+            photo_asset_id=photo.id,
+            model_version=GEMMA_MODEL_VERSION,
+            quality_version=settings.quality_version,
+            preview_fingerprint=embedding.preview_fingerprint,
+        ),
+    ))
+    db.commit()
+
+    if reference_source == "indexed_region":
+        embedding.bbox_x, embedding.bbox_y = .1, .1
+        embedding.bbox_width, embedding.bbox_height = .2, .2
+        db.commit()
+        request = create_search_request(
+            db, parent_gallery_id=parent.id, client_id=client.id,
+            consent_version=None, subject_declaration=None, representation_reference=None,
+            payload=b"", reference_region_id=embedding.id, settings=settings,
+        )
+        db.commit()
+    else:
+        request = _create_request(db, parent, client, settings)
+    assert request.search_engine == GEMMA_MODEL_ID
+    db.get(FacialEmbeddingExperimentSetting, 1).enabled = False
+    db.commit()  # Uma troca global não muda uma consulta já fixada.
+    repository = FacialJobRepository()
+    claim = repository.claim_next(
+        db, lease_seconds=settings.job_lease_seconds, job_class="gemma"
+    )
+    assert claim is not None and claim.kind == "search_gemma"
+    process_claimed_search_job(
+        db,
+        claim,
+        repository=repository,
+        provider=provider if reference_source == "upload" else None,
+        cipher=cipher,
+        settings=settings,
+    )
+    result, candidates = read_search_result(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        request_id=request.id,
+    )
+
+    assert result.status == "ready"
+    assert [candidate.photo_asset_id for candidate in candidates] == [photo.id]
+    engine.dispose()
+
+
 def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -293,7 +405,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
         search_queue_max_depth=100,
     )
     galleries = [
-        ParentGallery(id=uuid4(), name=f"Evento sintético {index}")
+        ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name=f"Evento sintético {index}")
         for index in range(2)
     ]
     gallery_ids = [gallery.id for gallery in galleries]
@@ -303,7 +415,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
             setup.add_all(
                 (
                     GalleryFacialPolicy(
-                        id=uuid4(),
+                        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
                         parent_gallery_id=gallery.id,
                         status="active",
                         legal_notice_version="notice-v1",
@@ -316,7 +428,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                         index_generation=1,
                     ),
                     FacialRollout(
-                        environment="test",
+                        tenant_id=FIXTURE_TENANT_ID, environment="test",
                         parent_gallery_id=gallery.id,
                         status="active",
                         stage="canary",
@@ -334,7 +446,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
         for index in range(100):
             gallery = galleries[index % len(galleries)]
             client = Client(
-                id=uuid4(),
+                tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
                 full_name=f"Cliente sintética {index}",
                 phone_e164=f"+55118{index:08d}",
             )
@@ -343,7 +455,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                 (
                     client,
                     ParentGalleryRegistration(
-                        parent_gallery_id=gallery.id,
+                        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
                         client_id=client.id,
                         status="active",
                     ),
@@ -805,16 +917,16 @@ def test_read_reject_and_cancel_repeat_full_client_gallery_scope(
     assert db.scalar(select(func.count()).select_from(DerivedGalleryMembership)) == 1
     assert db.scalar(select(func.count()).select_from(PhotoSelection)) == 1
 
-    other_parent = ParentGallery(id=uuid4(), name="Outro evento sintético")
+    other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Outro evento sintético")
     other_client = Client(
-        id=uuid4(), full_name="Outra cliente sintética", phone_e164="+5511888888888"
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Outra cliente sintética", phone_e164="+5511888888888"
     )
     db.add_all(
         (
             other_parent,
             other_client,
             ParentGalleryRegistration(
-                parent_gallery_id=other_parent.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=other_parent.id,
                 client_id=other_client.id,
                 status="active",
             ),
@@ -959,7 +1071,7 @@ def test_cleanup_recovers_after_external_reference_delete_and_is_idempotent(
 
     repeated, _ = repository.enqueue(
         db,
-        kind="cleanup",
+        tenant_id=FIXTURE_TENANT_ID, kind="cleanup",
         idempotency_key=f"cleanup-repeat:{request.id}",
         parent_gallery_id=parent.id,
         search_request_id=request.id,
@@ -1067,8 +1179,10 @@ def test_completion_notification_is_encrypted_idempotent_and_sent_once(
     assert len(messenger.calls) == 1
     recipient, message, key = messenger.calls[0]
     assert recipient == client.phone_e164
-    assert key == notification.idempotency_key
-    assert message.endswith(f"/public-galleries/{parent.id}")
+    assert key == f"tenant:{FIXTURE_TENANT_ID}:{notification.idempotency_key}"
+    assert message.endswith(
+        f"/?reauth=client&return_to=%2Fpublic-galleries%2F{parent.id}"
+    )
     assert all(word not in message.lower() for word in ("score", "rosto", "identidade", "quantidade"))
     db.refresh(notification)
     assert notification.status == "sent"

@@ -23,6 +23,7 @@ from app.auth import (
     WhatsAppDelivery,
     cleanup_expired_client_otp_pii,
     engine,
+    normalize_e164,
     now,
     password_hasher,
     pii_fingerprint,
@@ -30,6 +31,7 @@ from app.auth import (
 from app.gallery_access import issue_gallery_capability
 from app.main import app
 from app.seed_admin import seed_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -61,25 +63,63 @@ def otp_for(challenge_id):
         db.commit()
 
 
+def linked_post(client, path, *, json):
+    """Cada chamada positiva fornece a capacidade explícita da fixture própria."""
+    payload = dict(json)
+    contexts = getattr(client, "fixture_link_contexts", {})
+    client.fixture_link_contexts = contexts
+    tokens = getattr(client, "fixture_link_tokens", {})
+    client.fixture_link_tokens = tokens
+    if path == "/auth/client/challenge":
+        if not payload.get("access_token"):
+            with SessionLocal() as db:
+                person = db.scalar(select(Client).where(Client.tenant_id == FIXTURE_TENANT_ID,
+                    Client.phone_e164 == normalize_e164(payload["phone"])))
+                private = db.scalar(select(DerivedGallery).where(DerivedGallery.tenant_id == FIXTURE_TENANT_ID,
+                    DerivedGallery.client_id == person.id)) if person else None
+                parent = db.get(ParentGallery, private.parent_gallery_id) if private else db.scalar(
+                    select(ParentGallery).where(ParentGallery.tenant_id == FIXTURE_TENANT_ID))
+                if parent is None:
+                    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem OTP sintética", access_mode="standard")
+                    db.add(parent)
+                    db.flush()
+                context = (parent.id, private.id if private else None)
+                token = contexts.get(context)
+                if token is None:
+                    _, token = issue_gallery_capability(db, tenant_id=FIXTURE_TENANT_ID,
+                        parent_gallery_id=parent.id, scope="private_invite" if private else "public_gallery",
+                        derived_gallery_id=private.id if private else None,
+                        client_id=person.id if private else None)
+                    contexts[context] = token
+                db.commit()
+            payload["access_token"] = token
+        response = client.post(path, json=payload)
+        if response.status_code == 202:
+            tokens[response.json()["challenge_id"]] = payload["access_token"]
+        return response
+    payload["access_token"] = tokens[payload["challenge_id"]]
+    return client.post(path, json=payload)
+
+
 def test_client_otp_redirects_to_single_gallery(client):
     with SessionLocal() as db:
-        person = Client(full_name="Responsável", phone_e164="+5511999999999")
-        parent = ParentGallery(name="Evento")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Responsável", phone_e164="+5511999999999")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
         db.add(person)
         db.add(parent)
         db.flush()
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=person.id, name="Privada")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=person.id, name="Privada")
         db.add(gallery)
         db.commit()
         gallery_id = gallery.id
-    response = client.post(
-        "/auth/client/challenge", json={"full_name": "Responsável", "phone": "+55 (11) 99999-9999"}
+    response = linked_post(
+        client, "/auth/client/challenge", json={"full_name": "Responsável", "phone": "+55 (11) 99999-9999"}
     )
     assert response.status_code == 202
     challenge_id = response.json()["challenge_id"]
     otp_for(challenge_id)
-    response = client.post(
-        "/auth/client/verify", json={"challenge_id": challenge_id, "code": "123456"}
+    response = linked_post(
+        client, "/auth/client/verify", json={"challenge_id": challenge_id, "code": "123456"}
     )
     assert response.json() == {"destination": f"/gallery/{gallery_id}"}
     assert client.get(f"/gallery/{gallery_id}").status_code == 200
@@ -89,13 +129,13 @@ def test_client_otp_redirects_to_single_gallery(client):
 def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(client):
     phone = "+5511987654321"
     with SessionLocal() as db:
-        person = Client(full_name="Nome cadastrado pelo fotógrafo", phone_e164=phone)
-        parent = ParentGallery(name="Evento compartilhado", access_mode="standard")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Nome cadastrado pelo fotógrafo", phone_e164=phone)
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento compartilhado", access_mode="standard")
         db.add_all([person, parent])
         db.flush()
-        db.add(ClientPhone(client_id=person.id, phone_e164=phone, active=True))
+        db.add(ClientPhone(tenant_id=FIXTURE_TENANT_ID, client_id=person.id, phone_e164=phone, active=True))
         db.add(
-            ParentGalleryRegistration(
+            ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id,
                 client_id=person.id,
                 status="active",
@@ -103,6 +143,7 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
         )
         db.add(
             DerivedGallery(
+                tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent.id,
                 client_id=person.id,
                 name="Seleção privada automática",
@@ -113,12 +154,12 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
             parent_gallery_id=parent.id,
             scope="public_gallery",
             reconstructible=True,
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         client_id, parent_id = person.id, parent.id
 
-    challenge = client.post(
-        "/auth/client/challenge",
+    challenge = linked_post(
+        client, "/auth/client/challenge",
         json={
             "full_name": "Nome diferente informado no login",
             "phone": "+55 (11) 98765-4321",
@@ -128,8 +169,8 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
     )
     assert challenge.status_code == 202
     otp_for(challenge.json()["challenge_id"])
-    verified = client.post(
-        "/auth/client/verify",
+    verified = linked_post(
+        client, "/auth/client/verify",
         json={"challenge_id": challenge.json()["challenge_id"], "code": "123456"},
     )
     assert verified.status_code == 200
@@ -164,13 +205,13 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
         assert "123456" not in notifications[0].parent_name_snapshot
 
     client.cookies.clear()
-    resumed = client.post(
-        "/auth/client/challenge",
-        json={"full_name": "Nome ignorado", "phone": phone},
+    resumed = linked_post(
+        client, "/auth/client/challenge",
+        json={"full_name": "Nome ignorado", "phone": phone, "access_token": access_token, "return_to": f"/public-galleries/{parent_id}"},
     )
     otp_for(resumed.json()["challenge_id"])
-    assert client.post(
-        "/auth/client/verify",
+    assert linked_post(
+        client, "/auth/client/verify",
         json={"challenge_id": resumed.json()["challenge_id"], "code": "123456"},
     ).json() == {"destination": f"/public-galleries/{parent_id}"}
     with SessionLocal() as db:
@@ -183,107 +224,77 @@ def test_gallery_otp_reuses_admin_client_identity_without_overwriting_name(clien
                     )
                 )
             )
-        ) == 1
+        ) == 2
 
 
 def test_client_multiple_galleries_and_used_or_expired_otp(client):
     with SessionLocal() as db:
-        person = Client(full_name="Responsável", phone_e164="+5511888888888")
-        first_parent = ParentGallery(name="Evento 1")
-        second_parent = ParentGallery(name="Evento 2")
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Responsável", phone_e164="+5511888888888")
+        first_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento 1")
+        second_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento 2")
         db.add(person)
         db.add_all([first_parent, second_parent])
         db.flush()
         db.add_all(
             [
                 DerivedGallery(
+                    tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=first_parent.id, client_id=person.id, name="Privada 1"
                 ),
                 DerivedGallery(
+                    tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=second_parent.id, client_id=person.id, name="Privada 2"
                 ),
             ]
         )
         db.commit()
-    challenge = client.post(
-        "/auth/client/challenge", json={"full_name": "Responsável", "phone": "+5511888888888"}
+    challenge = linked_post(
+        client, "/auth/client/challenge", json={"full_name": "Responsável", "phone": "+5511888888888", "return_to": "/library"}
     ).json()["challenge_id"]
     otp_for(challenge)
-    assert client.post(
-        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    assert linked_post(
+        client, "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
     ).json() == {"destination": "/library"}
     assert (
-        client.post(
-            "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+        linked_post(
+            client, "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
         ).status_code
         == 401
     )
 
 
-def test_existing_client_without_gallery_redirects_to_empty_library(client):
+def test_existing_client_without_link_is_refused_without_fallback(client):
     with SessionLocal() as db:
-        db.add(Client(full_name="Responsável sem galeria", phone_e164="+5511987654321"))
+        db.add(Client(tenant_id=FIXTURE_TENANT_ID, full_name="Responsável sem galeria", phone_e164="+5511987654321"))
         db.commit()
-    challenge = client.post(
-        "/auth/client/challenge",
-        json={"full_name": "Responsável sem galeria", "phone": "+5511987654321"},
-    ).json()["challenge_id"]
-    otp_for(challenge)
-
-    response = client.post(
-        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"destination": "/library"}
+    response = client.post("/auth/client/challenge", json={"full_name": "Responsável sem galeria", "phone": "+5511987654321"})
+    assert response.status_code == 401
+    with SessionLocal() as db:
+        assert db.scalar(select(AuthChallenge)) is None
+        assert db.scalar(select(AuthSession)) is None
+        assert db.scalar(select(WhatsAppDelivery)) is None
 
 
 def test_unknown_phone_without_gallery_link_is_not_registered(client):
-    challenge = client.post(
-        "/auth/client/challenge",
-        json={"full_name": "Pessoa sem convite", "phone": "+5511976543210"},
-    ).json()["challenge_id"]
-    otp_for(challenge)
-
-    response = client.post(
-        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
-    )
-
-    assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "Este número ainda não possui acesso. "
-        "Abra o link compartilhado de uma galeria para se cadastrar."
-    )
+    response = client.post("/auth/client/challenge", json={"full_name": "Pessoa sem convite", "phone": "+5511976543210"})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Não foi possível concluir a autenticação."
     assert "markina_session" not in response.cookies
     with SessionLocal() as db:
-        stored_challenge = db.get(AuthChallenge, UUID(challenge))
-        assert stored_challenge.used_at is not None
-        assert stored_challenge.client_name is None
-        assert stored_challenge.subject is None
-        assert stored_challenge.subject_fingerprint == pii_fingerprint("+5511976543210")
-        delivery = db.scalar(
-            select(WhatsAppDelivery).where(WhatsAppDelivery.source_id == challenge)
-        )
-        assert delivery.recipient_phone is None
-        assert delivery.recipient_fingerprint == stored_challenge.subject_fingerprint
-        assert delivery.encrypted_payload is None
-        audit_subjects = list(db.scalars(select(AuditEvent.subject)))
-        assert not any(
-            "+5511976543210" in subject or "Pessoa sem convite" in subject
-            for subject in audit_subjects
-        )
-        assert db.scalar(select(Client).where(Client.phone_e164 == "+5511976543210")) is None
-        assert db.scalar(select(AuthSession).where(AuthSession.role == "client")) is None
+        assert db.scalar(select(Client)) is None
+        assert db.scalar(select(AuthChallenge)) is None
+        assert db.scalar(select(AuthSession)) is None
+        assert db.scalar(select(WhatsAppDelivery)) is None
 
 
 def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation(client):
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento protegido", access_mode="standard")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento protegido", access_mode="standard")
         db.add(parent)
         db.flush()
         _, access_token = issue_gallery_capability(
             db, parent_gallery_id=parent.id, scope="public_gallery"
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         parent_id = parent.id
 
@@ -292,13 +303,13 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
         "phone": "+5511965432109",
         "access_token": access_token,
     }
-    challenge = client.post("/auth/client/challenge", json=payload).json()["challenge_id"]
+    challenge = linked_post(client, "/auth/client/challenge", json=payload).json()["challenge_id"]
     with SessionLocal() as db:
         assert db.scalar(select(Client).where(Client.phone_e164 == payload["phone"])) is None
     otp_for(challenge)
 
-    response = client.post(
-        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    response = linked_post(
+        client, "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
     )
 
     assert response.status_code == 200
@@ -306,13 +317,13 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
     assert client.get(f"/gallery/{parent_id}").status_code == 403
     client.cookies.clear()
 
-    second = client.post(
-        "/auth/client/challenge",
+    second = linked_post(
+        client, "/auth/client/challenge",
         json={**payload, "full_name": "Nome divergente não deve substituir"},
     ).json()["challenge_id"]
     otp_for(second)
-    assert client.post(
-        "/auth/client/verify", json={"challenge_id": second, "code": "123456"}
+    assert linked_post(
+        client, "/auth/client/verify", json={"challenge_id": second, "code": "123456"}
     ).json() == {"destination": f"/public-galleries/{parent_id}"}
 
     with SessionLocal() as db:
@@ -369,16 +380,16 @@ def test_gallery_link_registers_unknown_phone_only_after_otp_and_reuses_relation
 
 def test_disabled_gallery_link_cannot_create_client_after_otp(client):
     with SessionLocal() as db:
-        parent = ParentGallery(name="Evento temporário", access_mode="standard")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento temporário", access_mode="standard")
         db.add(parent)
         db.flush()
         _, access_token = issue_gallery_capability(
             db, parent_gallery_id=parent.id, scope="public_gallery"
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         parent_id = parent.id
-    challenge = client.post(
-        "/auth/client/challenge",
+    challenge = linked_post(
+        client, "/auth/client/challenge",
         json={
             "full_name": "Pessoa convidada",
             "phone": "+5511954321098",
@@ -390,12 +401,13 @@ def test_disabled_gallery_link_cannot_create_client_after_otp(client):
         db.get(ParentGallery, parent_id).active = False
         db.commit()
 
-    response = client.post(
-        "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
+    response = linked_post(
+        client, "/auth/client/verify", json={"challenge_id": challenge, "code": "123456"}
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 401
     with SessionLocal() as db:
+        assert db.get(AuthChallenge, UUID(challenge)).used_at is None
         assert db.scalar(select(Client).where(Client.phone_e164 == "+5511954321098")) is None
         assert db.scalar(select(ParentGalleryRegistration)) is None
 
@@ -404,12 +416,12 @@ def test_admin_requires_totp_and_client_cannot_enter_admin(client):
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(
-            AdminUser(
+            fixture_admin(AdminUser(
                 email="foto@markina.test",
                 password_hash=password_hasher.hash("senha-segura"),
                 email_verified=True,
                 totp_secret=secret,
-            )
+            ))
         )
         db.commit()
     password = client.post(
@@ -435,27 +447,27 @@ def test_invalid_factors_have_neutral_response_and_audit(client):
     unknown = client.post(
         "/auth/client/challenge", json={"full_name": "Pessoa Teste", "phone": "+5511777777777"}
     )
-    assert unknown.status_code == 202
+    assert unknown.status_code == 401
     with SessionLocal() as db:
-        db.add(Client(full_name="Pessoa Conhecida", phone_e164="+5511999999998"))
+        db.add(Client(tenant_id=FIXTURE_TENANT_ID, full_name="Pessoa Conhecida", phone_e164="+5511999999998"))
         db.commit()
     known = client.post(
         "/auth/client/challenge", json={"full_name": "Pessoa Conhecida", "phone": "+5511999999998"}
     )
-    assert known.status_code == 202
-    assert known.json()["message"] == unknown.json()["message"]
+    assert known.status_code == 401
+    assert known.json()["detail"] == unknown.json()["detail"]
 
 
 def test_invalid_totp_is_neutral_and_audited(client):
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(
-            AdminUser(
+            fixture_admin(AdminUser(
                 email="foto@markina.test",
                 password_hash=password_hasher.hash("senha-segura"),
                 email_verified=True,
                 totp_secret=secret,
-            )
+            ))
         )
         db.commit()
     challenge = client.post(
@@ -468,13 +480,89 @@ def test_invalid_totp_is_neutral_and_audited(client):
         assert db.scalar(select(AuditEvent).where(AuditEvent.event == "admin_totp.failed"))
 
 
+def test_authenticated_identity_returns_only_admin_email(client):
+    secret = pyotp.random_base32()
+    with SessionLocal() as db:
+        db.add(
+            fixture_admin(AdminUser(
+                email="fotografo@markina.test",
+                password_hash=password_hasher.hash("senha-segura"),
+                email_verified=True,
+                totp_secret=secret,
+            ))
+        )
+        db.commit()
+
+    password = client.post(
+        "/auth/admin/password",
+        json={"email": "fotografo@markina.test", "password": "senha-segura"},
+    )
+    login = client.post(
+        "/auth/admin/totp",
+        json={
+            "challenge_id": password.json()["challenge_id"],
+            "code": pyotp.TOTP(secret).now(),
+        },
+    )
+
+    assert login.status_code == 200
+    assert client.get("/auth/identity").json() == {
+        "role": "admin",
+        "identity": "fotografo@markina.test",
+    }
+
+
+def test_authenticated_identity_returns_client_verified_phone(client):
+    phone = "+5511998765432"
+    with SessionLocal() as db:
+        person = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente de teste",
+            phone_e164=phone,
+        )
+        db.add(person)
+        db.flush()
+        db.add(
+            ClientPhone(
+                tenant_id=FIXTURE_TENANT_ID,
+                client_id=person.id,
+                phone_e164=phone,
+                verified_at=now(),
+            )
+        )
+        db.commit()
+
+    challenge = linked_post(
+        client,
+        "/auth/client/challenge",
+        json={"full_name": "Cliente de teste", "phone": phone},
+    )
+    assert challenge.status_code == 202
+    otp_for(challenge.json()["challenge_id"])
+    login = linked_post(
+        client,
+        "/auth/client/verify",
+        json={"challenge_id": challenge.json()["challenge_id"], "code": "123456"},
+    )
+
+    assert login.status_code == 200
+    assert client.get("/auth/identity").json() == {
+        "role": "client",
+        "identity": phone,
+    }
+
+
+def test_authenticated_identity_requires_session(client):
+    assert client.get("/auth/identity").status_code == 401
+
+
 def test_otp_resend_expiration_and_rate_limit(client):
-    response = client.post(
-        "/auth/client/challenge", json={"full_name": "Pessoa Teste", "phone": "+5511777777777"}
+    response = linked_post(
+        client, "/auth/client/challenge", json={"full_name": "Pessoa Teste", "phone": "+5511777777777"}
     )
     challenge_id = response.json()["challenge_id"]
     assert (
-        client.post("/auth/client/resend", json={"challenge_id": challenge_id}).status_code == 202
+        linked_post(client, "/auth/client/resend", json={"challenge_id": challenge_id}).status_code == 202
     )
     with SessionLocal() as db:
         challenge = db.get(AuthChallenge, UUID(challenge_id))
@@ -482,27 +570,27 @@ def test_otp_resend_expiration_and_rate_limit(client):
         challenge.expires_at = now() - timedelta(seconds=1)
         db.commit()
     assert (
-        client.post("/auth/client/resend", json={"challenge_id": challenge_id}).status_code == 401
+        linked_post(client, "/auth/client/resend", json={"challenge_id": challenge_id}).status_code == 401
     )
     for _ in range(5):
         assert (
-            client.post(
-                "/auth/client/challenge",
+            linked_post(
+                client, "/auth/client/challenge",
                 json={"full_name": "Pessoa Teste", "phone": "+5511666666666"},
             ).status_code
             == 202
         )
     assert (
-        client.post(
-            "/auth/client/challenge", json={"full_name": "Pessoa Teste", "phone": "+5511666666666"}
+        linked_post(
+            client, "/auth/client/challenge", json={"full_name": "Pessoa Teste", "phone": "+5511666666666"}
         ).status_code
         == 429
     )
 
 
 def test_legacy_active_challenge_backfills_fingerprint_on_resend(client):
-    response = client.post(
-        "/auth/client/challenge",
+    response = linked_post(
+        client, "/auth/client/challenge",
         json={"full_name": "Cliente Legada", "phone": "+5511777777711"},
     )
     challenge_id = response.json()["challenge_id"]
@@ -516,7 +604,7 @@ def test_legacy_active_challenge_backfills_fingerprint_on_resend(client):
         db.commit()
 
     assert (
-        client.post("/auth/client/resend", json={"challenge_id": challenge_id}).status_code == 202
+        linked_post(client, "/auth/client/resend", json={"challenge_id": challenge_id}).status_code == 202
     )
     with SessionLocal() as db:
         challenge = db.get(AuthChallenge, UUID(challenge_id))
@@ -529,14 +617,14 @@ def test_legacy_active_challenge_backfills_fingerprint_on_resend(client):
 
 
 def test_terminal_invalid_otp_attempt_minimizes_transient_pii(client):
-    challenge_id = client.post(
-        "/auth/client/challenge",
+    challenge_id = linked_post(
+        client, "/auth/client/challenge",
         json={"full_name": "Cliente Tentativas", "phone": "+5511777777755"},
     ).json()["challenge_id"]
     for _ in range(5):
         assert (
-            client.post(
-                "/auth/client/verify",
+            linked_post(
+                client, "/auth/client/verify",
                 json={"challenge_id": challenge_id, "code": "000000"},
             ).status_code
             == 401
@@ -565,7 +653,7 @@ def test_periodic_otp_cleanup_is_idempotent_and_preserves_usable_challenge(
             client_name="Cliente Abandonada",
             secret_hash="hash",
             expires_at=instant - timedelta(minutes=61),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         recent = AuthChallenge(
             kind="client_otp",
             subject="+5511777777733",
@@ -573,7 +661,7 @@ def test_periodic_otp_cleanup_is_idempotent_and_preserves_usable_challenge(
             client_name="Cliente Ainda Retida",
             secret_hash="hash",
             expires_at=instant - timedelta(minutes=30),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         usable = AuthChallenge(
             kind="client_otp",
             subject="+5511777777744",
@@ -581,11 +669,11 @@ def test_periodic_otp_cleanup_is_idempotent_and_preserves_usable_challenge(
             client_name="Cliente Ativa",
             secret_hash="hash",
             expires_at=instant + timedelta(minutes=5),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.add_all([old, recent, usable])
         db.flush()
         db.add(
-            WhatsAppDelivery(
+            WhatsAppDelivery(tenant_id=FIXTURE_TENANT_ID,
                 kind="otp",
                 source_type="auth_challenge",
                 source_id=str(old.id),
@@ -602,8 +690,8 @@ def test_periodic_otp_cleanup_is_idempotent_and_preserves_usable_challenge(
         old_id, recent_id, usable_id = old.id, recent.id, usable.id
 
     with SessionLocal() as db:
-        assert cleanup_expired_client_otp_pii(db, current_time=instant) == 1
-        assert cleanup_expired_client_otp_pii(db, current_time=instant) == 0
+        assert cleanup_expired_client_otp_pii(db, current_time=instant, tenant_id=FIXTURE_TENANT_ID) == 1
+        assert cleanup_expired_client_otp_pii(db, current_time=instant, tenant_id=FIXTURE_TENANT_ID) == 0
         assert db.get(AuthChallenge, old_id).subject is None
         assert db.get(AuthChallenge, old_id).client_name is None
         assert db.get(AuthChallenge, recent_id).subject == "+5511777777733"
@@ -620,12 +708,12 @@ def test_production_cookie_is_secure_and_session_is_rotated(monkeypatch, client)
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(
-            AdminUser(
+            fixture_admin(AdminUser(
                 email="foto@markina.test",
                 password_hash=password_hasher.hash("senha-segura"),
                 email_verified=True,
                 totp_secret=secret,
-            )
+            ))
         )
         db.commit()
     password = client.post(

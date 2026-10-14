@@ -10,6 +10,8 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(url: str, *arguments: str) -> None:
     result = run(
@@ -44,7 +46,7 @@ def test_client_deletion_receipt_migration_is_additive_and_reversible(tmp_path) 
                 "totp": "synthetic",
             },
         )
-    alembic(url, "upgrade", "head")
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     receipt = sa.Table("client_deletion_receipt", sa.MetaData(), autoload_with=engine)
     if engine.dialect.name == "sqlite":
         for column in receipt.columns:

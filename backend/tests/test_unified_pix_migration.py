@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 import sqlalchemy as sa
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 from tests.test_global_pix_migration import alembic
 
 
@@ -49,7 +50,7 @@ def test_unified_migration_preserves_legacy_and_enforces_owner(tmp_path):
                 "instant": instant,
             },
         )
-    alembic(url, "upgrade", "head")
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.connect() as db:
         assert db.execute(
             sa.text(
@@ -58,7 +59,7 @@ def test_unified_migration_preserves_legacy_and_enforces_owner(tmp_path):
             )
         ).one() == (None, "confirmed", 700, "SNAPSHOT ORIGINAL")
     alembic(url, "downgrade", "20260919_0057")
-    alembic(url, "upgrade", "head")
+    alembic(url, "upgrade", LEGACY_SCHEMA_HEAD)
     group = uuid4().hex
     with engine.begin() as db:
         if engine.dialect.name == "sqlite":

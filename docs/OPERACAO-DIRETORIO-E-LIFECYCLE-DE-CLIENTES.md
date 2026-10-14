@@ -34,12 +34,15 @@ divergentes.
 ## Classificação de exclusão
 
 `operational_removable` inclui cadastro, registros de telefone, acessos e registros
-públicos, memberships, capabilities, seleções, favoritos, visualizações,
-comentários, sessões, OTPs atribuíveis ao número atual, notificações de membership
-e buscas faciais transitórias.
+públicos, estados individuais de Galerias públicas inclusive já removidas,
+concessões de pastas, pedidos e avisos operacionais de reabertura, memberships,
+capabilities, seleções, favoritos, visualizações, comentários, sessões, OTPs
+atribuíveis ao número atual, notificações de membership e buscas faciais
+transitórias.
 
-`commercial_protected` inclui pedidos e itens, comunicações/notificações de
-pagamento, entregas comerciais ligadas à origem persistida e mídias do histórico.
+`commercial_protected` inclui grupos de pagamento com snapshot PIX, pedidos e
+itens, comunicações/notificações de pagamento, entregas comerciais ligadas à
+origem persistida e mídias do histórico.
 Qualquer quantidade maior que zero nessa classe impede a exclusão definitiva.
 Entregas comerciais são associadas pelos UUIDs de sua comunicação/outbox, nunca
 somente pelo telefone mutável.
@@ -52,10 +55,10 @@ apagada com suas referências operacionais. Uma privada compartilhada permanece;
 somente membership e interações da cliente são removidos, e outro membro válido
 assume a referência de proprietário quando necessário.
 
-Galerias públicas, pastas, JPEGs, configurações, outras clientes e interações de
-terceiros permanecem. A referência enviada para uma busca facial é removida do
-armazenamento físico após o commit; embeddings e candidatos transitórios já foram
-removidos na transação.
+Galerias públicas, seus tombstones e auditorias, pastas, JPEGs, configurações,
+outras clientes e interações de terceiros permanecem. A referência enviada para
+uma busca facial é removida do armazenamento físico após o commit; embeddings e
+candidatos transitórios já foram removidos na transação.
 
 O item desaparece imediatamente da interface. Repetir a mesma chave idempotente
 retorna o mesmo recibo, sem novo delete nem nova auditoria. Reutilizar a chave para

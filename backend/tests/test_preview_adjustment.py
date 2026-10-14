@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Base,
+    FolderProcessingSettings,
     GalleryPreviewSettings,
     ParentGallery,
     PhotoAsset,
@@ -14,6 +15,7 @@ from app.auth import (
     PreviewAdjustment,
     PreviewAdjustmentSettings,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture
@@ -32,13 +34,14 @@ def database(tmp_path, monkeypatch):
 
 
 def make_photo(db):
-    parent = ParentGallery(name="Amostra")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Amostra", payment_required=False)
     db.add(parent)
     db.flush()
-    folder = PhotoFolder(parent_gallery_id=parent.id, name="Fotos", purpose="content")
+    folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos", purpose="content")
     db.add(folder)
     db.flush()
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         parent_gallery_id=parent.id,
         folder_id=folder.id,
         filename="foto.jpg",
@@ -51,11 +54,11 @@ def make_photo(db):
 
 def test_settings_default_constraints_and_photo_cascade(database):
     with Session(database) as db:
-        config = PreviewAdjustmentSettings()
+        config = PreviewAdjustmentSettings(tenant_id=FIXTURE_TENANT_ID, )
         db.add(config)
         photo = make_photo(db)
         assert not config.enabled
-        db.add(PreviewAdjustment(photo_asset_id=photo.id, generation=1, fingerprint="a" * 64))
+        db.add(PreviewAdjustment(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, generation=1, fingerprint="a" * 64))
         db.commit()
         db.execute(delete(PhotoAsset).where(PhotoAsset.id == photo.id))
         db.commit()
@@ -106,7 +109,7 @@ def prepared(database):
         path = safe_source_path(photo)
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (320, 180), (45, 65, 85)).save(path)
-        configure(db, photo.parent_gallery_id, True, 50)
+        configure(db, photo.parent_gallery_id, True, 50, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         generate_derivatives(db, photo)
         return factory, photo.id
@@ -128,17 +131,17 @@ def test_gallery_configuration_isolation_defaults_and_constraints(prepared):
         a = db.get(PhotoAsset, photo_id).parent_gallery_id
         other = make_photo(db)
         b = other.parent_gallery_id
-        assert settings(db, b) is None
-        config_a = settings(db, a)
+        assert settings(db, b, tenant_id=FIXTURE_TENANT_ID) is None
+        config_a = settings(db, a, tenant_id=FIXTURE_TENANT_ID)
         generation = config_a.generation
-        config_b = configure(db, b, True, 75, 10)
+        config_b = configure(db, b, True, 75, 10, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
-        assert settings(db, a).generation == generation
+        assert settings(db, a, tenant_id=FIXTURE_TENANT_ID).generation == generation
         assert db.get(PreviewAdjustment, photo_id).status == "queued"
-        configure(db, a, False, 50)
+        configure(db, a, False, 50, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
-        assert settings(db, b).enabled
-        assert settings(db, b).exposure_tenths == 10
+        assert settings(db, b, tenant_id=FIXTURE_TENANT_ID).enabled
+        assert settings(db, b, tenant_id=FIXTURE_TENANT_ID).exposure_tenths == 10
         with pytest.raises(ValueError):
             cleanup(db, execute=True, worker_stopped=True)
         config_b.exposure_tenths = 21
@@ -155,20 +158,22 @@ def test_gallery_settings_migration_preserves_existing_configuration(database):
     with Session(database) as db:
         photo = make_photo(db)
         parent_id = photo.parent_gallery_id
-        db.add(PreviewAdjustmentSettings(enabled=True, strength=75, generation=7))
+        db.add(PreviewAdjustmentSettings(tenant_id=FIXTURE_TENANT_ID, enabled=True, strength=75, generation=7))
         db.commit()
     GalleryPreviewSettings.__table__.drop(database)
     migration = importlib.import_module("migrations.versions.20260913_0055_gallery_preview_settings")
     with database.begin() as connection, Operations.context(MigrationContext.configure(connection)):
         migration.upgrade()
     with Session(database) as db:
-        row = db.get(GalleryPreviewSettings, parent_id)
+        from sqlalchemy import text
+        row = db.execute(text("SELECT enabled, strength, generation, exposure_tenths FROM gallery_preview_settings WHERE parent_gallery_id=:id"), {"id": parent_id.hex}).one()
         assert (row.enabled, row.strength, row.generation, row.exposure_tenths) == (True, 75, 7, 0)
-        assert db.get(PreviewAdjustmentSettings, 1).enabled is False
+        assert db.scalar(text("SELECT enabled FROM preview_adjustment_settings WHERE id=1")) == 0
 
 
 def test_exposure_reprocessing_always_uses_clean_source(prepared):
-    from app.preview_adjustment.service import adjusted_path, configure, enqueue, process_one
+    from app.folder_processing import configure_folder
+    from app.preview_adjustment.service import adjusted_path, enqueue, process_one
 
     factory, photo_id = prepared
     inputs, results = [], []
@@ -180,17 +185,18 @@ def test_exposure_reprocessing_always_uses_clean_source(prepared):
 
     for exposure in (10, 0, 10):
         with factory() as db:
-            configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, True, 50, exposure)
-            assert enqueue(db, photo_id, retry=True)
+            configure_folder(db, db.get(PhotoAsset, photo_id).folder_id, preview_mode="custom", facial_mode="on",
+                             strength=50, exposure_tenths=exposure, tenant_id=FIXTURE_TENANT_ID)
+            assert not enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
             db.commit()
         assert process_one(factory, RecordingEngine())
         with factory() as db:
-            results.append(adjusted_path(db, photo_id).read_bytes())
+            results.append(adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID).read_bytes())
     assert inputs[0] == inputs[1] == inputs[2]
     assert results[0] == results[2] != results[1]
 
 
-def test_worker_uses_each_gallery_configuration_independently(prepared):
+def test_gallery_changes_do_not_cancel_jobs_for_existing_folder_snapshots(prepared):
     from PIL import Image
 
     from app.media import generate_derivatives, safe_source_path
@@ -198,37 +204,47 @@ def test_worker_uses_each_gallery_configuration_independently(prepared):
 
     factory, first_id = prepared
     with factory() as db:
+        first = db.get(PhotoAsset, first_id)
+        db.add(FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=first.folder_id,
+                                        preview_mode="custom", facial_mode="on",
+                                        preview_strength=50, preview_exposure_tenths=0))
         second = make_photo(db)
         path = safe_source_path(second)
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (40, 30), (100, 100, 100)).save(path)
-        configure(db, second.parent_gallery_id, True, 75, -10)
+        configure(db, second.parent_gallery_id, True, 75, -10, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         generate_derivatives(db, second)
         second_id = second.id
-        configure(db, db.get(PhotoAsset, first_id).parent_gallery_id, False, 50)
+        db.add(FolderProcessingSettings(tenant_id=FIXTURE_TENANT_ID, folder_id=second.folder_id,
+                                        preview_mode="custom", facial_mode="on",
+                                        preview_strength=75, preview_exposure_tenths=-10))
+        configure(db, db.get(PhotoAsset, first_id).parent_gallery_id, False, 50, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
     class GalleryEngine(BrightEngine):
         def render(self, image, strength):
-            assert strength == 75
+            assert strength in {50, 75}
+            strengths.append(strength)
             return super().render(image, strength)
 
+    strengths = []
     assert process_one(factory, GalleryEngine())
-    assert not process_one(factory, GalleryEngine())
+    assert process_one(factory, GalleryEngine())
     with factory() as db:
         assert db.get(PreviewAdjustment, second_id).status == "ready"
-        assert db.get(PreviewAdjustment, first_id).status == "cancelled"
+        assert db.get(PreviewAdjustment, first_id).status == "ready"
+    assert sorted(strengths) == [50, 75]
 
 
 def test_job_idempotency_fallback_and_byte_preservation(prepared):
     from sqlalchemy import select
 
     from app.auth import MediaDerivative
+    from app.folder_processing import configure_folder
     from app.media import safe_derivative_path
     from app.preview_adjustment.service import (
         adjusted_path,
-        configure,
         enqueue,
         presentation_path,
         process_one,
@@ -240,17 +256,18 @@ def test_job_idempotency_fallback_and_byte_preservation(prepared):
             row.variant: safe_derivative_path(row).read_bytes()
             for row in db.scalars(select(MediaDerivative))
         }
-        assert not enqueue(db, photo_id)
-        assert adjusted_path(db, photo_id) is None
+        assert not enqueue(db, photo_id, tenant_id=FIXTURE_TENANT_ID)
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
     assert process_one(factory, BrightEngine())
     assert not process_one(factory, BrightEngine())
     with factory() as db:
-        path = adjusted_path(db, photo_id)
+        path = adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID)
         assert path and path.read_bytes() != originals["client_preview"]
         for row in db.scalars(select(MediaDerivative)):
             assert safe_derivative_path(row).read_bytes() == originals[row.variant]
-        assert not enqueue(db, photo_id, retry=True)
-        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
+        assert not enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
+        configure_folder(db, db.get(PhotoAsset, photo_id).folder_id, preview_mode="off", facial_mode="on",
+                         strength=50, exposure_tenths=0, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         row = db.scalar(select(MediaDerivative).where(MediaDerivative.variant == "client_preview"))
         assert presentation_path(db, row).read_bytes() == originals["client_preview"]
@@ -262,7 +279,8 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
     from sqlalchemy import select
 
     from app.auth import BrandingSettings, MediaDerivative, MediaJob, now
-    from app.preview_adjustment.service import adjusted_path, configure, process_one
+    from app.folder_processing import configure_folder
+    from app.preview_adjustment.service import adjusted_path, process_one
 
     factory, photo_id = prepared
 
@@ -270,15 +288,17 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
         def render(self, image, strength):
             with factory() as db:
                 if mutation == "disable":
-                    configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
+                    configure_folder(db, db.get(PhotoAsset, photo_id).folder_id, preview_mode="off", facial_mode="on",
+                                     strength=50, exposure_tenths=0, tenant_id=FIXTURE_TENANT_ID)
                 elif mutation == "exposure":
-                    configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, True, 50, 10)
+                    configure_folder(db, db.get(PhotoAsset, photo_id).folder_id, preview_mode="custom", facial_mode="on",
+                                     strength=50, exposure_tenths=10, tenant_id=FIXTURE_TENANT_ID)
                 elif mutation == "source":
                     db.scalar(
                         select(MediaDerivative).where(MediaDerivative.variant == "admin_preview")
                     ).updated_at = now()
                 elif mutation == "protection":
-                    db.add(BrandingSettings(watermark_text="NOVA MARCA"))
+                    db.add(BrandingSettings(tenant_id=FIXTURE_TENANT_ID, watermark_text="NOVA MARCA"))
                 elif mutation == "gallery":
                     photo = db.get(PhotoAsset, photo_id)
                     db.get(ParentGallery, photo.parent_gallery_id).lifecycle_status = "deleting"
@@ -291,7 +311,7 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
 
     assert process_one(factory, ChangedEngine())
     with factory() as db:
-        assert adjusted_path(db, photo_id) is None
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
 
 
 def test_failure_retry_and_expired_claim(prepared):
@@ -309,7 +329,7 @@ def test_failure_retry_and_expired_claim(prepared):
     with factory() as db:
         row = db.get(PreviewAdjustment, photo_id)
         assert row.status == "failed" and "secret" not in row.last_error
-        assert enqueue(db, photo_id, retry=True)
+        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
         row.status, row.claim_token = "processing", str(uuid4())
         row.updated_at = now() - timedelta(minutes=5)
         db.commit()
@@ -324,9 +344,9 @@ def test_missing_result_falls_back_and_can_retry(prepared):
     factory, photo_id = prepared
     process_one(factory, BrightEngine())
     with factory() as db:
-        adjusted_path(db, photo_id).unlink()
-        assert adjusted_path(db, photo_id) is None
-        assert enqueue(db, photo_id, retry=True)
+        adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID).unlink()
+        assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
+        assert enqueue(db, photo_id, retry=True, tenant_id=FIXTURE_TENANT_ID)
 
 
 def test_cleanup_is_scoped_and_requires_disable(prepared):
@@ -345,7 +365,7 @@ def test_cleanup_is_scoped_and_requires_disable(prepared):
         assert cleanup(db)["files"] == 1
         with pytest.raises(ValueError):
             cleanup(db, execute=True, worker_stopped=True)
-        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
+        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         with pytest.raises(ValueError):
             cleanup(db, execute=True)
@@ -367,12 +387,21 @@ def api_client(prepared, monkeypatch):
     monkeypatch.setattr(auth, "SessionLocal", factory)
     monkeypatch.setattr(main, "SessionLocal", factory)
     with factory() as db:
+        admin = fixture_admin(auth.AdminUser(email="adjustment@example.test",
+                                              password_hash="synthetic", totp_secret="synthetic", email_verified=True))
+        db.add(admin)
+        person = auth.Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente fixture", phone_e164="+5511999999960")
+        db.add(person)
+        db.flush()
         db.add_all(
             [
                 auth.AuthSession(
                     token_hash=auth.token_hash(f"adjustment-{role}"),
                     role=role,
-                    subject_id=uuid4(),
+                    subject_id=admin.id if role == "admin" else person.id,
+                    tenant_id=FIXTURE_TENANT_ID,
+                    admin_subject_id=admin.id if role == "admin" else None,
+                    client_subject_id=person.id if role == "client" else None,
                     expires_at=auth.now() + timedelta(hours=1),
                 )
                 for role in ("admin", "client")
@@ -384,6 +413,7 @@ def api_client(prepared, monkeypatch):
 
 
 def test_admin_api_auth_comparison_and_immediate_disable(api_client):
+    from app.folder_processing import configure_folder
     from app.preview_adjustment.service import process_one
 
     client, factory, photo_id = api_client
@@ -407,6 +437,10 @@ def test_admin_api_auth_comparison_and_immediate_disable(api_client):
         client.get(f"/admin/photo-assets/{photo_id}/watermarked-preview").content == after.content
     )
     assert client.patch(config_url, json={"enabled": False, "strength": 50}).status_code == 200
+    with factory() as db:
+        configure_folder(db, db.get(PhotoAsset, photo_id).folder_id, preview_mode="off", facial_mode="on",
+                         strength=50, exposure_tenths=0, tenant_id=FIXTURE_TENANT_ID)
+        db.commit()
     assert client.get(f"{root}/photos/{photo_id}/after").status_code == 404
     assert (
         client.get(f"/admin/photo-assets/{photo_id}/watermarked-preview").content == before.content
@@ -426,7 +460,7 @@ def test_gallery_queue_and_progress_and_photo_deletion(api_client):
     assert client.post(f"{endpoint}/enqueue").json()["queued"] == 0
     process_one(factory, BrightEngine())
     with factory() as db:
-        result = adjusted_path(db, photo_id)
+        result = adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID)
     payload = client.get(endpoint).json()
     assert payload["counts"]["ready"] == 1
     assert payload["photos"][0]["id"] == str(photo_id)
@@ -448,29 +482,32 @@ def test_client_private_delivery_keeps_authorization_and_fallback(api_client):
         GalleryAccess,
         token_hash,
     )
-    from app.preview_adjustment.service import adjusted_path, configure, process_one
+    from app.folder_processing import configure_folder
+    from app.preview_adjustment.service import adjusted_path, process_one
 
     client, factory, photo_id = api_client
     with factory() as db:
-        owner = Client(full_name="Responsável de teste", phone_e164="+5511999999988")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Responsável de teste", phone_e164="+5511999999988")
         db.add(owner)
         db.flush()
         photo = db.get(PhotoAsset, photo_id)
         gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=photo.parent_gallery_id, client_id=owner.id, name="Privada de teste"
         )
         db.add(gallery)
         db.flush()
         db.add_all(
             [
-                GalleryAccess(client_id=owner.id, gallery_id=gallery.id),
-                DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo_id),
+                GalleryAccess(tenant_id=FIXTURE_TENANT_ID, client_id=owner.id, gallery_id=gallery.id, derived_gallery_id=gallery.id),
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo_id),
             ]
         )
         session = db.scalar(
             select(AuthSession).where(AuthSession.token_hash == token_hash("adjustment-client"))
         )
         session.subject_id = owner.id
+        session.client_subject_id = owner.id
         db.commit()
         gallery_id = gallery.id
     endpoint = f"/gallery/{gallery_id}/photos/{photo_id}/preview"
@@ -483,8 +520,9 @@ def test_client_private_delivery_keeps_authorization_and_fallback(api_client):
     assert result.status_code == 200 and result.content != conventional.content
     assert result.headers["cache-control"] == "private, no-store"
     with factory() as db:
-        assert result.content == adjusted_path(db, photo_id).read_bytes()
-        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
+        assert result.content == adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID).read_bytes()
+        configure_folder(db, db.get(PhotoAsset, photo_id).folder_id, preview_mode="off", facial_mode="on",
+                         strength=50, exposure_tenths=0, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     assert client.get(endpoint).content == conventional.content
     assert client.get(f"/gallery/{uuid4()}/photos/{photo_id}/preview").status_code == 403
@@ -513,11 +551,12 @@ def test_public_delivery_requires_registration_and_released_folder(api_client):
     from sqlalchemy import select
 
     from app.auth import AuthSession, Client, ParentGalleryRegistration, token_hash
-    from app.preview_adjustment.service import configure, process_one
+    from app.folder_processing import configure_folder
+    from app.preview_adjustment.service import process_one
 
     client, factory, photo_id = api_client
     with factory() as db:
-        owner = Client(full_name="Teste de acesso", phone_e164="+5511999999977")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Teste de acesso", phone_e164="+5511999999977")
         db.add(owner)
         db.flush()
         photo = db.get(PhotoAsset, photo_id)
@@ -528,6 +567,7 @@ def test_public_delivery_requires_registration_and_released_folder(api_client):
             select(AuthSession).where(AuthSession.token_hash == token_hash("adjustment-client"))
         )
         session.subject_id = owner.id
+        session.client_subject_id = owner.id
         owner_id = owner.id
         db.commit()
     endpoint = f"/public-galleries/{gallery_id}/photos/{photo_id}/preview"
@@ -536,7 +576,7 @@ def test_public_delivery_requires_registration_and_released_folder(api_client):
     assert client.get(endpoint).status_code == 403
     with factory() as db:
         db.add(
-            ParentGalleryRegistration(
+            ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=gallery_id,
                 client_id=owner_id,
                 status="active",
@@ -554,7 +594,8 @@ def test_public_delivery_requires_registration_and_released_folder(api_client):
     assert after.status_code == 200 and after.content != before.content
     assert after.headers["cache-control"] == "private, no-store"
     with factory() as db:
-        configure(db, db.get(PhotoAsset, photo_id).parent_gallery_id, False, 50)
+        configure_folder(db, folder_id, preview_mode="off", facial_mode="on", strength=50,
+                         exposure_tenths=0, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     assert client.get(endpoint).content == before.content
 
@@ -569,22 +610,23 @@ def test_lifecycle_manifest_includes_adjustment_even_with_private_reference(prep
     process_one(factory, BrightEngine())
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
-        relative = adjusted_path(db, photo_id).relative_to(derivatives_root()).as_posix()
-        manifest = gallery_operational_storage_manifest(db, photo.parent_gallery_id)
+        relative = adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID).relative_to(derivatives_root()).as_posix()
+        manifest = gallery_operational_storage_manifest(db, photo.parent_gallery_id, tenant_id=FIXTURE_TENANT_ID)
         assert relative in [item["relative_path"] for item in manifest["derivatives"]]
-        owner = Client(full_name="Teste privado", phone_e164="+5511999999966")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Teste privado", phone_e164="+5511999999966")
         db.add(owner)
         db.flush()
         gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=photo.parent_gallery_id,
             client_id=owner.id,
             name="Privada dependente da origem",
         )
         db.add(gallery)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo_id))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo_id))
         db.commit()
-        manifest = gallery_operational_storage_manifest(db, photo.parent_gallery_id)
+        manifest = gallery_operational_storage_manifest(db, photo.parent_gallery_id, tenant_id=FIXTURE_TENANT_ID)
         # Excluir a origem remove também o acervo das privadas dependentes.
         # A referência não pode retirar o original nem as prévias do manifesto.
         assert manifest["sources"] == [
@@ -593,8 +635,8 @@ def test_lifecycle_manifest_includes_adjustment_even_with_private_reference(prep
         paths = {item["relative_path"] for item in manifest["derivatives"]}
         assert {
             relative,
-            f"{photo_id}/thumbnail.jpg",
-            f"{photo_id}/client_preview.jpg",
-            f"{photo_id}/admin_preview.jpg",
+            f"tenants/{FIXTURE_TENANT_ID}/photos/{photo_id}/thumbnail.jpg",
+            f"tenants/{FIXTURE_TENANT_ID}/photos/{photo_id}/client_preview.jpg",
+            f"tenants/{FIXTURE_TENANT_ID}/photos/{photo_id}/admin_preview.jpg",
         } <= paths
         assert manifest["history"] == []

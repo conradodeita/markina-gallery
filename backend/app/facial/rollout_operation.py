@@ -9,7 +9,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.auth import AdminUser, AuditEvent, FacialRolloutOperation, now
+from app.acervo_context import owned_record
+from app.auth import AdminUser, AuditEvent, FacialRolloutOperation, ParentGallery, now
 from app.facial.config import FacialSettings
 from app.facial.rollout import (
     ACTIVE_STAGES,
@@ -23,6 +24,7 @@ from app.facial.rollout import (
     read_rollout,
     suspend_rollout,
 )
+from app.tenancy import require_admin_tenant
 
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_GATES = frozenset(
@@ -100,8 +102,13 @@ def execute_protected_rollout_operation(
     if action == "activate" and stage in ACTIVE_STAGES and not settings.enabled:
         raise FacialRolloutOperationError("Kill switch precisa estar ativo para esta etapa.")
 
+    tenant_id = require_admin_tenant(db, proof.actor_admin_id).id
+    for gallery_id in allowlist:
+        if not owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id):
+            raise FacialRolloutOperationError("Allowlist fora do escopo autorizado.")
     digest = sha256("\n".join(map(str, allowlist)).encode("ascii")).hexdigest()
     operation = FacialRolloutOperation(
+        tenant_id=tenant_id,
         environment=environment,
         action=action,
         stage=stage,
@@ -121,6 +128,7 @@ def execute_protected_rollout_operation(
                 db,
                 environment=environment,
                 parent_gallery_id=gallery_id,
+                tenant_id=tenant_id,
             )
             if action == "activate":
                 if rollout is None:
@@ -129,6 +137,7 @@ def execute_protected_rollout_operation(
                         environment=environment,
                         parent_gallery_id=gallery_id,
                         draft=draft_from_settings(settings),
+                        tenant_id=tenant_id,
                     )
                 if stage in ACTIVE_STAGES:
                     activate_rollout(
@@ -161,6 +170,7 @@ def execute_protected_rollout_operation(
     operation.completed_at = now()
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event=f"facial.rollout_operation_{action}",
             subject=(
                 f"operation_id:{operation.id};environment:{environment};"

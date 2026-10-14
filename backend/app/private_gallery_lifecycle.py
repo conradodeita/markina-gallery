@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id
 from app.auth import (
     DerivedGallery,
     DerivedGalleryMembership,
@@ -39,10 +40,14 @@ def remove_client_selection_and_close_if_empty(
 ) -> PrivateSelectionRemovalResult:
     """Remove apenas a justificativa client e encerra a privada realmente vazia."""
 
+    tenant_id = client_tenant_id(db, client_id)
+    if gallery.tenant_id != tenant_id:
+        raise ValueError("Seleção indisponível.")
     lock_client_commerce(db, gallery_id=gallery.id, client_id=client_id)
 
     selection = db.scalar(
         select(PhotoSelection).where(
+            PhotoSelection.tenant_id == tenant_id,
             PhotoSelection.derived_gallery_id == gallery.id,
             PhotoSelection.photo_asset_id == photo_id,
             PhotoSelection.client_id == client_id,
@@ -53,6 +58,7 @@ def remove_client_selection_and_close_if_empty(
 
     apply_commercial_removal_policy(
         db,
+        tenant_id=tenant_id,
         parent_gallery_id=gallery.parent_gallery_id,
         client_id=client_id,
         derived_gallery_id=gallery.id,
@@ -61,6 +67,7 @@ def remove_client_selection_and_close_if_empty(
     db.delete(selection)
     reference = db.scalar(
         select(DerivedGalleryPhoto).where(
+            DerivedGalleryPhoto.tenant_id == tenant_id,
             DerivedGalleryPhoto.derived_gallery_id == gallery.id,
             DerivedGalleryPhoto.photo_asset_id == photo_id,
         )
@@ -68,6 +75,7 @@ def remove_client_selection_and_close_if_empty(
     client_origin = (
         db.scalar(
             select(DerivedGalleryPhotoOrigin).where(
+                DerivedGalleryPhotoOrigin.tenant_id == tenant_id,
                 DerivedGalleryPhotoOrigin.derived_gallery_photo_id == reference.id,
                 DerivedGalleryPhotoOrigin.origin == "client",
             )
@@ -80,6 +88,7 @@ def remove_client_selection_and_close_if_empty(
     )
     other_client_selections = db.scalar(
         select(func.count()).select_from(PhotoSelection).where(
+            PhotoSelection.tenant_id == tenant_id,
             PhotoSelection.derived_gallery_id == gallery.id,
             PhotoSelection.photo_asset_id == photo_id,
             PhotoSelection.client_id != client_id,
@@ -93,6 +102,7 @@ def remove_client_selection_and_close_if_empty(
             select(func.count())
             .select_from(DerivedGalleryPhotoOrigin)
             .where(
+                DerivedGalleryPhotoOrigin.tenant_id == tenant_id,
                 DerivedGalleryPhotoOrigin.derived_gallery_photo_id == reference.id
             )
         )
@@ -104,11 +114,13 @@ def remove_client_selection_and_close_if_empty(
 
     references_left = db.scalar(
         select(func.count()).select_from(DerivedGalleryPhoto).where(
+            DerivedGalleryPhoto.tenant_id == tenant_id,
             DerivedGalleryPhoto.derived_gallery_id == gallery.id
         )
     )
     private_assets_left = db.scalar(
         select(func.count()).select_from(PhotoAsset).where(
+            PhotoAsset.tenant_id == tenant_id,
             PhotoAsset.derived_gallery_id == gallery.id
         )
     )
@@ -121,15 +133,19 @@ def remove_client_selection_and_close_if_empty(
         )
 
     for model in (PhotoComment, PhotoFavorite, PhotoView, PhotoSelection):
-        db.execute(delete(model).where(model.derived_gallery_id == gallery.id))
-    db.execute(delete(GalleryAccess).where(GalleryAccess.gallery_id == gallery.id))
+        db.execute(delete(model).where(
+            model.tenant_id == tenant_id, model.derived_gallery_id == gallery.id))
+    db.execute(delete(GalleryAccess).where(
+            GalleryAccess.tenant_id == tenant_id, GalleryAccess.gallery_id == gallery.id))
     db.execute(
         delete(GalleryAccessCapability).where(
+            GalleryAccessCapability.tenant_id == tenant_id,
             GalleryAccessCapability.derived_gallery_id == gallery.id
         )
     )
     db.execute(
         delete(DerivedGalleryMembership).where(
+            DerivedGalleryMembership.tenant_id == tenant_id,
             DerivedGalleryMembership.derived_gallery_id == gallery.id
         )
     )

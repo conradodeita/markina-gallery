@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { facialSearchApi, type FaceRegion, type FacialSearchResult } from "./facial-search-client";
+import { facialProgressPercent, facialSearchApi, type FaceRegion, type FacialSearchResult } from "./facial-search-client";
 
 export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, searchStatus, searchResult }: {
   galleryId: string;
@@ -31,8 +31,8 @@ export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, sea
   const progress = !busy && searchResult?.status === "waiting_index"
     ? { done: searchResult.progress.index.ready, total: searchResult.progress.index.total }
     : !busy && searchResult?.status === "searching" ? searchResult.progress.comparison : null;
-  const percent = progress && progress.total > 0
-    ? Math.max(0, Math.min(100, Math.round(progress.done / progress.total * 100))) : undefined;
+  const percent = progress ? facialProgressPercent(progress.done, progress.total) : undefined;
+  const progressUnit = searchResult?.status === "waiting_index" ? "fotos preparadas" : "fotos comparadas";
   const progressLabel = !busy && searchResult?.status === "waiting_index" ? "Preparando as fotos"
     : !busy && searchResult?.status === "ranking" ? "Organizando resultados" : "Procurando fotos semelhantes";
 
@@ -119,7 +119,7 @@ export function FaceRegionViewer({ galleryId, photo, onRegion, busy = false, sea
           <strong>{progressLabel}</strong>
           <p>Aguarde, procurando fotos…</p>
           <progress value={percent} max={100} aria-label="Progresso da busca na foto ampliada" />
-          <small>{percent === undefined ? "A busca está em andamento." : `${percent}% desta etapa concluído`}</small>
+          <small>{percent === undefined ? "A busca está em andamento." : `${percent}% desta etapa · ${progress?.done} de ${progress?.total} ${progressUnit}`}</small>
         </div>
       </div> : null}
     </div>

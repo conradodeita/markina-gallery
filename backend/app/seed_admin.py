@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import os
 
-import pyotp
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.auth import AdminUser, SessionLocal, password_hasher, validate_admin_password
+from app.auth import AdminUser, SessionLocal, TenantAdmin, password_hasher
+from app.provision_photographer import (
+    existing_admin_by_email,
+    existing_admin_owner,
+    validate_new_credentials,
+)
+from app.tenancy import require_single_tenant
 
 
 def required_setting(name: str) -> str:
@@ -20,30 +26,29 @@ def required_setting(name: str) -> str:
 def seed_admin() -> None:
     """Cria uma única conta verificada; nunca sobrescreve uma conta existente."""
     email = required_setting("ADMIN_SEED_EMAIL").lower()
-    password = required_setting("ADMIN_SEED_PASSWORD")
-    totp_secret = required_setting("ADMIN_SEED_TOTP_SECRET").replace(" ", "").upper()
-    try:
-        validate_admin_password(password, email=email)
-    except ValueError as exc:
-        raise RuntimeError(str(exc)) from exc
-    if not pyotp.TOTP(totp_secret).now():
-        raise RuntimeError("ADMIN_SEED_TOTP_SECRET não é uma chave TOTP válida.")
     with SessionLocal() as db:
-        existing = db.scalar(select(AdminUser).where(AdminUser.email == email))
+        existing = existing_admin_by_email(db, email)
         if existing:
+            existing_admin_owner(db, existing.id)
             return
+        tenant = require_single_tenant(db)
         if db.scalar(select(AdminUser.id)):
             raise RuntimeError("Já existe outro administrador; seed inicial interrompido.")
-        db.add(
-            AdminUser(
-                email=email,
-                password_hash=password_hasher.hash(password),
-                email_verified=True,
-                totp_secret=totp_secret,
-            )
+        password = required_setting("ADMIN_SEED_PASSWORD")
+        totp_secret = validate_new_credentials(email, password, required_setting("ADMIN_SEED_TOTP_SECRET"))
+        admin = AdminUser(
+            email=email,
+            password_hash=password_hasher.hash(password),
+            email_verified=True,
+            totp_secret=totp_secret,
         )
+        admin.tenant_memberships.append(TenantAdmin(tenant_id=tenant.id))
+        db.add(admin)
         db.commit()
 
 
 if __name__ == "__main__":
-    seed_admin()
+    try:
+        seed_admin()
+    except (RuntimeError, ValueError, SQLAlchemyError):
+        raise SystemExit("Seed recusado; verifique vínculos e configuração externa.") from None

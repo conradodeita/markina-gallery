@@ -2,7 +2,9 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { FacialApiError, facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
+import { FacialApiError, facialProgressPercent, facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
+import { clearFacialSearchStorage, facialSearchStorageKey, readFacialSearchStorage, rememberFacialSearch } from "../facial-search-storage";
+import { PUSH_LOGOUT_EVENT } from "../push-device";
 import { MarkinaButton, StatusBadge, SystemState } from "../ui-kit";
 
 const terminalStates = new Set(["ready", "no_face", "multiple_faces", "low_quality", "index_incomplete", "no_candidates", "cancelled", "expired", "failed"]);
@@ -47,7 +49,8 @@ export function FacialSearchPanel({
   const polling = useRef({ signature: "", delay: 0 });
   const restoreAllowed = useRef(true);
   const initialResult = useRef(result);
-  const storageKey = `markina:facial-search:${galleryId}`;
+  const storageKey = useRef<string | null>(null);
+  const contextVersion = useRef(0);
 
   useEffect(() => {
     if (result && result !== initialResult.current) restoreAllowed.current = false;
@@ -85,28 +88,57 @@ export function FacialSearchPanel({
 
   useEffect(() => {
     let active = true;
-    const restored = window.sessionStorage.getItem(storageKey);
-    facialSearchApi.availability(galleryId)
-      .then((value) => {
-        if (!active) return;
+    let loaded = false;
+    const invalidate = () => {
+      contextVersion.current += 1;
+      storageKey.current = null;
+      clearFacialSearchStorage();
+      closeDialog();
+      onResult(null);
+      setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
+    };
+    const refresh = async () => {
+      const version = ++contextVersion.current;
+      try {
+        const value = await facialSearchApi.availability(galleryId);
+        if (!active || version !== contextVersion.current) return;
+        const key = facialSearchStorageKey(value.storage_context, galleryId);
+        const changed = loaded && (!key || storageKey.current !== key);
+        clearFacialSearchStorage(key ? value.storage_context : undefined);
+        storageKey.current = key;
         setAvailability(value);
-      })
-      .catch(() => { if (active) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false }); });
-    if (restored) {
-      facialSearchApi.read(galleryId, restored)
-        .then((value) => { if (active && restoreAllowed.current) onResult(value); })
-        .catch(() => { if (active && restoreAllowed.current) window.sessionStorage.removeItem(storageKey); });
-    } else {
-      facialSearchApi.latest(galleryId)
-        .then((latest) => {
-          if (!active || !restoreAllowed.current || !latest?.id || !latest?.status || !latest?.progress) return;
-          window.sessionStorage.setItem(storageKey, latest.id);
+        if (changed) {
+          closeDialog();
+          onResult(null);
+          restoreAllowed.current = true;
+        }
+        if (loaded && !changed) return;
+        loaded = true;
+        const restored = readFacialSearchStorage(key);
+        try {
+          const latest = restored ? await facialSearchApi.read(galleryId, restored) : await facialSearchApi.latest(galleryId);
+          if (!active || version !== contextVersion.current || !restoreAllowed.current || !latest?.id || !latest?.status || !latest?.progress) return;
+          rememberFacialSearch(key, latest.id);
           onResult(latest);
-        })
-        .catch(() => undefined);
-    }
-    return () => { active = false; };
-  }, [galleryId, onResult, storageKey]);
+        } catch (cause) {
+          if (!active || version !== contextVersion.current) return;
+          rememberFacialSearch(key, null);
+          if (cause instanceof FacialApiError && [401, 403].includes(cause.status)) invalidate();
+        }
+      } catch {
+        if (active && version === contextVersion.current) invalidate();
+      }
+    };
+    void refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener(PUSH_LOGOUT_EVENT, invalidate);
+    return () => {
+      active = false;
+      contextVersion.current += 1;
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener(PUSH_LOGOUT_EVENT, invalidate);
+    };
+  }, [galleryId, onResult]);
 
   useEffect(() => {
     if (!result || terminalStates.has(result.status)) return;
@@ -117,20 +149,24 @@ export function FacialSearchPanel({
       ? { signature, delay: Math.min(10_000, Math.max(baseDelay, Math.round(polling.current.delay * 1.5))) }
       : { signature, delay: baseDelay };
     const timer = window.setTimeout(() => {
+      const version = contextVersion.current;
       facialSearchApi.read(galleryId, result.id)
-        .then((value) => { if (active) onResult(value); })
+        .then((value) => { if (active && version === contextVersion.current) onResult(value); })
         .catch((cause) => {
-          if (!active) return;
-          if (cause instanceof FacialApiError && cause.status === 404) {
-            window.sessionStorage.removeItem(storageKey);
+          if (!active || version !== contextVersion.current) return;
+          if (cause instanceof FacialApiError && [401, 403, 404].includes(cause.status)) {
+            contextVersion.current += 1;
+            clearFacialSearchStorage();
             onResult(null);
+            closeDialog();
+            if (cause.status !== 404) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
             return;
           }
           setError(cause instanceof Error ? cause.message : "Não foi possível atualizar a busca.");
         });
     }, polling.current.delay);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [galleryId, onResult, result, storageKey]);
+  }, [galleryId, onResult, result]);
 
   useEffect(() => {
     if (showDialog) consentDialog.current?.focus();
@@ -147,14 +183,24 @@ export function FacialSearchPanel({
     if (subjectDeclaration === "minor" && !availability.minor_search_available) return;
     setBusy(true);
     setError("");
+    const version = contextVersion.current;
     try {
       const created = await facialSearchApi.create(
         galleryId, file, availability.consent_version, subjectDeclaration,
       );
-      window.sessionStorage.setItem(storageKey, created.id);
+      if (version !== contextVersion.current) return;
+      rememberFacialSearch(storageKey.current, created.id);
       onResult(created);
       closeDialog();
     } catch (cause) {
+      if (version !== contextVersion.current) return;
+      if (cause instanceof FacialApiError && [401, 403].includes(cause.status)) {
+        contextVersion.current += 1;
+        clearFacialSearchStorage();
+        onResult(null);
+        closeDialog();
+        setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
+      }
       const retry = cause instanceof FacialApiError && cause.retryAfterSeconds
         ? ` Tente novamente em ${cause.retryAfterSeconds} segundos.`
         : "";
@@ -168,12 +214,22 @@ export function FacialSearchPanel({
     if (!result || busy) return false;
     setBusy(true);
     setError("");
+    const version = contextVersion.current;
     try {
       await facialSearchApi.cancel(galleryId, result.id);
-      window.sessionStorage.removeItem(storageKey);
+      if (version !== contextVersion.current) return false;
+      rememberFacialSearch(storageKey.current, null);
       onResult(null);
       return true;
     } catch (cause) {
+      if (version !== contextVersion.current) return false;
+      if (cause instanceof FacialApiError && [401, 403, 404].includes(cause.status)) {
+        contextVersion.current += 1;
+        clearFacialSearchStorage();
+        onResult(null);
+        closeDialog();
+        if (cause.status !== 404) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
+      }
       setError(cause instanceof Error ? cause.message : "Não foi possível excluir a busca.");
       return false;
     } finally {
@@ -185,7 +241,7 @@ export function FacialSearchPanel({
   if (availability.state === "unavailable") return null;
   const progressTotal = result?.status === "waiting_index" ? result.progress.index.total : result?.progress.comparison.total ?? 0;
   const progressDone = result?.status === "waiting_index" ? result.progress.index.ready : result?.progress.comparison.done ?? 0;
-  const progressValue = progressTotal ? Math.round(progressDone / progressTotal * 100) : 0;
+  const progressValue = facialProgressPercent(progressDone, progressTotal) ?? 0;
   const referenceRetentionMinutes = Math.ceil((availability.reference_retention_seconds ?? 900) / 60);
   const candidateRetentionHours = Math.ceil((availability.candidate_retention_seconds ?? 86400) / 3600);
   return (
@@ -194,7 +250,7 @@ export function FacialSearchPanel({
       {!result ? <MarkinaButton type="button" onClick={() => { setDialogOpen(true); setError(""); }}>Enviar foto para procurar</MarkinaButton> : (
         <div className="facial-search-status" aria-live="polite">
           <div><StatusBadge tone={result.status === "ready" ? "success" : result.status === "failed" ? "danger" : "neutral"}>{stateLabels[result.status] ?? result.status}</StatusBadge><span>{result.reference_deleted ? "Sem imagem temporária nesta busca" : "Foto protegida temporariamente"}</span></div>
-          {!terminalStates.has(result.status) ? <><progress value={progressValue} max={100} aria-label="Progresso da busca facial" /><small>{progressValue}% concluído · {result.estimate?.remaining_items ?? 0} itens restantes. Tempo restante ainda não disponível. Você pode fechar esta tela; avisaremos quando terminar.</small></> : null}
+          {!terminalStates.has(result.status) ? <><progress value={progressValue} max={100} aria-label="Progresso da busca facial" /><small>{progressValue}% concluído · {progressDone} de {progressTotal} fotos nesta etapa. Tempo restante ainda não disponível. Você pode fechar esta tela; avisaremos quando terminar.</small></> : null}
           {result.status === "no_face" ? <p>Tente uma foto frontal, bem iluminada e com o rosto inteiro.</p> : null}
           {result.status === "multiple_faces" ? <p>Recorte a imagem para manter somente a pessoa procurada.</p> : null}
           {result.status === "low_quality" ? <p>Envie outra foto com mais nitidez e melhor iluminação.</p> : null}

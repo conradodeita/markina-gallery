@@ -15,6 +15,7 @@ from app.facial.indexing import reconcile_gallery_index
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tenant-id", type=UUID, required=True)
     parser.add_argument("--gallery-id", type=UUID, required=True)
     parser.add_argument("--page-size", type=int, default=100, choices=range(1, 501))
     args = parser.parse_args()
@@ -26,6 +27,7 @@ def main() -> int:
         result = reconcile_gallery_index(
             db,
             parent_gallery_id=args.gallery_id,
+            tenant_id=args.tenant_id,
             derivatives_root=derivatives_root,
             settings=settings,
             page_size=args.page_size,

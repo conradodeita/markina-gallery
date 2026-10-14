@@ -1,16 +1,20 @@
 # Ajuste opcional de prévias
 
-Changes: `add-optional-preview-auto-adjustment` (origem) e `gallery-preview-exposure-and-installable-ui` (evolução). O controle fica na **etapa 04 → Ajuste automático das prévias** de cada galeria, não mais em Configurações. Galerias novas começam desligadas. Ausência do worker não interrompe o fluxo convencional; os ajustes ficam na fila. Falhas usam a prévia convencional.
+Changes: `add-optional-preview-auto-adjustment` (origem), `gallery-preview-exposure-and-installable-ui` (evolução) e `unify-folder-processing-controls` (painel contextual). Na **etapa Imagens**, uma única área mostra reconhecimento facial, intensidade, exposição e progresso da pasta selecionada, pública ou privada. Pastas públicas começam em 50%/0 EV; privadas, em 75%/0 EV. Cada pasta possui configuração própria, sem herança. Falhas de ajuste preservam a prévia convencional. O funcionamento RAW/Lightcraft e seu lifecycle são descritos nos documentos próprios do módulo.
 
 ## Comportamento
 
 O RawTherapee CLI executa um perfil de níveis automáticos, sem nitidez, reconstrução de rostos ou mudança de balanço de branco. A intensidade mistura o resultado com a prévia limpa (50% inicialmente, de 10 a 75%). É um primeiro perfil moderado para avaliação, não equivalência ao Auto do Lightroom nem tratamento final. Nova implementação de `AdjustmentEngine` pode substituir o motor; IA não está integrada nesta versão.
 
-Depois do ajuste automático, a exposição (-2 a +2 EV, passos de 0,1) clareia ou escurece somente aquela galeria em luz linear sRGB. Zero não altera os pixels do resultado automático. Valores altos podem recortar altas luzes; não recuperam detalhes ausentes. Cada processamento parte da prévia limpa, nunca do JPEG ajustado anterior, e a marca-d'água é aplicada por último. Não há importação de presets Lightroom.
+Depois do ajuste automático, a exposição (-2 a +2 EV, passos de 0,1) clareia ou escurece somente aquela pasta em luz linear sRGB. Zero não altera os pixels do resultado automático. Valores altos podem recortar altas luzes; não recuperam detalhes ausentes. Cada processamento parte da prévia limpa, nunca do JPEG ajustado anterior, e a marca-d'água é aplicada por último. Não há importação de presets Lightroom.
 
-Novas fotos de conteúdo recebem jobs depois das prévias convencionais, independentemente de rosto, conforme a configuração da sua galeria de origem. Ligar ou mudar intensidade/exposição não processa o acervo anterior: salvar e usar “Processar galeria / tentar falhas” na etapa 04. O navegador agenda páginas de 100 registros; se a página fechar, jobs já persistidos continuam. Repetir o comando retoma sem duplicar trabalho vigente. Progresso distingue fila, processamento, prontas e falhas. Antes/depois usa apenas prévias protegidas autenticadas. Capas e histórico comercial arquivado permanecem convencionais.
+Novas fotos de conteúdo recebem jobs conforme a configuração própria da pasta. Alterar intensidade/exposição salva automaticamente após um intervalo curto e reenfileira somente fotos elegíveis daquela pasta, invalidando a geração anterior. Pastas privadas preservam a dependência do reconhecimento facial concluído. Não há botões de salvar parâmetros ou processar toda a galeria. A retentativa facial continua limitada à pasta e ao gate global. Antes/depois e ampliação usam prévias protegidas autenticadas. Capas e histórico comercial arquivado permanecem convencionais.
 
-Desligar impede novas admissões, cancela filas/reservas e faz próximas requisições daquela galeria usarem o derivado convencional. Outras galerias não são afetadas. Fotos já carregadas na memória de um navegador só mudam ao recarregar. Mudança da marca-d'água, fonte ou geração invalida resultados anteriores. O original, `admin_preview`, `client_preview`, miniaturas e embeddings nunca são substituídos pelo ajuste.
+A etapa Imagens inclui pastas públicas e restritas; os cards de clientes levam ao mesmo painel pela identidade da pasta. O contador de upload conserva pasta de destino, arquivo, posição/total e progresso real em bytes durante troca de seleção. Consultas periódicas preservam a grade e os controles; não criam jobs. O Monitor continua mostrando filas e tentativas reais no escopo autorizado da instalação; reprocessamento reutiliza jobs e telemetria existentes, sem contagem por renderização da interface.
+
+O desligamento legado, disponível pelo contrato administrativo de configuração, impede novas admissões, cancela filas/reservas e faz próximas requisições daquela pasta usarem o derivado convencional. Outras pastas e fotógrafos não são afetados. Fotos já carregadas na memória de um navegador só mudam ao recarregar. Mudança da marca-d'água, fonte ou geração invalida resultados anteriores. O original, `admin_preview`, `client_preview`, miniaturas e embeddings nunca são substituídos pelo ajuste.
+
+Pastas restritas do Acervo do Cliente (`audience_scope=selected`) são sempre ajustadas individualmente, sem herdar nem desligar o módulo. O padrão efetivo é 75% e 0,0 EV; personalizações já salvas permanecem próprias da pasta. O job de prévia só entra na fila após o job facial mais recente daquela foto concluir com sucesso e sempre usa a prévia limpa baseada na fonte original. Alterar intensidade/exposição invalida a geração anterior e reenfileira as fotos com reconhecimento facial concluído. O gate facial global continua obrigatório.
 
 ## Worker opcional
 
@@ -28,7 +32,7 @@ O serviço tem imagem própria com RawTherapee; não instalar o editor na API. O
 
 ## Desligamento e higienização
 
-1. Desmarcar “Melhorar prévias automaticamente” e salvar em todas as galerias habilitadas. Confirmar `enabled=false` em `/admin/preview-adjustment/galleries/{id}/configuration`; para inventário global, consultar `gallery_preview_settings`. A limpeza recusa execução se qualquer galeria continua habilitada.
+1. O painel contextual não oferece desligamento. A higienização exige inventário de configurações da galeria e das pastas e desligamento explícito autorizado pelo contrato administrativo antes da limpeza. Confirmar `enabled=false` em `/admin/preview-adjustment/galleries/{id}/configuration`; para inventário global, consultar `gallery_preview_settings`. A limpeza recusa execução se qualquer galeria continua habilitada ou existe pasta restrita de cliente, pois essas pastas são sempre processadas.
 2. Parar exclusivamente o worker:
 
 ```powershell

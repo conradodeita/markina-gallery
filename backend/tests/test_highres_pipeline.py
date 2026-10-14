@@ -30,6 +30,7 @@ from app.facial.lifecycle import (
     media_can_proceed,
 )
 from app.media import generate_derivatives, safe_source_path
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 @pytest.fixture
@@ -44,6 +45,21 @@ def scene(tmp_path, monkeypatch):
     db = Session(create_engine("sqlite:///:memory:"))
     Base.metadata.create_all(db.bind)
     parent, photos = _gallery(db, tmp_path / "derivatives", photos=1)
+    from fastapi import Response
+    from sqlalchemy.orm import sessionmaker
+
+    from app import auth, main
+    from app.auth import AdminUser, Role
+    from tests.tenant_fixtures import fixture_admin
+
+    admin = fixture_admin(AdminUser(email="highres@example.invalid", password_hash="synthetic",
+        email_verified=True, totp_secret="synthetic"))
+    db.add(admin)
+    db.commit()
+    factory = sessionmaker(bind=db.bind, expire_on_commit=False)
+    monkeypatch.setattr(auth, "SessionLocal", factory)
+    monkeypatch.setattr(main, "SessionLocal", factory)
+    db.info["admin_cookie"] = auth.create_session(db, Response(), Role.ADMIN, admin.id, tenant_id=FIXTURE_TENANT_ID)
     yield db, parent, photos[0], _settings(tmp_path), tmp_path
     db.close()
 
@@ -84,8 +100,8 @@ def prepare(scene):
 def test_lifecycle_analyzes_before_media_then_removes_and_never_rescans(scene, monkeypatch):
     db, _, photo, settings, tmp = scene
     _row, path = prepare(scene)
-    assert not media_can_proceed(db, photo.id)
-    assert not cleanup_source(db, photo.id)
+    assert not media_can_proceed(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
+    assert not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     with pytest.raises(ValueError, match="Análise"):
         generate_derivatives(db, photo)
     cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
@@ -96,8 +112,8 @@ def test_lifecycle_analyzes_before_media_then_removes_and_never_rescans(scene, m
         "cipher": cipher,
         "settings": settings,
     }
-    assert replace_photo_index(db, **args) == 1
-    assert replace_photo_index(db, **args) == 1
+    assert replace_photo_index(db, tenant_id=FIXTURE_TENANT_ID, **args) == 1
+    assert replace_photo_index(db, tenant_id=FIXTURE_TENANT_ID, **args) == 1
     db.commit()
     regions = list(db.scalars(select(PhotoFaceEmbedding)))
     assert len(regions) == 1
@@ -105,14 +121,23 @@ def test_lifecycle_analyzes_before_media_then_removes_and_never_rescans(scene, m
     assert regions[0].bbox_width == pytest.approx(180 / 2400)
     assert regions[0].pipeline_version == "highres-v1"
     generate_derivatives(db, photo)
+    assert path.exists()  # A prévia ajustada ainda está pendente.
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.preview_adjustment.service import process_one
+
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     assert not path.exists()
     assert db.get(PhotoAnalysis, photo.id).deleted_at
-    assert not cleanup_source(db, photo.id)
+    assert not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     monkeypatch.setenv("FACIAL_HIGHRES_ENABLED", "false")
     generate_derivatives(db, photo, variants={"client_preview"})
     assert len(list(db.scalars(select(PhotoFaceEmbedding)))) == 1
     with pytest.raises(FacialEngineError, match="Reenvie"):
-        replace_photo_index(db, **args)
+        replace_photo_index(db, tenant_id=FIXTURE_TENANT_ID, **args)
 
 
 def test_retry_ttl_and_idempotent_admission(scene):
@@ -121,11 +146,11 @@ def test_retry_ttl_and_idempotent_admission(scene):
     assert admit_source(db, photo, jpeg(), settings=settings) is row
     assert len(list(db.scalars(select(FacialJob)))) == 1
     row.state = "failed"
-    assert not cleanup_source(db, photo.id)
+    assert not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     assert path.exists()
     row.expires_at = now() - timedelta(seconds=1)
     db.commit()
-    assert cleanup_source(db, photo.id)
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     assert row.state == "reupload_required"
     assert not path.exists()
 
@@ -137,7 +162,7 @@ def test_old_job_cannot_consume_new_upload_generation(scene):
     db, _, photo, settings, tmp = scene
     row, _ = prepare(scene)
     row.expires_at = now() - timedelta(seconds=1)
-    assert cleanup_source(db, photo.id)
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
     prepare(scene)  # nova retenção e novo job; job anterior ainda estava na fila
     repository = FacialJobRepository()
@@ -173,7 +198,7 @@ def test_reupload_rechecks_quota_and_job_key_is_bounded(scene, monkeypatch):
     row, _ = prepare(scene)
     assert len(db.scalar(select(FacialJob)).idempotency_key) < 100
     row.expires_at = now() - timedelta(seconds=1)
-    assert cleanup_source(db, photo.id)
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
     monkeypatch.setattr(
         "app.facial.lifecycle.shutil.disk_usage",
@@ -204,8 +229,7 @@ def test_admin_metrics_do_not_expose_arbitrary_payloads(scene, monkeypatch):
     row, _ = prepare(scene)
     row.metrics = {"faces_accepted": 3, "embedding": [1, 0], "source_path": "/private"}
     db.commit()
-    monkeypatch.setattr("app.main.require_admin", lambda request: None)
-    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [(b"cookie", f"markina_session={db.info['admin_cookie']}".encode())]})
     result = admin_photo_facial_analysis(photo.id, request, db)
     assert result["metrics"] == {"faces_accepted": 3}
     assert result["state"] == "pending"
@@ -226,19 +250,18 @@ def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(sc
     from app.main import import_photo_source
 
     db, _, photo, settings, _ = scene
-    monkeypatch.setattr("app.main.require_admin", lambda request: None)
     monkeypatch.setattr(lifecycle, "facial_settings_from_environment", lambda **kwargs: settings)
     real_write = lifecycle.write_source
     attempts = []
 
-    def interrupted_write(path, payload):
+    def interrupted_write(path, payload, **context):
         with Session(db.bind) as reader:
             reservation = reader.get(PhotoAnalysis, photo.id)
             assert reservation is not None and reservation.state == "receiving"
         attempts.append(1)
         if len(attempts) == 1:
             raise OSError("synthetic interrupted write")
-        real_write(path, payload)
+        real_write(path, payload, **context)
 
     monkeypatch.setattr(lifecycle, "write_source", interrupted_write)
 
@@ -251,7 +274,7 @@ def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(sc
                 "type": "http",
                 "method": "PUT",
                 "path": "/",
-                "headers": [(b"content-type", b"image/jpeg")],
+                "headers": [(b"content-type", b"image/jpeg"), (b"cookie", f"markina_session={db.info['admin_cookie']}".encode())],
                 "query_string": b"",
             },
             receive,
@@ -278,17 +301,20 @@ def test_orphan_cleanup_only_removes_expired_owned_fragments(scene):
     from app.facial.lifecycle import cleanup_upload_fragments, write_source
     from app.media import source_root
 
-    _, _, photo, _, _ = scene
+    db, _, photo, _, _ = scene
+    from uuid import uuid4
+
+    from app.acervo_context import require_active_owner
     path = safe_source_path(photo)
-    write_source(path, jpeg())
-    orphan = source_root() / ".pyp-uploading" / "synthetic.part"
+    write_source(path, jpeg(), tenant_id=FIXTURE_TENANT_ID, authorize=lambda: require_active_owner(db, FIXTURE_TENANT_ID))
+    orphan = source_root() / "tenants" / str(FIXTURE_TENANT_ID) / ".pyp-uploading" / f"{uuid4()}.part"
     orphan.write_bytes(b"partial")
     os.utime(orphan, (time.time() - 90000,) * 2)
-    recent = orphan.with_name("recent.part")
+    recent = orphan.with_name(f"{uuid4()}.part")
     recent.write_bytes(b"active")
     unrelated = path.with_name("other.tmp")
     unrelated.write_bytes(b"unrelated")
-    assert cleanup_upload_fragments() == 1
+    assert cleanup_upload_fragments(db=db) == 1
     assert not orphan.exists()
     assert recent.exists() and unrelated.exists() and path.exists()
 
@@ -304,25 +330,60 @@ def test_adjustment_must_complete_before_cleanup_and_never_reindexes(scene):
     cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
     replace_photo_index(
         db,
-        photo_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
         derivatives_root=tmp,
         provider=HighresProvider(),
         cipher=cipher,
         settings=settings,
     )
-    configure(db, parent.id, True, 50)
+    configure(db, parent.id, True, 50, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
     generate_derivatives(db, photo)
     before = db.scalar(select(PhotoFaceEmbedding)).id
-    assert path.exists() and not cleanup_source(db, photo.id)
+    assert path.exists() and not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
     assert process_one(sessionmaker(db.bind), BrightEngine())
     db.expire_all()
-    assert cleanup_source(db, photo.id)
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
     assert not path.exists()
     assert db.scalar(select(PhotoFaceEmbedding)).id == before
     assert len(list(db.scalars(select(FacialJob)))) == 1
+
+
+def test_folder_override_holds_source_until_its_adjustment_completes(scene):
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.folder_processing import configure_folder
+    from app.preview_adjustment.service import process_one
+
+    db, _parent, photo, settings, tmp = scene
+    _, path = prepare(scene)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    replace_photo_index(db, tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id, derivatives_root=tmp,
+                        provider=HighresProvider(), cipher=cipher, settings=settings)
+    configure_folder(db, photo.folder_id, tenant_id=FIXTURE_TENANT_ID, preview_mode="custom", facial_mode="on",
+                     strength=50, exposure_tenths=5)
+    db.commit()
+    generate_derivatives(db, photo)
+    assert path.exists() and not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
+    db.commit()
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
+    assert not path.exists()
+
+
+def test_folder_facial_pause_refuses_new_highres_admission(scene):
+    from app.folder_processing import configure_folder
+
+    db, _parent, photo, settings, _tmp = scene
+    configure_folder(db, photo.folder_id, tenant_id=FIXTURE_TENANT_ID, preview_mode="custom", facial_mode="off",
+                     strength=50, exposure_tenths=0)
+    db.commit()
+    assert admit_source(db, photo, jpeg(), settings=settings) is None
+    assert db.get(PhotoAnalysis, photo.id) is None
 
 
 def test_maintenance_preserves_index_between_analysis_and_media(scene):
@@ -336,17 +397,17 @@ def test_maintenance_preserves_index_between_analysis_and_media(scene):
     cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
     replace_photo_index(
         db,
-        photo_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
         derivatives_root=tmp,
         provider=HighresProvider(),
         cipher=cipher,
         settings=settings,
     )
     db.commit()
-    assert reconcile_invalid_facial_records(db).embeddings == 0
+    assert reconcile_invalid_facial_records(db, tenant_id=FIXTURE_TENANT_ID).embeddings == 0
     assert db.scalar(select(PhotoFaceEmbedding)) is not None
     assert (
-        purge_photo_records(db, parent_gallery_id=parent.id, photo_asset_id=photo.id).embeddings
+        purge_photo_records(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, photo_asset_id=photo.id).embeddings
         == 1
     )
 
@@ -361,7 +422,7 @@ def test_media_worker_recovers_interruption_with_bounded_attempts(scene, monkeyp
     row, path = prepare(scene)
     row.state = "failed"
     job = MediaJob(
-        photo_asset_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
         status="processing",
         attempts=1,
         updated_at=now() - timedelta(minutes=11),
@@ -412,7 +473,7 @@ def test_similarity_classes_and_model_isolation(scene):
     cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
     replace_photo_index(
         db,
-        photo_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
         derivatives_root=tmp,
         provider=HighresProvider(),
         cipher=cipher,
@@ -426,11 +487,11 @@ def test_similarity_classes_and_model_isolation(scene):
         "threshold_milli": 750,
         "ambiguous_threshold_milli": 650,
     }
-    assert search_gallery_index(db, **args)[0].match_class == "ambiguous"
+    assert search_gallery_index(db, tenant_id=FIXTURE_TENANT_ID, **args)[0].match_class == "ambiguous"
     row = db.scalar(select(PhotoFaceEmbedding))
     row.model_id = "edgeface"
     db.flush()
-    assert search_gallery_index(db, **args) == []
+    assert search_gallery_index(db, tenant_id=FIXTURE_TENANT_ID, **args) == []
 
 
 @pytest.mark.parametrize("deepen", [False, True])
@@ -568,19 +629,19 @@ def test_failed_attempt_metrics_survive_rollback_and_retry_without_double_counti
     assert row.metrics["embedding_failures"] == 1
     assert row.metrics["attempts"] == 1
     assert {"embedding", "tiles", "raw_detections"}.isdisjoint(row.metrics)
-    summary = gallery_analysis_metrics(db, parent_gallery_id=parent.id)
+    summary = gallery_analysis_metrics(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)
     assert summary["embedding_failures"] == 1 and summary["queue_depth"] == 1
     assert summary["photos_processed"] == 0
     assert summary["oldest_job_age_seconds"] >= 0
     claim = repository.claim_next(db, lease_seconds=120, job_class="index")
     process_claimed_index_job(db, claim, provider=HighresProvider(), **args)
-    summary = gallery_analysis_metrics(db, parent_gallery_id=parent.id)
+    summary = gallery_analysis_metrics(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)
     assert summary["photos_processed"] == summary["photos_with_faces"] == 1
     assert summary["faces_per_processed_photo"] == 1
     assert summary["embedding_failures"] == summary["queue_depth"] == 0
     assert db.get(PhotoAnalysis, photo.id).metrics["attempts"] == 2
     other, _ = _gallery(db, tmp / "other", photos=1)
-    assert gallery_analysis_metrics(db, parent_gallery_id=other.id)["photos_total"] == 0
+    assert gallery_analysis_metrics(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=other.id)["photos_total"] == 0
 
 
 def test_upload_index_media_region_query_and_purge_integrated(scene):
@@ -607,12 +668,21 @@ def test_upload_index_media_region_query_and_purge_integrated(scene):
         derivatives_root=tmp,
     )
     generate_derivatives(db, photo)
+    assert path.exists()  # O ajuste automático ainda precisa ler os derivados.
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.preview_adjustment.service import process_one
+
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
     assert not path.exists()
-    client = Client(full_name="Pessoa sintética", phone_e164="+5511999999901")
+    client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Pessoa sintética", phone_e164="+5511999999901")
     db.add(client)
     db.flush()
     db.add(
-        ParentGalleryRegistration(parent_gallery_id=parent.id, client_id=client.id, status="active")
+        ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=client.id, status="active")
     )
     db.commit()
     regions = photo_regions(
@@ -646,6 +716,94 @@ def test_upload_index_media_region_query_and_purge_integrated(scene):
     from app.auth import AuditEvent
     assert db.scalar(select(AuditEvent).where(AuditEvent.event == "facial.region_search_started")) is not None
     assert db.scalar(select(AuditEvent).where(AuditEvent.event == "facial.search_consented")) is None
-    purge_gallery_records(db, parent_gallery_id=parent.id)
+    purge_gallery_records(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)
     db.commit()
-    assert facial_cleanup_proof(db, parent_gallery_id=parent.id)["clean"]
+    assert facial_cleanup_proof(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)["clean"]
+
+
+@pytest.mark.parametrize("end_state", ["completed", "failed", "disabled", "expired"])
+def test_gemma_highres_preserves_sface_and_bounds_source_retention(scene, end_state):
+    from app.auth import FacialEmbeddingExperimentSetting
+    from app.facial.gemma_provider import GEMMA_MODEL_VERSION
+    from app.facial.jobs import FacialJobRepository
+    from app.facial.worker import process_claimed_index_job
+
+    db, parent, photo, settings, tmp = scene
+    setting = FacialEmbeddingExperimentSetting(
+        singleton=1, enabled=True, enabled_since=parent.created_at - timedelta(seconds=1),
+    )
+    db.add(setting)
+    db.commit()
+    row, path = prepare(scene)
+    jobs = list(db.scalars(select(FacialJob)))
+    assert {job.kind for job in jobs} == {"index", "index_gemma"}
+    gemma_job = next(job for job in jobs if job.kind == "index_gemma")
+    sface_job = next(job for job in jobs if job.kind == "index")
+    assert gemma_job.model_version == GEMMA_MODEL_VERSION
+    assert gemma_job.idempotency_key != sface_job.idempotency_key
+    repository = FacialJobRepository()
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    claim = repository.claim_next(db, lease_seconds=120, job_class="index")
+    process_claimed_index_job(db, claim, repository=repository, provider=HighresProvider(),
+                             cipher=cipher, settings=settings, derivatives_root=tmp / "derivatives")
+    db.commit()
+    original_metrics = dict(row.metrics)
+    generate_derivatives(db, photo)
+    assert row.state == "ready" and media_can_proceed(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
+    assert path.exists()  # Gemma não bloqueia mídia, mas ainda pode ler a fonte.
+    claim = repository.claim_next(db, lease_seconds=120, job_class="gemma")
+    assert claim is not None
+    if end_state == "completed":
+        from app.facial.gemma_provider import GEMMA_MODEL_ID
+        from app.facial.provider import normalize_embedding
+        class GemmaProvider(HighresProvider):
+            model_id = GEMMA_MODEL_ID
+            model_version = GEMMA_MODEL_VERSION
+            embedding_dimension = 768
+            def observe_highres_path(self, path):
+                assert path.is_file()
+                vector = normalize_embedding([1, *([0] * 767)], 768)
+                return [replace(_face(vector), image_width=2400, image_height=1600)]
+        process_claimed_index_job(db, claim, repository=repository, provider=GemmaProvider(),
+                                 cipher=cipher, settings=settings, derivatives_root=tmp / "derivatives")
+        db.commit()
+        assert {item.embedding_dimension for item in db.scalars(select(PhotoFaceEmbedding))} == {128, 768}
+    elif end_state == "failed":
+        repository.fail(db, claim, ValueError("private content"), max_attempts=1, retry_delay_seconds=1)
+    else:
+        repository.cancel(db, claim)
+        gemma_job.status = "queued"
+        if end_state == "disabled":
+            setting.enabled = False
+        else:
+            row.expires_at = now() - timedelta(seconds=1)
+        db.commit()
+    db.refresh(row)
+    assert row.state == "ready" and row.metrics == original_metrics
+    from sqlalchemy.orm import sessionmaker
+    from test_preview_adjustment import BrightEngine
+
+    from app.preview_adjustment.service import process_one
+
+    assert process_one(sessionmaker(db.bind), BrightEngine())
+    db.expire_all()
+    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
+    assert not path.exists()
+
+
+def test_gemma_active_reader_prevents_source_cleanup_even_after_ttl(scene):
+    from app.auth import FacialEmbeddingExperimentSetting
+    from app.facial.jobs import FacialJobRepository
+
+    db, parent, photo, _settings, _tmp = scene
+    db.add(FacialEmbeddingExperimentSetting(
+        singleton=1, enabled=True, enabled_since=parent.created_at - timedelta(seconds=1),
+    ))
+    db.commit()
+    row, path = prepare(scene)
+    claim = FacialJobRepository().claim_next(db, lease_seconds=120, job_class="gemma")
+    assert claim is not None
+    row.expires_at = now() - timedelta(seconds=1)
+    db.commit()
+    assert not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
+    assert path.exists()

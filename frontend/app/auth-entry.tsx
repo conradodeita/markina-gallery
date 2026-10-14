@@ -1,6 +1,7 @@
 "use client";
 
 import { BrandLogo } from "./brand-logo";
+import { safeAdminReturn, safeClientGalleryReturn } from "./session-recovery";
 
 
 import { FormEvent, useEffect, useState } from "react";
@@ -11,10 +12,14 @@ const genericError =
   "Não foi possível concluir a autenticação. Confira os dados e tente novamente.";
 const brazilPhoneError =
   "Informe DDD e celular com o nono dígito: (11) 99999-9999.";
+const clientOtpGuidance =
+  "O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.";
 const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar.", logo_url: null as string | null, app_icon_url: null as string | null, favicon_url: null as string | null };
 
 type AuthEntryProps = {
   navigate?: (destination: string) => void;
+  initialInvitation?: { accessToken: string; returnTo: string };
+  recoveryContext?: Context;
 };
 
 const defaultNavigate = (destination: string) => window.location.assign(destination);
@@ -44,8 +49,10 @@ export function brazilMobileE164(value: string) {
 
 export function AuthEntry({
   navigate = defaultNavigate,
+  initialInvitation,
+  recoveryContext,
 }: AuthEntryProps = {}) {
-  const [context, setContext] = useState<Context>("client");
+  const [context, setContext] = useState<Context>(recoveryContext ?? "client");
   const [step, setStep] = useState<Step>("details");
   const [challengeId, setChallengeId] = useState("");
   const [clientPhone, setClientPhone] = useState("");
@@ -54,6 +61,7 @@ export function AuthEntry({
   const [message, setMessage] = useState("");
   const [branding, setBranding] = useState(defaultBranding);
   const [invitation] = useState(() => {
+    if (initialInvitation) return initialInvitation;
     if (typeof window === "undefined") return { accessToken: "", returnTo: "" };
     const params = new URLSearchParams(window.location.search);
     return {
@@ -61,33 +69,59 @@ export function AuthEntry({
       returnTo: params.get("return_to") ?? "",
     };
   });
+  const contextualClientReauthentication = recoveryContext === "client"
+    && safeClientGalleryReturn(invitation.returnTo) !== null;
   useEffect(() => {
-    fetch("/api/branding")
+    const controller = new AbortController();
+    const brandingUrl = invitation.accessToken
+      ? `/api/branding?access_token=${encodeURIComponent(invitation.accessToken)}`
+      : "/api/branding";
+    fetch(brandingUrl, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const result = await response.json();
+        if (controller.signal.aborted) return;
         setBranding({ ...defaultBranding, ...result, login_title: result.login_title || defaultBranding.login_title, login_intro: result.login_intro || defaultBranding.login_intro, login_helper: result.login_helper || defaultBranding.login_helper });
       })
       .catch(() => undefined);
-  }, []);
+    return () => controller.abort();
+  }, [invitation.accessToken]);
   useEffect(() => {
-    if (!branding.favicon_url) return;
+    if (!branding.favicon_url) {
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.remove();
+      return;
+    }
     let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!icon) { icon = document.createElement("link"); icon.rel = "icon"; document.head.appendChild(icon); }
     icon.href = `/api${branding.favicon_url}`;
+    return () => icon.remove();
   }, [branding.favicon_url]);
   useEffect(() => {
-    if (!branding.app_icon_url) return;
+    if (!branding.app_icon_url) {
+      document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.remove();
+      return;
+    }
     let icon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (!icon) { icon = document.createElement("link"); icon.rel = "apple-touch-icon"; document.head.appendChild(icon); }
-    icon.href = `/api${branding.app_icon_url}?size=180`;
+    icon.href = `/api${branding.app_icon_url}${branding.app_icon_url.includes("?") ? "&" : "?"}size=180`;
+    return () => icon.remove();
   }, [branding.app_icon_url]);
   useEffect(() => {
-    if (!invitation.accessToken) return;
     let active = true;
+    if (recoveryContext === "admin" && !invitation.accessToken) return;
     fetch("/api/auth/destination", { credentials: "same-origin" })
       .then(async (sessionResponse) => {
         if (!active || !sessionResponse.ok) return;
+        if (!invitation.accessToken) {
+          const session = await sessionResponse.json();
+          if (active && typeof session.destination === "string" && session.destination !== "/admin") {
+            const clientReturn = recoveryContext === "client"
+              ? safeClientGalleryReturn(invitation.returnTo)
+              : null;
+            navigate(clientReturn?.path ?? session.destination);
+          }
+          return;
+        }
         const accessResponse = await fetch("/api/public-gallery/access", {
           method: "POST",
           credentials: "same-origin",
@@ -99,11 +133,11 @@ export function AuthEntry({
         });
         if (!accessResponse.ok) return;
         const result = await accessResponse.json();
-        if (active) navigate(result.destination);
+        if (active && typeof result.destination === "string") navigate(result.destination);
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [invitation, navigate]);
+  }, [invitation, navigate, recoveryContext]);
   async function requestCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -115,6 +149,9 @@ export function AuthEntry({
     setLoading(true);
     setMessage("");
     try {
+      const clientGalleryReturn = context === "client"
+        ? safeClientGalleryReturn(invitation.returnTo)
+        : null;
       const response = await fetch(
         context === "client"
           ? "/api/auth/client/challenge"
@@ -129,6 +166,7 @@ export function AuthEntry({
                   phone: clientPhoneE164,
                   ...(invitation.accessToken ? { access_token: invitation.accessToken } : {}),
                   ...(invitation.returnTo ? { return_to: invitation.returnTo } : {}),
+                  ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
                 }
               : { email: data.get("email"), password: data.get("password") },
           ),
@@ -137,7 +175,7 @@ export function AuthEntry({
       const result = await response.json();
       if (!response.ok) throw new Error();
       setChallengeId(result.challenge_id);
-      setMessage(result.message);
+      setMessage(context === "client" ? clientOtpGuidance : result.message);
       setStep("code");
     } catch {
       setMessage(genericError);
@@ -151,6 +189,9 @@ export function AuthEntry({
     setLoading(true);
     setMessage("");
     try {
+      const clientGalleryReturn = context === "client"
+        ? safeClientGalleryReturn(invitation.returnTo)
+        : null;
       const response = await fetch(
         context === "client"
           ? "/api/auth/client/verify"
@@ -159,7 +200,10 @@ export function AuthEntry({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ challenge_id: challengeId, code }),
+          body: JSON.stringify({ challenge_id: challengeId, code,
+            ...(context === "client" && invitation.accessToken ? { access_token: invitation.accessToken } : {}),
+            ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
+          }),
         },
       );
       const result = await response.json();
@@ -174,7 +218,8 @@ export function AuthEntry({
         }
         throw new Error();
       }
-      navigate(result.destination);
+      navigate(context === "admin" && result.destination === "/admin" && recoveryContext === "admin"
+        ? safeAdminReturn(invitation.returnTo) : result.destination);
     } catch {
       setMessage(
         context === "client"
@@ -189,14 +234,20 @@ export function AuthEntry({
     setLoading(true);
     setMessage("");
     try {
+      const clientGalleryReturn = context === "client"
+        ? safeClientGalleryReturn(invitation.returnTo)
+        : null;
       const response = await fetch("/api/auth/client/resend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challenge_id: challengeId }),
+        body: JSON.stringify({ challenge_id: challengeId,
+          ...(invitation.accessToken ? { access_token: invitation.accessToken } : {}),
+          ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
+        }),
       });
-      const result = await response.json();
+      await response.json();
       if (!response.ok) throw new Error();
-      setMessage(result.message);
+      setMessage(clientOtpGuidance);
     } catch {
       setMessage(
         "Não foi possível reenviar o código agora. Tente novamente mais tarde.",
@@ -282,6 +333,7 @@ export function AuthEntry({
         <h1 id="entry-title">{branding.login_title}</h1>
         <p className="intro">{branding.login_intro}</p>
         <p className="auth-helper">{branding.login_helper}</p>
+        {recoveryContext ? <p role="status">Sua sessão terminou ou não está disponível. Entre novamente para continuar.{recoveryContext === "client" && !invitation.accessToken && !contextualClientReauthentication ? " Reabra o link enviado pelo seu fotógrafo." : ""}</p> : null}
         <div
           className="context-tabs"
           role="tablist"
@@ -304,7 +356,12 @@ export function AuthEntry({
             Fotógrafo
           </button>
         </div>
-        {step === "details" ? (
+        {step === "details" && context === "client" && !invitation.accessToken && !contextualClientReauthentication ? (
+          <section className="auth-form" aria-labelledby="client-link-title">
+            <h2 id="client-link-title">Abra o link do seu fotógrafo</h2>
+            <p>Para acessar suas fotos, use o link enviado pelo fotógrafo. Cada fotógrafo tem seu cadastro e acesso próprios.</p>
+          </section>
+        ) : step === "details" ? (
           <form onSubmit={requestCode} className="auth-form">
             {context === "client" ? (
               <>
@@ -380,7 +437,7 @@ export function AuthEntry({
           <form onSubmit={verifyCode} className="auth-form">
             <label>
               {context === "client"
-                ? "Código enviado por WhatsApp"
+                ? "Código de acesso"
                 : "Código do autenticador"}
               <input
                 name="code"

@@ -39,7 +39,7 @@ describe("telas administrativas de galerias", () => {
     );
     render(<GalleriesPage />);
     expect(screen.getByText("Carregando galerias…")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Galerias públicas" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Galerias privadas" })).toBeNull();
     expect(screen.queryByText(/Galerias-mãe/i)).toBeNull();
     resolveFetch!(
       new Response(JSON.stringify({ parent_galleries: [] }), { status: 200 }),
@@ -58,7 +58,7 @@ describe("telas administrativas de galerias", () => {
       "Não foi possível carregar as galerias.",
     );
   });
-  it("consulta galerias privadas pelo termo de busca", async () => {
+  it("consulta apenas galerias públicas pelo termo de busca", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
@@ -67,23 +67,17 @@ describe("telas administrativas de galerias", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleriesPage />);
     await screen.findByText("Nenhum resultado nesta visão.");
-    fireEvent.click(screen.getByRole("tab", { name: "Galerias privadas" }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith(
-        "/api/admin/derived-galleries?tab=active",
-        { credentials: "same-origin" },
-      ),
-    );
     fireEvent.change(
-      screen.getByLabelText("Buscar por galeria, nome ou telefone"),
+      screen.getByLabelText("Buscar galeria por nome, evento, cliente ou telefone"),
       { target: { value: "Maria" } },
     );
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith(
-        "/api/admin/derived-galleries?tab=active&query=Maria",
+        "/api/admin/parent-galleries/overview?query=Maria",
         { credentials: "same-origin" },
       ),
     );
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("derived-galleries"))).toBe(false);
   });
   it("exige confirmação antes de bloquear uma galeria privada", async () => {
     const fetchMock = vi.fn((path: string) =>
@@ -152,7 +146,7 @@ describe("telas administrativas de galerias", () => {
     expect(await screen.findByRole("heading", { name: "Família" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Seleções vindas da Galeria pública" })).toBeTruthy();
     expect(screen.getByText("Cerimônia")).toBeTruthy();
-    expect(screen.getByAltText("Prévia protegida de FOTO_1.jpg")).toBeTruthy();
+    expect(screen.getByAltText("Prévia protegida de FOTO_1.jpg").getAttribute("loading")).toBe("lazy");
     expect(screen.getByText("Comprada · Ana")).toBeTruthy();
     expect(screen.getByText("Selecionada · Bia")).toBeTruthy();
     expect(screen.getByText("Favoritada por Ana")).toBeTruthy();
@@ -275,6 +269,33 @@ describe("telas administrativas de galerias", () => {
     fireEvent.click(screen.getByRole("button", { name: "Encerrar com as fotos enviadas" }));
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Lotes ainda abertos" })).toBeNull());
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/derived-galleries/private-1/upload-batches/batch-open/close", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("retoma foto do lote com namespace do servidor sem cadastrar outra foto", async () => {
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
+    const key = `private/private-1/folder-private/${"0".repeat(64)}.jpg`;
+    const batch = { id: "batch-open", status: "open", count: 1,
+      assets: [{ id: "photo-existing", storage_key: `tenants/owner/${key}`, upload_key: key, status: "not_imported" }] };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const data = path.endsWith("/upload-batches") ? { batches: [batch] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-private", name: "Uploads", status: "preparing", photo_count: 1 }] }
+        : path.endsWith("/photos") ? { photos: [] } : path.endsWith("/members") ? { members: [] }
+        : init?.method ? { status: "queued" }
+        : { id: "private-1", parent_gallery_id: "public-1", name: "Família", frozen: false, blocked: false };
+      return Promise.resolve(new Response(JSON.stringify(data)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar lote" }));
+    fireEvent.change(screen.getByLabelText("Pasta"), { target: { value: "folder-private" } });
+    const file = new File([new Uint8Array([0xff])], "retomada.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([0xff]).buffer });
+    fireEvent.change(screen.getByLabelText("JPEGs do dispositivo"), { target: { files: [file] } });
+    fireEvent.submit(screen.getByLabelText("JPEGs do dispositivo").closest("form")!);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/photo-assets/photo-existing/source",
+      expect.objectContaining({ method: "PUT", body: file })));
+    expect(fetchMock.mock.calls.some(([path, init]) => path.endsWith("/photos") && init?.method === "POST")).toBe(false);
+    expect(fetchMock.mock.calls.some(([path, init]) => path.endsWith("/upload-batches") && init?.method === "POST")).toBe(false);
   });
 });
 

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
+from fastapi import HTTPException
 from redis import Redis
 
-from app.auth import SessionLocal
+from app.auth import FacialEmbeddingExperimentSetting, FacialJob, SessionLocal, now
 from app.facial.config import FacialConfigurationError, facial_settings_from_environment
 from app.facial.crypto import FacialCipher
+from app.facial.gemma_assets import verify_gemma_model
+from app.facial.gemma_provider import GemmaFaceEmbeddingProvider
 from app.facial.indexing import reconcile_automatic_gallery_policies
 from app.facial.jobs import (
     FACIAL_JOB_KINDS_BY_CLASS,
@@ -24,33 +28,46 @@ from app.facial.retention import process_claimed_cleanup_job
 from app.facial.runtime import BlockingFacialWorker
 from app.facial.search_worker import process_claimed_search_job
 from app.facial.worker import process_claimed_index_job, process_claimed_purge_job
-from app.messaging import WhatsAppConfigurationError, whatsapp_provider_from_environment
+from app.tenancy import TenantContextError, domain_session
 
 
-class _UnavailableMessenger:
-    def connection_status(self):
-        raise WhatsAppConfigurationError("Canal transacional indisponível.")
-
-    def send_transactional(self, *_args, **_kwargs):
-        raise WhatsAppConfigurationError("Canal transacional indisponível.")
+def record_provider_failure(repository: FacialJobRepository, claim: ClaimedFacialJob,
+                            error: Exception) -> None:
+    try:
+        with domain_session(SessionLocal) as db:
+            repository.fail(db, claim, error, max_attempts=3, retry_delay_seconds=5)
+    except (TenantContextError, HTTPException):
+        # Exceção estreita: só devolver o lease demonstrado, mesmo com owner suspenso.
+        with SessionLocal() as db:
+            repository.release_denied(db, claim)
 
 
 def main(worker_class: str | None = None) -> None:
     active_class = (worker_class or os.getenv("FACIAL_WORKER_CLASS", "")).strip().lower()
     if active_class not in FACIAL_JOB_KINDS_BY_CLASS:
         raise FacialConfigurationError(
-            "FACIAL_WORKER_CLASS deve ser search, index ou maintenance."
+            "FACIAL_WORKER_CLASS deve ser search, index, gemma ou maintenance."
         )
     settings = facial_settings_from_environment(
         verify_runtime_assets=active_class != "maintenance"
     )
     if not settings.enabled:
         raise FacialConfigurationError("O worker facial não pode iniciar com a flag desligada.")
+    if active_class == "gemma" and settings.environment.lower() in {"prod", "production"}:
+        raise FacialConfigurationError("Gemma está limitado à homologação privada autorizada.")
     model_paths = (
         verify_models(settings.manifest_path, settings.model_root)
-        if active_class in {"search", "index"}
+        if active_class in {"search", "index", "gemma"}
         else {}
     )
+    gemma_model_path = Path(
+        os.getenv("FACIAL_GEMMA_MODEL_PATH", "/opt/markina-embeddinggemma-2")
+    )
+    if active_class == "gemma":
+        verify_gemma_model(gemma_model_path)
+        from app.system_monitor.runtime import start_monitor
+
+        start_monitor()
     cipher = FacialCipher(
         active_key_id=settings.active_key_id,
         keys=settings.aead_keys,
@@ -60,7 +77,7 @@ def main(worker_class: str | None = None) -> None:
         os.getenv("MEDIA_DERIVATIVES_ROOT", "/var/lib/markina/derivatives")
     ).resolve()
     if active_class == "index":
-        with SessionLocal() as db:
+        with domain_session(SessionLocal) as db:
             reconcile_automatic_gallery_policies(
                 db,
                 derivatives_root=derivatives_root,
@@ -68,11 +85,18 @@ def main(worker_class: str | None = None) -> None:
             )
             db.commit()
 
-    def provider_loader() -> OpenCvSFaceProvider:
-        return OpenCvSFaceProvider(model_paths["yunet"], model_paths["sface"])
+    def provider_loader():
+        detector = OpenCvSFaceProvider(model_paths["yunet"], model_paths["sface"])
+        if active_class == "gemma":
+            return GemmaFaceEmbeddingProvider(
+                detector,
+                model_path=gemma_model_path,
+            )
+        return detector
 
-    def processor(db, claim: ClaimedFacialJob, provider: object | None) -> None:
+    def processor(db, claim: ClaimedFacialJob, provider: object | None) -> bool | None:
         try:
+            repository._leased(db, claim)
             if claim.kind == "index":
                 if not isinstance(provider, OpenCvSFaceProvider):
                     raise FacialJobError("Provider facial não está disponível.")
@@ -85,8 +109,25 @@ def main(worker_class: str | None = None) -> None:
                     settings=settings,
                     derivatives_root=derivatives_root,
                 )
-            elif claim.kind == "search":
-                if not isinstance(provider, OpenCvSFaceProvider):
+            elif claim.kind == "index_gemma":
+                if not isinstance(provider, GemmaFaceEmbeddingProvider):
+                    raise FacialJobError("Provider experimental não está disponível.")
+                process_claimed_index_job(
+                    db,
+                    claim,
+                    repository=repository,
+                    provider=provider,
+                    cipher=cipher,
+                    settings=settings,
+                    derivatives_root=derivatives_root,
+                )
+            elif claim.kind in {"search", "search_gemma"}:
+                expected_provider = (
+                    GemmaFaceEmbeddingProvider
+                    if claim.kind == "search_gemma"
+                    else OpenCvSFaceProvider
+                )
+                if not isinstance(provider, expected_provider):
                     raise FacialJobError("Provider facial não está disponível.")
                 process_claimed_search_job(
                     db,
@@ -112,6 +153,11 @@ def main(worker_class: str | None = None) -> None:
                 )
             else:
                 raise FacialJobError("Tipo de job facial indisponível.")
+            completed = db.get(FacialJob, claim.id, populate_existing=True)
+            return completed is not None and completed.status not in {"queued", "failed"}
+        except (TenantContextError, HTTPException):
+            repository.release_denied(db, claim)
+            return
         except Exception as error:  # noqa: BLE001 - fronteira do processo sanitiza a falha
             db.rollback()
             repository.fail(
@@ -121,16 +167,10 @@ def main(worker_class: str | None = None) -> None:
                 max_attempts=3,
                 retry_delay_seconds=5,
             )
+            return False
 
     def provider_failure(claim: ClaimedFacialJob, error: Exception) -> None:
-        with SessionLocal() as db:
-            repository.fail(
-                db,
-                claim,
-                error,
-                max_attempts=3,
-                retry_delay_seconds=5,
-            )
+        record_provider_failure(repository, claim, error)
 
     wake_source = Redis.from_url(
         os.getenv("FACIAL_REDIS_URL", "redis://redis:6379/0"),
@@ -144,7 +184,9 @@ def main(worker_class: str | None = None) -> None:
         session_factory=SessionLocal,
         wake_source=wake_source,
         provider_loader=provider_loader,
-        provider_required=lambda claim: claim.kind in {"index", "search"},
+        provider_required=lambda claim: claim.kind in {
+            "index", "index_gemma", "search", "search_gemma"
+        },
         provider_failure=provider_failure,
         processor=processor,
         repository=repository,
@@ -156,19 +198,23 @@ def main(worker_class: str | None = None) -> None:
         active_class == "maintenance"
         or worker.processed_jobs < settings.max_jobs_per_process
     ):
-        worker.run_cycle()
-        if active_class == "search":
-            try:
-                messenger = whatsapp_provider_from_environment()
-            except WhatsAppConfigurationError:
-                messenger = _UnavailableMessenger()
-            with SessionLocal() as db:
-                process_next_search_notification(
-                    db,
-                    provider=messenger,
-                    cipher=cipher,
-                    settings=settings,
-                )
+        try:
+            worker.run_cycle()
+            if active_class == "gemma":
+                with SessionLocal() as db:
+                    state = db.get(FacialEmbeddingExperimentSetting, 1)
+                    if state is None:
+                        state = FacialEmbeddingExperimentSetting(singleton=1, enabled=False)
+                        db.add(state)
+                    state.worker_last_seen_at = now()
+                    db.commit()
+            if active_class == "search":
+                with SessionLocal() as db:
+                    process_next_search_notification(db, cipher=cipher, settings=settings)
+
+        except TenantContextError:
+            time.sleep(settings.queue_block_seconds)
+            continue
 
 
 if __name__ == "__main__":
