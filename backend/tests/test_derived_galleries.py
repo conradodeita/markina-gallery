@@ -5526,3 +5526,107 @@ def test_folder_deletion_removes_temporary_highres_analysis(client, monkeypatch,
         assert db.get(PhotoAnalysis, photo_id) is None
         assert db.get(PhotoAsset, photo_id) is None
     assert not (tmp_path / "highres.jpg").exists()
+
+
+def test_admin_payment_dashboard_searches_phone_and_exact_client_without_exposing_phone(
+    client: TestClient,
+):
+    reference = now()
+    with SessionLocal() as db:
+        target = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Marta Telefone",
+            phone_e164="+5511998765432",
+        )
+        other = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Maria Outra",
+            phone_e164="+5511888123456",
+        )
+        parent = ParentGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            name="Evento de busca por cliente",
+        )
+        db.add_all([target, other, parent])
+        db.flush()
+        target_gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=target.id,
+            name="Marta privada",
+        )
+        other_gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=other.id,
+            name="Maria privada",
+        )
+        db.add_all([target_gallery, other_gallery])
+        db.flush()
+        folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Fotos",
+        )
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="selecionada.jpg",
+            storage_key="payment-search/selecionada.jpg",
+        )
+        db.add(photo)
+        db.flush()
+        db.add_all(
+            [
+                PhotoSelection(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    derived_gallery_id=target_gallery.id,
+                    photo_asset_id=photo.id,
+                    client_id=target.id,
+                    created_at=reference,
+                ),
+                SaleOrder(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    derived_gallery_id=target_gallery.id,
+                    client_id=target.id,
+                    payment_status="pending",
+                    total_cents=1200,
+                    created_at=reference,
+                ),
+                SaleOrder(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    derived_gallery_id=other_gallery.id,
+                    client_id=other.id,
+                    payment_status="pending",
+                    total_cents=900,
+                    created_at=reference,
+                ),
+            ]
+        )
+        db.commit()
+        target_id = target.id
+
+    authenticate_admin(client)
+    phone_search = client.get(
+        "/admin/payment-communications", params={"query": "998765432"}
+    )
+    assert phone_search.status_code == 200
+    phone_payload = phone_search.json()
+    assert phone_payload["summary"]["orders"] == 1
+    assert phone_payload["groups"][0]["client"]["name"] == "Marta Telefone"
+    assert phone_payload["selections_without_order"][0]["client"]["name"] == "Marta Telefone"
+    assert "+5511998765432" not in phone_search.text
+    assert "998765432" not in phone_search.text
+
+    exact_search = client.get(
+        "/admin/payment-communications",
+        params={"query": "Maria", "client_id": str(target_id)},
+    )
+    assert exact_search.status_code == 200
+    exact_payload = exact_search.json()
+    assert exact_payload["summary"]["orders"] == 1
+    assert exact_payload["groups"][0]["client"]["name"] == "Marta Telefone"
+    assert exact_payload["selections_without_order"][0]["client"]["name"] == "Marta Telefone"
