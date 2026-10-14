@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Release web de produção isolado e aprovado
-O procedimento de produção SHALL publicar somente o serviço `web` do projeto Compose `markina-gallery`, a partir de um commit identificado e aprovado de `main`, após apresentar ao proprietário o inventário do alvo, portas e subdomínio atendidos, escopo da alteração e plano de impacto e rollback, e aguardar aprovação explícita para aquela execução. O procedimento SHALL verificar a configuração efetivamente usada pelo runtime sem revelar nem alterar valores de segredos, e SHALL parar se o checkout, o projeto Compose, a configuração ou a identidade do alvo não puderem ser confirmados.
+O procedimento SHALL limitar release e rollback de produção ao serviço `web` de `markina-gallery`, usando SHA aprovado de `main`, inventário confirmado e aprovação explícita da execução após apresentação do escopo, impacto, portas, subdomínio e reversão. O procedimento SHALL parar diante de identidade ou configuração não confirmada e SHALL preservar segredos e demais serviços.
 
 #### Scenario: Alvo validado e execução aprovada
 - **WHEN** o operador confirma em modo somente-leitura o commit, o projeto Compose, o serviço web ativo, a configuração de runtime, as portas e o subdomínio, e recebe aprovação explícita para a execução apresentada

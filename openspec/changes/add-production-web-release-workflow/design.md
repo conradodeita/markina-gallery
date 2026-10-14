@@ -48,3 +48,6 @@ Veja `proposal.md` para a motivação. O inventário atualizado confirmou que o 
 ## Preparação da integração em main
 
 A preparação autorizada após o inventário segue `integration.md`: base na versão ativa, preservação dos históricos, manutenção de main inerte e PR revisável sem merge/deploy. A diferença de aplicação deve ser avaliada contra o SHA ativo, além da comparação ampla contra main.
+
+
+O inventário do procedimento valida o hostname `clearbudget-vnic`, origin Git por correspondência exata, portas do nginx (`127.0.0.1:8080`) e igualdade dos arquivos de `docker/` entre checkout e alvo antes de qualquer troca. A impressão de aprovação inclui host, manifesto, contêiner e portas do nginx; configurações diferentes exigem outro plano operacional.

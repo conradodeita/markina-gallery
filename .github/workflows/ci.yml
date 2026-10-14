@@ -52,6 +52,7 @@ jobs:
         run: |
           python scripts/test_preserve_branding.py -v
           bash scripts/test_deploy_homolog.sh
+          bash scripts/test_deploy_prod_web.sh
           bash scripts/test_reset_homolog_owner.sh
           python scripts/test_owner_reset_policy.py
           ruff check scripts/reset_homolog_owner.py
