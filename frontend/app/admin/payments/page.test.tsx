@@ -120,7 +120,7 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.getAllByText("Pagamento comunicado").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeNull();
     expect(screen.getByLabelText("Link do álbum no Google Photos")).toBeTruthy();
-    expect(screen.queryByText(/copia e cola|telefone|api key/i)).toBeNull();
+    expect(screen.queryByText(/copia e cola|api key/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -141,7 +141,7 @@ describe("controle operacional de pagamentos", () => {
 
     expect(await screen.findByText("Nenhum pedido ainda")).toBeTruthy();
     expect(screen.getByText(/Pedidos e comunicações aparecerão aqui/)).toBeTruthy();
-    expect(screen.getByText("Filtros")).toBeTruthy();
+    expect(screen.getByText("Mais filtros")).toBeTruthy();
     expect(screen.queryByText("Mensagem global após conferência")).toBeNull();
     expect(screen.queryByText("Ver prévias")).toBeNull();
     expect(screen.queryByRole("link", { name: "Editar em Notificações" })).toBeNull();
@@ -156,7 +156,7 @@ describe("controle operacional de pagamentos", () => {
     render(<AdminPaymentsPage />);
     await screen.findByRole("heading", { name: "Ana" });
 
-    fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "Inexistente" } });
+    fireEvent.change(screen.getByLabelText("Cliente / telefone"), { target: { value: "Inexistente" } });
     fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reported" } });
     fireEvent.change(screen.getByLabelText("Entrega de mensagem"), { target: { value: "failed" } });
     fireEvent.click(screen.getByRole("button", { name: "Aplicar filtros" }));
@@ -206,6 +206,113 @@ describe("controle operacional de pagamentos", () => {
       "/api/admin/gallery-reopening-requests/reopening-1/decision",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "approved", selection_expires_at: "2026-09-15T23:59:59.000Z" }) }),
     ));
+  });
+});
+
+describe("filtro de cliente com sugestões", () => {
+  it("mantém a faixa antes do resumo e ajusta o sticky à altura real do cabeçalho", async () => {
+    const header = document.createElement("header");
+    header.className = "admin-topbar";
+    Object.defineProperty(header, "getBoundingClientRect", {
+      value: () => ({ height: 146, width: 390, top: 0, left: 0, right: 390, bottom: 146, x: 0, y: 0, toJSON: () => ({}) }),
+    });
+    document.body.prepend(header);
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(
+      JSON.stringify(path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : dashboard()),
+      { status: 200 },
+    ))));
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    const body = screen.getByLabelText("Cliente / telefone").closest(".payment-dashboard-body")!;
+    const sticky = body.querySelector(".payment-filter-sticky")!;
+    const summary = screen.getByRole("region", { name: "Resumo de pagamentos" });
+    expect(sticky.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await waitFor(() => expect(sticky.getAttribute("style")).toContain("top: 146px"));
+    header.remove();
+  });
+
+  it("cancela a consulta anterior, seleciona identidade exata e limpa a identidade ao editar o texto", async () => {
+    const fetchMock = vi.fn((path: string) => {
+      if (path.startsWith("/api/admin/clients?")) {
+        return Promise.resolve(new Response(JSON.stringify({ clients: [
+          { id: "client-marta", name: "Marta Silva", phone: "+5511999999999" },
+          { id: "client-maria", name: "Maria Souza", phone: "+5511888888888" },
+        ] }), { status: 200 }));
+      }
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      return Promise.resolve(new Response(JSON.stringify(dashboard()), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    const clientInput = screen.getByLabelText("Cliente / telefone");
+    expect(screen.getAllByLabelText("Cliente / telefone")).toHaveLength(1);
+    fireEvent.change(clientInput, { target: { value: "Ma" } });
+    fireEvent.change(clientInput, { target: { value: "Mar" } });
+    fireEvent.click(await screen.findByRole("option", { name: "Marta Silva" }));
+    expect(screen.queryByText("+5511999999999")).toBeNull();
+    const suggestionRequests = fetchMock.mock.calls.map(([path]) => String(path)).filter((path) => path.startsWith("/api/admin/clients?"));
+    expect(suggestionRequests).toHaveLength(1);
+    expect(new URL(suggestionRequests[0], "http://localhost").searchParams.get("query")).toBe("Mar");
+    fireEvent.change(clientInput, { target: { value: "1199" } });
+    fireEvent.click(await screen.findByRole("option", { name: "Marta Silva" }));
+    const phoneSuggestionRequest = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/clients?") && new URL(path, "http://localhost").searchParams.get("query") === "1199");
+    expect(phoneSuggestionRequest).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Mais filtros"));
+    fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reported" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?") && new URL(path, "http://localhost").searchParams.has("client_id"));
+      expect(request).toBeTruthy();
+      const params = new URL(request!, "http://localhost").searchParams;
+      expect(params.get("query")).toBe("Marta Silva");
+      expect(params.get("financial_status")).toBe("reported");
+    });
+
+    const refreshedInput = await screen.findByLabelText("Cliente / telefone");
+    fireEvent.change(refreshedInput, { target: { value: "Marta nova" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?") && new URL(path, "http://localhost").searchParams.get("query") === "Marta nova");
+      expect(request).toBeTruthy();
+      expect(new URL(request!, "http://localhost").searchParams.has("client_id")).toBe(false);
+    });
+  });
+
+  it("seleciona sugestões pelo teclado, fecha com Escape e informa vazio ou erro", async () => {
+    let failSuggestions = false;
+    const fetchMock = vi.fn((path: string) => {
+      if (path.startsWith("/api/admin/clients?")) {
+        if (failSuggestions) return Promise.resolve(new Response("{}", { status: 503 }));
+        const query = new URL(path, "http://localhost").searchParams.get("query");
+        return Promise.resolve(new Response(JSON.stringify({ clients: query === "Ma" ? [{ id: "client-marta", name: "Marta Silva" }] : [] }), { status: 200 }));
+      }
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      return Promise.resolve(new Response(JSON.stringify(dashboard()), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+    const clientInput = screen.getByLabelText("Cliente / telefone");
+
+    fireEvent.change(clientInput, { target: { value: "Ma" } });
+    await screen.findByRole("option", { name: "Marta Silva" });
+    fireEvent.keyDown(clientInput, { key: "ArrowDown" });
+    fireEvent.keyDown(clientInput, { key: "Enter" });
+    expect((clientInput as HTMLInputElement).value).toBe("Marta Silva");
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    fireEvent.change(clientInput, { target: { value: "Marta" } });
+    expect((await screen.findAllByText("Nenhuma cliente encontrada.")).length).toBeGreaterThan(0);
+    fireEvent.keyDown(clientInput, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    failSuggestions = true;
+    fireEvent.change(clientInput, { target: { value: "Erro" } });
+    expect((await screen.findAllByText("Não foi possível carregar sugestões de clientes.")).length).toBeGreaterThan(0);
   });
 });
 

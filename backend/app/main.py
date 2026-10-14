@@ -11843,6 +11843,7 @@ def admin_removed_photo_movements(
 def list_payment_communications(
     request: Request,
     query: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = Query(default=None),
     parent_gallery_id: UUID | None = Query(default=None),
     financial_status: Literal[
         "awaiting_payment", "reported", "confirmed", "not_found", "overdue",
@@ -11873,12 +11874,23 @@ def list_payment_communications(
         .order_by(SaleOrder.created_at.desc(), SaleOrder.id.desc())
     )
     normalized_query = query.strip().lower() if query else ""
-    if normalized_query:
-        order_query = order_query.where(
+    if normalized_query and not client_id:
+        phone_query = "".join(character for character in normalized_query if character.isdigit())
+        search_criteria = [
             func.lower(
                 func.coalesce(Client.full_name, SaleOrder.client_name_snapshot, "")
             ).like(f"%{normalized_query}%")
-        )
+        ]
+        if phone_query:
+            search_criteria.extend(
+                [
+                    Client.phone_e164.contains(phone_query),
+                    SaleOrder.client_phone_snapshot.contains(phone_query),
+                ]
+            )
+        order_query = order_query.where(or_(*search_criteria))
+    if client_id:
+        order_query = order_query.where(SaleOrder.client_id == client_id)
     if parent_gallery_id:
         order_query = order_query.where(
             SaleOrder.parent_gallery_id_snapshot == parent_gallery_id
@@ -11986,10 +11998,14 @@ def list_payment_communications(
         ))
         .order_by(PhotoSelection.created_at.desc())
     )
-    if normalized_query:
-        selection_query = selection_query.where(
-            func.lower(Client.full_name).like(f"%{normalized_query}%")
-        )
+    if normalized_query and not client_id:
+        phone_query = "".join(character for character in normalized_query if character.isdigit())
+        search_criteria = [func.lower(Client.full_name).like(f"%{normalized_query}%")]
+        if phone_query:
+            search_criteria.append(Client.phone_e164.contains(phone_query))
+        selection_query = selection_query.where(or_(*search_criteria))
+    if client_id:
+        selection_query = selection_query.where(PhotoSelection.client_id == client_id)
     if parent_gallery_id:
         selection_query = selection_query.where(
             ParentGallery.id == parent_gallery_id
