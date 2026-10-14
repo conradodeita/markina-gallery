@@ -14,7 +14,7 @@
 
 - [x] 3.1 Executar testes relevantes, lint, validação OpenSpec e revisão do diff; registrar resultados e limitações. Ruff, diff-check e OpenSpec estrito aprovados para o backend; nova alteração da interface aguarda a suíte CI descrita em validation.md. Nenhuma alteração de schema, configuração de runtime, segredo ou acervo integra o diff.
 - [x] 3.2 Apresentar inventário/portas/plano de impacto e obter aprovação explícita de implantação limitada ao worker de busca. Inventário e plano em deployment-plan.md; proprietário autorizou push, merge e deploy nesta conversa.
-- [ ] 3.3 Após aprovação, implantar sem alterar dados/configurações de segredo, conferir integridade/saúde e busca real autenticada; registrar duração e rollback.
+- [ ] 3.3 Após aprovação, implantar interface e worker sem alterar dados/configurações de segredo, conferir integridade/saúde e busca real autenticada; registrar duração e rollback.
 
 ## Bloqueios
 
