@@ -200,7 +200,11 @@ inventory() {
   fi
   echo "escopo=serviço web somente; api db redis worker nginx e recursos compartilhados preservados"
   echo "impacto=breve interrupção pode ocorrer durante a recriação; sem garantia de zero downtime"
-  echo "rollback_sha=$( [[ "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]] && echo 'não aplicável' || echo "$(read_state_sha "$STATE_DIR/web-previous.sha" 2>/dev/null || echo "$ACTIVE_SHA")" )"
+  if [[ "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]]; then
+    echo "rollback_sha=não aplicável"
+  else
+    echo "rollback_sha=$ACTIVE_SHA"
+  fi
   echo "approval_code=$code"
 }
 

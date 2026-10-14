@@ -141,5 +141,21 @@ for ports in '{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}' '{"80/tcp":
   fi
 done
 
+# Uma segunda publicação deve anunciar retorno à versão ativa, não à anterior à ativa.
+MARKINA_DEPLOY_SCRIPT_PATH="$SCRIPT" bash -c '
+  source "$MARKINA_DEPLOY_SCRIPT_PATH"
+  MODE=inventory
+  TARGET_SHA=3333333333333333333333333333333333333333
+  verify_repository() {
+    ACTIVE_SHA=2222222222222222222222222222222222222222
+    CHECKOUT_SHA="$ACTIVE_SHA"
+  }
+  verify_runtime_web() { :; }
+  read_state_sha() { echo 1111111111111111111111111111111111111111; }
+  docker() { :; }
+  inventory
+' > "$output"
+grep -Fxq 'rollback_sha=2222222222222222222222222222222222222222' "$output"
+
 python3 "$ROOT/scripts/test_deploy_prod_web_policy.py"
 echo "deploy-prod-web shell: ok"
