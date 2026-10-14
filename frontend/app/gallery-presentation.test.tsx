@@ -31,11 +31,12 @@ describe("apresentação editorial compartilhada", () => {
     expect(screen.getByText("Capa ainda não definida")).toBeTruthy();
   });
 
-  it("adia cards privados sem adiar a foto ampliada nem mudar o padrão público", () => {
-    const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} deferGridImages />);
+  it("adia a grade quando solicitado sem adiar capa ou ampliação nem mudar o padrão administrativo", () => {
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" coverUrl="/cover-preview" folders={folders.slice(0, 1)} deferGridImages />);
     const card = screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" });
     expect(card.getAttribute("loading")).toBe("lazy");
     expect(card.getAttribute("decoding")).toBe("async");
+    expect(screen.getByRole("img", { name: "Capa de Evento" }).getAttribute("loading")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
     expect(screen.getByRole("img", { name: "Prévia protegida ampliada de Horizontal.jpg" }).getAttribute("loading")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));

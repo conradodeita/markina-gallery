@@ -40,8 +40,14 @@ describe("Galeria pública da cliente", () => {
     const common = await screen.findByRole("button", { name: "Fotos comuns (1 fotos)" });
     const ana = screen.getByRole("button", { name: "Fotos de ana (1 fotos)" });
     expect(common.getAttribute("aria-pressed")).toBe("true");
+    const commonPreview = screen.getByRole("img", { name: "Prévia protegida de Comum" });
+    expect(commonPreview.getAttribute("loading")).toBe("lazy");
+    expect(commonPreview.getAttribute("decoding")).toBe("async");
     fireEvent.click(ana);
     expect(ana.getAttribute("aria-pressed")).toBe("true");
+    const folderPreview = screen.getByRole("img", { name: "Prévia protegida de Retrato" });
+    expect(folderPreview.getAttribute("loading")).toBe("lazy");
+    expect(folderPreview.getAttribute("decoding")).toBe("async");
     expect(screen.queryByText("Fotos de bia")).toBeNull();
     first.unmount();
     recipient = "bia";

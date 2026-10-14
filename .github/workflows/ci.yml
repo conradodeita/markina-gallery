@@ -52,6 +52,7 @@ jobs:
         run: |
           python scripts/test_preserve_branding.py -v
           bash scripts/test_deploy_homolog.sh
+          bash scripts/test_deploy_prod_web.sh
           bash scripts/test_reset_homolog_owner.sh
           python scripts/test_owner_reset_policy.py
           ruff check scripts/reset_homolog_owner.py
@@ -136,6 +137,15 @@ jobs:
             echo "::endgroup::"
             exit "$status"
           fi
+
+  homolog-inventory-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar sintaxe Bash do inventário
+        run: bash -n scripts/inventory-homolog-readonly.sh
+      - name: Testar política de escopo e SHA
+        run: python scripts/test_readonly_homolog_inventory_policy.py
 
   gitleaks:
     runs-on: ubuntu-latest
