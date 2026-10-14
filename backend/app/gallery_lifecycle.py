@@ -1,0 +1,476 @@
+"""Regras e orquestração retomável do ciclo de vida da galeria."""
+
+from collections.abc import Callable, Mapping
+from datetime import timedelta
+from secrets import token_hex
+from uuid import UUID
+
+from fastapi import HTTPException
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
+from app.acervo_context import owned_record, require_active_owner
+from app.auth import (
+    Client,
+    CommercialHistoryMedia,
+    DerivedGallery,
+    DerivedGalleryMembership,
+    DerivedGalleryPhoto,
+    GalleryAccessCapability,
+    GalleryLifecycleOperation,
+    MediaDerivative,
+    ParentGallery,
+    ParentGalleryRegistration,
+    PhotoAsset,
+    PhotoComment,
+    PhotoFavorite,
+    PhotoFolder,
+    PhotoSelection,
+    PhotoView,
+    SaleOrder,
+    SaleOrderItem,
+    Tenant,
+    TenantAdmin,
+    expired,
+    now,
+)
+from app.tenancy import TenantContextError, require_admin_tenant
+
+
+class InvalidLifecycleTransition(ValueError):
+    """Indica tentativa de regressão ou salto de estado não permitido."""
+
+
+class LifecycleLeaseConflict(RuntimeError):
+    """A operação não pertence mais a este worker."""
+
+
+class LifecycleStageUnavailable(RuntimeError):
+    """Uma etapa ainda não possui executor registrado."""
+
+
+LifecycleStageHandler = Callable[[Session, GalleryLifecycleOperation], None]
+LIFECYCLE_STAGES = (
+    "preparing_history",
+    "removing_storage",
+    "removing_records",
+)
+
+
+OPERATION_TRANSITIONS: dict[str, frozenset[str]] = {
+    "queued": frozenset({"preparing_history", "failed", "cancelled"}),
+    "preparing_history": frozenset({"removing_storage", "failed", "cancelled"}),
+    "removing_storage": frozenset({"removing_records", "failed"}),
+    "removing_records": frozenset({"completed", "failed"}),
+    "failed": frozenset({"queued", "cancelled"}),
+    "completed": frozenset(),
+    "cancelled": frozenset(),
+}
+
+
+def transition_operation(
+    operation: GalleryLifecycleOperation,
+    target_status: str,
+    *,
+    error: str | None = None,
+) -> None:
+    """Aplica somente transições explícitas e mantém timestamps auditáveis."""
+
+    allowed = OPERATION_TRANSITIONS.get(operation.status, frozenset())
+    if target_status not in allowed:
+        raise InvalidLifecycleTransition(
+            f"Transição inválida: {operation.status} -> {target_status}."
+        )
+    operation.status = target_status
+    operation.updated_at = now()
+    operation.last_error = error if target_status == "failed" else None
+    if target_status == "removing_storage" and operation.destructive_started_at is None:
+        operation.destructive_started_at = now()
+    if target_status == "completed":
+        operation.completed_at = now()
+
+
+def _manifest(operation: GalleryLifecycleOperation) -> dict:
+    return dict(operation.manifest or {})
+
+
+def gallery_deletion_inventory(db: Session, parent_gallery_id: UUID, *, tenant_id: UUID) -> dict:
+    """Conta o escopo operacional removível e o histórico preservado, sem PII."""
+
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria não encontrada.")
+    private_ids = select(DerivedGallery.id).where(DerivedGallery.tenant_id == tenant_id).where(
+        DerivedGallery.parent_gallery_id == parent_gallery_id
+    )
+    removable_photo_ids = select(PhotoAsset.id).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.parent_gallery_id == parent_gallery_id)
+
+    def count(model, *criteria) -> int:
+        return db.scalar(select(func.count()).select_from(model).where(model.tenant_id == tenant_id).where(*criteria)) or 0
+
+    order_counts = {
+        payment_status: total
+        for payment_status, total in db.execute(
+            select(SaleOrder.payment_status, func.count()).where(SaleOrder.tenant_id == tenant_id)
+            .where(SaleOrder.parent_gallery_id_snapshot == parent_gallery_id)
+            .group_by(SaleOrder.payment_status)
+        )
+    }
+    client_count = db.scalar(
+        select(func.count()).select_from(
+            select(DerivedGalleryMembership.client_id).where(DerivedGalleryMembership.tenant_id == tenant_id)
+            .where(DerivedGalleryMembership.parent_gallery_id == parent_gallery_id)
+            .union(
+                select(DerivedGallery.client_id).where(DerivedGallery.tenant_id == tenant_id).where(
+                    DerivedGallery.parent_gallery_id == parent_gallery_id
+                )
+            )
+            .subquery()
+        )
+    ) or 0
+    return {
+        "remove": {
+            "folders": count(PhotoFolder, PhotoFolder.parent_gallery_id == parent_gallery_id),
+            "photos": count(PhotoAsset, PhotoAsset.parent_gallery_id == parent_gallery_id),
+            "private_galleries": count(DerivedGallery, DerivedGallery.parent_gallery_id == parent_gallery_id),
+            "media_derivatives": count(MediaDerivative, MediaDerivative.photo_asset_id.in_(removable_photo_ids)),
+            "registrations": count(ParentGalleryRegistration, ParentGalleryRegistration.parent_gallery_id == parent_gallery_id),
+            "access_capabilities": count(GalleryAccessCapability, GalleryAccessCapability.parent_gallery_id == parent_gallery_id),
+        },
+        "preserve": {
+            "clients": client_count, "orders": sum(order_counts.values()),
+            "orders_by_status": order_counts,
+            "order_items": count(SaleOrderItem, SaleOrderItem.sale_order_id.in_(select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
+                SaleOrder.parent_gallery_id_snapshot == parent_gallery_id))),
+            "selections": count(PhotoSelection, PhotoSelection.derived_gallery_id.in_(private_ids)),
+            "favorites": count(PhotoFavorite, PhotoFavorite.derived_gallery_id.in_(private_ids)),
+            "comments": count(PhotoComment, PhotoComment.derived_gallery_id.in_(private_ids)),
+            "views": count(PhotoView, PhotoView.derived_gallery_id.in_(private_ids)),
+        },
+    }
+
+
+def client_unlink_inventory(
+    db: Session, *, parent_gallery_id: UUID, client_id: UUID, tenant_id: UUID
+) -> dict:
+    """Conta somente o vínculo operacional escolhido e o histórico preservado."""
+
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria não encontrada.")
+    if not owned_record(db, Client, client_id, tenant_id=tenant_id):
+        raise ValueError("Cliente não encontrada.")
+    membership_private_ids = select(DerivedGalleryMembership.derived_gallery_id).where(DerivedGalleryMembership.tenant_id == tenant_id).where(
+        DerivedGalleryMembership.parent_gallery_id == parent_gallery_id,
+        DerivedGalleryMembership.client_id == client_id,
+    )
+    private_ids = select(DerivedGallery.id).where(DerivedGallery.tenant_id == tenant_id).where(
+        DerivedGallery.parent_gallery_id == parent_gallery_id,
+        (
+            DerivedGallery.id.in_(membership_private_ids)
+            | (DerivedGallery.client_id == client_id)
+        ),
+    )
+
+    def count(model, *criteria) -> int:
+        return db.scalar(select(func.count()).select_from(model).where(model.tenant_id == tenant_id).where(*criteria)) or 0
+
+    order_query = select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
+        SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
+        SaleOrder.client_id == client_id,
+    )
+    order_counts = {
+        payment_status: total
+        for payment_status, total in db.execute(
+            select(SaleOrder.payment_status, func.count()).where(SaleOrder.tenant_id == tenant_id)
+            .where(
+                SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
+                SaleOrder.client_id == client_id,
+            )
+            .group_by(SaleOrder.payment_status)
+        )
+    }
+    return {
+        "remove": {
+            "registrations": count(
+                ParentGalleryRegistration,
+                ParentGalleryRegistration.parent_gallery_id == parent_gallery_id,
+                ParentGalleryRegistration.client_id == client_id,
+            ),
+            "memberships": count(
+                DerivedGalleryMembership,
+                DerivedGalleryMembership.parent_gallery_id == parent_gallery_id,
+                DerivedGalleryMembership.client_id == client_id,
+            ),
+            "selections": count(
+                PhotoSelection,
+                PhotoSelection.derived_gallery_id.in_(private_ids),
+                PhotoSelection.client_id == client_id,
+            ),
+            "favorites": count(
+                PhotoFavorite,
+                PhotoFavorite.derived_gallery_id.in_(private_ids),
+                PhotoFavorite.client_id == client_id,
+            ),
+            "comments": count(
+                PhotoComment,
+                PhotoComment.derived_gallery_id.in_(private_ids),
+                PhotoComment.client_id == client_id,
+            ),
+            "views": count(
+                PhotoView,
+                PhotoView.derived_gallery_id.in_(private_ids),
+                PhotoView.client_id == client_id,
+            ),
+            "private_capabilities": count(
+                GalleryAccessCapability,
+                GalleryAccessCapability.derived_gallery_id.in_(private_ids),
+                GalleryAccessCapability.client_id == client_id,
+            ),
+        },
+        "preserve": {
+            "clients": 1,
+            "private_galleries": count(
+                DerivedGallery,
+                DerivedGallery.id.in_(private_ids),
+            ),
+            "available_references": count(
+                DerivedGalleryPhoto,
+                DerivedGalleryPhoto.derived_gallery_id.in_(private_ids),
+            ),
+            "shared_private_capabilities": count(
+                GalleryAccessCapability,
+                GalleryAccessCapability.derived_gallery_id.in_(private_ids),
+                GalleryAccessCapability.client_id.is_(None),
+            ),
+            "photos": count(
+                PhotoAsset,
+                PhotoAsset.parent_gallery_id == parent_gallery_id,
+                PhotoAsset.derived_gallery_id.is_(None),
+            ),
+            "orders": sum(order_counts.values()),
+            "orders_by_status": {
+                **{status: order_counts.get(status, 0)
+                   for status in ("pending", "confirmed", "cancelled")},
+                **({"not_required": order_counts["not_required"]} if order_counts.get("not_required") else {}),
+            },
+            "order_items": count(
+                SaleOrderItem, SaleOrderItem.sale_order_id.in_(order_query)
+            ),
+        },
+    }
+
+
+def gallery_operational_storage_manifest(
+    db: Session, parent_gallery_id: UUID, *, tenant_id: UUID
+) -> dict[str, list[dict[str, str]]]:
+    """Congela somente chaves operacionais validadas por UUID, sem mídia histórica."""
+
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria não encontrada.")
+    removable_photo_ids = select(PhotoAsset.id).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.parent_gallery_id == parent_gallery_id)
+    sources = [
+        {"photo_id": str(photo_id), "storage_key": storage_key}
+        for photo_id, storage_key in db.execute(
+            select(PhotoAsset.id, PhotoAsset.storage_key).where(PhotoAsset.tenant_id == tenant_id)
+            .where(PhotoAsset.id.in_(removable_photo_ids))
+            .order_by(PhotoAsset.id)
+        )
+    ]
+    derivatives = [
+        {"derivative_id": str(derivative_id), "relative_path": relative_path}
+        for derivative_id, relative_path in db.execute(
+            select(MediaDerivative.id, MediaDerivative.relative_path).where(MediaDerivative.tenant_id == tenant_id)
+            .where(
+                MediaDerivative.photo_asset_id.in_(
+                    removable_photo_ids
+                ),
+                MediaDerivative.relative_path.is_not(None),
+            )
+            .order_by(MediaDerivative.id)
+        )
+    ]
+    from app.media import derivatives_root
+    from app.preview_adjustment.cleanup import photo_files
+
+    for source in sources:
+        for path in photo_files(UUID(source["photo_id"]), tenant_id=tenant_id):
+            derivatives.append({
+                "derivative_id": source["photo_id"],
+                "relative_path": path.relative_to(derivatives_root()).as_posix(),
+            })
+    history = []
+    for media in db.scalars(select(CommercialHistoryMedia).where(CommercialHistoryMedia.tenant_id == tenant_id).where(CommercialHistoryMedia.sale_order_item_id.in_(
+        select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id.in_(select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
+            SaleOrder.parent_gallery_id_snapshot == parent_gallery_id)))))):
+        for key in (media.preview_storage_key, media.delivery_storage_key):
+            if key:
+                history.append({"relative_path": key})
+    return {"sources": sources, "derivatives": derivatives, "history": history}
+
+
+def claim_next_operation(
+    db: Session, *, lease_seconds: int = 120
+) -> tuple[UUID, str] | None:
+    """Reserva uma operação nova ou interrompida com lease renovável."""
+
+    instant = now()
+    operation = db.scalar(
+        select(GalleryLifecycleOperation)
+        .join(Tenant, Tenant.id == GalleryLifecycleOperation.tenant_id)
+        .where(
+            Tenant.status == "active",
+            select(TenantAdmin.id).where(
+                TenantAdmin.admin_user_id == GalleryLifecycleOperation.actor_admin_id,
+                TenantAdmin.tenant_id == GalleryLifecycleOperation.tenant_id,
+                TenantAdmin.active.is_(True),
+            ).exists(),
+            select(func.count()).select_from(TenantAdmin).where(
+                TenantAdmin.admin_user_id == GalleryLifecycleOperation.actor_admin_id,
+                TenantAdmin.active.is_(True),
+            ).scalar_subquery() == 1,
+            GalleryLifecycleOperation.status.in_(("queued", *LIFECYCLE_STAGES)),
+            or_(
+                GalleryLifecycleOperation.lease_expires_at.is_(None),
+                GalleryLifecycleOperation.lease_expires_at <= instant,
+            ),
+        )
+        .order_by(GalleryLifecycleOperation.created_at)
+        .limit(1)
+        .with_for_update(skip_locked=True, of=GalleryLifecycleOperation)
+    )
+    if not operation:
+        return None
+    lease_token = token_hex(24)
+    operation.lease_token = lease_token
+    operation.lease_expires_at = instant + timedelta(seconds=lease_seconds)
+    operation.attempts += 1
+    if operation.status == "queued":
+        transition_operation(operation, "preparing_history")
+    db.commit()
+    return operation.id, lease_token
+
+
+def require_lifecycle_origin(db: Session, operation: GalleryLifecycleOperation) -> None:
+    """Prova durável e fresca, inclusive quando a origem está em exclusão."""
+    require_active_owner(db, operation.tenant_id)
+    if require_admin_tenant(db, operation.actor_admin_id).id != operation.tenant_id:
+        raise TenantContextError("Acesso negado.")
+    if not owned_record(db, ParentGallery, operation.target_parent_gallery_id, tenant_id=operation.tenant_id):
+        raise TenantContextError("Alvo da operação indisponível.")
+    if operation.target_client_id and not owned_record(db, Client, operation.target_client_id, tenant_id=operation.tenant_id):
+        raise TenantContextError("Alvo da operação indisponível.")
+    current = db.scalar(select(GalleryLifecycleOperation).where(
+        GalleryLifecycleOperation.id == operation.id,
+        GalleryLifecycleOperation.tenant_id == operation.tenant_id,
+    ).execution_options(populate_existing=True))
+    if current is None:
+        raise TenantContextError("Operação indisponível.")
+    if current.lease_token and (current.lease_expires_at is None or expired(current.lease_expires_at)):
+        raise LifecycleLeaseConflict("Lease da operação expirou.")
+
+
+def retry_failed_operation(db: Session, operation: GalleryLifecycleOperation) -> None:
+    """Reagenda falha; operações públicas legadas recompõem o escopo aprovado."""
+
+    require_lifecycle_origin(db, operation)
+    if operation.operation_type == "delete_parent_gallery" and (operation.manifest or {}).get("history_policy") != "text-only-v1":
+        manifest = dict(operation.manifest or {})
+        manifest["completed_steps"] = []
+        manifest["operational_storage"] = gallery_operational_storage_manifest(db, operation.target_parent_gallery_id, tenant_id=operation.tenant_id)
+        operation.manifest = manifest
+    transition_operation(operation, "queued")
+    operation.lease_token = None
+    operation.lease_expires_at = None
+    db.flush()
+
+
+def sanitized_lifecycle_error(stage: str, error: Exception) -> str:
+    if isinstance(error, LifecycleStageUnavailable):
+        return str(error)[:500]
+    return f"Falha interna na etapa {stage}."
+
+
+def process_claimed_operation(
+    db: Session,
+    *,
+    operation_id: UUID,
+    lease_token: str,
+    handlers: Mapping[str, LifecycleStageHandler],
+    lease_seconds: int = 120,
+) -> GalleryLifecycleOperation:
+    """Executa etapas idempotentes e confirma progresso após cada uma."""
+
+    while True:
+        operation = db.get(GalleryLifecycleOperation, operation_id, populate_existing=True)
+        if not operation:
+            raise LookupError("Operação de ciclo de vida não encontrada.")
+        if operation.status == "completed":
+            return operation
+        if operation.lease_token != lease_token:
+            raise LifecycleLeaseConflict("Lease da operação não pertence ao worker.")
+        stage = operation.status
+        if stage not in LIFECYCLE_STAGES:
+            raise InvalidLifecycleTransition(
+                f"Operação reservada em estado inesperado: {stage}."
+            )
+        manifest = _manifest(operation)
+        completed_steps = list(manifest.get("completed_steps", []))
+        try:
+            require_lifecycle_origin(db, operation)
+            if operation.lease_token != lease_token:
+                raise LifecycleLeaseConflict("Lease da operação não pertence ao worker.")
+            if stage not in completed_steps:
+                handler = handlers.get(stage)
+                if not handler:
+                    raise LifecycleStageUnavailable(
+                        f"Executor indisponível para a etapa {stage}."
+                    )
+                handler(db, operation)
+                require_lifecycle_origin(db, operation)
+                if operation.lease_token != lease_token:
+                    raise LifecycleLeaseConflict("Lease da operação não pertence ao worker.")
+                manifest = _manifest(operation)
+                completed_steps = list(manifest.get("completed_steps", []))
+                completed_steps.append(stage)
+                manifest["completed_steps"] = completed_steps
+                manifest.pop("failed_step", None)
+                operation.manifest = manifest
+            next_status = {
+                "preparing_history": "removing_storage",
+                "removing_storage": "removing_records",
+                "removing_records": "completed",
+            }[stage]
+            transition_operation(operation, next_status)
+            if next_status == "completed":
+                operation.lease_token = None
+                operation.lease_expires_at = None
+            else:
+                operation.lease_expires_at = now() + timedelta(seconds=lease_seconds)
+            db.commit()
+        except (TenantContextError, HTTPException):
+            db.rollback()
+            current = db.get(GalleryLifecycleOperation, operation_id, populate_existing=True)
+            if current and current.lease_token == lease_token:
+                current.lease_token = None
+                current.lease_expires_at = None
+                current.attempts = max(0, current.attempts - 1)
+                db.commit()
+            raise
+        except Exception as error:
+            db.rollback()
+            operation = db.get(GalleryLifecycleOperation, operation_id, populate_existing=True)
+            if not operation or operation.lease_token != lease_token:
+                raise LifecycleLeaseConflict(
+                    "Lease perdido durante a falha da operação."
+                ) from error
+            manifest = _manifest(operation)
+            manifest["failed_step"] = stage
+            operation.manifest = manifest
+            transition_operation(
+                operation,
+                "failed",
+                error=sanitized_lifecycle_error(stage, error),
+            )
+            operation.lease_token = None
+            operation.lease_expires_at = None
+            db.commit()
+            return operation

@@ -1,0 +1,17 @@
+[Version]
+Version=346
+
+[Exposure]
+Auto=true
+Clip=0.02
+HistogramMatching=false
+Saturation=0
+
+[White Balance]
+Enabled=false
+
+[Sharpening]
+Enabled=false
+
+[Color Management]
+OutputProfile=RTv4_sRGB

@@ -1,0 +1,815 @@
+"""Disponibilidade, consentimento e criação da busca facial da cliente."""
+from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+from PIL import Image
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session
+
+from app.auth import (
+    AuditEvent,
+    Base,
+    Client,
+    DerivedGallery,
+    DerivedGalleryMembership,
+    FacialEmbeddingExperimentSetting,
+    FacialJob,
+    FacialRollout,
+    FacialSearchCandidate,
+    FacialSearchRequest,
+    FacialSearchSnapshotItem,
+    FolderClientGrant,
+    GalleryClientState,
+    GalleryFacialPolicy,
+    MediaDerivative,
+    ParentGallery,
+    ParentGalleryRegistration,
+    PhotoAsset,
+    PhotoFolder,
+)
+from app.facial.capacity import FacialSearchCapacityError, measure_search_queue
+from app.facial.config import FacialSettings
+from app.facial.search import (
+    FacialSearchError,
+    create_search_request,
+    read_latest_search_result,
+    read_search_result,
+    search_availability,
+    search_request_payload,
+)
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
+
+
+def _jpeg() -> bytes:
+    stream = BytesIO()
+    Image.new("RGB", (160, 120), (40, 50, 60)).save(stream, format="JPEG")
+    return stream.getvalue()
+
+
+def _settings(tmp_path: Path, *, enabled: bool = True) -> FacialSettings:
+    return FacialSettings(
+        enabled=enabled,
+        environment="test",
+        credential_environment="test",
+        manifest_path=tmp_path / "manifest.json",
+        model_root=tmp_path / "models",
+        reference_root=tmp_path / "references",
+        model_version="model-v1",
+        quality_version="quality-v1",
+        calibration_version="calibration-v1",
+        legal_notice_version="notice-v1",
+        consent_version="consent-v1",
+        legal_basis_reference="synthetic-only",
+        retention_policy_version="retention-v1",
+        minor_policy_version="minor-disabled-v1",
+        similarity_threshold_milli=750,
+        active_key_id="test",
+        aead_keys={"test": b"k" * 32},
+        reference_retention_seconds=900,
+        candidate_retention_seconds=86400,
+        queue_name="markina:facial:jobs",
+        worker_concurrency=1,
+        max_jobs_per_process=100,
+        model_idle_seconds=300,
+        job_lease_seconds=120,
+        queue_block_seconds=10,
+        max_reference_bytes=31_457_280,
+        max_reference_pixels=25_000_000,
+    )
+
+
+def _fixture(tmp_path: Path, *, index_ready: bool):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento")
+    client = Client(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), full_name="Cliente", phone_e164="+5511999999998")
+    folder = PhotoFolder(
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
+        parent_gallery_id=parent.id,
+        name="Fotos",
+        status="released",
+        purpose="content",
+    )
+    photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
+        id=uuid4(),
+        parent_gallery_id=parent.id,
+        folder_id=folder.id,
+        filename="foto.jpg",
+        storage_key=f"{parent.id}/foto.jpg",
+        available=True,
+    )
+    protected_derivative = MediaDerivative(
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
+        variant="client_preview",
+        status="ready",
+        relative_path=f"{photo.id}/client_preview.jpg",
+    )
+    derivative = MediaDerivative(
+        tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
+        variant="admin_preview",
+        status="ready",
+        relative_path=f"{photo.id}/admin_preview.jpg",
+    )
+    policy = GalleryFacialPolicy(
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
+        parent_gallery_id=parent.id,
+        status="active",
+        legal_notice_version="notice-v1",
+        legal_basis_reference="synthetic-only",
+        retention_policy_version="retention-v1",
+        minor_policy_version="minor-disabled-v1",
+        model_version="model-v1",
+        quality_version="quality-v1",
+        calibration_version="calibration-v1",
+        index_generation=1,
+    )
+    registration = ParentGalleryRegistration(
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+        client_id=client.id,
+        status="active",
+    )
+    rollouts = tuple(
+        FacialRollout(
+            tenant_id=FIXTURE_TENANT_ID, environment=environment,
+            parent_gallery_id=parent.id,
+            status="active",
+            stage="canary",
+            model_version="model-v1",
+            quality_version="quality-v1",
+            calibration_version="calibration-v1",
+            legal_notice_version="notice-v1",
+            consent_version="consent-v1",
+            legal_basis_reference="synthetic-only",
+            retention_policy_version="retention-v1",
+        )
+        for environment in ("test", "staging")
+    )
+    db.add_all(
+        (
+            parent,
+            client,
+            registration,
+            folder,
+            photo,
+            protected_derivative,
+            derivative,
+            policy,
+            *rollouts,
+        )
+    )
+    if index_ready:
+        db.add(
+            FacialJob(
+                tenant_id=FIXTURE_TENANT_ID, kind="index",
+                status="completed",
+                idempotency_key=f"index:{photo.id}",
+                parent_gallery_id=parent.id,
+                photo_asset_id=photo.id,
+                model_version="model-v1",
+                quality_version="quality-v1",
+                preview_fingerprint="a" * 64,
+            )
+        )
+    db.commit()
+    return db, parent, client
+
+
+def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -> None:
+    db, parent, _client = _fixture(tmp_path, index_ready=False)
+    settings = _settings(tmp_path)
+
+    available = search_availability(
+        db, parent_gallery_id=parent.id, client_id=_client.id, settings=settings
+    )
+    unavailable = search_availability(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=_client.id,
+        settings=_settings(tmp_path, enabled=False),
+    )
+
+    assert available["state"] == "consent_required"
+    assert available["index"] == {"state": "processing", "ready": 0, "total": 1}
+    assert available["consent_version"] == "consent-v1"
+    assert available["max_reference_bytes"] == 31_457_280
+    assert available["engine"] == "opencv-yunet-sface"
+    assert available["minor_search_available"] is True
+    assert unavailable == {
+        "state": "unavailable",
+        "manual_selection_available": True,
+        "minor_search_available": False,
+        "max_reference_bytes": 31_457_280,
+    }
+
+
+@pytest.mark.parametrize(
+    ("is_new_gallery", "gemma_coverage_complete", "stale_reason"),
+    [(True, True, None), (True, False, None), (False, True, None),
+     (True, True, "generation"), (True, True, "preview"), (True, True, "future_heartbeat")],
+)
+def test_gallery_engine_uses_gemma_only_with_complete_current_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    is_new_gallery: bool,
+    gemma_coverage_complete: bool,
+    stale_reason: str | None,
+) -> None:
+    from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
+    from app.facial.indexing import index_idempotency_key
+
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    db.add(FacialEmbeddingExperimentSetting(
+            singleton=1,
+            enabled=True,
+            mode="shadow",
+            enabled_since=(
+                parent.created_at - timedelta(seconds=1)
+                if is_new_gallery
+                else parent.created_at + timedelta(seconds=1)
+            ),
+            worker_last_seen_at=datetime.now(UTC),
+        ))
+    if gemma_coverage_complete:
+        db.add(FacialJob(
+            tenant_id=FIXTURE_TENANT_ID,
+            kind="index_gemma",
+            status="completed",
+            idempotency_key=index_idempotency_key(
+                environment="test", gallery_id=parent.id, photo_id=db.scalar(select(PhotoAsset.id)),
+                model_version=GEMMA_MODEL_VERSION, quality_version="quality-v1", index_generation=1,
+                fingerprint="b" * 64,
+            ),
+            parent_gallery_id=parent.id,
+            photo_asset_id=db.scalar(select(PhotoAsset.id)),
+            model_version=GEMMA_MODEL_VERSION,
+            quality_version="quality-v1",
+            preview_fingerprint="b" * 64,
+        ))
+    db.commit()
+
+    if stale_reason == "generation":
+        db.scalar(select(GalleryFacialPolicy)).index_generation += 1
+    elif stale_reason == "preview":
+        db.scalar(select(MediaDerivative).where(MediaDerivative.variant == "admin_preview")).updated_at = datetime.now(UTC) + timedelta(seconds=1)
+    elif stale_reason == "future_heartbeat":
+        db.get(FacialEmbeddingExperimentSetting, 1).worker_last_seen_at = datetime.now(UTC) + timedelta(seconds=10)
+    db.commit()
+
+    request = create_search_request(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+
+    assert request.search_engine == (
+        GEMMA_MODEL_ID
+        if is_new_gallery and gemma_coverage_complete and stale_reason is None
+        else "opencv-yunet-sface"
+    )
+    assert db.scalar(select(FacialJob.kind).where(
+        FacialJob.search_request_id == request.id
+    )) == (
+        "search_gemma"
+        if is_new_gallery and gemma_coverage_complete and stale_reason is None
+        else "search"
+    )
+
+
+def test_search_admission_requires_gallery_in_active_rollout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    rollout = db.scalar(
+        select(FacialRollout).where(
+            FacialRollout.parent_gallery_id == parent.id,
+            FacialRollout.environment == "test",
+        )
+    )
+    assert rollout is not None
+    rollout.status = "prepared"
+    db.commit()
+
+    assert search_availability(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        settings=_settings(tmp_path),
+    )["state"] == "unavailable"
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        create_search_request(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            consent_version="consent-v1",
+            subject_declaration="adult",
+            representation_reference=None,
+            payload=_jpeg(),
+            settings=_settings(tmp_path),
+        )
+    assert not (tmp_path / "references").exists()
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 0
+
+
+@pytest.mark.parametrize("search_kind", ["search", "search_gemma"])
+def test_saturated_search_queue_refuses_before_storing_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, search_kind: str
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    settings = _settings(tmp_path)
+    object.__setattr__(settings, "search_queue_max_depth", 1)
+    object.__setattr__(settings, "search_queue_max_age_seconds", 30)
+    object.__setattr__(settings, "search_retry_after_seconds", 17)
+    db.add(
+        FacialJob(
+            tenant_id=FIXTURE_TENANT_ID, kind=search_kind,
+            status="queued",
+            idempotency_key="saturated-search-queue",
+            parent_gallery_id=parent.id,
+            search_request_id=uuid4(),
+            available_at=datetime.now(UTC),
+            created_at=datetime.now(UTC) - timedelta(seconds=45),
+        )
+    )
+    db.commit()
+
+    pressure = measure_search_queue(db)
+    assert pressure.depth == 1
+    assert pressure.oldest_age_seconds >= 30
+    with pytest.raises(FacialSearchCapacityError) as refused:
+        create_search_request(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            consent_version="consent-v1",
+            subject_declaration="adult",
+            representation_reference=None,
+            payload=_jpeg(),
+            settings=settings,
+        )
+
+    assert refused.value.retry_after_seconds == 17
+    assert not (tmp_path / "references").exists()
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 0
+
+
+def test_adult_consent_creates_durable_request_without_private_gallery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    item = create_search_request(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    assert item.status == "queued"
+    assert (item.snapshot_ready, item.snapshot_total) == (1, 1)
+    assert item.reference_locator_ciphertext is not None
+    assert db.scalar(select(func.count()).select_from(FacialJob).where(FacialJob.kind == "search")) == 1
+    snapshot = db.scalar(select(FacialSearchSnapshotItem))
+    assert snapshot is not None
+    assert snapshot.photo_asset_id is not None
+    assert snapshot.status == "ready"
+    assert snapshot.preview_fingerprint == "a" * 64
+    assert db.scalar(select(func.count()).select_from(DerivedGallery)) == 0
+    assert db.scalar(select(func.count()).select_from(DerivedGalleryMembership)) == 0
+    payload = search_request_payload(item)
+    assert set(payload) == {
+        "id",
+        "gallery_id",
+        "status",
+        "progress",
+        "reference_deleted",
+        "expires_at",
+        "poll_after_ms",
+        "estimate",
+    }
+    assert payload["poll_after_ms"] == 2000
+    assert payload["estimate"] == {
+        "remaining_items": 1,
+        "seconds": None,
+        "confidence": "unavailable",
+    }
+    audit_subject = db.scalar(
+        select(AuditEvent.subject).where(AuditEvent.event == "facial.search_consented")
+    )
+    assert "phone" not in audit_subject and "image" not in audit_subject
+    restored, _candidates = read_latest_search_result(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+    )
+    assert restored.id == item.id
+
+
+def test_accepts_one_hundred_isolated_durable_client_searches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, first_client = _fixture(tmp_path, index_ready=True)
+    clients = [first_client]
+    for index in range(1, 100):
+        client = Client(
+            tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
+            full_name=f"Cliente {index}",
+            phone_e164=f"+55119{index:08d}",
+        )
+        clients.append(client)
+        db.add_all(
+            (
+                client,
+                ParentGalleryRegistration(
+                    tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                    client_id=client.id,
+                    status="active",
+                ),
+            )
+        )
+    db.commit()
+
+    request_ids = {
+        create_search_request(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            consent_version="consent-v1",
+            subject_declaration="adult",
+            representation_reference=None,
+            payload=_jpeg(),
+            settings=_settings(tmp_path),
+        ).id
+        for client in clients
+    }
+    db.commit()
+
+    assert len(request_ids) == 100
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 100
+    assert db.scalar(
+        select(func.count()).select_from(FacialJob).where(FacialJob.kind == "search")
+    ) == 100
+
+
+def test_latest_search_repeats_client_gallery_authorization_and_expiry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    request = create_search_request(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=uuid4(),
+            client_id=client.id,
+        )
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=uuid4(),
+        )
+
+    registration = db.scalar(
+        select(ParentGalleryRegistration).where(
+            ParentGalleryRegistration.parent_gallery_id == parent.id,
+            ParentGalleryRegistration.client_id == client.id,
+        )
+    )
+    assert registration is not None
+    registration.status = "unlinked"
+    db.commit()
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+        )
+
+    registration.status = "active"
+    request.status = "queued"
+    request.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.commit()
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        read_latest_search_result(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+        )
+
+
+def test_search_snapshot_and_results_respect_restricted_folder_grant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, owner = _fixture(tmp_path, index_ready=True)
+    other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra cliente", phone_e164="+5511999999997")
+    folder = PhotoFolder(
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Retratos exclusivos", status="released",
+        purpose="content", audience_scope="selected", position=1,
+    )
+    db.add_all([other, folder])
+    db.flush()
+    photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
+        parent_gallery_id=parent.id, folder_id=folder.id,
+        filename="restrita.jpg", storage_key=f"{parent.id}/restrita.jpg", available=True,
+    )
+    db.add(photo)
+    db.flush()
+    grant = FolderClientGrant(
+        tenant_id=FIXTURE_TENANT_ID, folder_id=folder.id, parent_gallery_id=parent.id, client_id=owner.id,
+    )
+    db.add_all([
+        GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id),
+        GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=other.id),
+        ParentGalleryRegistration(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=other.id, status="active"),
+        grant,
+        MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="client_preview", status="ready", relative_path=f"{photo.id}/client_preview.jpg"),
+        FacialJob(tenant_id=FIXTURE_TENANT_ID, kind="index", status="completed", idempotency_key=f"index:{photo.id}",
+                  parent_gallery_id=parent.id, photo_asset_id=photo.id,
+                  model_version="model-v1", quality_version="quality-v1", preview_fingerprint="b" * 64),
+    ])
+    db.commit()
+    owner_search = create_search_request(
+        db, parent_gallery_id=parent.id, client_id=owner.id,
+        consent_version="consent-v1", subject_declaration="adult",
+        representation_reference=None, payload=_jpeg(), settings=_settings(tmp_path),
+    )
+    other_search = create_search_request(
+        db, parent_gallery_id=parent.id, client_id=other.id,
+        consent_version="consent-v1", subject_declaration="adult",
+        representation_reference=None, payload=_jpeg(), settings=_settings(tmp_path),
+    )
+    owner_ids = set(db.scalars(select(FacialSearchSnapshotItem.photo_asset_id).where(
+        FacialSearchSnapshotItem.search_request_id == owner_search.id
+    )))
+    other_ids = set(db.scalars(select(FacialSearchSnapshotItem.photo_asset_id).where(
+        FacialSearchSnapshotItem.search_request_id == other_search.id
+    )))
+    assert photo.id in owner_ids
+    assert photo.id not in other_ids
+    owner_search.status = "ready"
+    db.add(FacialSearchCandidate(
+        tenant_id=FIXTURE_TENANT_ID, search_request_id=owner_search.id, parent_gallery_id=parent.id,
+        client_id=owner.id, photo_asset_id=photo.id, rank=1,
+        quality_band="best", expires_at=datetime.now(UTC) + timedelta(hours=1),
+    ))
+    db.commit()
+    assert len(read_search_result(
+        db, parent_gallery_id=parent.id, client_id=owner.id,
+        request_id=owner_search.id,
+    )[1]) == 1
+    db.delete(grant)
+    db.commit()
+    assert read_search_result(
+        db, parent_gallery_id=parent.id, client_id=owner.id,
+        request_id=owner_search.id,
+    )[1] == []
+
+def test_latest_search_isolated_between_two_concurrent_galleries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, first_parent, client = _fixture(tmp_path, index_ready=True)
+    second_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Segundo evento")
+    second_folder = PhotoFolder(
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
+        parent_gallery_id=second_parent.id,
+        name="Fotos",
+        status="released",
+        purpose="content",
+    )
+    second_photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
+        id=uuid4(),
+        parent_gallery_id=second_parent.id,
+        folder_id=second_folder.id,
+        filename="segunda.jpg",
+        storage_key=f"{second_parent.id}/segunda.jpg",
+        available=True,
+    )
+    second_policy = GalleryFacialPolicy(
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
+        parent_gallery_id=second_parent.id,
+        status="active",
+        legal_notice_version="notice-v1",
+        legal_basis_reference="synthetic-only",
+        retention_policy_version="retention-v1",
+        minor_policy_version="minor-disabled-v1",
+        model_version="model-v1",
+        quality_version="quality-v1",
+        calibration_version="calibration-v1",
+        index_generation=1,
+    )
+    db.add_all(
+        (
+            second_parent,
+            second_folder,
+            second_photo,
+            MediaDerivative(
+                tenant_id=FIXTURE_TENANT_ID, photo_asset_id=second_photo.id,
+                variant="client_preview",
+                status="ready",
+                relative_path=f"{second_photo.id}/client_preview.jpg",
+            ),
+            MediaDerivative(
+                tenant_id=FIXTURE_TENANT_ID, photo_asset_id=second_photo.id,
+                variant="admin_preview",
+                status="ready",
+                relative_path=f"{second_photo.id}/admin_preview.jpg",
+            ),
+            second_policy,
+            ParentGalleryRegistration(
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=second_parent.id,
+                client_id=client.id,
+                status="active",
+            ),
+            FacialRollout(
+                tenant_id=FIXTURE_TENANT_ID, environment="test",
+                parent_gallery_id=second_parent.id,
+                status="active",
+                stage="canary",
+                model_version="model-v1",
+                quality_version="quality-v1",
+                calibration_version="calibration-v1",
+                legal_notice_version="notice-v1",
+                consent_version="consent-v1",
+                legal_basis_reference="synthetic-only",
+                retention_policy_version="retention-v1",
+            ),
+            FacialJob(
+                tenant_id=FIXTURE_TENANT_ID, kind="index",
+                status="completed",
+                idempotency_key=f"index:{second_photo.id}",
+                parent_gallery_id=second_parent.id,
+                photo_asset_id=second_photo.id,
+                model_version="model-v1",
+                quality_version="quality-v1",
+                preview_fingerprint="b" * 64,
+            ),
+        )
+    )
+    db.commit()
+
+    first = create_search_request(
+        db,
+        parent_gallery_id=first_parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    second = create_search_request(
+        db,
+        parent_gallery_id=second_parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    restored_first, _ = read_latest_search_result(
+        db,
+        parent_gallery_id=first_parent.id,
+        client_id=client.id,
+    )
+    restored_second, _ = read_latest_search_result(
+        db,
+        parent_gallery_id=second_parent.id,
+        client_id=client.id,
+    )
+    assert restored_first.id == first.id
+    assert restored_second.id == second.id
+    assert restored_first.id != restored_second.id
+
+
+def test_stale_consent_and_minor_search_fail_before_persisting_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    common = {
+        "db": db,
+        "parent_gallery_id": parent.id,
+        "client_id": client.id,
+        "representation_reference": None,
+        "payload": _jpeg(),
+        "settings": _settings(tmp_path),
+    }
+    with pytest.raises(FacialSearchError, match="revisto"):
+        create_search_request(
+            consent_version="old-consent",
+            subject_declaration="adult",
+            **common,
+        )
+    with pytest.raises(FacialSearchError, match="consentimento específico"):
+        create_search_request(
+            consent_version="consent-v1",
+            subject_declaration="minor",
+            **common,
+        )
+    assert not (tmp_path / "references").exists()
+
+
+def test_authorized_minor_reference_requires_guardian_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    settings = _settings(tmp_path)
+
+    available = search_availability(db, parent_gallery_id=parent.id, client_id=client.id, settings=settings)
+    assert available["minor_search_available"] is True
+    common = {"db": db, "parent_gallery_id": parent.id, "client_id": client.id,
+              "consent_version": "consent-v1", "subject_declaration": "minor",
+              "representation_reference": None, "payload": _jpeg(), "settings": settings}
+    with pytest.raises(FacialSearchError, match="consentimento específico"):
+        create_search_request(**common)
+    item = create_search_request(**common, consent_accepted=True)
+    db.commit()
+    assert item.status == "queued"
+    assert item.subject_declaration == "minor"
+    assert item.representation_reference is None
+    assert item.authorization_method == "explicit_consent"
+    from app.facial.search_worker import _request_is_authorized
+    assert _request_is_authorized(db, item, settings)
+    item.status = "cancelled"
+    assert not _request_is_authorized(db, item, settings)
+
+
+def test_terminal_index_failure_is_excluded_without_blocking_client_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    db, parent, client = _fixture(tmp_path, index_ready=False)
+    photo = db.scalar(select(PhotoAsset))
+    assert photo is not None
+    db.add(
+        FacialJob(
+            tenant_id=FIXTURE_TENANT_ID, kind="index",
+            status="failed",
+            idempotency_key=f"failed-index:{photo.id}",
+            parent_gallery_id=parent.id,
+            photo_asset_id=photo.id,
+            model_version="model-v1",
+            quality_version="quality-v1",
+            preview_fingerprint="f" * 64,
+            last_error_category="provider_unavailable",
+        )
+    )
+    db.commit()
+
+    item = create_search_request(
+        db,
+        parent_gallery_id=parent.id,
+        client_id=client.id,
+        consent_version="consent-v1",
+        subject_declaration="adult",
+        representation_reference=None,
+        payload=_jpeg(),
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    snapshot = db.scalar(
+        select(FacialSearchSnapshotItem).where(
+            FacialSearchSnapshotItem.search_request_id == item.id
+        )
+    )
+    assert item.status == "queued"
+    assert snapshot is not None and snapshot.status == "excluded"

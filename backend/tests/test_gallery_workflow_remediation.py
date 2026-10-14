@@ -1,0 +1,705 @@
+from io import BytesIO
+from uuid import UUID, uuid4
+
+import pyotp
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from app.auth import (
+    AdminUser,
+    Base,
+    Client,
+    DerivedGallery,
+    DerivedGalleryPhoto,
+    MediaDerivative,
+    MediaJob,
+    ParentGallery,
+    PhotoAsset,
+    PhotoFolder,
+    PhotoSelection,
+    SessionLocal,
+    engine,
+    password_hasher,
+)
+from app.main import app
+from app.media import generate_derivatives
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+
+
+@pytest.fixture(autouse=True)
+def clean_database():
+    with engine.connect() as connection:
+        if engine.dialect.name == "sqlite":
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        Base.metadata.drop_all(connection)
+        if engine.dialect.name == "sqlite":
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        connection.commit()
+    Base.metadata.create_all(engine)
+    yield
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def authenticate_admin(client: TestClient) -> None:
+    with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(
+            email="workflow@markina.test",
+            password_hash=password_hasher.hash("senha-segura"),
+            email_verified=True,
+            totp_secret=pyotp.random_base32(),
+        ))
+        db.add(admin)
+        db.commit()
+        secret = admin.totp_secret
+    challenge = client.post(
+        "/auth/admin/password",
+        json={"email": "workflow@markina.test", "password": "senha-segura"},
+    ).json()["challenge_id"]
+    response = client.post(
+        "/auth/admin/totp",
+        json={"challenge_id": challenge, "code": pyotp.TOTP(secret).now()},
+    )
+    assert response.status_code == 200
+
+
+def ready_photo(
+    db,
+    *,
+    parent: ParentGallery,
+    folder: PhotoFolder,
+    available: bool = False,
+    filename: str = "foto.jpg",
+) -> PhotoAsset:
+    photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
+        parent_gallery_id=parent.id,
+        folder_id=folder.id,
+        filename=filename,
+        storage_key=f"tests/{uuid4()}.jpg",
+        available=available,
+    )
+    db.add(photo)
+    db.flush()
+    db.add(MediaJob(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, status="completed", attempts=1))
+    db.add(
+        MediaDerivative(tenant_id=FIXTURE_TENANT_ID,
+            photo_asset_id=photo.id,
+            variant="client_preview",
+            relative_path=f"{photo.id}/client_preview.jpg",
+            status="ready",
+            width=1200,
+            height=800,
+        )
+    )
+    db.flush()
+    db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="admin_preview", relative_path=f"{photo.id}/admin_preview.jpg", status="ready", width=1200, height=800))
+    return photo
+
+
+def jpeg_bytes() -> bytes:
+    payload = BytesIO()
+    Image.new("RGB", (1200, 800), color=(34, 48, 67)).save(payload, format="JPEG")
+    return payload.getvalue()
+
+
+def test_only_one_cover_assets_folder_exists_per_parent() -> None:
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
+        db.add(parent)
+        db.flush()
+        db.add_all(
+            [
+                PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
+                    parent_gallery_id=parent.id,
+                    name="Capa A",
+                    purpose="cover_assets",
+                    position=-1,
+                ),
+                PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
+                    parent_gallery_id=parent.id,
+                    name="Capa B",
+                    purpose="cover_assets",
+                    position=-2,
+                ),
+            ]
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+
+
+def test_cover_assets_are_excluded_from_content_contracts(client: TestClient) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
+        db.add(parent)
+        db.flush()
+        content = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Cerimônia", status="released")
+        cover = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Capa técnica",
+            purpose="cover_assets",
+            position=-1,
+        )
+        db.add_all([content, cover])
+        db.flush()
+        ready_photo(db, parent=parent, folder=content, available=True, filename="conteudo.jpg")
+        ready_photo(db, parent=parent, folder=cover, filename="capa.jpg")
+        parent_id = parent.id
+        db.commit()
+
+    folders = client.get(f"/admin/parent-galleries/{parent_id}/folders")
+    assert folders.status_code == 200
+    assert folders.json()["total"] == 1
+    assert folders.json()["folders"][0]["name"] == "Cerimônia"
+    summary = client.get(f"/admin/parent-galleries/{parent_id}/summary").json()
+    assert summary["counts"]["folders"] == 1
+    assert summary["counts"]["photos"] == 1
+    available = client.get(f"/admin/parent-galleries/{parent_id}/available-photos").json()
+    assert [photo["name"] for photo in available["photos"]] == ["conteudo.jpg"]
+    assert available["photos"][0]["width"] == 1200
+    assert available["photos"][0]["height"] == 800
+    assert available["photos"][0]["publication_state"] == "published"
+    assert "storage_key" not in folders.text + str(available)
+
+
+def test_publish_promotes_only_ready_unavailable_photos_without_private_links(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento", payment_required=False)
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada")
+        db.add(folder)
+        db.flush()
+        ready = ready_photo(db, parent=parent, folder=folder)
+        pending = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="pendente.jpg",
+            storage_key=f"tests/{uuid4()}.jpg",
+            available=False,
+        )
+        db.add(pending)
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511999999999")
+        db.add(owner)
+        db.flush()
+        private = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+            name="Privada",
+        )
+        db.add(private)
+        db.commit()
+        folder_id, ready_id, pending_id = folder.id, ready.id, pending.id
+
+    published = client.post(f"/admin/photo-folders/{folder_id}/publish", json={})
+    assert published.status_code == 200
+    assert published.json()["published_count"] == 1
+    assert published.json()["pending_count"] == 1
+    repeated = client.post(f"/admin/photo-folders/{folder_id}/publish", json={})
+    assert repeated.status_code == 200
+    assert repeated.json()["published_count"] == 0
+    with SessionLocal() as db:
+        assert db.get(PhotoAsset, ready_id).available is True
+        assert db.get(PhotoAsset, pending_id).available is False
+        assert list(db.scalars(select(DerivedGalleryPhoto))) == []
+
+
+def test_publish_ready_parent_batch_reports_pending_and_publishes_all_ready(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento em lote", payment_required=False)
+        db.add(parent)
+        db.flush()
+        first = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Primeira", position=0)
+        second = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Segunda", position=1)
+        db.add_all([first, second])
+        db.flush()
+        ready_first = ready_photo(db, parent=parent, folder=first, filename="a.jpg")
+        ready_second = ready_photo(db, parent=parent, folder=second, filename="b.jpg")
+        pending = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            folder_id=second.id,
+            filename="c.jpg",
+            storage_key=f"tests/{uuid4()}.jpg",
+            available=False,
+        )
+        db.add(pending)
+        db.commit()
+        parent_id = parent.id
+
+    published = client.post(f"/admin/parent-galleries/{parent_id}/publish-ready")
+    assert published.status_code == 200
+    assert published.json()["published_count"] == 2
+    assert published.json()["pending_count"] == 1
+    assert published.json()["failed_count"] == 0
+    assert published.json()["available_count"] == 2
+    assert len(published.json()["folders"]) == 2
+    with SessionLocal() as db:
+        assert db.get(PhotoAsset, ready_first.id).available is True
+        assert db.get(PhotoAsset, ready_second.id).available is True
+        assert db.get(PhotoAsset, pending.id).available is False
+
+
+def test_legacy_release_rejects_private_destinations_without_side_effects(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada")
+        db.add(folder)
+        db.flush()
+        photo = ready_photo(db, parent=parent, folder=folder)
+        folder_id, photo_id = folder.id, photo.id
+        db.commit()
+
+    response = client.post(
+        f"/admin/photo-folders/{folder_id}/release",
+        json={"gallery_ids": [str(uuid4())]},
+    )
+    assert response.status_code == 410
+    with SessionLocal() as db:
+        assert db.get(PhotoFolder, folder_id).status == "preparing"
+        assert db.get(PhotoAsset, photo_id).available is False
+        assert list(db.scalars(select(DerivedGalleryPhoto))) == []
+
+
+def test_released_folder_accepts_incremental_registration_as_unavailable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada", status="released")
+        db.add(folder)
+        db.flush()
+        previous = ready_photo(db, parent=parent, folder=folder, available=True)
+        folder_id, previous_id = folder.id, previous.id
+        db.commit()
+
+    registered = client.post(
+        f"/admin/photo-folders/{folder_id}/photos",
+        json={
+            "filename": "nova.jpg",
+            "storage_key": f"{parent.id}/{folder_id}/nova.jpg",
+        },
+    )
+    assert registered.status_code == 201
+    uploaded = client.put(
+        f"/admin/photo-assets/{registered.json()['id']}/source",
+        content=jpeg_bytes(),
+        headers={"content-type": "image/jpeg"},
+    )
+    assert uploaded.status_code == 202
+    with SessionLocal() as db:
+        assert db.get(PhotoAsset, UUID(registered.json()["id"])).available is False
+        assert db.get(PhotoAsset, previous_id).available is True
+
+
+def test_admin_private_gallery_rejects_existing_photos_and_allows_empty_creation(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem publicada")
+        other_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outra origem")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente publicada", phone_e164="+5511999999910")
+        db.add_all([parent, other_parent, owner])
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Publicada", status="released")
+        other_folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=other_parent.id,
+            name="Estrangeira",
+            status="released",
+        )
+        db.add_all([folder, other_folder])
+        db.flush()
+        published = ready_photo(db, parent=parent, folder=folder, available=True)
+        unpublished = ready_photo(
+            db,
+            parent=parent,
+            folder=folder,
+            available=False,
+            filename="nao-publicada.jpg",
+        )
+        foreign = ready_photo(
+            db,
+            parent=other_parent,
+            folder=other_folder,
+            available=True,
+            filename="outra-origem.jpg",
+        )
+        parent_id, owner_id = parent.id, owner.id
+        published_id, unpublished_id, foreign_id = published.id, unpublished.id, foreign.id
+        db.commit()
+
+    available = client.get(
+        f"/admin/parent-galleries/{parent_id}/available-photos"
+    ).json()["photos"]
+    assert [item["id"] for item in available] == [str(published_id)]
+    link_only = client.post(
+        "/admin/derived-galleries",
+        json={
+            "parent_gallery_id": str(parent_id),
+            "client_id": str(owner_id),
+            "name": "Privada",
+            "photo_ids": [],
+        },
+    )
+    assert link_only.status_code == 201
+    assert link_only.json()["private_gallery_id"] is None
+
+    rejected_published = client.post(
+        "/admin/derived-galleries",
+        json={
+            "parent_gallery_id": str(parent_id),
+            "client_id": str(owner_id),
+            "name": "Privada",
+            "photo_ids": [str(published_id)],
+        },
+    )
+    assert rejected_published.status_code == 410
+
+    created = client.post(
+        "/admin/derived-galleries",
+        json={
+            "parent_gallery_id": str(parent_id),
+            "client_id": str(owner_id),
+            "name": "Privada",
+            "photo_ids": [],
+            "create_empty_private": True,
+        },
+    )
+    repeated = client.post(
+        "/admin/derived-galleries",
+        json={
+            "parent_gallery_id": str(parent_id),
+            "client_id": str(owner_id),
+            "name": "Privada",
+            "photo_ids": [],
+            "create_empty_private": True,
+        },
+    )
+    assert created.status_code == repeated.status_code == 410
+    with SessionLocal() as db:
+        assert db.scalar(select(PhotoSelection)) is None
+
+    for rejected_id in (unpublished_id, foreign_id):
+        rejected = client.post(
+            "/admin/derived-galleries",
+            json={
+                "parent_gallery_id": str(parent_id),
+                "client_id": str(owner_id),
+                "name": "Privada",
+                "photo_ids": [str(rejected_id)],
+            },
+        )
+        assert rejected.status_code == 410
+
+    aggregate = client.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"]
+    assert aggregate[0]["derived_gallery_id"] is None
+    assert aggregate[0]["available_count"] == 1
+    assert aggregate[0]["selected_count"] == 0
+
+
+def test_cover_font_uses_controlled_tokens_and_safe_legacy_fallback(client: TestClient) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento", cover_title_font="fonte-legada-desconhecida")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Capa")
+        db.add(folder)
+        db.flush()
+        parent.cover_photo_id = ready_photo(db, parent=parent, folder=folder).id
+        db.commit()
+        parent_id = parent.id
+
+    details = client.get(f"/admin/parent-galleries/{parent_id}/details")
+    assert details.status_code == 200
+    assert details.json()["settings"]["cover_title_font"] == "system-sans"
+    assert len(details.json()["font_options"]) >= 8
+    assert sum(
+        option["category"] == "handwritten"
+        for option in details.json()["font_options"]
+    ) >= 3
+    accepted = client.patch(
+        f"/admin/parent-galleries/{parent_id}/settings",
+        json={"cover_title_font": "handwritten-caveat"},
+    )
+    assert accepted.status_code == 200
+    third_handwritten = client.patch(
+        f"/admin/parent-galleries/{parent_id}/settings",
+        json={"cover_title_font": "handwritten-personal"},
+    )
+    assert third_handwritten.status_code == 200
+    rejected = client.patch(
+        f"/admin/parent-galleries/{parent_id}/settings",
+        json={"cover_title_font": "url(https://example.test/font.woff2)"},
+    )
+    assert rejected.status_code == 422
+
+
+def test_dedicated_cover_upload_reuses_technical_folder_and_media_pipeline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+    payload = {
+        "filename": "capa.jpg",
+        "display_name": "Capa principal",
+        "idempotency_key": "cover-upload-key-0001",
+    }
+    first = client.post(f"/admin/parent-galleries/{parent_id}/cover-photos", json=payload)
+    second = client.post(f"/admin/parent-galleries/{parent_id}/cover-photos", json=payload)
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    photo_id = UUID(first.json()["id"])
+
+    invalid_mime = client.put(
+        first.json()["upload_url"],
+        content=jpeg_bytes(),
+        headers={"content-type": "image/png"},
+    )
+    assert invalid_mime.status_code == 415
+    queued = client.put(
+        first.json()["upload_url"],
+        content=jpeg_bytes(),
+        headers={"content-type": "image/jpeg"},
+    )
+    assert queued.status_code == 202
+    with SessionLocal() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        assert photo is not None and photo.available is False
+        parent = db.get(ParentGallery, parent_id)
+        assert parent is not None and parent.cover_photo_id == photo_id
+    processing_details = client.get(f"/admin/parent-galleries/{parent_id}/details").json()
+    assert processing_details["settings"]["cover_photo_id"] == str(photo_id)
+    assert processing_details["cover_options"] == [
+        {
+            "id": str(photo_id),
+            "name": "Capa principal",
+            "source": "cover_assets",
+            "status": "processing",
+            "preview_url": None,
+            "width": None,
+            "height": None,
+            "error": None,
+        }
+    ]
+    with SessionLocal() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        assert photo is not None
+        generate_derivatives(db, photo)
+        assert (
+            len(
+                list(
+                    db.scalars(
+                        select(PhotoFolder).where(
+                            PhotoFolder.parent_gallery_id == parent_id,
+                            PhotoFolder.purpose == "cover_assets",
+                        )
+                    )
+                )
+            )
+            == 1
+        )
+
+    details = client.get(f"/admin/parent-galleries/{parent_id}/details").json()
+    assert details["settings"]["cover_photo_id"] == str(photo_id)
+    assert details["cover_options"][0]["status"] == "ready"
+    assert details["cover_options"][0]["source"] == "cover_assets"
+    assert client.get(f"/admin/parent-galleries/{parent_id}/folders").json()["total"] == 0
+    assert (
+        client.get(f"/admin/parent-galleries/{parent_id}/available-photos").json()["photos"] == []
+    )
+
+
+@pytest.mark.parametrize("size,orientation,accepted", [
+    ((120, 80), 1, True), ((80, 120), 1, False), ((80, 80), 1, False),
+    ((120, 80), 6, False), ((80, 120), 6, True),
+])
+def test_cover_orientation_preserves_current_on_rejection(client, monkeypatch, tmp_path, size, orientation, accepted):
+    from app.media import safe_source_path
+
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Orientação")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
+        db.add(folder)
+        db.flush()
+        old = ready_photo(db, parent=parent, folder=folder)
+        parent.cover_photo_id = old.id
+        new = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=folder.id, filename="nova.jpg", storage_key="covers/new.jpg")
+        db.add(new)
+        db.commit()
+        parent_id, old_id, new_id = parent.id, old.id, new.id
+        target = safe_source_path(new)
+    image = Image.new("RGB", size)
+    exif = Image.Exif()
+    exif[274] = orientation
+    output = BytesIO()
+    image.save(output, format="JPEG", exif=exif)
+    response = client.put(f"/admin/photo-assets/{new_id}/source", content=output.getvalue(), headers={"content-type": "image/jpeg"})
+    assert response.status_code == (202 if accepted else 422)
+    with SessionLocal() as db:
+        assert db.get(ParentGallery, parent_id).cover_photo_id == (new_id if accepted else old_id)
+        assert bool(db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == new_id))) == accepted
+    assert target.exists() == accepted
+    if not accepted:
+        assert "horizontal" in response.json()["detail"]
+
+
+def test_details_returns_only_the_configured_legacy_cover_without_cataloging_content(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento legado")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Conteúdo", purpose="content")
+        db.add(folder)
+        db.flush()
+        legacy_cover = ready_photo(
+            db, parent=parent, folder=folder, filename="capa-legada.jpg"
+        )
+        ready_photo(db, parent=parent, folder=folder, filename="outra-foto.jpg")
+        parent.cover_photo_id = legacy_cover.id
+        db.commit()
+        parent_id, legacy_cover_id = parent.id, legacy_cover.id
+
+    details = client.get(f"/admin/parent-galleries/{parent_id}/details")
+    assert details.status_code == 200
+    assert details.json()["settings"]["cover_photo_id"] == str(legacy_cover_id)
+    assert details.json()["cover_options"] == [
+        {
+            "id": str(legacy_cover_id),
+            "name": "capa-legada.jpg",
+            "source": "content",
+            "status": "ready",
+            "preview_url": f"/admin/photo-assets/{legacy_cover_id}/preview",
+            "width": 1200,
+            "height": 800,
+            "error": None,
+        }
+    ]
+
+
+def test_portrait_content_upload_allowed_but_new_cover_selection_rejected(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Conteúdo vertical")
+        db.add(parent)
+        db.flush()
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Fotos", purpose="content")
+        db.add(folder)
+        db.flush()
+        photo = ready_photo(db, parent=parent, folder=folder)
+        derivative = db.scalar(select(MediaDerivative).where(MediaDerivative.photo_asset_id == photo.id))
+        derivative.width, derivative.height = 800, 1200
+        db.commit()
+        photo_id, parent_id = photo.id, parent.id
+    output = BytesIO()
+    Image.new("RGB", (80, 120)).save(output, format="JPEG")
+    assert client.put(f"/admin/photo-assets/{photo_id}/source", content=output.getvalue(), headers={"content-type": "image/jpeg"}).status_code == 202
+    rejected = client.put(f"/admin/parent-galleries/{parent_id}/cover", json={"photo_id": str(photo_id)})
+    assert rejected.status_code == 422
+    assert "horizontal" in rejected.json()["detail"]
+
+
+def test_latest_accepted_cover_upload_wins_and_failed_cover_remains_recoverable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(tmp_path / "derivatives"))
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento concorrente")
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+    uploads = []
+    for index in (1, 2):
+        registered = client.post(
+            f"/admin/parent-galleries/{parent_id}/cover-photos",
+            json={
+                "filename": f"capa-{index}.jpg",
+                "display_name": f"Capa {index}",
+                "idempotency_key": f"cover-concurrent-key-{index:04d}",
+            },
+        )
+        assert registered.status_code == 201
+        accepted = client.put(
+            registered.json()["upload_url"],
+            content=jpeg_bytes(),
+            headers={"content-type": "image/jpeg"},
+        )
+        assert accepted.status_code == 202
+        uploads.append(UUID(registered.json()["id"]))
+
+    with SessionLocal() as db:
+        parent = db.get(ParentGallery, parent_id)
+        assert parent is not None and parent.cover_photo_id == uploads[1]
+        failed_job = db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == uploads[1]))
+        assert failed_job is not None
+        failed_job.status = "failed"
+        failed_job.last_error = "Falha sintética recuperável"
+        first_photo = db.get(PhotoAsset, uploads[0])
+        assert first_photo is not None
+        generate_derivatives(db, first_photo)
+        db.commit()
+        assert db.scalar(
+            select(ParentGallery.cover_photo_id).where(ParentGallery.id == parent_id)
+        ) == uploads[1]
+        assert len(
+            list(
+                db.scalars(
+                    select(PhotoAsset).join(
+                        PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id
+                    ).where(
+                        PhotoAsset.parent_gallery_id == parent_id,
+                        PhotoFolder.purpose == "cover_assets",
+                    )
+                )
+            )
+        ) == 2
+
+    details = client.get(f"/admin/parent-galleries/{parent_id}/details").json()
+    assert details["cover_options"][0]["id"] == str(uploads[1])
+    assert details["cover_options"][0]["status"] == "failed"
+    assert details["cover_options"][0]["error"] == "Falha sintética recuperável"

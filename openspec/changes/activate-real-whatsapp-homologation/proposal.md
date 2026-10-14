@@ -1,0 +1,34 @@
+## Why
+
+O login de cliente e as notificações transacionais já passam por uma abstração WhatsApp, porém homologação permanece no adaptador `sandbox`, que aceita a solicitação sem produzir efeito externo. A validação ponta a ponta agora depende de ativar uma instância Evolution API 2.3.7 + Baileys dedicada à Markina, tornar sua identidade e saúde verificáveis pelo fotógrafo e endurecer o resultado de entrega além de um simples HTTP 2xx.
+
+## What Changes
+
+- Adicionar uma capacidade operacional de transporte WhatsApp real, mantendo `WhatsAppProvider` independente de Evolution/Baileys e o sandbox para testes automatizados e desenvolvimento.
+- Vincular cada ambiente a uma única instância dedicada e a um número remetente efetivamente pareado; o painel administrativo exibirá identidade mascarada, estado da conexão e divergências, sem armazenar chave, credencial ou sessão em tabela comum.
+- Permitir ao fotógrafo iniciar ou retomar o pareamento seguro da instância autorizada e acompanhar conexão/reconexão; QR ou código de pareamento e confirmação no telefone continuam sendo ações humanas.
+- Fazer OTP e mensagens transacionais já especificadas utilizarem o mesmo transporte configurado, preservando regras de negócio, destinatários verificados, templates, auditoria, opt-out quando aplicável e separação entre ambientes.
+- Condicionar o primeiro cadastro de cliente a um link não listado de galeria-fonte ativa: o nome fica associado ao desafio e a conta só é criada depois da validação do OTP; entrada direta com telefone ainda desconhecido não cria sessão nem cadastro.
+- Interpretar o corpo real da resposta Evolution, persistir identificador externo e estado de entrega quando disponíveis e tratar recusa, timeout ambíguo, retry e risco de duplicação de maneira explícita.
+- Receber somente webhooks necessários ao ciclo de conexão e entrega, autenticados e deduplicados, sem introduzir chat livre, campanhas ou novos eventos de comunicação não previstos nas specs existentes.
+- Preparar Compose, persistência, health/readiness e operação de homologação com Evolution API 2.3.7 fixada, isolada dos demais projetos e sem exposição pública desnecessária.
+
+## Capabilities
+
+### New Capabilities
+
+- `messaging/whatsapp-transport`: configuração administrativa segura, identidade remetente pareada, adaptação Evolution/Baileys, estados de conexão e entrega, webhooks, idempotência e operação isolada por ambiente.
+
+### Modified Capabilities
+
+- `auth`: a entrada de cliente prepara explicitamente o telefone móvel brasileiro com país `+55`, DDD e nono dígito antes de solicitar o OTP pelo transporte real, e distingue após a posse do telefone a entrada direta sem vínculo do cadastro permitido por link.
+- `client-access/cloned-private-galleries`: o link não listado passa a ser a única origem de primeiro cadastro de cliente, sem conceder por si só leitura do acervo-fonte.
+
+## Impact
+
+- Backend: contrato do provider, persistência operacional de envios, resposta/erros Evolution, webhooks autenticados, endpoints administrativos e health/readiness.
+- Autenticação e acesso: persistência temporária do nome no desafio OTP, cadastro pós-verificação por link válido, vínculo individual pendente e negativa explícita para primeiro acesso direto.
+- Frontend: painel `Configurações → WhatsApp` com remetente esperado/conectado, estado, pareamento e diagnóstico sanitizado.
+- Infraestrutura: serviço Evolution API 2.3.7 + Baileys, volume exclusivo de sessão, rede interna, configuração segura por ambiente, backup/recuperação e runbook de ativação/rollback.
+- Testes e homologação: fake HTTP/provider para automação; dados e telefones sintéticos/próprios; pareamento e recebimento real exigem participação humana e deploy autorizado.
+- Segurança: chaves, sessão e dados de pareamento permanecem fora do Git, frontend e tabelas comuns; webhooks e endpoints administrativos usam autenticação, menor exposição e auditoria.

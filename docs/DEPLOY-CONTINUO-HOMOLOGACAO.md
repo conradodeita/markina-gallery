@@ -1,0 +1,40 @@
+# Entrega contínua em homologação — Pick-your-Pic
+
+O workflow `CI` publica em homologação somente após um push integrado em `develop` concluir os jobs `backend`, `frontend`, `openspec` e `gitleaks`. O job `deploy-homolog` usa o GitHub Environment `homolog`; configure nele revisores obrigatórios antes de habilitar a primeira publicação.
+
+## Limites operacionais
+
+- Alvo exclusivo: `/opt/markina-gallery`, projeto Compose `markina-gallery` e arquivo `docker/docker-compose.yml`.
+- O script recusa checkout sujo, SHA fora de `origin/develop`, origem Git diferente do repositório GitHub esperado e configuração Compose inválida.
+- São recriados somente `api`, `web`, `worker` e o Nginx interno da Markina. Não há `docker compose down`, prune, remoção de volumes ou alteração de ClearBudget, proxy, DNS, firewall, certificados e redes de terceiros.
+- Antes da migration, é criado um dump lógico exclusivo em `/var/lib/markina-gallery/backups`. O banco **nunca** é restaurado automaticamente.
+- Em falha antes de Alembic começar, ou após comprovar que a revisão permaneceu idêntica, o script pode voltar apenas o código e os serviços Markina ao SHA anterior. Depois que Alembic começa, qualquer falha mantém o rollback automático bloqueado até revisão humana, pois o schema pode ter sido parcialmente alterado. O banco nunca é restaurado automaticamente.
+
+## Bootstrap externo único
+
+Execute estas ações somente após inventário aprovado de containers, portas, subdomínio e impacto zero no servidor compartilhado:
+
+1. Crie o Environment GitHub `homolog`, ative aprovação obrigatória e configure, sem valores no Git, os secrets `HOMOLOG_SSH_HOST`, `HOMOLOG_SSH_PORT`, `HOMOLOG_SSH_USER`, `HOMOLOG_SSH_PRIVATE_KEY`, `HOMOLOG_SSH_KNOWN_HOSTS` e `HOMOLOG_PUBLIC_BASE_URL`.
+2. Crie uma chave de leitura exclusiva da Markina no servidor e configure o `origin` de `/opt/markina-gallery` para o repositório GitHub. A chave não pode dar escrita ao repositório nem acesso a outros projetos.
+3. Crie, com permissão restrita ao usuário da Markina, `/var/lib/markina-gallery/deploy-state` e `/var/lib/markina-gallery/backups`.
+4. Verifique que o checkout está limpo, que `docker/.env.homolog` existe fora do Git e que `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml config --quiet` é aprovado.
+5. Aprove o primeiro job pendente do Environment e confirme no servidor o SHA registrado em `/var/lib/markina-gallery/deploy-state/last-healthy.sha`, os healthchecks `https://<host>/healthz` e `https://<host>/api/health`, sem expor credenciais em logs.
+
+## Recuperação
+
+Para recuperar uma falha com schema comprovadamente inalterado, reexecute o workflow com o SHA saudável por procedimento aprovado. Se qualquer migration tiver sido iniciada e não houver comprovação de revisão idêntica, interrompa e avalie compatibilidade e restauração de banco com aprovação humana explícita. Nunca use `git reset --hard`, `git checkout -- .`, `git clean`, `docker compose down` sem escopo nem restore automático de banco.
+
+### Retomada dos serviços sem deploy ou migration
+
+Use este procedimento somente para iniciar os contêineres existentes depois de uma parada controlada, quando o checkout, as imagens e o schema já correspondem à última versão saudável. Ele não faz deploy, rebuild, recriação, limpeza nem alteração de banco. A migration é uma etapa separada do workflow de deploy.
+
+No host, com a autorização operacional aplicável e após conferir que a execução continua restrita à Markina:
+
+```bash
+cd /opt/markina-gallery
+bash scripts/resume-homolog.sh --public-base-url https://markina.pickyourpic.com.br
+```
+
+O script verifica que está no diretório da Markina, que PostgreSQL e Redis exclusivos estão saudáveis, e que a revisão Alembic do banco é o único head presente no checkout. Só então inicia os contêineres da aplicação que já existem usando `docker compose up -d --no-deps --no-recreate`; isso evita seguir a dependência `migrate` antiga. Espera healthchecks de todos os serviços selecionados e HTTP 200 em `/healthz` e `/api/health`, local e publicamente.
+
+Se preflight, revisão ou healthcheck falhar, não use `docker compose start`, não rode Alembic e não tente limpar/remover o contêiner `migrate`. Preserve o estado para diagnóstico e siga o fluxo de deploy/recuperação aprovado. O script não inclui PostgreSQL, Redis, Evolution, Proxy Manager nem serviços vizinhos na lista de start.

@@ -1,0 +1,218 @@
+"use client";
+
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+
+import { MarkinaButton, StatusBadge, SystemState } from "../../../../ui-kit";
+import { ClientGalleryCard, type ClientGalleryRow } from "../../client-gallery-card";
+
+type Folder = { id: string; name: string; status: string; photo_count: number; preview_url: string | null };
+type Summary = {
+  name: string;
+  event_name: string;
+  active: boolean;
+  unlisted_link: string | null;
+  public_link_status: "active" | "unavailable";
+  cover_preview_url: string | null;
+  counts: { folders: number; photos: number; clients: number };
+  clients: ClientGalleryRow[];
+  deletion_operation?: LifecycleOperation | null;
+};
+type InventorySection = Record<string, number | Record<string, number>>;
+type DeletionPreview = {
+  operation_type: "delete_parent_gallery";
+  target: { id: string; name: string };
+  inventory: { remove: InventorySection; preserve: InventorySection };
+  consequences: {
+    private_galleries_preserved: boolean;
+    private_referenced_photos_preserved: boolean;
+    clients_preserved: boolean;
+    commercial_history_preserved: boolean;
+    restoration_available_after_start: boolean;
+  };
+};
+type LifecycleOperation = {
+  operation_id: string;
+  status: string;
+  status_url: string;
+  last_error: string | null;
+  progress: { label: string; percent: number; failed_step: string | null };
+  actions: { can_cancel: boolean; can_retry: boolean; should_poll: boolean; poll_after_ms: number | null };
+};
+
+const inventoryLabels: Record<string, string> = {
+  folders: "pastas",
+  photos: "fotos",
+  media_derivatives: "prévias e arquivos derivados",
+  registrations: "vínculos públicos",
+  access_capabilities: "links e convites públicos",
+  clients: "clientes",
+  private_galleries: "galerias privadas",
+  photos_referenced_by_private: "fotos usadas por galerias privadas",
+  folders_with_private_photos: "pastas necessárias às galerias privadas",
+  available_references: "referências privadas de fotos",
+  selections: "seleções",
+  favorites: "favoritos",
+  comments: "comentários",
+  views: "registros de visualização",
+  orders: "pedidos",
+  order_items: "itens de pedidos",
+  historical_media: "mídias históricas",
+  pending: "pedidos pendentes",
+  confirmed: "pedidos confirmados",
+  cancelled: "pedidos cancelados",
+};
+
+function inventoryRows(section: InventorySection) {
+  return Object.entries(section).flatMap(([key, value]) => {
+    if (typeof value === "number") return [{ key, label: inventoryLabels[key] ?? key, value }];
+    return Object.entries(value).map(([nestedKey, nestedValue]) => ({
+      key: `${key}.${nestedKey}`,
+      label: inventoryLabels[nestedKey] ?? nestedKey,
+      value: nestedValue,
+    }));
+  });
+}
+
+function normalizeClientSearch(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+}
+
+export default function SourceGalleryDetailPage() {
+  const { sourceId } = useParams<{ sourceId: string }>();
+  const router = useRouter();
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [clientQuery, setClientQuery] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const [deletionError, setDeletionError] = useState("");
+  const [deletionPreview, setDeletionPreview] = useState<DeletionPreview | null>(null);
+  const [operation, setOperation] = useState<LifecycleOperation | null>(null);
+  const [deletionBusy, setDeletionBusy] = useState(false);
+  const idempotencyKey = useRef("");
+  useEffect(() => {
+    const refresh = () => setRefresh((value) => value + 1);
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+
+  async function openDeletionConfirmation() {
+    setDeletionBusy(true);
+    setDeletionError("");
+    try {
+      const response = await fetch(`/api/admin/parent-galleries/${sourceId}/deletion-inventory`, { credentials: "same-origin" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Não foi possível preparar o inventário.");
+      setDeletionPreview(payload);
+      idempotencyKey.current = crypto.randomUUID();
+    } catch (error) {
+      setDeletionError(error instanceof Error ? error.message : "Não foi possível preparar o inventário.");
+    } finally {
+      setDeletionBusy(false);
+    }
+  }
+
+  async function confirmDeletion() {
+    if (!deletionPreview || deletionBusy) return;
+    setDeletionBusy(true);
+    setDeletionError("");
+    try {
+      const retrying = Boolean(operation?.actions.can_retry);
+      const path = retrying
+        ? `/api/admin/gallery-lifecycle-operations/${operation!.operation_id}/retry`
+        : `/api/admin/parent-galleries/${sourceId}`;
+      const response = await fetch(path, {
+        method: retrying ? "POST" : "DELETE",
+        credentials: "same-origin",
+        ...(retrying ? {} : { headers: { "Idempotency-Key": idempotencyKey.current } }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Não foi possível iniciar a exclusão.");
+      setOperation(payload);
+      setDeletionPreview(null);
+    } catch (error) {
+      setDeletionError(error instanceof Error ? error.message : "Não foi possível iniciar a exclusão.");
+    } finally {
+      setDeletionBusy(false);
+    }
+  }
+
+  async function operationAction(action: "cancel") {
+    if (!operation || deletionBusy) return;
+    setDeletionBusy(true);
+    setDeletionError("");
+    try {
+      const response = await fetch(`/api/admin/gallery-lifecycle-operations/${operation.operation_id}/${action}`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Não foi possível atualizar a operação.");
+      setOperation(payload);
+    } catch (error) {
+      setDeletionError(error instanceof Error ? error.message : "Não foi possível atualizar a operação.");
+    } finally {
+      setDeletionBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([
+      fetch(`/api/admin/parent-galleries/${sourceId}/folders`, { credentials: "same-origin", signal: controller.signal }),
+      fetch(`/api/admin/parent-galleries/${sourceId}/summary`, { credentials: "same-origin", signal: controller.signal }),
+    ]).then(async ([folderResponse, summaryResponse]) => {
+      if (!folderResponse.ok || !summaryResponse.ok) throw new Error();
+      const folderPayload = await folderResponse.json();
+      const summaryPayload: Summary = await summaryResponse.json();
+      if (controller.signal.aborted) return;
+      setFolders(folderPayload.folders ?? []);
+      setSummary(summaryPayload);
+      setOperation(summaryPayload.deletion_operation ?? null);
+      setFailed(false);
+    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
+  }, [sourceId, refresh]);
+
+  useEffect(() => {
+    if (!operation?.actions.should_poll) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api${operation.status_url}`, { credentials: "same-origin" });
+        if (!response.ok) throw new Error();
+        setOperation(await response.json());
+      } catch {
+        setDeletionError("Não foi possível atualizar o progresso. Tente novamente.");
+      }
+    }, operation.actions.poll_after_ms ?? 1000);
+    return () => window.clearTimeout(timer);
+  }, [operation]);
+
+  if (failed) return <SystemState tone="error" title="Galeria indisponível" detail="Não foi possível consultar seus dados agora." />;
+  if (!summary) return <SystemState tone="loading" title="Carregando galeria" detail="Consultando clientes e pastas vinculadas." />;
+  const searchTerm = normalizeClientSearch(clientQuery.trim());
+  const phoneDigits = clientQuery.replace(/\D/g, "");
+  const visibleClients = summary.clients.filter((person) => !searchTerm
+    || normalizeClientSearch(person.name).includes(searchTerm)
+    || Boolean(phoneDigits && person.phone.replace(/\D/g, "").includes(phoneDigits)));
+
+  return (
+    <main className="admin-shell">
+      <Link href="/admin/galleries">← Galerias</Link>
+      <p className="eyebrow">Galeria pública · compartilhamento protegido</p>
+      <h1>{summary.name}</h1>
+      <p className="intro">{summary.event_name || "Evento sem nome"}. O acesso às fotos segue o modo configurado e sempre exige autenticação da cliente.</p>
+      <div className="action-grid"><Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/preview`}>Visualizar galeria</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/ajustes`}>Editar galeria</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/imagens`}>Abrir imagens</Link><MarkinaButton className="mk-button--danger" disabled={deletionBusy || Boolean(operation)} onClick={openDeletionConfirmation}>{deletionBusy ? "Preparando…" : "Excluir Galeria pública"}</MarkinaButton></div>
+      {deletionError && !deletionPreview && !operation ? <p className="form-message form-message--error" role="alert">{deletionError}</p> : null}
+      <section className="admin-card"><div className="source-summary"><Link className="source-summary-cover" href={`/admin/galleries/sources/${sourceId}/preview`}>{summary.cover_preview_url ? <img src={`/api${summary.cover_preview_url}`} alt="Capa da galeria" /> : "Sem capa definida"}</Link><div><h2>Resumo da galeria</h2><p>{summary.counts.folders} pastas · {summary.counts.photos} fotos · {summary.counts.clients} clientes vinculadas</p><p><strong>Link seguro:</strong> {summary.public_link_status === "active" ? "ativo" : "indisponível"}</p><Link href={`/admin/galleries/sources/${sourceId}/edit/clientes`}>Gerenciar links e clientes</Link><label className="gallery-search source-client-search">Buscar cliente nesta galeria por nome ou telefone<input type="search" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Ex.: Ana ou 11999999999" aria-controls="gallery-linked-clients" /></label></div></div></section>
+      <section className="admin-card"><h2>Pastas Públicas</h2>{folders.length ? <div className="source-folder-cards">{folders.map((folder) => <Link aria-label={`Abrir pasta ${folder.name}`} className="source-folder-card" href={`/admin/galleries/sources/${sourceId}/edit/imagens?folder=${encodeURIComponent(folder.id)}`} key={folder.id}><span className="source-folder-card__preview">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : <b>Pasta sem miniatura</b>}</span><span><strong>{folder.name}</strong><small>{folder.photo_count} foto(s)</small></span><StatusBadge tone={folder.status === "released" ? "success" : "warning"}>{folder.status === "released" ? "Publicada" : "Em preparação"}</StatusBadge></Link>)}</div> : <SystemState title="Nenhuma pasta" detail="Abra a etapa Imagens para criar a primeira pasta desta galeria." />}</section>
+      <section id="gallery-linked-clients" className="admin-card"><h2>Clientes vinculadas</h2>{visibleClients.length ? <div className="gallery-linked-clients">{visibleClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} parentGalleryId={sourceId} linkedClients={summary.clients} onRefresh={() => setRefresh((value) => value + 1)} />)}</div> : summary.clients.length ? <div><SystemState title="Nenhuma cliente encontrada nesta galeria" detail="Revise o nome ou telefone pesquisado." /><button type="button" className="link-button" onClick={() => setClientQuery("")}>Limpar busca</button></div> : <SystemState title="Nenhuma cliente vinculada" detail="O vínculo pode nascer pelo login no link ou pela etapa Clientes." />}</section>
+
+      {deletionPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="delete-gallery-title" aria-modal="true" className="mk-dialog lifecycle-dialog" role="dialog"><p className="eyebrow">Confirmação única</p><h2 id="delete-gallery-title">Excluir “{deletionPreview.target.name}”?</h2><p>A Galeria pública e o acesso compartilhável serão removidos. Esta limpeza não poderá ser restaurada depois que a etapa física começar.</p><div className="lifecycle-inventory"><section><h3>Será removido</h3><ul>{inventoryRows(deletionPreview.inventory.remove).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section><section><h3>Será preservado</h3><ul>{inventoryRows(deletionPreview.inventory.preserve).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section></div><p>As galerias privadas dependentes, pastas, fotos e prévias também serão removidas. Clientes, nomes das fotos, movimentos e estados financeiros permanecem no histórico.</p>{deletionError ? <p className="form-message form-message--error" role="alert">{deletionError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => { setDeletionPreview(null); setDeletionError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={deletionBusy} onClick={confirmDeletion}>{deletionBusy ? "Iniciando…" : operation?.actions.can_retry ? `Retomar exclusão de ${deletionPreview.target.name}` : `Excluir ${deletionPreview.target.name}`}</MarkinaButton></div></section></div> : null}
+
+      {operation ? <section className="admin-card lifecycle-progress" aria-live="polite"><div className="section-heading"><div><p className="eyebrow">Exclusão da Galeria pública</p><h2>{operation.progress.label}</h2></div><StatusBadge tone={operation.status === "completed" ? "success" : operation.status === "failed" ? "danger" : operation.status === "cancelled" ? "warning" : "neutral"}>{operation.progress.percent}%</StatusBadge></div><progress value={operation.progress.percent} max={100} /><p>{deletionError || operation.last_error || (operation.actions.should_poll ? "A operação continua em segundo plano. Esta página atualiza o progresso automaticamente." : "A operação não exige novas etapas automáticas.")}</p><div className="lifecycle-actions">{operation.actions.can_cancel ? <MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => operationAction("cancel")}>Cancelar antes da remoção física</MarkinaButton> : null}{operation.actions.can_retry ? <MarkinaButton type="button" disabled={deletionBusy} onClick={openDeletionConfirmation}>Retomar operação</MarkinaButton> : null}{operation.status === "completed" ? <MarkinaButton type="button" onClick={() => router.push("/admin/galleries")}>Voltar para galerias</MarkinaButton> : null}{operation.status === "cancelled" ? <MarkinaButton type="button" variant="secondary" onClick={() => { setOperation(null); setDeletionError(""); }}>Fechar acompanhamento</MarkinaButton> : null}</div></section> : null}
+    </main>
+  );
+}

@@ -1,7 +1,5 @@
 name: Maintenance homolog
 
-# Registro para permitir workflow_dispatch da versão operacional em develop.
-# A main não contém scripts de reset e nunca acessa o servidor neste workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -24,14 +22,73 @@ on:
         type: string
         required: false
 
-permissions:
-  contents: read
-
 jobs:
-  registration:
+  homolog-data:
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
+    environment: homolog
+    permissions:
+      contents: read
+    env:
+      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
+      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
+      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
+      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
+      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
+      MAINTENANCE_MODE: ${{ inputs.mode }}
+      MAINTENANCE_CONFIRMATION: ${{ inputs.confirmation }}
+      OWNER_EMAIL: ${{ inputs.owner_email }}
+      EXPECTED_APP_SHA: ${{ inputs.expected_sha }}
     steps:
-      - name: Recusar operação e orientar seleção de develop
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validar escopo e confirmação
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$MAINTENANCE_MODE" == "execute" && "$MAINTENANCE_CONFIRMATION" != "DELETE_HOMOLOG_GALLERIES_AND_CLIENTS" ]]; then
+            echo "Confirmação literal inválida" >&2
+            exit 1
+          fi
+          if [[ "$MAINTENANCE_MODE" == owner-* ]]; then
+            [[ "$GITHUB_REF" == refs/heads/develop && "$EXPECTED_APP_SHA" =~ ^[0-9a-f]{40}$ && -n "$OWNER_EMAIL" ]] || { echo "Destino/SHA/proprietário inválido" >&2; exit 1; }
+            if [[ "$MAINTENANCE_MODE" == "owner-execute" ]]; then
+              [[ "$MAINTENANCE_CONFIRMATION" == "RESET_HOMOLOG_TO_OWNER_AND_DELETE_164_DUMPS_WITHOUT_BACKUP" ]] || { echo "Confirmação de reset proprietário e dumps inválida" >&2; exit 1; }
+            else
+              [[ "$MAINTENANCE_MODE" == "owner-inventory" && -z "$MAINTENANCE_CONFIRMATION" ]] || { echo "Modo inventário inválido" >&2; exit 1; }
+            fi
+          fi
+      - name: Executar manutenção isolada
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Secret obrigatório ausente: $required" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          if [[ "$MAINTENANCE_MODE" == owner-* ]]; then
+            payload="$(base64 -w0 scripts/reset_homolog_owner.py)"
+            payload_sha="$(sha256sum scripts/reset_homolog_owner.py | cut -d ' ' -f1)"
+            remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_RESET_SCRIPT_BASE64=%q MARKINA_RESET_SCRIPT_SHA256=%q bash -s -- --mode %q --owner-email %q --expected-sha %q --confirmation %q' "$payload" "$payload_sha" "${MAINTENANCE_MODE#owner-}" "$OWNER_EMAIL" "$EXPECTED_APP_SHA" "$MAINTENANCE_CONFIRMATION")"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/reset-homolog-owner.sh
+          else
+            remote_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$MAINTENANCE_MODE" "$MAINTENANCE_CONFIRMATION")"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/maintain-homolog-data.sh
+          fi
+
+  registration:
+    if: github.ref != 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Recusar operação fora de develop
         run: |
           echo "::error::Selecione a ref develop para usar Maintenance homolog. Esta entrada de registro não acessa o servidor."
           exit 1

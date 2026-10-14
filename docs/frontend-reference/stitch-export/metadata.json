@@ -1,0 +1,6 @@
+{
+  "name": "Markina Gallery",
+  "description": "Plataforma de venda de fotos digitais para fotógrafos com preço progressivo, reconhecimento facial LGPD, login WhatsApp, checkout PIX, integração Google Photos e painel administrativo.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

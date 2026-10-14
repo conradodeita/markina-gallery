@@ -1,0 +1,250 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import AdminPaymentsPage from "./page";
+
+afterEach(() => vi.restoreAllMocks());
+
+const communication = {
+  id: "communication-1",
+  status: "pending_review",
+  order_id: "12345678-order",
+  client_name: "Ana",
+  gallery_name: "Formatura privada",
+  gallery_removed: false,
+  total_cents: 1200,
+  created_at: "2026-08-29T10:00:00Z",
+  decided_at: null,
+  can_decide: true,
+  photographer_notification: { id: "notice-1", status: "failed", attempts: 1, last_error: "Falha temporária de entrega.", can_retry: true },
+  client_notification: null,
+};
+
+function dashboard(name = "Ana", nextCursor: string | null = null) {
+  return {
+    summary: {
+      clients: 1,
+      orders: 2,
+      total_cents: 1200,
+      selected_carts: 1,
+      selected_cents: 700,
+      selected_pricing_unavailable: 0,
+      reported_orders: 1,
+      reported_cents: 1200,
+      confirmed_orders: 1,
+      confirmed_cents: 800,
+      financial_statuses: { reported: 1, confirmed: 1 },
+      failed_messages: 1,
+    },
+    facets: {
+      parent_galleries: [{ id: "gallery-public-1", name: "Formatura", count: 1 }],
+      financial_statuses: { reported: 1 },
+      delivery_statuses: { failed: 1 },
+    },
+    groups: [{
+      client: { id: `client-${name}`, name },
+      totals: { orders: 2, total_cents: 1200, reported_orders: 1, reported_cents: 1200, confirmed_orders: 1, confirmed_cents: 800 },
+      orders: [{
+        id: `${name.toLowerCase()}-order-12345678`,
+        parent_gallery: { id: "gallery-public-1", name: "Formatura", removed: false },
+        gallery: { id: "gallery-private-1", name: "Formatura privada", removed: false },
+        total_cents: 1200,
+        financial_status: "reported",
+        created_at: "2026-08-29T10:00:00Z",
+        selection_expires_at: null,
+        communications: [communication],
+        communication,
+        delivery_statuses: ["failed"],
+        folders: [],
+        payment_message_snapshot: null,
+      }],
+    }],
+    page: { next_cursor: nextCursor, limit: 12 },
+  };
+}
+
+const emptyDashboard = {
+  summary: { clients: 0, orders: 0, total_cents: 0, selected_carts: 0, selected_cents: 0, selected_pricing_unavailable: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0, confirmed_cents: 0, financial_statuses: {}, failed_messages: 0 },
+  facets: { parent_galleries: [], financial_statuses: {}, delivery_statuses: {} },
+  groups: [],
+  page: { next_cursor: null, limit: 12 },
+};
+
+describe("controle operacional de pagamentos", () => {
+  it("mantém o resultado do envio de entrega visível após atualizar a lista", async () => {
+    const album = "https://photos.app.goo.gl/SyntheticAlbum";
+    let sent = false;
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      const delivery = { album_url: sent ? album : null, version: sent ? 1 : 0, can_send: true, can_resend: sent };
+      if (options?.method === "PUT") {
+        sent = true;
+        return Promise.resolve(new Response(JSON.stringify({ delivery: { ...delivery, album_url: album, version: 1, can_resend: true }, notification: { channels: ["whatsapp", "push"] } })));
+      }
+      if (path.endsWith("gallery-reopening-requests")) return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      const data = dashboard();
+      const order = data.groups[0].orders[0];
+      const result = { ...data, groups: [{ ...data.groups[0], orders: [{ ...order, financial_status: "confirmed", communication: null, communications: [], delivery }] }] };
+      return Promise.resolve(new Response(JSON.stringify(result)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    fireEvent.click(await screen.findByText("Ver pedido e entrega"));
+    fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: album } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    expect(await screen.findByText("Fotos disponíveis em Compras. Aviso agendado.")).toBeTruthy();
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/payment-communications"))).toHaveLength(2));
+    expect(screen.getByRole("status").textContent).toContain("Aviso agendado");
+    expect(screen.getByRole("button", { name: "Reenviar aviso" })).toHaveProperty("disabled", false);
+    expect(screen.getByText("Ver pedido e entrega").closest("details")).toHaveProperty("open", true);
+  });
+
+  it("agrupa por cliente, mostra resumo e preserva decisão e substitui histórico por entrega", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi.fn((_path: string, options?: RequestInit) => {
+      if (options?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "confirmed" }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify(dashboard()), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+    expect(screen.getByText("Valor das fotos selecionadas")).toBeTruthy();
+    expect(screen.getByText("Valor dos pedidos")).toBeTruthy();
+    expect(screen.getByText("Receita confirmada")).toBeTruthy();
+    expect(screen.getByText("1 carrinho(s) sem pagamento comunicado")).toBeTruthy();
+    expect(screen.getByText("1 pagamento(s) comunicado(s)")).toBeTruthy();
+    expect(screen.getByText("1 depósito(s) confirmado(s)")).toBeTruthy();
+    expect(screen.getByText(/7,00/)).toBeTruthy();
+    expect(screen.getAllByText(/8,00/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/12,00/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Pagamento comunicado").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeNull();
+    expect(screen.getByLabelText("Link do álbum no Google Photos")).toBeTruthy();
+    expect(screen.queryByText(/copia e cola|telefone|api key/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/payment-communications/communication-1/decision",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    expect(await screen.findByText(/Decisão registrada/i)).toBeTruthy();
+
+    expect(screen.queryByRole("button", { name: "Tentar enviar novamente" })).toBeNull();
+  });
+
+  it("omite o cartão de mensagens globais e preserva filtros e estado vazio", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : emptyDashboard,
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    expect(await screen.findByText("Nenhum pedido ainda")).toBeTruthy();
+    expect(screen.getByText(/Pedidos e comunicações aparecerão aqui/)).toBeTruthy();
+    expect(screen.getByText("Filtros")).toBeTruthy();
+    expect(screen.queryByText("Mensagem global após conferência")).toBeNull();
+    expect(screen.queryByText("Ver prévias")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Editar em Notificações" })).toBeNull();
+  });
+
+  it("combina filtros, apresenta vazio específico e permite limpar", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(
+      JSON.stringify(path.includes("query=Inexistente") ? emptyDashboard : dashboard()),
+      { status: 200 },
+    )));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "Inexistente" } });
+    fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reported" } });
+    fireEvent.change(screen.getByLabelText("Entrega de mensagem"), { target: { value: "failed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar filtros" }));
+
+    expect(await screen.findByText("Nenhum pagamento neste filtro")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("query=Inexistente") && String(path).includes("financial_status=reported") && String(path).includes("delivery_status=failed"))).toBe(true);
+    fireEvent.click(screen.getAllByRole("button", { name: "Limpar filtros" })[1]);
+    expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+  });
+
+  it("carrega a próxima página sem substituir os grupos anteriores", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(
+      JSON.stringify(path.includes("cursor=next-page") ? dashboard("Bia") : dashboard("Ana", "next-page")),
+      { status: 200 },
+    )));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Carregar mais clientes" }));
+    expect(await screen.findByRole("heading", { name: "Bia" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Ana" })).toBeTruthy();
+  });
+
+  it("corrige confirmação sem mensagem e decide reabertura na área unificada", async () => {
+    const correctedDashboard = dashboard();
+    const confirmed = { ...communication, status: "confirmed", can_decide: false, can_correct: true, corrections: [] };
+    correctedDashboard.groups[0].orders[0] = { ...correctedDashboard.groups[0].orders[0], financial_status: "confirmed", communication: confirmed, communications: [confirmed], folders: [] };
+    const reopening = { id: "reopening-1", gallery_id: "gallery-private-1", gallery_name: "Formatura privada", status: "pending", created_at: "2026-09-09T10:00:00Z", approved_until: null, notification: { id: "reopening-notice-1", status: "failed", attempts: 1, can_retry: true } };
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [reopening] }), { status: 200 }));
+      if (options?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "pending_review" }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify(correctedDashboard), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal("prompt", vi.fn(() => "2026-09-15"));
+    render(<AdminPaymentsPage />);
+    expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Corrigir confirmação" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/payment-communications/communication-1/correction",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    fireEvent.click(await screen.findByRole("button", { name: "Definir novo prazo" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/gallery-reopening-requests/reopening-1/decision",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "approved", selection_expires_at: "2026-09-15T23:59:59.000Z" }) }),
+    ));
+  });
+});
+
+
+it("não carrega histórico por padrão e substitui páginas apenas na consulta explícita", async () => {
+  const fetchMock = vi.fn((path: string) => {
+    if (path.includes("removed-photo-movements")) {
+      const params = new URL(path, "http://localhost").searchParams;
+      const offset = Number(params.get("offset"));
+      const filtered = params.get("query") === "Ana";
+      return Promise.resolve(new Response(JSON.stringify({
+        items: [{ id: String(offset), client_id: "client-1", parent_gallery_id: "removed-1", kind: "selected", client_name: "Ana", gallery_name: "Privada", parent_gallery_name: "Evento excluído", folder_name: "Pasta", filename: filtered ? "filtrada.jpg" : offset ? "segunda.jpg" : "primeira.jpg", occurred_at: "2026-09-01T12:00:00Z", removed_at: "2026-09-02T12:00:00Z" }],
+        galleries: [{ id: "removed-1", name: "Evento excluído" }],
+        page: { offset, limit: 25, has_more: offset === 0 },
+      })));
+    }
+    return Promise.resolve(new Response(JSON.stringify(dashboard())));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AdminPaymentsPage />);
+  await screen.findByText("Receita confirmada");
+  expect(fetchMock.mock.calls.some(([path]) => path.includes("removed-photo-movements"))).toBe(false);
+  expect(screen.queryByRole("heading", { name: "Histórico de acervo removido" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Exibir"), { target: { value: "removed" } });
+  const first = await screen.findByText("primeira.jpg");
+  expect(first.closest("details")?.open).toBe(false);
+  expect(screen.getByRole("option", { name: "Evento excluído" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Próxima página" }));
+  await screen.findByText("segunda.jpg");
+  expect(screen.queryByText("primeira.jpg")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "Ana" } });
+  fireEvent.change(screen.getByLabelText("Galeria do histórico"), { target: { value: "removed-1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Consultar histórico" }));
+  await screen.findByText("filtrada.jpg");
+  const last = new URL(fetchMock.mock.calls.at(-1)![0], "http://localhost");
+  expect(last.searchParams.get("offset")).toBe("0");
+  expect(last.searchParams.get("parent_gallery_id")).toBe("removed-1");
+  expect(screen.queryByText("segunda.jpg")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Exibir"), { target: { value: "payments" } });
+  await screen.findByText("Receita confirmada");
+  expect(screen.queryByText("filtrada.jpg")).toBeNull();
+});

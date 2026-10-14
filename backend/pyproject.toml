@@ -2,5 +2,11 @@
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.per-file-target-version]
+"app/system_monitor/host_collect.py" = "py38"
+
+[tool.ruff.lint.per-file-ignores]
+"app/main.py" = ["B008"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

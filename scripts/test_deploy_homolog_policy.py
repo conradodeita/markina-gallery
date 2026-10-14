@@ -1,0 +1,175 @@
+"""Verificações estruturais da automação de homologação, executáveis no CI."""
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = (ROOT / "scripts" / "deploy-homolog.sh").read_text(encoding="utf-8")
+WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+COMPOSE = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
+
+
+def require(text: str, description: str, source: str) -> None:
+    if text not in source:
+        raise AssertionError(f"ausente: {description}")
+
+
+def forbid(pattern: str, description: str, source: str) -> None:
+    if re.search(pattern, source, flags=re.MULTILINE):
+        raise AssertionError(f"proibido: {description}")
+
+
+def main() -> int:
+    require('readonly PROJECT_ROOT="/opt/markina-gallery"', "diretório fixo Markina", SCRIPT)
+    require('readonly PROJECT_NAME="markina-gallery"', "projeto Compose fixo", SCRIPT)
+    require('[[ "$(pwd -P)" == "$PROJECT_ROOT" ]]', "recusa de diretório inesperado", SCRIPT)
+    require('git status --porcelain', "recusa de checkout sujo", SCRIPT)
+    require('ensure_pii_fingerprint_salt', "configuração segura do fingerprint de PII", SCRIPT)
+    require('ensure_gallery_capability_signing_key', "configuração segura da assinatura de galerias", SCRIPT)
+    require('ensure_sensitive_payload_encryption_key', "configuração segura da cifra de propostas PIX", SCRIPT)
+    require('ensure_public_app_origin', "sincronização da origem pública para operações sensíveis", SCRIPT)
+    require('MARKINA_PUBLIC_BASE_URL é obrigatória', "origem pública obrigatória", SCRIPT)
+    require('sincronizada com a origem pública autorizada', "registro sanitizado da origem configurada", SCRIPT)
+    require('parsed.path not in {"", "/"}', "recusa de URL pública com caminho", SCRIPT)
+    require('GALLERY_CAPABILITY_SIGNING_KEY', "segredo dedicado para links de galeria", SCRIPT)
+    require('EMAIL_PAYLOAD_ENCRYPTION_KEY', "segredo dedicado para propostas PIX", SCRIPT)
+    require('deve ser diferente de $fingerprint_key', "separação entre segredos HMAC", SCRIPT)
+    require('openssl rand -hex 32', "geração criptográfica do fingerprint de PII", SCRIPT)
+    require('chmod 600 "$env_file"', "permissão restrita do arquivo de ambiente", SCRIPT)
+    require('chmod 600 "$temp_file"', "permissão restrita do arquivo de ambiente temporário", SCRIPT)
+    require('record_predeploy_inventory', "inventário remoto antes do deploy", SCRIPT)
+    require('df -hP "$PROJECT_ROOT"', "registro de espaço livre", SCRIPT)
+    require('docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME"', "containers limitados ao projeto Markina", SCRIPT)
+    require('docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME"', "inventário limitado aos volumes Markina", SCRIPT)
+    require('docker network ls --filter "label=com.docker.compose.project=$PROJECT_NAME"', "inventário limitado às redes Markina", SCRIPT)
+    require('origin não aponta para o repositório GitHub esperado', "recusa de origem Git inesperada", SCRIPT)
+    require('git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop', "validação de SHA em develop", SCRIPT)
+    require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
+    require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
+    require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
+    require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('SCHEMA_ROLLBACK_UNSAFE=1', "bloqueio conservador após início da migration", SCRIPT)
+    require('SCHEMA_ROLLBACK_UNSAFE=0', "liberação somente após revisão inalterada", SCRIPT)
+    require('next_revision" == *"(head)"*', "confirmação de migration no head alvo", SCRIPT)
+    require('echo "migration Markina:', "registro não sensível da revisão aplicada", SCRIPT)
+    require(
+        'git switch --detach "$DEPLOY_SHA"\n'
+        '  SHA_SWITCHED=1\n'
+        '  prepare_branding_transition\n'
+        '  apply_target_migrations "$previous_revision"',
+        "migration executada somente após a seleção explícita do SHA",
+        SCRIPT,
+    )
+    require(
+        '  # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.\n'
+        '  # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente\n'
+        '  # as revisions do commit que será iniciado nos demais serviços.\n'
+        '  compose build migrate || {',
+        "build da migration antes de sua execução",
+        SCRIPT,
+    )
+    require('compose up -d --build --no-deps api web worker', "recriação limitada de serviços", SCRIPT)
+    require('compose up -d evolution-db evolution-redis evolution-api', "infraestrutura WhatsApp interna e explícita", SCRIPT)
+    require('compose config --services | grep -Fxq evolution-api', "ativação do perfil WhatsApp sem ler segredos", SCRIPT)
+    require('start_whatsapp_infrastructure_if_active', "gate do provedor real antes dos workers", SCRIPT)
+    require('compose up -d --force-recreate --no-deps nginx', "recriação limitada do nginx Markina", SCRIPT)
+    require('verify_facial_deploy_state', "verificação coerente do estado facial", SCRIPT)
+    require('report_container_state', "diagnóstico sanitizado de falha de healthcheck", SCRIPT)
+    require('oom={{.State.OOMKilled}}', "sinal agregado de OOM sem logs do job", SCRIPT)
+    require('restart_count={{.RestartCount}}', "contagem agregada de reinícios", SCRIPT)
+    require('exception_class=\\1', "classe de exceção sem mensagem ou conteúdo do job", SCRIPT)
+    require(
+        'docker.compose.service=$service',
+        "bootstrap facial independente dos serviços definidos no Compose anterior",
+        SCRIPT,
+    )
+    require('read_facial_enabled', "leitura persistente do kill switch facial", SCRIPT)
+    require('set_facial_enabled', "alteração atômica do kill switch facial", SCRIPT)
+    require(
+        'deve permanecer ausente com flag=false',
+        "combinação desligada coerente",
+        SCRIPT,
+    )
+    require(
+        'deve estar ativo com flag=true',
+        "combinação habilitada coerente",
+        SCRIPT,
+    )
+    require(
+        'face-search-worker" "face-index-worker" "face-maintenance-worker',
+        "três classes faciais no deploy",
+        SCRIPT,
+    )
+    require(
+        'compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"',
+        "atualização explícita dos workers faciais",
+        SCRIPT,
+    )
+    require(
+        'if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]',
+        "preservação da combinação facial no deploy e rollback",
+        SCRIPT,
+    )
+    require(
+        'estado facial coerente confirmado: flag=$expected',
+        "evidência operacional do estado facial persistente",
+        SCRIPT,
+    )
+    require('rollback automático de código não é seguro após mudança de schema', "bloqueio de rollback de banco", SCRIPT)
+    require('MARKINA_EXPECTED_REPOSITORY', "validação de origem Git", SCRIPT)
+    forbid(r'\bgit\s+reset\b', "git reset", SCRIPT)
+    forbid(r'\bgit\s+checkout\b', "git checkout", SCRIPT)
+    forbid(r'\bdocker\s+system\s+prune\b', "docker system prune", SCRIPT)
+    forbid(r'\bcompose\s+down\b', "docker compose down", SCRIPT)
+    forbid(r'\b(?:rm|rmdir)\s+-[A-Za-z]*r', "remoção recursiva", SCRIPT)
+    forbid(r'echo\s+.*\$salt', "impressão do segredo de fingerprint", SCRIPT)
+    forbid(r'echo\s+.*\$signing_key', "impressão do segredo de assinatura", SCRIPT)
+    forbid(r'echo\s+.*\$generated', "impressão do segredo de payload", SCRIPT)
+
+    require('branches: [develop]', "gatilho restrito a develop", WORKFLOW)
+    require(
+        'pip install -r backend/requirements.txt -r backend/face-requirements.txt',
+        "dependências do runtime facial nos testes backend",
+        WORKFLOW,
+    )
+    require('deploy-homolog:', "job de deploy", WORKFLOW)
+    require('needs: [backend, frontend, gemma-runtime, openspec, gitleaks]', "dependência integral da CI", WORKFLOW)
+    require('gemma-runtime:', "validação nativa Gemma antes do deploy", WORKFLOW)
+    require('--platform linux/amd64', "runtime Gemma em AMD64", WORKFLOW)
+    require('--memory 6g --memory-swap 6g --cpus 1', "inferência Gemma limitada", WORKFLOW)
+    require('--network none', "inferência sintética sem rede", WORKFLOW)
+    require('environment: homolog', "Environment protegido", WORKFLOW)
+    require('secrets.HOMOLOG_SSH_PRIVATE_KEY', "chave via secret", WORKFLOW)
+    require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
+    require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
+    require('MARKINA_PUBLIC_BASE_URL=%q', "origem pública encaminhada ao deploy", WORKFLOW)
+    forbid(r'HOMOLOG_FACIAL_PROCESSING_ENABLED:\s*"true"|--facial-enabled\s+%q',
+           "deploy InfinitePay não deve habilitar processamento facial", WORKFLOW)
+    forbid(r'HOMOLOG_RAW_DEVELOPMENT_ENABLED:\s*"true"|--raw-development-enabled\s+%q',
+           "deploy InfinitePay não deve habilitar o worker RAW", WORKFLOW)
+    require('REQUESTED_RAW_DEVELOPMENT_ENABLED="auto"', "RAW preservado automaticamente por padrão", SCRIPT)
+    require('resolve_raw_development_state', "estado RAW resolvido após detectar worker ativo", SCRIPT)
+    require('extra+=(-f docker/docker-compose.raw-development.yml)', "overlay RAW restrito ao deploy autorizado", SCRIPT)
+    require('"$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1', "overlay RAW mantido para parar worker ativo", SCRIPT)
+    require('compose up -d --build --no-deps raw-development-worker', "worker RAW iniciado antes da API", SCRIPT)
+    forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
+
+    require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)
+    require("  media-history:", "volume histórico persistente", COMPOSE)
+    require("BRANDING_ASSETS_ROOT: /var/lib/markina/branding", "raiz persistente de marca", COMPOSE)
+    assert COMPOSE.count("- branding-assets:/var/lib/markina/branding") == 1
+    require("python3 scripts/preserve_branding.py preserve", "preservação antes da migration", SCRIPT)
+    require('extra+=(-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment)',
+            "override/profile do worker de prévias já ativo", SCRIPT)
+    require('extra=(-f "$STATE_DIR/branding.compose.yml")', "persistência no rollback", SCRIPT)
+    require('recriação bloqueada: branding ainda não preservado', "gate de preservação", SCRIPT)
+    if COMPOSE.count("- media-history:/var/lib/markina/history") != 2:
+        raise AssertionError("a mídia histórica deve ser compartilhada somente por API e worker")
+
+    print("deploy-homolog policy: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

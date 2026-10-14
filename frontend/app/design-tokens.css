@@ -1,0 +1,60 @@
+:root {
+  --mk-canvas: #f3f4f5;
+  --mk-surface: #ffffff;
+  --mk-surface-subtle: #eceeef;
+  --mk-secondary: #eee5d3;
+  --mk-secondary-hover: #e4d8c0;
+  --mk-ink: #24221d;
+  --mk-ink-muted: #666052;
+  --mk-border: #ded7c7;
+  --mk-brand: #806000;
+  --mk-brand-strong: #614900;
+  --mk-brand-soft: #fff3cc;
+  --mk-action: #f2c343;
+  --mk-action-hover: #e5b12d;
+  --mk-action-ink: #24221d;
+  --mk-info: #665f51;
+  --mk-info-soft: #f0f1f2;
+  --mk-warning-soft: #fff6dc;
+  --mk-success-soft: #edf6ee;
+  --mk-danger-soft: #fff0ef;
+  --mk-success: #247146;
+  --mk-warning: #875d00;
+  --mk-danger: #a6372d;
+  --mk-focus: #806000;
+  --mk-radius-sm: 0.5rem;
+  --mk-radius-md: 0.875rem;
+  --mk-radius-lg: 1.25rem;
+  --mk-shadow-sm: 0 1px 2px rgb(20 24 19 / 8%);
+  --mk-shadow-md: 0 14px 38px rgb(20 24 19 / 9%);
+  --mk-page-gutter: clamp(0.75rem, 2.2vw, 2.5rem);
+  --font-system-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-montserrat: "Montserrat Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-system-rounded: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", ui-sans-serif, system-ui, sans-serif;
+  --font-system-serif: Georgia, "Times New Roman", ui-serif, serif;
+  --font-playfair-display: "Playfair Display Variable", Georgia, ui-serif, serif;
+  --font-caveat: "Caveat Variable", "Segoe Print", cursive;
+  --font-dancing-script: "Dancing Script Variable", "Segoe Print", cursive;
+  --font-handwritten-personal: "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
+  --mk-space-1: 0.25rem;
+  --mk-space-2: 0.5rem;
+  --mk-space-3: 0.75rem;
+  --mk-space-4: 1rem;
+  --mk-space-5: 1.5rem;
+  --mk-space-6: 2rem;
+  --mk-space-8: 3rem;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid var(--mk-focus);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

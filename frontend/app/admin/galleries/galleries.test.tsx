@@ -1,0 +1,341 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const push = vi.fn();
+
+vi.mock("next/link", () => ({
+  default: ({
+    children,
+    href,
+  }: {
+    children: React.ReactNode;
+    href: string;
+  }) => <a href={href}>{children}</a>,
+}));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ galleryId: "private-1" }),
+  useRouter: () => ({ push }),
+}));
+
+import GalleriesPage from "./page";
+import GalleryDetailPage from "./[galleryId]/page";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  push.mockReset();
+});
+
+describe("telas administrativas de galerias", () => {
+  it("exibe carregamento e o estado vazio de Galerias públicas", async () => {
+    let resolveFetch: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFetch = resolve;
+          }),
+      ),
+    );
+    render(<GalleriesPage />);
+    expect(screen.getByText("Carregando galerias…")).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Galerias privadas" })).toBeNull();
+    expect(screen.queryByText(/Galerias-mãe/i)).toBeNull();
+    resolveFetch!(
+      new Response(JSON.stringify({ parent_galleries: [] }), { status: 200 }),
+    );
+    expect(
+      await screen.findByText("Nenhum resultado nesta visão."),
+    ).toBeTruthy();
+  });
+  it("apresenta erro de carregamento", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 500 })),
+    );
+    render(<GalleriesPage />);
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Não foi possível carregar as galerias.",
+    );
+  });
+  it("consulta apenas galerias públicas pelo termo de busca", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ parent_galleries: [] }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleriesPage />);
+    await screen.findByText("Nenhum resultado nesta visão.");
+    fireEvent.change(
+      screen.getByLabelText("Buscar galeria por nome, evento, cliente ou telefone"),
+      { target: { value: "Maria" } },
+    );
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/admin/parent-galleries/overview?query=Maria",
+        { credentials: "same-origin" },
+      ),
+    );
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("derived-galleries"))).toBe(false);
+  });
+  it("exige confirmação antes de bloquear uma galeria privada", async () => {
+    const fetchMock = vi.fn((path: string) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            path.endsWith("/photos")
+              ? { photos: [] }
+              : path.endsWith("/members")
+                ? { members: [] }
+              : path.endsWith("/folders")
+                ? { folders: [] }
+              : path.endsWith("/facial-index")
+                ? { state: "waiting", progress: { ready: 0, total: 0 }, coverage: { photos_with_faces: 0, total: 0, percent: 0, detected_faces: 0 } }
+              : {
+                  id: "private-1",
+                  parent_gallery_id: "public-1",
+                  name: "Família Silva",
+                  link: null,
+                  custom_message: "",
+                  favorites_enabled: false,
+                  comments_enabled: false,
+                  selection_expires_at: null,
+                  cover_preview_url: null,
+                  client: null,
+                  responsible: null,
+                  frozen: false,
+                  blocked: false,
+                },
+          ),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => false),
+    );
+    render(<GalleryDetailPage />);
+    await screen.findByRole("button", { name: "Bloquear acesso geral" });
+    fireEvent.click(screen.getByRole("button", { name: "Bloquear acesso geral" }));
+    expect(window.confirm).toHaveBeenCalledWith(
+      "Bloquear o acesso desta galeria privada para todos os membros?",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("organiza o acervo por pasta e mantém agregados e seleção de cada cliente", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const body = path.endsWith("/photos")
+        ? { photos: [{ id: "photo-1", name: "FOTO_1.jpg", folder_id: "folder-1", folder_name: "Cerimônia", preview_url: "/admin/photo-assets/photo-1/watermarked-preview", origins: ["client"], ownership: "public_reference", favorited_by: [{ client_id: "client-1", client_name: "Ana" }], comments: [{ id: "comment-1", client_id: "client-1", client_name: "Ana", body: "Quero esta em destaque." }], commercial_states: [{ client_id: "client-1", client_name: "Ana", state: "purchased" }, { client_id: "client-2", client_name: "Bia", state: "selected" }] }] }
+        : path.endsWith("/members")
+          ? { members: [{ membership_id: "member-1", client_id: "client-1", client_name: "Ana", phone_e164: "+5511999999999", status: "active", selected_count: 2, purchased_count: 1, order_count: 1, confirmed_total_cents: 700, payment_status: "confirmed" }, { membership_id: "member-2", client_id: "client-2", client_name: "Bia", phone_e164: "+5511888888888", status: "active", selected_count: 5, purchased_count: 0, order_count: 0, confirmed_total_cents: 0, payment_status: "none" }] }
+          : path.endsWith("/folders")
+            ? { folders: [] }
+          : path.endsWith("/facial-index")
+            ? { state: "completed", progress: { ready: 1, total: 1 }, coverage: { photos_with_faces: 1, total: 1, percent: 100, detected_faces: 1 } }
+          : { id: "private-1", parent_gallery_id: "public-1", name: "Família", custom_message: "Escolha com calma", favorites_enabled: true, comments_enabled: true, selection_expires_at: null, cover_preview_url: null, inherited_folder_display_mode: "sequential", frozen: false, blocked: false };
+      if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ references_created: 1 }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+
+    expect(await screen.findByRole("heading", { name: "Família" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Seleções vindas da Galeria pública" })).toBeTruthy();
+    expect(screen.getByText("Cerimônia")).toBeTruthy();
+    expect(screen.getByAltText("Prévia protegida de FOTO_1.jpg").getAttribute("loading")).toBe("lazy");
+    expect(screen.getByText("Comprada · Ana")).toBeTruthy();
+    expect(screen.getByText("Selecionada · Bia")).toBeTruthy();
+    expect(screen.getByText("Favoritada por Ana")).toBeTruthy();
+    expect(screen.getByText("Quero esta em destaque.")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Exibição das pastas herdada" }) as HTMLSelectElement).value).toBe("sequential");
+    expect(screen.getAllByText("Selecionadas e não compradas")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "Baixar seleção individual" }).getAttribute("href")).toBe("/api/admin/derived-galleries/private-1/selection/export.html?client_id=client-1");
+    expect(screen.getByText("Disponível após a primeira compra confirmada.")).toBeTruthy();
+    expect(screen.getByText("2", { selector: ".private-member-cards dd" })).toBeTruthy();
+    expect(screen.getByText("5", { selector: ".private-member-cards dd" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Adicionar ao acervo privado" })).toBeNull();
+  });
+
+  it("abre a privada preservada sem consultar fotos de uma origem removida", async () => {
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/photos")) return Promise.resolve(new Response(JSON.stringify({ photos: [] }), { status: 200 }));
+      if (path.endsWith("/members")) return Promise.resolve(new Response(JSON.stringify({ members: [] }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ id: "private-1", parent_gallery_id: "public-removed", name: "Privada preservada", custom_message: "", favorites_enabled: false, comments_enabled: false, selection_expires_at: null, cover_preview_url: null, origin_active: false, frozen: false, blocked: false }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+
+    expect(await screen.findByRole("heading", { name: "Privada preservada" })).toBeTruthy();
+    expect(screen.getByText("Galeria pública de origem removida")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Excluir galeria privada" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Carregar novos JPEGs na pública" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/parent-galleries/public-removed/available-photos",
+    );
+  });
+
+  it("confirma e exclui uma galeria privada preservando o histórico", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const body = path.endsWith("/photos") || path.endsWith("/available-photos")
+        ? { photos: [] }
+        : path.endsWith("/members")
+          ? { members: [] }
+          : { id: "private-1", parent_gallery_id: "public-1", name: "Família Silva", custom_message: "", favorites_enabled: false, comments_enabled: false, selection_expires_at: null, cover_preview_url: null, frozen: false, blocked: false };
+      if (path === "/api/admin/derived-galleries/private-1" && init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir galeria privada" }));
+    const dialog = await screen.findByRole("dialog", { name: "Excluir “Família Silva”?" });
+    expect(dialog.textContent).toContain("histórico comercial serão preservados");
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar exclusão" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/derived-galleries/private-1",
+      expect.objectContaining({ method: "DELETE" }),
+    ));
+    expect(push).toHaveBeenCalledWith("/admin/galleries");
+  });
+
+  it("mantém a falha de exclusão visível dentro da confirmação da privada", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const body = path.endsWith("/photos") || path.endsWith("/available-photos")
+        ? { photos: [] }
+        : path.endsWith("/members")
+          ? { members: [] }
+          : { id: "private-1", parent_gallery_id: "public-1", name: "Família Protegida", custom_message: "", favorites_enabled: false, comments_enabled: false, selection_expires_at: null, cover_preview_url: null, frozen: false, blocked: false };
+      if (path === "/api/admin/derived-galleries/private-1" && init?.method === "DELETE") return Promise.resolve(new Response(JSON.stringify({ detail: "Pagamento comunicado aguarda revisão administrativa." }), { status: 409, headers: { "content-type": "application/json" } }));
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir galeria privada" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar exclusão" }));
+    const dialog = await screen.findByRole("dialog", { name: "Excluir “Família Protegida”?" });
+    expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Pagamento comunicado aguarda revisão administrativa.");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("carrega JPEGs do dispositivo somente em pasta própria da privada", async () => {
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/upload-batches")) return Promise.resolve(new Response(JSON.stringify(init?.method === "POST" ? { id: "batch-1", count: 0, assets: [] } : { batches: [] }), { status: 200 }));
+      if (path.endsWith("/close")) return Promise.resolve(new Response(JSON.stringify({ status: "closed" }), { status: 200 }));
+      if (path.endsWith("/photos") && !init?.method) return Promise.resolve(new Response(JSON.stringify({ photos: [] }), { status: 200 }));
+      if (path.endsWith("/folders") && !init?.method) return Promise.resolve(new Response(JSON.stringify({ folders: [{ id: "folder-private", name: "Uploads", status: "preparing", photo_count: 0 }] }), { status: 200 }));
+      if (path.endsWith("/members")) return Promise.resolve(new Response(JSON.stringify({ members: [] }), { status: 200 }));
+      if (path.endsWith("/facial-index")) return Promise.resolve(new Response(JSON.stringify({ state: "waiting", progress: { ready: 0, total: 0 }, coverage: { photos_with_faces: 0, total: 0, percent: 0, detected_faces: 0 } }), { status: 200 }));
+      if (path === "/api/admin/photo-folders/folder-private/photos" && init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ id: "photo-private" }), { status: 201 }));
+      if (init?.method === "PUT" || path.endsWith("/publish")) return Promise.resolve(new Response(JSON.stringify({ status: "preparing" }), { status: 202 }));
+      return Promise.resolve(new Response(JSON.stringify({ id: "private-1", parent_gallery_id: "public-1", name: "Família", custom_message: "", selection_expires_at: null, frozen: false, blocked: false }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    await screen.findByRole("heading", { name: "Família" });
+    fireEvent.change(screen.getByLabelText("Pasta"), { target: { value: "folder-private" } });
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], "nova.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([0xff]).buffer });
+    fireEvent.change(screen.getByLabelText("JPEGs do dispositivo"), { target: { files: [file] } });
+    fireEvent.submit(screen.getByLabelText("JPEGs do dispositivo").closest("form")!);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/photo-assets/photo-private/source",
+      expect.objectContaining({ method: "PUT", body: file }),
+    ));
+    const registration = fetchMock.mock.calls.find(([path, init]) => path === "/api/admin/photo-folders/folder-private/photos" && init?.method === "POST");
+    expect(String(registration?.[1]?.body)).toContain("private/private-1/folder-private/");
+    expect(JSON.parse(String(registration?.[1]?.body)).upload_batch_id).toBe("batch-1");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/derived-galleries/private-1/upload-batches/batch-1/close", expect.objectContaining({ method: "POST" })));
+  });
+
+  it("recupera lote aberto após reload e permite encerramento parcial", async () => {
+    const batch = { id: "batch-open", count: 2, status: "open", assets: [] };
+    let closed = false;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/batch-open/close") && init?.method === "POST") { closed = true; return Promise.resolve(new Response(JSON.stringify({ status: "closed" }))); }
+      const payload = path.endsWith("/upload-batches") ? { batches: closed ? [] : [batch] }
+        : path.endsWith("/folders") ? { folders: [] } : path.endsWith("/members") ? { members: [] }
+        : path.endsWith("/photos") ? { photos: [] }
+        : { id: "private-1", parent_gallery_id: "public-1", name: "Família", frozen: false, blocked: false };
+      return Promise.resolve(new Response(JSON.stringify(payload)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar lote" }));
+    expect(screen.getByRole("button", { name: "Selecionado para retomar" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar com as fotos enviadas" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Lotes ainda abertos" })).toBeNull());
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/derived-galleries/private-1/upload-batches/batch-open/close", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("retoma foto do lote com namespace do servidor sem cadastrar outra foto", async () => {
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
+    const key = `private/private-1/folder-private/${"0".repeat(64)}.jpg`;
+    const batch = { id: "batch-open", status: "open", count: 1,
+      assets: [{ id: "photo-existing", storage_key: `tenants/owner/${key}`, upload_key: key, status: "not_imported" }] };
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      const data = path.endsWith("/upload-batches") ? { batches: [batch] }
+        : path.endsWith("/folders") ? { folders: [{ id: "folder-private", name: "Uploads", status: "preparing", photo_count: 1 }] }
+        : path.endsWith("/photos") ? { photos: [] } : path.endsWith("/members") ? { members: [] }
+        : init?.method ? { status: "queued" }
+        : { id: "private-1", parent_gallery_id: "public-1", name: "Família", frozen: false, blocked: false };
+      return Promise.resolve(new Response(JSON.stringify(data)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GalleryDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retomar lote" }));
+    fireEvent.change(screen.getByLabelText("Pasta"), { target: { value: "folder-private" } });
+    const file = new File([new Uint8Array([0xff])], "retomada.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([0xff]).buffer });
+    fireEvent.change(screen.getByLabelText("JPEGs do dispositivo"), { target: { files: [file] } });
+    fireEvent.submit(screen.getByLabelText("JPEGs do dispositivo").closest("form")!);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/photo-assets/photo-existing/source",
+      expect.objectContaining({ method: "PUT", body: file })));
+    expect(fetchMock.mock.calls.some(([path, init]) => path.endsWith("/photos") && init?.method === "POST")).toBe(false);
+    expect(fetchMock.mock.calls.some(([path, init]) => path.endsWith("/upload-batches") && init?.method === "POST")).toBe(false);
+  });
+});
+
+
+it("exclui pasta própria privada com confirmação e atualiza a lista", async () => {
+  let deleted = false;
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (init?.method === "DELETE") { deleted = true; return Promise.resolve(new Response(null, { status: 204 })); }
+    const data = path.endsWith("/folders") ? { folders: deleted ? [] : [{ id: "own-folder", name: "Pasta exclusiva", status: "released", photo_count: 2 }] }
+      : path.endsWith("/photos") ? { photos: [] } : path.endsWith("/members") ? { members: [] }
+      : { id: "private-1", parent_gallery_id: "source-1", name: "Família", frozen: false, blocked: false };
+    return Promise.resolve(new Response(JSON.stringify(data), { status: 200 }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<GalleryDetailPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Excluir pasta Pasta exclusiva" }));
+  expect(deleted).toBe(false);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Excluir pasta Pasta exclusiva" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Excluir pasta Pasta exclusiva" })).toBeNull());
+  expect(fetchMock).toHaveBeenCalledWith("/api/admin/photo-folders/own-folder", expect.objectContaining({ method: "DELETE" }));
+});
+
+it("libera uma pasta privada depois do processamento", async () => {
+  let released = false;
+  const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path === "/api/admin/photo-folders/own-folder/publish" && init?.method === "POST") {
+      released = true;
+      return Promise.resolve(new Response(JSON.stringify({ status: "released" }), { status: 200 }));
+    }
+    const data = path.endsWith("/folders") ? { folders: [{ id: "own-folder", name: "Pasta exclusiva", status: released ? "released" : "preparing", photo_count: 2 }] }
+      : path.endsWith("/photos") ? { photos: [] } : path.endsWith("/members") ? { members: [] }
+      : { id: "private-1", parent_gallery_id: "source-1", name: "Família", inherited_folder_display_mode: "individual", frozen: false, blocked: false };
+    return Promise.resolve(new Response(JSON.stringify(data), { status: 200 }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<GalleryDetailPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Liberar para cliente" }));
+  await waitFor(() => expect(released).toBe(true));
+  expect(await screen.findByText("Pasta “Pasta exclusiva” liberada para a cliente.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Liberar para cliente" })).toBeNull();
+});

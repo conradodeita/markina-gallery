@@ -1,0 +1,54 @@
+## 1. Inventário e testes de contrato
+
+- [x] 1.1 Mapear todos os produtores e consumidores de fotos sem pasta, registrar o inventário técnico na documentação da mudança e verificar por busca automatizada que nenhuma chamada interna fique sem classificação.
+- [x] 1.2 Criar fixtures com fotos em pasta, fotos legadas sem pasta, referências derivadas, seleções e compras; verificar que os testes confirmam a preservação de IDs e relacionamentos antes da migration.
+- [x] 1.3 Adicionar testes de API inicialmente falhos para recusar pasta sem galeria, foto sem pasta, divergência galeria/pasta e liberação cruzada; verificar os códigos e mensagens esperados no FastAPI.
+
+## 2. Integridade de dados e migration
+
+- [x] 2.1 Atualizar os modelos para exigir pasta na foto e coerência composta entre foto, pasta e galeria-mãe; verificar que a suíte de persistência rejeita vínculos inválidos.
+- [x] 2.2 Criar migration aditiva que inventaria órfãos, gera uma pasta de compatibilidade determinística por galeria, associa fotos legadas e só então aplica nulidade e chaves; verificar idempotência em banco sintético.
+- [x] 2.3 Cobrir upgrade e downgrade não destrutivo com galerias vazias, pastas existentes e históricos de compra; verificar que contagens, UUIDs, referências, seleções e pedidos permanecem iguais.
+- [x] 2.4 Validar a migration nos comportamentos SQLite de teste e PostgreSQL da aplicação, sem dados reais; verificar constraints, índices e plano de rollback documentado. Evidência: `py -3.12 -m pytest backend/tests/test_cloned_gallery_migration.py -q` passou com 4 testes em 2026-08-30, incluindo PostgreSQL 17 efêmero habilitado por `TEST_POSTGRES_DATABASE_URL`; o teste confirma nulidade, índices, constraints compostas, rejeição de origem divergente e downgrade preservando pastas/vínculos. Plano não destrutivo registrado em `implementation-notes.md`.
+
+## 3. Contratos backend-driven do editor
+
+- [x] 3.1 Implementar contrato autenticado de resumo do editor por galeria-mãe com etapas, conclusão, pendências, capacidades e ações permitidas; verificar paginação/escopo e ausência de originais ou dados indevidos.
+- [x] 3.2 Implementar ou ajustar contratos pequenos de leitura e gravação para Ajustes, Vendas e Detalhes, retornando indisponibilidade explícita para capacidades futuras; verificar que o backend, não o navegador, decide permissões e disponibilidade.
+- [x] 3.3 Consolidar os contratos da etapa Imagens para listar, criar, renomear, excluir e liberar pastas somente no contexto da galeria proprietária; verificar autorização administrativa, estados e coerência de origem.
+- [x] 3.4 Fazer o cadastro e upload de novas fotos derivar a galeria exclusivamente da pasta em preparação e desativar a rota direta legada com `410 Gone`; verificar que nenhuma foto nova pode terminar sem pasta.
+- [x] 3.5 Ajustar os contratos da etapa Clientes para link não listado, registros, vínculos e galerias privadas derivadas da mesma origem; verificar autenticação antes da visualização e bloqueio de referências cruzadas.
+
+## 4. Fluxo administrativo em cinco etapas
+
+- [x] 4.1 Transformar Galerias na entrada principal e criar rotas de nova galeria e edição contextual; verificar que URLs antigas de operações redirecionam sem criar dados ou perder um identificador válido.
+- [x] 4.2 Implementar o componente acessível de etapas Ajustes, Vendas, Detalhes, Imagens e Clientes com navegação anterior/próxima; verificar foco, teclado, indicação da etapa atual e retomada após recarregar a página.
+- [x] 4.3 Implementar Ajustes, Vendas e Detalhes consumindo exclusivamente os contratos do backend; verificar estados de carregamento, vazio, erro, salvamento e capacidade indisponível sem valores simulados.
+- [x] 4.4 Implementar Imagens com cartões de pastas, capa autorizada, contagem, ordem, estado, upload, prévias, renomeação, exclusão segura e liberação; verificar que todos os comandos permanecem dentro da galeria selecionada.
+- [x] 4.5 Implementar Clientes com link não listado, busca/cadastro, responsáveis vinculados e acesso às galerias privadas derivadas; verificar que a interface não apresenta senha pública nem catálogo pesquisável.
+- [x] 4.6 Remover botões e formulários globais de criação de pasta ou upload e atualizar dashboard, navegação e estados vazios para conduzir primeiro à galeria; verificar por teste de componente e revisão das rotas administrativas.
+
+## 5. Qualidade funcional e visual
+
+- [x] 5.1 Criar testes frontend para a sequência completa, retorno entre etapas, falhas do backend, ausência de duplicação e indisponibilidade comercial; verificar a suíte de componentes sem mocks de autorização ou registros persistentes no browser. Evidência: `frontend/app/admin/galleries/gallery-editor.test.tsx` cobre sequência, retorno/avanço contextual, erro de contrato, filtro de responsável já vinculada e indisponibilidade comercial; `npx vitest run app/admin/galleries/gallery-editor.test.tsx --pool=threads --maxWorkers=1` (10 testes), `npx eslint app/admin/galleries/gallery-editor.test.tsx` e `npx tsc --noEmit` passaram em 2026-08-28.
+- [x] 5.2 Executar o fluxo funcional com dados sintéticos: criar galeria, percorrer etapas, criar duas pastas, carregar JPEG, liberar uma pasta e vincular cliente; verificar que a outra pasta permanece administrativa e que a cliente vê somente referências autorizadas.
+- [ ] 5.3 Revisar a interface em desktop e smartphone conforme as referências de fluxo e as diretrizes visuais próprias da Markina; verificar legibilidade, responsividade, estados vazios, confirmações e prévias protegidas.
+- [x] 5.4 Executar `ruff check backend/app backend/tests`, testes backend, lint, testes e build frontend; registrar comandos e resultados, mantendo qualquer falha como tarefa aberta.
+
+## 6. Documentação e preparação de homologação
+
+- [x] 6.1 Atualizar documentação operacional e de arquitetura com a hierarquia galeria-mãe → pasta → foto → referências derivadas e verificar que não reste orientação de upload avulso.
+- [x] 6.2 Manter estes artefatos e checkboxes sincronizados durante a aplicação e validar a mudança com OpenSpec em modo estrito; verificar que proposal, specs, design e implementação permaneçam coerentes.
+- [x] 6.3 Preparar roteiro de validação humana das cinco etapas e critérios de aceite para o fotógrafo, sem arquivar a mudança antes da aprovação visual; verificar que o roteiro usa somente dados sintéticos.
+- [x] 6.4 Antes de qualquer homologação, apresentar inventário do host compartilhado, backup exclusivo do Markina, comandos Compose explicitamente limitados ao projeto e plano de impacto zero; verificar aprovação explícita antes de executar deploy.
+
+## 7. Remediação do retorno visual de homologação
+
+- [x] 7.1 Remover Operação da navegação e preservar somente o redirecionamento legado contextual; verificar rotas antigas e o destaque correto de Galerias. Evidência: `app/admin/admin-navigation.test.tsx` e `app/admin/operations/page.test.tsx` passaram com 3 testes, incluindo redirecionamento com e sem galeria, e o lint direcionado passou em 2026-08-30.
+- [x] 7.2 Tornar Detalhes uma etapa funcional para capa, título e organização da galeria, retirando esses controles de Imagens; verificar carregamento, persistência, erro e retomada sem duplicar dados. Evidência: o contrato marca `visual_customization` e Detalhes como disponíveis, `/details` devolve capacidades e configuração persistida, o PATCH existente continua como fonte única; teste backend direcionado e 12 testes do editor passaram, assim como ruff e eslint sem erros em 2026-08-30.
+- [x] 7.3 Reorganizar o shell, painéis e ações administrativos com superfícies neutras e espaçamento uniforme, corrigindo texto/contraste dos botões e separando os três blocos de Clientes; verificar desktop, smartphone, teclado e estados vazios. Evidência: tokens e regras responsivas cobrem o shell, stepper, cards, botões normais/desabilitados e empilhamento abaixo de 760 px; Clientes usa três regiões nomeadas e ação textual. Os 16 testes direcionados e eslint sem erros passaram em 2026-08-30.
+- [x] 7.4 Atualizar os testes frontend do wizard, navegação e Clientes; executar lint, typecheck, testes, build e validação OpenSpec estrita antes de nova revisão humana em homologação. Evidência de 2026-08-30: ruff passou; backend `79 passed, 1 skipped`; frontend lint sem erros, TypeScript aprovado, `46 passed` e build Next.js 16.3.2 concluído. A validação estrita da change passou após a reconciliação.
+
+## Registro de supersession — 2026-08-31
+
+- A implementação estrutural desta change não deve ser reaplicada para restaurar terminologia ou regras antigas. `improve-gallery-and-client-data-lifecycle` passa a reger modos de acesso, derivação sob demanda, disponibilidade versus seleção, navegação pública/privada autorizada e exclusão integral. A task 5.3 continua dependendo somente de revisão visual humana e não bloqueia o código independente da change sucessora.

@@ -1,0 +1,500 @@
+"""Criação transacional e imutável de pedidos PIX manuais."""
+
+from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.orm import Session
+
+from app.acervo_context import client_tenant_id, owned_record
+from app.auth import (
+    Client,
+    DerivedGallery,
+    DerivedGalleryMembership,
+    DerivedGalleryPhoto,
+    GalleryClientState,
+    ParentGallery,
+    PaymentGroup,
+    PhotoAsset,
+    PhotoFolder,
+    PhotoSelection,
+    SaleOrder,
+    SaleOrderItem,
+    audit,
+    now,
+)
+from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
+from app.global_pix import checkout_pix
+from app.pix import PixCodeError
+from app.public_gallery_access import (
+    PublicGalleryAccessDenied,
+    authorized_canonical_photos,
+    require_public_gallery_browsing,
+)
+
+
+class CheckoutError(ValueError):
+    pass
+
+
+def lock_client_commerce(
+    db: Session, *, gallery_id, client_id
+) -> None:
+    """Serializa seleção, checkout e congelamento sem bloquear outros membros."""
+    tenant_id = client_tenant_id(db, client_id)
+
+    # O PIX pode abranger várias galerias: a identidade é sempre o primeiro lock.
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client_id).with_for_update())
+    membership = db.scalar(
+        select(DerivedGalleryMembership).where(DerivedGalleryMembership.tenant_id == tenant_id)
+        .where(
+            DerivedGalleryMembership.derived_gallery_id == gallery_id,
+            DerivedGalleryMembership.client_id == client_id,
+        )
+        .with_for_update()
+    )
+    if membership:
+        return
+    db.scalar(
+        select(DerivedGallery.id).where(DerivedGallery.tenant_id == tenant_id)
+        .where(DerivedGallery.id == gallery_id)
+        .with_for_update()
+    )
+
+
+def client_photo_is_frozen(
+    db: Session, *, gallery_id, client_id, photo_id
+) -> bool:
+    tenant_id = client_tenant_id(db, client_id)
+    return bool(
+        db.scalar(
+            select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id)
+            .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
+            .where(
+                SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                SaleOrder.client_id == client_id,
+                or_(
+                    SaleOrder.payment_status.in_(("confirmed", "not_required")),
+                    and_(
+                        SaleOrder.payment_status == "pending",
+                        SaleOrder.frozen_at.is_not(None),
+                    ),
+                ),
+                SaleOrderItem.photo_asset_id_snapshot == photo_id,
+            )
+        )
+    )
+
+
+def client_photo_is_frozen_any(db: Session, *, client_id, photo_id) -> bool:
+    """Uma foto já comunicada ou comprada não pode voltar a uma seleção nova."""
+    tenant_id = client_tenant_id(db, client_id)
+    return bool(db.scalar(
+        select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id)
+        .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
+        .where(
+            SaleOrder.client_id == client_id,
+            SaleOrderItem.photo_asset_id_snapshot == photo_id,
+            or_(
+                SaleOrder.payment_status.in_(("confirmed", "not_required")),
+                and_(SaleOrder.payment_status == "pending", SaleOrder.frozen_at.is_not(None)),
+            ),
+        )
+    ))
+
+
+def selected_photos(
+    db: Session, *, gallery: DerivedGallery | GalleryClientState, client: Client
+):
+    """Fotos selecionadas ainda autorizadas; também usadas quando não há cotação."""
+    tenant_id = client_tenant_id(db, client.id)
+    if gallery.tenant_id != tenant_id:
+        raise CheckoutError("Seleção indisponível.")
+    if isinstance(gallery, GalleryClientState):
+        selections = list(db.scalars(select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
+            PhotoSelection.parent_gallery_id == gallery.parent_gallery_id,
+            PhotoSelection.client_id == client.id,
+        )))
+        photos = list(db.scalars(
+            authorized_canonical_photos(gallery.parent_gallery_id, client.id).where(
+                PhotoAsset.id.in_({row.photo_asset_id for row in selections})
+            )
+        ))
+        return selections, photos
+    selections = list(
+        db.scalars(
+            select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id)
+            .where(
+                PhotoSelection.derived_gallery_id == gallery.id,
+                PhotoSelection.client_id == client.id,
+            )
+        )
+    )
+    photo_ids = {selection.photo_asset_id for selection in selections}
+    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(DerivedGalleryPhoto.tenant_id == tenant_id).where(
+        DerivedGalleryPhoto.derived_gallery_id == gallery.id
+    )
+    photos = list(
+        db.scalars(
+            select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id)
+            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+            .where(
+                PhotoAsset.id.in_(photo_ids),
+                PhotoAsset.available,
+                (PhotoAsset.derived_gallery_id == gallery.id)
+                | (PhotoAsset.id.in_(referenced_photo_ids)),
+                PhotoFolder.status == "released",
+                PhotoFolder.purpose == "content",
+            )
+            .distinct()
+        )
+    )
+    return selections, photos
+
+
+def _checkout_material(
+    db: Session, *, gallery: DerivedGallery | GalleryClientState,
+    client: Client, resolve_pix: bool = True
+):
+    tenant_id = client_tenant_id(db, client.id)
+    if isinstance(gallery, GalleryClientState):
+        try:
+            require_public_gallery_browsing(
+                db, parent_gallery_id=gallery.parent_gallery_id, client_id=client.id
+            )
+        except PublicGalleryAccessDenied as exc:
+            raise CheckoutError("O acesso a esta galeria está indisponível.") from exc
+    selections, photos = selected_photos(db, gallery=gallery, client=client)
+    if not selections:
+        raise CheckoutError("A seleção está vazia.")
+    photo_ids = {selection.photo_asset_id for selection in selections}
+    if {photo.id for photo in photos} != photo_ids:
+        raise CheckoutError("A seleção contém fotos indisponíveis.")
+    already_frozen = db.scalar(
+        select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id)
+        .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
+        .where(
+            SaleOrder.client_id == client.id,
+            or_(
+                SaleOrder.payment_status.in_(("confirmed", "not_required")),
+                and_(
+                    SaleOrder.payment_status == "pending",
+                    SaleOrder.frozen_at.is_not(None),
+                ),
+            ),
+            SaleOrderItem.photo_asset_id_snapshot.in_(photo_ids),
+        )
+    )
+    if already_frozen:
+        raise CheckoutError("A seleção contém fotos de um pedido já congelado.")
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
+    if not parent:
+        raise CheckoutError("A Galeria pública desta seleção não está disponível.")
+    try:
+        commercial_quote = quote_parent_gallery(db, gallery=parent, quantity=len(photos))
+    except GalleryPricingError as exc:
+        raise CheckoutError(str(exc)) from exc
+    if resolve_pix and not parent.payment_required:
+        raise CheckoutError("Finalize a seleção sem cobrança pelo carrinho.")
+    try:
+        settings = checkout_pix(db, tenant_id=client.tenant_id) if resolve_pix and parent.payment_required else None
+    except PixCodeError as exc:
+        raise CheckoutError(str(exc)) from exc
+    folders_by_id = {
+        folder.id: folder
+        for folder in db.scalars(
+            select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id).where(
+                PhotoFolder.id.in_({photo.folder_id for photo in photos})
+            )
+        )
+    }
+    return selections, photos, parent, commercial_quote, settings, folders_by_id
+
+
+def _synchronize_order(
+    db: Session,
+    *,
+    order: SaleOrder,
+    gallery: DerivedGallery | GalleryClientState,
+    client: Client,
+    material,
+) -> SaleOrder:
+    tenant_id = client_tenant_id(db, client.id)
+    _selections, photos, parent, commercial_quote, settings, folders_by_id = material
+    resources = [gallery, order, parent, *photos, *folders_by_id.values()]
+    if settings is not None:
+        resources.append(settings)
+    if any(resource.tenant_id != tenant_id for resource in resources):
+        raise CheckoutError("Pedido indisponível neste contexto.")
+    if isinstance(gallery, GalleryClientState):
+        order.parent_gallery_id = gallery.parent_gallery_id
+        order.derived_gallery_id = None
+    else:
+        order.derived_gallery_id = gallery.id
+    order.client_id = client.id
+    order.payment_status = "pending" if parent.payment_required else "not_required"
+    order.payment_required_snapshot = parent.payment_required
+    order.total_cents = commercial_quote.quote.total_cents
+    order.client_name_snapshot = client.full_name
+    order.client_phone_snapshot = client.phone_e164
+    order.price_rule_snapshot = {
+        **commercial_quote.snapshot,
+        "terms": {
+            "payment_confirmation": "manual_by_photographer" if parent.payment_required else "not_required",
+            "selection_expires_at": (
+                gallery.selection_expires_at.isoformat()
+                if gallery.selection_expires_at
+                else None
+            ),
+        },
+    }
+    order.sales_message_snapshot = parent.sales_message
+    if settings is not None:
+        order.pix_copy_paste_snapshot = settings.copy_paste
+        order.pix_qr_code_snapshot = None
+        order.pix_instructions_snapshot = settings.instructions
+        order.pix_configuration_snapshot = {
+            "configuration_id": str(settings.id),
+            "version": settings.version,
+            "receiver_name": settings.receiver_name,
+            "receiver_city": settings.receiver_city,
+        }
+    db.add(order)
+    db.flush()
+    db.execute(delete(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == order.id))
+    unit_prices = [
+        parcel.unit_price_cents
+        for parcel in commercial_quote.quote.parcels
+        for _ in range(parcel.quantity)
+    ]
+    for photo, unit_price_cents in zip(
+        sorted(photos, key=lambda item: str(item.id)), unit_prices, strict=True
+    ):
+        folder = folders_by_id.get(photo.folder_id)
+        db.add(
+            SaleOrderItem(
+                sale_order_id=order.id,
+                photo_asset_id=photo.id,
+                filename_snapshot=photo.display_name or photo.filename,
+                folder_id_snapshot=folder.id if folder else None,
+                folder_name_snapshot=folder.name if folder else None,
+                unit_price_cents=unit_price_cents,
+             tenant_id=tenant_id)
+        )
+    db.flush()
+    return order
+
+
+def remove_canonical_cart_selection(
+    db: Session, *, parent_gallery_id, client_id, photo_id=None
+) -> int:
+    """Remove somente a seleção própria e descarta rascunho ainda editável."""
+    tenant_id = client_tenant_id(db, client_id)
+    try:
+        require_public_gallery_browsing(
+            db, parent_gallery_id=parent_gallery_id, client_id=client_id
+        )
+    except PublicGalleryAccessDenied as exc:
+        raise CheckoutError("Seleção indisponível.") from exc
+    db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client_id).with_for_update())
+    state = db.scalar(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
+        GalleryClientState.parent_gallery_id == parent_gallery_id,
+        GalleryClientState.client_id == client_id,
+    ).with_for_update())
+    if not state:
+        raise CheckoutError("Seleção indisponível.")
+    query = select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
+        PhotoSelection.parent_gallery_id == parent_gallery_id,
+        PhotoSelection.client_id == client_id,
+        PhotoSelection.photo_asset_id.in_(
+            authorized_canonical_photos(parent_gallery_id, client_id)
+            .with_only_columns(PhotoAsset.id)
+        ),
+    )
+    if photo_id is not None:
+        query = query.where(PhotoSelection.photo_asset_id == photo_id)
+    selections = list(db.scalars(query))
+    if not selections:
+        raise CheckoutError("Seleção indisponível.")
+    db.execute(delete(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
+        PhotoSelection.id.in_([row.id for row in selections])
+    ))
+    draft = db.scalar(select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
+        SaleOrder.parent_gallery_id == parent_gallery_id,
+        SaleOrder.client_id == client_id,
+        SaleOrder.payment_status == "pending",
+        SaleOrder.frozen_at.is_(None),
+        SaleOrder.assets_removed_at.is_(None),
+        SaleOrder.checkout_key.is_not(None),
+    ).with_for_update())
+    if draft:
+        db.execute(delete(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == draft.id))
+        group_id = draft.payment_group_id
+        db.delete(draft)
+        db.flush()
+        if group_id and not db.scalar(select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
+            SaleOrder.payment_group_id == group_id
+        )):
+            db.execute(delete(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id).where(
+                PaymentGroup.id == group_id, PaymentGroup.state == "draft"
+            ))
+    return len(selections)
+
+
+def create_pending_checkout(
+    db: Session, *, gallery: DerivedGallery, client: Client, checkout_key: str
+) -> SaleOrder:
+    """Cria ou sincroniza o rascunho sem consumir o carrinho da cliente."""
+    tenant_id = client_tenant_id(db, client.id)
+    lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
+    existing = db.scalar(
+        select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
+            SaleOrder.derived_gallery_id == gallery.id,
+            SaleOrder.client_id == client.id,
+            SaleOrder.checkout_key == checkout_key,
+        )
+    )
+    if existing and existing.assets_removed_at:
+        raise CheckoutError("O acervo deste pedido foi removido; consulte o histórico.")
+    if existing and (
+        existing.frozen_at is not None or existing.payment_status != "pending"
+    ):
+        return existing
+    if existing is None:
+        existing = db.scalar(
+            select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
+            .where(
+                SaleOrder.derived_gallery_id == gallery.id,
+                SaleOrder.client_id == client.id,
+                SaleOrder.payment_status == "pending",
+                SaleOrder.frozen_at.is_(None),
+                SaleOrder.assets_removed_at.is_(None),
+                SaleOrder.checkout_key.is_not(None),
+            )
+            .order_by(SaleOrder.created_at.desc())
+            .with_for_update()
+        )
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
+    if parent and not parent.payment_required:
+        raise CheckoutError("Finalize a seleção sem cobrança pelo carrinho.")
+    if existing and existing.payment_group_id:
+        raise CheckoutError("Este pedido integra o carrinho único. Revise em /library/cart.")
+    material = _checkout_material(db, gallery=gallery, client=client,
+                                  resolve_pix=not (existing and existing.pix_copy_paste_snapshot))
+    created = existing is None
+    order = existing or SaleOrder(
+        derived_gallery_id=gallery.id,
+        client_id=client.id,
+        payment_status="pending",
+        total_cents=0,
+        checkout_key=checkout_key,
+     tenant_id=tenant_id)
+    _synchronize_order(
+        db, order=order, gallery=gallery, client=client, material=material
+    )
+    audit(
+        db,
+        "sale_order.draft_created" if created else "sale_order.draft_updated",
+        str(order.id),
+     tenant_id=tenant_id)
+    return order
+
+
+def synchronize_editable_draft(
+    db: Session, *, gallery: DerivedGallery, client_id
+) -> SaleOrder | None:
+    """Mantém o rascunho alinhado à seleção após uma mutação do carrinho."""
+    tenant_id = client_tenant_id(db, client_id)
+
+    lock_client_commerce(db, gallery_id=gallery.id, client_id=client_id)
+    order = db.scalar(
+        select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
+        .where(
+            SaleOrder.derived_gallery_id == gallery.id,
+            SaleOrder.client_id == client_id,
+            SaleOrder.payment_status == "pending",
+            SaleOrder.frozen_at.is_(None),
+            SaleOrder.assets_removed_at.is_(None),
+            SaleOrder.checkout_key.is_not(None),
+        )
+        .with_for_update()
+    )
+    if not order:
+        return None
+    client = owned_record(db, Client, client_id, tenant_id=tenant_id)
+    if not client:
+        return order
+    has_selection = db.scalar(
+        select(PhotoSelection.id).where(PhotoSelection.tenant_id == tenant_id).where(
+            PhotoSelection.derived_gallery_id == gallery.id,
+            PhotoSelection.client_id == client_id,
+        )
+    )
+    if not has_selection:
+        payment_group_id = order.payment_group_id
+        db.execute(delete(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == order.id))
+        db.delete(order)
+        audit(db, "sale_order.draft_discarded", str(order.id), tenant_id=tenant_id)
+        db.flush()
+        if payment_group_id and not db.scalar(select(SaleOrder.id).where(SaleOrder.tenant_id == tenant_id).where(
+            SaleOrder.payment_group_id == payment_group_id
+        )):
+            db.execute(delete(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id).where(PaymentGroup.id == payment_group_id,
+                                                  PaymentGroup.state == "draft"))
+        return None
+    if order.payment_group_id:
+        # A composição divergente invalida a revisão no report.
+        return order
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
+    if parent and not parent.payment_required:
+        return order
+    try:
+        material = _checkout_material(db, gallery=gallery, client=client,
+                                      resolve_pix=not order.pix_copy_paste_snapshot)
+    except CheckoutError:
+        # O carrinho continua autoritativo e o rascunho divergente deixa de ser
+        # oferecido pela projeção até um novo Prosseguir válido sincronizá-lo.
+        return order
+    _synchronize_order(
+        db, order=order, gallery=gallery, client=client, material=material
+    )
+    audit(db, "sale_order.draft_updated", str(order.id), tenant_id=tenant_id)
+    return order
+
+
+def freeze_pending_checkout(
+    db: Session, *, gallery: DerivedGallery, client: Client, order: SaleOrder
+) -> SaleOrder:
+    """Congela o retrato corrente quando a cliente comunica o pagamento."""
+    tenant_id = client_tenant_id(db, client.id)
+
+    lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
+    order = db.scalar(
+        select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
+        .where(
+            SaleOrder.id == order.id,
+            SaleOrder.derived_gallery_id == gallery.id,
+            SaleOrder.client_id == client.id,
+        )
+        .with_for_update()
+    )
+    if not order or order.assets_removed_at or order.payment_status != "pending":
+        raise CheckoutError("Pedido indisponível para comunicação.")
+    if order.payment_group_id:
+        raise CheckoutError("Informe o pagamento único pela revisão em /library/cart.")
+    if order.frozen_at is not None:
+        return order
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
+    if parent and not parent.payment_required:
+        raise CheckoutError("A revisão mudou. Finalize a seleção sem cobrança pelo carrinho.")
+    material = _checkout_material(db, gallery=gallery, client=client,
+                                  resolve_pix=not order.pix_copy_paste_snapshot)
+    selections = material[0]
+    _synchronize_order(
+        db, order=order, gallery=gallery, client=client, material=material
+    )
+    order.frozen_at = now()
+    db.execute(
+        delete(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
+            PhotoSelection.id.in_([selection.id for selection in selections])
+        )
+    )
+    audit(db, "sale_order.payment_reported_frozen", str(order.id), tenant_id=tenant_id)
+    return order

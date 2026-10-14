@@ -1,0 +1,163 @@
+"""Política comercial única antes de qualquer remoção operacional."""
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.acervo_context import owned_record
+from app.auth import (
+    AuditEvent,
+    Client,
+    DerivedGallery,
+    ParentGallery,
+    PaymentCommunication,
+    PhotoAsset,
+    SaleOrder,
+    SaleOrderItem,
+)
+from app.commercial_history import CommercialHistoryGap, materialize_commercial_history
+from app.historical_media import (
+    HistoricalMediaConflict,
+    prepare_confirmed_historical_media,
+)
+from app.unified_checkout import communications_for_orders
+
+
+class CommercialRemovalBlocked(RuntimeError):
+    """Pagamento comunicado exige decisão administrativa antes da remoção."""
+
+
+class CommercialRemovalPreparationFailed(RuntimeError):
+    """O histórico confirmado ainda não pode sustentar a remoção."""
+
+
+@dataclass
+class CommercialRemovalReport:
+    cancelled_pending_orders: int = 0
+    confirmed_orders: int = 0
+
+
+def commercial_removal_orders_query(
+    *,
+    parent_gallery_id: UUID,
+    tenant_id: UUID,
+    client_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    photo_asset_id: UUID | None = None,
+):
+    """Monta o bloqueio sem ``DISTINCT``, incompatível com FOR UPDATE no PostgreSQL."""
+
+    query = select(SaleOrder).where(
+        SaleOrder.tenant_id == tenant_id,
+        SaleOrder.parent_gallery_id_snapshot == parent_gallery_id
+    )
+    if client_id:
+        query = query.where(SaleOrder.client_id == client_id)
+    if derived_gallery_id:
+        query = query.where(
+            SaleOrder.derived_gallery_id_snapshot == derived_gallery_id
+        )
+    if photo_asset_id:
+        affected_order_ids = select(SaleOrderItem.sale_order_id).where(
+            SaleOrderItem.tenant_id == tenant_id,
+            SaleOrderItem.photo_asset_id_snapshot == photo_asset_id
+        )
+        query = query.where(SaleOrder.id.in_(affected_order_ids))
+    return query.with_for_update()
+
+
+def apply_commercial_removal_policy(
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+    tenant_id: UUID,
+    client_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    photo_asset_id: UUID | None = None,
+    authorize: Callable[[], object] | None = None,
+) -> CommercialRemovalReport:
+    """Bloqueia revisão, cancela pendências e prepara compras confirmadas."""
+
+    if authorize:
+        authorize()
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria indisponível.")
+    for model, resource_id in ((Client, client_id), (DerivedGallery, derived_gallery_id), (PhotoAsset, photo_asset_id)):
+        if resource_id:
+            resource = owned_record(db, model, resource_id, tenant_id=tenant_id)
+            if resource is None or (hasattr(resource, "parent_gallery_id") and resource.parent_gallery_id != parent_gallery_id):
+                raise ValueError("Alvo comercial indisponível.")
+    query = commercial_removal_orders_query(
+        parent_gallery_id=parent_gallery_id,
+        tenant_id=tenant_id,
+        client_id=client_id,
+        derived_gallery_id=derived_gallery_id,
+        photo_asset_id=photo_asset_id,
+    )
+    orders = list(db.scalars(query))
+    grouped_communications = communications_for_orders(db, orders)
+    if any(item.status == "pending_review" for item in grouped_communications.values()):
+        raise CommercialRemovalBlocked(
+            "Há pagamento comunicado aguardando decisão administrativa."
+        )
+    order_ids = [order.id for order in orders]
+    pending_review_order_ids = (
+        set(
+            db.scalars(
+                select(PaymentCommunication.sale_order_id).where(
+                    PaymentCommunication.tenant_id == tenant_id,
+                    PaymentCommunication.sale_order_id.in_(order_ids),
+                    PaymentCommunication.status == "pending_review",
+                )
+            )
+        )
+        if order_ids
+        else set()
+    )
+    if pending_review_order_ids:
+        raise CommercialRemovalBlocked(
+            "Há pagamento comunicado aguardando decisão administrativa."
+        )
+
+    report = CommercialRemovalReport()
+    for order in orders:
+        if order.payment_status == "pending":
+            if order.frozen_at is None and order.checkout_key is not None:
+                # O rascunho acompanha PhotoSelection e não é histórico comercial.
+                continue
+            order.payment_status = "cancelled"
+            report.cancelled_pending_orders += 1
+            db.add(
+                AuditEvent(
+                    event="sale_order.cancelled_for_operational_removal",
+                    tenant_id=tenant_id,
+                    subject=f"order_id:{order.id}",
+                )
+            )
+        elif order.payment_status == "confirmed":
+            report.confirmed_orders += 1
+    if report.confirmed_orders:
+        try:
+            materialize_commercial_history(
+                db,
+                parent_gallery_id=parent_gallery_id,
+                client_id=client_id,
+                photo_asset_id=photo_asset_id,
+            )
+            prepare_confirmed_historical_media(
+                db,
+                tenant_id=tenant_id,
+                authorize=authorize,
+                parent_gallery_id=parent_gallery_id,
+                client_id=client_id,
+                photo_asset_id=photo_asset_id,
+            )
+        except (CommercialHistoryGap, FileNotFoundError, HistoricalMediaConflict) as exc:
+            raise CommercialRemovalPreparationFailed(
+                "O histórico confirmado ainda não está pronto para remoção."
+            ) from exc
+    db.flush()
+    return report

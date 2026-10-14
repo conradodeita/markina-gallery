@@ -3,13 +3,54 @@
 # Projeto Compose exclusivo: markina-gallery (use sempre -p markina-gallery -f docker/docker-compose.yml).
 # Única porta publicada no host: nginx em ${MARKINA_GALLERY_PORT:-8080}.
 # db e redis NUNCA publicam portas; apenas a rede interna markina-gallery_internal.
-# Volumes: markina-gallery_pgdata e markina-gallery_redisdata.
+# Volumes: dados, Redis e mídia são exclusivos do projeto markina-gallery.
 #
 # Uso local:
 #   1) cp .env.example docker/.env   (ajuste valores locais; nunca versionar)
 #   2) docker compose -p markina-gallery -f docker/docker-compose.yml up -d --build
 #   3) curl http://localhost:8080/healthz
 name: markina-gallery
+
+x-facial-environment: &facial-environment
+  FACIAL_PROCESSING_ENABLED: ${FACIAL_PROCESSING_ENABLED:-false}
+  FACIAL_CREDENTIAL_ENV: ${FACIAL_CREDENTIAL_ENV:-development}
+  FACIAL_MODEL_MANIFEST_PATH: ${FACIAL_MODEL_MANIFEST_PATH:-/app/facial-assets/model-manifest.json}
+  FACIAL_MODEL_ROOT: ${FACIAL_MODEL_ROOT:-/opt/markina-face-models}
+  FACIAL_REFERENCE_ROOT: ${FACIAL_REFERENCE_ROOT:-/var/lib/markina/facial-references}
+  FACIAL_REDIS_URL: ${FACIAL_REDIS_URL:-redis://redis:6379/0}
+  FACIAL_MODEL_VERSION: ${FACIAL_MODEL_VERSION:-yunet-2023mar+sface-2021dec}
+  FACIAL_HIGHRES_ENABLED: ${FACIAL_HIGHRES_ENABLED:-false}
+  FACIAL_SOURCE_MAX_FILES: ${FACIAL_SOURCE_MAX_FILES:-64}
+  FACIAL_SOURCE_MAX_BYTES: ${FACIAL_SOURCE_MAX_BYTES:-2000000000}
+  FACIAL_SOURCE_TTL_SECONDS: ${FACIAL_SOURCE_TTL_SECONDS:-86400}
+  FACIAL_DETECTION_CONFIG_JSON: ${FACIAL_DETECTION_CONFIG_JSON:-}
+  FACIAL_AMBIGUOUS_THRESHOLD_MILLI: ${FACIAL_AMBIGUOUS_THRESHOLD_MILLI:-}
+  FACIAL_OVERLAY_AUTO_THRESHOLD: ${FACIAL_OVERLAY_AUTO_THRESHOLD:-4}
+  FACIAL_QUALITY_VERSION: ${FACIAL_QUALITY_VERSION:-opencv-technical-v1}
+  FACIAL_CALIBRATION_VERSION: ${FACIAL_CALIBRATION_VERSION:-}
+  FACIAL_LEGAL_NOTICE_VERSION: ${FACIAL_LEGAL_NOTICE_VERSION:-}
+  FACIAL_CONSENT_VERSION: ${FACIAL_CONSENT_VERSION:-}
+  FACIAL_LEGAL_BASIS_REFERENCE: ${FACIAL_LEGAL_BASIS_REFERENCE:-}
+  FACIAL_RETENTION_POLICY_VERSION: ${FACIAL_RETENTION_POLICY_VERSION:-}
+  FACIAL_MINOR_POLICY_VERSION: ${FACIAL_MINOR_POLICY_VERSION:-}
+  FACIAL_SIMILARITY_THRESHOLD_MILLI: ${FACIAL_SIMILARITY_THRESHOLD_MILLI:-750}
+  FACIAL_AEAD_ACTIVE_KEY_ID: ${FACIAL_AEAD_ACTIVE_KEY_ID:-}
+  FACIAL_AEAD_KEYS_JSON: ${FACIAL_AEAD_KEYS_JSON:-}
+  FACIAL_REFERENCE_RETENTION_SECONDS: ${FACIAL_REFERENCE_RETENTION_SECONDS:-900}
+  FACIAL_CANDIDATE_RETENTION_SECONDS: ${FACIAL_CANDIDATE_RETENTION_SECONDS:-86400}
+  FACIAL_QUEUE_NAME: ${FACIAL_QUEUE_NAME:-markina:facial:jobs}
+  FACIAL_WORKER_CONCURRENCY: ${FACIAL_WORKER_CONCURRENCY:-1}
+  FACIAL_MAX_JOBS_PER_PROCESS: ${FACIAL_MAX_JOBS_PER_PROCESS:-100}
+  FACIAL_MODEL_IDLE_SECONDS: ${FACIAL_MODEL_IDLE_SECONDS:-300}
+  FACIAL_JOB_LEASE_SECONDS: ${FACIAL_JOB_LEASE_SECONDS:-120}
+  FACIAL_QUEUE_BLOCK_SECONDS: ${FACIAL_QUEUE_BLOCK_SECONDS:-10}
+  FACIAL_MAX_REFERENCE_BYTES: ${FACIAL_MAX_REFERENCE_BYTES:-31457280}
+  FACIAL_MAX_REFERENCE_PIXELS: ${FACIAL_MAX_REFERENCE_PIXELS:-25000000}
+  FACIAL_SEARCH_QUEUE_MAX_DEPTH: ${FACIAL_SEARCH_QUEUE_MAX_DEPTH:-500}
+  FACIAL_SEARCH_QUEUE_MAX_AGE_SECONDS: ${FACIAL_SEARCH_QUEUE_MAX_AGE_SECONDS:-300}
+  FACIAL_SEARCH_RETRY_AFTER_SECONDS: ${FACIAL_SEARCH_RETRY_AFTER_SECONDS:-15}
+  MARKINA_PUBLIC_URL: ${MARKINA_PUBLIC_URL:-http://localhost:3000}
+  PUBLIC_APP_ORIGIN: ${PUBLIC_APP_ORIGIN:-}
 
 services:
   nginx:
@@ -28,7 +69,10 @@ services:
       retries: 5
       start_period: 5s
     networks:
-      - internal
+      internal: {}
+      npm:
+        aliases:
+          - markina-homolog-nginx
 
   web:
     build: ../frontend
@@ -47,12 +91,99 @@ services:
     build: ../backend
     expose:
       - "8000"
+    env_file: &whatsapp-bindings-environment
+      - path: ${WHATSAPP_BINDINGS_ENV_FILE:-.env.whatsapp-bindings}
+        required: false
+        format: raw
+    environment:
+      <<: *facial-environment
+      PUBLIC_APP_ORIGINS: ${PUBLIC_APP_ORIGINS:-}
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-markina_session}
+      SESSION_DAYS: ${SESSION_DAYS:-7}
+      AUTH_RATE_LIMIT_WINDOW_MINUTES: ${AUTH_RATE_LIMIT_WINDOW_MINUTES:-15}
+      AUTH_RATE_LIMIT_MAX_REQUESTS: ${AUTH_RATE_LIMIT_MAX_REQUESTS:-5}
+      AUTH_PII_FINGERPRINT_SALT: ${AUTH_PII_FINGERPRINT_SALT:-}
+      GALLERY_CAPABILITY_SIGNING_KEY: ${GALLERY_CAPABILITY_SIGNING_KEY:-}
+      AUTH_OTP_PII_RETENTION_MINUTES: ${AUTH_OTP_PII_RETENTION_MINUTES:-60}
+      COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS: ${COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS:-}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
+      WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      WHATSAPP_OTP_ENCRYPTION_KEY: ${WHATSAPP_OTP_ENCRYPTION_KEY:-}
+      WHATSAPP_PHOTOGRAPHER_PHONE_E164: ${WHATSAPP_PHOTOGRAPHER_PHONE_E164:-}
+      WHATSAPP_MAX_ATTEMPTS: ${WHATSAPP_MAX_ATTEMPTS:-3}
+      WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-10}
+      WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS: ${WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS:-300}
+      WEB_PUSH_ENABLED: ${WEB_PUSH_ENABLED:-false}
+      TRANSACTIONAL_WHATSAPP_ENABLED: ${TRANSACTIONAL_WHATSAPP_ENABLED:-false}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
+      WEB_PUSH_VAPID_SUBJECT: ${WEB_PUSH_VAPID_SUBJECT:-}
+      PUSH_SUBSCRIPTION_ENCRYPTION_KEY: ${PUSH_SUBSCRIPTION_ENCRYPTION_KEY:-}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-sandbox}
+      EMAIL_CREDENTIAL_ENV: ${EMAIL_CREDENTIAL_ENV:-development}
+      EMAIL_PAYLOAD_ENCRYPTION_KEY: ${EMAIL_PAYLOAD_ENCRYPTION_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
+      SMTP_IMPLICIT_TLS: ${SMTP_IMPLICIT_TLS:-false}
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      BRANDING_ASSETS_ROOT: /var/lib/markina/branding
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_HISTORY_ROOT: /var/lib/markina/history
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-Pick-your-Pic • PRÉVIA}
+    volumes:
+      - branding-assets:/var/lib/markina/branding
+      - media-source:/var/lib/markina/source
+      - media-derivatives:/var/lib/markina/derivatives
+      - media-history:/var/lib/markina/history
+      - facial-references:/var/lib/markina/facial-references
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - internal
+
+  migrate:
+    build: ../backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - internal
+
+  seed-admin:
+    build: ../backend
+    command: ["python", "-m", "app.seed_admin"]
+    profiles: ["bootstrap"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      ADMIN_SEED_EMAIL: ${ADMIN_SEED_EMAIL:-}
+      ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:-}
+      ADMIN_SEED_TOTP_SECRET: ${ADMIN_SEED_TOTP_SECRET:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
     networks:
       - internal
 
@@ -85,9 +216,155 @@ services:
     networks:
       - internal
 
+  evolution-api:
+    profiles: ["whatsapp-real"]
+    image: evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      SERVER_NAME: markina-evolution
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      SERVER_URL: http://evolution-api:8080
+      DEL_INSTANCE: "false"
+      AUTHENTICATION_API_KEY: ${WHATSAPP_API_KEY:-}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "false"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_POSTGRES_USER:-markina_evolution}:${EVOLUTION_POSTGRES_PASSWORD:-}@evolution-db:5432/${EVOLUTION_POSTGRES_DB:-markina_evolution}?schema=evolution_api
+      DATABASE_CONNECTION_CLIENT_NAME: markina_gallery_evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      DATABASE_DELETE_MESSAGE: "true"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/0
+      CACHE_REDIS_PREFIX_KEY: markina_evolution
+      CACHE_REDIS_SAVE_INSTANCES: "true"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPDATE: "true"
+      WEBHOOK_EVENTS_SEND_MESSAGE_UPDATE: "true"
+      WEBHOOK_EVENTS_CONNECTION_UPDATE: "true"
+      TELEMETRY_ENABLED: "false"
+      LOG_LEVEL: ERROR,WARN
+      LOG_COLOR: "false"
+      QRCODE_LIMIT: 10
+    volumes:
+      - evolution-instances:/evolution/instances
+    depends_on:
+      evolution-db:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 0.75
+    networks:
+      - internal
+
+  evolution-db:
+    profiles: ["whatsapp-real"]
+    image: postgres:15-alpine@sha256:fe0737ba566a2c5b2a28f34433c0a423261900ec17b9bf7ad115e1aae7e57f1b
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${EVOLUTION_POSTGRES_USER:-markina_evolution}
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${EVOLUTION_POSTGRES_DB:-markina_evolution}
+    command: ["postgres", "-c", "max_connections=100", "-c", "listen_addresses=*"]
+    volumes:
+      - evolution-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EVOLUTION_POSTGRES_USER:-markina_evolution} -d ${EVOLUTION_POSTGRES_DB:-markina_evolution}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    cpus: 0.50
+    networks:
+      - internal
+
+  evolution-redis:
+    profiles: ["whatsapp-real"]
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - evolution-redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - internal
+
   worker:
     build: ../backend
     command: ["python", "-m", "app.worker"]
+    env_file: *whatsapp-bindings-environment
+    environment:
+      <<: *facial-environment
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      AUTH_PII_FINGERPRINT_SALT: ${AUTH_PII_FINGERPRINT_SALT:-}
+      AUTH_OTP_PII_RETENTION_MINUTES: ${AUTH_OTP_PII_RETENTION_MINUTES:-60}
+      AUTH_OTP_CLEANUP_INTERVAL_SECONDS: ${AUTH_OTP_CLEANUP_INTERVAL_SECONDS:-60}
+      COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS: ${COMMERCIAL_HISTORY_MEDIA_RETENTION_DAYS:-}
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      MEDIA_HISTORY_ROOT: /var/lib/markina/history
+      MEDIA_WATERMARK_TEXT: ${MEDIA_WATERMARK_TEXT:-Pick-your-Pic • PRÉVIA}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
+      WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      WHATSAPP_OTP_ENCRYPTION_KEY: ${WHATSAPP_OTP_ENCRYPTION_KEY:-}
+      WHATSAPP_PHOTOGRAPHER_PHONE_E164: ${WHATSAPP_PHOTOGRAPHER_PHONE_E164:-}
+      WHATSAPP_MAX_ATTEMPTS: ${WHATSAPP_MAX_ATTEMPTS:-3}
+      WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-10}
+      WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS: ${WHATSAPP_AMBIGUOUS_RETRY_AFTER_SECONDS:-300}
+      WEB_PUSH_ENABLED: ${WEB_PUSH_ENABLED:-false}
+      TRANSACTIONAL_WHATSAPP_ENABLED: ${TRANSACTIONAL_WHATSAPP_ENABLED:-false}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
+      WEB_PUSH_VAPID_SUBJECT: ${WEB_PUSH_VAPID_SUBJECT:-}
+      PUSH_SUBSCRIPTION_ENCRYPTION_KEY: ${PUSH_SUBSCRIPTION_ENCRYPTION_KEY:-}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-sandbox}
+      EMAIL_CREDENTIAL_ENV: ${EMAIL_CREDENTIAL_ENV:-development}
+      EMAIL_PAYLOAD_ENCRYPTION_KEY: ${EMAIL_PAYLOAD_ENCRYPTION_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
+      SMTP_IMPLICIT_TLS: ${SMTP_IMPLICIT_TLS:-false}
+      EMAIL_MAX_ATTEMPTS: ${EMAIL_MAX_ATTEMPTS:-3}
+      EMAIL_RETRY_BASE_SECONDS: ${EMAIL_RETRY_BASE_SECONDS:-2}
+      EMAIL_PROCESSING_TIMEOUT_SECONDS: ${EMAIL_PROCESSING_TIMEOUT_SECONDS:-120}
+      ADMIN_SECURITY_CLEANUP_INTERVAL_SECONDS: ${ADMIN_SECURITY_CLEANUP_INTERVAL_SECONDS:-60}
+    volumes:
+      - media-source:/var/lib/markina/source
+      - media-derivatives:/var/lib/markina/derivatives
+      - media-history:/var/lib/markina/history
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f \"app.worker\" >/dev/null || exit 1"]
       interval: 15s
@@ -97,10 +374,165 @@ services:
     networks:
       - internal
 
+  face-search-worker:
+    profiles: ["facial"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.face
+    command: ["python", "-m", "app.facial.search_worker_entrypoint"]
+    restart: unless-stopped
+    env_file: *whatsapp-bindings-environment
+    environment:
+      <<: *facial-environment
+      APP_ENV: ${APP_ENV:-development}
+      FACIAL_WORKER_CLASS: search
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-sandbox}
+      WHATSAPP_CREDENTIAL_ENV: ${WHATSAPP_CREDENTIAL_ENV:-development}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_INSTANCE: ${WHATSAPP_INSTANCE:-}
+      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+    volumes:
+      - media-derivatives:/var/lib/markina/derivatives:ro
+      - facial-references:/var/lib/markina/facial-references
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.facial.search_worker_entrypoint' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: ${FACIAL_SEARCH_WORKER_MEMORY_LIMIT:-512m}
+    cpus: ${FACIAL_SEARCH_WORKER_CPU_LIMIT:-0.75}
+    networks:
+      - internal
+
+  face-index-worker:
+    profiles: ["facial"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.face
+    command: ["python", "-m", "app.facial.index_worker_entrypoint"]
+    restart: unless-stopped
+    environment:
+      <<: *facial-environment
+      APP_ENV: ${APP_ENV:-development}
+      FACIAL_WORKER_CLASS: index
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+    volumes:
+      - media-derivatives:/var/lib/markina/derivatives:ro
+      - media-source:/var/lib/markina/source:ro
+      - facial-references:/var/lib/markina/facial-references
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.facial.index_worker_entrypoint' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: ${FACIAL_INDEX_WORKER_MEMORY_LIMIT:-768m}
+    cpus: ${FACIAL_INDEX_WORKER_CPU_LIMIT:-1.0}
+    networks:
+      - internal
+
+  face-gemma-index-worker:
+    profiles: ["facial-gemma"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.gemma
+    command: ["python", "-m", "app.facial.face_worker"]
+    restart: unless-stopped
+    environment:
+      <<: *facial-environment
+      APP_ENV: ${APP_ENV:-development}
+      FACIAL_WORKER_CLASS: gemma
+      FACIAL_JOB_LEASE_SECONDS: ${FACIAL_GEMMA_JOB_LEASE_SECONDS:-900}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      FACIAL_GEMMA_MODEL_PATH: /opt/markina-embeddinggemma-2
+      MEDIA_SOURCE_ROOT: /var/lib/markina/source
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+    volumes:
+      - media-derivatives:/var/lib/markina/derivatives:ro
+      - media-source:/var/lib/markina/source:ro
+      - facial-references:/var/lib/markina/facial-references
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.facial.face_worker' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    mem_limit: ${FACIAL_GEMMA_WORKER_MEMORY_LIMIT:-6g}
+    cpus: ${FACIAL_GEMMA_WORKER_CPU_LIMIT:-1.0}
+    networks:
+      - internal
+
+  face-maintenance-worker:
+    profiles: ["facial"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.face
+    command: ["python", "-m", "app.facial.maintenance_worker_entrypoint"]
+    restart: unless-stopped
+    environment:
+      <<: *facial-environment
+      APP_ENV: ${APP_ENV:-development}
+      FACIAL_WORKER_CLASS: maintenance
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
+      MEDIA_DERIVATIVES_ROOT: /var/lib/markina/derivatives
+    volumes:
+      - facial-references:/var/lib/markina/facial-references
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.facial.maintenance_worker_entrypoint' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    mem_limit: ${FACIAL_MAINTENANCE_WORKER_MEMORY_LIMIT:-256m}
+    cpus: ${FACIAL_MAINTENANCE_WORKER_CPU_LIMIT:-0.25}
+    networks:
+      - internal
+
 volumes:
+  branding-assets:
   pgdata:
   redisdata:
+  media-source:
+  media-derivatives:
+  media-history:
+  facial-references:
+  evolution-instances:
+  evolution-pgdata:
+  evolution-redisdata:
 
 networks:
   internal:
     driver: bridge
+  npm:
+    name: npm-network
+    external: true

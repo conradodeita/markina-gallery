@@ -1,12 +1,26 @@
-# Markina Gallery — Roadmap Arquitetural
+> **Decisão substitutiva — `simplify-gallery-access-modes`:** oferecer somente Padrão (link válido + OTP permite vínculo) e Somente convite individual (vínculo prévio ou convite autorizado). Ambos mostram pastas comuns e exclusivas atribuídas; `collective_protected` permanece somente como legado bloqueado, sem conversão automática nem promoção de vínculos pendentes. Na etapa 2, Pagamento obrigatório exige preços positivos. Desmarcado, a cliente finaliza seleção sem cobrança/PIX, sem preços ou totais, com snapshot individual, exportação e entrega posterior em Compras; isso não confirma pagamento nem registra receita. A mensagem comercial aparece por galeria na revisão. Gates faciais e de privacidade permanecem independentes e obrigatórios.
+
+> **Decisão do proprietário em 24/09/2026 — `client-gallery-covers-and-payment-review`:** retirar o botão de feedback “Não é esta pessoa” da interface cliente. Esta decisão substitui a exigência visual anterior; endpoints, evidências históricas e proibição de treinamento automático permanecem. Cards de galerias/pastas passam a ter prévias clicáveis e recusa financeira pode voltar à revisão pela correção auditada e silenciosa existente.
+
+> **Decisão substitutiva aprovada em 21/09/2026 — `simplify-mobile-gallery-face-search`:** para novas buscas, toque em região indexada inicia diretamente sem diálogo/aceite ou declaração de idade; upload continua exigindo consentimento específico. Upload infantil exige somente o checkbox único com autodeclaração de responsável e consentimento versionado, sem registro prévio ou prova administrativa de representação. Regras anteriores de representação obrigatória e dois checkboxes ficam substituídas exclusivamente nesse escopo; evidências/controles históricos permanecem. Nome/seleção ficam abaixo das miniaturas; navegação ampliada sempre visível em barra externa abaixo da fotografia, nunca sobreposta. Demais controles de acesso, retenção, revogação e operação permanecem. Contrato completo: `openspec/changes/simplify-mobile-gallery-face-search/`.
+
+> **Entrega por pedido aprovada — `add-order-google-photos-delivery`:** o campo Google Photos substitui o histórico visual de mensagens. Enviar exige pagamento confirmado, disponibiliza botão verde “Fotos disponíveis” em Compras e agenda o sétimo evento configurável na central de Notificações. Sem entrega elegível, botão cinza “Fotos indisponíveis”. Reenviar aviso é explícito e deduplicado. Correção financeira preserva o link, suspende exposição e invalida avisos antigos; reconfirmação restaura disponibilidade sem aviso automático de entrega. Esta decisão substitui os cartões vermelho/amarelo e o disparo de entrega não configurável previstos abaixo. Filas técnicas e auditoria permanecem, sem backup paralelo do histórico visual.
+
+# Pick-your-Pic — Roadmap Arquitetural
+
+> **Decisão de galeria única — `unify-gallery-client-collections`:** a Galeria pública autenticada é a única galeria operacional. Cada pasta é comum ou atribuída a uma ou mais clientes; “Coleção” reúne somente as pastas comuns e atribuídas à pessoa autenticada. Seleções, compras, prazo e histórico permanecem por galeria + cliente. “Minha galeria” deixa de ser uma tela e links antigos redirecionam após autorização. A limpeza dos dados de teste é exclusiva de homologação, com preservação de admin, 2FA, Evolution e configurações globais. Cláusulas históricas de derivação abaixo ficam substituídas nesse escopo.
+
+> Direção detalhada de interface e UX: [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md).
 
 Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a especificação de implementação para o executor.
 
 ## Princípios do produto
 
 - Experiência mobile-first, com poucos passos para o responsável selecionar e comprar fotos.
-- Painel administrativo robusto, porém direto para um único fotógrafo no MVP.
-- Galerias privadas organizadas previamente no DigiKam e eventos coletivos protegidos por busca facial privada.
+- Painel administrativo robusto, porém direto para um único fotógrafo no MVP. Transição aprovada em 30/09/2026 na change `add-small-multi-photographer-pilot`: preparar e implementar localmente fotógrafos independentes, com clientes/telefones próprios da conta e permissão técnica separada para o dono da instalação. Substituição condicionada à fundação anterior validada, isolamento completo, preservação do legado e testes de engenharia; a instalação publicada continua de conta única até liberação autorizada. O ensaio pequeno ocorrerá assim que houver prontidão, sem ativação antecipada nem autorização implícita de deploy/canais/biometria.
+- O produto tem duas áreas — administração do fotógrafo e portal do cliente — com comportamento de CMS apenas para conteúdo estruturado de galerias, não para construção livre de websites.
+- Personalização visual controlada: cor da galeria, tipografia do nome, capa e templates suportados de organização; sem construtor de páginas ou múltiplos templates de website.
+- Pastas restritas organizadas pelo fotógrafo dentro da galeria autenticada; busca facial limitada às fotos já autorizadas à cliente.
 - Fotos exibidas são JPEGs exportados após o culling; RAW e edição final ficam fora do sistema.
 - Google Photos é o canal de entrega final criado manualmente pelo fotógrafo; o sistema controla o link e a comunicação.
 
@@ -59,8 +73,10 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 
 ## Fase 3 — Galerias e vendas
 
-- Galeria privada: importação DigiKam de fotos já separadas pelo fotógrafo, com vários responsáveis autorizados quando necessário.
-- Evento coletivo: acervo inteiro visível somente ao fotógrafo; clientes recebem somente resultado privado aprovado.
+- Pasta restrita: JPEGs já separados pelo fotógrafo, criada no card de uma cliente e atribuível a outras responsáveis autorizadas sem cópia.
+- Galeria pública é uma denominação de produto, não acesso anônimo: nenhuma prévia fotográfica é entregue antes do OTP, e o backend oferece `standard` e `invite_only`; `collective_protected` permanece apenas como legado bloqueado, sem conversão automática.
+- A galeria única fornece configuração efetiva a pastas comuns e restritas; fotos disponíveis e seleções comerciais continuam sendo estados distintos por cliente.
+- Evento coletivo: nenhuma grade é anônima; clientes autenticados e vinculados podem visualizar somente a Galeria pública autorizada, enquanto qualquer ampliação de acesso por reconhecimento exige resultado privado aprovado.
 - Cliente pode navegar, ampliar, favoritar e montar carrinho; identificação obrigatória na primeira intenção de compra.
 - Carrinho persistente por cliente e galeria; histórico de acessos, favoritos, remoções e abandono.
 - Preço por faixas dinâmicas: a faixa da quantidade será aplicada ao pedido inteiro, com simulador no painel e aviso de saltos de preço.
@@ -87,9 +103,15 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Arquivamento restaura fotos do Google Drive somente quando o fotógrafo reativar o evento.
 - Importação retomável e idempotente: hash por arquivo, fila, progresso, relatório de duplicados/falhas e retentativas.
 - Proteção de prévias: limite de resolução, remoção de EXIF/GPS, marca d’água configurável, grade diagonal, linhas configuráveis, marca individual dinâmica e aviso de direitos autorais.
+- Exceção de capa aprovada: capa vigente sem marca-d’água/grade, mantendo título, autenticação, autorização, prévia limitada e remoção de metadados; fotos de conteúdo permanecem protegidas. Novas capas devem ser horizontais após EXIF, sem recorte automático; capas antigas são preservadas até substituição.
 - Declarar na interface que a proteção desencoraja cópia, mas não impede capturas de tela de forma absoluta.
+- Ajuste automático opcional das prévias: módulo independente, desligado por padrão, motor substituível e resultados separados. Aplicar proteção depois do ajuste; preservar originais, prévias convencionais e análise facial. Desligamento retorna à prévia convencional na próxima requisição; prever higienização exclusiva conforme `add-optional-preview-auto-adjustment`. Edição final continua externa.
 
 ## Fase 6 — WhatsApp e comunicação
+
+- Evolução aprovada em `configurable-push-and-whatsapp-notifications`: central `/admin/notifications` com seis eventos e dois canais independentes (WhatsApp/push); substitui inbox read/unread e editor de pagamentos em Configurações. Histórico e auditoria permanecem.
+- Avisos ao fotógrafo: primeiro acesso e primeira seleção por cliente/galeria canônica; pagamento informado. Avisos ao cliente: novas prévias de pasta restrita prontas somente para destinatárias efetivas; pagamento confirmado ou recusado. Correções financeiras são silenciosas; falha de transporte não desfaz o negócio.
+- Web Push exige adesão explícita por dispositivo, inscrição cifrada, VAPID externo, destino interno autenticado e worker sem cache privado. Lotes, marcos e entregas são duráveis/idempotentes; ligar canais não reproduz histórico. Operação real depende de configuração e aceite de homologação, não apenas dos testes locais.
 
 - Mensagens configuráveis para OTP, convite, pagamento, edição, entrega, carrinho abandonado e expiração.
 - Separar mensagens transacionais de lembretes comerciais e registrar opt-out destes últimos.
@@ -99,14 +121,19 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 ## Fase 7 — Busca facial protegida (piloto antes de produção)
 
 - Importar apenas fotos aprovadas no culling.
-- Indexar rostos em fila após importação; limitar toda busca a um único evento.
-- Fluxo: responsável valida telefone, aceita termo específico, envia referência, fica pendente, fotógrafo revisa e ativa acesso por convite individual.
-- Nenhuma grade pública de fotos escolares; o responsável só vê resultado privado aprovado.
+- Quando o subsistema estiver operacionalmente habilitado, garantir automaticamente a política técnica interna e indexar rostos e qualidade explicável em fila depois que as prévias limpa e protegida estiverem prontas; o fotógrafo não prepara nem ativa política por galeria, e a disponibilidade da foto e a seleção manual não aguardam o processamento facial.
+- Executar indexação somente por evento persistido de foto/derivado novo, mudança versionada, backfill ou retentativa. Não manter varredura recorrente da galeria; worker ocioso aguarda a fila sem consumo ativo de CPU e pode descarregar modelos da memória.
+- Limitar toda busca a uma única Galeria pública já autorizada por link opaco, telefone/OTP e vínculo persistido. `Pública` é denominação de produto para acervo de interesse de várias pessoas, não acesso anônimo nem autorização por posse do URL.
+- Fluxo: responsável já autorizado aceita em checkbox o consentimento específico para uso temporário da referência, envia uma foto com um rosto e acompanha um job durável. Fechar ou atualizar a tela não cancela a busca; progresso real e conclusão ficam disponíveis para retomada e notificação transacional neutra.
+- Comparar somente com embeddings do snapshot daquela galeria. Resultados apenas reordenam fotos que a cliente já pode visualizar e aparecem na mesma Galeria pública, sem criar permissão, seleção ou galeria privada.
+- Ranqueamento técnico avalia o rosto que correspondeu à referência, não o maior rosto ou a foto inteira. Nitidez local, corte, tamanho/proeminência e pose separam `Melhores resultados encontrados` de `Outros resultados encontrados`; nenhuma foto é excluída ou ocultada automaticamente e nenhum atributo pessoal ou estético é inferido.
+- A primeira seleção consciente, manual ou a partir do resultado, cria ou reutiliza somente o estado comercial individual de `Galeria pública + cliente`; a busca isolada não cria entidade comercial.
+- Nenhuma grade anônima de fotos escolares e nenhuma busca entre eventos. Revisão do fotógrafo permanece obrigatória se um desenho futuro pretender liberar conteúdo antes invisível ou ampliar o escopo autorizado.
 - Feedback “não é esta pessoa” remove resultado e cria tarefa silenciosa para o fotógrafo; não treinar o modelo automaticamente sem revisão humana.
 - Incluir foto/excluir foto da indexação em massa antes da liberação do evento.
-- Registrar consentimento versionado, busca, revogação, exclusão e operação administrativa.
+- Registrar consentimento versionado da cliente, busca, revogação, exclusão e operação administrativa; cada login OTP continua auditado. Na change `configurable-push-and-whatsapp-notifications`, somente o primeiro acesso autorizado por cliente/galeria canônica produz aviso externo, sem transportar OTP e sem replay de vínculos históricos.
 - Apagar foto de referência e embedding temporário conforme retenção configurada; oferecer exclusão de dados biométricos.
-- Validar desempenho, licença comercial, compatibilidade ARM e precisão com um piloto anonimizado de 500–1.000 JPEGs antes de ativar em clientes reais.
+- Validar desempenho, licença comercial, compatibilidade ARM, precisão facial e qualidade técnica com 500–1.000 JPEGs em homologação privada. O lote pode ser sintético ou conter dados reais de adultos e menores quando for enviado pelo administrador/fotógrafo e possuir autorização explícita por execução, origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Essa medição não autoriza produção; OFIQ ou qualquer modelo adicional exige validação separada de código, pesos e dependências.
 
 ## Fase 8 — Privacidade, observabilidade e métricas
 

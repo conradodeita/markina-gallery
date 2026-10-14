@@ -1,0 +1,164 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import { GalleryPresentation } from "./gallery-presentation";
+
+const folders = [
+  { id: "opening", name: "Abertura", photos: [
+    { id: "landscape", name: "Horizontal.jpg", previewUrl: "/horizontal.jpg", width: 1600, height: 900 },
+    { id: "portrait", name: "Vertical.jpg", previewUrl: "/vertical.jpg", width: 800, height: 1200 },
+  ] },
+  { id: "closing", name: "Encerramento", photos: [
+    { id: "fallback", name: "Sem dimensões.jpg", previewUrl: "/fallback.jpg" },
+  ] },
+];
+
+describe("apresentação editorial compartilhada", () => {
+  it("exibe a capa limpa com título sem retirar proteção das fotos comuns", () => {
+    render(<GalleryPresentation galleryName="Evento" coverUrl="/cover-preview" folders={folders.slice(0, 1)} titleStyle={{ fontSize:74, color:"#ffcc00" }} />);
+    const cover = screen.getByRole("img", { name:"Capa de Evento" });
+    expect(cover.closest(".gallery-protected-media")).toBeNull();
+    expect(fireEvent.contextMenu(cover)).toBe(true);
+    expect(screen.getByRole("img", { name:"Prévia protegida de Horizontal.jpg" }).closest(".gallery-protected-media")).toBeTruthy();
+    expect(document.querySelector(".gallery-presentation-title")?.getAttribute("style")).toContain("4cqi");
+  });
+  it("permite omitir o hero sem alterar o padrão editorial", () => {
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} showHero={false} />);
+    expect(screen.queryByText("Capa ainda não definida")).toBeNull();
+    expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeTruthy();
+
+    rerender(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
+    expect(screen.getByText("Capa ainda não definida")).toBeTruthy();
+  });
+
+  it("adia a grade quando solicitado sem adiar capa ou ampliação nem mudar o padrão administrativo", () => {
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" coverUrl="/cover-preview" folders={folders.slice(0, 1)} deferGridImages />);
+    const card = screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" });
+    expect(card.getAttribute("loading")).toBe("lazy");
+    expect(card.getAttribute("decoding")).toBe("async");
+    expect(screen.getByRole("img", { name: "Capa de Evento" }).getAttribute("loading")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    expect(screen.getByRole("img", { name: "Prévia protegida ampliada de Horizontal.jpg" }).getAttribute("loading")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+
+    rerender(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
+    expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" }).getAttribute("loading")).toBeNull();
+  });
+
+  it("mantém ordem DOM, proporção e todas as pastas no modo sequencial", () => {
+    render(<GalleryPresentation galleryName="Evento" folders={folders} folderDisplayMode="sequential" />);
+    expect(screen.getByRole("heading", { name: "Abertura" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Encerramento" })).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "Pastas da galeria" })).toBeNull();
+
+    const images = screen.getAllByRole("img").filter((image) => image.getAttribute("alt")?.startsWith("Prévia protegida de"));
+    expect(images.map((image) => image.getAttribute("alt"))).toEqual([
+      "Prévia protegida de Horizontal.jpg",
+      "Prévia protegida de Vertical.jpg",
+      "Prévia protegida de Sem dimensões.jpg",
+    ]);
+    expect(images[0].closest("article")?.getAttribute("style")).toContain("--photo-aspect: 1600 / 900");
+    expect(images[0].closest("article")?.getAttribute("style")).toContain("--photo-span: 2");
+    expect(images[2].closest("article")?.getAttribute("style")).toContain("--photo-aspect: 4 / 3");
+  });
+
+  it("troca uma coleção por vez no modo individual", () => {
+    render(<GalleryPresentation galleryName="Evento" folders={folders} folderDisplayMode="individual" />);
+    expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Prévia protegida de Sem dimensões.jpg" })).toBeNull();
+    const folderCover = screen.getByRole("img", { name: "Capa de Encerramento" });
+    expect(folderCover.getAttribute("src")).toBe("/fallback.jpg");
+    expect(fireEvent.contextMenu(folderCover)).toBe(false);
+    fireEvent.click(folderCover);
+    expect(screen.getByRole("button", { name: /Encerramento/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("img", { name: "Prévia protegida de Sem dimensões.jpg" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeNull();
+    fireEvent.error(folderCover);
+    fireEvent.click(screen.getByRole("button", { name: /Abertura/ }));
+    expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" })).toBeTruthy();
+  });
+
+  it("separa ampliar dos marcadores da cliente e não cria ações no modo fotógrafo", () => {
+    const onSelect = vi.fn();
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} renderPhotoMarkers={(photo) => <button onClick={() => onSelect(photo.id)}>Selecionar {photo.name}</button>} />);
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar Horizontal.jpg" }));
+    expect(onSelect).toHaveBeenCalledWith("landscape");
+    const selection = screen.getByRole("button", { name: "Selecionar Horizontal.jpg" });
+    expect(selection.closest(".gallery-presentation-photo-frame")).toBeNull();
+    expect(selection.closest(".gallery-presentation-photo-caption")?.textContent).toContain("Horizontal.jpg");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    expect(screen.getByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Anterior" }).closest(".gallery-presentation-dialog-body")).toBeNull();
+    expect(screen.getByRole("button", { name: "Próxima" }).closest(".gallery-presentation-dialog-actions")).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+    expect(screen.getByRole("dialog", { name: "Prévia ampliada de Vertical.jpg" })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    rerender(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} modeLabel={<strong>Modo fotógrafo</strong>} />);
+    expect(screen.queryByRole("button", { name: /Selecionar Horizontal/ })).toBeNull();
+  });
+
+  it("mantém conteúdo contextual sob a mídia e notifica a troca da foto ampliada", () => {
+    const onExpandedPhotoChange = vi.fn();
+    render(
+      <GalleryPresentation
+        galleryName="Evento"
+        folders={folders.slice(0, 1)}
+        onExpandedPhotoChange={onExpandedPhotoChange}
+        renderExpandedPhotoContent={(photo) => <section aria-label={`Painel de ${photo.name}`}>Conteúdo de {photo.name}</section>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    const dialog = screen.getByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" });
+    const media = screen.getByRole("img", { name: "Prévia protegida ampliada de Horizontal.jpg" }).closest(".gallery-presentation-dialog-media")!;
+    const context = screen.getByRole("region", { name: "Painel de Horizontal.jpg" }).closest(".gallery-presentation-dialog-context")!;
+    expect(media.compareDocumentPosition(context) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(onExpandedPhotoChange).toHaveBeenLastCalledWith(folders[0].photos[0]);
+
+    fireEvent.keyDown(dialog, { key: "ArrowRight" });
+    expect(screen.getByRole("region", { name: "Painel de Vertical.jpg" })).toBeTruthy();
+    expect(onExpandedPhotoChange).toHaveBeenLastCalledWith(folders[0].photos[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(onExpandedPhotoChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("explica a limitação de screenshot e bloqueia cópia direta", () => {
+    render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
+    fireEvent.keyUp(window, { key: "PrintScreen" });
+    expect(screen.getByText(/não consegue impedir screenshots/)).toBeTruthy();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    expect(screen.getByText(/menu de contexto/)).toBeTruthy();
+  });
+
+  it("abre aviso autoral acessível somente quando habilitado para a cliente", () => {
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} showCopyrightProtectionDialog />);
+    const preview = screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" });
+
+    fireEvent.contextMenu(preview);
+    const warning = screen.getByRole("dialog", { name: "Conteúdo protegido por direitos autorais" });
+    expect(warning.textContent).toContain("Lei nº 9.610/98");
+    expect(warning.textContent).toContain("artigo 79");
+    expect(warning.textContent).toContain("não copie ou compartilhe");
+    expect(document.activeElement).toBe(warning);
+    fireEvent.keyDown(warning, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeNull();
+
+    fireEvent.click(preview);
+    expect(screen.getByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" })).toBeTruthy();
+    fireEvent.contextMenu(screen.getByRole("img", { name: "Prévia protegida ampliada de Horizontal.jpg" }));
+    expect(screen.queryByRole("dialog", { name: "Prévia ampliada de Horizontal.jpg" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Entendi" }));
+
+    expect(fireEvent.keyDown(window, { key: "s", ctrlKey: true })).toBe(false);
+    expect(screen.getByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Entendi" }));
+
+    rerender(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} modeLabel={<strong>Modo fotógrafo</strong>} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    expect(screen.queryByRole("dialog", { name: "Conteúdo protegido por direitos autorais" })).toBeNull();
+  });
+});

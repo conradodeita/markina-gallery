@@ -5,14 +5,21 @@ context: |
   All artifacts must be written in pt.
   Keep OpenSpec structural headings and SHALL/MUST keywords in English.
 
-  # Markina Gallery — contexto do projeto
-  Marca: produto = Markina Gallery (alinhado à marca Markina Photographer); repositório, projeto Docker Compose e prefixos (containers, redes, volumes, serviços) = markina-gallery; o change-id bootstrap-photocrm-foundation permanece como identificador de auditoria.
+  # Pick-your-Pic — contexto do projeto
+  Marca: produto = Pick-your-Pic (rebrand aprovado em 2026-09-13); repositório, projeto Docker Compose e prefixos (containers, redes, volumes, serviços) = markina-gallery; o change-id bootstrap-photocrm-foundation permanece como identificador de auditoria.
   Produto: plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos.
   Mandato: INSTRUCOES_EXECUTOR_CLAUDE_CODE.md (fonte operacional) e ROADMAP_ARQUITETURA.md (decisões de segurança e privacidade obrigatórias).
   Stack: Next.js (App Router, TypeScript, Tailwind), FastAPI (SQLAlchemy 2, Alembic, Pydantic), PostgreSQL, Redis + worker de filas, Nginx, Docker Compose, Google Drive (cópia/arquivo frio/backups), adaptadores WhatsApp (Evolution API inicial), e-mail SMTP e pagamentos (PIX manual; Infinity Pay pós-MVP).
-  Convenções: UUIDs públicos, UTC no banco, valores monetários em centavos inteiros; segredos nunca no Git, frontend ou tabelas comuns; Conventional Commits; branches main (protegida), develop e feature/*.
-  Restrições: sem grade pública de evento coletivo, sem RAWs, sem servir prévias do Google Drive, sem automatizar criação de álbuns no Google Photos; busca facial apenas após spike validado; dados reais de crianças nunca em homologação; deploy zero-impact: esta máquina e o servidor Oracle executam outros projetos — nunca alterar containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de terceiros, nunca usar prunes ou `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`, e apresentar inventário + portas/subdomínio + plano de impacto zero para aprovação explícita antes de qualquer ação em homologação/produção.
+  Convenções: UUIDs públicos, UTC no banco, valores monetários em centavos inteiros; segredos nunca no Git, frontend ou tabelas comuns; Conventional Commits; branches main (protegida por convenção via PR com CI verde e revisão — plano gratuito do GitHub sem enforcement técnico em repos privados), develop e feature/*.
+  Restrições: sem grade pública de evento coletivo, sem RAWs, sem servir prévias do Google Drive, sem automatizar criação de álbuns no Google Photos; busca facial apenas após spike validado; homologação privada pode usar dados reais de adultos e menores somente em lote enviado pelo administrador/fotógrafo e vinculado a autorização humana explícita por execução, origem/finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada, sem autorizar produção ou o fluxo infantil comum; deploy zero-impact: esta máquina e o servidor Oracle executam outros projetos — nunca alterar containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de terceiros, nunca usar prunes ou `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`, e apresentar inventário + portas/subdomínio + plano de impacto zero para aprovação explícita antes de qualquer ação em homologação/produção.
   Domínios: auth, client-access, gallery-sales, media-storage, messaging, privacy-biometric, deployment-operations.
+
+  Transição aprovada pelo proprietário em 30/09/2026 — add-small-multi-photographer-pilot: preparação e implementação local de fotógrafos independentes, com cadastro e telefone próprios da conta e diagnóstico agregado exclusivo de operador autorizado. Substitui a limitação de fotógrafo único somente após validação da fundação anterior, isolamento completo, preservação do legado e prontidão registrada; não descreve comportamento já publicado. Ensaio pequeno futuro assim que houver prontidão. Deploy, provisionamento remoto, canais reais e biometria permanecem sujeitos a autorização operacional explícita.
+
+  Decisão simplify-gallery-access-modes: somente standard e invite_only na operação; collective_protected permanece legado bloqueado sem conversão. Pagamento obrigatório configurável, padrão verdadeiro; seleção externa finalizada sem PIX/receita e com valores ocultos para cliente, exportação e entrega; mensagem comercial na revisão por galeria.
+
+  # Continuidade entre executores
+  Todo executor (humano ou qualquer IA) SHALL documentar o trabalho no OpenSpec. Antes de agir, deve ler o mandato, o roadmap, as diretrizes relevantes, as specs principais e as mudanças ativas. Toda nova funcionalidade ou alteração de comportamento SHALL ter change-id próprio com proposal, delta spec, design quando houver decisão técnica e tasks verificáveis antes do código. Durante a implementação, o executor SHALL manter tasks, testes e documentação sincronizados, registrar desvios e decisões, e nunca deixar comportamento implementado sem spec correspondente. Ao concluir, deve validar, sincronizar a spec principal e arquivar a mudança somente após revisão humana. Se não puder executar uma etapa, deve registrar o bloqueio no artefato e não inventar que ela foi concluída. O próximo executor deve conseguir continuar apenas lendo o repositório, sem depender do contexto de uma conversa anterior.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
@@ -25,6 +32,12 @@ context: |
 #       - Break tasks into chunks of max 2 hours
 
 # Per-operation guidance (optional)
+operations:
+  apply:
+    guidance:
+      - Continue por todas as tasks acionáveis; um bloqueio individual não bloqueia a change.
+      - Investigue e tente corrigir falhas técnicas antes de escalar.
+      - Relatório de progresso não é condição de parada; pare somente quando não houver trabalho acionável seguro.
 # Add advisory guidance for how apply and archive work should be conducted.
 # This is separate from artifact rules above.
 # Example:

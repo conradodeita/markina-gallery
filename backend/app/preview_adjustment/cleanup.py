@@ -1,0 +1,100 @@
+"""Inventário e limpeza exclusiva. Execute com módulo desligado e worker parado."""
+
+import argparse
+import json
+from uuid import UUID
+
+from sqlalchemy import delete, func, select
+
+from app.auth import (
+    FolderProcessingSettings,
+    GalleryPreviewSettings,
+    PhotoFolder,
+    PreviewAdjustment,
+    SessionLocal,
+)
+from app.media import derivatives_root
+from app.preview_adjustment.service import result_path
+from app.tenancy import require_single_tenant
+
+
+def photo_files(photo_id: UUID, *, tenant_id: UUID):
+    files = []
+    for legacy in (False, True):
+        directory = result_path(photo_id, str(UUID(int=0)), tenant_id=tenant_id, legacy=legacy).parent
+        if not directory.exists():
+            continue
+        for entry in directory.iterdir():
+            try:
+                expected = result_path(photo_id, entry.stem, tenant_id=tenant_id, legacy=legacy)
+                if entry == expected and entry.is_file() and not entry.is_symlink():
+                    files.append(entry)
+            except ValueError:
+                continue
+    return files
+
+
+def inventory(*, tenant_id: UUID):
+    root = derivatives_root()
+    files = []
+    if root.exists():
+        for photo_directory in root.iterdir():
+            if not photo_directory.is_dir() or photo_directory.is_symlink():
+                continue
+            try:
+                photo_id = UUID(photo_directory.name)
+            except ValueError:
+                continue
+            files.extend(photo_files(photo_id, tenant_id=tenant_id))
+    owner_root = root / "tenants" / str(tenant_id) / "photos"
+    if owner_root.exists() and not owner_root.is_symlink():
+        for photo_directory in owner_root.iterdir():
+            if not photo_directory.is_dir() or photo_directory.is_symlink():
+                continue
+            try:
+                photo_id = UUID(photo_directory.name)
+            except ValueError:
+                continue
+            files.extend(photo_files(photo_id, tenant_id=tenant_id))
+    return list(dict.fromkeys(files))
+
+
+def cleanup(db, *, execute: bool = False, worker_stopped: bool = False):
+    tenant = require_single_tenant(db)
+    configs = list(db.scalars(select(GalleryPreviewSettings).with_for_update()))
+    files = inventory(tenant_id=tenant.id)
+    report = {
+        "files": len(files),
+        "bytes": sum(p.stat().st_size for p in files),
+        "records": db.scalar(select(func.count()).select_from(PreviewAdjustment)),
+        "deleted": False,
+    }
+    if execute:
+        custom_active = db.scalar(select(FolderProcessingSettings.folder_id)
+                                  .where(FolderProcessingSettings.preview_mode == "custom").limit(1))
+        private_folder_active = db.scalar(select(PhotoFolder.id).where(
+            PhotoFolder.audience_scope == "selected", PhotoFolder.purpose == "content"
+        ).limit(1))
+        if any(config.enabled for config in configs) or custom_active or private_folder_active or not worker_stopped:
+            raise ValueError("Desligue o módulo e pare o worker antes da limpeza.")
+        for path in files:
+            require_single_tenant(db)
+            path.unlink(missing_ok=True)
+        require_single_tenant(db)
+        db.execute(delete(PreviewAdjustment))
+        db.commit()
+        report["deleted"] = True
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--worker-stopped", action="store_true")
+    args = parser.parse_args()
+    with SessionLocal() as db:
+        print(json.dumps(cleanup(db, execute=args.execute, worker_stopped=args.worker_stopped)))
+
+
+if __name__ == "__main__":
+    main()

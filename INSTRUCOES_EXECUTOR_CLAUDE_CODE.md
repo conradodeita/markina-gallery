@@ -1,18 +1,26 @@
-# Markina Gallery — Especificação de Execução para Claude Code
+> **Decisão substitutiva — `simplify-gallery-access-modes`:** oferecer somente Padrão (link válido + OTP permite vínculo) e Somente convite individual (vínculo prévio ou convite autorizado). Ambos mostram pastas comuns e exclusivas atribuídas; `collective_protected` permanece somente como legado bloqueado, sem conversão automática nem promoção de vínculos pendentes. Na etapa 2, Pagamento obrigatório exige preços positivos. Desmarcado, a cliente finaliza seleção sem cobrança/PIX, sem preços ou totais, com snapshot individual, exportação e entrega posterior em Compras; isso não confirma pagamento nem registra receita. A mensagem comercial aparece por galeria na revisão. Gates faciais e de privacidade permanecem independentes e obrigatórios.
+
+> **Decisão aprovada — `add-order-google-photos-delivery`:** entrega manual Google Photos por pedido confirmado, botão Enviar e aviso configurável em Notificações (WhatsApp/push independentes). Em Compras, verde “Fotos disponíveis” com link autorizado; cinza “Fotos indisponíveis” nos demais casos. Reenvio explícito com deduplicação; correção financeira suspende exposição e invalida avisos pendentes, preservando o URL. Estas regras substituem os estados vermelho/amarelo e a ação de entrega descritos neste mandato, conforme a change aprovada. Não criar backup do histórico visual de mensagens retirado nem apagar filas técnicas compartilhadas.
+
+> **Transição aprovada em 30/09/2026 — `add-small-multi-photographer-pilot`:** o proprietário aprovou prosseguir com a preparação e implementação local para fotógrafos independentes, mantendo cadastro de cliente separado por fotógrafo, inclusive quando o telefone coincide. As referências abaixo a fotógrafo único e telefone globalmente único serão substituídas somente após isolamento completo, preservação do legado e validação dos caminhos inventariados. O sistema publicado continua limitado a uma conta; outra conta operacional e o ensaio futuro dependem da prontidão registrada. O aceite pendente da fundação anterior e os controles de revisão humana, canais, biometria e deploy permanecem obrigatórios. Esta decisão não declara código novo implementado nem autoriza publicação remota.
+
+# Pick-your-Pic — Especificação de Execução para Claude Code
+
+> **Decisão substitutiva — `unify-gallery-client-collections`:** galeria autenticada única com pastas comuns ou atribuídas a clientes. Estado de seleção, prazo, compra e histórico é individual por galeria + cliente; nenhuma seleção nova cria galeria privada derivada. “Coleção” reúne as pastas autorizadas, Carrinho mantém revisão/PIX e Compras mantém pedidos/entregas. Referências abaixo à criação, navegação ou importação para galeria privada são legado substituído; APIs e snapshots antigos permanecem somente para compatibilidade até migração inventariada fora de homologação. A limpeza autorizada de dados de teste vale apenas para homologação.
 
 ## 1. Mandato e resultado esperado
 
-Implemente a **Markina Gallery**, plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. O produto deve priorizar:
+Implemente a **Pick-your-Pic**, plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. O produto deve priorizar:
 
 - poucos passos e navegação mobile-first para responsáveis;
 - administração operacional rápida para um fotógrafo;
-- galerias privadas importadas do DigiKam;
-- eventos coletivos cujo acervo é privado ao fotógrafo e cujos resultados faciais são liberados individualmente;
+- pastas comuns ou restritas a clientes dentro de uma galeria autenticada;
+- galerias públicas não listadas cujo acervo só é exibido após autenticação e vínculo, com busca facial limitada a reordenar o conjunto já autorizado;
 - segurança, privacidade e operação resiliente.
 
 Não substituir o culling, a edição nem a entrega final do fotógrafo. O sistema recebe apenas JPEGs exportados após o culling. RAWs e edição de imagem final estão fora de escopo.
 
-Leia também [ROADMAP_ARQUITETURA.md](ROADMAP_ARQUITETURA.md). Em caso de conflito, esta especificação é a fonte operacional; decisões de segurança e privacidade do roadmap permanecem obrigatórias.
+Leia também [ROADMAP_ARQUITETURA.md](ROADMAP_ARQUITETURA.md) e [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md). Em caso de conflito, esta especificação é a fonte operacional; decisões de segurança, privacidade e UX dos documentos complementares permanecem obrigatórias.
 
 ## 1.1 OpenSpec é obrigatório
 
@@ -39,6 +47,20 @@ Fluxo padrão para cada mudança:
 
 Começar pela mudança `bootstrap-photocrm-foundation`, que cria infraestrutura, padrões, specs iniciais e a base mínima do projeto. Não criar um único change gigante que tente implementar o produto inteiro.
 
+## 1.2 Continuidade obrigatória entre executores
+
+O projeto poderá ser continuado por Claude Code, Codex, DeepSeek ou qualquer outro executor. **Nenhum executor pode depender do histórico da conversa para entender o projeto.** O repositório deve ser a fonte completa de contexto.
+
+- Antes de qualquer ação, ler este mandato, `ROADMAP_ARQUITETURA.md`, `DIRETRIZES_FRONTEND_MARKINA_GALLERY.md`, `openspec/config.yaml`, specs principais e mudanças ativas.
+- Toda funcionalidade ou alteração de comportamento deve possuir `change-id` próprio com proposal, delta spec, design quando houver decisão técnica e tasks antes da implementação.
+- Toda decisão nova, desvio do plano, limitação, risco ou bloqueio deve ser registrado nos artefatos OpenSpec ou na documentação técnica correspondente.
+- Durante a execução, atualizar `tasks.md`, testes e documentação junto com o código. Não marcar tarefa como concluída sem evidência verificável.
+- Ao finalizar, executar testes e validação OpenSpec, sincronizar somente o comportamento realmente implementado para `openspec/specs/` e arquivar a mudança após revisão humana.
+- Nunca declarar como implementado, validado, testado ou implantado algo que não tenha evidência no repositório ou no ambiente informado.
+- Se uma etapa não puder ser executada, registrar o bloqueio e o próximo passo necessário para o executor seguinte.
+
+O próximo executor deve conseguir retomar o trabalho lendo apenas o repositório, sem depender de memória externa, mensagens anteriores ou conhecimento implícito.
+
 ## 2. Limites de escopo
 
 ### MVP obrigatório
@@ -46,7 +68,7 @@ Começar pela mudança `bootstrap-photocrm-foundation`, que cria infraestrutura,
 1. Fundação Docker, Next.js, FastAPI, PostgreSQL, Redis, worker e Nginx.
 2. Área administrativa de um único fotógrafo com autenticação segura.
 3. Clientes/responsáveis, pessoas fotografadas, eventos, bibliotecas, pastas, galerias, fotos, tags e histórico.
-4. Importação confiável de JPEGs e XMP do DigiKam para galerias privadas.
+4. Importação confiável de JPEGs e XMP do DigiKam para pastas comuns ou atribuídas a clientes.
 5. Galeria mobile-first, favoritos/carrinho, preços por faixas, checkout e PIX manual.
 6. Controle de produção/edição por foto, pedidos e entrega por link de Google Photos.
 7. WhatsApp via adaptador, com OTP e fila de mensagens; implementação concreta pode começar em modo sandbox.
@@ -59,12 +81,18 @@ Começar pela mudança `bootstrap-photocrm-foundation`, que cria infraestrutura,
 - Busca facial: implementar apenas depois de um spike de compatibilidade ARM, licença comercial, desempenho e precisão.
 - Múltiplos administradores, impressos, laboratórios, produtos físicos e edição dentro da plataforma.
 
+### Limite de personalização visual
+
+Pick-your-Pic não é um CMS completo de páginas. O fotógrafo pode configurar identidade simples e opções controladas por galeria — cor, tipografia do nome, capa e layouts suportados — mas não terá construtor de páginas, editor livre de HTML/CSS ou coleção de templates de website. Consulte `DIRETRIZES_FRONTEND_MARKINA_GALLERY.md` para a direção completa do frontend e `docs/frontend-reference/README.md` para o uso do protótipo visual.
+
+O export do Google Stitch em `docs/frontend-reference/stitch-export/` é somente referência visual e funcional. **Não copiar diretamente seu código, componentes, mocks, dados, dependências ou estrutura para a aplicação oficial.** Reconstruir o frontend no stack oficial e conectá-lo às APIs, autenticação, permissões, regras de negócio e specs OpenSpec vigentes.
+
 ### Não fazer
 
 - Não expor uma grade pública de fotografias escolares de evento coletivo.
 - Não servir prévias diretamente do Google Drive.
 - Não automatizar criação/compartilhamento de álbuns no Google Photos; o fotógrafo cria o link manualmente.
-- Não armazenar RAWs, nem tentar editar fotos no sistema.
+- Não armazenar RAWs nem realizar edição final no sistema. O módulo opcional de ajuste de prévias, aprovado em `add-optional-preview-auto-adjustment`, atua somente na vitrine e preserva originais, prévias convencionais e entrada facial.
 - Não copiar código, design ou componentes de serviços concorrentes.
 
 ## 3. Infraestrutura e arquitetura
@@ -108,6 +136,13 @@ Há um administrador no MVP, sem registro público.
 - Convite: token opaco aleatório, hash no banco, uso único, expira em 72 horas, revogável e reenviável.
 - O vínculo de acesso pertence ao cliente/responsável, não ao token; após ativação, acessos posteriores usam OTP.
 
+### Entrada unificada e roteamento
+
+- Usar uma única tela/rota de entrada para `Cliente` e `Fotógrafo`, com escolha explícita do contexto na mesma experiência visual.
+- Cliente informa nome completo e telefone, recebe OTP pelo WhatsApp e, após validação, é encaminhado à galeria autorizada ou à biblioteca quando possuir várias galerias.
+- Fotógrafo informa e-mail e senha, valida TOTP do Google Authenticator/compatível e, somente após os dois fatores, é encaminhado à área administrativa.
+- O papel e o destino final são decididos e revalidados pelo backend; frontend, URL ou estado local nunca concedem autorização.
+
 ### Auditoria, incidente e configurações externas
 
 Registrar login, falha, reset, 2FA, convite, ativação, exclusão, pagamento, mudanças de PIX, entrega e operações biométricas. Implementar função administrativa de revogar sessões, tokens e convites. Configurar SMTP transacional com SPF/DKIM/DMARC no deploy.
@@ -124,8 +159,8 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - `client_person`: N:N entre responsáveis e pessoas. Mãe e pai podem acessar a mesma criança; um responsável pode acessar várias pessoas.
 - `event`: título, data, descrição, status, capacidade/arquivamento.
 - `library`: biblioteca privada de uma família/responsável, com relação ao evento quando aplicável.
-- `gallery`: tipo `private_digikam | collective_face_result`; título, capa, layout, visibilidade, datas de seleção/pagamento, regras de venda, status e configurações de proteção.
-- `folder`: estrutura de pastas dentro de galeria/evento.
+- `gallery`: galeria autenticada única; título, capa, layout, visibilidade, regras de venda, status e configurações de proteção. Prazo e compras são individuais por cliente.
+- `folder`: estrutura de pastas comuns ou atribuídas a clientes da mesma galeria, com liberação explícita.
 - `photo`: arquivo JPEG, hash, dimensões, caminho local, caminho Drive, metadata sanitizada, status de venda e status global de produção.
 - `gallery_photo`: foto dentro da galeria/pasta, com ordenação e visibilidade.
 - `gallery_access`: cliente autorizado, galeria, status `pending | active | rejected | expired`, método, token/convite e auditoria.
@@ -157,22 +192,23 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 
 ## 6. Regras de negócio
 
-### Galerias privadas DigiKam
+### Pastas restritas na galeria autenticada
 
 - O fotógrafo faz a separação no DigiKam antes do upload.
 - Ler JPEG + XMP, extraindo apenas metadados necessários: nome/região/keywords quando disponíveis.
-- Importar para biblioteca/galeria privada e autorizar um ou mais responsáveis.
+- Importar para uma pasta restrita criada no card da cliente e atribuir outras responsáveis autorizadas quando necessário, sem duplicar fotos.
 - O cliente vê pastas por evento/ano e apenas as fotos autorizadas.
 
 ### Eventos coletivos
 
-- Acervo completo é somente administrativo.
-- Não criar URL pública de grade de fotos.
-- Futuramente, busca facial gera resultado privado; responsável valida telefone, aceita termo, fica pendente, fotógrafo revisa e só então ativa convite individual.
+- Não criar URL anônima de grade de fotos. Galeria pública é uma denominação de produto e exige link opaco, telefone/OTP e vínculo persistido antes de qualquer prévia identificável.
+- Quando a cliente já pode visualizar o acervo autorizado, a busca facial atua somente como filtro temporário na mesma galeria: não concede acesso, não cria seleção nem privada e não pesquisa outro evento.
+- Se um desenho futuro utilizar reconhecimento para revelar fotos que não faziam parte do conjunto já autorizado, o resultado deve ser privado, revisado pelo fotógrafo e coberto por nova especificação.
+- Quando o subsistema facial estiver operacionalmente habilitado, a indexação acontece automaticamente por jobs duráveis após as prévias limpa e protegida ficarem prontas, sem declaração/ativação por galeria do fotógrafo e sem varredura contínua; a consulta pode continuar depois que a cliente fechar a tela e notificar conclusão por mensagem neutra.
 
 ### Seleção, preços e pagamento
 
-- Exigir login somente ao selecionar a primeira foto. Navegação de capa/informação pode ser pública se a galeria permitir.
+- Exigir login por telefone e OTP antes de entregar qualquer prévia fotográfica. Capa e informação sem fotografia identificável podem permanecer públicas quando a Galeria pública permitir; `standard`, `invite_only` e `collective_protected` são decididos e impostos pelo backend.
 - Mostrar marcador visual de favorito, contador sticky e valor estimado somente após autenticação.
 - Implementar preço por faixa aplicado a todas as fotos do pedido. Exemplo: 1–30 = R$7, 31–59 = R$6, 60+ = R$5.
 - Painel deve simular os totais e alertar ao fotógrafo se subir uma faixa diminuir o total comparado à faixa anterior.
@@ -194,10 +230,11 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 ### Portal do cliente
 
 - Mobile-first: 2 colunas no celular, 4 ou mais em desktop; carregamento progressivo e placeholders.
+- Após autenticação e autorização, “Coleção” mostra pastas comuns e pastas atribuídas à cliente na mesma galeria. Carrinho concentra revisão/PIX e Compras mostra histórico, pagamentos e entregas; links legados exigem vínculo antes de redirecionar.
 - Foto abre em ampliação; seleção é ação explícita por coração/check. Não selecionar involuntariamente ao ampliar.
 - Rodapé fixo com número de fotos, estimativa e CTA de carrinho/finalização.
 - Carrinho com miniaturas, remoção, preços, texto de venda e progresso até próxima faixa de desconto.
-- Páginas mínimas: entrada/OTP, convite, biblioteca, galeria, carrinho/checkout, pedido e minhas entregas.
+- Páginas mínimas: entrada/OTP, convite, biblioteca/Coleção, carrinho/checkout e Compras/entregas.
 - Todo texto, cor, logo, capa e parte das mensagens deve ser configurável pelo fotógrafo.
 
 ### Proteção das prévias
@@ -206,6 +243,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Aplicar marca d’água textual configurável e, quando habilitado, grade diagonal/linhas com espessura, cor, espaçamento, opacidade e rotação configuráveis.
 - Oferecer marca dinâmica com nome/telefone parcial/código do cliente, quando autenticado.
 - Aplicar proteção à imagem que é servida, não apenas camada CSS.
+- Exceção autorizada: somente a capa vigente da galeria é apresentada sem marca-d’água nem grade, via derivado limpo limitado e rotas autenticadas/autorizadas. A mesma foto no acervo continua protegida. Novas capas exigem JPEG horizontal após orientação EXIF; capas antigas permanecem até substituição. Nunca servir o original como fallback.
 - Informar que não é tecnicamente possível impedir captura de tela de forma absoluta; mostrar aviso configurável de direitos autorais.
 
 ### Administração
@@ -227,18 +265,22 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 
 ## 9. Integrações por adaptadores
 
+- Change `configurable-push-and-whatsapp-notifications`: central administrativa de seis eventos com templates globais, prévias e interruptores separados para WhatsApp/push. Migração preserva templates de pagamento e auditoria, sem inbox duplicada nem replay. Primeiro acesso/seleção são marcos por cliente/galeria, não por OTP nem pela criação administrativa da pasta. Novas fotos restritas avisam somente as clientes atribuídas após prévias protegidas disponíveis.
+- Push usa inscrição cifrada por identidade/instalação, adesão por clique, VAPID exclusivamente externo e serviço HTTPS com destinos de provedores validados. Logout/troca de conta revogam; expiração natural de sessão não interrompe avisos, mas clique revalida acesso. Pagamentos não dependem do sucesso da mensagem; correção silenciosa não envia em nenhum canal. Nunca confundir aceite do provedor com leitura.
+- Gates de implantação/segredos e validação Android/iPhone permanecem humanos. Consulte `docs/transactional-notifications.md`; transporte desabilitado por padrão, sem alterar `.env` automaticamente.
+
 - `WhatsAppProvider`: OTP, mensagens transacionais, lembretes, status e erro. Inicialmente Evolution API; não acoplar regras de negócio ao fornecedor.
 - `PaymentProvider`: PIX manual no MVP; Infinity Pay posterior com criação de cobrança, webhook assinado e reconciliação.
 - `DriveStorageProvider`: upload resumível, checksum, retentativa exponencial, restauração e deleção controlada.
 - `EmailProvider`: SMTP transacional para verificação e recuperação de senha.
-- `FaceRecognitionProvider`: interface vazia/feature flag até concluir piloto; não ativar automaticamente.
+- `FaceRecognitionProvider`: implementação somente depois de spike aprovado, sempre protegida por feature flag desligada por padrão. A habilitação de dados reais é uma decisão operacional externa e aprovada; uma vez habilitado o ambiente, galerias ativas são indexadas automaticamente, sem declaração manual do fotógrafo.
 
 ## 10. Privacidade e biometria
 
-- Fotos escolares e dados biométricos exigem minimização, transparência, consentimento específico de responsável e fluxo de exclusão. Não tratar isso como texto decorativo.
+- Fotos escolares e dados biométricos exigem minimização, transparência, consentimento específico do cliente/responsável para a referência enviada e fluxo de exclusão. O checkbox pertence à consulta da cliente, não à rotina de upload do fotógrafo; não tratar isso como texto decorativo.
 - Termo versionado, aceite auditável, finalidade explícita, expiração de referência facial e exclusão de embedding devem existir antes da feature ir a produção.
-- Feedback facial cria revisão humana; nunca retreinar/aplicar associação automaticamente a partir de um único feedback.
-- Dados reais de crianças nunca entram em homologação.
+- Feedback facial remove o resultado daquela consulta e pode criar revisão humana; nunca retreinar/aplicar associação automaticamente a partir de um único feedback.
+- Homologação privada pode usar dados reais de adultos e crianças quando o lote for enviado pelo administrador/fotógrafo e estiver vinculado a autorização humana explícita por execução, origem e finalidade documentadas, acesso autenticado, proteção criptográfica, retenção mínima e exclusão controlada. Essa autorização não se estende à produção nem ao fluxo infantil comum.
 
 ## 11. Ordem de implementação
 

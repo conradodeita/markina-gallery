@@ -1,0 +1,52 @@
+FROM python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641
+
+ARG TARGETARCH
+ARG LIGHTCRAFT_VERSION=0.6.0
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    RAYON_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1
+
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      arm64) package_arch=aarch64; package_sha=834045c5d18d69eca3d13eb313aafe10835baa59bf3ec1d3c2013ca76828f08e ;; \
+      amd64) package_arch=x86_64; package_sha=04aa36f4d9bc4e57d4d3d0a5673261f03d3fcdd13bdd2a1e46b693f7eca03a32 ;; \
+      *) echo "Unsupported LightCraft architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl procps; \
+    curl -fsSL "https://github.com/storytold/lightcraft/releases/download/v${LIGHTCRAFT_VERSION}/lightcraft-${LIGHTCRAFT_VERSION}-linux-${package_arch}.deb" -o /tmp/lightcraft.deb; \
+    echo "${package_sha}  /tmp/lightcraft.deb" | sha256sum -c -; \
+    package_version=$(dpkg-deb -f /tmp/lightcraft.deb Version); \
+    case "${package_version}" in "${LIGHTCRAFT_VERSION}"|"${LIGHTCRAFT_VERSION}"-[0-9]*) ;; *) echo "Unexpected LightCraft package version: ${package_version}" >&2; exit 1 ;; esac; \
+    apt-get install -y --no-install-recommends /tmp/lightcraft.deb; \
+    apt-get install -y --no-install-recommends rawtherapee=5.9-1+b1; \
+    rm -f /tmp/lightcraft.deb; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt requirements-push.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app ./app
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      arm64) package_arch=aarch64; package_sha=834045c5d18d69eca3d13eb313aafe10835baa59bf3ec1d3c2013ca76828f08e ;; \
+      amd64) package_arch=x86_64; package_sha=04aa36f4d9bc4e57d4d3d0a5673261f03d3fcdd13bdd2a1e46b693f7eca03a32 ;; \
+      *) echo "Unsupported LightCraft architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/storytold/lightcraft/releases/download/v${LIGHTCRAFT_VERSION}/lightcraft-${LIGHTCRAFT_VERSION}-linux-${package_arch}.deb" -o /tmp/lightcraft-docs.deb; \
+    echo "${package_sha}  /tmp/lightcraft-docs.deb" | sha256sum -c -; \
+    mkdir -p /tmp/lightcraft-docs /usr/share/doc/lightcraft; \
+    dpkg-deb -x /tmp/lightcraft-docs.deb /tmp/lightcraft-docs; \
+    cp -a /tmp/lightcraft-docs/usr/share/doc/lightcraft/. /usr/share/doc/lightcraft/; \
+    curl -fsSL https://raw.githubusercontent.com/storytold/lightcraft/v${LIGHTCRAFT_VERSION}/assets/ATTRIBUTION.md -o /usr/share/doc/lightcraft/ATTRIBUTION.md; \
+    curl -fsSL https://raw.githubusercontent.com/storytold/lightcraft/v${LIGHTCRAFT_VERSION}/assets/app-icon/LICENSE.txt -o /usr/share/doc/lightcraft/LICENSE-APP-ICON.txt; \
+    curl -fsSL https://raw.githubusercontent.com/storytold/lightcraft/v${LIGHTCRAFT_VERSION}/assets/fonts/OFL-Inter.txt -o /usr/share/doc/lightcraft/OFL-Inter.txt; \
+    curl -fsSL https://raw.githubusercontent.com/storytold/lightcraft/v${LIGHTCRAFT_VERSION}/docs/brand/LICENSE-brand.txt -o /usr/share/doc/lightcraft/LICENSE-brand.txt; \
+    echo "4b1497c3ea1afbf162c360708f0377896227b44d7a4141105f8a51dd0b9d6a0d  /usr/share/doc/lightcraft/ATTRIBUTION.md" | sha256sum -c -; \
+    echo "6426c23f529938deddfbaed543e7135e08b514fa6a75b330734331d877c78faf  /usr/share/doc/lightcraft/LICENSE-APP-ICON.txt" | sha256sum -c -; \
+    echo "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a  /usr/share/doc/lightcraft/OFL-Inter.txt" | sha256sum -c -; \
+    echo "d516dfeae4a19d636c0d16f389d0a8593efd9dd259b8832bb06722a3dc09e0ce  /usr/share/doc/lightcraft/LICENSE-brand.txt" | sha256sum -c -; \
+    test -s /usr/share/doc/lightcraft/README.md; \
+    rm -rf /tmp/lightcraft-docs /tmp/lightcraft-docs.deb
+CMD ["python", "-m", "app.raw_development.worker"]
