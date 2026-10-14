@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, bindparam, delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.acervo_context import owned_record, require_active_owner
@@ -18,6 +18,7 @@ from app.auth import (
     ParentGallery,
     PhotoAsset,
     PhotoFaceEmbedding,
+    Tenant,
 )
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope, FacialScope
@@ -32,6 +33,7 @@ from app.facial.provider import (
     normalize_embedding,
 )
 from app.facial.quality import FacialQualityError, assess_face_quality
+from app.tenancy import bind_domain_owner
 
 
 class FacialEngineError(RuntimeError):
@@ -239,6 +241,7 @@ def search_gallery_index(
     allowed_fingerprints: dict[UUID, str] | None = None,
     ambiguous_threshold_milli: int | None = None,
     authorize: Callable[[UUID], bool] | None = None,
+    on_progress: Callable[[int], None] | None = None,
     model_id: str = "opencv-yunet-sface",
     model_version: str | None = None,
     embedding_dimension: int = EXPECTED_EMBEDDING_DIMENSIONS,
@@ -255,99 +258,153 @@ def search_gallery_index(
     selected_version = model_version or settings.model_version
     if allowed_fingerprints is not None and not allowed_fingerprints:
         return []
-    rows = list(
-        db.scalars(
-            select(PhotoFaceEmbedding)
-            .join(PhotoAsset, PhotoAsset.id == PhotoFaceEmbedding.photo_asset_id)
-            .where(
-                PhotoFaceEmbedding.tenant_id == tenant_id,
-                PhotoAsset.tenant_id == tenant_id,
-                PhotoFaceEmbedding.parent_gallery_id == gallery_id,
-                PhotoFaceEmbedding.model_version == selected_version,
-                PhotoFaceEmbedding.model_id == model_id,
-                PhotoFaceEmbedding.embedding_dimension == embedding_dimension,
-                PhotoFaceEmbedding.quality_version == settings.quality_version,
-                PhotoAsset.parent_gallery_id == gallery_id,
-                PhotoAsset.derived_gallery_id.is_(None),
-                PhotoFaceEmbedding.derived_gallery_id.is_(None),
-                PhotoAsset.available.is_(True),
-                *(
-                    (PhotoFaceEmbedding.photo_asset_id.in_(allowed_fingerprints),)
-                    if allowed_fingerprints is not None
-                    else ()
-                ),
-            )
-            .order_by(PhotoFaceEmbedding.photo_asset_id, PhotoFaceEmbedding.face_ordinal)
+    query = (
+        select(
+            PhotoFaceEmbedding.photo_asset_id,
+            PhotoFaceEmbedding.face_ordinal,
+            PhotoFaceEmbedding.preview_fingerprint,
+            PhotoFaceEmbedding.quality_band,
+            PhotoFaceEmbedding.payload_ciphertext,
+            PhotoFaceEmbedding.payload_nonce,
+            PhotoFaceEmbedding.key_id,
+            PhotoFaceEmbedding.model_version,
+            PhotoFaceEmbedding.quality_version,
+            PhotoFaceEmbedding.embedding_dimension,
         )
-    )
-    if not rows:
-        return []
-    matrix: list[tuple[float, ...]] = []
-    usable_rows: list[PhotoFaceEmbedding] = []
-    for row in rows:
-        require_active_owner(db, tenant_id)
-        if authorize is not None and not authorize(row.photo_asset_id):
-            continue
-        parent = owned_record(db, ParentGallery, gallery_id, tenant_id=tenant_id)
-        photo = owned_record(db, PhotoAsset, row.photo_asset_id, tenant_id=tenant_id)
-        from app.facial.policy import read_policy
-        policy = read_policy(db, gallery_id, tenant_id=tenant_id)
-        if not parent or not parent.active or parent.lifecycle_status != "active" or not policy or policy.status != "active" or not _policy_matches(policy, settings):
-            raise FacialEngineError("Origem facial indisponível.")
-        if not photo or not photo.available or photo.parent_gallery_id != gallery_id or photo.derived_gallery_id is not None:
-            continue
-        if (
-            allowed_fingerprints is not None
-            and allowed_fingerprints.get(row.photo_asset_id)
-            != row.preview_fingerprint
-        ):
-            continue
-        envelope = FacialEnvelope(
-            ciphertext=row.payload_ciphertext,
-            nonce=row.payload_nonce,
-            key_id=row.key_id,
-        )
-        payload = cipher.decrypt(
-            envelope,
-            scope=_embedding_scope(
-                settings=settings,
-                gallery_id=gallery_id,
-                photo_id=row.photo_asset_id,
-                model_version=row.model_version,
-                quality_version=row.quality_version,
+        .join(PhotoAsset, PhotoAsset.id == PhotoFaceEmbedding.photo_asset_id)
+        .where(
+            PhotoFaceEmbedding.tenant_id == tenant_id,
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoFaceEmbedding.parent_gallery_id == gallery_id,
+            PhotoFaceEmbedding.model_version == selected_version,
+            PhotoFaceEmbedding.model_id == model_id,
+            PhotoFaceEmbedding.embedding_dimension == embedding_dimension,
+            PhotoFaceEmbedding.quality_version == settings.quality_version,
+            PhotoAsset.parent_gallery_id == gallery_id,
+            PhotoAsset.derived_gallery_id.is_(None),
+            PhotoFaceEmbedding.derived_gallery_id.is_(None),
+            PhotoAsset.available.is_(True),
+            *(
+                (PhotoFaceEmbedding.photo_asset_id.in_(allowed_fingerprints),)
+                if allowed_fingerprints is not None
+                else ()
             ),
         )
-        try:
-            decoded = json.loads(payload)
-            embedding = normalize_embedding(decoded["embedding"], row.embedding_dimension)
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise FacialEngineError("Índice facial inválido.") from exc
-        matrix.append(embedding)
-        usable_rows.append(row)
-    if not usable_rows:
-        return []
-    vectors = np.asarray(matrix, dtype=np.float32)
-    query = np.asarray(normalized_query, dtype=np.float32)
-    if vectors.shape != (len(usable_rows), embedding_dimension):
-        raise FacialEngineError("Dimensão do índice facial inválida.")
-    similarities = vectors @ query
+        .order_by(PhotoFaceEmbedding.photo_asset_id, PhotoFaceEmbedding.face_ordinal)
+    )
     threshold = threshold_milli / 1000
     ambiguous = threshold if ambiguous_threshold_milli is None else ambiguous_threshold_milli / 1000
     if not 0 <= ambiguous <= threshold <= 1:
         raise FacialEngineError("Faixas de similaridade inválidas.")
+    normalized_query_array = np.asarray(normalized_query, dtype=np.float32)
+    current_scope = (
+        select(PhotoAsset.id)
+        .select_from(ParentGallery)
+        .join(Tenant, Tenant.id == ParentGallery.tenant_id)
+        .join(GalleryFacialPolicy, and_(
+            GalleryFacialPolicy.parent_gallery_id == ParentGallery.id,
+            GalleryFacialPolicy.tenant_id == tenant_id,
+        ))
+        .outerjoin(PhotoAsset, and_(
+            PhotoAsset.id == bindparam("comparison_photo_id"),
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoAsset.parent_gallery_id == gallery_id,
+            PhotoAsset.derived_gallery_id.is_(None),
+            PhotoAsset.available.is_(True),
+        ))
+        .where(
+            settings.enabled,
+            Tenant.id == tenant_id, Tenant.status == "active",
+            ParentGallery.id == gallery_id, ParentGallery.tenant_id == tenant_id,
+            ParentGallery.active.is_(True), ParentGallery.lifecycle_status == "active",
+            GalleryFacialPolicy.status == "active",
+            *(getattr(GalleryFacialPolicy, field) == getattr(settings, field) for field in (
+                "model_version", "quality_version", "calibration_version", "legal_notice_version",
+                "legal_basis_reference", "retention_policy_version", "minor_policy_version",
+            )),
+        )
+    )
     best_by_photo: dict[UUID, SearchMatch] = {}
-    for row, similarity_value in zip(usable_rows, similarities, strict=True):
-        similarity = float(similarity_value)
-        if similarity < ambiguous:
-            continue
-        current = best_by_photo.get(row.photo_asset_id)
-        if current is None or similarity > current.similarity:
-            best_by_photo[row.photo_asset_id] = SearchMatch(
-                photo_id=row.photo_asset_id,
-                quality_band=row.quality_band,
-                similarity=similarity,
-                match_class="matched" if similarity >= threshold else "ambiguous",
+    compared_photos = 0
+    previous_photo_id = None
+    cursor = None
+    while True:
+        page_query = query
+        if cursor is not None:
+            photo_id, ordinal = cursor
+            page_query = page_query.where(or_(
+                PhotoFaceEmbedding.photo_asset_id > photo_id,
+                and_(
+                    PhotoFaceEmbedding.photo_asset_id == photo_id,
+                    PhotoFaceEmbedding.face_ordinal > ordinal,
+                ),
+            ))
+        # Projeção imutável e paginação por chave: callbacks podem fazer commit
+        # sem expirar milhares de entidades ORM nem fechar um cursor de servidor.
+        rows = list(db.execute(page_query.limit(128)))
+        if not rows:
+            break
+        cursor = (rows[-1].photo_asset_id, rows[-1].face_ordinal)
+        for row in rows:
+            if row.photo_asset_id != previous_photo_id:
+                if previous_photo_id is not None:
+                    compared_photos += 1
+                    if on_progress is not None:
+                        on_progress(compared_photos)
+                previous_photo_id = row.photo_asset_id
+            if authorize is not None and not authorize(row.photo_asset_id):
+                continue
+            current = db.execute(current_scope, {
+                "comparison_photo_id": row.photo_asset_id,
+            }).first()
+            if current is None:
+                require_active_owner(db, tenant_id)
+                raise FacialEngineError("Origem facial indisponível.")
+            bind_domain_owner(db, tenant_id)
+            if current[0] is None:
+                continue
+            if (
+                allowed_fingerprints is not None
+                and allowed_fingerprints.get(row.photo_asset_id)
+                != row.preview_fingerprint
+            ):
+                continue
+            envelope = FacialEnvelope(
+                ciphertext=row.payload_ciphertext,
+                nonce=row.payload_nonce,
+                key_id=row.key_id,
             )
+            payload = cipher.decrypt(
+                envelope,
+                scope=_embedding_scope(
+                    settings=settings,
+                    gallery_id=gallery_id,
+                    photo_id=row.photo_asset_id,
+                    model_version=row.model_version,
+                    quality_version=row.quality_version,
+                ),
+            )
+            try:
+                decoded = json.loads(payload)
+                embedding = normalize_embedding(decoded["embedding"], row.embedding_dimension)
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                raise FacialEngineError("Índice facial inválido.") from exc
+            vector = np.asarray(embedding, dtype=np.float32)
+            if vector.shape != (embedding_dimension,):
+                raise FacialEngineError("Dimensão do índice facial inválida.")
+            similarity = float(vector @ normalized_query_array)
+            if similarity < ambiguous:
+                continue
+            current = best_by_photo.get(row.photo_asset_id)
+            if current is None or similarity > current.similarity:
+                best_by_photo[row.photo_asset_id] = SearchMatch(
+                    photo_id=row.photo_asset_id,
+                    quality_band=row.quality_band,
+                    similarity=similarity,
+                    match_class="matched" if similarity >= threshold else "ambiguous",
+                )
+    if previous_photo_id is not None and on_progress is not None:
+        on_progress(compared_photos + 1)
     return sorted(
         best_by_photo.values(),
         key=lambda match: (
