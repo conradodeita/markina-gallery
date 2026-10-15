@@ -91,3 +91,12 @@ Este inventário foi aprovado pelo proprietário; o fingerprint foi recalculado 
 - Revisão Alembic antes/depois permaneceu `20261014_0081`; nenhuma migration, escrita no banco, mudança de configuração/ambiente ou alteração em outros projetos ocorreu. Checkout remoto limpo em `d9c8d3b118fc367af26cfa2b47772d7bff1ccd47`.
 - Os registros `last-healthy.sha` e `web-last-healthy.sha` foram atualizados para o SHA implantado após os checks. O registro operacional foi criado em `/var/lib/markina-gallery/deploy-state/payment-status-api-web-d9c8d3b118fc367af26cfa2b47772d7bff1ccd47.txt`.
 - Nenhuma sessão administrativa autenticada foi disponibilizada; portanto, não houve inspeção visual autenticada. O fluxo automatizado e os checks sem sessão estão registrados acima.
+
+
+## Revisão humana pós-publicação — 2026-10-15
+
+- Após testar a página publicada, o proprietário confirmou que todas as melhorias de situações financeiras estão funcionando perfeitamente. Esta revisão funcional humana complementa a verificação automatizada; a inspeção visual autenticada automatizada não foi executada pelo agente.
+
+## Revisão humana pós-publicação — 2026-10-15
+
+- Após testar a página publicada, o proprietário confirmou que todas as melhorias de situações financeiras estão funcionando perfeitamente. Esta revisão funcional humana complementa a verificação automatizada; a inspeção visual autenticada automatizada não foi executada pelo agente.
