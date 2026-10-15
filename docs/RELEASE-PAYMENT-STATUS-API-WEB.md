@@ -79,9 +79,10 @@ A recarga é necessária porque `proxy_pass http://api:8000` resolve o upstream 
 ## Verificação e registro
 
 - Esperar API/web saudáveis, com limite de 120 segundos e consultas curtas; conferir novos IDs de imagem e `APP_VERSION` alvo.
-- HTTPS `/healthz`, `/api/health`, `/` e `/admin/payments` devem retornar 200. `/api/admin/payment-communications` deve continuar negado sem sessão (403 observado). Conferir também API interna `/health` e web interna `/api/health`.
+- HTTPS `/healthz`, `/api/health`, `/` e `/admin/payments` devem retornar 200. `/api/admin/payment-communications` deve continuar negado sem sessão (403 observado). Conferir também API interna `/health` e web interna `/api/health`. A imagem do frontend é baseada em Node.js e não inclui Python; executar a verificação interna da web com Node, por exemplo: `docker exec "$WEB_CONTAINER_ID" node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"`. Reservar Python para a imagem da API.
 - Conferir presença do código `confirmed_undelivered` nos artefatos publicados; não consultar dados de clientes nem inventar login. A inspeção visual autenticada exige sessão legítima disponível.
 - Conferir revisão Alembic inalterada, configuração equivalente exceto APP_VERSION e que nenhum outro container foi recriado pela execução. Se outro operador mudou o ambiente, registrar e avaliar a divergência, sem tentar revertê-la.
+- Ao comparar IDs de containers antes/depois, filtrar os serviços esperados pela coluna de nomes antes de comparar os demais: `grep -vE '^markina-gallery-(api|web)-1='` sobre linhas `nome=ID`. Os IDs de API e web devem mudar no release; uma comparação que os inclua acusa falsamente a troca autorizada como alteração de outro container.
 - Após saúde confirmada, registrar SHAs, IDs das imagens anteriores/novas e resultados no diretório Markina `/var/lib/markina-gallery/deploy-state` e na evidência desta change. Atualizar os registros de última versão saudável API/web somente depois de concluir as verificações. Não arquivar a change antes da revisão humana.
 
 ## Recuperação autorizada
@@ -98,4 +99,4 @@ docker exec markina-gallery-nginx-1 nginx -t
 docker exec markina-gallery-nginx-1 nginx -s reload
 ```
 
-Repetir verificações de saúde/HTTPS, imagens e banco. Nenhuma reconstrução ou restauração de banco ocorre no rollback. Conservar as imagens novas e antigas para diagnóstico; não limpar recursos. Registrar a falha e o resultado real da recuperação.
+Esperar API/web saudáveis por até 120 segundos e repetir verificações de saúde interna/HTTPS, imagens e banco. Nenhuma reconstrução ou restauração de banco ocorre no rollback. Conservar as imagens novas e antigas para diagnóstico; não limpar recursos. Registrar a falha e o resultado real da recuperação.
