@@ -4,7 +4,7 @@ import NotificationsPage, { NotificationSetting } from "./page";
 
 const settings: NotificationSetting[] = ["first_access", "first_selection", "private_photos_ready", "payment_reported", "payment_confirmed", "payment_refused", "order_delivery_ready"].map((event_type) => ({
   event_type, label: event_type, recipient: event_type === "private_photos_ready" || ["payment_confirmed", "payment_refused", "order_delivery_ready"].includes(event_type) ? "client" : "admin",
-  allowed_variables: ["cliente", "galeria"], version: 1, push_enabled: true, whatsapp_enabled: true,
+  allowed_variables: ["cliente", "galeria"], whatsapp_variables: ["cliente", "galeria", ...(event_type === "order_delivery_ready" ? ["link_compras"] : [])], version: 1, push_enabled: true, whatsapp_enabled: true,
   push_title: "Aviso", push_body: "Olá {{cliente}}", whatsapp_body: "Mensagem {{galeria}}",
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -27,6 +27,10 @@ it("exibe sete eventos, prévias e dois interruptores sem a caixa de entrada ant
   expect(screen.queryByLabelText("Leitura")).toBeNull();
   expect(screen.queryByText("Marcar como lida")).toBeNull();
   expect(screen.getByText(/As alterações afetam os clientes da sua conta/)).toBeTruthy();
+  const delivery = settings.find((item) => item.event_type === "order_delivery_ready")!;
+  expect(delivery.allowed_variables).not.toContain("link_compras");
+  expect(delivery.whatsapp_variables).toContain("link_compras");
+  expect(screen.getByText("{{link_compras}}")).toBeTruthy();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 

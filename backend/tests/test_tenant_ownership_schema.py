@@ -50,7 +50,7 @@ client_db = _client_db
 def graph(client_db):
     records = []
     for label in ("A", "B"):
-        tenant = Tenant()
+        tenant = Tenant(canonical_host=f"{label.lower()}.fotografo.exemplo.com")
         client_db.add(tenant)
         client_db.flush()
         admin = AdminUser(email=f"{label}@example.test", password_hash="synthetic", totp_secret="fake")

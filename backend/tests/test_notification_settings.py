@@ -19,7 +19,13 @@ from app.auth import (
     token_hash,
 )
 from app.main import app
-from app.notification_settings import enqueue_event, render_text, save_setting, setting_for
+from app.notification_settings import (
+    enqueue_event,
+    render_text,
+    render_whatsapp_text,
+    save_setting,
+    setting_for,
+)
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
@@ -83,6 +89,18 @@ def test_configuration_api_is_admin_only_and_validates_templates():
     assert response.status_code == 200
     assert response.json()["version"] == 2
     assert client.put("/admin/notification-settings/first_access", json=payload).status_code == 422
+
+
+def test_link_compras_is_validated_and_rendered_only_for_delivery_whatsapp():
+    link = "https://a.fotografo.example.com/library/purchases#order-00000000-0000-4000-8000-000000000001"
+    body = "Fotos prontas: {{link_compras}}"
+    assert render_whatsapp_text("order_delivery_ready", body, {"link_compras": link}, 500) == f"Fotos prontas: {link}"
+    assert render_whatsapp_text("order_delivery_ready", body, {"link_compras": "https://evil.example/path"}, 500) == "Fotos prontas: "
+    assert render_whatsapp_text("order_delivery_ready", body, {"link_compras": "https://a.example.com:bad/library/purchases#order-00000000-0000-4000-8000-000000000001"}, 500) == "Fotos prontas: "
+    with pytest.raises(ValueError):
+        render_text("order_delivery_ready", body, {"link_compras": link}, 500)
+    with pytest.raises(ValueError):
+        render_whatsapp_text("payment_confirmed", body, {"link_compras": link}, 500)
 
 
 def test_payment_legacy_api_delegates_to_the_single_source():

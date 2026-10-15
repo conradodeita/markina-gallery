@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionBoundary } from "./session-boundary";
-import { protectedContext, recoveryLocation, safeAdminReturn, safeClientGalleryReturn } from "./session-recovery";
+import { protectedContext, recoveryLocation, safeAdminReturn, safeClientGalleryReturn, safeClientPurchaseReturn } from "./session-recovery";
 
 const navigation = vi.hoisted(() => ({ pathname: "/admin" }));
 vi.mock("next/navigation", () => ({ usePathname: () => navigation.pathname }));
@@ -347,6 +347,15 @@ describe("recuperação uniforme de sessão", () => {
       `/?reauth=client&return_to=%2Fpublic-galleries%2F${galleryId}`,
     );
     expect(safeClientGalleryReturn(`/public-galleries/${galleryId}?access_token=secret`)).toBeNull();
+    const orderId = "5f581c42-08aa-4305-9bfb-55f803d1cfc6";
+    expect(safeClientPurchaseReturn(`/library/purchases#order-${orderId}`)).toEqual({
+      path: `/library/purchases#order-${orderId}`,
+      orderId,
+    });
+    expect(recoveryLocation("/library/purchases", `#order-${orderId}`)).toBe(
+      `/?reauth=client&return_to=%2Flibrary%2Fpurchases%23order-${orderId}`,
+    );
+    expect(safeClientPurchaseReturn(`/library/purchases?return=https://evil.test#order-${orderId}`)).toBeNull();
     expect(protectedContext("/administrator")).toBeNull();
   });
 });

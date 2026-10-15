@@ -10,6 +10,8 @@ class NotificationDefinition:
     title: str
     body: str
     variables: tuple[str, ...]
+    whatsapp_body: str | None = None
+    whatsapp_extra_variables: tuple[str, ...] = ()
 
 
 DEFINITIONS = {
@@ -43,5 +45,7 @@ DEFINITIONS = {
         "Fotos disponíveis", "client", "Fotos disponíveis",
         "Suas fotos estão prontas! Acesse Compras para abrir seu álbum.",
         ("cliente", "galeria", "pedido"),
+        "Suas fotos estão prontas! Acesse {{link_compras}} para abrir seu álbum.",
+        ("link_compras",),
     ),
 }

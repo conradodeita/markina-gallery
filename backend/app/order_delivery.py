@@ -18,23 +18,22 @@ def validate_album_url(value: str | None) -> str | None:
         return None
     # urlsplit remove controles; validar antes de fazer parse.
     if re.search(r"[\x00-\x1f\x7f\\]", value):
-        raise ValueError("Informe um link de compartilhamento HTTPS do Google Photos.")
+        raise ValueError("Informe um link HTTPS público de compartilhamento do álbum.")
     value = value.strip()
     if not value:
         return None
     try:
         url = urlsplit(value)
-        valid_path = (
-            url.hostname == "photos.app.goo.gl" and re.fullmatch(r"/[A-Za-z0-9_-]+/?", url.path)
-        ) or (
-            url.hostname == "photos.google.com" and re.fullmatch(r"/share/[A-Za-z0-9_-]+/?", url.path)
-        )
+        from app.tenant_hosts import normalize_canonical_host
+
+        normalize_canonical_host(url.hostname or "")
+        has_share_target = url.path not in {"", "/"} or bool(url.query or url.fragment)
         if (len(value) > 2048 or url.scheme != "https" or url.username is not None
                 or url.password is not None or url.port not in {None, 443}
-                or not valid_path or re.search(r"\s", value)):
+                or not has_share_target or re.search(r"\s", value)):
             raise ValueError()
     except ValueError as exc:
-        raise ValueError("Informe um link de compartilhamento HTTPS do Google Photos (até 2048 caracteres).") from exc
+        raise ValueError("Informe um link HTTPS público de compartilhamento do álbum (até 2048 caracteres).") from exc
     return value
 
 
@@ -146,6 +145,17 @@ def delivery_notice_allowed(db, event, item):
             or event.client_id != order.client_id or not order_fulfillable(order)
             or not order.delivery_album_url):
         return False
+    if "https://" in event.whatsapp_body:
+        from app.auth import Tenant
+        from app.tenant_hosts import CanonicalHostError, purchase_url_for_tenant
+
+        tenant = db.get(Tenant, event.tenant_id, populate_existing=True)
+        try:
+            expected_url = purchase_url_for_tenant(db, tenant, order.id) if tenant else None
+        except CanonicalHostError:
+            return False
+        if not expected_url or expected_url not in event.whatsapp_body:
+            return False
     parts = event.event_key.split(":")
     try:
         expected_length = {"order-delivery": 3, "order-delivery-resend": 4}.get(parts[0])
