@@ -243,6 +243,14 @@ def test_admin_scope_history_decisions_and_correction(monkeypatch):
     assert filtered["summary"]["total_cents"] == subtotal
     scope = filtered["groups"][0]["orders"][0]["communications"][0]["payment_group"]
     assert scope["total_cents"] == 2100 and len(scope["galleries"]) == 2
+    assert scope["id"] == payment["id"]
+    assert {item["order_id"] for item in scope["galleries"]} == {str(order.id) for order in orders}
+    with SessionLocal() as db:
+        reported_event = db.scalar(
+            select(NotificationEvent).where(NotificationEvent.event_type == "payment_reported")
+        )
+        assert f"informou pagamento da compra {payment['id'][:8]}" in reported_event.whatsapp_body
+        assert "da galeria sua compra" not in reported_event.whatsapp_body
     path = f"/admin/payment-communications/{communication['id']}"
     assert browser.post(path + "/decision", json={"decision": "confirmed"}).status_code == 409
     payload = {"decision": "confirmed", "payment_group_id": payment["id"]}
@@ -255,6 +263,8 @@ def test_admin_scope_history_decisions_and_correction(monkeypatch):
             select(NotificationEvent).where(NotificationEvent.event_type == "payment_confirmed")
         )
         assert event.target_path == f"/library/purchases#payment-{payment['id']}"
+        assert f"da compra {payment['id'][:8]}" in event.whatsapp_body
+        assert "da galeria sua compra" not in event.whatsapp_body
 
     class FailedProvider(SandboxWhatsAppProvider):
         def send_transactional(self, *_args, **_kwargs):

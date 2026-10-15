@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import re
 
-ALLOWED_VARIABLES = {"cliente", "pedido", "galeria"}
+ALLOWED_VARIABLES = {"cliente", "pedido", "galeria", "contexto_pagamento"}
 DEFAULT_PAYMENT_TEMPLATES = {
     "confirmed": (
-        "Olá {{cliente}}, confirmamos o pagamento do pedido {{pedido}} "
-        "da galeria {{galeria}}. Suas fotos seguirão para edição."
+        "Olá {{cliente}}, confirmamos o pagamento {{contexto_pagamento}}. "
+        "Suas fotos seguirão para edição."
     ),
     "refused": (
-        "Olá {{cliente}}, não localizamos o pagamento do pedido {{pedido}} "
-        "da galeria {{galeria}}. Revise os dados antes de comunicar novamente."
+        "Olá {{cliente}}, não localizamos o pagamento {{contexto_pagamento}}. "
+        "Revise os dados antes de comunicar novamente."
     ),
 }
 PLACEHOLDER = re.compile(r"{{\s*([a-z_]+)\s*}}")
 FORBIDDEN_URL = re.compile(r"(?:https?://|www\.|data:)", re.IGNORECASE)
+LEGACY_PAYMENT_REFERENCE = re.compile(
+    r"do pedido\s+{{\s*pedido\s*}}\s+da galeria\s+{{\s*galeria\s*}}",
+    re.IGNORECASE,
+)
 
 
 def validate_template(body: str) -> str:
@@ -40,6 +44,22 @@ def validate_template(body: str) -> str:
     return normalized
 
 
-def render_template(body: str, *, cliente: str, pedido: str, galeria: str) -> str:
-    values = {"cliente": cliente, "pedido": pedido, "galeria": galeria}
+def preview_payment_template_migration(templates: dict[str, str]) -> dict[str, dict[str, object]]:
+    """Return a reversible before/after preview; callers decide whether to apply it."""
+    preview = {}
+    for kind, body in templates.items():
+        transformed, count = LEGACY_PAYMENT_REFERENCE.subn("{{contexto_pagamento}}", body)
+        preview[kind] = {
+            "before": body,
+            "after": transformed,
+            "changed": count > 0,
+            "recognized": count > 0 or "{{contexto_pagamento}}" in body,
+        }
+    return preview
+
+
+def render_template(body: str, *, cliente: str, pedido: str, galeria: str,
+                    contexto_pagamento: str | None = None) -> str:
+    values = {"cliente": cliente, "pedido": pedido, "galeria": galeria,
+              "contexto_pagamento": contexto_pagamento or f"do pedido {pedido} da galeria {galeria}"}
     return PLACEHOLDER.sub(lambda match: values[match.group(1)], validate_template(body))

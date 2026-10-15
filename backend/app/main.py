@@ -285,7 +285,11 @@ from app.order_delivery import (
     validate_album_url,
 )
 from app.parent_registration import link_client_to_parent
-from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
+from app.payment_templates import (
+    DEFAULT_PAYMENT_TEMPLATES,
+    preview_payment_template_migration,
+    validate_template,
+)
 from app.pix import PixCodeError, pix_qr_data_url
 from app.preview_adjustment.api import register_routes as register_preview_adjustment_routes
 from app.preview_adjustment.service import presentation_path
@@ -9696,8 +9700,16 @@ def list_payment_templates(
             kind: configured.get(kind, default)
             for kind, default in DEFAULT_PAYMENT_TEMPLATES.items()
         },
-        "allowed_variables": sorted(["cliente", "pedido", "galeria"]),
+        "allowed_variables": sorted(["cliente", "pedido", "galeria", "contexto_pagamento"]),
     }
+
+
+@app.get("/admin/payment-message-templates/migration-preview")
+def preview_payment_template_migration_api(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    require_admin(request)
+    return {"templates": preview_payment_template_migration(payment_template_bodies(db))}
 
 
 @app.get("/admin/removed-photo-movements")

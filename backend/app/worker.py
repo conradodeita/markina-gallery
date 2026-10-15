@@ -25,6 +25,7 @@ from app.auth import (
     MediaJob,
     NotificationEvent,
     PaymentCommunication,
+    PaymentGroup,
     PaymentNotificationOutbox,
     PhotoAsset,
     SaleOrder,
@@ -109,11 +110,16 @@ def payment_notification_message(db: Session, item: PaymentNotificationOutbox) -
     if item.rendered_body_snapshot:
         return item.rendered_body_snapshot
     body = setting_for(db, f"payment_{item.template_kind}").whatsapp_body
+    group = db.get(PaymentGroup, communication.payment_group_id) if communication.payment_group_id else None
+    order_code = str(group.id if group else order.id)[:8]
+    payment_context = (f"da compra {order_code}" if group else
+                       f"do pedido {order_code} da galeria {order.derived_gallery_name_snapshot or gallery.name}")
     return render_template(
         body,
         cliente=order.client_name_snapshot or client.full_name,
-        pedido=str(order.id)[:8],
-        galeria=gallery.name,
+        pedido=order_code,
+        galeria="sua compra" if group else (order.derived_gallery_name_snapshot or gallery.name),
+        contexto_pagamento=payment_context,
     )
 
 

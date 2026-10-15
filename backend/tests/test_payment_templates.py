@@ -1,6 +1,11 @@
 import pytest
 
-from app.payment_templates import render_template, validate_template
+from app.payment_templates import (
+    DEFAULT_PAYMENT_TEMPLATES,
+    preview_payment_template_migration,
+    render_template,
+    validate_template,
+)
 
 
 def test_payment_template_allows_only_controlled_variables() -> None:
@@ -25,3 +30,34 @@ def test_payment_template_accepts_spacing_without_arbitrary_interpolation() -> N
         pedido="abc123",
         galeria="Formatura",
     ) == "Olá Ana, pedido abc123 da galeria Formatura."
+
+
+def test_grouped_and_individual_context_render_with_existing_reference():
+    body = DEFAULT_PAYMENT_TEMPLATES["confirmed"]
+    assert render_template(body, cliente="Ana", pedido="bebb98d7", galeria="sua compra",
+                           contexto_pagamento="da compra bebb98d7") == (
+        "Olá Ana, confirmamos o pagamento da compra bebb98d7. Suas fotos seguirão para edição."
+    )
+    assert render_template(body, cliente="Ana", pedido="1b55d2b5", galeria="Formatura",
+                           contexto_pagamento="do pedido 1b55d2b5 da galeria Formatura") == (
+        "Olá Ana, confirmamos o pagamento do pedido 1b55d2b5 da galeria Formatura. "
+        "Suas fotos seguirão para edição."
+    )
+
+
+def test_legacy_template_migration_preview_is_narrow_reversible_and_idempotent():
+    source = {
+        "confirmed": "Olá {{cliente}}, confirmamos o pagamento do pedido {{pedido}} da galeria {{galeria}}. Obrigado!",
+        "custom": "Aviso {{cliente}}: seu pedido {{pedido}} está em revisão.",
+    }
+    preview = preview_payment_template_migration(source)
+    assert preview["confirmed"] == {
+        "before": source["confirmed"],
+        "after": "Olá {{cliente}}, confirmamos o pagamento {{contexto_pagamento}}. Obrigado!",
+        "changed": True,
+        "recognized": True,
+    }
+    assert preview["custom"]["before"] == preview["custom"]["after"] == source["custom"]
+    assert preview["custom"]["changed"] is False and preview["custom"]["recognized"] is False
+    assert preview_payment_template_migration({"confirmed": preview["confirmed"]["after"]})[
+        "confirmed"]["changed"] is False

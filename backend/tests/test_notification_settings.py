@@ -71,11 +71,16 @@ def test_configuration_api_is_admin_only_and_validates_templates():
 
 
 def test_payment_legacy_api_delegates_to_the_single_source():
+    assert TestClient(app).get("/admin/payment-message-templates/migration-preview").status_code == 403
     with SessionLocal() as db:
         db.add(PaymentMessageTemplate(kind="confirmed", body="Texto antigo {{cliente}}"))
         db.commit()
     client = authenticated()
     assert client.get("/admin/payment-message-templates").json()["templates"]["confirmed"] == "Texto antigo {{cliente}}"
+    preview_response = client.get("/admin/payment-message-templates/migration-preview")
+    assert preview_response.status_code == 200
+    assert preview_response.json()["templates"]["confirmed"]["before"] == "Texto antigo {{cliente}}"
+    assert preview_response.json()["templates"]["confirmed"]["changed"] is False
     response = client.put("/admin/payment-message-templates/confirmed", json={"body": "Novo {{cliente}}"})
     assert response.status_code == 200
     assert client.get("/admin/payment-message-templates").json()["templates"]["confirmed"] == "Novo {{cliente}}"

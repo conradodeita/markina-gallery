@@ -10,8 +10,10 @@ export type NotificationSetting = {
   push_title: string; push_body: string; version: number;
 };
 
-function preview(text: string) {
-  const values: Record<string, string> = { cliente: "Cliente", galeria: "Galeria", pedido: "1234abcd" };
+function preview(text: string, contextoPagamento = "da compra 1234abcd") {
+  const values: Record<string, string> = {
+    cliente: "Cliente", galeria: "Galeria", pedido: "1234abcd", contexto_pagamento: contextoPagamento,
+  };
   return text.replace(/\{\{(\w+)\}\}/g, (match, key) => values[key] ?? match);
 }
 
@@ -48,7 +50,12 @@ function EventCard({ initial }: { initial: NotificationSetting }) {
       <aside className={styles.preview} aria-label="Prévia do push"><small>PRÉVIA · PUSH</small><strong>{preview(item.push_title)}</strong><p>{preview(item.push_body)}</p></aside>
       <label className={styles.toggle}><input type="checkbox" checked={item.whatsapp_enabled} onChange={(event) => setItem({ ...item, whatsapp_enabled: event.target.checked })} />Enviar WhatsApp</label>
       <label>Mensagem do WhatsApp <span>{item.whatsapp_body.length}/500</span><textarea required maxLength={500} rows={4} value={item.whatsapp_body} onChange={(event) => setItem({ ...item, whatsapp_body: event.target.value })} /></label>
-      <aside className={styles.preview} aria-label="Prévia do WhatsApp"><small>PRÉVIA · WHATSAPP</small><p>{preview(item.whatsapp_body)}</p></aside>
+      <aside className={styles.preview} aria-label="Prévia do WhatsApp"><small>PRÉVIA · WHATSAPP</small>
+        {item.event_type.startsWith("payment_") ? <>
+          <p><strong>Compra agrupada:</strong> {preview(item.whatsapp_body, "da compra 1234abcd")}</p>
+          <p><strong>Pedido individual:</strong> {preview(item.whatsapp_body, "do pedido 1234abcd da galeria Formatura")}</p>
+        </> : <p>{preview(item.whatsapp_body)}</p>}
+      </aside>
     </fieldset>
     <footer><MarkinaButton type="submit" disabled={busy}>{busy ? "Salvando…" : "Salvar evento"}</MarkinaButton>{message && <p role={error ? "alert" : "status"}>{message}</p>}</footer>
     </form>

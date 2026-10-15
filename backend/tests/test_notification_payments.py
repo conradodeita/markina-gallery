@@ -39,6 +39,9 @@ def test_payment_decisions_unique_and_correction_silent(monkeypatch, first_decis
         db.flush()
         first = record_payment_event(db, communication=communication, order=order, event_type="payment_reported")
         assert record_payment_event(db, communication=communication, order=order, event_type="payment_reported").id == first.id
+        assert first.whatsapp_body.endswith(
+            " informou pagamento do pedido " + str(order.id)[:8] + " da galeria Privada."
+        )
         db.commit()
         communication_id = communication.id
     url = f"/admin/payment-communications/{communication_id}"

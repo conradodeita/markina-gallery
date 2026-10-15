@@ -108,7 +108,8 @@ def setting_payload(setting: NotificationSetting) -> dict:
         "whatsapp_body": setting.whatsapp_body, "push_title": setting.push_title,
         "push_body": setting.push_body, "version": setting.version,
         "preview": {field: render_text(setting.event_type, getattr(setting, field),
-                                      {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd"},
+                                      {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd",
+                                       "contexto_pagamento": "da compra 1234abcd"},
                                       limit)
                     for field, limit in (("push_title", 60), ("push_body", 140),
                                          ("whatsapp_body", 500))},

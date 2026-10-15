@@ -29,7 +29,7 @@ export function PaymentActions({ order, clientName, onRefresh }: { order: Financ
     if (locked.current || (action === "correction" ? !order.can_correct : !order.can_decide)) return;
     const label = action === "confirmed" ? "Confirmar pagamento" : action === "refused" ? "Pagamento não localizado" : correctionLabel;
     const context = order.payment_group
-      ? `${clientName}\nPIX único · ${money(order.payment_group.total_cents)}\n${order.payment_group.galleries.map((gallery) => `${gallery.name}: ${money(gallery.total_cents)}`).join("\n")}\nA decisão será aplicada a todos esses pedidos.`
+      ? `Compra ${order.payment_group.id.slice(0, 8)} · PIX único · ${money(order.payment_group.total_cents)}\n${order.payment_group.galleries.map((gallery) => `Pedido ${gallery.order_id.slice(0, 8)} · ${gallery.name}: ${money(gallery.total_cents)}`).join("\n")}\n${clientName}\nA decisão será aplicada a toda esta compra e aos pedidos listados.`
       : `${clientName} · ${order.gallery_name}\nPedido ${order.order_id} · ${order.quantity === undefined ? "" : `${order.quantity} foto(s) · `}${money(order.total_cents)}`;
     if (!window.confirm(`${label}?\n${context}${action === "correction" ? "\nO pagamento voltará para revisão. Nenhuma mensagem será enviada à cliente." : ""}`)) return;
     locked.current = true; setBusy(true); setMessage("");
@@ -51,7 +51,11 @@ export function PaymentActions({ order, clientName, onRefresh }: { order: Financ
   }
 
   return <div className="payment-shortcut-actions">
-    {order.payment_group ? <p>Este pedido integra um PIX único de {money(order.payment_group.total_cents)} · {order.payment_group.galleries.map((gallery) => gallery.name).join(", ")}</p> : null}
+    {order.payment_group ? <div role="region" aria-label={`Compra ${order.payment_group.id.slice(0, 8)}`}>
+      <p><strong>Compra {order.payment_group.id.slice(0, 8)}</strong> · PIX único de {money(order.payment_group.total_cents)}</p>
+      <ul>{order.payment_group.galleries.map((gallery) => <li key={gallery.order_id}>Pedido {gallery.order_id.slice(0, 8)} · {gallery.name}: {money(gallery.total_cents)}</li>)}</ul>
+      <p>A confirmação, recusa ou correção afeta toda a compra.</p>
+    </div> : null}
     <div className="dashboard-actions">
       {order.can_decide ? <><MarkinaButton type="button" disabled={busy} onClick={() => void act("confirmed")}>Confirmar pagamento</MarkinaButton><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void act("refused")}>Pagamento não localizado</MarkinaButton></> : null}
       {order.can_correct ? <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void act("correction")}>{correctionLabel}</MarkinaButton> : null}
