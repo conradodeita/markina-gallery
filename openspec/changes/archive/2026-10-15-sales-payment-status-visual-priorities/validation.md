@@ -34,3 +34,9 @@ Validação local e revisão humana aprovadas. A spec principal `openspec/specs/
 - `frontend`: `npm test` — 517 passaram em 60 arquivos; `npx tsc --noEmit` — sem erros; `npm run build` — concluído; `npm run lint` — 0 erros e 31 avisos preexistentes.
 - `openspec validate --specs` — 21 specs passaram.
 - `openspec validate --strict --all` — encontrou 33 falhas em changes ativos preexistentes fora desta change; a spec consolidada desta change é válida. O resultado integral será confirmado pelo check do PR.
+
+## Revalidação no CI do PR
+
+- O check `backend` confirmou a inicialização de PostgreSQL via Docker Hub e executou 1.596 testes; 1.596 passaram, 23 foram ignorados e um teste falhou por esperar `confirmed` sem `delivery_album_url`.
+- A expectativa do teste `test_admin_payment_queue_identifica_metodo_sem_duplicar_receita` foi atualizada para `confirmed_undelivered`, alinhada ao requisito aprovado de classificar pagamento confirmado sem link salvo como fotos não entregues. A contagem de receita confirmada continua coberta.
+- Reexecução completa do CI após esta correção: pendente.
