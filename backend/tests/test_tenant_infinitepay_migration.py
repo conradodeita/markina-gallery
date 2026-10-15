@@ -53,18 +53,19 @@ def test_upgrade_e_downgrade_vazios_preservam_pix_e_snapshots(migration_database
     alembic(url, "upgrade", SOURCE)
     if legacy:
         with Session(engine) as db:
-            tenant = auth.Tenant()
+            tenant_id = uuid4()
+            insert_legacy_model(db.connection(), auth.Tenant, id=tenant_id, status="active")
             admin = auth.AdminUser(email="synthetic@example.test", password_hash="synthetic",
                                    totp_secret="synthetic")
-            db.add_all([tenant, admin])
+            db.add(admin)
             db.flush()
-            client = auth.Client(tenant_id=tenant.id, full_name="Sintética",
+            client = auth.Client(tenant_id=tenant_id, full_name="Sintética",
                                  phone_e164="+5511999990010")
-            db.add_all([auth.TenantAdmin(tenant_id=tenant.id, admin_user_id=admin.id), client])
+            db.add_all([auth.TenantAdmin(tenant_id=tenant_id, admin_user_id=admin.id), client])
             db.flush()
-            db.add(auth.GlobalPixSettings(tenant_id=tenant.id, admin_user_id=admin.id,
+            db.add(auth.GlobalPixSettings(tenant_id=tenant_id, admin_user_id=admin.id,
                    version=7, status="active", copy_paste="synthetic-pix-preserved"))
-            insert_legacy_model(db.connection(), auth.SaleOrder, tenant_id=tenant.id, client_id=client.id, total_cents=700,
+            insert_legacy_model(db.connection(), auth.SaleOrder, tenant_id=tenant_id, client_id=client.id, total_cents=700,
                    pix_copy_paste_snapshot="synthetic-old-snapshot", payment_status="confirmed",
                    derived_gallery_id_snapshot=uuid4(), derived_gallery_name_snapshot="Histórica",
                    parent_gallery_id_snapshot=uuid4(), parent_gallery_name_snapshot="Origem histórica")
@@ -89,18 +90,19 @@ def test_downgrade_recusa_configuracao_existente(migration_database):
     url, engine = migration_database
     alembic(url, "upgrade", TARGET)
     with Session(engine) as db:
-        tenant = auth.Tenant()
+        tenant_id = uuid4()
+        insert_legacy_model(db.connection(), auth.Tenant, id=tenant_id, status="active")
         admin = auth.AdminUser(email="synthetic@example.test", password_hash="synthetic",
                                totp_secret="synthetic")
-        db.add_all([tenant, admin])
+        db.add(admin)
         db.flush()
-        db.add(auth.TenantAdmin(tenant_id=tenant.id, admin_user_id=admin.id))
+        db.add(auth.TenantAdmin(tenant_id=tenant_id, admin_user_id=admin.id))
         db.flush()
         setting_id = uuid4()
         # TARGET intentionally predates card_enabled; reflect the historical
         # table so current ORM metadata does not insert a future column.
         insert_legacy_model(db.connection(), auth.InfinitePaySettings, id=setting_id,
-            tenant_id=tenant.id, admin_user_id=admin.id, handle="synthetic", version=2,
+            tenant_id=tenant_id, admin_user_id=admin.id, handle="synthetic", version=2,
             status="pending", updated_at=auth.now())
         db.commit()
     result = alembic(url, "downgrade", SOURCE, succeeds=False)

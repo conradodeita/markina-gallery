@@ -2,7 +2,7 @@
 
 import { FormEvent, useRef, useState } from "react";
 import { MarkinaButton } from "../../ui-kit";
-import { safeOrderAlbumUrl } from "../../order-album-url";
+import { safeExternalAlbumUrl } from "../../order-album-url";
 
 export type OrderDelivery = {
   album_url: string | null;
@@ -30,8 +30,8 @@ export function OrderDeliveryForm({ orderId, delivery, onRefresh }: { orderId: s
 
   async function submit(action: "send" | "remove" | "resend") {
     if (inFlight.current) return;
-    if (action === "send" && !safeOrderAlbumUrl(draft.trim())) {
-      setFailed(true); setMessage("Informe um link de compartilhamento HTTPS do Google Photos."); return;
+    if (action === "send" && !safeExternalAlbumUrl(draft.trim())) {
+      setFailed(true); setMessage("Informe um link HTTPS público de compartilhamento do álbum."); return;
     }
     if (action === "remove" && !window.confirm("Remover o link deste pedido? O botão ficará indisponível em Compras.")) return;
     if (action === "resend" && !window.confirm("Reenviar o aviso de fotos disponíveis para este pedido?")) return;
@@ -58,10 +58,10 @@ export function OrderDeliveryForm({ orderId, delivery, onRefresh }: { orderId: s
   }
 
   return <form className="order-delivery-form" aria-label="Entrega das fotos" onSubmit={(event: FormEvent) => { event.preventDefault(); void submit("send"); }}>
-    <label htmlFor={`delivery-link-${orderId}`}>Link do álbum no Google Photos</label>
+    <label htmlFor={`delivery-link-${orderId}`}>Link externo do álbum</label>
     <input id={`delivery-link-${orderId}`} type="url" maxLength={2048} value={draft} disabled={busy || !delivery.can_send}
-      placeholder="https://photos.app.goo.gl/…" onChange={(event) => setDraft(event.target.value)} aria-describedby={`delivery-help-${orderId}`} />
-    <p id={`delivery-help-${orderId}`}>{delivery.can_send ? "Enviar libera o álbum em Compras e avisa pelos canais habilitados em Notificações." : "Confirme o pagamento para disponibilizar as fotos."}</p>
+      placeholder="https://drive.google.com/…" onChange={(event) => setDraft(event.target.value)} aria-describedby={`delivery-help-${orderId}`} />
+    <p id={`delivery-help-${orderId}`}>{delivery.can_send ? "Cole o link HTTPS de compartilhamento do serviço de armazenamento (Google Photos, Drive ou equivalente). Enviar libera o botão em Compras e avisa pelos canais habilitados em Notificações." : "Confirme o pagamento para disponibilizar as fotos."}</p>
     <div className="order-delivery-actions">
       <MarkinaButton type="submit" disabled={busy || !delivery.can_send || !draft.trim()}>{busy ? "Aguarde…" : "Enviar"}</MarkinaButton>
       {saved.album_url ? <>

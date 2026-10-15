@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { StatusBadge } from "../ui-kit";
 import { PurchasePreview } from "../purchase-preview";
-import { safeOrderAlbumUrl } from "../order-album-url";
+import { safeExternalAlbumUrl } from "../order-album-url";
 export type Order = {
   id: string;
   gallery_name: string;
@@ -58,7 +58,7 @@ export function LibraryOrderCard({ order }: { order: Order }) {
   const activityAt = order.payment_required === false ? order.frozen_at : order.confirmed_at ?? order.communicated_at;
   const activityLabel = order.payment_required === false ? "Finalizada" : order.confirmed_at ? "Confirmada" : "Informada";
   const gridId = `library-order-${order.id}-photos`;
-  const albumUrl = ["purchased", "selection_finalized"].includes(orderState(order)) ? safeOrderAlbumUrl(order.delivery_album_url) : null;
+  const albumUrl = ["purchased", "selection_finalized"].includes(orderState(order)) ? safeExternalAlbumUrl(order.delivery_album_url) : null;
 
   useEffect(() => {
     if (!expandedPhoto) return;

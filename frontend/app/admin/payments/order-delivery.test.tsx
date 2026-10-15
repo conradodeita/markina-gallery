@@ -12,7 +12,7 @@ it("digitar não envia; Enviar persiste e informa agendamento sem alegar entrega
   vi.stubGlobal("fetch", fetch);
   const refresh = vi.fn().mockResolvedValue(undefined);
   render(<OrderDeliveryForm orderId="order-1" delivery={initial} onRefresh={refresh} />);
-  fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: album } });
+  fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: album } });
   expect(fetch).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
   expect(await screen.findByRole("status")).toHaveProperty("textContent", "Fotos disponíveis em Compras. Aviso agendado.");
@@ -20,10 +20,25 @@ it("digitar não envia; Enviar persiste e informa agendamento sem alegar entrega
   expect(refresh).toHaveBeenCalledOnce();
 });
 
-it("preserva rascunho na falha e rejeita destino que não seja Google Photos", async () => {
+it("aceita link do Google Drive no mesmo campo de entrega", async () => {
+  const drive = "https://drive.google.com/file/d/Ab12/view?usp=sharing";
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    delivery: { ...saved, album_url: drive }, notification: { channels: ["whatsapp"] },
+  })));
+  vi.stubGlobal("fetch", fetch);
+  render(<OrderDeliveryForm orderId="order-1" delivery={initial} onRefresh={vi.fn().mockResolvedValue(undefined)} />);
+  fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: drive } });
+  fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+  await screen.findByRole("status");
+  expect(fetch).toHaveBeenCalledWith("/api/admin/orders/order-1/delivery", expect.objectContaining({
+    body: JSON.stringify({ album_url: drive, version: 0 }),
+  }));
+});
+
+it("preserva rascunho na falha e rejeita destinos que não sejam HTTPS públicos", async () => {
   const fetch = vi.fn().mockRejectedValue(new Error("Failed to fetch")); vi.stubGlobal("fetch", fetch);
   render(<OrderDeliveryForm orderId="order-1" delivery={initial} onRefresh={vi.fn()} />);
-  const input = screen.getByLabelText("Link do álbum no Google Photos");
+  const input = screen.getByLabelText("Link externo do álbum");
   fireEvent.change(input, { target: { value: "https://attacker.invalid/album" } });
   fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
   expect(fetch).not.toHaveBeenCalled();
@@ -66,7 +81,7 @@ it("impede reenvio de rascunho diferente e confirma remoção", () => {
   const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
   vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<OrderDeliveryForm orderId="order-1" delivery={saved} onRefresh={vi.fn()} />);
-  fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: `${album}2` } });
+  fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: `${album}2` } });
   expect(screen.getByRole("button", { name: "Reenviar aviso" })).toHaveProperty("disabled", true);
   fireEvent.click(screen.getByRole("button", { name: "Remover link" }));
   expect(fetch).not.toHaveBeenCalled();
@@ -88,10 +103,10 @@ it("duplo clique durante requisição pendente não duplica aviso", async () => 
 it("explica quando não há canal disponível e acompanha correção financeira", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ delivery: saved, notification: { channels: [] } }))));
   const { rerender } = render(<OrderDeliveryForm orderId="order-1" delivery={initial} onRefresh={vi.fn()} />);
-  fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: album } });
+  fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: album } });
   fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
   expect(await screen.findByRole("status")).toHaveProperty("textContent", expect.stringContaining("Nenhum aviso agendado"));
   rerender(<OrderDeliveryForm orderId="order-1" delivery={{ ...saved, version: 2, can_send: false }} onRefresh={vi.fn()} />);
   expect(screen.getByRole("button", { name: "Reenviar aviso" })).toHaveProperty("disabled", true);
-  expect(screen.getByLabelText("Link do álbum no Google Photos")).toHaveProperty("value", album);
+  expect(screen.getByLabelText("Link externo do álbum")).toHaveProperty("value", album);
 });

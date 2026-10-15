@@ -26,3 +26,9 @@ it.each([null, "https://attacker.invalid/album", "javascript:alert(1)", "https:/
   expect(screen.getByRole("button", { name: "Fotos indisponíveis" })).toHaveProperty("disabled", true);
   expect(screen.getByText("Após a edição, quando o fotógrafo liberar o álbum, clique em “Fotos disponíveis” para acessá-las.")).toBeTruthy();
 });
+
+it("não transforma endereço de rede local em botão externo do álbum", () => {
+  render(<LibraryOrderCard order={{ ...order, delivery_album_url: "https://127.0.0.1/album" }} />);
+  expect(screen.queryByRole("link", { name: "Fotos disponíveis" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Fotos indisponíveis" })).toHaveProperty("disabled", true);
+});

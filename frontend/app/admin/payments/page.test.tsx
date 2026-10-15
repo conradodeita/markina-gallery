@@ -82,6 +82,19 @@ const emptyDashboard = {
 };
 
 describe("controle operacional de pagamentos", () => {
+  it("mostra o código da compra agrupada junto ao código preservado do pedido", async () => {
+    const data = dashboard();
+    Object.assign(data.groups[0].orders[0].communication, { payment_group: {
+      id: "group-12345678", total_cents: 2100,
+      galleries: [{ order_id: "12345678-order", name: "Formatura", total_cents: 1200 }],
+    } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(data))));
+    render(<AdminPaymentsPage />);
+    const galleryHeading = await screen.findByRole("heading", { name: "Formatura privada" });
+    expect(galleryHeading.closest(".payment-order")?.querySelector(".payment-order__heading")?.textContent)
+      .toContain("Compra group-12 · Pedido ana-orde");
+  });
+
   it("mantém o resultado do envio de entrega visível após atualizar a lista", async () => {
     const album = "https://photos.app.goo.gl/SyntheticAlbum";
     let sent = false;
@@ -100,7 +113,7 @@ describe("controle operacional de pagamentos", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminPaymentsPage />);
     fireEvent.click(await screen.findByText("Ver pedido e entrega"));
-    fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: album } });
+    fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: album } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
     expect(await screen.findByText("Fotos disponíveis em Compras. Aviso agendado.")).toBeTruthy();
     await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/payment-communications"))).toHaveLength(2));
@@ -130,7 +143,7 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.getAllByText(/12,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pagamento comunicado").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeNull();
-    expect(screen.getByLabelText("Link do álbum no Google Photos")).toBeTruthy();
+    expect(screen.getByLabelText("Link externo do álbum")).toBeTruthy();
     expect(screen.queryByText(/copia e cola|api key/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
@@ -141,6 +154,36 @@ describe("controle operacional de pagamentos", () => {
     expect(await screen.findByText(/Decisão registrada/i)).toBeTruthy();
 
     expect(screen.queryByRole("button", { name: "Tentar enviar novamente" })).toBeNull();
+  });
+
+  it.each(["confirmed", "confirmed_undelivered"])("mostra o download HTML em %s e o remove após corrigir a confirmação", async (financialStatus) => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let current = dashboard();
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      if (options?.method === "POST" && path.endsWith("/decision")) {
+        const confirmed = { ...communication, status: "confirmed", can_decide: false, can_correct: true };
+        current = dashboard();
+        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: financialStatus, communication: confirmed, communications: [confirmed] };
+        return Promise.resolve(new Response(JSON.stringify({ status: "confirmed" })));
+      }
+      if (options?.method === "POST" && path.endsWith("/correction")) {
+        const pending = { ...communication, status: "pending_review", can_decide: true, can_correct: false };
+        current = dashboard();
+        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: "reported", communication: pending, communications: [pending] };
+        return Promise.resolve(new Response(JSON.stringify({ status: "pending_review" })));
+      }
+      return Promise.resolve(new Response(JSON.stringify(current)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar pagamento" }));
+    const download = await screen.findByRole("link", { name: "Baixar fotos compradas" });
+    expect(download.getAttribute("href")).toBe("/api/admin/parent-galleries/gallery-public-1/clients/client-Ana/selection/export.html");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Corrigir confirmação" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Baixar fotos compradas" })).toBeNull());
   });
 
   it("omite o cartão de mensagens globais e preserva filtros e estado vazio", async () => {
