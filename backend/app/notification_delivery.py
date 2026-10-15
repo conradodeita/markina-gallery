@@ -37,6 +37,7 @@ from app.messaging import (
     WhatsAppConfigurationError,
     WhatsAppDeliveryError,
 )
+from app.notification_contract import whatsapp_event_gate_open
 from app.order_delivery import EVENT_TYPE as ORDER_DELIVERY_EVENT
 from app.order_delivery import delivery_notice_allowed
 from app.private_membership import client_has_operational_membership
@@ -56,8 +57,8 @@ def utc(value):
 def channel_enabled(event_type: str, channel: str) -> bool:
     if channel == "push":
         return push_enabled()
-    # Fluxos de pagamento já ativos permanecem; três eventos novos exigem ativação operacional.
-    return event_type.startswith("payment_") or os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true"
+    global_gate_enabled = os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true"
+    return whatsapp_event_gate_open(event_type, global_gate_enabled=global_gate_enabled)
 
 
 def mirror_payment_projection(db, event, item):

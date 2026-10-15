@@ -294,6 +294,41 @@ def test_resend_idempotency_current_templates_and_removed_link():
     assert len(events()) == 4
 
 
+def test_delivery_whatsapp_initial_and_resend_ignore_gate_for_new_events(monkeypatch):
+    monkeypatch.setenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false")
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "sandbox")
+    admin, _, orders, _ = setup_order()
+    order = orders[0]
+
+    class RecordingProvider(SandboxWhatsAppProvider):
+        calls = 0
+
+        def send_transactional(self, *args, **kwargs):
+            self.calls += 1
+            return super().send_transactional(*args, **kwargs)
+
+    provider = RecordingProvider()
+    assert send(admin, order).status_code == 200
+    with SessionLocal() as db:
+        first = db.scalar(select(NotificationDelivery).where(NotificationDelivery.channel == "whatsapp"))
+        assert first.status == "queued" and first.last_error is None
+    assert process_next_notification("whatsapp", whatsapp_provider=provider)
+
+    resent = admin.post(
+        f"/admin/orders/{order}/delivery/resend",
+        json={"version": 1, "operation_id": str(uuid4())},
+    )
+    assert resent.status_code == 200, resent.text
+    assert process_next_notification("whatsapp", whatsapp_provider=provider)
+    with SessionLocal() as db:
+        deliveries = list(db.scalars(select(NotificationDelivery).where(
+            NotificationDelivery.channel == "whatsapp",
+        ).order_by(NotificationDelivery.created_at)))
+        assert len(deliveries) == 2
+        assert all(item.status == "accepted" and item.last_error is None for item in deliveries)
+    assert provider.calls == 2
+
+
 def test_rollback_cannot_publish_or_queue():
     admin, _, orders, _ = setup_order()
     with SessionLocal() as db:

@@ -76,6 +76,12 @@ Para manter a imagem e versão efetivas, usar o mirror Google da imagem oficial 
 
 Alternativa descartada: esperar indefinidamente pela cota do ECR ou voltar ao Docker Hub sem verificar identidade da imagem e disponibilidade.
 
+### 8. Fotos disponíveis conserva a ativação por evento
+
+`order_delivery_ready` já é um evento comercial configurável anterior aos três eventos novos controlados por `TRANSACTIONAL_WHATSAPP_ENABLED`. O canal de fotos disponíveis SHALL depender do interruptor WhatsApp próprio do evento e da prontidão normal do provedor; aplicaremos a mesma decisão tanto na criação da entrega quanto no worker. O gate global continua protegendo `first_access`, `first_selection` e `private_photos_ready`. Push permanece independente.
+
+Esta decisão evita ativar incidentalmente outros eventos quando o fotógrafo só habilitou “Fotos disponíveis”. Ela também corrige a divergência entre o comentário/documentação do gate (“três eventos novos”) e sua implementação anterior, que bloqueava todo evento não relacionado a pagamento.
+
 ## Risks / Trade-offs
 
 - [Host encaminhado incorretamente pode direcionar uma cliente ao fotógrafo errado] → mapear hostname canônico registrado após validação do proxy e falhar fechado; nunca inferir pelo cabeçalho bruto.

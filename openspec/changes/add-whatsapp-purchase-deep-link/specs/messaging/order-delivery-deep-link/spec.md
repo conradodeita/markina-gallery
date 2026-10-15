@@ -45,3 +45,15 @@ O sistema SHALL criar e processar o aviso somente para a cliente proprietária d
 #### Scenario: Revisão do pedido continua válida
 - **WHEN** o worker processa mensagem de um pedido do tenant correto com pagamento confirmado, álbum vigente e revisão atual
 - **THEN** entrega o aviso ao contato autorizado da cliente usando o mesmo subdomínio vinculado ao evento
+
+### Requirement: Fotos disponíveis respeita o interruptor próprio de WhatsApp
+
+O evento já existente `order_delivery_ready` SHALL usar o interruptor WhatsApp desse evento e a prontidão do transporte como condições para enfileirar e enviar. O gate global `TRANSACTIONAL_WHATSAPP_ENABLED`, reservado aos três eventos novos da central de notificações, SHALL NOT bloquear fotos disponíveis. O push SHALL continuar independente.
+
+#### Scenario: WhatsApp de fotos disponíveis com gate global desligado
+- **WHEN** WhatsApp está habilitado para “Fotos disponíveis”, o transporte está pronto e `TRANSACTIONAL_WHATSAPP_ENABLED` está desligado
+- **THEN** Enviar e Reenviar aviso enfileiram o canal WhatsApp e o worker tenta a entrega sem alterar o gate dos demais eventos
+
+#### Scenario: Gate global continua protegendo os eventos novos
+- **WHEN** `TRANSACTIONAL_WHATSAPP_ENABLED` está desligado e ocorre um dos três eventos novos sujeitos a esse gate
+- **THEN** o WhatsApp desses eventos permanece bloqueado conforme a política operacional existente
