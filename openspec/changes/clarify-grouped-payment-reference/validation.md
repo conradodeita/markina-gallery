@@ -24,6 +24,13 @@
 - `git diff --check` — sem erros de whitespace.
 - `npm ci` reportou 11 alertas no audit das dependências resolvidas (10 altos, 1 crítico); nenhuma atualização de dependências foi incluída nesta change.
 
+## Correção após CI vermelho — 2026-10-15
+
+- O job `backend / Testes (pytest)` do run `38750801217` concluiu com 1 falha, 1627 testes aprovados e 23 ignorados. A falha era uma expectativa desatualizada em `test_admin_payment_templates_are_controlled_and_have_safe_defaults`: o endpoint inclui `contexto_pagamento` na lista de variáveis permitidas desde esta change.
+- Atualizada a expectativa para incluir `contexto_pagamento`, mantendo o contrato da API e sem alterar código de produção.
+- `python -m pytest -q tests/test_derived_galleries.py::test_admin_payment_templates_are_controlled_and_have_safe_defaults` — 1 passou.
+- A suíte backend completa ainda precisa ser reexecutada pelo CI após o envio deste ajuste; não declarar CI verde até confirmar todos os checks do PR.
+
 ## Limites
 
 - Nenhuma migration de schema, alteração de UUID, regravação de snapshot ou operação em produção foi executada.
