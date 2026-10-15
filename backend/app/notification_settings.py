@@ -26,7 +26,7 @@ from app.auth import (
     now,
 )
 from app.client_identity import require_identity_tenant
-from app.notification_contract import DEFINITIONS
+from app.notification_contract import DEFINITIONS, whatsapp_event_gate_open
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, PLACEHOLDER, validate_template
 
 
@@ -285,7 +285,10 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
             db.flush()
             for recipient in set(recipients):
                 if setting.whatsapp_enabled:
-                    whatsapp_status = "queued" if event_type.startswith("payment_") or os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true" else "cancelled"
+                    global_gate_enabled = os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true"
+                    whatsapp_status = "queued" if whatsapp_event_gate_open(
+                        event_type, global_gate_enabled=global_gate_enabled,
+                    ) else "cancelled"
                     whatsapp_error = None if whatsapp_status == "queued" else "transport_disabled"
                     if not whatsapp_link_available:
                         whatsapp_status, whatsapp_error = "cancelled", "canonical_host_unavailable"

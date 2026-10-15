@@ -24,6 +24,7 @@
 - [x] 4.3 Atualizar configuração e prévias do evento para mostrar a variável WhatsApp exclusiva; verificar edição/versionamento, compatibilidade dos seis eventos anteriores e que push continua usando `target_path` sem expor dados de outro tenant. Evidência: testes backend de settings e frontend de notificações.
 - [x] 4.4 Reutilizar o `delivery_album_url` por pedido e o evento atual, ampliando a validação de Google Photos para links HTTPS públicos de serviços externos de arquivos; atualizar rótulo/ajuda do campo e testar Google Photos, Drive e outro serviço externo, rejeição de HTTP/credenciais/porta não padrão/host local, preservação de query e que somente o botão da compra do cliente recebe o link externo. Evidência: 25 testes backend e 26 testes frontend direcionados passaram; Google Drive foi usado na regressão de entrega e o teste confirma que somente a projeção da compra contém o link externo.
 - [x] 4.5 Usar a origem pública HTTPS confiável somente como hostname compatível quando houver exatamente um tenant ativo sem host persistido; em cenário multitenant, exigir host explícito e falhar fechado para link, OTP e sessão. Cobrir origem diferente recebida pelo cliente, hostname registrado, tenant único, hostname inativo e mais de um tenant ativo. Evidência: `test_tenant_hosts.py` passou com 16 testes, incluindo `test_host_de_tenant_inativo_nao_cai_no_fallback_de_outro_tenant`.
+- [x] 4.6 Preservar o evento existente `order_delivery_ready` atrás do interruptor WhatsApp por evento, sem submetê-lo ao gate global reservado aos três novos eventos; cobrir criação, Reenviar aviso e worker com gate global desligado, mantendo os eventos novos bloqueados. Evidência: `pytest tests/test_order_delivery.py tests/test_notification_delivery.py -q --tb=short` (**31 passed**); Ruff focado passou; testes usam provedor sandbox e não enviam mensagens reais.
 
 ## 5. Integração e liberação
 
@@ -32,7 +33,8 @@
 - [x] 5.1c Executar build de produção com dependências instaladas pelo lockfile e registrar o resultado em `validation.md`.
 - [x] 5.2a Fazer inventário estático da configuração versionada para orientar a implantação futura e confirmar que esta change não alterou arquivos de DNS/proxy/segredos; registrar limites em `validation.md`.
 - [x] 5.2b Inventariar a homologação em modo somente leitura e apresentar plano de impacto zero antes do deploy já autorizado para o hostname existente; manter serviços exclusivos e preservar workers/orphans, sem alterar DNS/TLS/proxy/porta ou enviar mensagem real. Evidência: run `38644817829`, estado e plano em `validation.md`.
-- [ ] 5.2c Trocar apenas a origem das duas imagens PostgreSQL dos serviços temporários do CI para o mirror com digest idêntico, executar o CI no SHA atual e registrar resultado. Não alterar imagens do deploy.
+- [x] 5.2c Trocar apenas a origem das duas imagens PostgreSQL dos serviços temporários do CI para o mirror com digest idêntico, executar o CI no SHA atual e registrar resultado. Evidência: run `38728087811` aprovou os gates no merge SHA `78954e310a0ae46efe5fec6d7adaeb5ca13cfb8e`; o workflow também executou `deploy-homolog` no host remoto. Não alterar imagens do deploy.
+- [ ] 5.3 Revisar o inventário/classificação do host que o workflow chama `deploy-homolog` e decidir um procedimento seguro e explicitamente autorizado para atualizar API/worker de produção; não usar o job automático enquanto o alvo real for tratado como homologação. Evidência e desvio operacional registrados em `validation.md`.
 
 ## Workflow follow-up
 

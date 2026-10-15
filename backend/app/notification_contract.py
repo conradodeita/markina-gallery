@@ -49,3 +49,17 @@ DEFINITIONS = {
         ("link_compras",),
     ),
 }
+
+
+TRANSACTIONAL_WHATSAPP_GATED_EVENTS = frozenset({
+    "first_access",
+    "first_selection",
+    "private_photos_ready",
+})
+
+
+def whatsapp_event_gate_open(event_type: str, *, global_gate_enabled: bool) -> bool:
+    """Apply the rollout gate only to the three newer notification events."""
+    if event_type.startswith("payment_") or event_type == "order_delivery_ready":
+        return True
+    return event_type in TRANSACTIONAL_WHATSAPP_GATED_EVENTS and global_gate_enabled

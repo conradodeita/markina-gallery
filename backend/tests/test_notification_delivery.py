@@ -138,6 +138,14 @@ def test_attempts_exhausted_and_operational_gate_has_no_replay(monkeypatch):
     assert not process_next_notification("push", push_sender=fail)
 
 
+def test_new_nonpayment_whatsapp_events_remain_behind_operational_gate(monkeypatch):
+    monkeypatch.setenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false")
+    queued(monkeypatch)
+    item = status("whatsapp")
+    assert item.status == "cancelled" and item.last_error == "transport_disabled"
+    assert not process_next_notification("whatsapp", whatsapp_provider=SandboxWhatsAppProvider())
+
+
 def test_lost_lease_does_not_overwrite_another_worker(monkeypatch):
     queued(monkeypatch)
     def recovered(*_args, **_kwargs):
