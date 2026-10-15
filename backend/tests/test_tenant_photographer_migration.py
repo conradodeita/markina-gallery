@@ -239,7 +239,11 @@ def assert_catalog(connection):
         if name in POST_TRANSITION_TABLES:
             continue
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
-        future_columns = {"facial_search_request": {"search_engine"}, "sale_order": {"provider_payment_id"}}
+        future_columns = {
+            "facial_search_request": {"search_engine"},
+            "sale_order": {"provider_payment_id"},
+            "tenant": {"canonical_host"},
+        }
         historical_columns = [column for column in target.c if column.name not in future_columns.get(name, set())]
         assert set(actual_columns) == {column.name for column in historical_columns}, name
         assert all(actual_columns[column.name]["nullable"] == column.nullable
@@ -256,8 +260,11 @@ def assert_catalog(connection):
         assert actual_fk == expected_fk, name
         assert set(inspector.get_pk_constraint(name)["constrained_columns"]) == set(target.primary_key.columns.keys())
         actual_unique = {tuple(u["column_names"]) for u in inspector.get_unique_constraints(name)}
-        expected_unique = {tuple(column.name for column in u.columns)
-                           for u in target.constraints if isinstance(u, sa.UniqueConstraint)}
+        expected_unique = {
+            tuple(column.name for column in u.columns)
+            for u in target.constraints
+            if isinstance(u, sa.UniqueConstraint) and u.name != "uq_tenant_canonical_host"
+        }
         assert actual_unique == expected_unique, name
         actual_indexes = {i["name"]: (tuple(i["column_names"]), i["unique"])
                           for i in inspector.get_indexes(name) if not i.get("duplicates_constraint")}

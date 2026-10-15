@@ -500,7 +500,8 @@ def test_logout_com_push_revoga_A_e_preserva_B(client_db, graph, transports, mon
         subscriptions.append(subscribe(client_db, session, fingerprint(installation), payload))
     client_db.commit()
     logout_request = Request({"type": "http", "method": "POST", "path": "/auth/logout",
-        "headers": [(b"cookie", f"markina_session={cookies[0]}; {INSTALLATION_COOKIE}={installation}".encode())],
+        "headers": [(b"host", b"a.fotografo.exemplo.com"),
+                    (b"cookie", f"markina_session={cookies[0]}; {INSTALLATION_COOKIE}={installation}".encode())],
         "client": ("127.0.0.1", 1234)})
     response = main.logout(logout_request, Response())
     assert response.status_code == 204
