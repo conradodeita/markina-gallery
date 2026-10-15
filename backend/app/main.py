@@ -1535,7 +1535,7 @@ def client_challenge_context(
 
 def _purchase_return_order_id(value: str | None) -> UUID | None:
     prefix = "/library/purchases#order-"
-    if not value or not value.startswith(prefix):
+    if not isinstance(value, str) or not value.startswith(prefix):
         return None
     try:
         order_id = UUID(value.removeprefix(prefix))
@@ -2243,7 +2243,7 @@ def destination(request: Request, return_to: str | None = Query(default=None, ma
     with SessionLocal() as db:
         purchase_destination = _purchase_return_destination(
             db, return_to, tenant_id=session.tenant_id, client_id=session.subject_id,
-        ) if return_to else None
+        ) if isinstance(return_to, str) and return_to else None
         if purchase_destination:
             return {"destination": purchase_destination}
         client_destination = _client_journey_destination(db, session.subject_id, tenant_id=session.tenant_id)

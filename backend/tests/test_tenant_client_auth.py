@@ -33,7 +33,19 @@ CODE = "123456"
 
 
 def request(cookie=None):
-    headers = [(b"cookie", f"markina_session={cookie}".encode())] if cookie else []
+    host = "a.fotografo.exemplo.com"
+    headers = [(b"host", host.encode())]
+    if cookie:
+        from sqlalchemy import select
+
+        with auth.SessionLocal() as db:
+            session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(cookie)))
+            if session and session.tenant_id:
+                tenant = db.get(auth.Tenant, session.tenant_id)
+                if tenant and tenant.canonical_host:
+                    host = tenant.canonical_host
+        headers[0] = (b"host", host.encode())
+        headers.append((b"cookie", f"markina_session={cookie}".encode()))
     return Request({"type": "http", "method": "POST", "path": "/auth/client/verify",
                     "headers": headers, "client": ("127.0.0.1", 1234)})
 
