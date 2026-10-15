@@ -17,3 +17,29 @@
 
 - Nenhuma migration de schema, alteração de UUID, regravação de snapshot ou operação em produção foi executada.
 - A transformação da configuração ativa permanece só em prévia reversível. A aplicação remota depende da task 4.2 e de autorização operacional explícita.
+
+## Inventário remoto somente leitura — 2026-10-15
+
+Inspecionada a tela autenticada de notificações em `https://markina.pickyourpic.com.br/admin/notifications`. Os canais Push e WhatsApp estavam habilitados para os três eventos abaixo. Nenhum campo foi editado ou salvo. A prévia padrão da tela usa dados fictícios (`Cliente`, `Galeria`, `1234abcd`) e não representa, por si só, o texto entregue a um grupo.
+
+| Evento/campo | Texto ativo observado | Prévia local da transformação | Resultado |
+| --- | --- | --- | --- |
+| `payment_reported` — título Push | `Pagamento informado` | igual | sem alteração |
+| `payment_reported` — corpo Push e WhatsApp | `{{cliente}} informou pagamento do pedido {{pedido}}.` | `{{cliente}} informou pagamento {{contexto_pagamento}}.` | frase reconhecida; código e texto externo preservados |
+| `payment_confirmed` — título Push | `Pagamento confirmado` | igual | sem alteração |
+| `payment_confirmed` — corpo Push | `Confirmamos o pagamento do seu pedido.` | igual | sem alteração |
+| `payment_confirmed` — corpo WhatsApp | `Olá {{cliente}}, essa mensagem é automática, confirmamos o pagamento do pedido {{pedido}} da galeria {{galeria}}. Suas fotos seguirão para edição.` | `Olá {{cliente}}, essa mensagem é automática, confirmamos o pagamento {{contexto_pagamento}}. Suas fotos seguirão para edição.` | frase reconhecida; código e restante do texto preservados |
+| `payment_refused` — título Push | `Pagamento não localizado` | igual | sem alteração |
+| `payment_refused` — corpo Push | `Não localizamos seu pagamento. Confira seu pedido.` | igual | sem alteração |
+| `payment_refused` — corpo WhatsApp | `Olá {{cliente}}, não localizamos o pagamento do pedido {{pedido}} da galeria {{galeria}}. Revise os dados antes de comunicar novamente.` | `Olá {{cliente}}, não localizamos o pagamento {{contexto_pagamento}}. Revise os dados antes de comunicar novamente.` | frase reconhecida; código e restante do texto preservados |
+
+Os corpos Push e WhatsApp observados para `payment_reported` eram iguais e ambos estavam habilitados. A prévia acima foi calculada pelo código local da change, não pela instância remota: o endpoint de prévia ainda depende da publicação do código e nenhum endpoint remoto foi chamado. A interface não expôs versões internas nem uma exportação recuperável das configurações; portanto esse inventário visual não é backup operacional suficiente.
+
+### Plano operacional pendente
+
+1. Obter autorização explícita para publicar o código da change; sem ele, a variável `{{contexto_pagamento}}` pode não ser renderizada pela aplicação atual.
+2. Antes de alterar templates ativos, obter autorização operacional específica e gerar backup recuperável das três configurações efetivas (corpos Push/WhatsApp, títulos, canais habilitados e versões), além de registrar a versão do serviço e conferir os snapshots/outbox existentes sem modificá-los.
+3. Após a publicação autorizada, chamar somente a prévia autenticada, comparar o `before` com este inventário e confirmar que apenas as frases reconhecidas mudam. Divergência de template, canal ou versão interrompe a aplicação até nova revisão.
+4. Só aplicar a transformação após aprovação explícita do diff e do backup. Conferir as configurações futuras e demonstrar que notificações/snapshots históricos não foram reescritos. Ter procedimento de restauração dos campos de configuração usando o backup.
+
+Até a aprovação e execução desses passos, task 4.2 permanece pendente. O inventário não autoriza publicação, escrita remota nem envio de mensagens.
