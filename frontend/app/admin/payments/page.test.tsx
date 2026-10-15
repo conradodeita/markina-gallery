@@ -89,7 +89,7 @@ describe("controle operacional de pagamentos", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminPaymentsPage />);
     fireEvent.click(await screen.findByText("Ver pedido e entrega"));
-    fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: album } });
+    fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: album } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
     expect(await screen.findByText("Fotos disponíveis em Compras. Aviso agendado.")).toBeTruthy();
     await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/payment-communications"))).toHaveLength(2));
@@ -119,7 +119,7 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.getAllByText(/12,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pagamento comunicado").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeNull();
-    expect(screen.getByLabelText("Link do álbum no Google Photos")).toBeTruthy();
+    expect(screen.getByLabelText("Link externo do álbum")).toBeTruthy();
     expect(screen.queryByText(/copia e cola|api key/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));

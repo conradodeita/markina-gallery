@@ -195,10 +195,18 @@ class FacialEmbeddingExperimentSetting(Base):
 class Tenant(Base):
     __tablename__ = "tenant"
     __table_args__ = (
+        UniqueConstraint("canonical_host", name="uq_tenant_canonical_host"),
         CheckConstraint("status IN ('active', 'suspended')", name="ck_tenant_status"),
+        CheckConstraint(
+            "canonical_host IS NULL OR (canonical_host = lower(canonical_host) "
+            "AND length(canonical_host) BETWEEN 1 AND 253 "
+            "AND canonical_host NOT LIKE '%/%' AND canonical_host NOT LIKE '%:%')",
+            name="ck_tenant_canonical_host",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    canonical_host: Mapped[str | None] = mapped_column(String(253), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -3157,7 +3165,7 @@ apply_ownership_constraints(Base.metadata)
 
 
 class ClientChallengeInput(BaseModel):
-    full_name: str = Field(min_length=3, max_length=200)
+    full_name: str | None = Field(default=None, min_length=3, max_length=200)
     phone: str = Field(min_length=8, max_length=32)
 
 
@@ -3612,6 +3620,19 @@ def current_session(
                     raise TenantContextError("Acesso negado.")
             elif session.role == Role.CLIENT.value:
                 require_client_auth_tenant(db, session.tenant_id)
+                tenant = db.get(Tenant, session.tenant_id, populate_existing=True)
+                if tenant:
+                    from app.tenant_hosts import (
+                        CanonicalHostError,
+                        canonical_host_for_tenant,
+                        request_hostname,
+                    )
+                    try:
+                        canonical_host = canonical_host_for_tenant(db, tenant)
+                        if canonical_host and request_hostname(request.headers.get("host")) != canonical_host:
+                            raise TenantContextError("Acesso negado.")
+                    except CanonicalHostError as exc:
+                        raise TenantContextError("Acesso negado.") from exc
                 if session.client_subject_id != session.subject_id or not db.scalar(select(Client.id).where(
                     Client.id == session.subject_id, Client.tenant_id == session.tenant_id,
                 )):

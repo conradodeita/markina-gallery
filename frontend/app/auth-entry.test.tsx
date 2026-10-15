@@ -42,6 +42,27 @@ it.each([200, 202])("solicitação e reenvio aceitos (%s) orientam sem prometer 
 });
 
 describe("entrada com identidade configurável", () => {
+  it("reautentica cadastro existente no subdomínio e conserva a compra solicitada", async () => {
+    const orderId = "0f581c42-08aa-4305-9bfb-55f803d1cfc6";
+    const returnTo = `/library/purchases#order-${orderId}`;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url === "/api/branding") return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+      if (url.includes("/api/auth/destination")) return Promise.resolve(new Response(null, { status: 401 }));
+      if (url === "/api/auth/client/challenge") return Promise.resolve(new Response(JSON.stringify({ challenge_id: "purchase-challenge", message: "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp." }), { status: 202 }));
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry recoveryContext="client" initialInvitation={{ accessToken: "", returnTo }} navigate={vi.fn()} />);
+    expect(screen.queryByLabelText("Nome completo")).toBeNull();
+    fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11987654321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+    await screen.findByLabelText("Código de acesso");
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/challenge", expect.objectContaining({
+      body: JSON.stringify({ phone: "+5511987654321", return_to: returnTo }),
+    }));
+  });
+
   it.each(["/admin/settings", "//external.example.test", "/admin?access_token=synthetic"])("reauth administrativa mantém TOTP e valida retorno %s", async (returnTo) => {
     const navigate = vi.fn();
     const fetchMock = vi.fn((input: string | URL | Request) => {
