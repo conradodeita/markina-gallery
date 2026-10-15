@@ -29,7 +29,7 @@
 - O job `backend / Testes (pytest)` do run `38750801217` concluiu com 1 falha, 1627 testes aprovados e 23 ignorados. A falha era uma expectativa desatualizada em `test_admin_payment_templates_are_controlled_and_have_safe_defaults`: o endpoint inclui `contexto_pagamento` na lista de variáveis permitidas desde esta change.
 - Atualizada a expectativa para incluir `contexto_pagamento`, mantendo o contrato da API e sem alterar código de produção.
 - `python -m pytest -q tests/test_derived_galleries.py::test_admin_payment_templates_are_controlled_and_have_safe_defaults` — 1 passou.
-- A suíte backend completa ainda precisa ser reexecutada pelo CI após o envio deste ajuste; não declarar CI verde até confirmar todos os checks do PR.
+- CI após a correção: run `38756021851` no SHA `e3ab6a7b165fe2c59f628efcb4abd6584da8155f` concluiu com sucesso. `pytest backend/tests -q` — 1628 passed, 23 skipped; regressões multi-tenant PostgreSQL — 4 passed; regressão concorrente do checkout PostgreSQL — 1 passed; regressão do inventário de exclusão PostgreSQL — 1 passed. Frontend, Gemma, OpenSpec, gitleaks e política de inventário também passaram; `deploy-homolog` foi ignorado pelo workflow.
 
 ## Limites
 
