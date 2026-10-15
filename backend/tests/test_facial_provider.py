@@ -191,7 +191,9 @@ def test_reference_bytes_preserve_exif_orientation_and_reject_pixel_budget() -> 
         assert opened.getexif()[274] == 6
 
     decoded = decode_reference_bytes(payload.getvalue(), max_pixels=10_000)
-    assert decoded.shape == (60, 120, 3)
+    # EXIF orientation 6 rotates 90 degrees clockwise: PIL dimensions become
+    # 60x120, represented by NumPy as height x width.
+    assert decoded.shape == (120, 60, 3)
 
     with pytest.raises(FacialProviderError, match="Resolução facial inválida"):
         decode_reference_bytes(payload.getvalue(), max_pixels=100)
