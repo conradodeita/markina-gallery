@@ -28,6 +28,7 @@ type Communication = {
   decided_at: string | null;
   can_decide: boolean;
   can_correct: boolean;
+  payment_group?: { id: string; total_cents: number; galleries: Array<{ order_id: string; name: string; total_cents: number }> } | null;
   corrections: Array<{ id: string; created_at: string }>;
   photographer_notification: Delivery | null;
   client_notification: Delivery | null;
@@ -324,7 +325,7 @@ function PaymentsDashboard() {
       {dashboard.groups.map((group) => <section className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
         <header><div><p className="eyebrow">Cliente</p><StatusBadge tone={financialPresentation[group.financial_status].tone} className={`payment-status-badge--${group.financial_status}`}>{financialPresentation[group.financial_status].label}</StatusBadge><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
-          {group.orders.map((order) => <OrderCard key={order.id} order={order} onRefresh={() => load(filters)} />)}
+          {group.orders.map((order) => <OrderCard key={order.id} order={order} clientId={group.client.id} onRefresh={() => load(filters)} />)}
         </div>
       </section>)}
     </div>
@@ -459,19 +460,25 @@ function ClientAutocomplete({
   </div>;
 }
 
-function OrderCard({ order, onRefresh }: { order: Order; onRefresh: () => Promise<void> }) {
+function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void> }) {
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
+  const paymentGroup = communication?.payment_group;
+  const canDownloadPurchasedPhotos = (order.financial_status === "confirmed" || order.financial_status === "confirmed_undelivered") && !order.assets_removed && !order.gallery.removed;
+  const downloadPurchasedPhotos = canDownloadPurchasedPhotos ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${encodeURIComponent(order.parent_gallery.id)}/clients/${encodeURIComponent(clientId)}/selection/export.html`}>Baixar fotos compradas</a> : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.parent_gallery.name} · pedido {order.id.slice(0, 8)}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""}</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""}</p></div><strong>{money(order.total_cents)}</strong></div>
     <details>
       <summary>Ver pedido e entrega</summary>
       <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div>{order.selection_expires_at ? <div><dt>Prazo</dt><dd>{new Date(order.selection_expires_at).toLocaleDateString("pt-BR")}</dd></div> : null}</dl>
       {order.folders?.length ? <div>{order.folders.map((folder) => <section key={folder.id ?? folder.name}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name} · {money(item.unit_price_cents)}</li>)}</ul></section>)}</div> : null}
-      {order.payment_method === "credit_card" ? <p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
+      {order.payment_method === "credit_card" ? <><p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>{downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}</> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
-        <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
+        <div className="dashboard-actions">
+          <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
+          {downloadPurchasedPhotos}
+        </div>
       </>}
       <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
     </details>

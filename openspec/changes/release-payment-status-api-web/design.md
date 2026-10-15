@@ -9,6 +9,7 @@ Preservar integralmente a versão instalada e publicar a classificação finance
 ## Decisions
 
 1. Integrar o commit de produção à main em branch isolada, por PR com CI, mantendo a árvore do runtime igual à produção mais o delta de pagamentos. Validar conflitos conforme specs de pagamentos e os contratos já implementados de autenticação/entrega.
+   O download de fotos compradas já presente na produção permanece disponível para ambos os estados de pagamento confirmado, com ou sem link de álbum; classificação visual não revoga a autorização comercial existente. O teste de confirmação/correção cobre ambos os estados.
 2. Usar os mesmos seis arquivos Compose e perfis ativos. Conferir hashes de configuração da API/web, metadados e imagens antes de executar; nunca imprimir configuração resolvida ou valores de ambiente.
 3. Publicar código sem migration: o candidato deve conservar integralmente `backend/migrations`, dependências, Dockerfiles e Compose em relação a `71be3b2`. Ler a revisão Alembic ativa sem escrever dados e compará-la à cadeia candidata.
 4. Preservar imagens antigas por ID e tags específicas antes de construir as novas. Construir somente API/web antes de trocar qualquer container; usar `up -d --no-deps --no-build` com serviços explicitamente selecionados. Não usar o job deploy-homolog.

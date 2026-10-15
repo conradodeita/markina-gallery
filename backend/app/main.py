@@ -6,7 +6,9 @@ import base64
 import csv
 import json
 import logging
+import re
 import secrets
+import unicodedata
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -16,7 +18,7 @@ from io import BytesIO, StringIO
 from os import getenv
 from pathlib import Path
 from typing import Annotated, Literal
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -314,6 +316,7 @@ from app.notification_events import (
 from app.notification_settings import (
     notification_savepoint,
     payment_template_bodies,
+    payment_template_migration_sources,
     save_setting,
     setting_for,
     setting_payload,
@@ -336,7 +339,11 @@ from app.payment_availability import (
     require_payment_method,
 )
 from app.payment_provider import PaymentCheckRequest, operational_provider
-from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
+from app.payment_templates import (
+    DEFAULT_PAYMENT_TEMPLATES,
+    preview_payment_template_migration,
+    validate_template,
+)
 from app.pix import PixCodeError, pix_qr_data_url
 from app.preview_adjustment.api import register_routes as register_preview_adjustment_routes
 from app.preview_adjustment.service import presentation_path
@@ -403,6 +410,7 @@ from app.tenancy import (
     domain_session,
     require_admin_tenant,
 )
+from app.tenant_hosts import tenant_for_host
 from app.unified_checkout import (
     cart_payload,
     communication_join,
@@ -1499,6 +1507,18 @@ def client_challenge_context(
             raise neutral_error()
         return challenge.tenant_id
 
+    if not access_token:
+        challenge = db.scalar(select(AuthChallenge).where(
+            AuthChallenge.id == challenge_id,
+            AuthChallenge.kind == "client_otp",
+        ).with_for_update())
+        if challenge and _purchase_return_order_id(challenge.return_to):
+            tenant = tenant_for_host(db, request.headers.get("host"))
+            if (not tenant or tenant.id != challenge.tenant_id or not challenge.subject
+                    or not _client_has_verified_phone(db, tenant_id=tenant.id, phone=challenge.subject)):
+                raise neutral_error()
+            return tenant.id
+
     tenant_id, presented, _parent = client_link_context(db, request, access_token)
     challenge = db.scalar(select(AuthChallenge).where(
         AuthChallenge.id == challenge_id, AuthChallenge.tenant_id == tenant_id,
@@ -1516,6 +1536,39 @@ def client_challenge_context(
     if parent_gallery_id and challenge.parent_gallery_id != parent_gallery_id:
         raise neutral_error()
     return tenant_id
+
+
+def _purchase_return_order_id(value: str | None) -> UUID | None:
+    prefix = "/library/purchases#order-"
+    if not isinstance(value, str) or not value.startswith(prefix):
+        return None
+    try:
+        order_id = UUID(value.removeprefix(prefix))
+    except (ValueError, AttributeError):
+        return None
+    return order_id if value == f"{prefix}{order_id}" else None
+
+
+def _purchase_return_destination(db: Session, value: str | None, *, tenant_id: UUID,
+                                 client_id: UUID) -> str:
+    order_id = _purchase_return_order_id(value)
+    if not order_id:
+        return "/library"
+    order = db.scalar(select(SaleOrder.id).where(
+        SaleOrder.id == order_id,
+        SaleOrder.tenant_id == tenant_id,
+        SaleOrder.client_id == client_id,
+    ))
+    return f"/library/purchases#order-{order_id}" if order else "/library"
+
+
+def _client_has_verified_phone(db: Session, *, tenant_id: UUID, phone: str) -> bool:
+    return bool(db.scalar(select(ClientPhone.id).where(
+        ClientPhone.tenant_id == tenant_id,
+        ClientPhone.phone_e164 == phone,
+        ClientPhone.active.is_(True),
+        ClientPhone.verified_at.is_not(None),
+    )))
 
 
 def _active_client_reauthentication_parent(
@@ -1556,14 +1609,29 @@ def client_challenge(
     payload: ClientLinkChallengeInput, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, str]:
     phone = normalize_e164(payload.phone)
-    client_name = " ".join(payload.full_name.split())
-    if len(client_name) < 3:
-        raise HTTPException(status_code=422, detail="Informe o nome completo.")
+    client_name = " ".join((payload.full_name or "").split())
     # Proteção global precede resolução para cobrir também links inválidos.
     ip_address = request.client.host if request.client else "unknown"
     enforce_rate_limit(db, "client_otp.entry", pii_fingerprint(phone), ip_address)
+    purchase_reauthentication = (
+        not payload.access_token and not payload.parent_gallery_id
+        and _purchase_return_order_id(payload.return_to) is not None
+    )
+    if purchase_reauthentication:
+        tenant = tenant_for_host(db, request.headers.get("host"))
+        if not tenant:
+            audit(db, "client_otp.context_rejected", "invalid")
+            db.commit()
+            return {"challenge_id": str(uuid4()),
+                    "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp."}
+        tenant_id, capability, parent = tenant.id, None, None
+    else:
+        if len(client_name) < 3:
+            raise HTTPException(status_code=422, detail="Informe o nome completo.")
     contextual_reauthentication = not payload.access_token and payload.parent_gallery_id is not None
-    if contextual_reauthentication:
+    if purchase_reauthentication:
+        pass
+    elif contextual_reauthentication:
         try:
             parent = _active_client_reauthentication_parent(db, payload.parent_gallery_id)
         except HTTPException:
@@ -1586,6 +1654,16 @@ def client_challenge(
     client_auth_rate_limit(db, "client_otp.challenge", pii_fingerprint(phone), ip_address,
                                 tenant_id=tenant_id,
                             )
+    if purchase_reauthentication:
+        try:
+            client = resolve_client_by_phone(db, phone, tenant_id=tenant_id)
+        except ClientIdentityConflict:
+            client = None
+        if not client or not _client_has_verified_phone(db, tenant_id=tenant_id, phone=phone):
+            audit(db, "client_otp.context_rejected", "invalid", tenant_id=tenant_id)
+            db.commit()
+            return {"challenge_id": str(uuid4()),
+                    "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp."}
     if contextual_reauthentication and not _registered_client_for_gallery(db, parent, phone):
         audit(db, "client_otp.context_rejected", "invalid", tenant_id=tenant_id)
         db.commit()
@@ -1593,16 +1671,19 @@ def client_challenge(
             "challenge_id": str(uuid4()),
             "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
         }
-    deliver = client_otp_delivery_allowed(db, parent=parent, phone_e164=phone, capability=capability)
+    deliver = (True if purchase_reauthentication else
+               client_otp_delivery_allowed(db, parent=parent, phone_e164=phone, capability=capability))
     challenge, code = create_challenge(
         db, "client_otp", phone, code=None if deliver else secrets.token_urlsafe(32),
-        tenant_id=tenant_id, client_name=client_name,
+        tenant_id=tenant_id, client_name=None if purchase_reauthentication else client_name,
         parent_gallery_id=parent.id if parent else None,
         gallery_capability_id=capability.id if capability else None,
         return_to=(
             f"/public-galleries/{parent.id}"
             if contextual_reauthentication and parent
-            else safe_internal_return(payload.return_to, "/library") if payload.return_to else None
+            else (f"/library/purchases#order-{_purchase_return_order_id(payload.return_to)}"
+                  if purchase_reauthentication else safe_internal_return(payload.return_to, "/library"))
+            if payload.return_to or contextual_reauthentication else None
         ),
     )
     if deliver:
@@ -1672,6 +1753,7 @@ def client_verify(
     parent_gallery = (
         db.get(ParentGallery, challenge.parent_gallery_id) if challenge.parent_gallery_id else None
     )
+    purchase_reauthentication = _purchase_return_order_id(challenge.return_to) is not None
     capability = active_capability_by_id(db, challenge.gallery_capability_id)
     if not client:
         can_register_from_link = bool(
@@ -1696,6 +1778,8 @@ def client_verify(
             audit(db, "client_otp.unlinked_denied", fingerprint, tenant_id=tenant_id)
             minimize_client_challenge_pii(db, challenge)
             db.commit()
+            if purchase_reauthentication:
+                raise neutral_error()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -1903,6 +1987,10 @@ def client_verify(
             gallery=destination_gallery if capability and capability.scope in {
                 "private_invite", "private_client_invite", "private_gallery_link"
             } else None,
+        )
+    elif purchase_reauthentication:
+        destination = _purchase_return_destination(
+            db, challenge.return_to, tenant_id=tenant_id, client_id=client.id,
         )
     else:
         destination = _client_journey_destination(db, client.id, tenant_id=tenant_id)
@@ -2153,11 +2241,16 @@ def confirm_admin_email(
 
 
 @app.get("/auth/destination")
-def destination(request: Request) -> dict[str, str]:
+def destination(request: Request, return_to: str | None = Query(default=None, max_length=512)) -> dict[str, str]:
     session = current_session(request, invalid_session_status=401)
     if session.role == Role.ADMIN.value:
         return {"destination": "/admin"}
     with SessionLocal() as db:
+        purchase_destination = _purchase_return_destination(
+            db, return_to, tenant_id=session.tenant_id, client_id=session.subject_id,
+        ) if isinstance(return_to, str) and return_to else None
+        if purchase_destination:
+            return {"destination": purchase_destination}
         client_destination = _client_journey_destination(db, session.subject_id, tenant_id=session.tenant_id)
     return {"destination": client_destination}
 
@@ -6439,6 +6532,16 @@ def _selection_html_preview(db: Session, item: SaleOrderItem) -> str:
     return f'<img src="data:image/jpeg;base64,{encoded}" alt="Prévia de {escape(item.filename_snapshot)}">'
 
 
+def _purchased_photos_content_disposition(client_name: str | None) -> str:
+    safe_name = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', "", client_name or "")
+    safe_name = re.sub(r"\s+", " ", safe_name).strip(" .")[:120].strip(" .") or "Cliente"
+    unicode_filename = f"fotos-compradas-{safe_name}.html"
+    ascii_name = unicodedata.normalize("NFKD", safe_name).encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "-", ascii_name).strip(".-_") or "Cliente"
+    fallback = f"fotos-compradas-{ascii_name[:120]}.html"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(unicode_filename, safe='')}"
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/selection/export.{format}")
 def export_selection(
     gallery_id: UUID,
@@ -6512,7 +6615,7 @@ h1 {{ margin: 0 0 10px; font-size: 25px; }} p {{ margin: 5px 0; color: #5f5a53; 
         db.commit()
         return HTMLResponse(
             content,
-            headers={"Content-Disposition": 'attachment; filename="fotos-compradas.html"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+            headers={"Content-Disposition": _purchased_photos_content_disposition(owner.full_name if owner else None), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
         )
     rows = []
     for selection in db.scalars(
@@ -6621,7 +6724,7 @@ def export_canonical_selection(
         audit(db, "selection.exported", str(parent_gallery_id), tenant_id=tenant_id)
         db.commit()
         return HTMLResponse(content, headers={
-            "Content-Disposition": 'attachment; filename="fotos-compradas.html"',
+            "Content-Disposition": _purchased_photos_content_disposition(owner.full_name),
             "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
         })
 
@@ -11816,8 +11919,18 @@ def list_payment_templates(
             kind: configured.get(kind, default)
             for kind, default in DEFAULT_PAYMENT_TEMPLATES.items()
         },
-        "allowed_variables": sorted(["cliente", "pedido", "galeria"]),
+        "allowed_variables": sorted(["cliente", "pedido", "galeria", "contexto_pagamento"]),
     }
+
+
+@app.get("/admin/payment-message-templates/migration-preview")
+def preview_payment_template_migration_api(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    session = require_admin(request)
+    return {"templates": preview_payment_template_migration(
+        payment_template_migration_sources(db, tenant_id=session.tenant_id)
+    )}
 
 
 @app.get("/admin/removed-photo-movements")

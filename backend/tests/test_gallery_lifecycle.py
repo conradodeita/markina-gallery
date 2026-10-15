@@ -1490,6 +1490,7 @@ def test_canonical_selection_export_is_individual_and_keeps_confirmed_snapshot()
         assert "outra.jpg" not in csv_response.text
         html_response = client.get(prefix + ".html")
         assert html_response.status_code == 200
+        assert html_response.headers["content-disposition"] == 'attachment; filename="fotos-compradas-Cliente-A.html"; filename*=UTF-8\'\'fotos-compradas-Cliente%20A.html'
         assert "&lt;foto&gt;,a.jpg" in html_response.text
         assert "Galeria &lt;B&gt;" in html_response.text
         assert "Cliente &lt;A&gt;" in html_response.text
