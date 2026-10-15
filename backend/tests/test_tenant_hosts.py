@@ -68,6 +68,17 @@ def test_varios_tenants_exigem_host_explicito_e_nao_usam_origem_publica(tenant_d
         canonical_host_for_tenant(tenant_db, unconfigured)
 
 
+def test_host_de_tenant_inativo_nao_cai_no_fallback_de_outro_tenant(tenant_db, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://markina.example.com")
+    inactive = Tenant(status="suspended", canonical_host="markina.example.com")
+    active = Tenant(status="active")
+    tenant_db.add_all([inactive, active])
+    tenant_db.commit()
+
+    assert tenant_for_host(tenant_db, "markina.example.com") is None
+
+
 def test_origem_nao_usa_host_recebido_quando_configuracao_ausente(tenant_db, monkeypatch):
     monkeypatch.delenv("PUBLIC_APP_ORIGIN", raising=False)
     monkeypatch.delenv("MARKINA_PUBLIC_URL", raising=False)

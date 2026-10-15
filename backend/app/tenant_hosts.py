@@ -64,8 +64,8 @@ def tenant_for_host(db: Session, host: str | None) -> Tenant | None:
     except CanonicalHostError:
         return None
     tenant = db.scalar(select(Tenant).where(Tenant.canonical_host == hostname).execution_options(populate_existing=True))
-    if tenant and tenant.status == "active":
-        return tenant
+    if tenant:
+        return tenant if tenant.status == "active" else None
     try:
         origin_hostname = configured_origin_hostname()
     except CanonicalHostError:

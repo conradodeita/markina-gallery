@@ -26,6 +26,10 @@ O aviso WhatsApp de fotos disponíveis SHALL oferecer a variável `{{link_compra
 - **WHEN** há mais de um tenant ativo e algum tenant ainda não possui hostname canônico cadastrado
 - **THEN** o sistema não infere a origem do Host recebido, não gera link de compra para esse tenant e rejeita autenticação dele em host não registrado
 
+#### Scenario: Host associado a tenant inativo
+- **WHEN** o host da origem pública está registrado em tenant inativo enquanto outro tenant está ativo sem hostname
+- **THEN** o sistema não reaproveita esse host para resolver o tenant ativo
+
 #### Scenario: Destino canônico ausente ou inválido
 - **WHEN** não há origem pública confiável nem hostname HTTPS canônico associado ao pedido
 - **THEN** o sistema não inventa origem a partir de `Host`, não envia link de outro fotógrafo e registra falha operacional sanitizada da notificação
