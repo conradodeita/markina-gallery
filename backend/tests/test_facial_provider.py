@@ -185,7 +185,10 @@ def test_reference_bytes_preserve_exif_orientation_and_reject_pixel_budget() -> 
     exif = image.getexif()
     exif[274] = 6
     payload = BytesIO()
-    image.save(payload, format="JPEG", exif=exif)
+    image.save(payload, format="JPEG", exif=exif.tobytes())
+
+    with Image.open(BytesIO(payload.getvalue())) as opened:
+        assert opened.getexif()[274] == 6
 
     decoded = decode_reference_bytes(payload.getvalue(), max_pixels=10_000)
     assert decoded.shape == (60, 120, 3)
