@@ -331,11 +331,6 @@ from app.order_delivery import (
     validate_album_url,
 )
 from app.parent_registration import link_client_to_parent
-from app.payment_templates import (
-    DEFAULT_PAYMENT_TEMPLATES,
-    preview_payment_template_migration,
-    validate_template,
-)
 from app.payment_availability import (
     PAYMENT_REQUIRED_MESSAGE,
     can_publish_gallery,
@@ -344,6 +339,11 @@ from app.payment_availability import (
     require_payment_method,
 )
 from app.payment_provider import PaymentCheckRequest, operational_provider
+from app.payment_templates import (
+    DEFAULT_PAYMENT_TEMPLATES,
+    preview_payment_template_migration,
+    validate_template,
+)
 from app.pix import PixCodeError, pix_qr_data_url
 from app.preview_adjustment.api import register_routes as register_preview_adjustment_routes
 from app.preview_adjustment.service import presentation_path

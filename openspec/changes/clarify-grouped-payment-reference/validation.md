@@ -19,6 +19,7 @@
 - `python -m pytest -q tests/test_payment_templates.py tests/test_notification_settings.py tests/test_notification_payments.py tests/test_unified_checkout.py` — 35 passed, 5 skipped.
 - `npm test -- --run app/admin/payments/payment-actions.test.tsx app/admin/payments/page.test.tsx app/admin/notifications/page.test.tsx` — 25 passed.
 - `npx tsc --noEmit` e ESLint nos arquivos administrativos tocados — passaram.
+- CI inicial apontou apenas ordem de imports em `backend/app/main.py`; após organizar os imports, `ruff check backend/app backend/tests` — passou.
 - `openspec validate clarify-grouped-payment-reference --strict` — change válida.
 - `git diff --check` — sem erros de whitespace.
 - `npm ci` reportou 11 alertas no audit das dependências resolvidas (10 altos, 1 crítico); nenhuma atualização de dependências foi incluída nesta change.
