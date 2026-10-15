@@ -35,6 +35,11 @@ Mensagens de pagamento SHALL descrever a referência conforme seu escopo: compra
 - **THEN** a cliente recebe uma mensagem que identifica o pagamento como compra agrupada usando o mesmo código
 - **AND** o texto não diz “da galeria sua compra”
 
+#### Scenario: Cliente informa pagamento agrupado
+- **WHEN** a cliente informa o pagamento de um grupo identificado por `bebb98d7`
+- **THEN** a notificação ao fotógrafo identifica a compra agrupada com o mesmo código
+- **AND** o painel localiza a compra por essa referência
+
 #### Scenario: Confirmação de pedido individual
 - **WHEN** o fotógrafo confirma um pagamento de pedido legado sem agrupamento
 - **THEN** a cliente recebe o código existente do pedido e o nome da galeria correspondente

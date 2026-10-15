@@ -48,6 +48,7 @@ def test_grouped_and_individual_context_render_with_existing_reference():
 def test_legacy_template_migration_preview_is_narrow_reversible_and_idempotent():
     source = {
         "confirmed": "Olá {{cliente}}, confirmamos o pagamento do pedido {{pedido}} da galeria {{galeria}}. Obrigado!",
+        "payment_reported.whatsapp_body": "{{cliente}} informou pagamento do pedido {{pedido}}.",
         "custom": "Aviso {{cliente}}: seu pedido {{pedido}} está em revisão.",
     }
     preview = preview_payment_template_migration(source)
@@ -59,5 +60,8 @@ def test_legacy_template_migration_preview_is_narrow_reversible_and_idempotent()
     }
     assert preview["custom"]["before"] == preview["custom"]["after"] == source["custom"]
     assert preview["custom"]["changed"] is False and preview["custom"]["recognized"] is False
+    assert preview["payment_reported.whatsapp_body"]["after"] == (
+        "{{cliente}} informou pagamento {{contexto_pagamento}}."
+    )
     assert preview_payment_template_migration({"confirmed": preview["confirmed"]["after"]})[
         "confirmed"]["changed"] is False

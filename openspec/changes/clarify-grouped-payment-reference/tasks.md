@@ -13,7 +13,7 @@
 ## 3. Contexto de mensagens de pagamento
 
 - [x] 3.1 Implementar a variável contextual completa para mensagens de pagamento e atualizar templates padrão/prévias; testes cobrem grupos e pedidos individuais com os mesmos códigos existentes e o texto “da galeria sua compra”.
-- [x] 3.2 Implementar e testar transformação idempotente somente da frase reconhecida, preservando texto personalizado fora do trecho, templates não reconhecidos e histórico; a prévia autenticada apresenta `before`/`after` reversíveis e não grava configuração.
+- [x] 3.2 Implementar e testar transformação idempotente somente das frases reconhecidas de confirmação/recusa e do aviso ao fotógrafo, preservando texto personalizado fora dos trechos, templates não reconhecidos e histórico; a prévia autenticada apresenta `before`/`after` reversíveis e não grava configuração.
 
 ## 4. Integração
 

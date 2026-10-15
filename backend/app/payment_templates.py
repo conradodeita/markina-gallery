@@ -17,9 +17,9 @@ DEFAULT_PAYMENT_TEMPLATES = {
 }
 PLACEHOLDER = re.compile(r"{{\s*([a-z_]+)\s*}}")
 FORBIDDEN_URL = re.compile(r"(?:https?://|www\.|data:)", re.IGNORECASE)
-LEGACY_PAYMENT_REFERENCE = re.compile(
-    r"do pedido\s+{{\s*pedido\s*}}\s+da galeria\s+{{\s*galeria\s*}}",
-    re.IGNORECASE,
+LEGACY_PAYMENT_REFERENCES = (
+    re.compile(r"do pedido\s+{{\s*pedido\s*}}\s+da galeria\s+{{\s*galeria\s*}}", re.IGNORECASE),
+    re.compile(r"informou pagamento do pedido\s+{{\s*pedido\s*}}", re.IGNORECASE),
 )
 
 
@@ -48,7 +48,15 @@ def preview_payment_template_migration(templates: dict[str, str]) -> dict[str, d
     """Return a reversible before/after preview; callers decide whether to apply it."""
     preview = {}
     for kind, body in templates.items():
-        transformed, count = LEGACY_PAYMENT_REFERENCE.subn("{{contexto_pagamento}}", body)
+        transformed = body
+        count = 0
+        for pattern in LEGACY_PAYMENT_REFERENCES:
+            transformed, replacements = pattern.subn(
+                "{{contexto_pagamento}}" if "galeria" in pattern.pattern
+                else "informou pagamento {{contexto_pagamento}}",
+                transformed,
+            )
+            count += replacements
         preview[kind] = {
             "before": body,
             "after": transformed,

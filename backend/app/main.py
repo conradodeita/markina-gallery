@@ -273,6 +273,7 @@ from app.notification_events import record_gallery_milestone, record_payment_eve
 from app.notification_settings import (
     notification_savepoint,
     payment_template_bodies,
+    payment_template_migration_sources,
     save_setting,
     setting_for,
     setting_payload,
@@ -9709,7 +9710,7 @@ def preview_payment_template_migration_api(
     request: Request, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     require_admin(request)
-    return {"templates": preview_payment_template_migration(payment_template_bodies(db))}
+    return {"templates": preview_payment_template_migration(payment_template_migration_sources(db))}
 
 
 @app.get("/admin/removed-photo-movements")

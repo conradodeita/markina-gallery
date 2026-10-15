@@ -99,6 +99,31 @@ def payment_template_bodies(db: Session) -> dict[str, str]:
     return result
 
 
+def payment_template_migration_sources(db: Session) -> dict[str, str]:
+    """Read effective payment templates without creating settings or changing versions."""
+    event_types = ("payment_reported", "payment_confirmed", "payment_refused")
+    configured = {
+        setting.event_type: setting
+        for setting in db.scalars(select(NotificationSetting).where(
+            NotificationSetting.event_type.in_(event_types)
+        ))
+    }
+    legacy_bodies = payment_template_bodies(db)
+    sources: dict[str, str] = {}
+    for event_type in event_types:
+        setting = configured.get(event_type)
+        for field in ("whatsapp_body", "push_body", "push_title"):
+            if setting:
+                body = getattr(setting, field)
+            elif field == "whatsapp_body" and event_type in {"payment_confirmed", "payment_refused"}:
+                body = legacy_bodies[event_type.removeprefix("payment_")]
+            else:
+                definition = DEFINITIONS[event_type]
+                body = definition.title if field == "push_title" else definition.body
+            sources[f"{event_type}.{field}"] = body
+    return sources
+
+
 def setting_payload(setting: NotificationSetting) -> dict:
     definition = DEFINITIONS[setting.event_type]
     return {
