@@ -32,6 +32,7 @@
 - [x] 5.1c Executar build de produção com dependências instaladas pelo lockfile e registrar o resultado em `validation.md`.
 - [x] 5.2a Fazer inventário estático da configuração versionada para orientar a implantação futura e confirmar que esta change não alterou arquivos de DNS/proxy/segredos; registrar limites em `validation.md`.
 - [x] 5.2b Inventariar a homologação em modo somente leitura e apresentar plano de impacto zero antes do deploy já autorizado para o hostname existente; manter serviços exclusivos e preservar workers/orphans, sem alterar DNS/TLS/proxy/porta ou enviar mensagem real. Evidência: run `38644817829`, estado e plano em `validation.md`.
+- [ ] 5.2c Trocar apenas a origem das duas imagens PostgreSQL dos serviços temporários do CI para o mirror com digest idêntico, executar o CI no SHA atual e registrar resultado. Não alterar imagens do deploy.
 
 ## Workflow follow-up
 

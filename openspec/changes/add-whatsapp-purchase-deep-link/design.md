@@ -68,6 +68,14 @@ Antes do código, reconciliar o head/ref que contém a fundação de tenant, a e
 
 Alternativa descartada: liberar apenas a geração de links e presumir que o tenant foundation atual cobre pedidos/sessões. Ele limita a uma conta e não entrega isolamento multitenant completo.
 
+### 7. Imagem PostgreSQL do CI não é dependência do deploy
+
+Os serviços PostgreSQL temporários do GitHub Actions usam `postgres:17-alpine` exclusivamente para testar o backend. Eles não são usados pelo compose de homologação nem pelo servidor. O pull da mesma imagem no Amazon ECR público foi recusado por limite de dados; antes de alterar o workflow, o manifesto `linux/amd64` de `mirror.gcr.io/library/postgres:17-alpine` foi comparado ao ECR e os dois retornaram o digest `sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3`.
+
+Para manter a imagem e versão efetivas, usar o mirror Google da imagem oficial do Docker Hub somente nos dois serviços do CI. Validar a mudança pelo workflow integral antes do merge. Nenhuma referência de imagem de runtime/deploy é alterada.
+
+Alternativa descartada: esperar indefinidamente pela cota do ECR ou voltar ao Docker Hub sem verificar identidade da imagem e disponibilidade.
+
 ## Risks / Trade-offs
 
 - [Host encaminhado incorretamente pode direcionar uma cliente ao fotógrafo errado] → mapear hostname canônico registrado após validação do proxy e falhar fechado; nunca inferir pelo cabeçalho bruto.
