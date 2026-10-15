@@ -13,8 +13,8 @@ export function MarkinaLink({ href, children, variant = "primary", className = "
   return <Link className={`mk-button mk-button--${variant} ${className}`} href={href} prefetch={prefetch}>{children}</Link>;
 }
 
-export function StatusBadge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "success" | "warning" | "danger" | "dark" }) {
-  return <span className={`mk-badge mk-badge--${tone}`}>{children}</span>;
+export function StatusBadge({ children, tone = "neutral", className = "" }: { children: ReactNode; tone?: "neutral" | "success" | "warning" | "danger" | "dark"; className?: string }) {
+  return <span className={`mk-badge mk-badge--${tone} ${className}`.trim()}>{children}</span>;
 }
 
 export function SurfaceCard({ children, className = "" }: { children: ReactNode; className?: string }) {

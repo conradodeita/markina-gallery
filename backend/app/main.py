@@ -11846,8 +11846,8 @@ def list_payment_communications(
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
     financial_status: Literal[
-        "awaiting_payment", "reported", "confirmed", "not_found", "overdue",
-        "verifying", "exception", "hold",
+        "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
+        "not_found", "overdue", "verifying", "exception", "hold",
     ]
     | None = Query(default=None),
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
@@ -12014,9 +12014,7 @@ def list_payment_communications(
         selection_query = selection_query.where(PhotoSelection.created_at >= created_from)
     if created_to:
         selection_query = selection_query.where(PhotoSelection.created_at <= created_to)
-    include_open_selections = (
-        financial_status in (None, "awaiting_payment") and delivery_status is None
-    )
+    include_open_selections = financial_status is None and delivery_status is None
     selection_rows = list(db.execute(selection_query)) if include_open_selections else []
     selection_groups: dict[tuple[UUID, UUID], dict[str, object]] = {}
     selection_parents: dict[tuple[UUID, UUID], ParentGallery | None] = {}
@@ -12199,26 +12197,37 @@ def list_payment_communications(
                     "confirmed_cents": 0,
                 },
                 "orders": [],
+                "financial_status": order_payload["financial_status"],
+                "_sort_priority": _payment_financial_priority(order_payload["financial_status"]),
                 "_sort_created_at": sort_created_at,
             },
         )
         group["orders"].append(order_payload)
+        order_priority = _payment_financial_priority(order_payload["financial_status"])
+        if order_priority < group["_sort_priority"]:
+            group["financial_status"] = order_payload["financial_status"]
+            group["_sort_priority"] = order_priority
+            group["_sort_created_at"] = sort_created_at
+        elif order_priority == group["_sort_priority"]:
+            group["_sort_created_at"] = min(group["_sort_created_at"], sort_created_at)
         group["totals"]["orders"] += 1
         if order_payload["financial_status"] == "reported":
             group["totals"]["reported_orders"] += 1
             group["totals"]["reported_cents"] += order_payload["total_cents"]
-        elif order_payload["financial_status"] == "confirmed":
+        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
             group["totals"]["confirmed_orders"] += 1
             group["totals"]["confirmed_cents"] += order_payload["total_cents"]
         # Compatibilidade temporária: `total_cents` passa a representar somente
         # pedidos cujo pagamento foi comunicado e ainda aguarda conferência.
         group["totals"]["total_cents"] = group["totals"]["reported_cents"]
-        group["_sort_created_at"] = max(group["_sort_created_at"], sort_created_at)
 
     all_groups = sorted(
         grouped.values(),
-        key=lambda group: (group["_sort_created_at"], group["client"]["id"]),
-        reverse=True,
+        key=lambda group: (
+            group["_sort_priority"],
+            group["_sort_created_at"].isoformat(),
+            group["client"]["id"],
+        ),
     )
     cursor_key = _decode_payment_cursor(cursor) if cursor else None
     if cursor_key:
@@ -12226,10 +12235,10 @@ def list_payment_communications(
             group
             for group in all_groups
             if (
+                group["_sort_priority"],
                 group["_sort_created_at"].isoformat(),
                 group["client"]["id"],
-            )
-            < cursor_key
+            ) > cursor_key
         ]
 
     page_groups = all_groups[:limit]
@@ -12238,10 +12247,13 @@ def list_payment_communications(
     if has_next_page and page_groups:
         last_group = page_groups[-1]
         next_cursor = _encode_payment_cursor(
-            last_group["_sort_created_at"], last_group["client"]["id"]
+            last_group["_sort_created_at"],
+            last_group["client"]["id"],
+            priority=last_group["_sort_priority"],
         )
     for group in page_groups:
         group.pop("_sort_created_at", None)
+        group.pop("_sort_priority", None)
 
     financial_counts: dict[str, int] = defaultdict(int)
     delivery_counts: dict[str, int] = defaultdict(int)
@@ -12255,7 +12267,7 @@ def list_payment_communications(
         if order_payload["financial_status"] == "reported":
             reported_orders += 1
             reported_cents += order_payload["total_cents"]
-        elif order_payload["financial_status"] == "confirmed":
+        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
             confirmed_orders += 1
             confirmed_cents += order_payload["total_cents"]
         for state in order_payload["delivery_statuses"]:
@@ -12334,7 +12346,7 @@ def _payment_financial_status(
     provider_payment: ProviderPayment | None = None,
 ) -> str:
     if provider_payment:
-        return {
+        financial_state = {
             "creating": "awaiting_payment",
             "awaiting_payment": "awaiting_payment",
             "verification_required": "verifying",
@@ -12343,8 +12355,11 @@ def _payment_financial_status(
             "exception": "exception",
             "hold": "hold",
         }[provider_payment.state]
+        if financial_state == "confirmed" and not order.delivery_album_url:
+            return "confirmed_undelivered"
+        return financial_state
     if order.payment_status == "confirmed":
-        return "confirmed"
+        return "confirmed" if order.delivery_album_url else "confirmed_undelivered"
     if order.payment_status == "cancelled":
         return "not_found"
     if latest_communication and latest_communication.status == "pending_review":
@@ -12352,6 +12367,20 @@ def _payment_financial_status(
     if gallery and gallery.selection_expires_at and expired(gallery.selection_expires_at):
         return "overdue"
     return "awaiting_payment"
+
+
+def _payment_financial_priority(financial_status: str) -> int:
+    return {
+        "reported": 0,
+        "confirmed": 1,
+        "confirmed_undelivered": 2,
+        "awaiting_payment": 3,
+        "not_found": 4,
+        "overdue": 5,
+        "verifying": 6,
+        "exception": 7,
+        "hold": 8,
+    }.get(financial_status, 9)
 
 
 def _admin_payment_communication_payload(
@@ -12409,15 +12438,17 @@ def _admin_payment_communication_payload(
     }
 
 
-def _encode_payment_cursor(created_at: datetime, client_id: str) -> str:
+def _encode_payment_cursor(
+    created_at: datetime, client_id: str, *, priority: int = 0
+) -> str:
     raw = json.dumps(
-        {"created_at": created_at.isoformat(), "client_id": client_id},
+        {"priority": priority, "created_at": created_at.isoformat(), "client_id": client_id},
         separators=(",", ":"),
     ).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _decode_payment_cursor(cursor: str) -> tuple[str, str]:
+def _decode_payment_cursor(cursor: str) -> tuple[int, str, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
@@ -12425,7 +12456,7 @@ def _decode_payment_cursor(cursor: str) -> tuple[str, str]:
         client_id = UUID(payload["client_id"])
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail="Cursor de pagamentos inválido.") from exc
-    return created_at.isoformat(), str(client_id)
+    return int(payload.get("priority", 0)), created_at.isoformat(), str(client_id)
 
 
 def _delivery_payload(

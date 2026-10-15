@@ -802,7 +802,50 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .payment-filters .filter-grid { margin:0; padding:22px 24px 24px; }
 .payment-filter-actions { display:flex; align-self:end; flex-wrap:wrap; gap:8px; }
 .payment-client-groups { display:grid; gap:20px; }
-.payment-client-card { margin-top:0; padding:clamp(18px,3vw,28px); background:var(--mk-surface-subtle); }
+.payments-dashboard {
+  --payment-status-reported:#a16207; --payment-status-confirmed:#15803d;
+  --payment-status-confirmed-undelivered:#b91c1c; --payment-status-awaiting:#1d4ed8;
+  --payment-status-not-found:#475569; --payment-status-overdue:#7e22ce;
+  --payment-status-verifying:#0e7490; --payment-status-exception:#c2410c;
+  --payment-status-hold:#4f46e5; --payment-status-cart:#0f766e;
+  --payment-status-reported-soft:#fef3c7; --payment-status-confirmed-soft:#dcfce7;
+  --payment-status-confirmed-undelivered-soft:#fee2e2; --payment-status-awaiting-soft:#dbeafe;
+  --payment-status-not-found-soft:#e2e8f0; --payment-status-overdue-soft:#f3e8ff;
+  --payment-status-verifying-soft:#cffafe; --payment-status-exception-soft:#ffedd5;
+  --payment-status-hold-soft:#e0e7ff; --payment-status-cart-soft:#ccfbf1;
+}
+:root[data-theme="dark"] .payments-dashboard {
+  --payment-status-reported:#fcd34d; --payment-status-confirmed:#86efac;
+  --payment-status-confirmed-undelivered:#fca5a5; --payment-status-awaiting:#93c5fd;
+  --payment-status-not-found:#cbd5e1; --payment-status-overdue:#d8b4fe;
+  --payment-status-verifying:#67e8f9; --payment-status-exception:#fdba74;
+  --payment-status-hold:#a5b4fc; --payment-status-cart:#5eead4;
+  --payment-status-reported-soft:#3b321a; --payment-status-confirmed-soft:#1d3828;
+  --payment-status-confirmed-undelivered-soft:#3e2528; --payment-status-awaiting-soft:#202f43;
+  --payment-status-not-found-soft:#30363d; --payment-status-overdue-soft:#382943;
+  --payment-status-verifying-soft:#17383c; --payment-status-exception-soft:#402a1d;
+  --payment-status-hold-soft:#292c49; --payment-status-cart-soft:#1d3937;
+}
+.payment-client-card { margin-top:0; padding:clamp(18px,3vw,28px); border-left:6px solid var(--payment-client-accent); background:var(--payment-client-surface); }
+.payment-client-card--reported { --payment-client-accent:var(--payment-status-reported); --payment-client-surface:var(--payment-status-reported-soft); }
+.payment-client-card--confirmed { --payment-client-accent:var(--payment-status-confirmed); --payment-client-surface:var(--payment-status-confirmed-soft); }
+.payment-client-card--confirmed_undelivered { --payment-client-accent:var(--payment-status-confirmed-undelivered); --payment-client-surface:var(--payment-status-confirmed-undelivered-soft); }
+.payment-client-card--awaiting_payment { --payment-client-accent:var(--payment-status-awaiting); --payment-client-surface:var(--payment-status-awaiting-soft); }
+.payment-client-card--not_found { --payment-client-accent:var(--payment-status-not-found); --payment-client-surface:var(--payment-status-not-found-soft); }
+.payment-client-card--overdue { --payment-client-accent:var(--payment-status-overdue); --payment-client-surface:var(--payment-status-overdue-soft); }
+.payment-client-card--verifying { --payment-client-accent:var(--payment-status-verifying); --payment-client-surface:var(--payment-status-verifying-soft); }
+.payment-client-card--exception { --payment-client-accent:var(--payment-status-exception); --payment-client-surface:var(--payment-status-exception-soft); }
+.payment-client-card--hold { --payment-client-accent:var(--payment-status-hold); --payment-client-surface:var(--payment-status-hold-soft); }
+.payment-status-badge--reported { background:var(--payment-status-reported-soft); color:var(--payment-status-reported); }
+.payment-status-badge--confirmed { background:var(--payment-status-confirmed-soft); color:var(--payment-status-confirmed); }
+.payment-status-badge--confirmed_undelivered { background:var(--payment-status-confirmed-undelivered-soft); color:var(--payment-status-confirmed-undelivered); }
+.payment-status-badge--awaiting_payment { background:var(--payment-status-awaiting-soft); color:var(--payment-status-awaiting); }
+.payment-status-badge--not_found { background:var(--payment-status-not-found-soft); color:var(--payment-status-not-found); }
+.payment-status-badge--overdue { background:var(--payment-status-overdue-soft); color:var(--payment-status-overdue); }
+.payment-status-badge--verifying { background:var(--payment-status-verifying-soft); color:var(--payment-status-verifying); }
+.payment-status-badge--exception { background:var(--payment-status-exception-soft); color:var(--payment-status-exception); }
+.payment-status-badge--hold { background:var(--payment-status-hold-soft); color:var(--payment-status-hold); }
+.payment-status-badge--cart { background:var(--payment-status-cart-soft); color:var(--payment-status-cart); }
 .payment-client-card > header { display:flex; justify-content:space-between; gap:20px; align-items:start; margin-bottom:18px; }
 .payment-client-card > header h2 { margin:2px 0 0; }
 .payment-client-total { display:grid; justify-items:end; }
@@ -810,10 +853,16 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .payment-client-total span { color:var(--muted); font-size:.85rem; }
 .payment-orders { display:grid; gap:12px; }
 .payment-order { padding:18px; border:1px solid var(--mk-border); border-left:5px solid var(--mk-border); border-radius:13px; background:var(--mk-surface); }
-.payment-order--reported { border-left-color:var(--mk-border); }
-.payment-order--confirmed { border-left-color:var(--mk-border); }
-.payment-order--not_found { border-left-color:var(--mk-border); }
-.payment-order--overdue { border-left-color:var(--mk-border); }
+.payment-order--reported { border-left-color:var(--payment-status-reported); }
+.payment-order--confirmed { border-left-color:var(--payment-status-confirmed); }
+.payment-order--confirmed_undelivered { border-left-color:var(--payment-status-confirmed-undelivered); }
+.payment-order--awaiting_payment { border-left-color:var(--payment-status-awaiting); }
+.payment-order--not_found { border-left-color:var(--payment-status-not-found); }
+.payment-order--overdue { border-left-color:var(--payment-status-overdue); }
+.payment-order--verifying { border-left-color:var(--payment-status-verifying); }
+.payment-order--exception { border-left-color:var(--payment-status-exception); }
+.payment-order--hold { border-left-color:var(--payment-status-hold); }
+.payment-order--cart { border-left-color:var(--payment-status-cart); background:var(--payment-status-cart-soft); }
 .payment-order__heading { display:flex; justify-content:space-between; gap:16px; align-items:start; }
 .payment-order__heading h3 { margin:9px 0 2px; font-size:1.02rem; }
 .payment-order__heading p { margin:0; color:var(--muted); font-size:.84rem; }
