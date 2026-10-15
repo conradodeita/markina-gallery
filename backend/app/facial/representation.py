@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id, owned_record
 from app.auth import (
     AdminUser,
     AuditEvent,
@@ -23,6 +24,7 @@ from app.auth import (
     now,
 )
 from app.facial.reference_store import delete_reference_file
+from app.tenancy import require_admin_tenant
 
 AUTHORITY_KINDS = {"parent", "legal_guardian", "court_order"}
 VERIFICATION_METHODS = {"admin_attestation", "trusted_provider"}
@@ -63,6 +65,9 @@ def create_legal_representation(
     expires_at: datetime,
     valid_from: datetime | None = None,
 ) -> FacialLegalRepresentation:
+    tenant_id = require_admin_tenant(db, verified_by_admin_id).id
+    if client_tenant_id(db, client_id) != tenant_id:
+        raise FacialLegalRepresentationError("Representação legal indisponível.")
     issued_at = valid_from or now()
     if authority_kind not in AUTHORITY_KINDS:
         raise FacialLegalRepresentationError("Autoridade de representação inválida.")
@@ -74,15 +79,16 @@ def create_legal_representation(
         raise FacialLegalRepresentationError("Representação legal indisponível.")
     registration = db.scalar(
         select(ParentGalleryRegistration).where(
-            ParentGalleryRegistration.parent_gallery_id == parent_gallery_id,
+            ParentGalleryRegistration.tenant_id == tenant_id, ParentGalleryRegistration.parent_gallery_id == parent_gallery_id,
             ParentGalleryRegistration.client_id == client_id,
             ParentGalleryRegistration.status == "active",
         )
     )
-    gallery = db.get(ParentGallery, parent_gallery_id)
+    gallery = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if registration is None or gallery is None or not gallery.active:
         raise FacialLegalRepresentationError("Representação legal indisponível.")
     item = FacialLegalRepresentation(
+        tenant_id=tenant_id,
         client_id=client_id,
         parent_gallery_id=parent_gallery_id,
         subject_scope_reference=_required_opaque(
@@ -104,6 +110,7 @@ def create_legal_representation(
     db.flush()
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event="facial.legal_representation_created",
             subject=(
                 f"representation_id:{item.id};gallery_id:{parent_gallery_id};"
@@ -123,6 +130,9 @@ def require_valid_legal_representation(
     terms_version: str,
     at: datetime | None = None,
 ) -> FacialLegalRepresentation:
+    tenant_id = client_tenant_id(db, client_id)
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialLegalRepresentationError("Representação legal indisponível.")
     try:
         representation_id = UUID((representation_reference or "").strip())
     except (ValueError, AttributeError) as exc:
@@ -137,7 +147,7 @@ def require_valid_legal_representation(
         )
         .join(ParentGallery, ParentGallery.id == parent_gallery_id)
         .where(
-            FacialLegalRepresentation.id == representation_id,
+            FacialLegalRepresentation.tenant_id == tenant_id, ParentGallery.tenant_id == tenant_id, ParentGalleryRegistration.tenant_id == tenant_id, FacialLegalRepresentation.id == representation_id,
             FacialLegalRepresentation.client_id == client_id,
             FacialLegalRepresentation.parent_gallery_id == parent_gallery_id,
             FacialLegalRepresentation.terms_version == terms_version,
@@ -163,6 +173,9 @@ def find_valid_legal_representation(
     terms_version: str,
     at: datetime | None = None,
 ) -> FacialLegalRepresentation | None:
+    tenant_id = client_tenant_id(db, client_id)
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise FacialLegalRepresentationError("Representação legal indisponível.")
     instant = at or now()
     return db.scalar(
         select(FacialLegalRepresentation)
@@ -173,7 +186,7 @@ def find_valid_legal_representation(
         )
         .join(ParentGallery, ParentGallery.id == parent_gallery_id)
         .where(
-            FacialLegalRepresentation.client_id == client_id,
+            FacialLegalRepresentation.tenant_id == tenant_id, ParentGallery.tenant_id == tenant_id, ParentGalleryRegistration.tenant_id == tenant_id, FacialLegalRepresentation.client_id == client_id,
             FacialLegalRepresentation.parent_gallery_id == parent_gallery_id,
             FacialLegalRepresentation.terms_version == terms_version,
             FacialLegalRepresentation.status == "active",
@@ -198,7 +211,8 @@ def revoke_legal_representation(
     representation_id: UUID,
     actor_admin_id: UUID,
 ) -> FacialLegalRepresentation:
-    item = db.get(FacialLegalRepresentation, representation_id)
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
+    item = owned_record(db, FacialLegalRepresentation, representation_id, tenant_id=tenant_id)
     if item is None or db.get(AdminUser, actor_admin_id) is None:
         raise FacialLegalRepresentationError("Representação legal indisponível.")
     if item.status != "revoked":
@@ -207,7 +221,8 @@ def revoke_legal_representation(
         item.updated_at = now()
         db.add(
             AuditEvent(
-                event="facial.legal_representation_revoked",
+            tenant_id=tenant_id,
+            event="facial.legal_representation_revoked",
                 subject=(
                     f"representation_id:{item.id};gallery_id:{item.parent_gallery_id};"
                     f"client_id:{item.client_id}"
@@ -219,19 +234,19 @@ def revoke_legal_representation(
 
 
 def legal_representation_rights_inventory(
-    db: Session, *, representation_id: UUID
+    db: Session, *, representation_id: UUID, tenant_id: UUID
 ) -> dict[str, int | bool]:
-    item = db.get(FacialLegalRepresentation, representation_id)
+    item = owned_record(db, FacialLegalRepresentation, representation_id, tenant_id=tenant_id)
     if item is None:
         raise FacialLegalRepresentationError("Representação legal indisponível.")
     reference = str(item.id)
     requests = select(FacialSearchRequest.id).where(
-        FacialSearchRequest.representation_reference == reference,
+        FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.representation_reference == reference,
         FacialSearchRequest.subject_declaration == "minor",
     )
 
     def count(model, *criteria) -> int:
-        return int(db.scalar(select(func.count()).select_from(model).where(*criteria)) or 0)
+        return int(db.scalar(select(func.count()).select_from(model).where(model.tenant_id == tenant_id, *criteria)) or 0)
 
     references = count(
         FacialSearchRequest,
@@ -268,13 +283,16 @@ def fulfill_legal_representation_deletion(
     actor_admin_id: UUID,
     reference_root: Path,
 ) -> FacialRepresentationRightsReport:
-    item = db.get(FacialLegalRepresentation, representation_id)
+    tenant_id = require_admin_tenant(db, actor_admin_id).id
+    item = owned_record(db, FacialLegalRepresentation, representation_id, tenant_id=tenant_id)
     if item is None or db.get(AdminUser, actor_admin_id) is None:
         raise FacialLegalRepresentationError("Representação legal indisponível.")
     reference = str(item.id)
     requests = list(
         db.scalars(
             select(FacialSearchRequest).where(
+                FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.parent_gallery_id == item.parent_gallery_id,
+                FacialSearchRequest.client_id == item.client_id,
                 FacialSearchRequest.representation_reference == reference,
                 FacialSearchRequest.subject_declaration == "minor",
             )
@@ -284,6 +302,8 @@ def fulfill_legal_representation_deletion(
     references_deleted = 0
     for request in requests:
         if request.reference_locator_ciphertext is not None:
+            if require_admin_tenant(db, actor_admin_id).id != tenant_id:
+                raise FacialLegalRepresentationError("Representação legal indisponível.")
             references_deleted += int(delete_reference_file(reference_root, request.id))
     candidates_deleted = 0
     notifications_cancelled = 0
@@ -293,14 +313,14 @@ def fulfill_legal_representation_deletion(
     if request_ids:
         candidate_result = db.execute(
             delete(FacialSearchCandidate).where(
-                FacialSearchCandidate.search_request_id.in_(request_ids)
+                FacialSearchCandidate.tenant_id == tenant_id, FacialSearchCandidate.search_request_id.in_(request_ids)
             )
         )
         candidates_deleted = candidate_result.rowcount or 0
         notification_result = db.execute(
             update(FacialSearchNotificationOutbox)
             .where(
-                FacialSearchNotificationOutbox.search_request_id.in_(request_ids),
+                FacialSearchNotificationOutbox.tenant_id == tenant_id, FacialSearchNotificationOutbox.search_request_id.in_(request_ids),
                 FacialSearchNotificationOutbox.status.in_(("queued", "processing")),
             )
             .values(
@@ -315,7 +335,7 @@ def fulfill_legal_representation_deletion(
         job_result = db.execute(
             update(FacialJob)
             .where(
-                FacialJob.search_request_id.in_(request_ids),
+                FacialJob.tenant_id == tenant_id, FacialJob.search_request_id.in_(request_ids),
                 FacialJob.status.in_(("queued", "processing")),
             )
             .values(
@@ -330,7 +350,7 @@ def fulfill_legal_representation_deletion(
         request_result = db.execute(
             update(FacialSearchRequest)
             .where(
-                FacialSearchRequest.id.in_(request_ids),
+                FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.id.in_(request_ids),
                 FacialSearchRequest.status.not_in(("cancelled", "expired")),
             )
             .values(status="cancelled", completed_at=instant, updated_at=instant)
@@ -338,7 +358,7 @@ def fulfill_legal_representation_deletion(
         requests_cancelled = request_result.rowcount or 0
         db.execute(
             update(FacialSearchRequest)
-            .where(FacialSearchRequest.id.in_(request_ids))
+            .where(FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.id.in_(request_ids))
             .values(
                 reference_locator_ciphertext=None,
                 reference_locator_nonce=None,
@@ -361,6 +381,7 @@ def fulfill_legal_representation_deletion(
     )
     db.add(
         AuditEvent(
+            tenant_id=tenant_id,
             event="facial.legal_representation_rights_fulfilled",
             subject=(
                 f"representation_id:{item.id};requests:{report.requests_cancelled};"

@@ -1,3 +1,5 @@
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
+
 """Executar no PostgreSQL dedicado de testes, nunca em banco operacional."""
 
 from concurrent.futures import ThreadPoolExecutor
@@ -52,7 +54,7 @@ def test_concurrent_resends_share_one_event():
         with SessionLocal() as db:
             actor = db.scalar(select(AuthSession).where(AuthSession.role == "admin")).subject_id
             gate.wait(timeout=10)
-            result = resend_delivery(db, lock_delivery_order(db, orders[0]), 1, operation, actor)
+            result = resend_delivery(db, lock_delivery_order(db, orders[0], tenant_id=FIXTURE_TENANT_ID), 1, operation, actor)
             db.commit()
             return result["notification"]["event_id"]
 

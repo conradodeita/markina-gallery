@@ -1,12 +1,23 @@
 """Política comercial única antes de qualquer remoção operacional."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import AuditEvent, PaymentCommunication, SaleOrder, SaleOrderItem
+from app.acervo_context import owned_record
+from app.auth import (
+    AuditEvent,
+    Client,
+    DerivedGallery,
+    ParentGallery,
+    PaymentCommunication,
+    PhotoAsset,
+    SaleOrder,
+    SaleOrderItem,
+)
 from app.commercial_history import CommercialHistoryGap, materialize_commercial_history
 from app.historical_media import (
     HistoricalMediaConflict,
@@ -32,6 +43,7 @@ class CommercialRemovalReport:
 def commercial_removal_orders_query(
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     client_id: UUID | None = None,
     derived_gallery_id: UUID | None = None,
     photo_asset_id: UUID | None = None,
@@ -39,6 +51,7 @@ def commercial_removal_orders_query(
     """Monta o bloqueio sem ``DISTINCT``, incompatível com FOR UPDATE no PostgreSQL."""
 
     query = select(SaleOrder).where(
+        SaleOrder.tenant_id == tenant_id,
         SaleOrder.parent_gallery_id_snapshot == parent_gallery_id
     )
     if client_id:
@@ -49,6 +62,7 @@ def commercial_removal_orders_query(
         )
     if photo_asset_id:
         affected_order_ids = select(SaleOrderItem.sale_order_id).where(
+            SaleOrderItem.tenant_id == tenant_id,
             SaleOrderItem.photo_asset_id_snapshot == photo_asset_id
         )
         query = query.where(SaleOrder.id.in_(affected_order_ids))
@@ -59,14 +73,26 @@ def apply_commercial_removal_policy(
     db: Session,
     *,
     parent_gallery_id: UUID,
+    tenant_id: UUID,
     client_id: UUID | None = None,
     derived_gallery_id: UUID | None = None,
     photo_asset_id: UUID | None = None,
+    authorize: Callable[[], object] | None = None,
 ) -> CommercialRemovalReport:
     """Bloqueia revisão, cancela pendências e prepara compras confirmadas."""
 
+    if authorize:
+        authorize()
+    if not owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id):
+        raise ValueError("Galeria indisponível.")
+    for model, resource_id in ((Client, client_id), (DerivedGallery, derived_gallery_id), (PhotoAsset, photo_asset_id)):
+        if resource_id:
+            resource = owned_record(db, model, resource_id, tenant_id=tenant_id)
+            if resource is None or (hasattr(resource, "parent_gallery_id") and resource.parent_gallery_id != parent_gallery_id):
+                raise ValueError("Alvo comercial indisponível.")
     query = commercial_removal_orders_query(
         parent_gallery_id=parent_gallery_id,
+        tenant_id=tenant_id,
         client_id=client_id,
         derived_gallery_id=derived_gallery_id,
         photo_asset_id=photo_asset_id,
@@ -82,6 +108,7 @@ def apply_commercial_removal_policy(
         set(
             db.scalars(
                 select(PaymentCommunication.sale_order_id).where(
+                    PaymentCommunication.tenant_id == tenant_id,
                     PaymentCommunication.sale_order_id.in_(order_ids),
                     PaymentCommunication.status == "pending_review",
                 )
@@ -106,6 +133,7 @@ def apply_commercial_removal_policy(
             db.add(
                 AuditEvent(
                     event="sale_order.cancelled_for_operational_removal",
+                    tenant_id=tenant_id,
                     subject=f"order_id:{order.id}",
                 )
             )
@@ -121,6 +149,8 @@ def apply_commercial_removal_policy(
             )
             prepare_confirmed_historical_media(
                 db,
+                tenant_id=tenant_id,
+                authorize=authorize,
                 parent_gallery_id=parent_gallery_id,
                 client_id=client_id,
                 photo_asset_id=photo_asset_id,

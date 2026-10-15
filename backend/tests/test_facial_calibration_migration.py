@@ -7,6 +7,8 @@ from subprocess import run
 
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(database_url: str, *arguments: str) -> None:
     backend = Path(__file__).resolve().parents[1]
@@ -24,7 +26,7 @@ def alembic(database_url: str, *arguments: str) -> None:
 def test_calibration_migration_is_additive_empty_and_reversible(tmp_path: Path) -> None:
     database_url = f"sqlite:///{(tmp_path / 'calibration.sqlite').as_posix()}"
     alembic(database_url, "upgrade", "20260908_0049")
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     engine = create_engine(database_url)
     inspector = inspect(engine)
     assert "facial_calibration_approval" in inspector.get_table_names()

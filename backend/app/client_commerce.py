@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import client_tenant_id, require_active_owner
 from app.auth import (
     DerivedGallery,
     ParentGallery,
@@ -17,7 +18,7 @@ from app.auth import (
     SaleOrder,
     SaleOrderItem,
 )
-from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
+from app.gallery_pricing import GalleryPricingError, quote_loaded_gallery
 from app.unified_checkout import communication_join, communications_for_orders
 
 
@@ -25,6 +26,10 @@ def client_carts_by_gallery_payload(
     db: Session, *, galleries: list[DerivedGallery], client_id: UUID
 ) -> dict[UUID, dict[str, object]]:
     """Projeta carrinhos e rascunhos de várias galerias com consultas constantes."""
+    tenant_id = client_tenant_id(db, client_id)
+
+    if any(gallery.tenant_id != tenant_id for gallery in galleries):
+        raise ValueError("Galeria indisponível neste contexto.")
 
     gallery_by_id = {gallery.id: gallery for gallery in galleries}
     result: dict[UUID, dict[str, object]] = {
@@ -37,7 +42,7 @@ def client_carts_by_gallery_payload(
     selections_by_gallery: dict[UUID, list[PhotoSelection]] = defaultdict(list)
     selection_rows = list(
         db.scalars(
-            select(PhotoSelection).where(
+            select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(
                 PhotoSelection.derived_gallery_id.in_(gallery_ids),
                 PhotoSelection.client_id == client_id,
             )
@@ -48,7 +53,7 @@ def client_carts_by_gallery_payload(
     drafts_by_gallery = {
         draft.derived_gallery_id: draft
         for draft in db.scalars(
-            select(SaleOrder).where(
+            select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(
                 SaleOrder.derived_gallery_id.in_(gallery_ids),
                 SaleOrder.client_id == client_id,
                 SaleOrder.payment_status == "pending",
@@ -61,7 +66,7 @@ def client_carts_by_gallery_payload(
     draft_items: dict[UUID, set[UUID]] = defaultdict(set)
     if drafts_by_gallery:
         for order_id, photo_id in db.execute(
-            select(SaleOrderItem.sale_order_id, SaleOrderItem.photo_asset_id_snapshot).where(
+            select(SaleOrderItem.sale_order_id, SaleOrderItem.photo_asset_id_snapshot).where(SaleOrderItem.tenant_id == tenant_id).where(
                 SaleOrderItem.sale_order_id.in_(
                     [draft.id for draft in drafts_by_gallery.values()]
                 )
@@ -73,7 +78,7 @@ def client_carts_by_gallery_payload(
     photos = (
         {
             photo.id: photo
-            for photo in db.scalars(select(PhotoAsset).where(PhotoAsset.id.in_(photo_ids)))
+            for photo in db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.id.in_(photo_ids)))
         }
         if photo_ids
         else {}
@@ -81,11 +86,11 @@ def client_carts_by_gallery_payload(
     parent_ids = {gallery.parent_gallery_id for gallery in galleries}
     parents = {
         parent.id: parent
-        for parent in db.scalars(select(ParentGallery).where(ParentGallery.id.in_(parent_ids)))
+        for parent in db.scalars(select(ParentGallery).where(ParentGallery.tenant_id == tenant_id).where(ParentGallery.id.in_(parent_ids)))
     }
     rules_by_parent: dict[UUID, list[PriceRule]] = defaultdict(list)
     for rule in db.scalars(
-        select(PriceRule)
+        select(PriceRule).where(PriceRule.tenant_id == tenant_id)
         .where(PriceRule.parent_gallery_id.in_(parent_ids))
         .order_by(PriceRule.parent_gallery_id, PriceRule.minimum_quantity)
     ):
@@ -116,9 +121,11 @@ def client_carts_by_gallery_payload(
         parent = parents.get(gallery.parent_gallery_id)
         if not parent:
             continue
+        payload["payment_required"] = parent.payment_required
+        if not parent.payment_required:
+            continue
         try:
-            commercial_quote = quote_parent_gallery(
-                db,
+            commercial_quote = quote_loaded_gallery(
                 gallery=parent,
                 quantity=len(selections),
                 rules=rules_by_parent[parent.id],
@@ -140,21 +147,27 @@ def client_carts_by_gallery_payload(
                 },
             }
         )
+    require_active_owner(db, tenant_id)
     return result
 
 
 def client_photo_states(
-    db: Session, *, gallery_id: UUID, client_id: UUID, photo_ids: set[UUID]
+    db: Session, *, gallery_id: UUID | None, client_id: UUID,
+    photo_ids: set[UUID], parent_gallery_id: UUID | None = None
 ) -> dict[UUID, str]:
     """Resolve estados por prioridade sem consultas por foto."""
+    tenant_id = client_tenant_id(db, client_id)
 
     states = {photo_id: "available" for photo_id in photo_ids}
     if not photo_ids:
         return states
     selected = set(
         db.scalars(
-            select(PhotoSelection.photo_asset_id).where(
-                PhotoSelection.derived_gallery_id == gallery_id,
+            select(PhotoSelection.photo_asset_id).where(PhotoSelection.tenant_id == tenant_id).where(
+                or_(
+                    PhotoSelection.derived_gallery_id == gallery_id,
+                    PhotoSelection.parent_gallery_id == parent_gallery_id,
+                ) if parent_gallery_id else PhotoSelection.derived_gallery_id == gallery_id,
                 PhotoSelection.client_id == client_id,
                 PhotoSelection.photo_asset_id.in_(photo_ids),
             )
@@ -170,18 +183,23 @@ def client_photo_states(
                 SaleOrder.payment_status,
                 SaleOrder.frozen_at,
                 PaymentCommunication.status,
-            )
+            ).where(or_(PaymentCommunication.id.is_(None), PaymentCommunication.tenant_id == tenant_id), SaleOrder.tenant_id == tenant_id, SaleOrderItem.tenant_id == tenant_id)
             .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
             .outerjoin(PaymentCommunication, communication_join())
             .where(
-                SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                or_(
+                    SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                    SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
+                ) if parent_gallery_id else SaleOrder.derived_gallery_id_snapshot == gallery_id,
                 SaleOrder.client_id == client_id,
                 SaleOrderItem.photo_asset_id_snapshot.in_(photo_ids),
             )
         )
     )
     for photo_id, payment_status, frozen_at, communication_status in rows:
-        if payment_status == "confirmed":
+        if payment_status == "not_required" and frozen_at:
+            states[photo_id] = "selection_finalized"
+        elif payment_status == "confirmed":
             states[photo_id] = "purchased"
         elif (
             payment_status == "pending"
@@ -203,6 +221,7 @@ def client_orders_by_gallery_payload(
     db: Session, *, gallery_ids: set[UUID], client_id: UUID
 ) -> dict[UUID, list[dict[str, object]]]:
     """Entrega pedidos agrupados por galeria com custo fixo de consultas."""
+    tenant_id = client_tenant_id(db, client_id)
 
     grouped: dict[UUID, list[dict[str, object]]] = {
         gallery_id: [] for gallery_id in gallery_ids
@@ -211,7 +230,7 @@ def client_orders_by_gallery_payload(
         return grouped
     orders = list(
         db.scalars(
-            select(SaleOrder)
+            select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
             .where(
                 SaleOrder.derived_gallery_id_snapshot.in_(gallery_ids),
                 SaleOrder.client_id == client_id,
@@ -228,7 +247,7 @@ def client_orders_by_gallery_payload(
     order_ids = [order.id for order in orders]
     items_by_order: dict[UUID, list[SaleOrderItem]] = defaultdict(list)
     for item in db.scalars(
-        select(SaleOrderItem)
+        select(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id)
         .where(SaleOrderItem.sale_order_id.in_(order_ids))
         .order_by(SaleOrderItem.filename_snapshot)
     ):
@@ -238,7 +257,7 @@ def client_orders_by_gallery_payload(
     deliveries: dict[UUID, PaymentNotificationOutbox] = {}
     if communication_ids:
         for delivery in db.scalars(
-            select(PaymentNotificationOutbox)
+            select(PaymentNotificationOutbox).where(PaymentNotificationOutbox.tenant_id == tenant_id)
             .where(
                 PaymentNotificationOutbox.payment_communication_id.in_(communication_ids),
                 PaymentNotificationOutbox.template_kind.in_(("confirmed", "refused")),
@@ -251,7 +270,9 @@ def client_orders_by_gallery_payload(
         communication = communications.get(order.id)
         delivery = deliveries.get(communication.id) if communication else None
         state = (
-            "purchased"
+            "selection_finalized"
+            if order.payment_status == "not_required"
+            else "purchased"
             if order.payment_status == "confirmed"
             else "cancelled"
             if order.payment_status == "cancelled"
@@ -266,7 +287,8 @@ def client_orders_by_gallery_payload(
             {
                 "order_id": str(order.id),
                 "payment_group_id": str(order.payment_group_id) if order.payment_group_id else None,
-                "total_cents": order.total_cents,
+                "total_cents": order.total_cents if order.payment_required_snapshot else None,
+                **({"payment_required": False} if not order.payment_required_snapshot else {}),
                 "payment_status": order.payment_status,
                 "commercial_state": state,
                 "frozen_at": order.frozen_at.isoformat() if order.frozen_at else None,
@@ -293,7 +315,7 @@ def client_orders_by_gallery_payload(
                         "item_id": str(item.id),
                         "photo_id": str(item.photo_asset_id_snapshot),
                         "name": item.filename_snapshot,
-                        "unit_price_cents": item.unit_price_cents,
+                        "unit_price_cents": item.unit_price_cents if order.payment_required_snapshot else None,
                         "preview_url": (
                             f"/gallery/{gallery_id}/photos/{item.photo_asset_id_snapshot}/preview"
                             if item.photo_asset_id is not None
@@ -311,6 +333,7 @@ def client_orders_payload(
     db: Session, *, gallery_id: UUID, client_id: UUID
 ) -> list[dict[str, object]]:
     """Entrega os pedidos de uma galeria para retomada após login."""
+    client_tenant_id(db, client_id)
 
     return client_orders_by_gallery_payload(
         db, gallery_ids={gallery_id}, client_id=client_id

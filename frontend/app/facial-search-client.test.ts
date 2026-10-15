@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FacialApiError, facialAdminApi, facialSearchApi } from "./facial-search-client";
+import { FacialApiError, facialProgressPercent, facialSearchApi } from "./facial-search-client";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("contratos HTTP faciais", () => {
+  it("mantém o percentual abaixo de 100 até concluir todas as fotos", () => {
+    expect(facialProgressPercent(999, 1000)).toBe(99);
+    expect(facialProgressPercent(1000, 1000)).toBe(100);
+    expect(facialProgressPercent(1200, 1000)).toBe(100);
+    expect(facialProgressPercent(0, 0)).toBeUndefined();
+  });
+
   it("envia somente JPEG e recibo explícito ao criar consulta", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "request-1" }), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -72,7 +79,7 @@ describe("contratos HTTP faciais", () => {
     await facialSearchApi.latest("gallery-1");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/gallery-1/facial-searches/latest",
-      { credentials: "same-origin" },
+      { credentials: "same-origin", cache: "no-store" },
     );
   });
 
@@ -107,13 +114,4 @@ describe("contratos HTTP faciais", () => {
     }));
   });
 
-  it("envia somente IDs de jobs na retentativa administrativa", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ retried: 2 }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-    await facialAdminApi.retry("gallery-1", ["job-1", "job-2"]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/parent-galleries/gallery-1/facial-index/retry",
-      expect.objectContaining({ body: JSON.stringify({ job_ids: ["job-1", "job-2"] }) }),
-    );
-  });
 });

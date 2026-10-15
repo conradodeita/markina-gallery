@@ -11,9 +11,11 @@ it("abre álbum seguro e suspende botão depois da correção financeira", () =>
   expect(link.getAttribute("target")).toBe("_blank");
   expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   expect(screen.getByRole("article").id).toBe("order-order-1");
+  expect(screen.queryByText(/Após a edição/)).toBeNull();
   rerender(<LibraryOrderCard order={{ ...order, commercial_state: "payment_reported" }} />);
   expect(screen.queryByRole("link", { name: "Fotos disponíveis" })).toBeNull();
   expect(screen.getByRole("button", { name: "Fotos indisponíveis" })).toHaveProperty("disabled", true);
+  expect(screen.getByText("Após a edição, quando o fotógrafo liberar o álbum, clique em “Fotos disponíveis” para acessá-las.")).toBeTruthy();
   rerender(<LibraryOrderCard order={{ ...order, gallery_removed: true, assets_removed: true }} />);
   expect(screen.getByRole("link", { name: "Fotos disponíveis" })).toBeTruthy();
 });
@@ -21,5 +23,12 @@ it("abre álbum seguro e suspende botão depois da correção financeira", () =>
 it.each([null, "https://attacker.invalid/album", "javascript:alert(1)", "https://photos.app.goo.gl.attacker.invalid/album"])("sem link válido não oferece destino: %s", (url) => {
   render(<LibraryOrderCard order={{ ...order, delivery_album_url: url }} />);
   expect(screen.queryByRole("link")).toBeNull();
+  expect(screen.getByRole("button", { name: "Fotos indisponíveis" })).toHaveProperty("disabled", true);
+  expect(screen.getByText("Após a edição, quando o fotógrafo liberar o álbum, clique em “Fotos disponíveis” para acessá-las.")).toBeTruthy();
+});
+
+it("não transforma endereço de rede local em botão externo do álbum", () => {
+  render(<LibraryOrderCard order={{ ...order, delivery_album_url: "https://127.0.0.1/album" }} />);
+  expect(screen.queryByRole("link", { name: "Fotos disponíveis" })).toBeNull();
   expect(screen.getByRole("button", { name: "Fotos indisponíveis" })).toHaveProperty("disabled", true);
 });

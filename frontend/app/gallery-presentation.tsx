@@ -30,6 +30,7 @@ type GalleryPresentationProps<TPhoto extends GalleryPresentationPhoto> = {
   coverUrl?: string | null;
   folders: GalleryPresentationFolder<TPhoto>[];
   folderDisplayMode?: "individual" | "sequential";
+  deferGridImages?: boolean;
   titleStyle?: TitleStyle;
   eyebrow?: string;
   modeLabel?: ReactNode;
@@ -66,6 +67,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   coverUrl,
   folders,
   folderDisplayMode = "individual",
+  deferGridImages = false,
   titleStyle,
   eyebrow = "Galeria privada",
   modeLabel,
@@ -169,7 +171,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   };
   const renderPhoto = (photo: TPhoto, markers = renderPhotoMarkers) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
     <div className="gallery-presentation-photo-frame">
-    <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => openExpanded(photo)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} /></button>
+    <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => openExpanded(photo)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} loading={deferGridImages ? "lazy" : undefined} decoding={deferGridImages ? "async" : undefined} /></button>
     </div>
     <div className="gallery-presentation-photo-details"><div className="gallery-presentation-photo-caption"><strong title={photo.name}>{photo.name}</strong>{markers ? <div className="gallery-presentation-photo-markers">{markers(photo)}</div> : null}</div>{renderPhotoDetails?.(photo)}</div>
   </article>;

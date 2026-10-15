@@ -1,15 +1,15 @@
 """Espera bloqueante, descarga ociosa e limite do processo facial."""
-
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app.auth import Base, ParentGallery
+from app.auth import Base, ParentGallery, PhotoAsset, PhotoFolder
 from app.facial.config import FacialSettings
 from app.facial.jobs import FacialJobRepository
 from app.facial.runtime import BlockingFacialWorker
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _settings(tmp_path: Path, *, max_jobs: int = 2, idle: int = 30) -> FacialSettings:
@@ -65,11 +65,26 @@ def _database(tmp_path: Path):
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine)
     with factory() as db:
-        parent = ParentGallery(id=uuid4(), name="Evento")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento")
         db.add(parent)
         db.commit()
         parent_id = parent.id
     return factory, parent_id
+
+
+
+def fixture_index_photo(db, parent_id):
+    folder = db.scalar(select(PhotoFolder).where(PhotoFolder.tenant_id == FIXTURE_TENANT_ID,
+                                                PhotoFolder.parent_gallery_id == parent_id))
+    if folder is None:
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, name="Origem sintética")
+        db.add(folder)
+        db.flush()
+    photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, folder_id=folder.id,
+                       filename="synthetic.jpg", storage_key=f"synthetic/{uuid4()}.jpg")
+    db.add(photo)
+    db.flush()
+    return photo.id
 
 
 def test_empty_queue_blocks_without_loading_or_reprocessing(tmp_path: Path) -> None:
@@ -99,7 +114,7 @@ def test_cleanup_job_does_not_load_models(tmp_path: Path) -> None:
     loads = []
     with factory() as db:
         repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="cleanup",
             idempotency_key="cleanup-without-model",
             parent_gallery_id=parent_id,
@@ -147,11 +162,11 @@ def test_provider_startup_failure_is_delegated_without_losing_claim(
     repository = FacialJobRepository()
     with factory() as db:
         job, _created = repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             idempotency_key="provider-failure",
             parent_gallery_id=parent_id,
-            photo_asset_id=uuid4(),
+            photo_asset_id=fixture_index_photo(db, parent_id),
             model_version="model-v1",
             quality_version="quality-v1",
             preview_fingerprint="a" * 64,
@@ -206,11 +221,11 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
     )
     with factory() as db:
         repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             idempotency_key="first",
             parent_gallery_id=parent_id,
-            photo_asset_id=uuid4(),
+            photo_asset_id=fixture_index_photo(db, parent_id),
             model_version="model-v1",
             quality_version="quality-v1",
             preview_fingerprint="b" * 64,
@@ -225,11 +240,11 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
 
     with factory() as db:
         repository.enqueue(
-            db,
+            db, tenant_id=FIXTURE_TENANT_ID,
             kind="index",
             idempotency_key="second",
             parent_gallery_id=parent_id,
-            photo_asset_id=uuid4(),
+            photo_asset_id=fixture_index_photo(db, parent_id),
             model_version="model-v1",
             quality_version="quality-v1",
             preview_fingerprint="c" * 64,
@@ -238,3 +253,48 @@ def test_model_unloads_after_idle_and_loads_again_for_new_work(tmp_path: Path) -
     assert worker.run_cycle() is True
     assert len(loads) == 2 and len(processed) == 2
     assert worker.model_loaded is False  # limite de dois jobs força reciclagem
+
+
+def test_gemma_retry_is_counted_as_error_and_not_success(tmp_path, monkeypatch):
+    from app.system_monitor import telemetry
+
+    monkeypatch.setenv("SYSTEM_MONITOR_ENABLED", "true")
+    telemetry.drain()
+    monkeypatch.setattr(telemetry, "_workers", {})
+    factory, parent_id = _database(tmp_path)
+    repository = FacialJobRepository()
+    with factory() as db:
+        photo_id = fixture_index_photo(db, parent_id)
+        repository.enqueue(db, tenant_id=FIXTURE_TENANT_ID, kind="index_gemma",
+                           idempotency_key="gemma-failure", parent_gallery_id=parent_id,
+                           photo_asset_id=photo_id, model_version="gemma-v1",
+                           quality_version="quality-v1", preview_fingerprint="f" * 64)
+        db.commit()
+    def processor(db, claim, _provider):
+        repository.fail(db, claim, ValueError("private"), max_attempts=3, retry_delay_seconds=5)
+        return False
+    worker = BlockingFacialWorker(
+        settings=_settings(tmp_path), job_class="gemma", session_factory=factory,
+        wake_source=WakeSource([0]), provider_loader=lambda: object(), processor=processor,
+    )
+    assert worker.run_cycle()
+    buckets, beats, _dropped = telemetry.drain()
+    assert {key[1] for key in buckets} == {"work.gemma"}
+    assert sum(value[0] for value in buckets.values()) == 1
+    assert sum(value[1] for value in buckets.values()) == 1
+    assert beats["gemma"][1] is None
+
+
+def test_gemma_worker_refuses_production_before_loading_assets(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    import pytest
+
+    from app.facial import face_worker
+    from app.facial.config import FacialConfigurationError
+
+    settings = replace(_settings(tmp_path), environment="production")
+    monkeypatch.setattr(face_worker, "facial_settings_from_environment", lambda **kwargs: settings)
+    monkeypatch.setattr(face_worker, "verify_models", lambda *_args: pytest.fail("Nenhum modelo deve carregar"))
+    with pytest.raises(FacialConfigurationError, match="homologação"):
+        face_worker.main("gemma")

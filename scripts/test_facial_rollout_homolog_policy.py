@@ -31,7 +31,7 @@ def main() -> None:
     )
     require("compose restart face-index-worker", "backfill pós-ativação", SCRIPT)
     require("rollout suspenso como contenção", "contenção de falha", SCRIPT)
-    require('PUBLIC_BASE_URL="https://markina-homolog.duckdns.org"', "healthcheck externo", SCRIPT)
+    require('PUBLIC_BASE_URL="https://markina.pickyourpic.com.br"', "healthcheck externo no domínio canônico", SCRIPT)
     require("environment: homolog", "Environment protegido", WORKFLOW)
     require("ACTIVATE_FACIAL_HOMOLOG_CANARY", "confirmação vinculada", WORKFLOW)
     require("persist-credentials: false", "credencial Git não persistida", WORKFLOW)

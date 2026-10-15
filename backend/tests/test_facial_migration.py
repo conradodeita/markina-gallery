@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(database_url: str, *arguments: str) -> None:
     backend = Path(__file__).resolve().parents[1]
@@ -69,7 +71,7 @@ def test_facial_foundation_migration_is_additive_disabled_and_reversible(
             },
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     inspector = inspect(engine)
     facial_tables = {
         "gallery_facial_policy",
@@ -119,7 +121,7 @@ def test_facial_foundation_migration_is_additive_disabled_and_reversible(
 
 def test_facial_foundation_migration_upgrades_a_clean_database(tmp_path: Path) -> None:
     database_url = f"sqlite:///{(tmp_path / 'facial-clean.sqlite').as_posix()}"
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     inspector = inspect(create_engine(database_url))
     assert "facial_search_request" in inspector.get_table_names()
     assert "facial_job" in inspector.get_table_names()
@@ -144,7 +146,7 @@ def test_layered_visual_protection_migration_preserves_existing_branding(
             {"id": branding_id.hex, "updated_at": datetime.now(UTC)},
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     columns = {column["name"] for column in inspect(engine).get_columns("branding_settings")}
     assert {
         "watermark_opacity",
@@ -202,7 +204,7 @@ def test_client_gallery_login_notification_migration_is_additive(tmp_path: Path)
             },
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     with engine.begin() as connection:
         assert connection.execute(
             text(

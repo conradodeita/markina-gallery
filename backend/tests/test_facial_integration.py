@@ -21,6 +21,7 @@ from app.auth import (
     FacialRollout,
     FacialSearchCandidate,
     GalleryFacialPolicy,
+    GlobalPixSettings,
     ParentGallery,
     ParentGalleryRegistration,
     PhotoAsset,
@@ -38,8 +39,10 @@ from app.facial.search import authorize_search_candidate_selection, create_searc
 from app.facial.search_worker import process_claimed_search_job
 from app.facial.worker import process_claimed_index_job, process_claimed_purge_job
 from app.gallery_pricing import quote_parent_gallery
+from app.global_pix import normalize_configuration
 from app.media import generate_derivatives
 from app.private_derivation import derive_client_selection
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 def _jpeg(color: tuple[int, int, int]) -> bytes:
@@ -110,33 +113,34 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
     db = Session(create_engine(f"sqlite:///{tmp_path / 'integration.db'}"))
     Base.metadata.create_all(db.bind)
 
-    admin = AdminUser(
+    admin = fixture_admin(AdminUser(
         id=uuid4(),
         email="admin.synthetic@example.invalid",
         password_hash="synthetic",
         email_verified=True,
         totp_secret="synthetic",
-    )
+    ))
     gallery = ParentGallery(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         name="Evento sintético adulto",
         pricing_mode="fixed",
         fixed_unit_price_cents=700,
     )
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=gallery.id,
         name="Fotos sintéticas",
         status="preparing",
         purpose="content",
     )
     client = Client(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         full_name="Cliente sintética adulta",
         phone_e164="+5511999999998",
     )
     registration = ParentGalleryRegistration(
-        parent_gallery_id=gallery.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
         client_id=client.id,
         status="active",
     )
@@ -148,16 +152,24 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
             client,
             registration,
             PriceRule(
-                parent_gallery_id=gallery.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.id,
                 minimum_quantity=1,
                 maximum_quantity=None,
                 unit_price_cents=700,
             ),
         )
     )
+    db.add(GlobalPixSettings(
+        tenant_id=FIXTURE_TENANT_ID,
+        admin_user_id=admin.id,
+        version=1,
+        **normalize_configuration({
+            "copy_paste": "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17",
+        }),
+    ))
     db.add(
         FacialRollout(
-            environment=settings.environment,
+            tenant_id=FIXTURE_TENANT_ID, environment=settings.environment,
             parent_gallery_id=gallery.id,
             status="active",
             stage="canary",
@@ -175,6 +187,7 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
     photos = []
     for index, color in enumerate(((210, 180, 160), (160, 190, 215)), start=1):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=gallery.id,
             folder_id=folder.id,

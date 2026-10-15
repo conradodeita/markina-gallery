@@ -40,6 +40,9 @@ describe("regiões persistidas", () => {
       expect(bar().getAttribute("value")).toBe(value);
       expect((face as HTMLButtonElement).disabled).toBe(true);
     }
+    rerender(<FaceRegionViewer galleryId="gallery" photo={photo} onRegion={onRegion} searchResult={{ ...result("searching"), progress: { index: { ready: 4, total: 4 }, comparison: { done: 999, total: 1000 } } }} />);
+    expect(bar().getAttribute("value")).toBe("99");
+    expect(screen.getByText("99% desta etapa · 999 de 1000 fotos comparadas")).toBeTruthy();
     for (const status of ["ready", "failed", "no_candidates", "cancelled", "expired"] as const) {
       rerender(<FaceRegionViewer galleryId="gallery" photo={photo} onRegion={onRegion} searchResult={result(status)} />);
       expect(screen.queryByRole("progressbar")).toBeNull();

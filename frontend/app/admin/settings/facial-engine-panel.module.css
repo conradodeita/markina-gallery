@@ -1,0 +1,74 @@
+.panel {
+  display: grid;
+  gap: 18px;
+}
+
+.heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.heading p { margin: 0 0 6px; }
+.panel .heading h2 { margin: 0; padding: 0; border: 0; }
+
+.badge {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--mk-border);
+  border-radius: 999px;
+  background: var(--mk-surface-subtle);
+  color: var(--mk-ink-muted);
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.description {
+  margin: 0;
+  max-width: 85ch;
+  color: var(--mk-ink-muted);
+  font-size: .9rem;
+  line-height: 1.5;
+}
+
+.selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--mk-border);
+  border-radius: 12px;
+  background: var(--mk-surface-subtle);
+}
+
+.current { display: grid; gap: 4px; }
+.current span { color: var(--mk-ink-muted); font-size: .8rem; }
+.current strong { color: var(--mk-ink); font-size: 1.5rem; line-height: 1.2; }
+.toggle { flex-shrink: 0; min-height: 44px; }
+
+.details { border-top: 1px solid var(--mk-border); padding-top: 8px; }
+.details summary {
+  width: fit-content;
+  min-height: 44px;
+  padding: 12px 0;
+  color: var(--mk-ink-muted);
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.details summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+.details > p { margin: 14px 0 0; max-width: 85ch; color: var(--mk-ink-muted); font-size: .85rem; line-height: 1.5; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 8px 0 0; }
+.metrics > div { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--mk-border); border-radius: 10px; background: var(--mk-surface-subtle); }
+.metrics dt { color: var(--mk-ink-muted); font-size: .8rem; }
+.metrics dd { margin: 0; color: var(--mk-ink); font-weight: 700; overflow-wrap: anywhere; }
+.feedback { margin: 0; color: var(--mk-ink); font-size: .9rem; }
+
+@media (max-width: 620px) {
+  .heading { flex-wrap: wrap; gap: 10px; }
+  .selection { flex-direction: column; align-items: stretch; gap: 16px; padding: 16px; }
+  .toggle { width: 100%; }
+  .metrics { grid-template-columns: 1fr; }
+}

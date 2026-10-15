@@ -1,6 +1,12 @@
+> **Decisão substitutiva — `simplify-gallery-access-modes`:** oferecer somente Padrão (link válido + OTP permite vínculo) e Somente convite individual (vínculo prévio ou convite autorizado). Ambos mostram pastas comuns e exclusivas atribuídas; `collective_protected` permanece somente como legado bloqueado, sem conversão automática nem promoção de vínculos pendentes. Na etapa 2, Pagamento obrigatório exige preços positivos. Desmarcado, a cliente finaliza seleção sem cobrança/PIX, sem preços ou totais, com snapshot individual, exportação e entrega posterior em Compras; isso não confirma pagamento nem registra receita. A mensagem comercial aparece por galeria na revisão. Gates faciais e de privacidade permanecem independentes e obrigatórios.
+
 > **Decisão aprovada — `add-order-google-photos-delivery`:** entrega manual Google Photos por pedido confirmado, botão Enviar e aviso configurável em Notificações (WhatsApp/push independentes). Em Compras, verde “Fotos disponíveis” com link autorizado; cinza “Fotos indisponíveis” nos demais casos. Reenvio explícito com deduplicação; correção financeira suspende exposição e invalida avisos pendentes, preservando o URL. Estas regras substituem os estados vermelho/amarelo e a ação de entrega descritos neste mandato, conforme a change aprovada. Não criar backup do histórico visual de mensagens retirado nem apagar filas técnicas compartilhadas.
 
+> **Transição aprovada em 30/09/2026 — `add-small-multi-photographer-pilot`:** o proprietário aprovou prosseguir com a preparação e implementação local para fotógrafos independentes, mantendo cadastro de cliente separado por fotógrafo, inclusive quando o telefone coincide. As referências abaixo a fotógrafo único e telefone globalmente único serão substituídas somente após isolamento completo, preservação do legado e validação dos caminhos inventariados. O sistema publicado continua limitado a uma conta; outra conta operacional e o ensaio futuro dependem da prontidão registrada. O aceite pendente da fundação anterior e os controles de revisão humana, canais, biometria e deploy permanecem obrigatórios. Esta decisão não declara código novo implementado nem autoriza publicação remota.
+
 # Pick-your-Pic — Especificação de Execução para Claude Code
+
+> **Decisão substitutiva — `unify-gallery-client-collections`:** galeria autenticada única com pastas comuns ou atribuídas a clientes. Estado de seleção, prazo, compra e histórico é individual por galeria + cliente; nenhuma seleção nova cria galeria privada derivada. “Coleção” reúne as pastas autorizadas, Carrinho mantém revisão/PIX e Compras mantém pedidos/entregas. Referências abaixo à criação, navegação ou importação para galeria privada são legado substituído; APIs e snapshots antigos permanecem somente para compatibilidade até migração inventariada fora de homologação. A limpeza autorizada de dados de teste vale apenas para homologação.
 
 ## 1. Mandato e resultado esperado
 
@@ -8,7 +14,7 @@ Implemente a **Pick-your-Pic**, plataforma self-hosted de gestão, prova, venda 
 
 - poucos passos e navegação mobile-first para responsáveis;
 - administração operacional rápida para um fotógrafo;
-- galerias privadas importadas do DigiKam;
+- pastas comuns ou restritas a clientes dentro de uma galeria autenticada;
 - galerias públicas não listadas cujo acervo só é exibido após autenticação e vínculo, com busca facial limitada a reordenar o conjunto já autorizado;
 - segurança, privacidade e operação resiliente.
 
@@ -62,7 +68,7 @@ O próximo executor deve conseguir retomar o trabalho lendo apenas o repositóri
 1. Fundação Docker, Next.js, FastAPI, PostgreSQL, Redis, worker e Nginx.
 2. Área administrativa de um único fotógrafo com autenticação segura.
 3. Clientes/responsáveis, pessoas fotografadas, eventos, bibliotecas, pastas, galerias, fotos, tags e histórico.
-4. Importação confiável de JPEGs e XMP do DigiKam para galerias privadas.
+4. Importação confiável de JPEGs e XMP do DigiKam para pastas comuns ou atribuídas a clientes.
 5. Galeria mobile-first, favoritos/carrinho, preços por faixas, checkout e PIX manual.
 6. Controle de produção/edição por foto, pedidos e entrega por link de Google Photos.
 7. WhatsApp via adaptador, com OTP e fila de mensagens; implementação concreta pode começar em modo sandbox.
@@ -153,8 +159,8 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - `client_person`: N:N entre responsáveis e pessoas. Mãe e pai podem acessar a mesma criança; um responsável pode acessar várias pessoas.
 - `event`: título, data, descrição, status, capacidade/arquivamento.
 - `library`: biblioteca privada de uma família/responsável, com relação ao evento quando aplicável.
-- `gallery`: tipo `private_digikam | collective_face_result`; título, capa, layout, visibilidade, datas de seleção/pagamento, regras de venda, status e configurações de proteção.
-- `folder`: estrutura de pastas dentro de galeria/evento.
+- `gallery`: galeria autenticada única; título, capa, layout, visibilidade, regras de venda, status e configurações de proteção. Prazo e compras são individuais por cliente.
+- `folder`: estrutura de pastas comuns ou atribuídas a clientes da mesma galeria, com liberação explícita.
 - `photo`: arquivo JPEG, hash, dimensões, caminho local, caminho Drive, metadata sanitizada, status de venda e status global de produção.
 - `gallery_photo`: foto dentro da galeria/pasta, com ordenação e visibilidade.
 - `gallery_access`: cliente autorizado, galeria, status `pending | active | rejected | expired`, método, token/convite e auditoria.
@@ -186,11 +192,11 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 
 ## 6. Regras de negócio
 
-### Galerias privadas DigiKam
+### Pastas restritas na galeria autenticada
 
 - O fotógrafo faz a separação no DigiKam antes do upload.
 - Ler JPEG + XMP, extraindo apenas metadados necessários: nome/região/keywords quando disponíveis.
-- Importar para biblioteca/galeria privada e autorizar um ou mais responsáveis.
+- Importar para uma pasta restrita criada no card da cliente e atribuir outras responsáveis autorizadas quando necessário, sem duplicar fotos.
 - O cliente vê pastas por evento/ano e apenas as fotos autorizadas.
 
 ### Eventos coletivos
@@ -224,11 +230,11 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 ### Portal do cliente
 
 - Mobile-first: 2 colunas no celular, 4 ou mais em desktop; carregamento progressivo e placeholders.
-- Após autenticação e autorização, permitir alternar entre Galerias públicas abertas, galerias privadas derivadas e histórico comercial; a privada herda configuração e apresentação da Galeria pública sem conceder acesso às privadas de terceiros.
+- Após autenticação e autorização, “Coleção” mostra pastas comuns e pastas atribuídas à cliente na mesma galeria. Carrinho concentra revisão/PIX e Compras mostra histórico, pagamentos e entregas; links legados exigem vínculo antes de redirecionar.
 - Foto abre em ampliação; seleção é ação explícita por coração/check. Não selecionar involuntariamente ao ampliar.
 - Rodapé fixo com número de fotos, estimativa e CTA de carrinho/finalização.
 - Carrinho com miniaturas, remoção, preços, texto de venda e progresso até próxima faixa de desconto.
-- Páginas mínimas: entrada/OTP, convite, biblioteca, galeria, carrinho/checkout, pedido e minhas entregas.
+- Páginas mínimas: entrada/OTP, convite, biblioteca/Coleção, carrinho/checkout e Compras/entregas.
 - Todo texto, cor, logo, capa e parte das mensagens deve ser configurável pelo fotógrafo.
 
 ### Proteção das prévias
@@ -259,7 +265,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 
 ## 9. Integrações por adaptadores
 
-- Change `configurable-push-and-whatsapp-notifications`: central administrativa de seis eventos com templates globais, prévias e interruptores separados para WhatsApp/push. Migração preserva templates de pagamento e auditoria, sem inbox duplicada nem replay. Primeiro acesso/seleção são marcos por cliente/galeria, não por OTP nem pela simples criação administrativa da privada. Novas fotos privadas avisam somente após encerramento durável do lote com prévias protegidas disponíveis.
+- Change `configurable-push-and-whatsapp-notifications`: central administrativa de seis eventos com templates globais, prévias e interruptores separados para WhatsApp/push. Migração preserva templates de pagamento e auditoria, sem inbox duplicada nem replay. Primeiro acesso/seleção são marcos por cliente/galeria, não por OTP nem pela criação administrativa da pasta. Novas fotos restritas avisam somente as clientes atribuídas após prévias protegidas disponíveis.
 - Push usa inscrição cifrada por identidade/instalação, adesão por clique, VAPID exclusivamente externo e serviço HTTPS com destinos de provedores validados. Logout/troca de conta revogam; expiração natural de sessão não interrompe avisos, mas clique revalida acesso. Pagamentos não dependem do sucesso da mensagem; correção silenciosa não envia em nenhum canal. Nunca confundir aceite do provedor com leitura.
 - Gates de implantação/segredos e validação Android/iPhone permanecem humanos. Consulte `docs/transactional-notifications.md`; transporte desabilitado por padrão, sem alterar `.env` automaticamente.
 

@@ -1,5 +1,4 @@
 """Regressões do PIX global e da confirmação administrativa sensível."""
-
 from datetime import timedelta
 from uuid import UUID
 
@@ -35,6 +34,7 @@ from app.auth import (
 from app.checkout import CheckoutError, create_pending_checkout
 from app.global_pix import apply_configuration, canonical_proposal, normalize_configuration
 from app.main import app
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -53,17 +53,17 @@ def clean_database():
 def client():
     with TestClient(app) as client:
         with SessionLocal() as db:
-            admin = AdminUser(
+            admin = fixture_admin(AdminUser(
                 email="pix@markina.test",
                 email_verified=True,
                 password_hash=password_hasher.hash("Senha-atual-2026"),
                 totp_secret="JBSWY3DPEHPK3PXP",
-            )
+            ))
             db.add(admin)
             db.flush()
             cookie = create_session(db, Response(), Role.ADMIN, admin.id)
             db.add(
-                WhatsAppChannelSettings(
+                WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
                     environment="development",
                     status="sandbox",
                     expected_phone_e164="+5511999999999",
@@ -129,14 +129,18 @@ def test_global_pix_denies_anonymous_and_client_access(client):
     client.cookies.clear()
     assert client.get("/admin/settings/pix").status_code == 403
     with SessionLocal() as db:
-        subject = db.scalar(select(AdminUser.id))
-        cookie = create_session(db, Response(), Role.CLIENT, subject)
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente fixture", phone_e164="+5511999999631")
+        db.add(person)
+        db.flush()
+        subject = person.id
+        cookie = create_session(db, Response(), Role.CLIENT, subject, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     client.cookies.set("markina_session", cookie)
     assert client.get("/admin/settings/pix").status_code == 403
 
 
 def start_change(client, configuration=None):
+    configuration = configuration or {"copy_paste": "synthetic@example.test", "receiver_name": "MARKINA", "receiver_city": "SAO PAULO"}
     response = client.post(
         "/admin/settings/pix/challenge",
         json={
@@ -177,10 +181,10 @@ def test_confirmation_rejects_invalid_context(client, mode):
 
 
 def test_wrong_password_unavailable_channel_rate_limit_and_sensitive_audit(client, monkeypatch):
-    request = {"current_password": "wrong", "configuration": None}
+    request = {"current_password": "wrong", "configuration": {"copy_paste": "synthetic@example.test", "receiver_name": "MARKINA", "receiver_city": "SAO PAULO"}}
     assert client.post("/admin/settings/pix/challenge", json=request).status_code == 401
     request["current_password"] = "Senha-atual-2026"
-    monkeypatch.setattr("app.admin_account._admin_whatsapp_phone", lambda db: None)
+    monkeypatch.setattr("app.admin_account._admin_whatsapp_phone", lambda db, **_kwargs: None)
     assert client.post("/admin/settings/pix/challenge", json=request).status_code == 409
     for _ in range(3):
         assert client.post("/admin/settings/pix/challenge", json=request).status_code == 409
@@ -219,11 +223,12 @@ def test_pix_challenge_fails_closed_when_sensitive_payload_key_is_missing(
         assert not list(db.scalars(select(AdminSecurityChallenge)))
 
 
-def test_settings_are_read_only_in_sales_and_saving_without_pix_is_allowed(client):
+def test_sales_without_receiving_requires_no_charge_mode_and_pix_remains_read_only(client):
     source = client.post("/admin/parent-galleries", json={"name": "Galeria PIX"}).json()["id"]
     url = f"/admin/parent-galleries/{source}/sales"
     request = {"pricing_mode": "fixed", "fixed_unit_price_cents": 700}
-    saved = client.put(url, json=request)
+    assert client.put(url, json=request).status_code == 422
+    saved = client.put(url, json={**request, "payment_required": False})
     assert saved.status_code == 200, saved.text
     assert saved.json()["pix"]["scope"] == "global"
     assert not saved.json()["pix"]["checkout_available"]
@@ -253,8 +258,9 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
 
     with SessionLocal() as db:
         admin_id = db.scalar(select(AdminUser.id))
-        owner = Client(full_name="Cliente sintética", phone_e164="+5511999990001")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente sintética", phone_e164="+5511999990001")
         parent = ParentGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             name="Evento",
             pricing_mode="fixed",
             fixed_unit_price_cents=700,
@@ -262,13 +268,14 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         )
         db.add_all([owner, parent])
         db.flush()
-        db.add(PriceRule(parent_gallery_id=parent.id, minimum_quantity=1,
+        db.add(PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, minimum_quantity=1,
                          maximum_quantity=None, unit_price_cents=700))
-        folder = PhotoFolder(parent_gallery_id=parent.id, name="Pasta", status="released")
-        gallery = DerivedGallery(parent_gallery_id=parent.id, client_id=owner.id, name="Privada")
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Pasta", status="released")
+        gallery = DerivedGallery(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=owner.id, name="Privada")
         db.add_all([folder, gallery])
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="foto.jpg",
@@ -276,15 +283,15 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         )
         db.add(photo)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=gallery.id, photo_asset_id=photo.id))
-        selection = PhotoSelection(
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery.id, photo_asset_id=photo.id))
+        selection = PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery.id, client_id=owner.id, photo_asset_id=photo.id
         )
         db.add(selection)
         db.commit()
         for status in ("unconfigured", "review_required"):
             if status == "review_required":
-                db.add(GlobalPixSettings(admin_user_id=admin_id, status=status))
+                db.add(GlobalPixSettings(tenant_id=FIXTURE_TENANT_ID, admin_user_id=admin_id, status=status))
                 db.commit()
             with pytest.raises(CheckoutError, match="seleção foi mantida"):
                 create_pending_checkout(
@@ -300,7 +307,7 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         }
         first_settings = apply_configuration(
             db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 0))
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         first_code = first_settings.copy_paste
         first = create_pending_checkout(
             db, gallery=gallery, client=owner, checkout_key="first-checkout"
@@ -311,7 +318,7 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         config["instructions"] = "Segunda instrução"
         apply_configuration(
             db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 1))
-        )
+        , tenant_id=FIXTURE_TENANT_ID)
         second = create_pending_checkout(
             db, gallery=gallery, client=owner, checkout_key="second-checkout"
         )
@@ -322,8 +329,10 @@ def test_checkout_preserves_started_pix_snapshot_and_selection(client):
         assert first.pix_instructions_snapshot == "Primeira instrução"
         assert first.pix_configuration_snapshot["receiver_name"] == "PRIMEIRO"
         assert first.pix_configuration_snapshot["version"] == 1
-        apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(None, 2)))
-        db.commit()
+        from app.pix import PixCodeError
+        with pytest.raises(PixCodeError, match="não pode ser removido"):
+            canonical_proposal(None, 2)
+        assert first_settings.status == "active" and first_settings.version == 2
         resumed = create_pending_checkout(
             db, gallery=gallery, client=owner, checkout_key="first-checkout"
         )
@@ -340,17 +349,41 @@ def test_global_key_normalization(value):
     assert configured["receiver_name"] == "MARKINA"
 
 
-def test_removal_requires_confirmation_and_increments_version(client):
-    config = {"copy_paste": "foto@example.test", "receiver_name": "MARKINA",
-              "receiver_city": "SAO PAULO"}
+def test_pix_removal_is_rejected_without_issuing_challenge(client):
+    config = {"copy_paste": "foto@example.test", "receiver_name": "MARKINA", "receiver_city": "SAO PAULO"}
     assert client.post("/admin/settings/pix/confirm", json=start_change(client, config)).status_code == 200
-    removal = start_change(client)
-    assert client.get("/admin/settings/pix").json()["status"] == "active"
-    response = client.post("/admin/settings/pix/confirm", json=removal)
-    assert response.status_code == 200
-    assert response.json()["status"] == "unconfigured"
-    assert response.json()["version"] == 2
-    assert response.json()["copy_paste"] is None
+    with SessionLocal() as db:
+        before = len(list(db.scalars(select(AdminSecurityChallenge))))
+    response = client.post("/admin/settings/pix/challenge", json={
+        "current_password": "Senha-atual-2026", "configuration": None,
+    })
+    assert response.status_code == 422
+    assert "não pode ser removido" in response.text
+    result = client.get("/admin/settings/pix").json()
+    assert result["status"] == "active" and result["version"] == 1
+    with SessionLocal() as db:
+        assert len(list(db.scalars(select(AdminSecurityChallenge)))) == before
+
+
+def test_legacy_removal_challenge_cannot_remove_current_pix(client):
+    import json
+
+    from app.admin_account import create_security_challenge
+    from app.auth import AuthSession, pii_fingerprint
+
+    assert client.post("/admin/settings/pix/confirm", json=start_change(client)).status_code == 200
+    with SessionLocal() as db:
+        admin = db.scalar(select(AdminUser))
+        session = db.scalar(select(AuthSession).where(AuthSession.subject_id == admin.id))
+        target = json.dumps({"version": 1, "configuration": normalize_configuration(None)})
+        challenge, code, _ = create_security_challenge(db, purpose="change_pix_otp",
+            subject_fingerprint=pii_fingerprint(str(admin.id)), admin=admin,
+            session_id=session.id, tenant_id=FIXTURE_TENANT_ID, target=target)
+        payload = {"challenge_id": str(challenge.id), "code": code}
+    response = client.post("/admin/settings/pix/confirm", json=payload)
+    assert response.status_code == 409
+    after = client.get("/admin/settings/pix").json()
+    assert after["status"] == "active" and after["version"] == 1
 
 
 def test_stale_proposal_rolls_back_confirmation(client):
@@ -361,7 +394,7 @@ def test_stale_proposal_rolls_back_confirmation(client):
               "receiver_city": "SAO PAULO"}
     with SessionLocal() as db:
         admin_id = db.scalar(select(AdminUser.id))
-        apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 0)))
+        apply_configuration(db, admin_id=admin_id, proposed=json.loads(canonical_proposal(config, 0)), tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     response = client.post("/admin/settings/pix/confirm", json=pending)
     assert response.status_code == 409

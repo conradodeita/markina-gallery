@@ -216,6 +216,44 @@ def public_app_origin() -> str:
     return origin
 
 
+def additional_public_app_origins() -> tuple[str, ...]:
+    """Retorna origens HTTPS exatas autorizadas além da origem canônica."""
+    raw_origins = os.getenv("PUBLIC_APP_ORIGINS", "").strip()
+    if not raw_origins:
+        return ()
+
+    origins: list[str] = []
+    for raw_origin in raw_origins.split(","):
+        origin = raw_origin.strip()
+        parsed = urlsplit(origin)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise EmailConfigurationError(
+                "PUBLIC_APP_ORIGINS contém uma porta inválida."
+            ) from exc
+        if (
+            not origin
+            or parsed.scheme != "https"
+            or not parsed.netloc
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or "*" in parsed.hostname
+            or (port is not None and not 1 <= port <= 65535)
+        ):
+            raise EmailConfigurationError(
+                "PUBLIC_APP_ORIGINS deve conter somente origens HTTPS exatas."
+            )
+        normalized = f"https://{parsed.netloc.lower()}"
+        if normalized not in origins:
+            origins.append(normalized)
+    return tuple(origins)
+
+
 def sensitive_link(path: str, raw_token: str) -> str:
     if not path.startswith("/") or "?" in path or "#" in path:
         raise EmailConfigurationError("Caminho de link sensível inválido.")

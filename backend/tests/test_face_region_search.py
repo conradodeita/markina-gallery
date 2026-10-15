@@ -1,5 +1,4 @@
 """Consulta por região usa o vetor existente, com gates e snapshot normais."""
-
 import json
 from uuid import uuid4
 
@@ -21,6 +20,7 @@ from app.facial.jobs import FacialJobRepository
 from app.facial.regions import photo_regions
 from app.facial.search import FacialSearchError, create_search_request, read_search_result
 from app.facial.search_worker import process_claimed_search_job
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def setup_region(tmp_path):
@@ -38,7 +38,7 @@ def setup_region(tmp_path):
             quality_version=settings.quality_version,
         ),
     )
-    region = PhotoFaceEmbedding(
+    region = PhotoFaceEmbedding(tenant_id=FIXTURE_TENANT_ID,
         photo_asset_id=photo.id,
         parent_gallery_id=gallery.id,
         face_ordinal=0,
@@ -194,7 +194,7 @@ def test_regions_disappear_immediately_when_policy_is_revoked(tmp_path):
 
 def test_region_from_another_authorized_gallery_cannot_cross_scope(tmp_path):
     db, gallery, client, settings, _, region = setup_region(tmp_path)
-    other = ParentGallery(name="Outro evento")
+    other = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Outro evento")
     db.add(other)
     db.flush()
     # Mesmo uma região existente é invisível ao escopo consultado.
@@ -257,13 +257,13 @@ def test_gallery_purge_clears_region_reference_and_proof(tmp_path):
         settings=settings,
     )
     db.commit()
-    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id)["references"] == 1
-    purge_gallery_records(db, parent_gallery_id=gallery.id)
+    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id, tenant_id=FIXTURE_TENANT_ID)["references"] == 1
+    purge_gallery_records(db, parent_gallery_id=gallery.id, tenant_id=FIXTURE_TENANT_ID)
     db.commit()
     db.refresh(item)
     assert item.reference_region_id is None
     assert item.status == "cancelled"
-    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id)["clean"]
+    assert facial_cleanup_proof(db, parent_gallery_id=gallery.id, tenant_id=FIXTURE_TENANT_ID)["clean"]
 
 
 def test_cancel_clears_region_even_when_cleanup_jobs_are_cancelled(tmp_path):

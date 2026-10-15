@@ -26,15 +26,43 @@ FACIAL_DEPLOY_ENABLED="false"
 BRANDING_REQUIRED=0
 BRANDING_PRESERVED=0
 PREVIEW_WORKER_ACTIVE=0
+GEMMA_WORKER_ACTIVE=0
+RAW_DEVELOPMENT_DEPLOY_ENABLED=false
+RAW_DEVELOPMENT_WORKER_ACTIVE=0
+REQUESTED_RAW_DEVELOPMENT_ENABLED="auto"
 readonly FACIAL_SERVICES=("face-search-worker" "face-index-worker" "face-maintenance-worker")
 
+discover_gemma_worker() {
+  local container
+  GEMMA_WORKER_ACTIVE=0
+  container="$(docker ps --quiet \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter 'label=com.docker.compose.service=face-gemma-index-worker')" || return 1
+  [[ -z "$container" ]] || GEMMA_WORKER_ACTIVE=1
+  return 0
+}
+
+discover_raw_development_worker() {
+  local container
+  RAW_DEVELOPMENT_WORKER_ACTIVE=0
+  container="$(docker ps --quiet \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter 'label=com.docker.compose.service=raw-development-worker')" || return 1
+  [[ -z "$container" ]] || RAW_DEVELOPMENT_WORKER_ACTIVE=1
+  return 0
+}
+
 usage() {
-  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>]" >&2
+  echo "Uso: deploy-homolog.sh --sha <sha-completo> [--public-base-url <https://...>] [--facial-enabled <true|false>] [--raw-development-enabled <auto|true|false>]" >&2
 }
 
 fail() {
   echo "deploy-homolog: $*" >&2
   return 1
+}
+
+monitor_is_configured() {
+  [[ -f "$STATE_DIR/system-monitor.compose.yml" && -f docker/docker-compose.system-monitor.yml ]]
 }
 
 compose() {
@@ -43,17 +71,33 @@ compose() {
   if [[ -f "$STATE_DIR/branding.compose.yml" ]]; then
     extra=(-f "$STATE_DIR/branding.compose.yml")
   fi
+  if [[ ("$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" || "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1) && -f docker/docker-compose.raw-development.yml ]]; then
+    extra+=(-f docker/docker-compose.raw-development.yml)
+  fi
+  # The monitor overlay references this optional service even during preflight,
+  # before running-worker detection. Include its definition without enabling it.
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     extra+=(-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment)
+  elif monitor_is_configured; then
+    extra+=(-f docker/docker-compose.preview-adjustment.yml)
   fi
-  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${extra[@]}" "$@"
+  if monitor_is_configured; then
+    extra+=(-f docker/docker-compose.system-monitor.yml -f "$STATE_DIR/system-monitor.compose.yml")
+  fi
+  APP_VERSION="$(git rev-parse HEAD)" docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${extra[@]}" "$@"
 }
 
 prepare_branding_transition() {
   # Build while the old API is still serving. Preservation stops only that API.
   compose build api web worker migrate
+  if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" ]]; then
+    compose build raw-development-worker
+  fi
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     compose build "${FACIAL_SERVICES[@]}"
+  fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    compose build face-gemma-index-worker
   fi
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     compose build preview-adjustment-worker
@@ -316,6 +360,10 @@ PY
 
   occurrences="$(grep -c "^${key}=" "$env_file" || true)"
   [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  if [[ "$occurrences" -eq 1 && "$(grep "^${key}=" "$env_file")" == "$key=$normalized" ]]; then
+    echo "$key já corresponde à origem pública autorizada; ambiente preservado"
+    return 0
+  fi
   temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
   chmod 600 "$temp_file"
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -332,6 +380,84 @@ PY
   mv "$temp_file" "$env_file"
   chmod 600 "$env_file"
   echo "$key sincronizada com a origem pública autorizada de homologação"
+}
+
+ensure_public_app_origins() {
+  local env_file="${1:-$ENV_FILE}"
+  local allowed_origins="${2-${MARKINA_PUBLIC_APP_ORIGINS:-}}"
+  local key="PUBLIC_APP_ORIGINS" normalized occurrences temp_file line replaced=0
+
+  normalized="$({ PUBLIC_ORIGINS_VALUE="$allowed_origins" python3 - <<'PY'
+import os
+from urllib.parse import urlsplit
+
+raw = os.environ["PUBLIC_ORIGINS_VALUE"]
+if not raw:
+    print("")
+    raise SystemExit(0)
+origins = []
+for candidate in raw.split(","):
+    origin = candidate.strip()
+    parsed = urlsplit(origin)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise SystemExit("porta inválida") from exc
+    if (
+        not origin
+        or parsed.scheme != "https"
+        or not parsed.netloc
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or "*" in parsed.hostname
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise SystemExit("origem inválida")
+    normalized = f"https://{parsed.netloc.lower()}"
+    if normalized not in origins:
+        origins.append(normalized)
+if not origins:
+    raise SystemExit("lista vazia")
+print(",".join(origins))
+PY
+  } 2>/dev/null)" || fail "MARKINA_PUBLIC_APP_ORIGINS deve conter somente origens HTTPS exatas"
+
+  occurrences="$(grep -c "^${key}=" "$env_file" || true)"
+  [[ "$occurrences" -le 1 ]] || fail "configuração duplicada para $key"
+  if [[ "$occurrences" -eq 1 && -n "$normalized" && "$(grep "^${key}=" "$env_file")" == "$key=$normalized" ]]; then
+    echo "$key já corresponde às origens adicionais autorizadas; ambiente preservado"
+    return 0
+  fi
+  if [[ "$occurrences" -eq 0 && -z "$normalized" ]]; then
+    echo "$key já está ausente; ambiente preservado"
+    return 0
+  fi
+  temp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
+  chmod 600 "$temp_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      replaced=1
+      if [[ -n "$normalized" ]]; then
+        printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
+      fi
+    else
+      printf '%s\n' "$line" >> "$temp_file"
+    fi
+  done < "$env_file"
+  if [[ "$replaced" -eq 0 && -n "$normalized" ]]; then
+    printf '%s=%s\n' "$key" "$normalized" >> "$temp_file"
+  fi
+  mv "$temp_file" "$env_file"
+  chmod 600 "$env_file"
+  if [[ -n "$normalized" ]]; then
+    echo "$key sincronizada com as origens HTTPS adicionais autorizadas"
+  else
+    echo "$key removida para usar somente a origem canônica"
+  fi
 }
 
 record_predeploy_inventory() {
@@ -365,6 +491,10 @@ parse_arguments() {
         REQUESTED_FACIAL_ENABLED="${2:-}"
         shift 2
         ;;
+      --raw-development-enabled)
+        REQUESTED_RAW_DEVELOPMENT_ENABLED="${2:-}"
+        shift 2
+        ;;
       *)
         usage
         fail "argumento não permitido: $1"
@@ -376,6 +506,20 @@ parse_arguments() {
   [[ -z "$PUBLIC_BASE_URL" || "$PUBLIC_BASE_URL" =~ ^https://[^[:space:]]+$ ]] || fail "a URL pública deve usar HTTPS"
   REQUESTED_FACIAL_ENABLED="${REQUESTED_FACIAL_ENABLED,,}"
   [[ -z "$REQUESTED_FACIAL_ENABLED" || "$REQUESTED_FACIAL_ENABLED" == "true" || "$REQUESTED_FACIAL_ENABLED" == "false" ]] || fail "--facial-enabled deve ser true ou false"
+  REQUESTED_RAW_DEVELOPMENT_ENABLED="${REQUESTED_RAW_DEVELOPMENT_ENABLED,,}"
+  [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "auto" || "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "true" || "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "false" ]] || fail "--raw-development-enabled deve ser auto, true ou false"
+}
+
+resolve_raw_development_state() {
+  if [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == "auto" ]]; then
+    if [[ "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1 ]]; then
+      RAW_DEVELOPMENT_DEPLOY_ENABLED=true
+    else
+      RAW_DEVELOPMENT_DEPLOY_ENABLED=false
+    fi
+  else
+    RAW_DEVELOPMENT_DEPLOY_ENABLED="$REQUESTED_RAW_DEVELOPMENT_ENABLED"
+  fi
 }
 
 verify_target() {
@@ -392,6 +536,9 @@ verify_target() {
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
   PREVIOUS_FACIAL_ENABLED="$(read_facial_enabled)"
   FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
+  discover_gemma_worker
+  discover_raw_development_worker
+  resolve_raw_development_state
   verify_facial_deploy_state
   compose config --quiet
   record_predeploy_inventory
@@ -399,6 +546,7 @@ verify_target() {
   ensure_gallery_capability_signing_key
   ensure_sensitive_payload_encryption_key
   ensure_public_app_origin
+  ensure_public_app_origins
   if [[ -n "$REQUESTED_FACIAL_ENABLED" ]]; then
     set_facial_enabled "$REQUESTED_FACIAL_ENABLED"
     FACIAL_DEPLOY_ENABLED="$REQUESTED_FACIAL_ENABLED"
@@ -418,6 +566,38 @@ current_revision() {
   compose run --rm --no-deps migrate alembic current 2>/dev/null | tr -d '\r' | tail -n 1
 }
 
+stop_application_writers() {
+  local service container
+  local writers=(api worker)
+  if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
+    writers+=("${FACIAL_SERVICES[@]}")
+  fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    writers+=(face-gemma-index-worker)
+  fi
+  if [[ "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1 ]]; then
+    writers+=(raw-development-worker)
+  fi
+  if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
+    writers+=(preview-adjustment-worker)
+  fi
+  compose stop --timeout 60 "${writers[@]}" || {
+    fail "parada dos escritores Markina falhou; migration bloqueada"
+    return 1
+  }
+  for service in "${writers[@]}"; do
+    container="$(docker ps --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service")" || return 1
+    [[ -z "$container" ]] || {
+      fail "escritor Markina ainda ativo: $service; migration bloqueada"
+      return 1
+    }
+  done
+  RAW_DEVELOPMENT_WORKER_ACTIVE=0
+  echo "escritores Markina interrompidos; jobs duráveis preservados"
+}
+
 apply_target_migrations() {
   local previous_revision="$1" next_revision
 
@@ -428,6 +608,8 @@ apply_target_migrations() {
     fail "não foi possível construir a migration do SHA alvo"
     return 1
   }
+
+  stop_application_writers || return 1
 
   # Depois que Alembic começa, uma falha pode significar schema parcialmente
   # alterado. O rollback automático de código fica bloqueado até comprovarmos
@@ -492,6 +674,12 @@ wait_for_health() {
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     services+=("${FACIAL_SERVICES[@]}")
   fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    services+=(face-gemma-index-worker)
+  fi
+  if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" && -f docker/docker-compose.raw-development.yml ]]; then
+    services+=(raw-development-worker)
+  fi
   for service in "${services[@]}"; do
     container="$(compose ps -q "$service")"
     [[ -n "$container" ]] || fail "serviço Markina ausente após deploy: $service"
@@ -519,12 +707,18 @@ start_application_services() {
     fail "recriação bloqueada: branding ainda não preservado"
     return 1
   }
+  if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" && -f docker/docker-compose.raw-development.yml ]]; then
+    compose up -d --build --no-deps raw-development-worker
+  fi
   compose up -d --build --no-deps api web worker
   if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
     compose up -d --build --no-deps preview-adjustment-worker
   fi
   if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
     compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"
+  fi
+  if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+    compose up -d --build --no-deps face-gemma-index-worker
   fi
   compose up -d --force-recreate --no-deps nginx
 }
@@ -576,13 +770,29 @@ rollback_code_if_safe() {
   fi
   if [[ "$SHA_SWITCHED" -eq 1 && "$MIGRATION_CHANGED" -eq 0 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 0 && -n "$PREVIOUS_SHA" ]]; then
     echo "falha antes de mudança de schema; restaurando somente código Markina para $PREVIOUS_SHA" >&2
+    if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+      compose stop --timeout 60 face-gemma-index-worker || {
+        echo "rollback bloqueado: leitor Gemma ainda pode estar ativo" >&2
+        exit "$exit_code"
+      }
+      if ! git cat-file -e "$PREVIOUS_SHA:backend/Dockerfile.gemma" 2>/dev/null; then
+        GEMMA_WORKER_ACTIVE=0
+      fi
+    fi
     git switch --detach "$PREVIOUS_SHA"
+    if [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == "true" && -f docker/docker-compose.raw-development.yml ]]; then
+      compose build raw-development-worker
+      compose up -d --build --no-deps raw-development-worker
+    fi
     compose up -d --build --no-deps api web worker
     if [[ "$PREVIEW_WORKER_ACTIVE" -eq 1 ]]; then
       compose up -d --build --no-deps preview-adjustment-worker
     fi
     if [[ "$FACIAL_DEPLOY_ENABLED" == "true" ]]; then
       compose up -d --build --no-deps "${FACIAL_SERVICES[@]}"
+    fi
+    if [[ "$GEMMA_WORKER_ACTIVE" -eq 1 ]]; then
+      compose up -d --build --no-deps face-gemma-index-worker
     fi
     compose up -d --force-recreate --no-deps nginx
     verify_facial_deploy_state

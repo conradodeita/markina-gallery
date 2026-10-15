@@ -15,7 +15,9 @@ from fastapi import HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import owned_record, require_active_owner
 from app.auth import AdminUser, AuthSession, Client, PushSubscription, now
+from app.tenancy import TenantContextError, require_admin_tenant
 
 INSTALLATION_COOKIE = "pick_push_installation"
 MAX_DEVICES = 10
@@ -88,8 +90,9 @@ def installation_key(request: Request, response: Response) -> str:
 
 
 def revoke_installation(db: Session, installation: str, session: AuthSession) -> None:
+    require_push_session(db, session)
     for item in db.scalars(select(PushSubscription).where(
-        PushSubscription.installation_fingerprint == installation,
+        PushSubscription.tenant_id == session.tenant_id, PushSubscription.installation_fingerprint == installation,
         PushSubscription.role == session.role, PushSubscription.subject_id == session.subject_id,
     ).with_for_update()):
         item.active = False
@@ -98,11 +101,16 @@ def revoke_installation(db: Session, installation: str, session: AuthSession) ->
 
 
 def detach_previous_identity(db: Session, request: Request, role: str, subject_id) -> None:
+    try:
+        owner = require_admin_tenant(db, subject_id).id if role == "admin" else db.scalar(select(Client.tenant_id).where(Client.id == subject_id))
+        require_active_owner(db, owner)
+    except (TenantContextError, HTTPException):
+        return
     raw = request.cookies.get(INSTALLATION_COOKIE)
     if not raw:
         return
     for item in db.scalars(select(PushSubscription).where(
-        PushSubscription.installation_fingerprint == fingerprint(raw),
+        PushSubscription.tenant_id == owner, PushSubscription.installation_fingerprint == fingerprint(raw),
     ).with_for_update()):
         if item.role != role or item.subject_id != subject_id:
             item.active = False
@@ -110,36 +118,56 @@ def detach_previous_identity(db: Session, request: Request, role: str, subject_i
             item.updated_at = now()
 
 
+def require_push_session(db: Session, session: AuthSession):
+    require_active_owner(db, session.tenant_id)
+    current = owned_record(db, AuthSession, session.id, tenant_id=session.tenant_id)
+    if (not current or current.revoked_at or current.expires_at.replace(tzinfo=now().tzinfo) <= now()
+            or current.role != session.role or current.subject_id != session.subject_id):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    if session.role == "admin":
+        try:
+            admin = db.get(AdminUser, session.subject_id, populate_existing=True)
+            if not admin or not admin.email_verified or require_admin_tenant(db, admin.id).id != session.tenant_id:
+                raise TenantContextError("Acesso negado.")
+        except TenantContextError:
+            raise HTTPException(status_code=403, detail="Acesso negado.") from None
+    elif session.role != "client" or not owned_record(db, Client, session.subject_id, tenant_id=session.tenant_id):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+
+
 def subscribe(db: Session, session: AuthSession, installation: str, payload: dict) -> PushSubscription:
+    require_push_session(db, session)
     owner_model = AdminUser if session.role == "admin" else Client
     if not db.scalar(select(owner_model).where(owner_model.id == session.subject_id).with_for_update()):
         raise HTTPException(status_code=403, detail="Acesso negado.")
     data = validate_subscription(payload)
     endpoint_fp = fingerprint(data["endpoint"])
     item = db.scalar(select(PushSubscription).where(
-        PushSubscription.endpoint_fingerprint == endpoint_fp).with_for_update())
+        PushSubscription.tenant_id == session.tenant_id, PushSubscription.endpoint_fingerprint == endpoint_fp).with_for_update())
     if item and item.installation_fingerprint != installation:
         raise ValueError("Inscrição pertence a outra instalação. Reative no dispositivo.")
     others = list(db.scalars(select(PushSubscription).where(
-        PushSubscription.installation_fingerprint == installation).with_for_update()))
+        PushSubscription.tenant_id == session.tenant_id, PushSubscription.installation_fingerprint == installation).with_for_update()))
     for other in others:
         if not item or other.id != item.id:
             other.active = False
             other.generation += 1
             other.installation_fingerprint = None
     count = db.scalar(select(func.count(PushSubscription.id)).where(
-        PushSubscription.role == session.role, PushSubscription.subject_id == session.subject_id,
+        PushSubscription.tenant_id == session.tenant_id, PushSubscription.role == session.role, PushSubscription.subject_id == session.subject_id,
         PushSubscription.active, PushSubscription.id != (item.id if item else uuid4()),
     ))
     if count >= MAX_DEVICES:
         raise ValueError("Limite de dispositivos atingido. Desative um dispositivo primeiro.")
     if not item:
-        item = PushSubscription(id=uuid4(), endpoint_fingerprint=endpoint_fp,
+        item = PushSubscription(id=uuid4(), tenant_id=session.tenant_id, endpoint_fingerprint=endpoint_fp,
                                 installation_fingerprint=installation, generation=1)
         db.add(item)
     else:
         item.generation += 1
     item.role, item.subject_id, item.session_id = session.role, session.subject_id, session.id
+    item.client_subject_id = session.subject_id if session.role == "client" else None
+    item.admin_subject_id = session.subject_id if session.role == "admin" else None
     item.active = True
     item.updated_at = now()
     item.encrypted_subscription = cipher().encrypt(json.dumps({

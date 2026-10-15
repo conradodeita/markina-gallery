@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.acervo_context import require_active_owner
 from app.auth import WhatsAppChannelSettings, audit, now
 from app.messaging import (
     WhatsAppConfigurationError,
@@ -15,8 +17,8 @@ from app.messaging import (
     WhatsAppProvider,
     mask_phone,
     normalize_configured_phone,
-    whatsapp_provider_name,
 )
+from app.whatsapp_binding import OwnedWhatsAppProvider, resolve_binding
 
 
 def app_environment() -> str:
@@ -47,18 +49,24 @@ def whatsapp_identities_match(
     )
 
 
-def channel_settings(db: Session) -> WhatsAppChannelSettings:
+def channel_settings(db: Session, *, tenant_id: UUID) -> WhatsAppChannelSettings:
+    require_active_owner(db, tenant_id)
     environment = app_environment()
     settings = db.scalar(
         select(WhatsAppChannelSettings).where(
+            WhatsAppChannelSettings.tenant_id == tenant_id,
             WhatsAppChannelSettings.environment == environment
         )
     )
     if not settings:
+        try:
+            provider_name = resolve_binding(db, tenant_id).name
+        except WhatsAppConfigurationError:
+            provider_name = "unavailable"
         settings = WhatsAppChannelSettings(
-            environment=environment,
+            tenant_id=tenant_id, environment=environment,
             status="sandbox"
-            if whatsapp_provider_name() == "sandbox"
+            if provider_name == "sandbox"
             else "pending_pairing",
         )
         db.add(settings)
@@ -67,12 +75,13 @@ def channel_settings(db: Session) -> WhatsAppChannelSettings:
 
 
 def refresh_channel(
-    db: Session, provider: WhatsAppProvider
+    db: Session, provider: WhatsAppProvider, *, tenant_id: UUID
 ) -> WhatsAppChannelSettings:
-    settings = channel_settings(db)
+    settings = channel_settings(db, tenant_id=tenant_id)
     settings.last_checked_at = now()
     settings.last_error = None
-    if whatsapp_provider_name() == "sandbox":
+    validate_provider(provider, tenant_id)
+    if provider.binding.name == "sandbox":
         settings.status = "sandbox"
         settings.connected_phone_e164 = None
         db.commit()
@@ -85,6 +94,7 @@ def refresh_channel(
         settings.last_error = "Não foi possível consultar o canal."
         db.commit()
         return settings
+    provider.validate()
     settings.connected_phone_e164 = result.connected_phone_e164
     if result.state == "open":
         if not settings.expected_phone_e164:
@@ -104,10 +114,17 @@ def refresh_channel(
     return settings
 
 
-def require_ready_channel(db: Session, provider: WhatsAppProvider) -> None:
-    if whatsapp_provider_name() == "sandbox":
+def validate_provider(provider, tenant_id):
+    if not isinstance(provider, OwnedWhatsAppProvider) or provider.tenant_id != tenant_id:
+        raise WhatsAppConfigurationError("Associação do canal indisponível.")
+    provider.validate()
+
+
+def require_ready_channel(db: Session, provider: WhatsAppProvider, *, tenant_id: UUID) -> None:
+    validate_provider(provider, tenant_id)
+    if provider.binding.name == "sandbox":
         return
-    settings = refresh_channel(db, provider)
+    settings = refresh_channel(db, provider, tenant_id=tenant_id)
     if settings.status == "mismatch":
         raise WhatsAppConfigurationError("Identidade remetente divergente.")
     if settings.status != "ready":
@@ -117,9 +134,9 @@ def require_ready_channel(db: Session, provider: WhatsAppProvider) -> None:
 
 
 def configure_expected_phone(
-    db: Session, phone_e164: str
+    db: Session, phone_e164: str, *, tenant_id: UUID
 ) -> WhatsAppChannelSettings:
-    settings = channel_settings(db)
+    settings = channel_settings(db, tenant_id=tenant_id)
     normalized = normalize_configured_phone(phone_e164)
     if settings.expected_phone_e164 != normalized:
         settings.expected_phone_e164 = normalized
@@ -127,29 +144,35 @@ def configure_expected_phone(
         settings.connected_phone_e164 = None
         settings.last_error = None
         settings.last_checked_at = None
-        audit(db, "whatsapp.expected_phone_updated", str(settings.id))
+        audit(db, "whatsapp.expected_phone_updated", str(settings.id), tenant_id=tenant_id)
     db.commit()
     return settings
 
 
 def start_channel_pairing(
-    db: Session, provider: WhatsAppProvider
+    db: Session, provider: WhatsAppProvider, *, tenant_id: UUID
 ) -> tuple[WhatsAppChannelSettings, WhatsAppPairingResult]:
-    settings = channel_settings(db)
+    settings = channel_settings(db, tenant_id=tenant_id)
     if not settings.expected_phone_e164:
         raise WhatsAppConfigurationError("Configure o número esperado antes do pareamento.")
+    validate_provider(provider, tenant_id)
     result = provider.start_pairing(settings.expected_phone_e164)
+    provider.validate()
     settings.status = "connecting" if result.state != "open" else "pending_pairing"
     settings.last_checked_at = now()
     settings.last_error = None
-    audit(db, "whatsapp.pairing_started", str(settings.id))
+    audit(db, "whatsapp.pairing_started", str(settings.id), tenant_id=tenant_id)
     db.commit()
     return settings, result
 
 
-def channel_payload(settings: WhatsAppChannelSettings) -> dict[str, str | None]:
+def channel_payload(db: Session, settings: WhatsAppChannelSettings) -> dict[str, str | None]:
+    try:
+        name = resolve_binding(db, settings.tenant_id).name
+    except WhatsAppConfigurationError:
+        name = "unavailable"
     return {
-        "provider": whatsapp_provider_name(),
+        "provider": name,
         "environment": settings.environment,
         "expected_phone": mask_phone(settings.expected_phone_e164),
         "connected_phone": mask_phone(settings.connected_phone_e164),

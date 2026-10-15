@@ -13,6 +13,16 @@
 - `openspec validate clarify-grouped-payment-reference --strict` — change válida.
 - `git diff --check` — sem erros de whitespace; Git reportou avisos de conversão LF/CRLF em arquivos preexistentes da worktree.
 
+## Revalidação após integração com `develop` — 2026-10-15
+
+- Merge do `origin/develop` atualizado preservou o escopo multi-tenant da configuração/eventos e a ação existente de download de fotos compradas; os sete conflitos foram resolvidos no checkout isolado do PR, sem tocar a worktree principal.
+- `python -m pytest -q tests/test_payment_templates.py tests/test_notification_settings.py tests/test_notification_payments.py tests/test_unified_checkout.py` — 35 passed, 5 skipped.
+- `npm test -- --run app/admin/payments/payment-actions.test.tsx app/admin/payments/page.test.tsx app/admin/notifications/page.test.tsx` — 25 passed.
+- `npx tsc --noEmit` e ESLint nos arquivos administrativos tocados — passaram.
+- `openspec validate clarify-grouped-payment-reference --strict` — change válida.
+- `git diff --check` — sem erros de whitespace.
+- `npm ci` reportou 11 alertas no audit das dependências resolvidas (10 altos, 1 crítico); nenhuma atualização de dependências foi incluída nesta change.
+
 ## Limites
 
 - Nenhuma migration de schema, alteração de UUID, regravação de snapshot ou operação em produção foi executada.

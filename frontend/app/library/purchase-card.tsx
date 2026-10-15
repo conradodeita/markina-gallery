@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { StatusBadge } from "../ui-kit";
 import { PurchasePreview } from "../purchase-preview";
-import { safeOrderAlbumUrl } from "../order-album-url";
+import { safeExternalAlbumUrl } from "../order-album-url";
 export type Order = {
   id: string;
   gallery_name: string;
@@ -12,9 +12,13 @@ export type Order = {
   assets_removed?: boolean;
   communicated_at?: string | null;
   confirmed_at: string | null;
-  commercial_state?: "awaiting_payment" | "payment_reported" | "purchased" | "cancelled";
+  frozen_at?: string | null;
+  commercial_state?: "awaiting_payment" | "payment_reported" | "purchased" | "selection_finalized" | "cancelled";
   communication_status?: "pending_review" | "confirmed" | "refused" | null;
-  total_cents: number;
+  total_cents: number | null;
+  payment_required?: boolean;
+  payment_method?: "credit_card" | "pix";
+  provider_payment_state?: string;
   delivery_album_url?: string | null;
   items: Array<{ photo_id: string; name: string; preview_url: string | null; delivery_url: string | null; delivery_reference_available: boolean }>;
 };
@@ -28,7 +32,19 @@ function orderState(order: Order) {
 }
 
 function orderLabel(order: Order) {
+  if (order.payment_method === "credit_card") {
+    return {
+      creating: "Preparando checkout",
+      awaiting_payment: "Aguardando pagamento no cartão",
+      verification_required: "Verificando pagamento",
+      confirmed: "Pagamento por cartão confirmado",
+      failed_before_issue: "Checkout não iniciado",
+      exception: "Pagamento em análise",
+      hold: "Pagamento em revisão",
+    }[order.provider_payment_state ?? ""] ?? "Pagamento por cartão em conferência";
+  }
   const state = orderState(order);
+  if (state === "selection_finalized") return "Seleção finalizada";
   return state === "payment_reported" ? "Pagamento informado" : state === "cancelled" ? "Pagamento não localizado" : state === "awaiting_payment" ? "Aguardando pagamento" : "Pagamento confirmado";
 }
 
@@ -39,10 +55,10 @@ export function LibraryOrderCard({ order }: { order: Order }) {
   const previewTrigger = useRef<HTMLButtonElement | null>(null);
   const photos = order.items;
   const state = orderState(order).replaceAll("_", "-");
-  const activityAt = order.confirmed_at ?? order.communicated_at;
-  const activityLabel = order.confirmed_at ? "Confirmada" : "Informada";
+  const activityAt = order.payment_required === false ? order.frozen_at : order.confirmed_at ?? order.communicated_at;
+  const activityLabel = order.payment_required === false ? "Finalizada" : order.confirmed_at ? "Confirmada" : "Informada";
   const gridId = `library-order-${order.id}-photos`;
-  const albumUrl = orderState(order) === "purchased" ? safeOrderAlbumUrl(order.delivery_album_url) : null;
+  const albumUrl = ["purchased", "selection_finalized"].includes(orderState(order)) ? safeExternalAlbumUrl(order.delivery_album_url) : null;
 
   useEffect(() => {
     if (!expandedPhoto) return;
@@ -54,11 +70,11 @@ export function LibraryOrderCard({ order }: { order: Order }) {
   }, [expandedPhoto]);
 
   return (
-    <article id={`order-${order.id}`} aria-label={`Compra de ${order.gallery_name}`} className={`library-order library-order--${state}`}>
-      <div className="library-order-summary"><strong>{order.gallery_name}</strong><small>{order.parent_gallery_name}{order.gallery_removed ? " · Galeria removida" : ""}</small><span>{order.items.length} foto(s) · {money(order.total_cents)}</span><StatusBadge tone={order.commercial_state === "purchased" || !order.commercial_state ? "success" : order.commercial_state === "payment_reported" ? "warning" : "neutral"}>{orderLabel(order)}</StatusBadge>{activityAt ? <time dateTime={activityAt}>{activityLabel} em {new Date(activityAt).toLocaleDateString("pt-BR")}</time> : null}</div>
+    <article id={`order-${order.id}`} aria-label={`${order.payment_required === false ? "Seleção" : "Compra"} de ${order.gallery_name}`} className={`library-order library-order--${state}`}>
+      <div className="library-order-summary"><strong>{order.gallery_name}</strong><small>{order.parent_gallery_name}{order.gallery_removed ? " · Galeria removida" : ""}</small><span>{order.items.length} foto(s) · {order.payment_required !== false && order.total_cents !== null ? money(order.total_cents) : "Seleção sem cobrança"}</span><StatusBadge tone={order.commercial_state === "purchased" || !order.commercial_state ? "success" : order.commercial_state === "payment_reported" ? "warning" : "neutral"}>{orderLabel(order)}</StatusBadge>{activityAt ? <time dateTime={activityAt}>{activityLabel} em {new Date(activityAt).toLocaleDateString("pt-BR")}</time> : null}</div>
       {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Este registro permanece no seu histórico.</p> : null}
       {albumUrl ? <a className="order-album-button order-album-button--available" href={albumUrl} target="_blank" rel="noopener noreferrer">Fotos disponíveis</a>
-        : <button type="button" className="order-album-button order-album-button--unavailable" disabled>Fotos indisponíveis</button>}
+        : <><button type="button" className="order-album-button order-album-button--unavailable" disabled>Fotos indisponíveis</button><p className="order-album-hint">Após a edição, quando o fotógrafo liberar o álbum, clique em “Fotos disponíveis” para acessá-las.</p></>}
       <button className="secondary" type="button" aria-expanded={open} aria-controls={gridId} onClick={() => setOpen((current) => !current)} disabled={!photos.length}>{open ? "Ocultar fotos" : `Ver fotos (${photos.length})`}</button>
       {open ? <div className="library-order-photo-grid" id={gridId} role="region" aria-label={`Fotos da compra de ${order.gallery_name}`}>
         {photos.map((photo) => <figure key={photo.photo_id}>

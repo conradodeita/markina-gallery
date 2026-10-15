@@ -1,5 +1,7 @@
 ## Why
 
+> **Reconciliação (2026-09-27):** requisitos de criação ou exibição de galeria privada derivada para novas jornadas foram substituídos por `unify-gallery-client-collections`. Contratos independentes de histórico, proteção, preço e apresentação permanecem, conforme `openspec/changes/unify-gallery-client-collections/supersession.md`. Não retomar tarefas de derivação ainda abertas; esta nota não altera a validação nem arquiva esta change.
+
 A prévia do fotógrafo e a galeria da cliente têm estruturas visuais diferentes e a prévia administrativa atual é excessivamente técnica. Isso impede validar a experiência que será efetivamente apresentada à cliente e reduz o protagonismo das fotografias.
 
 ## What Changes

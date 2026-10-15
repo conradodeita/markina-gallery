@@ -1,5 +1,4 @@
 """Substituição atômica e busca vetorizada isolada por galeria."""
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +21,7 @@ from app.facial.engine import replace_photo_index, search_gallery_index
 from app.facial.jobs import FacialJobRepository
 from app.facial.provider import FaceObservation, normalize_embedding
 from app.facial.worker import process_claimed_index_job
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _vector(first: float, second: float = 0.0) -> tuple[float, ...]:
@@ -89,16 +89,16 @@ def _settings(tmp_path: Path) -> FacialSettings:
 
 
 def _gallery(db: Session, root: Path, *, photos: int):
-    parent = ParentGallery(id=uuid4(), name="Evento sintético")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento sintético")
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Fotos",
         status="released",
         purpose="content",
     )
     policy = GalleryFacialPolicy(
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         status="active",
         legal_notice_version="notice-v1",
         legal_basis_reference="synthetic-only",
@@ -109,7 +109,7 @@ def _gallery(db: Session, root: Path, *, photos: int):
         calibration_version="calibration-v1",
     )
     rollout = FacialRollout(
-        environment="test",
+        tenant_id=FIXTURE_TENANT_ID, environment="test",
         parent_gallery_id=parent.id,
         status="active",
         stage="canary",
@@ -125,6 +125,7 @@ def _gallery(db: Session, root: Path, *, photos: int):
     created = []
     for index in range(photos):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=parent.id,
             folder_id=folder.id,
@@ -133,7 +134,7 @@ def _gallery(db: Session, root: Path, *, photos: int):
             available=True,
         )
         protected_derivative = MediaDerivative(
-            photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
             variant="client_preview",
             status="ready",
             relative_path=f"{photo.id}/client_preview.jpg",
@@ -141,7 +142,7 @@ def _gallery(db: Session, root: Path, *, photos: int):
             height=480,
         )
         derivative = MediaDerivative(
-            photo_asset_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
             variant="admin_preview",
             status="ready",
             relative_path=f"{photo.id}/admin_preview.jpg",
@@ -170,7 +171,7 @@ def test_index_replaces_all_faces_atomically_and_keeps_ciphertext_only(
 
     assert replace_photo_index(
         db,
-        photo_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
         derivatives_root=tmp_path,
         provider=provider,
         cipher=cipher,
@@ -186,7 +187,7 @@ def test_index_replaces_all_faces_atomically_and_keeps_ciphertext_only(
     provider.by_name[str(photo.id)] = [_face(_vector(1.0)), _face(_vector(0.9, 0.1))]
     assert replace_photo_index(
         db,
-        photo_id=photo.id,
+        tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
         derivatives_root=tmp_path,
         provider=provider,
         cipher=cipher,
@@ -199,6 +200,64 @@ def test_index_replaces_all_faces_atomically_and_keeps_ciphertext_only(
         .where(PhotoFaceEmbedding.photo_asset_id == photo.id)
     ) == 2
 
+
+def test_reindexing_one_engine_preserves_the_other_model_namespace(tmp_path: Path) -> None:
+    db = Session(create_engine("sqlite:///:memory:"))
+    Base.metadata.create_all(db.bind)
+    _parent, photos = _gallery(db, tmp_path, photos=1)
+    photo = photos[0]
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    settings = _settings(tmp_path)
+    current = Provider({str(photo.id): [_face(_vector(1.0))]})
+    assert replace_photo_index(
+        db, tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
+        derivatives_root=tmp_path, provider=current, cipher=cipher, settings=settings,
+    ) == 1
+    db.commit()
+
+    class GemmaStub(Provider):
+        model_id = "google-embeddinggemma-2"
+        model_version = "embeddinggemma-2-test-face-crop-768"
+        embedding_dimension = 768
+
+    gemma_face = _face(normalize_embedding([1.0, *([0.0] * 767)], 768))
+    gemma = GemmaStub({str(photo.id): [gemma_face]})
+    assert replace_photo_index(
+        db, tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
+        derivatives_root=tmp_path, provider=gemma, cipher=cipher, settings=settings,
+    ) == 1
+    db.commit()
+    assert db.scalar(select(func.count()).select_from(PhotoFaceEmbedding).where(
+        PhotoFaceEmbedding.photo_asset_id == photo.id,
+    )) == 2
+
+    assert replace_photo_index(
+        db, tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
+        derivatives_root=tmp_path, provider=current, cipher=cipher, settings=settings,
+    ) == 1
+    db.commit()
+    assert db.scalar(select(func.count()).select_from(PhotoFaceEmbedding).where(
+        PhotoFaceEmbedding.photo_asset_id == photo.id,
+        PhotoFaceEmbedding.model_id == gemma.model_id,
+    )) == 1
+    assert db.scalar(select(func.count()).select_from(PhotoFaceEmbedding).where(
+        PhotoFaceEmbedding.photo_asset_id == photo.id,
+        PhotoFaceEmbedding.model_id == "opencv-yunet-sface",
+    )) == 1
+    gemma_matches = search_gallery_index(
+        db,
+        gallery_id=photo.parent_gallery_id,
+        tenant_id=FIXTURE_TENANT_ID,
+        query_embedding=gemma_face.embedding,
+        cipher=cipher,
+        settings=settings,
+        threshold_milli=750,
+        model_id=gemma.model_id,
+        model_version=gemma.model_version,
+        embedding_dimension=768,
+    )
+    assert [match.photo_id for match in gemma_matches] == [photo.id]
+
     class FailingCipher:
         calls = 0
 
@@ -208,13 +267,13 @@ def test_index_replaces_all_faces_atomically_and_keeps_ciphertext_only(
                 raise FacialCryptoError("falha sintética")
             return cipher.encrypt(payload, scope=scope)
 
-    provider.by_name[str(photo.id)] = [_face(_vector(1.0)), _face(_vector(0.8, 0.2))]
+    current.by_name[str(photo.id)] = [_face(_vector(1.0)), _face(_vector(0.8, 0.2))]
     try:
         replace_photo_index(
             db,
-            photo_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
             derivatives_root=tmp_path,
-            provider=provider,
+            provider=current,
             cipher=FailingCipher(),
             settings=settings,
         )
@@ -246,7 +305,7 @@ def test_vector_search_is_gallery_scoped_and_orders_best_before_other(
     for photo in (*photos, *sentinel):
         replace_photo_index(
             db,
-            photo_id=photo.id,
+            tenant_id=FIXTURE_TENANT_ID, photo_id=photo.id,
             derivatives_root=tmp_path,
             provider=provider,
             cipher=cipher,
@@ -256,7 +315,7 @@ def test_vector_search_is_gallery_scoped_and_orders_best_before_other(
 
     matches = search_gallery_index(
         db,
-        gallery_id=first_gallery.id,
+        tenant_id=FIXTURE_TENANT_ID, gallery_id=first_gallery.id,
         query_embedding=_vector(1.0),
         cipher=cipher,
         settings=settings,
@@ -291,7 +350,7 @@ def test_index_skips_only_invalid_face_observations_and_can_finish_empty(
     assert (
         replace_photo_index(
             db,
-            photo_id=photos[0].id,
+            tenant_id=FIXTURE_TENANT_ID, photo_id=photos[0].id,
             derivatives_root=tmp_path,
             provider=provider,
             cipher=cipher,
@@ -302,7 +361,7 @@ def test_index_skips_only_invalid_face_observations_and_can_finish_empty(
     repository = FacialJobRepository()
     job, _created = repository.enqueue(
         db,
-        kind="index",
+        tenant_id=FIXTURE_TENANT_ID, kind="index",
         idempotency_key="worker-index-invalid-observation",
         parent_gallery_id=parent.id,
         photo_asset_id=photos[1].id,
@@ -343,7 +402,7 @@ def test_claimed_index_job_runs_in_worker_and_finishes_durably(tmp_path: Path) -
     repository = FacialJobRepository()
     job, _created = repository.enqueue(
         db,
-        kind="index",
+        tenant_id=FIXTURE_TENANT_ID, kind="index",
         idempotency_key="worker-index-synthetic",
         parent_gallery_id=parent.id,
         photo_asset_id=photo.id,
@@ -373,6 +432,39 @@ def test_claimed_index_job_runs_in_worker_and_finishes_durably(tmp_path: Path) -
     ) == 1
 
 
+def test_completed_private_facial_job_enqueues_preview_adjustment(tmp_path: Path, monkeypatch) -> None:
+    db = Session(create_engine("sqlite:///:memory:"))
+    Base.metadata.create_all(db.bind)
+    parent, photos = _gallery(db, tmp_path, photos=1)
+    photo = photos[0]
+    db.get(PhotoFolder, photo.folder_id).audience_scope = "selected"
+    db.flush()
+    settings = _settings(tmp_path)
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    provider = Provider({str(photo.id): [_face(_vector(1.0))]})
+    repository = FacialJobRepository()
+    job, _created = repository.enqueue(
+        db, tenant_id=FIXTURE_TENANT_ID, kind="index", idempotency_key="worker-private-index",
+        parent_gallery_id=parent.id, photo_asset_id=photo.id, model_version="model-v1",
+        quality_version="quality-v1", preview_fingerprint="a" * 64,
+    )
+    db.commit()
+    claim = repository.claim_next(db, lease_seconds=60)
+    assert claim is not None and claim.id == job.id
+    enqueued = []
+    monkeypatch.setattr("app.preview_adjustment.service.enqueue",
+                        lambda _db, photo_id, *, tenant_id, retry=False: enqueued.append(
+                            (photo_id, tenant_id, retry)) or True)
+
+    completed = process_claimed_index_job(
+        db, claim, repository=repository, provider=provider, cipher=cipher,
+        settings=settings, derivatives_root=tmp_path,
+    )
+
+    assert completed.status == "completed"
+    assert enqueued == [(photo.id, FIXTURE_TENANT_ID, True)]
+
+
 def test_claimed_index_job_is_cancelled_if_rollout_is_suspended(
     tmp_path: Path,
 ) -> None:
@@ -383,7 +475,7 @@ def test_claimed_index_job_is_cancelled_if_rollout_is_suspended(
     repository = FacialJobRepository()
     job, _created = repository.enqueue(
         db,
-        kind="index",
+        tenant_id=FIXTURE_TENANT_ID, kind="index",
         idempotency_key="worker-index-suspended-rollout",
         parent_gallery_id=parent.id,
         photo_asset_id=photos[0].id,

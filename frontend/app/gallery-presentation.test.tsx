@@ -31,6 +31,20 @@ describe("apresentação editorial compartilhada", () => {
     expect(screen.getByText("Capa ainda não definida")).toBeTruthy();
   });
 
+  it("adia a grade quando solicitado sem adiar capa ou ampliação nem mudar o padrão administrativo", () => {
+    const { rerender } = render(<GalleryPresentation galleryName="Evento" coverUrl="/cover-preview" folders={folders.slice(0, 1)} deferGridImages />);
+    const card = screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" });
+    expect(card.getAttribute("loading")).toBe("lazy");
+    expect(card.getAttribute("decoding")).toBe("async");
+    expect(screen.getByRole("img", { name: "Capa de Evento" }).getAttribute("loading")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" }));
+    expect(screen.getByRole("img", { name: "Prévia protegida ampliada de Horizontal.jpg" }).getAttribute("loading")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+
+    rerender(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
+    expect(screen.getByRole("img", { name: "Prévia protegida de Horizontal.jpg" }).getAttribute("loading")).toBeNull();
+  });
+
   it("mantém ordem DOM, proporção e todas as pastas no modo sequencial", () => {
     render(<GalleryPresentation galleryName="Evento" folders={folders} folderDisplayMode="sequential" />);
     expect(screen.getByRole("heading", { name: "Abertura" })).toBeTruthy();

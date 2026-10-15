@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    from app.system_monitor.runtime import start_monitor
+    start_monitor()
     logging.basicConfig(level=logging.INFO)
     logger.info("preview_adjustment.worker_ready")
     while True:

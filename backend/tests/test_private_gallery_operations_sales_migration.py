@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(database_url: str, *arguments: str, succeeds: bool = True):
     backend = Path(__file__).resolve().parents[1]
@@ -66,7 +68,7 @@ def test_private_operations_migration_is_additive_and_empty_downgrade_is_safe(
                 "created_at": instant,
             },
         )
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
 
     engine = create_engine(database_url)
     inspector = inspect(engine)

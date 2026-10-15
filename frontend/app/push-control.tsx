@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import styles from "./push-control.module.css";
+import { clearFacialSearchStorage } from "./facial-search-storage";
 
 import {
   cancelPushWork, clearDeviceNotifications, fetchPushState, PUSH_CHOICE_PREFIX, PUSH_LOGOUT_EVENT,
@@ -22,6 +23,7 @@ export function LogoutButton() {
       await withPushDevice(async () => {
         const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
         if (!response.ok) throw new Error();
+        clearFacialSearchStorage();
         await clearDeviceNotifications().catch(() => {}); // A revogação no servidor já terminou.
       });
       router.replace("/"); router.refresh();

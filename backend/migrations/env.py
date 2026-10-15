@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.auth import Base, database_url
+from app.system_monitor import models as _monitor_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", database_url())

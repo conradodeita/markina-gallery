@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-29
+goal: Definir e validar um procedimento de retomada da aplicação que preserve o
+  schema existente e não inicie migration implicitamente

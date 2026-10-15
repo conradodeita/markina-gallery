@@ -6,6 +6,7 @@ As superfícies administrativa e da cliente ainda parecem técnicas, fragmentada
 
 - Consolidar tokens e componentes acessíveis reutilizáveis.
 - Reestruturar navegação, dashboard e estados do painel do fotógrafo.
+- Remover do dashboard operacional o cartão técnico com ambiente/versão e aviso de importação; a interface não deve exibir contexto de staging/local nem orientação de teste nessa superfície.
 - Refinar a jornada visual da cliente para galeria, seleção, carrinho e entregas.
 
 ## Capabilities

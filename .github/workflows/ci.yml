@@ -8,21 +8,94 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      tenant-postgres:
+        # Google mirror of the Docker Official Image avoids registry quota failures on shared runners.
+        image: mirror.gcr.io/library/postgres:17-alpine
+        env:
+          POSTGRES_DB: pyp_tenant_test
+          POSTGRES_USER: pyp_test
+          POSTGRES_PASSWORD: synthetic-test-only
+        ports:
+          - 55469:5432
+        options: >-
+          --health-cmd "pg_isready -U pyp_test -d pyp_tenant_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      photographer-postgres:
+        image: mirror.gcr.io/library/postgres:17-alpine
+        env:
+          POSTGRES_DB: pyp_photographer_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic-test-only
+        ports:
+          - 15470:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pyp_photographer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TENANT_TEST_DATABASE_URL: postgresql+psycopg://pyp_test:synthetic-test-only@127.0.0.1:55469/pyp_tenant_test
+      PHOTOGRAPHER_TEST_DATABASE_URL: postgresql+psycopg://postgres:synthetic-test-only@127.0.0.1:15470/pyp_photographer_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - name: Instalar dependências
-        run: pip install -r backend/requirements.txt -r backend/face-requirements.txt
+        run: pip install -r backend/requirements.txt -r backend/face-requirements.txt -r backend/benchmark-requirements.txt
       - name: Lint (ruff)
         run: ruff check backend/app backend/tests
-      - name: Testes (pytest)
-        run: pytest backend/tests -q
       - name: Persistência de branding e política de deploy
         run: |
           python scripts/test_preserve_branding.py -v
           bash scripts/test_deploy_homolog.sh
+          bash scripts/test_deploy_prod_web.sh
+          bash scripts/test_reset_homolog_owner.sh
+          python scripts/test_owner_reset_policy.py
+          ruff check scripts/reset_homolog_owner.py
+      - name: Testes (pytest)
+        run: pytest backend/tests -q
+      - name: Regressões de concorrência multi-tenant em PostgreSQL
+        run: |
+          export PHOTOGRAPHER_TEST_DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
+          pytest \
+            backend/tests/test_tenant_cleanup_jobs.py::test_copia_historica_suspensa_antes_publicacao_nao_publica_A \
+            backend/tests/test_tenant_media_jobs.py::test_suspensao_durante_render_nao_publica_A_e_worker_avanca_B \
+            backend/tests/test_tenant_notification_transport.py::test_suspensao_durante_consulta_canal_preserva_A_e_envia_B \
+            backend/tests/test_tenant_notification_transport.py::test_revogacao_membership_apos_consulta_canal_impede_envio \
+            -q
+      - name: Regressão concorrente do checkout em PostgreSQL
+        run: >-
+          DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
+          pytest backend/tests/test_provider_checkout.py::test_clique_concorrente_com_mesma_chave_produz_uma_reserva -q
+      - name: Regressão do inventário de exclusão em PostgreSQL
+        run: >-
+          DATABASE_URL="$TENANT_TEST_DATABASE_URL"
+          pytest backend/tests/test_admin_client_directory.py::test_deletion_removes_combined_homolog_operational_inventory_and_keeps_tombstone -q
+
+  gemma-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CPU AMD64 isolado
+        run: |
+          docker buildx create --name gemma-validation --driver docker-container \
+            --driver-opt memory=2g --driver-opt memory-swap=2g \
+            --driver-opt cpu-period=100000 --driver-opt cpu-quota=100000
+          docker buildx build --builder gemma-validation --platform linux/amd64 \
+            --load --tag gemma-runtime:validation --file backend/Dockerfile.gemma backend
+          docker buildx stop gemma-validation
+      - name: Inferência sintética offline
+        run: |
+          docker run --rm --network none --memory 6g --memory-swap 6g --cpus 1 \
+            --pids-limit 256 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=128m \
+            -e PYTHONPATH=/app -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
+            -v "$GITHUB_WORKSPACE/scripts/check_gemma_runtime.py:/tmp/check_gemma_runtime.py:ro" \
+            gemma-runtime:validation python /tmp/check_gemma_runtime.py
 
   frontend:
     runs-on: ubuntu-latest
@@ -40,7 +113,7 @@ jobs:
         run: npm run lint
         working-directory: frontend
       - name: Testes (vitest)
-        run: npm test
+        run: npm test -- --maxWorkers=2
         working-directory: frontend
       - name: Build
         run: npm run build
@@ -56,14 +129,23 @@ jobs:
       - name: Validar mudanças e specs
         run: |
           set +e
-          npx -y @fission-ai/openspec@latest validate --strict --all
+          npx -y @fission-ai/openspec@1.14.0 validate --strict --all
           status=$?
           if [ "$status" -ne 0 ]; then
             echo "::group::Diagnóstico detalhado do OpenSpec"
-            npx -y @fission-ai/openspec@latest validate unify-gallery-presentation --type change --strict --no-interactive --json || true
+            npx -y @fission-ai/openspec@1.14.0 validate unify-gallery-presentation --type change --strict --no-interactive --json || true
             echo "::endgroup::"
             exit "$status"
           fi
+
+  homolog-inventory-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar sintaxe Bash do inventário
+        run: bash -n scripts/inventory-homolog-readonly.sh
+      - name: Testar política de escopo e SHA
+        run: python scripts/test_readonly_homolog_inventory_policy.py
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -78,7 +160,7 @@ jobs:
 
   deploy-homolog:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
-    needs: [backend, frontend, openspec, gitleaks]
+    needs: [backend, frontend, gemma-runtime, openspec, gitleaks]
     runs-on: ubuntu-latest
     environment: homolog
     permissions:
@@ -90,12 +172,12 @@ jobs:
       HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
       HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
       HOMOLOG_PUBLIC_BASE_URL: ${{ secrets.HOMOLOG_PUBLIC_BASE_URL }}
-      HOMOLOG_FACIAL_PROCESSING_ENABLED: "true"
       HOMOLOG_FACIAL_MAX_REFERENCE_BYTES: "31457280"
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Validar automação de entrega
         run: bash scripts/test_deploy_homolog.sh
       - name: Publicar SHA aprovado em homologação
@@ -114,8 +196,6 @@ jobs:
           printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
           printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
           chmod 600 "$key_file" "$known_hosts_file"
-          remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q --facial-enabled %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA" "$HOMOLOG_FACIAL_PROCESSING_ENABLED")"
-          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
           maintenance_mode="inventory"
           maintenance_confirmation=""
           maintenance_without_backup=""
@@ -126,6 +206,20 @@ jobs:
           elif git log -1 --pretty=%B | grep -Fxq 'Homolog-Cleanup: galleries-and-clients'; then
             maintenance_mode="execute"
             maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
+          fi
+          if [[ "$maintenance_without_backup" == "--without-backup" ]]; then
+            expected_sha="$(git log -1 --pretty=%B | sed -nE 's/^Homolog-Cleanup-Expected-SHA: ([0-9a-f]{40})$/\1/p')"
+            [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'SHA inventariado ausente ou inválido' >&2; exit 1; }
+            git merge-base --is-ancestor "$expected_sha" "$GITHUB_SHA"
+            if ! git diff --quiet "$expected_sha" "$GITHUB_SHA" -- backend frontend docker scripts ':(exclude)scripts/test_maintain_homolog_policy.py'; then
+              echo 'Código operacional mudou desde o SHA inventariado; limpeza cancelada' >&2
+              exit 1
+            fi
+            remote_command="$(printf 'cd /opt/markina-gallery && test "$(git rev-parse HEAD)" = %q && curl -fsS http://127.0.0.1:8080/healthz >/dev/null && curl -fsS http://127.0.0.1:8080/api/health >/dev/null' "$expected_sha")"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" </dev/null
+          else
+            remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA")"
+            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
           fi
           maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
           if [[ -n "$maintenance_without_backup" ]]; then

@@ -4,7 +4,7 @@ from uuid import UUID
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import (
@@ -55,6 +55,7 @@ from app.private_membership import (
     block_private_membership,
     ensure_private_membership,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +95,7 @@ def test_signed_capability_is_reconstructible_tamper_evident_and_hash_only(
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0001")
     with SessionLocal() as db:
-        parent = ParentGallery(name="Origem assinada")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem assinada")
         db.add(parent)
         db.flush()
         capability, token = issue_gallery_capability(
@@ -102,7 +103,7 @@ def test_signed_capability_is_reconstructible_tamper_evident_and_hash_only(
             parent_gallery_id=parent.id,
             scope="public_gallery",
             reconstructible=True,
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
         assert token.startswith(f"gc1.{capability.id}.1.")
@@ -118,7 +119,7 @@ def test_signed_rotation_invalidates_old_token_and_increments_version(
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0002")
     with SessionLocal() as db:
-        parent = ParentGallery(name="Origem rotacionada")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem rotacionada")
         db.add(parent)
         db.flush()
         original, original_token = issue_gallery_capability(
@@ -126,8 +127,8 @@ def test_signed_rotation_invalidates_old_token_and_increments_version(
             parent_gallery_id=parent.id,
             scope="public_gallery",
             reconstructible=True,
-        )
-        replacement, replacement_token = rotate_gallery_capability(db, original)
+        tenant_id=FIXTURE_TENANT_ID)
+        replacement, replacement_token = rotate_gallery_capability(db, original, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
         assert original.status == "rotated"
@@ -142,11 +143,12 @@ def test_legacy_token_remains_resolvable_and_private_link_has_no_bound_client(
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0003")
     with SessionLocal() as db:
-        owner = Client(full_name="Titular", phone_e164="+5511999999401")
-        parent = ParentGallery(name="Origem compatível")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular", phone_e164="+5511999999401")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem compatível")
         db.add_all((owner, parent))
         db.flush()
         private = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             client_id=owner.id,
             name="Privada compatível",
@@ -160,14 +162,14 @@ def test_legacy_token_remains_resolvable_and_private_link_has_no_bound_client(
             client_id=owner.id,
             scope="private_invite",
             expires_at=now() + timedelta(hours=1),
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         shared, shared_token = issue_gallery_capability(
             db,
             parent_gallery_id=parent.id,
             derived_gallery_id=private.id,
             scope="private_gallery_link",
             reconstructible=True,
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
         assert legacy.token_mode == "legacy_random"
@@ -176,7 +178,7 @@ def test_legacy_token_remains_resolvable_and_private_link_has_no_bound_client(
         assert reconstruct_gallery_capability_token(shared) == shared_token
         assert resolve_gallery_capability(db, shared_token).id == shared.id
 
-        duplicate = GalleryAccessCapability(
+        duplicate = GalleryAccessCapability(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             derived_gallery_id=private.id,
             scope="private_gallery_link",
@@ -190,12 +192,12 @@ def test_legacy_token_remains_resolvable_and_private_link_has_no_bound_client(
 
 def _authenticate_admin(client: TestClient) -> None:
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="links@markina.test",
             password_hash=password_hasher.hash("senha-segura"),
             email_verified=True,
             totp_secret=pyotp.random_base32(),
-        )
+        ))
         db.add(admin)
         db.commit()
         secret = admin.totp_secret
@@ -232,59 +234,36 @@ def _verify_client_link(
         db.commit()
     verified = client.post(
         "/auth/client/verify",
-        json={"challenge_id": challenge_id, "code": "123456"},
+        json={"challenge_id": challenge_id, "code": "123456", "access_token": access_token},
     )
     return verified.status_code, verified.json()
 
 
-def _authenticate_existing_client(
-    client: TestClient,
-    *,
-    full_name: str,
-    phone: str,
-) -> None:
-    response = client.post(
-        "/auth/client/challenge",
-        json={"full_name": full_name, "phone": phone},
-    )
-    assert response.status_code == 202
-    challenge_id = response.json()["challenge_id"]
-    with SessionLocal() as db:
-        challenge = db.get(AuthChallenge, UUID(challenge_id))
-        challenge.secret_hash = token_hash("123456")
-        db.commit()
-    assert client.post(
-        "/auth/client/verify",
-        json={"challenge_id": challenge_id, "code": "123456"},
-    ).status_code == 200
+def _authenticate_existing_client(client: TestClient, *, full_name: str, phone: str) -> None:
+    fixture_client_cookie(client, phone)
 
 
-def test_admin_private_link_endpoints_migrate_rotate_reconstruct_and_revoke(
+def test_admin_private_link_endpoints_preserve_legacy_without_issuing_new_links(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0004")
     with SessionLocal() as db:
-        owner = Client(full_name="Titular API", phone_e164="+5511999999402")
-        parent = ParentGallery(name="Origem API")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular API", phone_e164="+5511999999402")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem API")
         db.add_all((owner, parent))
         db.flush()
         private = DerivedGallery(
-            parent_gallery_id=parent.id,
-            client_id=owner.id,
-            name="Privada API",
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id, client_id=owner.id, name="Privada API",
         )
         db.add(private)
         db.flush()
         legacy, legacy_token = issue_gallery_capability(
-            db,
-            parent_gallery_id=parent.id,
-            derived_gallery_id=private.id,
-            client_id=owner.id,
-            scope="private_invite",
-        )
+            db, parent_gallery_id=parent.id, derived_gallery_id=private.id,
+            client_id=owner.id, scope="private_invite",
+        tenant_id=FIXTURE_TENANT_ID)
         db.commit()
-        private_id = private.id
-        legacy_id = legacy.id
+        private_id, legacy_id = private.id, legacy.id
 
     with TestClient(app) as client:
         _authenticate_admin(client)
@@ -292,37 +271,23 @@ def test_admin_private_link_endpoints_migrate_rotate_reconstruct_and_revoke(
         assert status.status_code == 200
         assert status.json()["status"] == "legacy_unrecoverable"
         assert status.json()["link"] is None
-
-        migrated = client.post(
-            f"/admin/derived-galleries/{private_id}/link/rotate",
-            json={},
-        )
-        assert migrated.status_code == 200
-        first_token = migrated.json()["access_token"]
-        assert first_token.startswith("gc1.")
-
-        reconstructed = client.get(f"/admin/derived-galleries/{private_id}/link")
-        assert reconstructed.status_code == 200
-        assert reconstructed.json()["access_token"] == first_token
-        assert reconstructed.json()["secret_available"] is True
-
-        rotated = client.post(
-            f"/admin/derived-galleries/{private_id}/link/rotate",
-            json={},
-        )
-        assert rotated.status_code == 200
-        second_token = rotated.json()["access_token"]
-        assert second_token != first_token
+        assert client.post(
+            f"/admin/derived-galleries/{private_id}/link", json={},
+        ).status_code == 410
+        assert client.post(
+            f"/admin/derived-galleries/{private_id}/link/rotate", json={},
+        ).status_code == 410
+        assert client.post(
+            f"/admin/derived-galleries/{private_id}/invite/rotate", json={},
+        ).status_code == 410
+        assert client.get(f"/admin/derived-galleries/{private_id}/link").json() == status.json()
 
         with SessionLocal() as db:
-            assert db.get(GalleryAccessCapability, legacy_id).status == "revoked"
-            assert resolve_gallery_capability(db, legacy_token) is None
-            assert resolve_gallery_capability(db, first_token) is None
-            assert resolve_gallery_capability(db, second_token) is not None
-
-        assert client.delete(f"/admin/derived-galleries/{private_id}/link").status_code == 204
-        unavailable = client.get(f"/admin/derived-galleries/{private_id}/link")
-        assert unavailable.json()["status"] == "unavailable"
+            assert db.get(GalleryAccessCapability, legacy_id).status == "active"
+            assert resolve_gallery_capability(db, legacy_token) is not None
+            assert db.scalar(select(func.count(GalleryAccessCapability.id)).where(
+                GalleryAccessCapability.scope == "private_gallery_link",
+            )) == 0
 
 
 def test_private_link_otp_reuses_identity_membership_and_existing_origin_binding(
@@ -330,17 +295,19 @@ def test_private_link_otp_reuses_identity_membership_and_existing_origin_binding
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0005")
     with SessionLocal() as db:
-        owner = Client(full_name="Titular", phone_e164="+5511999999403")
-        other_owner = Client(full_name="Outra titular", phone_e164="+5511999999404")
-        parent = ParentGallery(name="Origem OTP")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular", phone_e164="+5511999999403")
+        other_owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra titular", phone_e164="+5511999999404")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem OTP")
         db.add_all((owner, other_owner, parent))
         db.flush()
         first_private = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             client_id=owner.id,
             name="Primeira privada",
         )
         second_private = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             client_id=other_owner.id,
             name="Segunda privada",
@@ -353,14 +320,14 @@ def test_private_link_otp_reuses_identity_membership_and_existing_origin_binding
             derived_gallery_id=first_private.id,
             scope="private_gallery_link",
             reconstructible=True,
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         _second_capability, second_token = issue_gallery_capability(
             db,
             parent_gallery_id=parent.id,
             derived_gallery_id=second_private.id,
             scope="private_gallery_link",
             reconstructible=True,
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         first_id = first_private.id
         second_id = second_private.id
@@ -444,8 +411,8 @@ def test_blocked_member_cannot_reenter_through_private_link(
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0006")
     with SessionLocal() as db:
-        client_record = Client(full_name="Cliente bloqueada", phone_e164="+5511999999406")
-        parent = ParentGallery(name="Origem bloqueada")
+        client_record = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente bloqueada", phone_e164="+5511999999406")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem bloqueada")
         db.add_all((client_record, parent))
         db.flush()
         result = ensure_private_membership(db, parent=parent, client=client_record)
@@ -456,7 +423,7 @@ def test_blocked_member_cannot_reenter_through_private_link(
             derived_gallery_id=result.gallery.id,
             scope="private_gallery_link",
             reconstructible=True,
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.commit()
 
     with TestClient(app) as client:
@@ -475,10 +442,10 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
 ) -> None:
     monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "signed-gallery-key-for-tests-0007")
     with SessionLocal() as db:
-        owner = Client(full_name="Titular membros", phone_e164="+5511999999407")
-        relative = Client(full_name="Familiar membros", phone_e164="+5511999999408")
-        conflict_owner = Client(full_name="Titular conflito", phone_e164="+5511999999409")
-        parent = ParentGallery(name="Origem membros")
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular membros", phone_e164="+5511999999407")
+        relative = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Familiar membros", phone_e164="+5511999999408")
+        conflict_owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular conflito", phone_e164="+5511999999409")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem membros")
         db.add_all((owner, relative, conflict_owner, parent))
         db.flush()
         shared = ensure_private_membership(db, parent=parent, client=owner)
@@ -502,7 +469,7 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
         assert added.json()["created"] is True
 
         with SessionLocal() as db:
-            folder = PhotoFolder(
+            folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent_id,
                 name="Lote membros",
                 status="released",
@@ -511,6 +478,7 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
             db.add(folder)
             db.flush()
             photo = PhotoAsset(
+                tenant_id=FIXTURE_TENANT_ID,
                 parent_gallery_id=parent_id,
                 folder_id=folder.id,
                 filename="membro.jpg",
@@ -519,20 +487,20 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
             db.add(photo)
             db.flush()
             db.add(
-                DerivedGalleryPhoto(
+                DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery_id,
                     photo_asset_id=photo.id,
                 )
             )
             db.add(
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery_id,
                     photo_asset_id=photo.id,
                     client_id=relative_id,
                 )
             )
             db.add(
-                SaleOrder(
+                SaleOrder(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery_id,
                     client_id=relative_id,
                     payment_status="confirmed",
@@ -553,7 +521,9 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
         finally:
             event.remove(engine, "before_cursor_execute", count_selects)
         assert listed.status_code == 200
-        assert len(selects) <= 8
+        context_selects = [sql for sql in selects if sql.startswith(("SELECT tenant.", "SELECT tenant_admin."))]
+        assert len(context_selects) <= 11
+        assert len(selects) - len(context_selects) <= 11  # Revalidação fixa da identidade administrativa.
         assert {item["client_id"] for item in listed.json()["members"]} == {
             str(owner_id),
             str(relative_id),
@@ -669,12 +639,12 @@ def test_admin_manages_private_members_without_deleting_identity_or_history(
 
 def test_admin_private_acervo_rejects_new_public_refs_and_cleans_legacy_ones() -> None:
     with SessionLocal() as db:
-        owner = Client(full_name="Titular acervo", phone_e164="+5511999999410")
-        parent = ParentGallery(name="Origem acervo", active=True)
+        owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Titular acervo", phone_e164="+5511999999410")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem acervo", active=True)
         db.add_all((owner, parent))
         db.flush()
         shared = ensure_private_membership(db, parent=parent, client=owner)
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Lote publicado",
             status="released",
@@ -683,12 +653,14 @@ def test_admin_private_acervo_rejects_new_public_refs_and_cleans_legacy_ones() -
         db.add(folder)
         db.flush()
         selected_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="selecionada.jpg",
             storage_key="acervo/selecionada.jpg",
         )
         admin_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="administrativa.jpg",
@@ -701,13 +673,13 @@ def test_admin_private_acervo_rejects_new_public_refs_and_cleans_legacy_ones() -
             gallery_id=shared.gallery.id,
             photo_id=selected_photo.id,
             origin="client",
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         ensure_private_photo_reference(
             db,
             gallery_id=shared.gallery.id,
             photo_id=admin_photo.id,
             origin="admin",
-        )
+        tenant_id=FIXTURE_TENANT_ID)
         db.commit()
         gallery_id = shared.gallery.id
         selected_photo_id = selected_photo.id
@@ -772,11 +744,12 @@ def test_membership_notification_outbox_is_idempotent_and_sanitizes_external_fai
 ) -> None:
     monkeypatch.setenv("GALLERY_NOTIFICATION_EXTERNAL_ENABLED", "true")
     with SessionLocal() as db:
-        client = Client(full_name="Cliente notificada", phone_e164="+5511999999410")
-        parent = ParentGallery(name="Origem notificada")
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente notificada", phone_e164="+5511999999410")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem notificada")
         db.add_all((client, parent))
         db.flush()
         private = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             client_id=client.id,
             name="Privada notificada",
@@ -817,9 +790,9 @@ def test_membership_notification_outbox_is_idempotent_and_sanitizes_external_fai
 
 def test_client_contracts_do_not_serialize_other_member_or_commercial_activity() -> None:
     with SessionLocal() as db:
-        first = Client(full_name="Primeira cliente privada", phone_e164="+5511999999411")
-        second = Client(full_name="Segunda cliente secreta", phone_e164="+5511999999412")
-        parent = ParentGallery(name="Origem privada", comments_enabled=True)
+        first = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Primeira cliente privada", phone_e164="+5511999999411")
+        second = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Segunda cliente secreta", phone_e164="+5511999999412")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Origem privada", comments_enabled=True)
         db.add_all((first, second, parent))
         db.flush()
         shared = ensure_private_membership(db, parent=parent, client=first)
@@ -829,7 +802,7 @@ def test_client_contracts_do_not_serialize_other_member_or_commercial_activity()
             client=second,
             gallery=shared.gallery,
         )
-        folder = PhotoFolder(
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             name="Lote",
             status="released",
@@ -838,6 +811,7 @@ def test_client_contracts_do_not_serialize_other_member_or_commercial_activity()
         db.add(folder)
         db.flush()
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             folder_id=folder.id,
             filename="IMG_PRIVADA.jpg",
@@ -845,34 +819,34 @@ def test_client_contracts_do_not_serialize_other_member_or_commercial_activity()
         )
         db.add(photo)
         db.flush()
-        db.add(DerivedGalleryPhoto(derived_gallery_id=shared.gallery.id, photo_asset_id=photo.id))
+        db.add(DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=shared.gallery.id, photo_asset_id=photo.id))
         db.add_all(
             (
-                PhotoComment(
+                PhotoComment(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=shared.gallery.id,
                     photo_asset_id=photo.id,
                     client_id=first.id,
                     body="Comentário visível da primeira",
                 ),
-                PhotoComment(
+                PhotoComment(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=shared.gallery.id,
                     photo_asset_id=photo.id,
                     client_id=second.id,
                     body="SEGREDO-COMENTARIO-SEGUNDA",
                 ),
-                PhotoSelection(
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=shared.gallery.id,
                     photo_asset_id=photo.id,
                     client_id=second.id,
                 ),
-                PhotoFavorite(
+                PhotoFavorite(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=shared.gallery.id,
                     photo_asset_id=photo.id,
                     client_id=second.id,
                 ),
             )
         )
-        other_order = SaleOrder(
+        other_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=shared.gallery.id,
             client_id=second.id,
             payment_status="confirmed",
@@ -881,7 +855,7 @@ def test_client_contracts_do_not_serialize_other_member_or_commercial_activity()
         db.add(other_order)
         db.flush()
         db.add(
-            SaleOrderItem(
+            SaleOrderItem(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=other_order.id,
                 photo_asset_id=photo.id,
                 filename_snapshot=photo.filename,
@@ -889,7 +863,7 @@ def test_client_contracts_do_not_serialize_other_member_or_commercial_activity()
             )
         )
         db.add(
-            PaymentCommunication(
+            PaymentCommunication(tenant_id=FIXTURE_TENANT_ID,
                 sale_order_id=other_order.id,
                 client_id=second.id,
                 status="pending_review",
@@ -937,9 +911,9 @@ def test_client_contracts_do_not_serialize_other_member_or_commercial_activity()
 
 def test_library_routes_one_private_per_origin_and_preserves_blocked_history() -> None:
     with SessionLocal() as db:
-        client_record = Client(full_name="Cliente biblioteca", phone_e164="+5511999999413")
-        first_parent = ParentGallery(name="Primeira origem")
-        second_parent = ParentGallery(name="Segunda origem")
+        client_record = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente biblioteca", phone_e164="+5511999999413")
+        first_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Primeira origem")
+        second_parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Segunda origem")
         db.add_all((client_record, first_parent, second_parent))
         db.flush()
         blocked = ensure_private_membership(
@@ -949,7 +923,7 @@ def test_library_routes_one_private_per_origin_and_preserves_blocked_history() -
             db, parent=second_parent, client=client_record
         )
         block_private_membership(blocked.membership)
-        order = SaleOrder(
+        order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=blocked.gallery.id,
             client_id=client_record.id,
             payment_status="confirmed",
@@ -987,3 +961,5 @@ def test_library_routes_one_private_per_origin_and_preserves_blocked_history() -
         history = client.get("/library/purchases")
         assert history.status_code == 200
         assert history.json()["orders"][0]["total_cents"] == 1500
+
+from tests.tenant_fixtures import fixture_client_cookie

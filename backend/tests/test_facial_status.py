@@ -1,5 +1,4 @@
 """Progresso real e retentativa seletiva do índice facial."""
-
 from datetime import timedelta
 from uuid import uuid4
 
@@ -24,22 +23,23 @@ from app.facial.status import (
     retry_all_failed_index_jobs,
     retry_failed_index_jobs,
 )
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 
 def _fixture():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento")
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Fotos",
         status="released",
         purpose="content",
     )
     policy = GalleryFacialPolicy(
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         status="active",
         legal_notice_version="notice-v1",
         legal_basis_reference="synthetic-only",
@@ -53,6 +53,7 @@ def _fixture():
     photos = []
     for index in range(6):
         photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
             id=uuid4(),
             parent_gallery_id=parent.id,
             folder_id=folder.id,
@@ -64,13 +65,13 @@ def _fixture():
             (
                 photo,
                 MediaDerivative(
-                    photo_asset_id=photo.id,
+                    tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
                     variant="client_preview",
                     status="ready",
                     relative_path=f"{photo.id}/client_preview.jpg",
                 ),
                 MediaDerivative(
-                    photo_asset_id=photo.id,
+                    tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id,
                     variant="admin_preview",
                     status="ready",
                     relative_path=f"{photo.id}/admin_preview.jpg",
@@ -83,7 +84,7 @@ def _fixture():
     jobs = []
     for index, state in enumerate(("completed", "queued", "processing", "failed", "failed")):
         job = FacialJob(
-            kind="index",
+            tenant_id=FIXTURE_TENANT_ID, kind="index",
             status=state,
             idempotency_key=f"status-{index}",
             parent_gallery_id=parent.id,
@@ -102,7 +103,7 @@ def _fixture():
     db.add_all(
         (
             PhotoFaceEmbedding(
-                parent_gallery_id=parent.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
                 photo_asset_id=photos[0].id,
                 face_ordinal=0,
                 model_version="model-v1",
@@ -114,7 +115,7 @@ def _fixture():
                 key_id="test",
             ),
             PhotoFaceEmbedding(
-                parent_gallery_id=parent.id,
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
                 photo_asset_id=photos[0].id,
                 face_ordinal=1,
                 model_version="model-v1",
@@ -136,14 +137,14 @@ def test_status_reports_real_latest_counts_and_paginated_sanitized_failures() ->
 
     first = gallery_index_status(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         page=1,
         page_size=1,
         processing_enabled=True,
     )
     second = gallery_index_status(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         page=2,
         page_size=1,
         processing_enabled=True,
@@ -164,22 +165,49 @@ def test_status_reports_real_latest_counts_and_paginated_sanitized_failures() ->
     }
 
 
+def test_folder_status_and_retries_do_not_cross_folder_or_paused_mode() -> None:
+    from app.folder_processing import configure_folder
+
+    db, parent, photos, jobs = _fixture()
+    other = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Reservada", purpose="content", position=1)
+    db.add(other)
+    db.flush()
+    photos[4].folder_id = other.id
+    db.commit()
+
+    own = gallery_index_status(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                               folder_id=photos[3].folder_id)
+    reserved = gallery_index_status(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=other.id)
+    assert (own.total, own.failed, own.photos_with_faces) == (5, 1, 1)
+    assert (reserved.total, reserved.failed, reserved.photos_with_faces) == (1, 1, 0)
+    assert retry_all_failed_index_jobs(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                                       folder_id=photos[3].folder_id,
+                                       photo_ids={photos[3].id}) == 1
+    assert jobs[3].status == "queued" and jobs[4].status == "failed"
+
+    configure_folder(db, other.id, tenant_id=FIXTURE_TENANT_ID, preview_mode="custom", facial_mode="off",
+                     strength=50, exposure_tenths=0)
+    db.commit()
+    assert retry_all_failed_index_jobs(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id) == 0
+    assert jobs[4].status == "failed"
+
+
 def test_retry_is_scoped_and_idempotent() -> None:
     db, parent, _photos, jobs = _fixture()
     failed_id = jobs[3].id
 
     assert retry_failed_index_jobs(
-        db, parent_gallery_id=parent.id, job_ids={failed_id}
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, job_ids={failed_id}
     ) == 1
     db.commit()
     assert jobs[3].status == "queued"
     assert jobs[3].attempts == 0 and jobs[3].last_error_category is None
     assert retry_failed_index_jobs(
-        db, parent_gallery_id=parent.id, job_ids={failed_id}
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, job_ids={failed_id}
     ) == 0
-    with pytest.raises(FacialStatusError, match="não encontrado"):
+    with pytest.raises(FacialStatusError, match="Galeria indisponível"):
         retry_failed_index_jobs(
-            db, parent_gallery_id=uuid4(), job_ids={jobs[4].id}
+            db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=uuid4(), job_ids={jobs[4].id}
         )
 
 
@@ -190,7 +218,7 @@ def test_retry_all_failed_index_jobs_handles_more_than_two_thousand() -> None:
     for index in range(2_001):
         bulk.append(
             FacialJob(
-                kind="index",
+                tenant_id=FIXTURE_TENANT_ID, kind="index",
                 status="failed",
                 idempotency_key=f"bulk-retry-{index}",
                 parent_gallery_id=parent.id,
@@ -206,17 +234,17 @@ def test_retry_all_failed_index_jobs_handles_more_than_two_thousand() -> None:
     db.add_all(bulk)
     db.commit()
 
-    assert retry_all_failed_index_jobs(db, parent_gallery_id=parent.id) == 2_003
+    assert retry_all_failed_index_jobs(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id) == 2_003
     db.commit()
     assert all(job.status == "queued" for job in (*bulk, jobs[3], jobs[4]))
-    assert retry_all_failed_index_jobs(db, parent_gallery_id=parent.id) == 0
+    assert retry_all_failed_index_jobs(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id) == 0
 
 
 def test_stale_completed_version_does_not_count_as_ready() -> None:
     db, parent, photos, _jobs = _fixture()
     db.add(
         FacialJob(
-            kind="index",
+            tenant_id=FIXTURE_TENANT_ID, kind="index",
             status="completed",
             idempotency_key="stale-completed",
             parent_gallery_id=parent.id,
@@ -229,7 +257,7 @@ def test_stale_completed_version_does_not_count_as_ready() -> None:
     )
     db.commit()
 
-    report = gallery_index_status(db, parent_gallery_id=parent.id)
+    report = gallery_index_status(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)
 
     assert report.ready == 1
     assert report.unindexed == 1
@@ -238,7 +266,7 @@ def test_stale_completed_version_does_not_count_as_ready() -> None:
 def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
     db, parent, _photos, _jobs = _fixture()
     second_folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Outra pasta",
         status="preparing",
@@ -246,6 +274,7 @@ def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
         position=1,
     )
     waiting_photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=second_folder.id,
@@ -254,7 +283,7 @@ def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
         available=False,
     )
     cover_folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Capas",
         status="preparing",
@@ -262,6 +291,7 @@ def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
         position=2,
     )
     cover_photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=cover_folder.id,
@@ -272,7 +302,7 @@ def test_status_counts_uploaded_photos_across_folders_before_previews() -> None:
     db.add_all((second_folder, waiting_photo, cover_folder, cover_photo))
     db.commit()
 
-    report = gallery_index_status(db, parent_gallery_id=parent.id)
+    report = gallery_index_status(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)
 
     assert report.total == 7
     assert report.ready == 1
@@ -284,15 +314,16 @@ def test_enabled_environment_reports_processing_before_automatic_policy_exists()
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
-    parent = ParentGallery(id=uuid4(), name="Evento novo")
+    parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento novo")
     folder = PhotoFolder(
-        id=uuid4(),
+        tenant_id=FIXTURE_TENANT_ID, id=uuid4(),
         parent_gallery_id=parent.id,
         name="Uploads",
         status="preparing",
         purpose="content",
     )
     photo = PhotoAsset(
+        tenant_id=FIXTURE_TENANT_ID,
         id=uuid4(),
         parent_gallery_id=parent.id,
         folder_id=folder.id,
@@ -305,7 +336,7 @@ def test_enabled_environment_reports_processing_before_automatic_policy_exists()
 
     report = gallery_index_status(
         db,
-        parent_gallery_id=parent.id,
+        tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
         processing_enabled=True,
     )
 
@@ -323,7 +354,7 @@ def test_status_exposes_only_completed_or_failed_terminal_states() -> None:
         job.last_error_category = None
     db.add(
         FacialJob(
-            kind="index",
+            tenant_id=FIXTURE_TENANT_ID, kind="index",
             status="completed",
             idempotency_key="completed-sixth",
             parent_gallery_id=parent.id,
@@ -337,7 +368,7 @@ def test_status_exposes_only_completed_or_failed_terminal_states() -> None:
     db.commit()
 
     completed = gallery_index_status(
-        db, parent_gallery_id=parent.id, processing_enabled=True
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, processing_enabled=True
     )
     assert completed.state == "completed"
 
@@ -345,6 +376,6 @@ def test_status_exposes_only_completed_or_failed_terminal_states() -> None:
     jobs[4].last_error_category = "provider_unavailable"
     db.commit()
     failed = gallery_index_status(
-        db, parent_gallery_id=parent.id, processing_enabled=True
+        db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, processing_enabled=True
     )
     assert failed.state == "failed"

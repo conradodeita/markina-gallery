@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def test_otp_privacy_migration_is_additive_and_keeps_active_challenges(
     tmp_path: Path,
@@ -65,7 +67,7 @@ def test_otp_privacy_migration_is_additive_and_keeps_active_challenges(
             },
         )
 
-    alembic("upgrade", "head")
+    alembic("upgrade", LEGACY_SCHEMA_HEAD)
     inspector = inspect(migrated_engine)
     challenge_columns = {
         column["name"]: column for column in inspector.get_columns("auth_challenge")

@@ -1,5 +1,7 @@
 ## Why
 
+> **Reconciliação (2026-09-27):** requisitos de criação ou exibição de galeria privada derivada para novas jornadas foram substituídos por `unify-gallery-client-collections`. Contratos independentes de histórico, proteção, preço e apresentação permanecem, conforme `openspec/changes/unify-gallery-client-collections/supersession.md`. Não retomar tarefas de derivação ainda abertas; esta nota não altera a validação nem arquiva esta change.
+
 A validação humana do editor e a revisão do domínio mostraram três desalinhamentos estruturais: as faixas atuais aplicam um único preço ao pedido inteiro em vez de calcular parcelas progressivas, os links seguros são descartados ou não podem ser reutilizados pela interface, e cada galeria privada ainda pertence a uma única cliente embora o produto precise compartilhar o mesmo acervo privado entre familiares com jornadas comerciais isoladas. A mudança consolida essas decisões antes de ampliar o ciclo completo em homologação.
 
 ## What Changes

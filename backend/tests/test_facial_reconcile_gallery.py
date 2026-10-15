@@ -8,6 +8,7 @@ import pytest
 from app.facial import reconcile_gallery
 from app.facial.indexing import GalleryReconciliation
 
+TENANT_ID = UUID("00000000-0000-4000-8000-000000000001")
 GALLERY_ID = UUID("11111111-1111-4111-8111-111111111111")
 
 
@@ -38,7 +39,7 @@ def test_reconcile_gallery_pages_existing_collection(monkeypatch, capsys) -> Non
     )
     monkeypatch.setattr(
         "sys.argv",
-        ["reconcile_gallery", "--gallery-id", str(GALLERY_ID), "--page-size", "100"],
+        ["reconcile_gallery", "--tenant-id", str(TENANT_ID), "--gallery-id", str(GALLERY_ID), "--page-size", "100"],
     )
 
     assert reconcile_gallery.main() == 0
@@ -61,7 +62,7 @@ def test_reconcile_gallery_propagates_fail_closed_result(monkeypatch) -> None:
         raise SystemExit("Rollout facial ativo não encontrado para a galeria.")
 
     monkeypatch.setattr(reconcile_gallery, "reconcile_gallery_index", fail_closed)
-    monkeypatch.setattr("sys.argv", ["reconcile_gallery", "--gallery-id", str(GALLERY_ID)])
+    monkeypatch.setattr("sys.argv", ["reconcile_gallery", "--tenant-id", str(TENANT_ID), "--gallery-id", str(GALLERY_ID)])
 
     with pytest.raises(SystemExit, match="Rollout facial ativo"):
         reconcile_gallery.main()

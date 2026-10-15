@@ -1,5 +1,6 @@
-"""Testes focados nas primitivas e fluxos de segurança administrativa."""
+from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
+"""Testes focados nas primitivas e fluxos de segurança administrativa."""
 import re
 from datetime import timedelta
 from email.utils import parsedate_to_datetime
@@ -47,6 +48,7 @@ from app.email_delivery import (
 )
 from app.main import app
 from app.worker import process_next_email_delivery
+from tests.tenant_fixtures import fixture_admin
 
 
 @pytest.fixture(autouse=True)
@@ -71,15 +73,15 @@ def client():
 def create_admin(*, email: str = "admin@markina.test", password: str = "Atual-forte-2026"):
     secret = pyotp.random_base32()
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email=email,
             password_hash=password_hasher.hash(password),
             email_verified=True,
             totp_secret=secret,
-        )
+        ))
         db.add(admin)
         db.add(
-            WhatsAppChannelSettings(
+            WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
                 environment="development",
                 expected_phone_e164="+5511999999999",
                 status="sandbox",
@@ -175,12 +177,12 @@ def test_sensitive_payload_is_authenticated_and_requires_key_outside_dev(monkeyp
 
 def test_action_token_is_hash_only_single_use_and_new_issue_invalidates_previous() -> None:
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="admin@markina.test",
             password_hash=password_hasher.hash("Atual-forte-2026"),
             email_verified=True,
             totp_secret="TESTSECRET",
-        )
+        ))
         db.add(admin)
         db.flush()
         first, first_raw = issue_admin_action_token(
@@ -216,12 +218,12 @@ def test_action_token_is_hash_only_single_use_and_new_issue_invalidates_previous
 
 def test_cleanup_is_idempotent_and_removes_recoverable_terminal_payloads() -> None:
     with SessionLocal() as db:
-        admin = AdminUser(
+        admin = fixture_admin(AdminUser(
             email="admin@markina.test",
             password_hash=password_hasher.hash("Atual-forte-2026"),
             email_verified=True,
             totp_secret="TESTSECRET",
-        )
+        ))
         db.add(admin)
         db.flush()
         challenge = AdminSecurityChallenge(
@@ -443,11 +445,15 @@ def test_email_worker_accepts_once_and_minimizes_payload(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("PUBLIC_APP_ORIGIN", "http://localhost:3000")
     with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(email="admin@markina.test", email_verified=True,
+                                        password_hash="synthetic-hash", totp_secret="synthetic-totp"))
+        db.add(admin)
+        db.flush()
         delivery = enqueue_email(
             db,
             kind="security_notice",
             source_type="admin_user",
-            source_id=str(uuid4()),
+            source_id=str(admin.id),
             recipient="admin@markina.test",
             subject="Aviso de segurança",
             text_body="Sua credencial foi alterada.",
@@ -507,11 +513,15 @@ def test_email_worker_handles_failures_without_blind_retry(
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("EMAIL_RETRY_BASE_SECONDS", "30")
     with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(email="admin@markina.test", email_verified=True,
+                                        password_hash="synthetic-hash", totp_secret="synthetic-totp"))
+        db.add(admin)
+        db.flush()
         delivery = enqueue_email(
             db,
             kind="security_notice",
             source_type="admin_user",
-            source_id=str(uuid4()),
+            source_id=str(admin.id),
             recipient="admin@markina.test",
             subject="Teste",
             text_body="Teste sintético.",
@@ -673,7 +683,7 @@ def test_public_recovery_stays_neutral_when_real_whatsapp_key_is_missing(
     create_admin()
     with SessionLocal() as db:
         db.add(
-            WhatsAppChannelSettings(
+            WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
                 environment="homolog",
                 status="ready",
                 expected_phone_e164="+5511999999999",

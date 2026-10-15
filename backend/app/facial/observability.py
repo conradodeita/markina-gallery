@@ -26,6 +26,7 @@ ALLOWED_DIMENSION_VALUES = {
             "admission",
             "search",
             "index",
+            "gemma",
             "maintenance",
             "reference",
             "candidate",

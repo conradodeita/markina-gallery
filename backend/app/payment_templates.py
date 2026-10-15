@@ -23,7 +23,7 @@ LEGACY_PAYMENT_REFERENCES = (
 )
 
 
-def validate_template(body: str) -> str:
+def validate_template(body: str, *, allowed_variables: set[str] | None = None) -> str:
     normalized = body.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not normalized:
         raise ValueError("Informe um texto para a mensagem.")
@@ -34,7 +34,7 @@ def validate_template(body: str) -> str:
     if FORBIDDEN_URL.search(normalized):
         raise ValueError("URLs não são permitidas neste template.")
     variables = set(PLACEHOLDER.findall(normalized))
-    if not variables.issubset(ALLOWED_VARIABLES):
+    if not variables.issubset(allowed_variables if allowed_variables is not None else ALLOWED_VARIABLES):
         raise ValueError("Variável não permitida.")
     without_placeholders = PLACEHOLDER.sub("", normalized)
     if "{" in without_placeholders or "}" in without_placeholders:

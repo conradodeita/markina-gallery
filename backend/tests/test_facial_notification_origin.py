@@ -127,8 +127,8 @@ def test_outbox_sends_public_link_once_or_rejects_before_provider(tmp_path, monk
         assert provider.calls == [
             (
                 client.phone_e164,
-                f"Sua busca na galeria foi concluída. Confira as possibilidades em https://markina-homolog.example/public-galleries/{gallery.id}",
-                notification.idempotency_key,
+                f"Sua busca na galeria foi concluída. Confira as possibilidades em https://markina-homolog.example/?reauth=client&return_to=%2Fpublic-galleries%2F{gallery.id}",
+                f"tenant:{FIXTURE_TENANT_ID}:{notification.idempotency_key}",
             )
         ]
         assert notification.status == "sent"
@@ -143,3 +143,4 @@ def test_outbox_sends_public_link_once_or_rejects_before_provider(tmp_path, monk
     assert request.status == "ready"
     db.close()
     engine.dispose()
+from tests.tenant_fixtures import FIXTURE_TENANT_ID

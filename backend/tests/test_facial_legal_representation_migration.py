@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine, inspect, text
 
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
+
 
 def alembic(database_url: str, *arguments: str) -> None:
     backend = Path(__file__).resolve().parents[1]
@@ -37,7 +39,7 @@ def test_representation_migration_is_additive_and_reversible(tmp_path: Path) -> 
             {"id": gallery_id.hex, "created_at": datetime.now(UTC)},
         )
 
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     inspector = inspect(engine)
     assert "facial_legal_representation" in inspector.get_table_names()
     columns = {
@@ -79,7 +81,7 @@ def test_representation_migration_upgrades_clean_database_without_backfill(
     tmp_path: Path,
 ) -> None:
     database_url = f"sqlite:///{(tmp_path / 'representation-clean.sqlite').as_posix()}"
-    alembic(database_url, "upgrade", "head")
+    alembic(database_url, "upgrade", LEGACY_SCHEMA_HEAD)
     engine = create_engine(database_url)
     assert "facial_legal_representation" in inspect(engine).get_table_names()
     with engine.connect() as connection:

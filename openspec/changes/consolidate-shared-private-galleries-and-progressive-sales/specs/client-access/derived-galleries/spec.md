@@ -57,3 +57,19 @@ O sistema SHALL renderizar jornadas agrupadas, associação, permissões, prazo,
 #### Scenario: Origem ativa determina a privada
 - **WHEN** a cliente entra diretamente em uma Galeria pública vinculada e inicia seleção
 - **THEN** o backend cria ou reutiliza a única privada associada àquela origem e cliente sem consultar privadas de outras origens
+
+#### Scenario: Navegação sem Minha galeria
+- **WHEN** uma cliente autenticada acessa sua galeria canônica
+- **THEN** a Coleção oferece seleção, favoritos, comentários e pedido de novo prazo; o Carrinho oferece revisão e PIX; Compras oferece pedidos, estados de pagamento e entregas, sem botão ou página operacional “Minha galeria”
+
+#### Scenario: Link legado da galeria privada
+- **WHEN** uma cliente abre um link antigo de “Minha galeria”
+- **THEN** o sistema verifica autenticação e vínculo antes de redirecionar à Coleção ou a Compras conforme o contexto, sem revelar dados de outra cliente
+
+#### Scenario: Tentativa de criar galeria ou link privado novo
+- **WHEN** uma chamada administrativa antiga tenta criar uma galeria derivada, emitir ou rotacionar seu link privado
+- **THEN** o backend recusa a operação sem gravar a derivada ou capacidade nova; o vínculo simples da cliente com a galeria pública continua disponível
+
+#### Scenario: Exportação individual após a unificação
+- **WHEN** o fotógrafo exporta a seleção ou as compras de uma cliente no card da galeria canônica
+- **THEN** o arquivo contém somente dados daquela cliente, as fotos selecionadas seguem o público atual e as compras confirmadas usam seus snapshots históricos, inclusive as legadas permitidas
