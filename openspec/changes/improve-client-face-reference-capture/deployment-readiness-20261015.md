@@ -46,6 +46,15 @@ Mesmo limitado ao projeto `markina-gallery`, recriar API/web pode causar breve i
 4. Substituir somente os serviços aprovados, validar saúde interna e HTTPS de `/healthz`, `/api/health` e `/`. O worker pode atrasar jobs durante a troca; não expor imagens, embeddings, scores ou PII nos logs.
 5. Se a saúde falhar, interromper o rollout, apresentar diagnóstico e novo plano de recuperação. Restaurar somente as imagens Markina previamente registradas após aprovação explícita; nunca restaurar banco automaticamente nem tocar recursos compartilhados.
 
+## Fluxo automático no GitHub
+
+- O CI roda em PR e em push para develop ou main. Um PR verde não publica nada; o merge gera um único evento push em main, e o job de preflight começa no mesmo run depois dos jobs obrigatórios. Não é necessário um segundo push para destravar deploy.
+- O preflight usa o environment protegido production para fazer inventário remoto somente leitura e calcular um fingerprint que liga SHA, containers, imagens, configuração e domínio. A aprovação dessa primeira etapa autoriza somente o inventário.
+- O workflow avalia production-gates.json. Enquanto qualquer gate não tiver status aprovado e referência de evidência verificável, production-release é ignorado; nenhum comando mutável é enviado ao host.
+- Quando todos os gates forem aprovados, o segundo job aguarda nova aprovação do environment production, após o inventário estar visível na mesma execução. Ele refaz as verificações e exige que o fingerprint ainda corresponda antes de construir e recriar somente web, api e face-search-worker.
+- O script não executa migration e falha se Compose, Docker ou migrations mudarem entre o SHA ativo e o alvo. Em caso de falha operacional não há rollback automático; imagens anteriores ficam etiquetadas e o rollback exige inventário e aprovação próprios.
+- Estado atual de production-gates.json: bloqueado por base legal, calibração/equidade, capacidade ARM, recuperação, representação/consentimento infantil e aprovação operacional ainda sem evidência. O job pode inventariar após CI verde e aprovação de leitura, mas não publica até esses registros serem atualizados com evidência.
+
 ## Gates que impedem a execução
 
 1. Revalidar os gates da change `productionize-facial-search`: base legal, calibração/equidade com corpus autorizado, capacidade ARM, recuperação e o gate próprio de representação/consentimento para fluxo infantil. O registro versionado em `docs/PRODUCAO-FACIAL-INVENTARIO-E-PLANO.md` os mantém pendentes ou bloqueados; a flag atualmente ativa não os satisfaz.

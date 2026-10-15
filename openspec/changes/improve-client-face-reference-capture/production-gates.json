@@ -1,0 +1,12 @@
+{
+  "release_ready": false,
+  "gates": {
+    "base_legal": { "status": "pendente", "evidence": null },
+    "calibracao_e_equidade": { "status": "bloqueado", "evidence": null },
+    "capacidade_arm": { "status": "pendente", "evidence": null },
+    "recuperacao": { "status": "parcial", "evidence": null },
+    "representacao_e_consentimento_infantil": { "status": "bloqueado", "evidence": null },
+    "aprovacao_operacional": { "status": "pendente", "evidence": null }
+  },
+  "note": "Status transcrito das evidências versionadas em 2026-10-15. A busca já estar ativa no host não aprova estes gates. Atualizar cada status e registrar referência de evidência verificável antes de permitir deploy."
+}

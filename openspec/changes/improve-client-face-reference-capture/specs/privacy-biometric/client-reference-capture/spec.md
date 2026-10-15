@@ -17,6 +17,10 @@ A busca SHALL detectar e alinhar o rosto de referência usando os pixels origina
 - **WHEN** o rosto não pode ser detectado ou não atende à qualidade mínima após tentativas de detecção limitadas
 - **THEN** a busca termina com estado técnico específico e orienta a cliente a enviar ou capturar outra imagem, sem afirmar que não há fotos dela na galeria
 
+#### Scenario: Busca válida não encontra sugestões
+- **WHEN** a referência passa pelas validações técnicas, mas a busca não encontra candidatos confiáveis
+- **THEN** a interface informa que não houve sugestões, esclarece que isso não confirma a ausência da pessoa na galeria e oferece nova foto ou seleção manual
+
 ### Requirement: Cliente pode escolher upload ou captura guiada
 A cliente autenticada e autorizada SHALL poder manter o envio de imagem do dispositivo ou escolher a câmera. Ao escolher a câmera, SHALL concluir uma captura guiada obrigatória com orientação visual e ação explícita de captura; a imagem capturada SHALL passar pelas validações de rosto e qualidade do servidor antes de qualquer comparação com a galeria. A captura guiada SHALL NOT exigir detecção de vivacidade nem impedir busca por referência antiga válida.
 

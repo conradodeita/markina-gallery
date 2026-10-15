@@ -364,6 +364,7 @@ describe("jornada mobile e privacidade da referência", () => {
     ["no_face", "Nenhum rosto foi detectado", "Tente uma foto frontal, bem iluminada e com o rosto inteiro."],
     ["multiple_faces", "A foto enviada contém mais de um rosto", "Recorte a imagem para manter somente a pessoa procurada."],
     ["low_quality", "A foto não tem qualidade suficiente", "Envie outra foto com mais nitidez e melhor iluminação."],
+    ["no_candidates", "Nenhuma possibilidade foi encontrada", "Não encontramos sugestões confiáveis com esta foto. Isso não confirma que a pessoa não esteja nesta galeria. Tente outra foto mais nítida ou continue pela seleção manual."],
   ] as const)("mostra mensagem sanitizada para %s sem renderizar a referência", async (status, title, guidance) => {
     const terminal = { ...queued, status, reference_deleted: true, poll_after_ms: null };
     window.sessionStorage.setItem(storageKey, terminal.id);
