@@ -34,6 +34,17 @@ it("exibe sete eventos, prévias e dois interruptores sem a caixa de entrada ant
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
+it("mostra prévias de pagamento para compra agrupada e pedido individual", async () => {
+  const configured = settings.map((item) => item.event_type === "payment_confirmed"
+    ? { ...item, whatsapp_body: "Pagamento {{contexto_pagamento}} confirmado." }
+    : item);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings: configured }))));
+  render(<NotificationsPage />);
+  await openCard("payment_confirmed");
+  expect(screen.getByText("Pagamento da compra 1234abcd confirmado.")).toBeTruthy();
+  expect(screen.getByText("Pagamento do pedido 1234abcd da galeria Formatura confirmado.")).toBeTruthy();
+});
+
 it("inicia recolhido e preserva rascunhos e abertura independente sem chamadas adicionais", async () => {
   const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings })));
   vi.stubGlobal("fetch", fetch);

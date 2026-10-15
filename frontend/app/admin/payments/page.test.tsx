@@ -71,6 +71,19 @@ const emptyDashboard = {
 };
 
 describe("controle operacional de pagamentos", () => {
+  it("mostra o código da compra agrupada junto ao código preservado do pedido", async () => {
+    const data = dashboard();
+    Object.assign(data.groups[0].orders[0].communication, { payment_group: {
+      id: "group-12345678", total_cents: 2100,
+      galleries: [{ order_id: "12345678-order", name: "Formatura", total_cents: 1200 }],
+    } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(data))));
+    render(<AdminPaymentsPage />);
+    const galleryHeading = await screen.findByRole("heading", { name: "Formatura privada" });
+    expect(galleryHeading.closest(".payment-order")?.querySelector(".payment-order__heading")?.textContent)
+      .toContain("Compra group-12 · Pedido ana-orde");
+  });
+
   it("mantém o resultado do envio de entrega visível após atualizar a lista", async () => {
     const album = "https://photos.app.goo.gl/SyntheticAlbum";
     let sent = false;

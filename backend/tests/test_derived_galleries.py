@@ -3650,7 +3650,12 @@ def test_admin_payment_templates_are_controlled_and_have_safe_defaults(client: T
     defaults = client.get("/admin/payment-message-templates")
     assert defaults.status_code == 200
     assert set(defaults.json()["templates"]) == {"confirmed", "refused"}
-    assert defaults.json()["allowed_variables"] == ["cliente", "galeria", "pedido"]
+    assert defaults.json()["allowed_variables"] == [
+        "cliente",
+        "contexto_pagamento",
+        "galeria",
+        "pedido",
+    ]
     invalid = client.put(
         "/admin/payment-message-templates/confirmed",
         json={"body": "Acesse https://exemplo.invalid/{{pedido}}"},

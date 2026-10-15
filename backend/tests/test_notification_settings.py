@@ -11,6 +11,7 @@ from app.auth import (
     Client,
     NotificationDelivery,
     NotificationEvent,
+    NotificationSetting,
     PaymentMessageTemplate,
     PushSubscription,
     SessionLocal,
@@ -104,11 +105,29 @@ def test_link_compras_is_validated_and_rendered_only_for_delivery_whatsapp():
 
 
 def test_payment_legacy_api_delegates_to_the_single_source():
+    assert TestClient(app).get("/admin/payment-message-templates/migration-preview").status_code == 403
     with SessionLocal() as db:
         db.add(PaymentMessageTemplate(tenant_id=FIXTURE_TENANT_ID, kind="confirmed", body="Texto antigo {{cliente}}"))
+        db.add(NotificationSetting(
+            tenant_id=FIXTURE_TENANT_ID,
+            event_type="payment_reported",
+            whatsapp_body="{{cliente}} informou pagamento do pedido {{pedido}}.",
+            push_title="Pagamento informado",
+            push_body="{{cliente}} informou pagamento do pedido {{pedido}}.",
+        ))
         db.commit()
     client = authenticated()
     assert client.get("/admin/payment-message-templates").json()["templates"]["confirmed"] == "Texto antigo {{cliente}}"
+    preview_response = client.get("/admin/payment-message-templates/migration-preview")
+    assert preview_response.status_code == 200
+    assert preview_response.json()["templates"]["payment_confirmed.whatsapp_body"]["before"] == "Texto antigo {{cliente}}"
+    assert preview_response.json()["templates"]["payment_confirmed.whatsapp_body"]["changed"] is False
+    reported_preview = preview_response.json()["templates"]["payment_reported.whatsapp_body"]
+    assert reported_preview["after"] == "{{cliente}} informou pagamento {{contexto_pagamento}}."
+    with SessionLocal() as db:
+        assert db.get(NotificationSetting, (FIXTURE_TENANT_ID, "payment_reported")).whatsapp_body == (
+            "{{cliente}} informou pagamento do pedido {{pedido}}."
+        )
     response = client.put("/admin/payment-message-templates/confirmed", json={"body": "Novo {{cliente}}"})
     assert response.status_code == 200
     assert client.get("/admin/payment-message-templates").json()["templates"]["confirmed"] == "Novo {{cliente}}"

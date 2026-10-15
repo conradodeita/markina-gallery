@@ -316,6 +316,7 @@ from app.notification_events import (
 from app.notification_settings import (
     notification_savepoint,
     payment_template_bodies,
+    payment_template_migration_sources,
     save_setting,
     setting_for,
     setting_payload,
@@ -338,7 +339,11 @@ from app.payment_availability import (
     require_payment_method,
 )
 from app.payment_provider import PaymentCheckRequest, operational_provider
-from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
+from app.payment_templates import (
+    DEFAULT_PAYMENT_TEMPLATES,
+    preview_payment_template_migration,
+    validate_template,
+)
 from app.pix import PixCodeError, pix_qr_data_url
 from app.preview_adjustment.api import register_routes as register_preview_adjustment_routes
 from app.preview_adjustment.service import presentation_path
@@ -11914,8 +11919,18 @@ def list_payment_templates(
             kind: configured.get(kind, default)
             for kind, default in DEFAULT_PAYMENT_TEMPLATES.items()
         },
-        "allowed_variables": sorted(["cliente", "pedido", "galeria"]),
+        "allowed_variables": sorted(["cliente", "pedido", "galeria", "contexto_pagamento"]),
     }
+
+
+@app.get("/admin/payment-message-templates/migration-preview")
+def preview_payment_template_migration_api(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    session = require_admin(request)
+    return {"templates": preview_payment_template_migration(
+        payment_template_migration_sources(db, tenant_id=session.tenant_id)
+    )}
 
 
 @app.get("/admin/removed-photo-movements")

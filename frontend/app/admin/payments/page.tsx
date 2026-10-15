@@ -28,6 +28,7 @@ type Communication = {
   decided_at: string | null;
   can_decide: boolean;
   can_correct: boolean;
+  payment_group?: { id: string; total_cents: number; galleries: Array<{ order_id: string; name: string; total_cents: number }> } | null;
   corrections: Array<{ id: string; created_at: string }>;
   photographer_notification: Delivery | null;
   client_notification: Delivery | null;
@@ -452,11 +453,12 @@ function ClientAutocomplete({
 function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void> }) {
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
+  const paymentGroup = communication?.payment_group;
   const canDownloadPurchasedPhotos = order.financial_status === "confirmed" && !order.assets_removed && !order.gallery.removed;
   const downloadPurchasedPhotos = canDownloadPurchasedPhotos ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${encodeURIComponent(order.parent_gallery.id)}/clients/${encodeURIComponent(clientId)}/selection/export.html`}>Baixar fotos compradas</a> : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.parent_gallery.name} · pedido {order.id.slice(0, 8)}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""}</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""}</p></div><strong>{money(order.total_cents)}</strong></div>
     <details>
       <summary>Ver pedido e entrega</summary>
       <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div>{order.selection_expires_at ? <div><dt>Prazo</dt><dd>{new Date(order.selection_expires_at).toLocaleDateString("pt-BR")}</dd></div> : null}</dl>

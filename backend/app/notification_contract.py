@@ -29,17 +29,18 @@ DEFINITIONS = {
     ),
     "payment_reported": NotificationDefinition(
         "Pagamento informado", "admin", "Pagamento informado",
-        "{{cliente}} informou pagamento do pedido {{pedido}}.",
-        ("cliente", "galeria", "pedido"),
+        "{{cliente}} informou pagamento {{contexto_pagamento}}.",
+        ("cliente", "galeria", "pedido", "contexto_pagamento"),
     ),
     "payment_confirmed": NotificationDefinition(
         "Pagamento confirmado", "client", "Pagamento confirmado",
-        "Confirmamos o pagamento do seu pedido.", ("cliente", "galeria", "pedido"),
+        "Confirmamos o pagamento {{contexto_pagamento}}.",
+        ("cliente", "galeria", "pedido", "contexto_pagamento"),
     ),
     "payment_refused": NotificationDefinition(
         "Pagamento recusado", "client", "Pagamento não localizado",
-        "Não localizamos seu pagamento. Confira seu pedido.",
-        ("cliente", "galeria", "pedido"),
+        "Não localizamos o pagamento {{contexto_pagamento}}. Confira os dados.",
+        ("cliente", "galeria", "pedido", "contexto_pagamento"),
     ),
     "order_delivery_ready": NotificationDefinition(
         "Fotos disponíveis", "client", "Fotos disponíveis",

@@ -152,6 +152,33 @@ def payment_template_bodies(db: Session, *, tenant_id: UUID) -> dict[str, str]:
     return result
 
 
+def payment_template_migration_sources(db: Session, *, tenant_id: UUID) -> dict[str, str]:
+    """Read effective payment templates without creating settings or changing versions."""
+    require_identity_tenant(db, tenant_id)
+    event_types = ("payment_reported", "payment_confirmed", "payment_refused")
+    configured = {
+        setting.event_type: setting
+        for setting in db.scalars(select(NotificationSetting).where(
+            NotificationSetting.tenant_id == tenant_id,
+            NotificationSetting.event_type.in_(event_types)
+        ))
+    }
+    legacy_bodies = payment_template_bodies(db, tenant_id=tenant_id)
+    sources: dict[str, str] = {}
+    for event_type in event_types:
+        setting = configured.get(event_type)
+        for field in ("whatsapp_body", "push_body", "push_title"):
+            if setting:
+                body = getattr(setting, field)
+            elif field == "whatsapp_body" and event_type in {"payment_confirmed", "payment_refused"}:
+                body = legacy_bodies[event_type.removeprefix("payment_")]
+            else:
+                definition = DEFINITIONS[event_type]
+                body = definition.title if field == "push_title" else definition.body
+            sources[f"{event_type}.{field}"] = body
+    return sources
+
+
 def setting_payload(setting: NotificationSetting) -> dict:
     definition = DEFINITIONS[setting.event_type]
     return {
@@ -163,12 +190,15 @@ def setting_payload(setting: NotificationSetting) -> dict:
         "push_body": setting.push_body, "version": setting.version,
         "preview": {
             "push_title": render_text(setting.event_type, setting.push_title,
-                                       {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd"}, 60),
+                                       {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd",
+                                        "contexto_pagamento": "da compra 1234abcd"}, 60),
             "push_body": render_text(setting.event_type, setting.push_body,
-                                      {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd"}, 140),
+                                      {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd",
+                                       "contexto_pagamento": "da compra 1234abcd"}, 140),
             "whatsapp_body": render_whatsapp_text(
                 setting.event_type, setting.whatsapp_body,
                 {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd",
+                 "contexto_pagamento": "da compra 1234abcd",
                  "link_compras": "https://fotografo.exemplo/library/purchases#order-00000000-0000-4000-8000-000000000000"}, 500),
         },
     }
