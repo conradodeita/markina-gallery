@@ -11,6 +11,7 @@ import { FacialSearchPanel } from "./facial-search-panel";
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.sessionStorage.clear();
   window.localStorage.clear();
 });
@@ -226,21 +227,25 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(screen.getByText(/semelhante a foto de documento/)).toBeTruthy();
     expect(screen.getByText(/Não fotografe nem envie documento de identidade/)).toBeTruthy();
     const libraryInput = screen.getByLabelText("Escolher foto JPEG da galeria do celular") as HTMLInputElement;
-    const cameraInput = screen.getByLabelText("Tirar foto JPEG com a câmera") as HTMLInputElement;
     expect(libraryInput.accept).toBe("image/jpeg");
     expect(libraryInput.getAttribute("capture")).toBeNull();
     expect(libraryInput.hidden).toBe(true);
-    expect(cameraInput.accept).toBe("image/jpeg");
-    expect(cameraInput.getAttribute("capture")).toBe("user");
-    expect(cameraInput.hidden).toBe(true);
+    expect(screen.queryByLabelText("Tirar foto JPEG com a câmera")).toBeNull();
     const libraryClick = vi.spyOn(libraryInput, "click");
-    const cameraClick = vi.spyOn(cameraInput, "click");
+    const stopTrack = vi.fn();
+    vi.stubGlobal("navigator", Object.create(navigator, {
+      mediaDevices: { configurable: true, value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] }) } },
+    }));
     fireEvent.click(screen.getByRole("button", { name: "Escolher foto do celular" }));
     fireEvent.click(screen.getByRole("button", { name: "Usar câmera" }));
     expect(libraryClick).toHaveBeenCalledOnce();
-    expect(cameraClick).toHaveBeenCalledOnce();
     const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
+    expect(await screen.findByRole("button", { name: "Capturar rosto" })).toBeTruthy();
+    expect(screen.getByText(/mantenha o celular firme/)).toBeTruthy();
+    expect(submitButton.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar câmera" }));
+    await waitFor(() => expect(stopTrack).toHaveBeenCalledOnce());
     const reference = new File(["private-reference-bytes"], "referencia.jpg", { type: "image/jpeg" });
     Object.defineProperty(reference, "size", { value: 31_457_280 });
     fireEvent.change(libraryInput, { target: { files: [reference] } });

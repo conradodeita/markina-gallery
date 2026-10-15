@@ -41,10 +41,14 @@ export function FacialSearchPanel({
   const [consented, setConsented] = useState(false);
   const [subjectDeclaration, setSubjectDeclaration] = useState<"adult" | "minor" | "">("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const libraryInput = useRef<HTMLInputElement>(null);
-  const cameraInput = useRef<HTMLInputElement>(null);
+  const cameraVideo = useRef<HTMLVideoElement>(null);
+  const cameraStream = useRef<MediaStream | null>(null);
+  const cameraAttempt = useRef(0);
   const consentDialog = useRef<HTMLElement>(null);
   const polling = useRef({ signature: "", delay: 0 });
   const restoreAllowed = useRef(true);
@@ -56,18 +60,26 @@ export function FacialSearchPanel({
     if (result && result !== initialResult.current) restoreAllowed.current = false;
   }, [result]);
 
+  function stopCamera() {
+    cameraAttempt.current += 1;
+    cameraStream.current?.getTracks().forEach((track) => track.stop());
+    cameraStream.current = null;
+    setCameraActive(false);
+    setCameraStarting(false);
+  }
+
   function closeDialog() {
+    stopCamera();
     setDialogOpen(false);
     setConsented(false);
     setSubjectDeclaration("");
     setSelectedFile(null);
     if (libraryInput.current) libraryInput.current.value = "";
-    if (cameraInput.current) cameraInput.current.value = "";
   }
 
   function chooseReference(file: File | undefined, source: "library" | "camera") {
     if (!file) return;
-    const sourceInput = source === "library" ? libraryInput.current : cameraInput.current;
+    const sourceInput = source === "library" ? libraryInput.current : null;
     if (file.type !== "image/jpeg") {
       setSelectedFile(null);
       setError("Escolha uma foto no formato JPEG.");
@@ -82,9 +94,78 @@ export function FacialSearchPanel({
     }
     setSelectedFile(file);
     setError("");
-    const otherInput = source === "library" ? cameraInput.current : libraryInput.current;
+    const otherInput = source === "library" ? null : libraryInput.current;
     if (otherInput) otherInput.value = "";
   }
+
+  async function startGuidedCamera() {
+    setError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Este navegador não permite abrir a câmera aqui. Escolha uma foto do dispositivo.");
+      return;
+    }
+    setCameraStarting(true);
+    const attempt = ++cameraAttempt.current;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } },
+      });
+      if (attempt !== cameraAttempt.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      cameraStream.current = stream;
+      setCameraActive(true);
+    } catch {
+      if (attempt === cameraAttempt.current) {
+        stopCamera();
+        setError("Não foi possível abrir a câmera. Permita o acesso ou escolha uma foto do dispositivo.");
+      }
+    } finally {
+      setCameraStarting(false);
+    }
+  }
+
+  async function captureGuidedPhoto() {
+    const video = cameraVideo.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setError("A câmera ainda está iniciando. Aguarde a imagem aparecer e tente novamente.");
+      return;
+    }
+    const attempt = cameraAttempt.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setError("Não foi possível preparar a captura. Tente novamente ou escolha uma foto.");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (attempt !== cameraAttempt.current) return;
+    if (!blob) {
+      setError("Não foi possível preparar a captura. Tente novamente ou escolha uma foto.");
+      return;
+    }
+    chooseReference(
+      new File([blob], "captura-facial.jpg", { type: "image/jpeg", lastModified: Date.now() }),
+      "camera",
+    );
+    stopCamera();
+  }
+
+  useEffect(() => {
+    if (cameraActive && cameraVideo.current && cameraStream.current) {
+      cameraVideo.current.srcObject = cameraStream.current;
+    }
+  }, [cameraActive]);
+
+  useEffect(() => () => {
+    cameraAttempt.current += 1;
+    cameraStream.current?.getTracks().forEach((track) => track.stop());
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -301,19 +382,18 @@ export function FacialSearchPanel({
                   hidden
                   onChange={(event) => chooseReference(event.currentTarget.files?.[0], "library")}
                 />
-                <input
-                  ref={cameraInput}
-                  type="file"
-                  accept="image/jpeg"
-                  capture="user"
-                  aria-label="Tirar foto JPEG com a câmera"
-                  hidden
-                  onChange={(event) => chooseReference(event.currentTarget.files?.[0], "camera")}
-                />
                 <div className="facial-reference-actions">
-                  <MarkinaButton type="button" disabled={busy} onClick={() => libraryInput.current?.click()}>Escolher foto do celular</MarkinaButton>
-                  <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => cameraInput.current?.click()}>Usar câmera</MarkinaButton>
+                  <MarkinaButton type="button" disabled={busy || cameraStarting} onClick={() => { stopCamera(); libraryInput.current?.click(); }}>Escolher foto do celular</MarkinaButton>
+                  <MarkinaButton type="button" variant="secondary" disabled={busy || cameraStarting} onClick={() => { setSelectedFile(null); void startGuidedCamera(); }}>{cameraStarting ? "Abrindo câmera…" : "Usar câmera"}</MarkinaButton>
                 </div>
+                {cameraActive ? <div className="facial-guided-camera" aria-label="Captura guiada obrigatória">
+                  <div className="facial-guided-camera-frame"><video ref={cameraVideo} autoPlay playsInline muted aria-label="Enquadramento ao vivo da câmera" /></div>
+                  <p>Posicione o rosto dentro do contorno. Olhe para a câmera, procure uma luz de frente e mantenha o celular firme. A análise verificará a qualidade antes de comparar com a galeria.</p>
+                  <div className="facial-reference-actions">
+                    <MarkinaButton type="button" disabled={busy} onClick={() => { void captureGuidedPhoto(); }}>Capturar rosto</MarkinaButton>
+                    <MarkinaButton type="button" variant="secondary" onClick={stopCamera}>Cancelar câmera</MarkinaButton>
+                  </div>
+                </div> : null}
                 {selectedFile ? <p className="facial-reference-selected" role="status">Foto selecionada e pronta para envio.</p> : null}
                 {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
               </section>

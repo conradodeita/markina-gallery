@@ -138,6 +138,18 @@ class OpenCvSFaceProvider:
             raise FacialProviderError("Imagem facial não pôde ser lida.") from exc
         return self.observe_image(image)
 
+    def observe_reference_bytes(
+        self, payload: bytes, *, max_pixels: int, config=None
+    ) -> list[FaceObservation]:
+        """Analisa JPEG de consulta em resolução original, sem arquivo em claro."""
+        from app.facial.reference import (
+            decode_reference_bytes,
+            observe_reference_image,
+        )
+
+        image = decode_reference_bytes(payload, max_pixels=max_pixels)
+        return observe_reference_image(self, image, config=config)
+
     def observe_image(self, image: Any, *, include_embedding: bool = True) -> list[FaceObservation]:
         if image is None or not hasattr(image, "shape") or len(image.shape) < 2:
             raise FacialProviderError("Imagem facial não pôde ser lida.")

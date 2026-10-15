@@ -170,7 +170,15 @@ def process_claimed_search_job(
                 data_version=request.consent_version,
                 locator=_reference_locator(request),
             )
-            analysis = analyze_query(provider.observe_bytes(payload))
+            reference_observer = getattr(provider, "observe_reference_bytes", None)
+            observations = (
+                reference_observer(
+                    payload, max_pixels=settings.max_reference_pixels
+                )
+                if callable(reference_observer)
+                else provider.observe_bytes(payload)
+            )
+            analysis = analyze_query(observations)
             if analysis.status != "ready" or analysis.observation is None:
                 _finish_request(db, request, status=analysis.status, store=store, cipher=cipher, settings=settings)
                 return repository.complete(db, claim)

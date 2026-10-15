@@ -1,9 +1,11 @@
 """Contrato isolado do provider YuNet/SFace."""
 
 import math
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from app.facial.provider import (
     FaceObservation,
@@ -12,6 +14,7 @@ from app.facial.provider import (
     analyze_query,
     normalize_embedding,
 )
+from app.facial.reference import decode_reference_bytes, observe_reference_image
 
 
 class FakeImage:
@@ -39,6 +42,9 @@ class FakeDetector:
 
     def setInputSize(self, size) -> None:
         self.input_size = size
+
+    def setScoreThreshold(self, threshold) -> None:
+        self.score_threshold = threshold
 
     def detect(self, _image):
         return None, self.faces
@@ -156,6 +162,36 @@ def test_provider_bounds_high_resolution_detection_without_changing_contract(
     assert max(width, height) <= 1600
     assert width * height <= 2_000_000
     assert cv2.detector.input_size == (width, height)
+
+
+def test_reference_detection_embeds_only_two_faces_before_multiple_face_rejection(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        [x, 20, 120, 120, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, confidence]
+        for x, confidence in ((20, 0.99), (200, 0.98), (400, 0.97))
+    ]
+    provider = OpenCvSFaceProvider(*_model_files(tmp_path), cv2_module=FakeCv2(rows))
+
+    observations = observe_reference_image(provider, FakeImage())
+
+    assert len(observations) == 2
+    assert analyze_query(observations).status == "multiple_faces"
+    assert provider.last_metrics["embedding_successes"] == 2
+
+
+def test_reference_bytes_preserve_exif_orientation_and_reject_pixel_budget() -> None:
+    image = Image.new("RGB", (120, 60), "white")
+    exif = image.getexif()
+    exif[274] = 6
+    payload = BytesIO()
+    image.save(payload, format="JPEG", exif=exif)
+
+    decoded = decode_reference_bytes(payload.getvalue(), max_pixels=10_000)
+    assert decoded.shape == (60, 120, 3)
+
+    with pytest.raises(FacialProviderError, match="Resolução facial inválida"):
+        decode_reference_bytes(payload.getvalue(), max_pixels=100)
 
 
 def test_query_requires_exactly_one_technically_usable_face() -> None:
