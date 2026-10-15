@@ -37,6 +37,6 @@ Validação local e revisão humana aprovadas. A spec principal `openspec/specs/
 
 ## Revalidação no CI do PR
 
-- O check `backend` confirmou a inicialização de PostgreSQL via Docker Hub e executou 1.596 testes; 1.596 passaram, 23 foram ignorados e um teste falhou por esperar `confirmed` sem `delivery_album_url`.
-- A expectativa do teste `test_admin_payment_queue_identifica_metodo_sem_duplicar_receita` foi atualizada para `confirmed_undelivered`, alinhada ao requisito aprovado de classificar pagamento confirmado sem link salvo como fotos não entregues. A contagem de receita confirmada continua coberta.
-- Reexecução completa do CI após esta correção: pendente.
+- Na primeira execução, o check `backend` confirmou a inicialização de PostgreSQL via Docker Hub e executou 1.596 testes; 1.596 passaram, 23 foram ignorados e um teste falhou por esperar `confirmed` sem `delivery_album_url`.
+- A expectativa do teste `test_admin_payment_queue_identifica_metodo_sem_duplicar_receita` foi atualizada para `confirmed_undelivered`, alinhada ao requisito aprovado de classificar pagamento confirmado sem link salvo como fotos não entregues. O teste isolado passou (1 aprovado), e a contagem de receita confirmada continua coberta.
+- Reexecução completa do CI do PR #188 (`38787365191`): todos os checks obrigatórios passaram. Backend: 1.597 testes aprovados, 23 ignorados; regressões PostgreSQL: 4 + 1 + 1 aprovadas. Frontend, runtime, OpenSpec, gitleaks e política de inventário passaram.
