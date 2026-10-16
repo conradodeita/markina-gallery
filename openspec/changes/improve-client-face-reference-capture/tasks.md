@@ -60,6 +60,8 @@ CI focado #38933365069 no SHA `9ccc69d` confirmou a execução da migration em P
 
 CI #38933642631 no SHA `dd41674` passou completamente (backend: 1.632 passaram, 23 ignorados; frontend, Gemma, OpenSpec, Gitleaks e política também verdes). A PR #196 foi integrada como `337483c`. O preflight somente de leitura falhou fechado em `verify_repository`: o gate esperava baseline `d9c8d3b`, mas a conferência remota confirmou checkout e `APP_VERSION` da API em `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`; API e worker mantêm `FACIAL_PROCESSING_ENABLED=true`. Nenhuma mutação de aplicação ocorreu. O baseline autorizado foi atualizado para a revisão remota confirmada; repetir o fluxo CI e preflight após revisão.
 
+O primeiro CI da atualização de baseline identificou que `scripts/deploy-prod-facial-services.sh` ainda fixava `d9c8d3b`; manifesto e constante precisam coincidir. A constante foi alinhada ao checkout verificado `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`. Nenhum código dos serviços ou blob de runtime foi alterado; a validação CI será repetida.
+
 ## Evidências de CI
 
 - [ ] 3.2d Corrigir o cálculo dos hashes para usar configuração resolvida em memória e APP_VERSION ativo/alvo; corrigir releitura de hash pós-release, espera limitada e reload exclusivo do nginx Markina; validar cenários de igualdade/divergência e pós-condições no CI, sem testes locais. Diagnóstico remoto somente leitura em 2026-10-16 confirmou correspondência resolvida e saúde dos três serviços; o drift antes registrado foi refutado. Blob fixado já atualizado no wrapper root-owned e hash conferido; repetir preflight automático completo antes de marcar concluída.
