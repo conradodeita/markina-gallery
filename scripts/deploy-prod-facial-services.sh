@@ -19,7 +19,7 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(web api face-search-worker)
-readonly MAINTENANCE_BASELINE_SHA="d9c8d3b118fc367af26cfa2b47772d7bff1ccd47"
+readonly MAINTENANCE_BASELINE_SHA="fe0a05a74dd1d6941b160e75c2081c78dad3bc05"
 readonly EXPECTED_DATABASE_REVISION="20261014_0081"
 readonly TARGET_DATABASE_REVISION="20261016_0082"
 
