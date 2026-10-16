@@ -1,6 +1,7 @@
 """Contratos de escopo da manutenção, com histórico Git sintético isolado."""
 
 import copy
+import base64
 import os
 import subprocess
 import tempfile
@@ -31,7 +32,8 @@ class MaintenanceReleaseTests(unittest.TestCase):
                 "authorized": True, "scope": "existing_facial_runtime",
                 "evidence": "synthetic authorization", "baseline_sha": baseline,
                 "runtime_blobs": {
-                    name: self.run_git("rev-parse", "HEAD:" + name)
+                    name: [base64.b64encode(bytes.fromhex(self.run_git("rev-parse", "HEAD:" + name))).decode()[i:i + 7]
+                           for i in range(0, 28, 7)]
                     for name in gates.RUNTIME_FILES
                 },
             },
@@ -69,7 +71,7 @@ class MaintenanceReleaseTests(unittest.TestCase):
                          (False, "historico_ou_runtime_nao_comprovado"))
 
     def test_outside_scope_is_rejected(self):
-        outside = self.root / "backend/app/auth.py"
+        outside = self.root / "backend/app/facial/unapproved_runtime.py"
         outside.write_text("outside approved capture scope\n", encoding="utf-8")
         self.commit()
         self.assertEqual(gates.evaluate_maintenance(self.payload, self.root),

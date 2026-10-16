@@ -24,7 +24,7 @@ from app.auth import (
     now,
 )
 from app.facial.capacity import require_search_capacity
-from app.facial.config import FacialSettings
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
 from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
 from app.facial.jobs import FacialJobRepository
@@ -114,7 +114,7 @@ def search_availability(
         "state": "consent_required",
         "manual_selection_available": True,
         "minor_search_available": True,
-        "consent_version": settings.consent_version,
+        "consent_version": CLIENT_REFERENCE_CONSENT_VERSION,
         "legal_notice_version": policy.legal_notice_version,
         "reference_retention_seconds": settings.reference_retention_seconds,
         "candidate_retention_seconds": settings.candidate_retention_seconds,
@@ -164,12 +164,12 @@ def create_search_request(
             raise FacialSearchError("Consulta por região não aceita arquivo.")
         consent_version = subject_declaration = representation_reference = None
     else:
-        if consent_version != settings.consent_version:
+        if consent_version != CLIENT_REFERENCE_CONSENT_VERSION:
             raise FacialSearchError("O consentimento facial precisa ser revisto.")
-        if subject_declaration not in {"adult", "minor"}:
-            raise FacialSearchError("Declaração do sujeito inválida.")
-        if subject_declaration == "minor" and not consent_accepted:
-            raise FacialSearchError("O consentimento específico do responsável é obrigatório.")
+        if subject_declaration != "conditional":
+            raise FacialSearchError("A declaração condicional de consentimento é obrigatória.")
+        if not consent_accepted:
+            raise FacialSearchError("O consentimento facial é obrigatório.")
         # A nova autorização é autodeclarada; nunca fabricar comprovação externa.
         representation_reference = None
     require_search_capacity(db, settings)

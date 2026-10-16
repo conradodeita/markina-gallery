@@ -68,3 +68,14 @@ O preflight e o release SHALL comparar os labels ativos com hashes da configura�
 #### Scenario: Serviço é recriado no release aprovado
 - **WHEN** web, API e worker de busca são recriados
 - **THEN** a liberação somente registra sucesso após espera limitada por saúde, leitura dos novos hashes, reload confinado ao nginx Markina e smoke HTTPS aprovados
+
+### Requirement: Migration facial aditiva é validada e aplicada de forma isolada
+Quando a mudança aprovada exigir a ampliação aditiva da constraint de declaração facial, o workflow de produção SHALL verificar que o banco está exatamente na revisão `20261014_0081`, aplicar somente a revisão aprovada desta change antes de recriar os serviços e confirmar a revisão resultante. Divergência de revisão SHALL interromper o release antes da recriação de qualquer serviço. O preflight e fingerprint SHALL incluir a revisão atual do banco.
+
+#### Scenario: Banco está na revisão esperada
+- **WHEN** a aprovação de produção está vigente e o inventário confirma `20261014_0081`
+- **THEN** o job executa a revisão aditiva aprovada, confirma a revisão nova e segue com a recriação coordenada dos serviços Pick-your-Pic
+
+#### Scenario: Banco diverge da revisão esperada
+- **WHEN** o inventário ou a revalidação pós-aprovação encontra outra revisão ou múltiplas cabeças
+- **THEN** o job falha fechado sem migration, recriação ou alteração de serviços

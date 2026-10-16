@@ -347,7 +347,10 @@ def _request_is_authorized(
     require_active_owner(db, request.tenant_id)
     if request.status in {"cancelled", "expired"}:
         return False
-    if request.authorization_method != "direct_region" and request.consent_version != settings.consent_version:
+    from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION
+    if request.authorization_method != "direct_region" and request.consent_version not in {
+        settings.consent_version, CLIENT_REFERENCE_CONSENT_VERSION,
+    }:
         return False
     if request.subject_declaration == "minor" and request.authorization_method == "legacy":
         from app.facial.representation import (

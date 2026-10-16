@@ -40,6 +40,35 @@ A cliente autenticada e autorizada SHALL poder manter o envio de imagem do dispo
 - **WHEN** a criança ou outra pessoa procurada não está diante da câmera
 - **THEN** o responsável continua podendo usar uma foto existente do dispositivo, sujeito às validações e consentimento vigentes
 
+### Requirement: Consentimento único com declaração condicional de responsabilidade
+O diálogo de envio SHALL apresentar um único checkbox obrigatório para qualquer pessoa retratada, sem seletor adulto/menor. O texto SHALL autorizar de forma livre, informada e específica a busca nesta galeria e o tratamento temporário da foto e dos dados biométricos extraídos; SHALL declarar que, se a pessoa retratada for menor de 18 anos, a pessoa que aceita é pai, mãe ou responsável legal. A interface SHALL apresentar a declaração em português claro, registrar a modalidade `conditional` e manter registros históricos `adult` e `minor` sem alteração. O serviço SHALL exigir o checkbox aceito e a versão de consentimento vigente para toda nova busca por upload.
+
+#### Scenario: Referência de pessoa adulta ou menor
+- **WHEN** a cliente aceita o checkbox único antes de enviar uma referência
+- **THEN** a busca registra o consentimento específico na versão vigente e a modalidade condicional, sem inferir ou registrar idade; se a pessoa for menor, a declaração aceita inclui responsabilidade legal
+
+#### Scenario: Checkbox não aceito ou declaração antiga
+- **WHEN** a cliente não marca o checkbox ou um pedido novo omite a modalidade condicional
+- **THEN** o envio é bloqueado na interface ou recusado pela API, sem criar consulta
+
+### Requirement: Captura guiada prefere a câmera traseira e permite alternância
+A captura guiada SHALL solicitar a câmera traseira por padrão e SHALL oferecer alternância para a frontal e de volta quando o navegador suportar seleção de direção. A ação de alternância SHALL encerrar a trilha ativa antes de abrir a outra câmera. A captura explícita e as validações existentes SHALL continuar obrigatórias.
+
+#### Scenario: Cliente abre a câmera guiada
+- **WHEN** a cliente escolhe `Usar câmera`
+- **THEN** o navegador solicita primeiro `facingMode` `environment` com preferência ideal e a interface continua exigindo o botão de captura explícita
+
+#### Scenario: Cliente alterna a câmera
+- **WHEN** a cliente seleciona a ação para trocar a câmera
+- **THEN** a trilha atual é encerrada e o navegador solicita a direção oposta; o texto da ação indica qual câmera abrirá
+
+### Requirement: Falha de transporte do envio é explicada sem repetição automática
+Quando o navegador rejeitar o envio antes de receber uma resposta HTTP, a interface SHALL substituir mensagens genéricas em inglês por uma orientação em português que informe que o recebimento pode não ter sido confirmado. A interface SHALL NOT repetir automaticamente o upload nem iniciar uma segunda busca.
+
+#### Scenario: Conexão é perdida durante o envio
+- **WHEN** `fetch` rejeita sem resposta HTTP durante a criação da busca
+- **THEN** a cliente recebe uma mensagem localizada para conferir a conexão e o estado da busca antes de tentar novamente, sem mostrar `Failed to fetch`
+
 ### Requirement: Referência e diagnósticos permanecem minimizados
 A melhoria da extração SHALL preservar autorização, consentimento, isolamento da galeria, cifragem, retenção e exclusão da referência já vigentes. Logs, auditoria e métricas SHALL NOT armazenar imagem, recorte facial, embedding, landmarks ou score biométrico.
 

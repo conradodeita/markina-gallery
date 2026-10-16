@@ -1,6 +1,7 @@
 """Verifica a separação entre preflight somente-leitura e gate de produção."""
 
 import hashlib
+import base64
 import json
 from pathlib import Path
 
@@ -26,6 +27,7 @@ def main() -> None:
     require("environment: production-preflight", "environment sem revisor para preflight", preflight)
     require("fetch-depth: 0", "histórico para comparar o baseline autorizado", preflight)
     require("check_prod_facial_release_gates.py --maintenance", "gate próprio da manutenção autorizada", preflight)
+    require("20261016_0082_facial_conditional_consent.py", "única migration aditiva aprovada", preflight)
     require("environment: production", "environment protegido no release", release)
     require(
         "secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY",
@@ -69,15 +71,21 @@ def main() -> None:
     for path, expected in maintenance["runtime_blobs"].items():
         data = (ROOT / path).read_bytes()
         actual = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
-        if actual != expected:
+        if actual != base64.b64decode("".join(expected), validate=True).hex():
             raise AssertionError("arquivo de runtime diverge do blob revisado")
     require("config --no-interpolate --hash", "hash usa JSON resolvido sem nova interpolação", script)
     if "compose config --hash" in script:
         raise AssertionError("hash direto omite env_file no Compose do host")
     require('APP_VERSION="$COMPOSE_APP_VERSION" docker compose', "metadado operacional preservado", script)
     require('--wait --wait-timeout 120', "espera de saúde limitada", script)
+    require('EXPECTED_DATABASE_REVISION="20261014_0081"', "revisão anterior do banco fixada", script)
+    require('TARGET_DATABASE_REVISION="20261016_0082"', "revisão de destino fixada", script)
     release_script = script.split("release() {", 1)[1].split("main() {", 1)[0]
     require("runtime_snapshot", "releitura de hashes após recriação", release_script)
+    require('alembic upgrade "$TARGET_DATABASE_REVISION"', "migration única aplicada após aprovação", release_script)
+    require('migrated_revision" == "$TARGET_DATABASE_REVISION"', "revisão nova confirmada", release_script)
+    if not (release_script.index('alembic upgrade') < release_script.index("compose up")):
+        raise AssertionError("migration deve concluir antes da recriação de serviços")
     require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)
     require("compose exec -T nginx nginx -s reload", "renovação dos upstreams Markina", release_script)
     if not (release_script.index("compose up") < release_script.index("runtime_snapshot")

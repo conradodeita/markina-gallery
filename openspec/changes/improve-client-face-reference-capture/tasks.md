@@ -10,6 +10,9 @@
 
 - [x] 2.1 Preservar upload de fotos antigas e exigir captura guiada explícita quando a cliente escolher a câmera, exibindo enquadramento e instruções de pose, luz e estabilidade; a validação técnica do servidor deve ocorrer antes da comparação, com orientação de nova tentativa; verificar lint, testes e build executados pelo GitHub CI. Evidência: CI #38815751058 passou frontend (ESLint, Vitest e build), backend pytest e OpenSpec no SHA `9891afb`; captura de câmera segue obrigatoriamente pelo fluxo guiado.
 - [ ] 2.2 Apresentar orientação específica para referência inadequada sem afirmar que a pessoa não existe na galeria; verificar fluxos de upload e câmera no CI e aceite visual do proprietário após publicação, sem teste local. Implementação da orientação para `no_candidates` e regressão de interface adicionadas; CI GitHub #38831676865 passou no SHA `5d2386405e92e9fdaa8dcdb9f115ea61248fe02f`; aceite visual após publicação continua pendente.
+- [ ] 2.3 Trocar a câmera guiada para traseira por padrão e oferecer alternância explícita traseira/frontal, parando a trilha anterior; validar constraints, estados e alternativa de browser no CI sem teste local.
+- [ ] 2.4 Substituir seletor adulto/menor por um único checkbox para qualquer referência, com texto condicional de responsabilidade legal se a pessoa for menor; registrar modalidade `conditional`, exigir consentimento em todos os uploads e preservar consultas históricas. Criar e validar migration aditiva da constraint.
+- [ ] 2.5 Diagnosticar e tratar rejeição de transporte de upload: substituir `Failed to fetch` por orientação em português, sem repetição automática nem risco de duplicar busca; confirmar fluxo em CI e registrar que o smoke autenticado pós-deploy é necessário para concluir causa de rede.
 
 ## 3. Publicação automática protegida pelo GitHub
 
@@ -44,6 +47,16 @@ Esta decisão orienta o próximo executor e refina as tasks 3.1–3.3 acima. A a
 - [x] 3.2c Validar no CI do GitHub que o fluxo pede exatamente uma aprovação em `production`, sem aprovação no preflight, e não exige push separado para passar do merge ao deploy. Nenhuma mutação de produção ocorre nesta validação. Evidência: política em `scripts/test_production_release_workflow_policy.py` passou no CI GitHub #38831676865 no SHA `5d2386405e92e9fdaa8dcdb9f115ea61248fe02f`; aprovação real e execução pós-merge não foram simuladas.
 
 Estado atualizado em 2026-10-16: PRs #192, #193 e #194 foram integradas automaticamente após CI verde. O preflight chegou ao servidor, mas o hash direto do Compose omitiu env_file; comparação efetiva em memória refutou drift real. O inventário remoto corrigido completou saúde, bind e HTTPS para o SHA 57bbc7c. A correção técnica e o novo blob do wrapper aguardam CI/instalação/preflight automático. O proprietário confirmou que base legal/consentimento documentados e corpus autorizado ainda precisam ser definidos; critérios preparados em production-evidence-review.md. Nenhum deploy foi iniciado e release_ready permanece falso.
+
+CI da PR #196 no SHA `de13d95`: checks de frontend, OpenSpec, Gitleaks, política de inventário e runtime passaram; backend reportou sete falhas em fixtures de consentimento que ainda enviavam os valores legados e em uma migração iniciada fora do head legado suportado. Fixtures atualizadas para `conditional` e `client-reference-conditional-v1`; teste da migração agora parte de `LEGACY_SCHEMA_HEAD`. Correção enviada para nova validação remota; nenhum teste local foi executado.
+
+CI #38927833638 no SHA `ef0dfe7`: os checks anteriores ao backend passaram e o frontend concluiu lint, Vitest e build. O job backend parou no Ruff antes do pytest por separação de imports ausente no teste da migration; correção aplicada para a execução seguinte. A imagem Gemma ainda estava construindo no momento da coleta; nenhum teste local foi executado.
+
+CI #38928288870 no SHA `654892a`: OpenSpec, Gitleaks, política, frontend e runtime passaram. Backend completou a suíte em 1.907,68s: 1.632 passaram, 23 ignorados e somente `test_conditional_consent_migration_preserves_existing_declarations` falhou ao aplicar `20261016_0082` em SQLite. A fixture ocultava o `stderr` do Alembic, então a causa específica não ficou disponível. O stderr agora é preservado na asserção e a regressão da migration roda como etapa focada antes da suíte longa; não houve testes locais.
+
+CI focado #38932996708 no SHA `703b9a1` revelou em 47s que a falha ocorria porque a fixture atravessava a revisão `20260930_0070`, explicitamente incompatível com SQLite e exigente de PostgreSQL. O teste foi corrigido para criar base PostgreSQL descartável isolada, aplicar desde `20261014_0081`, preservar recibos `adult`/`minor` e validar a constraint com `conditional`. A suíte longa só inicia após esse teste focado. Correção submetida à próxima execução remota; nenhum teste local foi executado.
+
+CI focado #38933365069 no SHA `9ccc69d` confirmou a execução da migration em PostgreSQL, mas a inserção do fixture falhou porque não associava `tenant_id` às linhas sintéticas. A fixture passa a obter o tenant criado no banco temporário e atribuí-lo à galeria, cliente, política e recibos. A migration de produção não foi executada; nenhum teste local foi executado.
 
 ## Evidências de CI
 

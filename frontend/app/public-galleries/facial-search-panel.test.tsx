@@ -233,8 +233,9 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(screen.queryByLabelText("Tirar foto JPEG com a câmera")).toBeNull();
     const libraryClick = vi.spyOn(libraryInput, "click");
     const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
     vi.stubGlobal("navigator", Object.create(navigator, {
-      mediaDevices: { configurable: true, value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] }) } },
+      mediaDevices: { configurable: true, value: { getUserMedia } },
     }));
     fireEvent.click(screen.getByRole("button", { name: "Escolher foto do celular" }));
     fireEvent.click(screen.getByRole("button", { name: "Usar câmera" }));
@@ -243,15 +244,22 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(submitButton.disabled).toBe(true);
     expect(await screen.findByRole("button", { name: "Capturar rosto" })).toBeTruthy();
     expect(screen.getByText(/mantenha o celular firme/)).toBeTruthy();
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      video: expect.objectContaining({ facingMode: { ideal: "environment" } }),
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Usar câmera frontal" }));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      video: expect.objectContaining({ facingMode: { ideal: "user" } }),
+    }));
     expect(submitButton.disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Cancelar câmera" }));
-    await waitFor(() => expect(stopTrack).toHaveBeenCalledOnce());
+    await waitFor(() => expect(stopTrack).toHaveBeenCalledTimes(2));
     const reference = new File(["private-reference-bytes"], "referencia.jpg", { type: "image/jpeg" });
     Object.defineProperty(reference, "size", { value: 31_457_280 });
     fireEvent.change(libraryInput, { target: { files: [reference] } });
     expect(screen.getByText("Foto selecionada e pronta para envio.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo, de forma livre, informada e específica/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Se a pessoa retratada for criança ou adolescente menor de 18 anos/ }));
     expect(submitButton.disabled).toBe(false);
     fireEvent.submit(submitButton.closest("form")!);
 
@@ -295,14 +303,14 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 
-  it("exige somente um consentimento infantil sem registro prévio de representação", async () => {
+  it("exige um único consentimento condicional para qualquer pessoa retratada", async () => {
     const created = { ...queued, id: "minor-request" };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/facial-search")) return response({
         state: "consent_required",
         manual_selection_available: true,
         minor_search_available: true,
-        consent_version: "consent-v2",
+        consent_version: "client-reference-conditional-v1",
         legal_notice_version: "notice-v2",
       });
       if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
@@ -315,19 +323,13 @@ describe("jornada mobile e privacidade da referência", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
     const reference = new File(["minor-reference"], "referencia.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), { target: { files: [reference] } });
-    fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
-
     const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
-    const consent = screen.getByRole("checkbox", { name: /Sou pai, mãe ou responsável legal/ });
+    const consent = screen.getByRole("checkbox", { name: /Se a pessoa retratada for criança ou adolescente menor de 18 anos/ });
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.queryByRole("radio")).toBeNull();
     expect((consent as HTMLInputElement).checked).toBe(false);
     expect(submitButton.disabled).toBe(true);
     fireEvent.click(consent);
-    fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(screen.getByRole("checkbox"));
     expect(submitButton.disabled).toBe(false);
     fireEvent.submit(submitButton.closest("form")!);
 
@@ -338,12 +340,36 @@ describe("jornada mobile e privacidade da referência", () => {
         method: "POST",
         body: reference,
         headers: expect.objectContaining({
-          "x-facial-consent-version": "consent-v2",
-          "x-facial-subject-declaration": "minor",
+          "x-facial-consent-version": "client-reference-conditional-v1",
+          "x-facial-subject-declaration": "conditional",
           "x-facial-consent-accepted": "true",
         }),
       }),
     );
+  });
+
+  it("localiza falha de transporte sem repetir automaticamente o envio", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required", manual_selection_available: true,
+        minor_search_available: true, consent_version: "client-reference-conditional-v1",
+      });
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches") && init?.method === "POST") return Promise.reject(new TypeError("Failed to fetch"));
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmptyHarness />);
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), {
+      target: { files: [new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Se a pessoa retratada for criança ou adolescente menor de 18 anos/ }));
+    fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível confirmar o envio da foto.");
+    expect(screen.getByRole("alert").textContent).not.toContain("Failed to fetch");
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
 
   it("mantém o diálogo rolável e alcançável na viewport mobile", () => {
