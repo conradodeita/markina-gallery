@@ -58,6 +58,8 @@ jobs:
           python scripts/test_owner_reset_policy.py
           python scripts/check_prod_facial_release_gates.py
           ruff check scripts/reset_homolog_owner.py
+      - name: Regressão focada da migration de consentimento facial
+        run: pytest backend/tests/test_facial_conditional_consent_migration.py -q
       - name: Testes (pytest)
         run: pytest backend/tests -q
       - name: Regressões de concorrência multi-tenant em PostgreSQL

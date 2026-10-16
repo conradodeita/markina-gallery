@@ -52,6 +52,8 @@ CI da PR #196 no SHA `de13d95`: checks de frontend, OpenSpec, Gitleaks, polític
 
 CI #38927833638 no SHA `ef0dfe7`: os checks anteriores ao backend passaram e o frontend concluiu lint, Vitest e build. O job backend parou no Ruff antes do pytest por separação de imports ausente no teste da migration; correção aplicada para a execução seguinte. A imagem Gemma ainda estava construindo no momento da coleta; nenhum teste local foi executado.
 
+CI #38928288870 no SHA `654892a`: OpenSpec, Gitleaks, política, frontend e runtime passaram. Backend completou a suíte em 1.907,68s: 1.632 passaram, 23 ignorados e somente `test_conditional_consent_migration_preserves_existing_declarations` falhou ao aplicar `20261016_0082` em SQLite. A fixture ocultava o `stderr` do Alembic, então a causa específica não ficou disponível. O stderr agora é preservado na asserção e a regressão da migration roda como etapa focada antes da suíte longa; não houve testes locais.
+
 ## Evidências de CI
 
 - [ ] 3.2d Corrigir o cálculo dos hashes para usar configuração resolvida em memória e APP_VERSION ativo/alvo; corrigir releitura de hash pós-release, espera limitada e reload exclusivo do nginx Markina; validar cenários de igualdade/divergência e pós-condições no CI, sem testes locais. Diagnóstico remoto somente leitura em 2026-10-16 confirmou correspondência resolvida e saúde dos três serviços; o drift antes registrado foi refutado. Blob fixado já atualizado no wrapper root-owned e hash conferido; repetir preflight automático completo antes de marcar concluída.

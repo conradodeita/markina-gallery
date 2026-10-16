@@ -16,10 +16,11 @@ def test_conditional_consent_migration_preserves_existing_declarations(tmp_path)
     env = {**os.environ, "DATABASE_URL": database_url}
 
     def migrate(revision):
-        subprocess.run(
+        result = subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", revision],
-            cwd=root, env=env, capture_output=True, check=True,
+            cwd=root, env=env, capture_output=True, text=True, check=False,
         )
+        assert result.returncode == 0, result.stderr or result.stdout
 
     migrate(LEGACY_SCHEMA_HEAD)
     migrate("20261016_0082")
