@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [develop]
+    branches: [develop, main]
 
 jobs:
   backend:
@@ -53,8 +53,10 @@ jobs:
           python scripts/test_preserve_branding.py -v
           bash scripts/test_deploy_homolog.sh
           bash scripts/test_deploy_prod_web.sh
+          bash -n scripts/deploy-prod-facial-services.sh
           bash scripts/test_reset_homolog_owner.sh
           python scripts/test_owner_reset_policy.py
+          python scripts/check_prod_facial_release_gates.py
           ruff check scripts/reset_homolog_owner.py
       - name: Testes (pytest)
         run: pytest backend/tests -q
@@ -146,6 +148,10 @@ jobs:
         run: bash -n scripts/inventory-homolog-readonly.sh
       - name: Testar política de escopo e SHA
         run: python scripts/test_readonly_homolog_inventory_policy.py
+      - name: Validar política de preflight e aprovação única de produção
+        run: |
+          bash -n scripts/production-preflight-ssh-wrapper.sh
+          python scripts/test_production_release_workflow_policy.py
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -226,3 +232,92 @@ jobs:
             maintenance_command+=" --without-backup"
           fi
           ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$maintenance_command" < scripts/maintain-homolog-data.sh
+
+  production-preflight:
+    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      release_ready: ${{ steps.gates.outputs.release_ready }}
+      approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verificar configuração protegida
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]] || { echo 'Domínio diverge do inventário aprovado' >&2; exit 1; }
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || { echo 'Porta SSH inválida' >&2; exit 1; }
+          if ! git diff --quiet "$GITHUB_SHA^" "$GITHUB_SHA" -- docker/ backend/migrations/; then
+            echo 'A mudança inclui Compose/Docker ou migration e exige plano separado' >&2
+            exit 1
+          fi
+      - name: Inventário remoto somente leitura
+        id: inventory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          output_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file" "$output_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "MARKINA_TARGET_SHA=$GITHUB_SHA" </dev/null | tee "$output_file" | tee -a "$GITHUB_STEP_SUMMARY"
+          fingerprint="$(sed -nE 's/^approval_fingerprint=([0-9a-f]{64})$/\1/p' "$output_file" | tail -n1)"
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Inventário não forneceu fingerprint válido' >&2; exit 1; }
+          echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Avaliar gates faciais versionados
+        id: gates
+        run: python scripts/check_prod_facial_release_gates.py | tee -a "$GITHUB_STEP_SUMMARY"
+
+  production-release:
+    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.production-preflight.outputs.release_ready == 'true' }}"
+    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, production-preflight]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Publicar somente os serviços aprovados
+        shell: bash
+        env:
+          APPROVAL_FINGERPRINT: ${{ needs.production-preflight.outputs.approval_fingerprint }}
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
+            < scripts/deploy-prod-facial-services.sh

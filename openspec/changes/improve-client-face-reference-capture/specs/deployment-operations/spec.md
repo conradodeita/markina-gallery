@@ -1,0 +1,44 @@
+# Spec Delta
+
+## ADDED Requirements
+
+### Requirement: Job de produção é disparado automaticamente após CI
+Um workflow SHALL iniciar automaticamente a publicação do SHA aprovado para `main` após CI e validações obrigatórias concluírem com sucesso. O job SHALL aguardar aprovação do ambiente protegido e SHALL repetir inventário de produção, conferir o SHA e limitar mutações aos serviços Pick-your-Pic explicitamente incluídos no plano aprovado.
+
+#### Scenario: CI verde após merge
+- **WHEN** um PR aprovado é integrado à `main` e todos os jobs obrigatórios terminam com sucesso
+- **THEN** o GitHub inicia automaticamente o job de publicação e o mantém aguardando aprovação do ambiente `production` antes de qualquer mutação remota
+
+#### Scenario: CI falha ou aprovação não é concedida
+- **WHEN** uma validação obrigatória falha ou o ambiente protegido não aprova a execução
+- **THEN** nenhum comando de mutação é executado em produção
+
+#### Scenario: Inventário ou SHA diverge
+- **WHEN** o inventário imediatamente anterior não corresponde ao plano aprovado, o SHA não é o candidato aprovado ou serviços/portas de terceiros seriam afetados
+- **THEN** o job falha fechado antes de alterar o ambiente e registra o motivo sem expor segredos
+
+#### Scenario: Publicação de alteração facial atravessa serviços
+- **WHEN** a versão altera API, web ou workers faciais
+- **THEN** o workflow publica o conjunto de serviços necessário conforme inventário e plano aprovados, sem usar o procedimento limitado ao serviço `web` como substituto de uma publicação integral
+
+### Requirement: Correção iterativa e merge automático após CI
+O executor SHALL iterar correções verificáveis de CI dentro do escopo sem aprovação por push. O PR SHALL usar merge automático condicionado aos checks obrigatórios e às revisões exigidas pela política do repositório. Não SHALL haver push adicional apenas para iniciar o deploy.
+
+#### Scenario: Correção iterativa do CI
+- **WHEN** um check obrigatório falha por problema verificável dentro do escopo
+- **THEN** o executor consulta os logs, corrige, publica commit/push e acompanha outro CI sem pedir aprovação por push, repetindo até ficar verde ou até encontrar uma decisão/acesso humano necessário
+
+#### Scenario: Merge automático e mesmo run de publicação
+- **WHEN** checks obrigatórios e revisões exigidas estão aprovados
+- **THEN** o PR é integrado automaticamente e o mesmo fluxo GitHub executa preflight e release sem push separado para iniciar deploy
+
+### Requirement: Preflight anterior à aprovação única de produção
+Após CI e merge, o workflow SHALL executar preflight somente-leitura antes de qualquer aprovação, com credencial SSH separada, restrita à rotina de inventário e sem capacidade de escrita. O preflight SHALL fornecer evidência revisável. Apenas o job mutável SHALL usar o environment protegido `production`, para uma única aprovação antes da mutação.
+
+#### Scenario: Preflight antes da única aprovação
+- **WHEN** CI e merge concluem com sucesso
+- **THEN** o workflow executa inventário somente-leitura com chave SSH separada e restrita, apresenta SHA, host/projeto, serviços, portas/subdomínio, fingerprint, impacto e rollback, e só então aguarda aprovação do environment `production` no job mutável
+
+#### Scenario: Credencial somente-leitura ausente
+- **WHEN** não existe chave SSH separada e restrita à rotina de inventário
+- **THEN** o workflow falha fechado antes de conectar ao servidor e não reutiliza a chave de deploy nem reduz a proteção de produção

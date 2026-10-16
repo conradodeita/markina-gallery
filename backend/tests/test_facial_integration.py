@@ -71,6 +71,10 @@ class SyntheticAdultProvider:
     def observe_bytes(self, _payload: bytes):
         return self.query_faces
 
+    def observe_reference_bytes(self, _payload: bytes, *, max_pixels: int):
+        assert max_pixels > 0
+        return self.query_faces
+
 
 def _configure(monkeypatch, tmp_path: Path) -> None:
     key = base64.urlsafe_b64encode(b"k" * 32).decode("ascii")

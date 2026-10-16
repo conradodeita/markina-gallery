@@ -96,6 +96,10 @@ class Provider:
             raise RuntimeError("detalhe sensível que não deve persistir")
         return self.query_observations
 
+    def observe_reference_bytes(self, payload: bytes, *, max_pixels: int):
+        assert max_pixels > 0
+        return self.observe_bytes(payload)
+
 
 class Messenger:
     def __init__(self, *, failure: Exception | None = None) -> None:
