@@ -64,6 +64,12 @@ Mesmo limitado ao projeto `markina-gallery`, recriar API/web pode causar breve i
 - O script não executa migration e falha se Compose, Docker ou migrations mudarem entre o SHA ativo e o alvo. Em caso de falha operacional não há rollback automático; imagens anteriores ficam etiquetadas e o rollback exige inventário e aprovação próprios.
 - Estado atual de `production-gates.json`: bloqueado por base legal, calibração/equidade e representação/consentimento infantil sem evidência humana. O snapshot de ARM foi registrado, mas falta carga autorizada; recuperação continua parcial porque backup e manifesto existem, mas restauração não foi verificada. Aprovação operacional também segue pendente. O preflight pode inventariar após CI verde e credencial dedicada; nenhum release é permitido até que cada gate exigido tenha status aprovado e evidência verificável.
 
+## Atualização pós-merge — 2026-10-16
+
+- A PR #192 foi integrada automaticamente à `main` como `b191e1c` depois do CI #38836929107 passar. Não houve push extra para provocar merge.
+- No run da `main` #38839154615, os seis checks de CI passaram. O job `production-preflight` parou antes do SSH porque o checkout padrão raso não continha `b191e1c^`; o erro `fatal: bad revision` veio da comparação local que protege alterações em Compose e migrations. O inventário remoto não foi executado e nenhum serviço foi alterado.
+- A correção adiciona profundidade 2 ao checkout do preflight e valida essa condição no checker da política. O run da `main` seguinte deverá confirmar o inventário somente leitura; `production-release` permanece condicionado a todos os gates e deve continuar ignorado enquanto `production-gates.json` não contiver aprovações e evidências válidas.
+
 ## Gates que impedem a execução
 
 1. Revalidar os gates da change `productionize-facial-search`: base legal, calibração/equidade com corpus autorizado, capacidade ARM, recuperação e o gate próprio de representação/consentimento para fluxo infantil. O registro versionado em `docs/PRODUCAO-FACIAL-INVENTARIO-E-PLANO.md` os mantém pendentes ou bloqueados; a flag atualmente ativa não os satisfaz.
