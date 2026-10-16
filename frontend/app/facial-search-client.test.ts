@@ -1,10 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FacialApiError, facialProgressPercent, facialSearchApi } from "./facial-search-client";
+import { FacialApiError, FacialUploadUnconfirmedError, facialProgressPercent, facialSearchApi } from "./facial-search-client";
+
+const createdResponse = { id: "request-1", status: "queued", progress: { index: { ready: 0, total: 1 }, comparison: { done: 0, total: 1 } } };
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("contratos HTTP faciais", () => {
+  it.each(["network", "invalid-json"])("recupera resposta %s usando somente o UUID da tentativa", async (failure) => {
+    const attempt = "02852e38-eed3-4d70-a060-4c965ce5db10";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(attempt);
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => failure === "network" ? Promise.reject(new TypeError("Failed to fetch")) : Promise.resolve(new Response("invalid", { status: 202 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...createdResponse, id: attempt }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await facialSearchApi.create("gallery-1", new File(["jpeg"], "foto.jpg", { type: "image/jpeg" }), "consent-v1", "conditional");
+    expect(result.id).toBe(attempt);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/public-galleries/gallery-1/facial-searches", expect.objectContaining({ headers: expect.objectContaining({ "x-facial-upload-attempt": attempt }) }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, `/api/public-galleries/gallery-1/facial-searches/${attempt}`, expect.not.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("mantém tentativa incerta quando GET não confirma o mesmo UUID", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "not found" }), { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(facialSearchApi.create("gallery-1", new File(["jpeg"], "foto.jpg", { type: "image/jpeg" }), "consent-v1", "conditional")).rejects.toBeInstanceOf(FacialUploadUnconfirmedError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("mantém o percentual abaixo de 100 até concluir todas as fotos", () => {
     expect(facialProgressPercent(999, 1000)).toBe(99);
     expect(facialProgressPercent(1000, 1000)).toBe(100);
@@ -13,7 +37,7 @@ describe("contratos HTTP faciais", () => {
   });
 
   it("envia somente JPEG e recibo explícito ao criar consulta", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "request-1" }), { status: 202 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(createdResponse), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
     const file = new File(["jpeg"], "rosto.jpg", { type: "image/jpeg" });
 
@@ -50,7 +74,7 @@ describe("contratos HTTP faciais", () => {
   });
 
   it("envia a modalidade de declaração condicional no recibo", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "request-1" }), { status: 202 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(createdResponse), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
     const file = new File(["jpeg"], "crianca.jpg", { type: "image/jpeg" });
 

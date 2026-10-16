@@ -48,7 +48,7 @@ O diálogo de envio SHALL apresentar um único checkbox obrigatório para qualqu
 - **THEN** a busca registra o consentimento específico na versão vigente e a modalidade condicional, sem inferir ou registrar idade; se a pessoa for menor, a declaração aceita inclui responsabilidade legal
 
 #### Scenario: Checkbox não aceito ou declaração antiga
-- **WHEN** a cliente não marca o checkbox ou um pedido novo omite a modalidade condicional
+- **WHEN** a cliente desmarca o checkbox ou um pedido novo omite a modalidade condicional
 - **THEN** o envio é bloqueado na interface ou recusado pela API, sem criar consulta
 
 ### Requirement: Captura guiada prefere a câmera traseira e permite alternância
@@ -75,3 +75,40 @@ A melhoria da extração SHALL preservar autorização, consentimento, isolament
 #### Scenario: Busca termina ou falha
 - **WHEN** a extração ou comparação da referência conclui, falha, é cancelada ou expira
 - **THEN** a referência temporária segue a política de exclusão existente e apenas estados e métricas técnicas agregadas podem permanecer
+
+### Requirement: Referência prioriza um rosto visualmente dominante
+O processamento SHALL consolidar detecções repetidas do mesmo rosto entre escalas antes de contar candidatos. SHALL selecionar o maior rosto quando tiver confiança de pelo menos 0,85, menor lado de pelo menos 18% do maior lado da imagem e área pelo menos quatro vezes maior que cada outro candidato; SHALL então alinhar seu recorte nos pixels originais. A regra SHALL aplicar-se somente à referência, sem modificar indexação ou similaridade.
+
+#### Scenario: Retrato com pessoas pequenas ao fundo
+- **WHEN** um rosto atende a todos os critérios de dominância sobre os demais
+- **THEN** apenas ele é alinhado e comparado, sujeito à qualidade mínima vigente
+
+#### Scenario: Detecção duplicada entre escalas
+- **WHEN** caixas possuem IoU de pelo menos 0,20 e todos os landmarks correspondentes estão a até 15% do menor lado das caixas
+- **THEN** o processamento consolida as detecções sem contar o mesmo rosto duas vezes
+
+#### Scenario: Dois rostos de tamanho semelhante
+- **WHEN** há mais de um candidato e nenhum atende aos critérios de dominância
+- **THEN** a busca termina sem comparação, explicando que não foi possível isolar um único rosto e solicitando recorte
+
+### Requirement: Confirmação de upload pode ser recuperada sem reenvio
+A API SHALL aceitar um UUID v4 opcional da tentativa e reservá-lo antes de qualquer escrita da referência ou retirada de buscas anteriores. A leitura SHALL continuar restrita ao cliente, tenant e galeria autorizados. Após falha de transporte ou resposta inválida, o frontend SHALL consultar exclusivamente esse UUID, SHALL NOT repetir o POST e SHALL oferecer conferência manual se ainda não houver confirmação.
+
+#### Scenario: Resposta se perde após aceitação
+- **WHEN** o POST foi aceito mas o navegador não recebeu confirmação válida
+- **THEN** um GET autenticado do UUID da tentativa recupera a busca e continua o acompanhamento
+
+#### Scenario: Identificador já existe
+- **WHEN** um upload tenta reutilizar um UUID reservado
+- **THEN** a API recusa sem sobrescrever referência, criar job duplicado ou retirar buscas existentes
+
+### Requirement: Captura ocupa a tela e textos longos podem ser recolhidos
+A câmera guiada SHALL ocupar a viewport, manter o contorno dentro da imagem exibida sem corte oculto, oferecer captura, alternância e saída e encerrar trilhas ao sair. Os detalhes de uso temporário e consentimento SHALL ser recolhíveis. O checkbox único SHALL iniciar marcado, ter resumo visível de autorização e responsabilidade condicional e permitir desmarcação; somente o clique explícito em Autorizar e procurar fotos SHALL enviar e registrar o aceite.
+
+#### Scenario: Abertura sem envio
+- **WHEN** a cliente abre o diálogo ou a câmera
+- **THEN** nenhum upload ou recibo de consentimento é criado
+
+#### Scenario: Cliente desmarca o aceite
+- **WHEN** o checkbox é desmarcado
+- **THEN** o envio fica bloqueado até nova seleção explícita do aceite

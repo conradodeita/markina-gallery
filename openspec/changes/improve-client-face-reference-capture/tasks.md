@@ -1,5 +1,15 @@
 # Tasks
 
+## 5. Refinamento após feedback de produção em 2026-10-16
+
+- [ ] 5.1 Consolidar duplicações geométricas e selecionar rosto claramente dominante antes do alinhamento, preservando qualidade e índice; adicionar regressões de duplicação, fundo pequeno e ambiguidade para o CI.
+- [ ] 5.2 Correlacionar upload com UUID v4 reservado antes da gravação; recuperar confirmação por GET sem reenvio; verificar colisão, autorização e resposta perdida no CI.
+- [ ] 5.3 Captura em tela cheia com guia fiel ao vídeo, foco/saída e trilhas; detalhes recolhíveis e checkbox inicialmente marcado com autorização explícita no envio; validar no CI e pelo proprietário após publicação.
+- [ ] 5.4 Atualizar inventário/baseline/schema já publicado e pins de manutenção, corrigir smoke com espera limitada; CI e preflight protegidos antes do próximo deploy.
+- [ ] 5.5 Publicar PR isolada, acompanhar CI e merge automático até preflight e única aprovação protegida; registrar evidência e limitações. Nenhum teste local.
+
+Evidência de entrada: run 38955969200 publicou 7c7a4ad e os três serviços saudáveis, mas terminou em 502 no smoke imediatamente após reload. HTTPS posterior retornou 200. Proprietário confirmou uso e relatou falso múltiplo rosto/erro de confirmação no Android. Logs sanitizados confirmam dois POST Android aceitos (202) e um Windows aceito. Causa exata no navegador ainda não comprovada; nenhuma imagem ou biometria foi lida.
+
 ## 1. Extração robusta da referência
 
 - [x] 1.1 Atualizar o caminho de consulta para normalizar a orientação e detectar/alinha o rosto em resolução adequada sob limites de bytes, pixels, passes e latência, preservando YuNet + SFace, versão, dimensão e contrato do índice; verificar provider/worker no CI do GitHub, sem executar testes localmente. Evidência: CI GitHub #38815751058 no SHA `9891afb06f74722fd3aaabcd50b09fa4905164b1` passou backend/Ruff e suíte pytest (1.632 passaram, 23 ignorados), após corrigir a expectativa de forma do array NumPy para EXIF 6; nenhum teste local executado.

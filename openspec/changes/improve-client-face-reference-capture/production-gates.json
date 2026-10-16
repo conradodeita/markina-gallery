@@ -30,8 +30,8 @@
   "maintenance_release": {
     "authorized": true,
     "scope": "existing_facial_runtime",
-    "baseline_sha": "fe0a05a74dd1d6941b160e75c2081c78dad3bc05",
-    "evidence": "Autorização do proprietário para corrigir e publicar a busca já ativa, reiterada em 2026-10-16. O preflight pós-merge #38938071080 falhou fechado porque a PR #195 já havia atualizado o checkout de produção; conferência somente de leitura confirmou /opt/markina-gallery e APP_VERSION da API em fe0a05a74dd1d6941b160e75c2081c78dad3bc05, com FACIAL_PROCESSING_ENABLED=true na API e no worker. Este baseline verificado substitui d9c8d3b, sem alterar os blobs de runtime aprovados. Preservar estado, configuração, acesso, modelo, índice, limiar e retenção. A change registra o novo consentimento condicional sem inferir idade; aplica somente a migration aditiva 20261016_0082 se o preflight confirmar 20261014_0081. Exigir CI, inventário, fingerprint e aprovação protegida; gates de primeira ativação permanecem independentes.",
+    "baseline_sha": "7c7a4ad217343dc4faee57734436afd91bb1f6b1",
+    "evidence": "Refinamento solicitado pelo proprietário em 2026-10-16 após teste em produção: priorização de rosto dominante, confirmação de upload por UUID e câmera em tela cheia, textos recolhíveis e checkbox inicialmente marcado com aceite no envio. Inventário remoto somente leitura confirmou checkout/API 7c7a4ad217343dc4faee57734436afd91bb1f6b1, schema 20261016_0082, runtime facial já ativo e serviços saudáveis. Sem nova migration, reindexação ou alteração de modelo, limiar de similaridade, escopo, retenção ou segredos. Exigir CI, inventário/fingerprint e única aprovação protegida antes de recriar somente web/API/face-search-worker. Os gates de primeira ativação permanecem independentes.",
     "runtime_blobs": {
       "backend/app/auth.py": [
         "JY2mH/W",
@@ -52,16 +52,16 @@
         "HK+ivg="
       ],
       "backend/app/facial/reference.py": [
-        "jwvzEAf",
-        "ubKO9Ma",
-        "nAa1rda",
-        "XMpb/Y="
+        "Zn+NKG+",
+        "+aRLE6Q",
+        "Cr2i3b5",
+        "PkEB/w="
       ],
       "backend/app/facial/search.py": [
-        "DpM2fjx",
-        "bHuR0JV",
-        "X0t0WPJ",
-        "g1Ou1A="
+        "zBbEYvs",
+        "jxJCSAx",
+        "zn4o2Ua",
+        "SjCcmQ="
       ],
       "backend/app/facial/search_worker.py": [
         "8xvETXZ",
@@ -70,10 +70,10 @@
         "qfSsvk="
       ],
       "backend/app/main.py": [
-        "fjp4Ss9",
-        "XcwndBG",
-        "8Fnr+Gl",
-        "0duvH4="
+        "tbKoDn9",
+        "di50jMv",
+        "uLDxnOB",
+        "B3PtXc="
       ],
       "backend/migrations/versions/20261016_0082_facial_conditional_consent.py": [
         "CE9p1+1",
@@ -82,22 +82,22 @@
         "o7wnHA="
       ],
       "frontend/app/globals.css": [
-        "bsK8mUb",
-        "HEL3rxf",
-        "UIm/Kh+",
-        "U1dZRg="
+        "2gYgjr1",
+        "3AVSg/X",
+        "DQ0JNpB",
+        "X/z0kc="
       ],
       "frontend/app/facial-search-client.ts": [
-        "fAV5iyB",
-        "hNskSRg",
-        "2SreKjh",
-        "Hc8VOo="
+        "Dtfq1DX",
+        "RmVqQdU",
+        "vMXpiO8",
+        "+dEO4s="
       ],
       "frontend/app/public-galleries/facial-search-panel.tsx": [
-        "T40oau4",
-        "nwUi3fw",
-        "nFN7OSc",
-        "hSF5Rk="
+        "VtcpuoT",
+        "+JrGncl",
+        "LsHVQZC",
+        "/nhQVo="
       ]
     }
   }

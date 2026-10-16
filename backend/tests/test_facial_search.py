@@ -207,6 +207,32 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
     }
 
 
+def test_upload_attempt_is_recoverable_and_collision_does_not_replace_reference(tmp_path):
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    request_id = uuid4()
+    kwargs = dict(parent_gallery_id=parent.id, client_id=client.id,
+                  consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+                  subject_declaration="conditional", representation_reference=None,
+                  payload=_jpeg(), settings=_settings(tmp_path), consent_accepted=True,
+                  request_id=request_id)
+    created = create_search_request(db, **kwargs)
+    db.commit()
+    assert created.id == request_id
+    assert created.status == "queued"
+    recovered, _ = read_search_result(db, parent_gallery_id=parent.id, client_id=client.id,
+                                     request_id=request_id)
+    assert recovered.id == request_id
+    stored = {p: p.read_bytes() for p in (tmp_path / "references").rglob("*") if p.is_file()}
+    assert stored
+    db.expunge_all()
+    with pytest.raises(FacialSearchError, match="reservar"):
+        create_search_request(db, **kwargs)
+    db.rollback()
+    assert db.get(FacialSearchRequest, request_id).status == "queued"
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 1
+    assert {p: p.read_bytes() for p in (tmp_path / "references").rglob("*") if p.is_file()} == stored
+
+
 @pytest.mark.parametrize(
     ("is_new_gallery", "gemma_coverage_complete", "stale_reason"),
     [(True, True, None), (True, False, None), (False, True, None),

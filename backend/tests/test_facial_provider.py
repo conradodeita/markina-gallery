@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from app.facial.detection import Detection
 from app.facial.provider import (
     FaceObservation,
     FacialProviderError,
@@ -14,7 +15,11 @@ from app.facial.provider import (
     analyze_query,
     normalize_embedding,
 )
-from app.facial.reference import decode_reference_bytes, observe_reference_image
+from app.facial.reference import (
+    decode_reference_bytes,
+    observe_reference_image,
+    reference_candidates,
+)
 
 
 class FakeImage:
@@ -208,3 +213,55 @@ def test_query_requires_exactly_one_technically_usable_face() -> None:
     ready = analyze_query([_face()])
     assert ready.status == "ready"
     assert ready.observation is not None
+
+
+def _portrait_row(x, y, size, confidence=0.99):
+    return (x, y, size, size,
+            x + size * .3, y + size * .35,
+            x + size * .7, y + size * .35,
+            x + size * .5, y + size * .55,
+            x + size * .35, y + size * .75,
+            x + size * .65, y + size * .75, confidence)
+
+
+def test_reference_aligns_dominant_portrait_in_original_pixels(tmp_path):
+    # O fundo tem confiança maior, mas um quarto da área do retrato.
+    main = _portrait_row(30, 40, 240, .90)
+    background = _portrait_row(400, 40, 120, .99)
+    cv2 = FakeCv2([background, main])
+    aligned_inputs = []
+
+    def align_original(image, row):
+        aligned_inputs.append((image, row))
+        return image
+
+    cv2.recognizer.alignCrop = align_original
+    provider = OpenCvSFaceProvider(*_model_files(tmp_path), cv2_module=cv2)
+    image = FakeImage()
+    observations = observe_reference_image(provider, image)
+    assert len(observations) == 1
+    assert observations[0].box == (30, 40, 240, 240)
+    assert analyze_query(observations).status == "ready"
+    assert len(aligned_inputs) == 1
+    assert aligned_inputs[0][0] is image
+
+
+def test_reference_consolidates_same_landmarks_across_different_scale_boxes():
+    main = _portrait_row(100, 100, 200)
+    # IoU 0.25 é menor que NMS 0.4, mas são os mesmos landmarks no espaço original.
+    duplicate = (150, 150, 100, 100, *main[4:14], .95)
+    result = reference_candidates([Detection(main, "global"), Detection(duplicate, "tile:0")],
+                                  width=800, height=600, nms_iou=.4)
+    assert len(result) == 1
+    assert result[0].row == main
+
+
+@pytest.mark.parametrize("main_size,background_size,confidence", [
+    (240, 180, .99),  # rostos comparáveis
+    (120, 40, .99),   # retrato não ocupa 18% do lado maior
+    (240, 80, .84),   # dominância não pode compensar baixa confiança
+])
+def test_reference_keeps_ambiguous_candidates(main_size, background_size, confidence):
+    detections = [Detection(_portrait_row(10, 10, main_size, confidence), "global"),
+                  Detection(_portrait_row(500, 10, background_size), "global")]
+    assert len(reference_candidates(detections, width=800, height=600, nms_iou=.4)) == 2

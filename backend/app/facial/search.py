@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import delete, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.acervo_context import client_tenant_id
@@ -144,6 +145,7 @@ def create_search_request(
     repository: FacialJobRepository | None = None,
     reference_region_id: UUID | None = None,
     consent_accepted: bool = False,
+    request_id: UUID | None = None,
 ) -> FacialSearchRequest:
     tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
@@ -182,7 +184,9 @@ def create_search_request(
                           region_id=reference_region_id, settings=settings,
                           model_id=search_engine)
 
-    request_id = uuid4()
+    request_id = request_id or uuid4()
+    if request_id.version != 4:
+        raise FacialSearchError("Identificador de tentativa inválido.")
     snapshot = _build_snapshot(
         db,
         request_id=request_id,
@@ -233,6 +237,13 @@ def create_search_request(
         max_pixels=settings.max_reference_pixels,
     )
     _require_search_context(db, parent_gallery_id, client_id)
+    # Reservar a chave antes de qualquer escrita no store ou retirada de buscas.
+    # A PK também serializa tentativas concorrentes com o mesmo UUID.
+    try:
+        db.add(item)
+        db.flush()
+    except IntegrityError as exc:
+        raise FacialSearchError("Não foi possível reservar esta tentativa de busca.") from exc
     stored = None if reference_region_id else store.store(
         request_id=item.id,
         gallery_id=parent_gallery_id,
@@ -251,6 +262,7 @@ def create_search_request(
             parent_gallery_id=parent_gallery_id,
             client_id=client_id,
             store=store,
+            except_request_id=item.id,
         )
         db.add(item)
         db.add_all(snapshot)
@@ -382,6 +394,7 @@ def _retire_prior_searches(
     parent_gallery_id: UUID,
     client_id: UUID,
     store: FacialReferenceStore,
+    except_request_id: UUID,
 ) -> None:
     tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     prior_requests = list(
@@ -389,6 +402,7 @@ def _retire_prior_searches(
             select(FacialSearchRequest).where(
                 FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.parent_gallery_id == parent_gallery_id,
                 FacialSearchRequest.client_id == client_id,
+                FacialSearchRequest.id != except_request_id,
                 FacialSearchRequest.status != "cancelled",
             )
         )

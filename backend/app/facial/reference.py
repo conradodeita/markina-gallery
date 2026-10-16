@@ -16,6 +16,7 @@ from app.facial.detection import (
     DetectionConfig,
     deduplicate,
     difficulty,
+    iou,
     restore,
     tiles,
 )
@@ -24,6 +25,34 @@ from app.facial.provider import (
     FaceObservation,
     FacialProviderError,
 )
+
+
+def reference_candidates(detections: list[Detection], *, width: int, height: int,
+                         nms_iou: float) -> list[Detection]:
+    """Consolida escalas e escolhe apenas um retrato geometricamente dominante."""
+    kept: list[Detection] = []
+    for candidate in sorted(deduplicate(detections, nms_iou),
+                            key=lambda item: (-item.row[-1], item.row[:4])):
+        duplicate = False
+        for other in kept:
+            tolerance = 0.15 * min(*candidate.row[2:4], *other.row[2:4])
+            if iou(candidate.row, other.row) >= 0.20 and all(
+                math.hypot(candidate.row[i] - other.row[i],
+                           candidate.row[i + 1] - other.row[i + 1]) <= tolerance
+                for i in range(4, 14, 2)
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(candidate)
+    kept.sort(key=lambda item: (-item.row[2] * item.row[3], -item.row[-1], item.row[:4]))
+    if len(kept) > 1:
+        largest, second = kept[:2]
+        if (largest.row[-1] >= 0.85
+                and min(largest.row[2:4]) >= 0.18 * max(width, height)
+                and largest.row[2] * largest.row[3] >= 4 * second.row[2] * second.row[3]):
+            return [largest]
+    return kept
 
 
 def decode_reference_bytes(payload: bytes, *, max_pixels: int) -> np.ndarray:
@@ -146,10 +175,13 @@ def observe_reference_image(
                     y,
                 )
 
-        kept = deduplicate(detections, config.nms_iou)
+        kept = reference_candidates(detections, width=width, height=height,
+                                    nms_iou=config.nms_iou)
         deduplicated_count = len(kept)
-        embedding_limit = min(config.max_faces, 2)
-        kept = sorted(kept, key=lambda item: -item.row[-1])[:embedding_limit]
+        # Dois candidatos bastam para recusar ambiguidade, mesmo se o índice
+        # estiver configurado para extrair apenas um rosto por foto.
+        embedding_limit = 2
+        kept = kept[:embedding_limit]
         observations = []
         failures = 0
         phase = "embedding"

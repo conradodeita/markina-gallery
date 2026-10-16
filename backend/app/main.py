@@ -10647,6 +10647,13 @@ async def create_public_gallery_facial_search(
         ip_address=request.client.host if request.client else "unknown",
     )
     consent_version = request.headers.get("x-facial-consent-version", "").strip()
+    upload_attempt = request.headers.get("x-facial-upload-attempt")
+    try:
+        upload_request_id = UUID(upload_attempt) if upload_attempt else None
+        if upload_request_id is not None and upload_request_id.version != 4:
+            raise ValueError("UUID v4 required")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Identificador de tentativa inválido.") from exc
     subject_declaration = request.headers.get(
         "x-facial-subject-declaration", ""
     ).strip()
@@ -10670,6 +10677,7 @@ async def create_public_gallery_facial_search(
             payload=payload,
             settings=settings,
             consent_accepted=request.headers.get("x-facial-consent-accepted") == "true",
+            request_id=upload_request_id,
         )
         db.commit()
         FACIAL_ADMISSION_COUNTER.record("accepted")

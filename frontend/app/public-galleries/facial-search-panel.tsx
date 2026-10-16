@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { FacialApiError, facialProgressPercent, facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
+import { FacialApiError, FacialUploadUnconfirmedError, facialProgressPercent, facialSearchApi, type FacialSearchAvailability, type FacialSearchResult } from "../facial-search-client";
 import { clearFacialSearchStorage, facialSearchStorageKey, readFacialSearchStorage, rememberFacialSearch } from "../facial-search-storage";
 import { PUSH_LOGOUT_EVENT } from "../push-device";
 import { MarkinaButton, StatusBadge, SystemState } from "../ui-kit";
@@ -17,7 +17,7 @@ const stateLabels: Record<string, string> = {
   ranking: "Organizando resultados",
   ready: "Resultados prontos",
   no_face: "Nenhum rosto foi detectado",
-  multiple_faces: "A foto enviada contém mais de um rosto",
+  multiple_faces: "Não foi possível isolar um único rosto",
   low_quality: "A foto não tem qualidade suficiente",
   index_incomplete: "As fotos da galeria não ficaram prontas a tempo",
   no_candidates: "Nenhuma possibilidade foi encontrada",
@@ -38,12 +38,15 @@ export function FacialSearchPanel({
   const [availability, setAvailability] = useState<FacialSearchAvailability | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const showDialog = dialogOpen;
-  const [consented, setConsented] = useState(false);
+  const [consented, setConsented] = useState(true);
+  const [unconfirmedRequest, setUnconfirmedRequest] = useState<string | null>(null);
   const subjectDeclaration = "conditional" as const;
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<"environment" | "user">("environment");
+  const cameraMode = cameraActive || cameraStarting;
+  const [cameraAspect, setCameraAspect] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const libraryInput = useRef<HTMLInputElement>(null);
@@ -72,7 +75,8 @@ export function FacialSearchPanel({
   function closeDialog() {
     stopCamera();
     setDialogOpen(false);
-    setConsented(false);
+    setConsented(true);
+    setUnconfirmedRequest(null);
     setSelectedFile(null);
     if (libraryInput.current) libraryInput.current.value = "";
   }
@@ -92,6 +96,7 @@ export function FacialSearchPanel({
       if (sourceInput) sourceInput.value = "";
       return;
     }
+    setUnconfirmedRequest(null);
     setSelectedFile(file);
     setError("");
     const otherInput = source === "library" ? null : libraryInput.current;
@@ -124,7 +129,7 @@ export function FacialSearchPanel({
         setError("Não foi possível abrir a câmera. Permita o acesso ou escolha uma foto do dispositivo.");
       }
     } finally {
-      setCameraStarting(false);
+      if (attempt === cameraAttempt.current) setCameraStarting(false);
     }
   }
 
@@ -171,6 +176,7 @@ export function FacialSearchPanel({
   useEffect(() => {
     let active = true;
     let loaded = false;
+    let refreshAttempt = 0;
     const invalidate = () => {
       contextVersion.current += 1;
       storageKey.current = null;
@@ -180,16 +186,18 @@ export function FacialSearchPanel({
       setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
     };
     const refresh = async () => {
-      const version = ++contextVersion.current;
+      const attempt = ++refreshAttempt;
+      let version = contextVersion.current;
       try {
         const value = await facialSearchApi.availability(galleryId);
-        if (!active || version !== contextVersion.current) return;
+        if (!active || attempt !== refreshAttempt || version !== contextVersion.current) return;
         const key = facialSearchStorageKey(value.storage_context, galleryId);
         const changed = loaded && (!key || storageKey.current !== key);
         clearFacialSearchStorage(key ? value.storage_context : undefined);
         storageKey.current = key;
         setAvailability(value);
         if (changed) {
+          version = ++contextVersion.current;
           closeDialog();
           onResult(null);
           restoreAllowed.current = true;
@@ -208,7 +216,7 @@ export function FacialSearchPanel({
           if (cause instanceof FacialApiError && [401, 403].includes(cause.status)) invalidate();
         }
       } catch {
-        if (active && version === contextVersion.current) invalidate();
+        if (active && attempt === refreshAttempt && version === contextVersion.current) invalidate();
       }
     };
     void refresh();
@@ -251,8 +259,12 @@ export function FacialSearchPanel({
   }, [galleryId, onResult, result]);
 
   useEffect(() => {
-    if (showDialog) consentDialog.current?.focus();
-  }, [showDialog]);
+    if (!showDialog) return;
+    consentDialog.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [showDialog, cameraMode]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -261,7 +273,7 @@ export function FacialSearchPanel({
       setError("Escolha uma foto JPEG nítida com apenas um rosto.");
       return;
     }
-    if (!consented || !availability?.consent_version) return;
+    if (!consented || !availability?.consent_version || busy || unconfirmedRequest) return;
     setBusy(true);
     setError("");
     const version = contextVersion.current;
@@ -275,6 +287,10 @@ export function FacialSearchPanel({
       closeDialog();
     } catch (cause) {
       if (version !== contextVersion.current) return;
+      if (cause instanceof FacialUploadUnconfirmedError) {
+        setUnconfirmedRequest(cause.requestId);
+        rememberFacialSearch(storageKey.current, cause.requestId);
+      }
       if (cause instanceof FacialApiError && [401, 403].includes(cause.status)) {
         contextVersion.current += 1;
         clearFacialSearchStorage();
@@ -289,6 +305,33 @@ export function FacialSearchPanel({
         ? cause.message
         : "Não foi possível confirmar o envio da foto. Verifique sua conexão e confira se a busca apareceu antes de tentar novamente.";
       setError(`${message}${retry}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmUpload() {
+    if (!unconfirmedRequest || busy) return;
+    setBusy(true);
+    const version = contextVersion.current;
+    try {
+      const recovered = await facialSearchApi.read(galleryId, unconfirmedRequest);
+      if (version !== contextVersion.current) return;
+      if (recovered?.id !== unconfirmedRequest || !recovered.status || !recovered.progress) throw new Error("Invalid confirmation");
+      rememberFacialSearch(storageKey.current, recovered.id);
+      onResult(recovered);
+      setError("");
+      closeDialog();
+    } catch (cause) {
+      if (version !== contextVersion.current) return;
+      if (cause instanceof FacialApiError && [401, 403].includes(cause.status)) {
+        contextVersion.current += 1;
+        clearFacialSearchStorage();
+        onResult(null);
+        closeDialog();
+        setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
+      }
+      setError("O envio ainda não foi confirmado. Confira novamente quando a conexão voltar ou escolha a foto para iniciar uma nova tentativa.");
     } finally {
       setBusy(false);
     }
@@ -336,7 +379,7 @@ export function FacialSearchPanel({
           <div><StatusBadge tone={result.status === "ready" ? "success" : result.status === "failed" ? "danger" : "neutral"}>{stateLabels[result.status] ?? result.status}</StatusBadge><span>{result.reference_deleted ? "Sem imagem temporária nesta busca" : "Foto protegida temporariamente"}</span></div>
           {!terminalStates.has(result.status) ? <><progress value={progressValue} max={100} aria-label="Progresso da busca facial" /><small>{progressValue}% concluído · {progressDone} de {progressTotal} fotos nesta etapa. Tempo restante ainda não disponível. Você pode fechar esta tela; avisaremos quando terminar.</small></> : null}
           {result.status === "no_face" ? <p>Tente uma foto frontal, bem iluminada e com o rosto inteiro.</p> : null}
-          {result.status === "multiple_faces" ? <p>Recorte a imagem para manter somente a pessoa procurada.</p> : null}
+          {result.status === "multiple_faces" ? <p>Detectamos mais de uma região possível. Recorte a imagem para manter somente o rosto da pessoa procurada.</p> : null}
           {result.status === "low_quality" ? <p>Envie outra foto com mais nitidez e melhor iluminação.</p> : null}
           {result.status === "no_candidates" ? <p>Não encontramos sugestões confiáveis com esta foto. Isso não confirma que a pessoa não esteja nesta galeria. Tente outra foto mais nítida ou continue pela seleção manual.</p> : null}
           {result.status === "index_incomplete" || result.status === "failed" ? <p>A seleção manual permanece disponível. Você também pode tentar uma nova busca.</p> : null}
@@ -348,64 +391,90 @@ export function FacialSearchPanel({
         <div className="mk-dialog-backdrop facial-consent-backdrop" role="presentation" onMouseDown={closeDialog}>
           <section
             ref={consentDialog}
-            className="mk-dialog facial-consent-dialog"
+            className={`mk-dialog facial-consent-dialog${cameraMode ? " facial-consent-dialog--camera" : ""}`}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="facial-consent-title"
-            aria-describedby="facial-consent-purpose facial-consent-limits"
+            aria-labelledby={cameraMode ? "facial-camera-title" : "facial-consent-title"}
+            aria-describedby={cameraMode ? "facial-camera-guidance" : "facial-consent-purpose"}
             tabIndex={-1}
             onMouseDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => { if (event.key === "Escape") closeDialog(); }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") { event.preventDefault(); if (cameraMode) stopCamera(); else closeDialog(); }
+              if (event.key !== "Tab") return;
+              const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), summary, [tabindex='0']"))
+                .filter((element) => !element.closest("[hidden]") && (!element.closest("details:not([open])") || element.tagName === "SUMMARY"));
+              const first = controls[0], last = controls[controls.length - 1];
+              if (!first) { event.preventDefault(); return; }
+              if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last.focus(); }
+              if (!event.shiftKey && (document.activeElement === last || document.activeElement === event.currentTarget)) { event.preventDefault(); first.focus(); }
+            }}
           >
-            <header className="facial-consent-header">
-              <p className="eyebrow">Consentimento específico</p>
-              <h2 id="facial-consent-title">Busca facial nesta galeria</h2>
-              <p id="facial-consent-purpose">Antes de enviar, entenda como a foto será usada para procurar possíveis correspondências.</p>
-            </header>
-            <div className="facial-consent-privacy" id="facial-consent-limits">
-              <strong>Uso temporário e restrito</strong>
-              <p>A foto escolhida e a representação biométrica facial extraída dela serão usadas somente para procurar possíveis correspondências nesta galeria.</p>
-              <p>Não há cadastro biométrico permanente. Esses dados serão eliminados após o processamento ou, no máximo, em {referenceRetentionMinutes} minutos.</p>
-              <small>Os resultados expiram em até {candidateRetentionHours} horas. São apenas sugestões, não confirmam identidade e podem conter correspondências incorretas.</small>
-            </div>
-            <form onSubmit={submit}>
-              <section className="facial-consent-step" aria-labelledby="facial-reference-source-title">
-                <div className="facial-consent-step-heading">
-                  <span aria-hidden="true">1</span>
-                  <div>
-                    <h3 id="facial-reference-source-title">Escolha a foto</h3>
-                    <p>Prefira uma JPEG de até 30 MB semelhante a foto de documento: frontal, nítida, bem iluminada, com o rosto inteiro e somente uma pessoa.</p>
-                    <small>Use apenas uma foto do rosto. Não fotografe nem envie documento de identidade.</small>
+            {cameraMode ? <div className="facial-guided-camera" aria-label="Captura guiada obrigatória">
+              <header><h2 id="facial-camera-title">Enquadre o rosto</h2></header>
+              <div className="facial-guided-camera-stage">
+                <div className="facial-guided-camera-frame" style={{ width: `min(100%, calc(60dvh * ${cameraAspect}))`, aspectRatio: cameraAspect }}>
+                  <video ref={cameraVideo} autoPlay playsInline muted aria-label="Enquadramento ao vivo da câmera" onLoadedMetadata={(event) => {
+                    const video = event.currentTarget;
+                    if (video.videoWidth && video.videoHeight) setCameraAspect(video.videoWidth / video.videoHeight);
+                  }} />
+                </div>
+              </div>
+              <p id="facial-camera-guidance">Posicione o rosto dentro do contorno. Olhe para a câmera, procure uma luz de frente e mantenha o celular firme.</p>
+              {cameraStarting ? <p role="status">Abrindo câmera…</p> : null}
+              {error ? <p role="alert">{error}</p> : null}
+              <div className="facial-reference-actions">
+                <MarkinaButton type="button" disabled={busy || cameraStarting || !cameraActive} onClick={() => { void captureGuidedPhoto(); }}>Capturar rosto</MarkinaButton>
+                <MarkinaButton type="button" variant="secondary" disabled={busy || cameraStarting} onClick={() => { const next = cameraFacing === "environment" ? "user" : "environment"; stopCamera(); void startGuidedCamera(next); }}>{cameraFacing === "environment" ? "Usar câmera frontal" : "Usar câmera traseira"}</MarkinaButton>
+                <MarkinaButton type="button" variant="secondary" onClick={stopCamera}>Cancelar câmera</MarkinaButton>
+              </div>
+            </div> : null}
+            <div hidden={cameraMode}>
+              <header className="facial-consent-header">
+                <p className="eyebrow">Consentimento específico</p>
+                <h2 id="facial-consent-title">Busca facial nesta galeria</h2>
+                <p id="facial-consent-purpose">Antes de enviar, entenda como a foto será usada para procurar possíveis correspondências.</p>
+              </header>
+              <details className="facial-consent-privacy" id="facial-consent-limits">
+                <summary>Uso temporário e restrito</summary>
+                <p>A foto escolhida e a representação biométrica facial extraída dela serão usadas somente para procurar possíveis correspondências nesta galeria.</p>
+                <p>Não há cadastro biométrico permanente. Esses dados serão eliminados após o processamento ou, no máximo, em {referenceRetentionMinutes} minutos.</p>
+                <small>Os resultados expiram em até {candidateRetentionHours} horas. São apenas sugestões, não confirmam identidade e podem conter correspondências incorretas.</small>
+              </details>
+              <form onSubmit={submit}>
+                <section className="facial-consent-step" aria-labelledby="facial-reference-source-title">
+                  <div className="facial-consent-step-heading">
+                    <span aria-hidden="true">1</span>
+                    <div>
+                      <h3 id="facial-reference-source-title">Escolha a foto</h3>
+                      <p>Prefira uma JPEG de até 30 MB semelhante a foto de documento: frontal, nítida, bem iluminada, com o rosto inteiro e somente uma pessoa.</p>
+                      <small>Use apenas uma foto do rosto. Não fotografe nem envie documento de identidade.</small>
+                    </div>
                   </div>
-                </div>
-                <input
-                  ref={libraryInput}
-                  type="file"
-                  accept="image/jpeg"
-                  aria-label="Escolher foto JPEG da galeria do celular"
-                  hidden
-                  onChange={(event) => chooseReference(event.currentTarget.files?.[0], "library")}
-                />
-                <div className="facial-reference-actions">
-                  <MarkinaButton type="button" disabled={busy || cameraStarting} onClick={() => { stopCamera(); libraryInput.current?.click(); }}>Escolher foto do celular</MarkinaButton>
-                  <MarkinaButton type="button" variant="secondary" disabled={busy || cameraStarting} onClick={() => { setSelectedFile(null); void startGuidedCamera(); }}>{cameraStarting ? "Abrindo câmera…" : "Usar câmera"}</MarkinaButton>
-                </div>
-                {cameraActive ? <div className="facial-guided-camera" aria-label="Captura guiada obrigatória">
-                  <div className="facial-guided-camera-frame"><video ref={cameraVideo} autoPlay playsInline muted aria-label="Enquadramento ao vivo da câmera" /></div>
-                  <p>Posicione o rosto dentro do contorno. Olhe para a câmera, procure uma luz de frente e mantenha o celular firme. A análise verificará a qualidade antes de comparar com a galeria.</p>
+                  <input
+                    ref={libraryInput}
+                    type="file"
+                    accept="image/jpeg"
+                    aria-label="Escolher foto JPEG da galeria do celular"
+                    hidden
+                    onChange={(event) => chooseReference(event.currentTarget.files?.[0], "library")}
+                  />
                   <div className="facial-reference-actions">
-                    <MarkinaButton type="button" disabled={busy} onClick={() => { void captureGuidedPhoto(); }}>Capturar rosto</MarkinaButton>
-                    <MarkinaButton type="button" variant="secondary" disabled={busy || cameraStarting} onClick={() => { const next = cameraFacing === "environment" ? "user" : "environment"; stopCamera(); void startGuidedCamera(next); }}>{cameraFacing === "environment" ? "Usar câmera frontal" : "Usar câmera traseira"}</MarkinaButton>
-                    <MarkinaButton type="button" variant="secondary" onClick={stopCamera}>Cancelar câmera</MarkinaButton>
+                    <MarkinaButton type="button" disabled={busy || cameraStarting} onClick={() => { stopCamera(); libraryInput.current?.click(); }}>Escolher foto do celular</MarkinaButton>
+                    <MarkinaButton type="button" variant="secondary" disabled={busy || cameraStarting} onClick={() => { setSelectedFile(null); void startGuidedCamera(); }}>{cameraStarting ? "Abrindo câmera…" : "Usar câmera"}</MarkinaButton>
                   </div>
-                </div> : null}
-                {selectedFile ? <p className="facial-reference-selected" role="status">Foto selecionada e pronta para envio.</p> : null}
-                {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
-              </section>
-              <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> Se a pessoa retratada for criança ou adolescente menor de 18 anos, declaro ser seu pai, sua mãe ou seu responsável legal. Autorizo, de forma livre, informada e específica, a busca de fotos dessa pessoa nesta galeria e o tratamento temporário da foto enviada e dos dados biométricos extraídos exclusivamente para procurar possíveis correspondências nesta galeria. Li e compreendi as informações acima.</label>
-              <p className="field-hint">A busca é opcional. Você pode cancelar ou continuar procurando e selecionando as fotos manualmente.{availability.legal_notice_version ? ` Aviso ${availability.legal_notice_version}.` : ""}</p>
-              <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!selectedFile || !consented || busy}>{busy ? "Iniciando busca…" : "Autorizar e procurar fotos"}</MarkinaButton></div>
-            </form>
+                  {selectedFile ? <p className="facial-reference-selected" role="status">Foto selecionada e pronta para envio.</p> : null}
+                  {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
+                </section>
+                <details className="facial-consent-details">
+                  <summary>Leia a declaração de consentimento</summary>
+                  <p id="facial-consent-declaration">Se a pessoa retratada for criança ou adolescente menor de 18 anos, declaro ser seu pai, sua mãe ou seu responsável legal. Autorizo, de forma livre, informada e específica, a busca de fotos dessa pessoa nesta galeria e o tratamento temporário da foto enviada e dos dados biométricos extraídos exclusivamente para procurar possíveis correspondências nesta galeria. Li e compreendi as informações acima.</p>
+                </details>
+                <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> Autorizo a busca facial e o tratamento temporário nesta galeria. Se a pessoa for menor de 18 anos, declaro ser seu pai, sua mãe ou responsável legal.</label>
+                <p className="field-hint">A busca é opcional. Você pode cancelar ou continuar procurando e selecionando as fotos manualmente.{availability.legal_notice_version ? ` Aviso ${availability.legal_notice_version}.` : ""}</p>
+                {unconfirmedRequest ? <MarkinaButton type="button" disabled={busy} onClick={() => { void confirmUpload(); }}>{busy ? "Conferindo envio…" : "Conferir envio"}</MarkinaButton> : null}
+                <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!selectedFile || !consented || busy || !!unconfirmedRequest}>{busy ? "Iniciando busca…" : "Autorizar e procurar fotos"}</MarkinaButton></div>
+              </form>
+            </div>
           </section>
         </div>
       ) : null}
