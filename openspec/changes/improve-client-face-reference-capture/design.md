@@ -6,7 +6,7 @@ Consulte `proposal.md` e as specs desta change. `OpenCvSFaceProvider.observe_byt
 
 ## Goals / Non-Goals
 
-**Goals:** preservar detalhes da referência até detecção/alinhamento; reduzir falhas por rosto pequeno, orientação, pose ou enquadramento; manter upload e tornar obrigatória a captura guiada quando a cliente escolher a câmera; testar a versão em produção pelo fluxo GitHub autorizado sem alterar terceiros.
+**Goals:** preservar detalhes da referência até detecção/alinhamento; reduzir falhas por rosto pequeno, orientação, pose ou enquadramento; manter upload e tornar obrigatória a captura guiada quando a cliente escolher a câmera; abrir a câmera traseira por padrão com alternância frontal/traseira; usar um aceite condicional único para buscas adultas e infantis; tornar falhas de transporte compreensíveis sem duplicar buscas; testar a versão em produção pelo fluxo GitHub autorizado sem alterar terceiros.
 
 **Non-Goals:** substituir SFace, reindexar o catálogo, fazer busca entre galerias, exigir presença da criança, adicionar liveness, adicionar API paga, persistir recortes faciais ou remover o envio de fotos antigas.
 
@@ -26,12 +26,18 @@ Consulte `proposal.md` e as specs desta change. `OpenCvSFaceProvider.observe_byt
 
 7. **Validação conforme preferência do proprietário.** Não executar testes locais. PR e workflow GitHub continuam executando as verificações já configuradas; o proprietário realiza primeiro o smoke funcional com cliente autenticado no servidor de produção após publicação aprovada. Registrar SHA, resultado e métricas sanitizadas no OpenSpec, sem alegar acurácia melhorada sem conjunto rotulado.
 
+8. **Consentimento único e condicional.** O formulário não pergunta idade/categoria do rosto. Um checkbox obrigatório autoriza a busca e o tratamento temporário para qualquer referência; sua cláusula condicional declara que, se a pessoa retratada for menor de 18 anos, quem aceita é pai/mãe/responsável legal. A API armazena `subject_declaration='conditional'`, sem inferir idade nem inventar representação administrativa. Uma migration aditiva amplia a constraint existente, preservando buscas anteriores `adult` e `minor`; a nova revisão somente será aplicada se o preflight confirmar a revisão anterior esperada `20261014_0081`.
+
+9. **Câmera traseira preferida e reversível.** Iniciar `getUserMedia` com `facingMode: { ideal: 'environment' }`; a ação de alternância encerra a trilha ativa e solicita a câmera oposta com `ideal`, preservando captura explícita obrigatória e sem impedir upload antigo.
+
+10. **Falha de transporte sem repetição implícita.** A inspeção somente leitura do servidor não encontrou erro de upstream facial no Nginx; a configuração não registra access logs da rota. O texto `Failed to fetch` provém de rejeição de `fetch` sem resposta HTTP. A UI SHALL substituir essa mensagem por orientação localizada, avisar que o servidor pode não ter confirmado o envio e SHALL NOT reenviar automaticamente. O teste funcional do proprietário após o deploy continua necessário para confirmar se a falha de rede persiste.
+
 ## Limites operacionais e rollback
 
 - A referência mantém o limite configurado de 30 MiB e, por padrão, 25 milhões de pixels (`FACIAL_MAX_REFERENCE_BYTES` e `FACIAL_MAX_REFERENCE_PIXELS`). A imagem é decodificada em memória, orientada por EXIF e não é persistida em claro.
 - A consulta reutiliza `FACIAL_DETECTION_CONFIG_JSON`: uma passagem global, uma multiescala quando a heurística indica dificuldade e até `max_tiles` recortes (padrão 64). Cada entrada é limitada pelos lados configurados e a resolução da passagem global não excede 2 megapixels. Apenas os dois rostos de maior confiança são alinhados/embeddados, suficientes para decidir rosto único versus múltiplos rostos.
 - O lease padrão do job é 120 segundos. O número e tamanho das inferências são limitados por configuração; não há garantia de latência fixa em hardware compartilhado. Métricas existentes de passes e tempo podem orientar ajuste, sem incluir pixels, recortes, embeddings, landmarks ou scores.
-- Não há migration nem reindexação. Rollback é a reversão do código web/API/workers pelo fluxo de publicação aprovado, sem rollback de dados. Nenhuma melhoria quantitativa de acurácia pode ser alegada sem corpus rotulado e revisão de falsos positivos/negativos.
+- Não há reindexação nem reescrita de dados. Uma migration aditiva e restrita amplia a constraint `ck_facial_search_subject_declaration` para aceitar `adult`, `minor` e `conditional`, preservando os registros existentes. O deploy SHALL confirmar a revisão atual `20261014_0081`, aplicar exclusivamente a revisão nova antes de recriar API/worker/web, confirmar a revisão resultante e recusar estado divergente. A reversão do código não exige downgrade; a constraint não pode ser estreitada se já existirem consultas `conditional`. Nenhuma melhoria quantitativa de acurácia pode ser alegada sem corpus rotulado e revisão de falsos positivos/negativos.
 
 ## Risks / Trade-offs
 

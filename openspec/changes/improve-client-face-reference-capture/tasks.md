@@ -10,6 +10,9 @@
 
 - [x] 2.1 Preservar upload de fotos antigas e exigir captura guiada explícita quando a cliente escolher a câmera, exibindo enquadramento e instruções de pose, luz e estabilidade; a validação técnica do servidor deve ocorrer antes da comparação, com orientação de nova tentativa; verificar lint, testes e build executados pelo GitHub CI. Evidência: CI #38815751058 passou frontend (ESLint, Vitest e build), backend pytest e OpenSpec no SHA `9891afb`; captura de câmera segue obrigatoriamente pelo fluxo guiado.
 - [ ] 2.2 Apresentar orientação específica para referência inadequada sem afirmar que a pessoa não existe na galeria; verificar fluxos de upload e câmera no CI e aceite visual do proprietário após publicação, sem teste local. Implementação da orientação para `no_candidates` e regressão de interface adicionadas; CI GitHub #38831676865 passou no SHA `5d2386405e92e9fdaa8dcdb9f115ea61248fe02f`; aceite visual após publicação continua pendente.
+- [ ] 2.3 Trocar a câmera guiada para traseira por padrão e oferecer alternância explícita traseira/frontal, parando a trilha anterior; validar constraints, estados e alternativa de browser no CI sem teste local.
+- [ ] 2.4 Substituir seletor adulto/menor por um único checkbox para qualquer referência, com texto condicional de responsabilidade legal se a pessoa for menor; registrar modalidade `conditional`, exigir consentimento em todos os uploads e preservar consultas históricas. Criar e validar migration aditiva da constraint.
+- [ ] 2.5 Diagnosticar e tratar rejeição de transporte de upload: substituir `Failed to fetch` por orientação em português, sem repetição automática nem risco de duplicar busca; confirmar fluxo em CI e registrar que o smoke autenticado pós-deploy é necessário para concluir causa de rede.
 
 ## 3. Publicação automática protegida pelo GitHub
 

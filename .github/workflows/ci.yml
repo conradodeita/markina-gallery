@@ -266,8 +266,13 @@ jobs:
           done
           [[ "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]] || { echo 'Domínio diverge do inventário aprovado' >&2; exit 1; }
           [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || { echo 'Porta SSH inválida' >&2; exit 1; }
-          if ! git diff --quiet "$GITHUB_SHA^" "$GITHUB_SHA" -- docker/ backend/migrations/; then
-            echo 'A mudança inclui Compose/Docker ou migration e exige plano separado' >&2
+          if ! git diff --quiet "$GITHUB_SHA^" "$GITHUB_SHA" -- docker/; then
+            echo 'A mudança inclui Compose/Docker e exige plano separado' >&2
+            exit 1
+          fi
+          migration_paths="$(git diff --name-only "$GITHUB_SHA^" "$GITHUB_SHA" -- backend/migrations/)"
+          if [[ -n "$migration_paths" && "$migration_paths" != 'backend/migrations/versions/20261016_0082_facial_conditional_consent.py' ]]; then
+            echo 'A mudança inclui migration fora do escopo aprovado' >&2
             exit 1
           fi
       - name: Inventário remoto somente leitura

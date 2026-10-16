@@ -31,13 +31,19 @@
     "authorized": true,
     "scope": "existing_facial_runtime",
     "baseline_sha": "d9c8d3b118fc367af26cfa2b47772d7bff1ccd47",
-    "evidence": "Autorização do proprietário para corrigir e publicar a busca já ativa, reiterada em 2026-10-16 ao esclarecer que pendências de base legal/consentimento/corpus não impedem a implementação no servidor. Preservar estado, configuração, acesso, modelo, índice, limiar, consentimento e retenção; exigir CI, inventário e aprovação protegida.",
+    "evidence": "Autorização do proprietário para corrigir e publicar a busca já ativa, reiterada em 2026-10-16. Preservar estado, configuração, acesso, modelo, índice, limiar e retenção. A change registra o novo consentimento condicional sem inferir idade; aplica somente a migration aditiva 20261016_0082 se o preflight confirmar 20261014_0081. Exigir CI, inventário, fingerprint e aprovação protegida; gates de primeira ativação permanecem independentes.",
     "runtime_blobs": {
+      "backend/app/auth.py": "258da61ff5b19383cb771378f082ed102d76a0b6",
+      "backend/app/facial/config.py": "bc88fbd482d52f8adedce978075e31f95f35a4be",
       "backend/app/facial/provider.py": "705592a94ce36e51bced6f80852c7af072be8af8",
       "backend/app/facial/reference.py": "8f0bf31007ee6ca3bd31a9c06b5add6973296ff6",
-      "backend/app/facial/search_worker.py": "3cd9b89615b7ba394aa54cad3af4852e3400fd60",
+      "backend/app/facial/search.py": "0e93367e3c5b1ee4742555f4b7458f260d4ebb50",
+      "backend/app/facial/search_worker.py": "f31bc44d766e5d9ceb48007bc0d7f1aea7d2b2f9",
+      "backend/app/main.py": "7e3a784acf577309dd046f059ebf8697476ebc7e",
+      "backend/migrations/versions/20261016_0082_facial_conditional_consent.py": "084f69d7ed4a69cd2c20cd5669407ca68ef09c70",
       "frontend/app/globals.css": "6ec2bc9946c710bdebc5f5089bf2a1f94d5d6518",
-      "frontend/app/public-galleries/facial-search-panel.tsx": "96dc64440346553a4a98454fc1697cf05344771f"
+      "frontend/app/facial-search-client.ts": "7c05798b206136c912460d92ade2a384773c54ea",
+      "frontend/app/public-galleries/facial-search-panel.tsx": "77526b5e1f2e85ef9551721ed781a7d240de7aa1"
     }
   }
 }

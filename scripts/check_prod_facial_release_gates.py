@@ -13,10 +13,16 @@ from pathlib import Path
 
 
 RUNTIME_FILES = (
+    "backend/app/auth.py",
+    "backend/app/facial/config.py",
     "backend/app/facial/provider.py",
     "backend/app/facial/reference.py",
+    "backend/app/facial/search.py",
     "backend/app/facial/search_worker.py",
+    "backend/app/main.py",
+    "backend/migrations/versions/20261016_0082_facial_conditional_consent.py",
     "frontend/app/globals.css",
+    "frontend/app/facial-search-client.ts",
     "frontend/app/public-galleries/facial-search-panel.tsx",
 )
 OPERATIONS_FILES = {
@@ -30,7 +36,10 @@ OPERATIONS_FILES = {
     "scripts/test_prod_facial_release_gates.py",
     "backend/tests/test_facial_integration.py",
     "backend/tests/test_facial_provider.py",
+    "backend/tests/test_facial_conditional_consent_migration.py",
+    "backend/tests/test_facial_search.py",
     "backend/tests/test_facial_search_worker.py",
+    "frontend/app/facial-search-client.test.ts",
     "frontend/app/public-galleries/facial-search-panel.test.tsx",
 }
 

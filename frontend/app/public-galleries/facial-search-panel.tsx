@@ -39,10 +39,11 @@ export function FacialSearchPanel({
   const [dialogOpen, setDialogOpen] = useState(false);
   const showDialog = dialogOpen;
   const [consented, setConsented] = useState(false);
-  const [subjectDeclaration, setSubjectDeclaration] = useState<"adult" | "minor" | "">("");
+  const subjectDeclaration: "conditional" = "conditional";
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState<"environment" | "user">("environment");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const libraryInput = useRef<HTMLInputElement>(null);
@@ -72,7 +73,6 @@ export function FacialSearchPanel({
     stopCamera();
     setDialogOpen(false);
     setConsented(false);
-    setSubjectDeclaration("");
     setSelectedFile(null);
     if (libraryInput.current) libraryInput.current.value = "";
   }
@@ -98,7 +98,7 @@ export function FacialSearchPanel({
     if (otherInput) otherInput.value = "";
   }
 
-  async function startGuidedCamera() {
+  async function startGuidedCamera(facing: "environment" | "user" = "environment") {
     setError("");
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("Este navegador não permite abrir a câmera aqui. Escolha uma foto do dispositivo.");
@@ -109,13 +109,14 @@ export function FacialSearchPanel({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } },
+        video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 1280 } },
       });
       if (attempt !== cameraAttempt.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
       cameraStream.current = stream;
+      setCameraFacing(facing);
       setCameraActive(true);
     } catch {
       if (attempt === cameraAttempt.current) {
@@ -260,8 +261,7 @@ export function FacialSearchPanel({
       setError("Escolha uma foto JPEG nítida com apenas um rosto.");
       return;
     }
-    if (!consented || !availability?.consent_version || !subjectDeclaration) return;
-    if (subjectDeclaration === "minor" && !availability.minor_search_available) return;
+    if (!consented || !availability?.consent_version) return;
     setBusy(true);
     setError("");
     const version = contextVersion.current;
@@ -285,7 +285,10 @@ export function FacialSearchPanel({
       const retry = cause instanceof FacialApiError && cause.retryAfterSeconds
         ? ` Tente novamente em ${cause.retryAfterSeconds} segundos.`
         : "";
-      setError(`${cause instanceof Error ? cause.message : "Não foi possível iniciar a busca."}${retry}`);
+      const message = cause instanceof FacialApiError
+        ? cause.message
+        : "Não foi possível confirmar o envio da foto. Verifique sua conexão e confira se a busca apareceu antes de tentar novamente.";
+      setError(`${message}${retry}`);
     } finally {
       setBusy(false);
     }
@@ -392,20 +395,16 @@ export function FacialSearchPanel({
                   <p>Posicione o rosto dentro do contorno. Olhe para a câmera, procure uma luz de frente e mantenha o celular firme. A análise verificará a qualidade antes de comparar com a galeria.</p>
                   <div className="facial-reference-actions">
                     <MarkinaButton type="button" disabled={busy} onClick={() => { void captureGuidedPhoto(); }}>Capturar rosto</MarkinaButton>
+                    <MarkinaButton type="button" variant="secondary" disabled={busy || cameraStarting} onClick={() => { const next = cameraFacing === "environment" ? "user" : "environment"; stopCamera(); void startGuidedCamera(next); }}>{cameraFacing === "environment" ? "Usar câmera frontal" : "Usar câmera traseira"}</MarkinaButton>
                     <MarkinaButton type="button" variant="secondary" onClick={stopCamera}>Cancelar câmera</MarkinaButton>
                   </div>
                 </div> : null}
                 {selectedFile ? <p className="facial-reference-selected" role="status">Foto selecionada e pronta para envio.</p> : null}
                 {error ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
               </section>
-              <fieldset className="facial-consent-step facial-consent-subject">
-                <legend><span aria-hidden="true">2</span> Quem aparece na foto?</legend>
-                <label className="gallery-toggle"><input type="radio" name="facial-subject" value="adult" checked={subjectDeclaration === "adult"} onChange={() => { setSubjectDeclaration("adult"); setConsented(false); }} required /> Pessoa adulta</label>
-                <label className="gallery-toggle"><input type="radio" name="facial-subject" value="minor" checked={subjectDeclaration === "minor"} disabled={!availability.minor_search_available} onChange={() => { setSubjectDeclaration("minor"); setConsented(false); }} required /> Criança ou adolescente</label>
-              </fieldset>
-              <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> {subjectDeclaration === "minor" ? "Sou pai, mãe ou responsável legal e autorizo a busca de fotos desta criança ou adolescente nesta galeria." : "Autorizo, de forma livre, informada e específica, o tratamento temporário desta foto e dos dados biométricos extraídos exclusivamente para procurar possíveis correspondências nesta galeria. Li e compreendi as informações acima."}</label>
-              <p className="field-hint">A busca é opcional. Você pode cancelar ou continuar procurando e selecionando as fotos manualmente.{availability.legal_notice_version ? ` Aviso ${availability.legal_notice_version}.` : ""}{!availability.minor_search_available ? " A busca de criança ainda não está disponível neste ambiente." : ""}</p>
-              <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!selectedFile || !consented || !subjectDeclaration || (subjectDeclaration === "minor" && !availability.minor_search_available) || busy}>{busy ? "Iniciando busca…" : "Autorizar e procurar fotos"}</MarkinaButton></div>
+              <label className="gallery-toggle facial-consent-check"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required /> Se a pessoa retratada for criança ou adolescente menor de 18 anos, declaro ser seu pai, sua mãe ou seu responsável legal. Autorizo, de forma livre, informada e específica, a busca de fotos dessa pessoa nesta galeria e o tratamento temporário da foto enviada e dos dados biométricos extraídos exclusivamente para procurar possíveis correspondências nesta galeria. Li e compreendi as informações acima.</label>
+              <p className="field-hint">A busca é opcional. Você pode cancelar ou continuar procurando e selecionando as fotos manualmente.{availability.legal_notice_version ? ` Aviso ${availability.legal_notice_version}.` : ""}</p>
+              <div className="mk-dialog__actions facial-consent-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={closeDialog}>Cancelar</MarkinaButton><MarkinaButton disabled={!selectedFile || !consented || busy}>{busy ? "Iniciando busca…" : "Autorizar e procurar fotos"}</MarkinaButton></div>
             </form>
           </section>
         </div>

@@ -20,6 +20,8 @@ readonly COMPOSE_EXTRA_FILES=(
 )
 readonly SERVICES=(web api face-search-worker)
 readonly MAINTENANCE_BASELINE_SHA="d9c8d3b118fc367af26cfa2b47772d7bff1ccd47"
+readonly EXPECTED_DATABASE_REVISION="20261014_0081"
+readonly TARGET_DATABASE_REVISION="20261016_0082"
 
 MODE=""
 TARGET_SHA=""
@@ -30,6 +32,7 @@ ACTIVE_SHA=""
 CHECKOUT_SHA=""
 INVENTORY_FINGERPRINT=""
 COMPOSE_APP_VERSION=""
+DATABASE_REVISION=""
 
 fail() { echo "deploy-prod-facial-services: $*" >&2; exit 1; }
 
@@ -62,6 +65,17 @@ resolved_compose_hashes() {
     | docker compose -p "$PROJECT_NAME" -f - --profile facial --profile preview-adjustment \
       config --no-interpolate --hash web,api,face-search-worker 2>/dev/null \
     || fail "não foi possível calcular hashes da configuração resolvida"
+}
+
+database_revision() {
+  local output revisions count
+  output="$(compose exec -T api python -m alembic current 2>/dev/null)" \
+    || fail "não foi possível consultar a revisão do banco"
+  revisions="$(sed -nE 's/^([0-9]{8}_[0-9]{4})( .*)?$/\1/p' <<<"$output")"
+  count="$(wc -l <<<"$revisions" | tr -d ' ')"
+  [[ "$count" == "1" && "$revisions" =~ ^[0-9]{8}_[0-9]{4}$ ]] \
+    || fail "banco sem revisão única ou com múltiplas cabeças"
+  printf '%s\n' "$revisions"
 }
 
 require_existing_facial_runtime() {
@@ -98,7 +112,11 @@ verify_repository() {
   else
     git fetch --quiet origin main
     git merge-base --is-ancestor "$TARGET_SHA" origin/main || fail "SHA alvo não pertence à main atual"
-    git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ backend/migrations/ || fail "alteração de Compose/Docker ou migration exige outro plano"
+    git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ || fail "alteração de Compose/Docker exige outro plano"
+    local migration_paths
+    migration_paths="$(git diff --name-only "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/)"
+    [[ -z "$migration_paths" || "$migration_paths" == "backend/migrations/versions/20261016_0082_facial_conditional_consent.py" ]] \
+      || fail "migration fora do escopo aprovado"
   fi
   ACTIVE_SHA="$CHECKOUT_SHA"
   local api_id api_version
@@ -109,6 +127,9 @@ verify_repository() {
   [[ "$api_version" =~ ^[0-9a-f]{40}$ && "$api_version" == "$CHECKOUT_SHA" ]] \
     || fail "metadado de versão da API diverge do checkout"
   COMPOSE_APP_VERSION="$api_version"
+  DATABASE_REVISION="$(database_revision)"
+  [[ "$MODE" != "release" || "$DATABASE_REVISION" == "$EXPECTED_DATABASE_REVISION" ]] \
+    || fail "revisão do banco diverge do preflight aprovado"
 }
 
 runtime_snapshot() {
@@ -146,7 +167,7 @@ runtime_snapshot() {
 }
 
 fingerprint() {
-  { printf '%s\n' "inventory" "$TARGET_SHA" "$ACTIVE_SHA" "$CHECKOUT_SHA" "$EXPECTED_URL"; runtime_snapshot; } | sha256sum | awk '{print $1}'
+  { printf '%s\n' "inventory" "$TARGET_SHA" "$ACTIVE_SHA" "$CHECKOUT_SHA" "$EXPECTED_URL" "database_revision=$DATABASE_REVISION"; runtime_snapshot; } | sha256sum | awk '{print $1}'
 }
 
 inventory() {
@@ -155,6 +176,7 @@ inventory() {
   echo "Inventário somente leitura Pick-your-Pic"
   echo "host=$(hostname) projeto=$PROJECT_NAME domínio=$EXPECTED_URL bind_nginx=verificado_por_container"
   echo "checkout_sha=$CHECKOUT_SHA target_sha=$TARGET_SHA"
+  printf 'database_revision=%s target_database_revision=%s\n' "$DATABASE_REVISION" "$TARGET_DATABASE_REVISION"
   runtime_snapshot
   printf 'capacidade_host='
   awk '/MemTotal|MemAvailable/ {printf "%s=%s%s ", $1, $2, $3} END {print ""}' /proc/meminfo
@@ -164,7 +186,7 @@ inventory() {
   local fp
   fp="$(fingerprint)"
   printf 'approval_fingerprint=%s\n' "$fp"
-  echo "impacto=web,api,face-search-worker; sem migration; pode haver breve indisponibilidade e atraso de fila"
+  echo "impacto=web,api,face-search-worker; migration aditiva facial 20261014_0081 -> 20261016_0082; pode haver breve indisponibilidade e atraso de fila"
   echo "rollback=tags de imagem e SHA anterior preservados; restaurar somente os três serviços após novo inventário/aprovação"
   echo "nenhum comando de mutação foi executado"
 }
@@ -193,6 +215,16 @@ release() {
   # desde o inventário aprovado, mantendo a versão ativa na comparação.
   current_fp="$(COMPOSE_APP_VERSION="$ACTIVE_SHA" fingerprint)"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário mudou durante o build; serviços preservados"
+  [[ "$(COMPOSE_APP_VERSION="$ACTIVE_SHA" database_revision)" == "$EXPECTED_DATABASE_REVISION" ]] \
+    || fail "revisão do banco mudou após inventário; migration não aplicada"
+  compose run --rm --no-deps api python -m alembic upgrade "$TARGET_DATABASE_REVISION"
+  local migrated_revision migration_output migration_revisions
+  migration_output="$(compose run --rm --no-deps api python -m alembic current 2>/dev/null)" \
+    || fail "não foi possível confirmar revisão após migration"
+  migration_revisions="$(sed -nE 's/^([0-9]{8}_[0-9]{4})( .*)?$/\1/p' <<<"$migration_output")"
+  [[ "$(wc -l <<<"$migration_revisions" | tr -d ' ')" == "1" ]] || fail "migration deixou revisões ambíguas"
+  migrated_revision="$migration_revisions"
+  [[ "$migrated_revision" == "$TARGET_DATABASE_REVISION" ]] || fail "migration aprovada não foi confirmada"
   compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
   runtime_snapshot
   compose exec -T nginx nginx -t || fail "configuração do nginx Markina inválida"

@@ -10586,7 +10586,7 @@ class FaceRegionSearchInput(BaseModel):
     face_region_id: UUID
     # Compatibilidade de transporte; não são registrados como novo consentimento.
     consent_version: str | None = Field(default=None, max_length=120)
-    subject_declaration: Literal["adult", "minor"] | None = None
+    subject_declaration: Literal["adult", "minor", "conditional"] | None = None
     representation_reference: str | None = Field(default=None, max_length=200)
 
 

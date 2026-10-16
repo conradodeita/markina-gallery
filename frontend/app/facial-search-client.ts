@@ -103,7 +103,7 @@ export const facialSearchApi = {
     galleryId: string,
     file: File,
     consentVersion: string,
-    subjectDeclaration: "adult" | "minor",
+    subjectDeclaration: "conditional",
     representationReference?: string,
   ) => jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches`, {
     method: "POST",
