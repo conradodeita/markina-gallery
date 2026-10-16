@@ -56,6 +56,8 @@ CI #38928288870 no SHA `654892a`: OpenSpec, Gitleaks, política, frontend e runt
 
 CI focado #38932996708 no SHA `703b9a1` revelou em 47s que a falha ocorria porque a fixture atravessava a revisão `20260930_0070`, explicitamente incompatível com SQLite e exigente de PostgreSQL. O teste foi corrigido para criar base PostgreSQL descartável isolada, aplicar desde `20261014_0081`, preservar recibos `adult`/`minor` e validar a constraint com `conditional`. A suíte longa só inicia após esse teste focado. Correção submetida à próxima execução remota; nenhum teste local foi executado.
 
+CI focado #38933365069 no SHA `9ccc69d` confirmou a execução da migration em PostgreSQL, mas a inserção do fixture falhou porque não associava `tenant_id` às linhas sintéticas. A fixture passa a obter o tenant criado no banco temporário e atribuí-lo à galeria, cliente, política e recibos. A migration de produção não foi executada; nenhum teste local foi executado.
+
 ## Evidências de CI
 
 - [ ] 3.2d Corrigir o cálculo dos hashes para usar configuração resolvida em memória e APP_VERSION ativo/alvo; corrigir releitura de hash pós-release, espera limitada e reload exclusivo do nginx Markina; validar cenários de igualdade/divergência e pós-condições no CI, sem testes locais. Diagnóstico remoto somente leitura em 2026-10-16 confirmou correspondência resolvida e saúde dos três serviços; o drift antes registrado foi refutado. Blob fixado já atualizado no wrapper root-owned e hash conferido; repetir preflight automático completo antes de marcar concluída.

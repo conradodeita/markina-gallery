@@ -10,7 +10,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy import create_engine, inspect, text
 
-from app.auth import Client, FacialSearchRequest, GalleryFacialPolicy, ParentGallery, now
+from app.auth import Client, FacialSearchRequest, GalleryFacialPolicy, ParentGallery, Tenant, now
 from tests.tenant_fixtures import insert_legacy_model
 
 
@@ -45,18 +45,24 @@ def test_conditional_consent_migration_preserves_existing_declarations():
         migrate("20261014_0081")
         migration_engine = create_engine(migration_url)
         with migration_engine.begin() as connection:
-            gallery_id = insert_legacy_model(connection, ParentGallery, name="Galeria sintética")
+            tenant_id = connection.scalar(sa.select(Tenant.id))
+            assert tenant_id is not None
+            gallery_id = insert_legacy_model(
+                connection, ParentGallery, tenant_id=tenant_id, name="Galeria sintética",
+            )
             client_id = insert_legacy_model(
-                connection, Client, full_name="Cliente sintético", phone_e164="+5511999999900",
+                connection, Client, tenant_id=tenant_id,
+                full_name="Cliente sintético", phone_e164="+5511999999900",
             )
             policy_id = insert_legacy_model(
-                connection, GalleryFacialPolicy, parent_gallery_id=gallery_id,
+                connection, GalleryFacialPolicy, tenant_id=tenant_id, parent_gallery_id=gallery_id,
                 model_version="synthetic-v1", quality_version="synthetic-v1",
             )
             for declaration in ("adult", "minor"):
                 insert_legacy_model(
                     connection,
                     FacialSearchRequest,
+                    tenant_id=tenant_id,
                     parent_gallery_id=gallery_id,
                     client_id=client_id,
                     policy_id=policy_id,
