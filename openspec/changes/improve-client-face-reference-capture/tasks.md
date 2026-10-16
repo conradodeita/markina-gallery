@@ -60,7 +60,7 @@ CI focado #38933365069 no SHA `9ccc69d` confirmou a execução da migration em P
 
 CI #38933642631 no SHA `dd41674` passou completamente (backend: 1.632 passaram, 23 ignorados; frontend, Gemma, OpenSpec, Gitleaks e política também verdes). A PR #196 foi integrada como `337483c`. O preflight somente de leitura falhou fechado em `verify_repository`: o gate esperava baseline `d9c8d3b`, mas a conferência remota confirmou checkout e `APP_VERSION` da API em `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`; API e worker mantêm `FACIAL_PROCESSING_ENABLED=true`. Nenhuma mutação de aplicação ocorreu. O baseline autorizado foi atualizado para a revisão remota confirmada; repetir o fluxo CI e preflight após revisão.
 
-O primeiro CI da atualização de baseline identificou que `scripts/deploy-prod-facial-services.sh` ainda fixava `d9c8d3b`; manifesto e constante precisam coincidir. A constante foi alinhada ao checkout verificado `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`. Nenhum código dos serviços ou blob de runtime foi alterado; a validação CI será repetida.
+O primeiro CI da atualização de baseline identificou que `scripts/deploy-prod-facial-services.sh` ainda fixava `d9c8d3b`; manifesto e constante precisam coincidir. A constante foi alinhada ao checkout verificado `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`. O CI seguinte detectou que o hash pinado no wrapper havia sido calculado sobre a cópia Windows com finais de linha CRLF, enquanto o gate compara o blob Git normalizado; o wrapper agora fixa o blob commitado `2c4b8be16991d5ee5e4c87cee8d88f006445eac3`. Nenhum código dos serviços ou blob de runtime foi alterado; a validação CI será repetida.
 
 ## Evidências de CI
 
