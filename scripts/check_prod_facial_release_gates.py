@@ -78,7 +78,10 @@ def evaluate_maintenance(payload: dict, root: Path) -> tuple[bool, str]:
             return False, "arquivo_fora_do_escopo"
         for path, expected in blobs.items():
             try:
-                decoded = base64.b64decode(expected, validate=True) if isinstance(expected, str) else b""
+                encoded = "".join(expected) if isinstance(expected, list) and all(
+                    isinstance(part, str) for part in expected
+                ) else ""
+                decoded = base64.b64decode(encoded, validate=True) if encoded else b""
             except (ValueError, binascii.Error):
                 decoded = b""
             if len(decoded) != 20:

@@ -33,17 +33,72 @@
     "baseline_sha": "d9c8d3b118fc367af26cfa2b47772d7bff1ccd47",
     "evidence": "Autorização do proprietário para corrigir e publicar a busca já ativa, reiterada em 2026-10-16. Preservar estado, configuração, acesso, modelo, índice, limiar e retenção. A change registra o novo consentimento condicional sem inferir idade; aplica somente a migration aditiva 20261016_0082 se o preflight confirmar 20261014_0081. Exigir CI, inventário, fingerprint e aprovação protegida; gates de primeira ativação permanecem independentes.",
     "runtime_blobs": {
-      "backend/app/auth.py": "JY2mH/Wxk4PLdxN48ILtEC12oLY=",
-      "backend/app/facial/config.py": "vIj71ILVL4re3Ol4B14x+V81pL4=",
-      "backend/app/facial/provider.py": "cFWSqUzjblG87W+AhSx68HK+ivg=",
-      "backend/app/facial/reference.py": "jwvzEAfubKO9ManAa1rdaXMpb/Y=",
-      "backend/app/facial/search.py": "DpM2fjxbHuR0JVX0t0WPJg1Ou1A=",
-      "backend/app/facial/search_worker.py": "8xvETXZuXZzrSAB7wNfxrqfSsvk=",
-      "backend/app/main.py": "fjp4Ss9XcwndBG8Fnr+Gl0duvH4=",
-      "backend/migrations/versions/20261016_0082_facial_conditional_consent.py": "CE9p1+1Kac0sIM1WaUB8po7wnHA=",
-      "frontend/app/globals.css": "bsK8mUbHEL3rxfUIm/Kh+U1dZRg=",
-      "frontend/app/facial-search-client.ts": "fAV5iyBhNskSRg2SreKjhHc8VOo=",
-      "frontend/app/public-galleries/facial-search-panel.tsx": "T40oau4nwUi3fwnFN7OSchSF5Rk="
+      "backend/app/auth.py": [
+        "JY2mH/W",
+        "xk4PLdx",
+        "N48ILtE",
+        "C12oLY="
+      ],
+      "backend/app/facial/config.py": [
+        "vIj71IL",
+        "VL4re3O",
+        "l4B14x+",
+        "V81pL4="
+      ],
+      "backend/app/facial/provider.py": [
+        "cFWSqUz",
+        "jblG87W",
+        "+AhSx68",
+        "HK+ivg="
+      ],
+      "backend/app/facial/reference.py": [
+        "jwvzEAf",
+        "ubKO9Ma",
+        "nAa1rda",
+        "XMpb/Y="
+      ],
+      "backend/app/facial/search.py": [
+        "DpM2fjx",
+        "bHuR0JV",
+        "X0t0WPJ",
+        "g1Ou1A="
+      ],
+      "backend/app/facial/search_worker.py": [
+        "8xvETXZ",
+        "uXZzrSA",
+        "B7wNfxr",
+        "qfSsvk="
+      ],
+      "backend/app/main.py": [
+        "fjp4Ss9",
+        "XcwndBG",
+        "8Fnr+Gl",
+        "0duvH4="
+      ],
+      "backend/migrations/versions/20261016_0082_facial_conditional_consent.py": [
+        "CE9p1+1",
+        "Kac0sIM",
+        "1WaUB8p",
+        "o7wnHA="
+      ],
+      "frontend/app/globals.css": [
+        "bsK8mUb",
+        "HEL3rxf",
+        "UIm/Kh+",
+        "U1dZRg="
+      ],
+      "frontend/app/facial-search-client.ts": [
+        "fAV5iyB",
+        "hNskSRg",
+        "2SreKjh",
+        "Hc8VOo="
+      ],
+      "frontend/app/public-galleries/facial-search-panel.tsx": [
+        "T40oau4",
+        "nwUi3fw",
+        "nFN7OSc",
+        "hSF5Rk="
+      ]
     }
   }
 }

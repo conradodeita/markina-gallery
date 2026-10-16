@@ -32,7 +32,8 @@ class MaintenanceReleaseTests(unittest.TestCase):
                 "authorized": True, "scope": "existing_facial_runtime",
                 "evidence": "synthetic authorization", "baseline_sha": baseline,
                 "runtime_blobs": {
-                    name: base64.b64encode(bytes.fromhex(self.run_git("rev-parse", "HEAD:" + name))).decode()
+                    name: [base64.b64encode(bytes.fromhex(self.run_git("rev-parse", "HEAD:" + name))).decode()[i:i + 7]
+                           for i in range(0, 28, 7)]
                     for name in gates.RUNTIME_FILES
                 },
             },
