@@ -52,6 +52,12 @@ O Compose 2.35.1 do host calcula `config --hash` sem resolver o `env_file` adici
 
 O preflight SHALL calcular hashes da configuração resolvida sem imprimir ou gravar seu conteúdo. A variável de processo `APP_VERSION` SHALL reproduzir o metadado da API ativa, validado contra o checkout; o release usa o SHA alvo sem editar `.env`. A igualdade de hashes continua obrigatória. Após recriar somente web/API/face-search-worker, o script SHALL esperar saúde por até 120 segundos, reler IDs/hashes/saúde e validar/recarregar exclusivamente o nginx Markina para renovar os upstreams, antes do smoke HTTPS. Não haverá rollback automático de dados nem alteração de proxy compartilhado. O wrapper root-owned SHALL fixar o novo blob revisado antes do próximo preflight.
 
+### Escopo operacional esclarecido pelo proprietário — 2026-10-16
+
+O proprietário determinou que a pendência dos registros de base legal, consentimento e corpus não deve impedir a implementação/entrega desta melhoria no servidor. Esta entrega é manutenção corretiva do recurso que já está ativo em `d9c8d3b118fc367af26cfa2b47772d7bff1ccd47`, sem primeira ativação, expansão de acesso, alteração de consentimento, limiar, modelo, índice ou retenção. A interpretação anterior que exigia todos os gates de primeira ativação para qualquer entrega de código fica substituída exclusivamente nesse escopo.
+
+O workflow SHALL avaliar separadamente a autorização de manutenção e os gates de ativação. A manutenção exige baseline exato no host, flag já verdadeira em API/worker, configuração efetiva preservada, arquivos de runtime restritos à referência/captura e blobs revisados fixados no manifesto versionado, além de CI, inventário/fingerprint e aprovação protegida de produção. Arquivo de runtime não permitido ou blob divergente SHALL bloquear. O checkout do runner precisa do histórico para comparar baseline/candidata. O script de release SHALL NOT ligar flag, criar rollout, aumentar allowlist, mudar dados, modelos, limiar, consentimento ou retenção. Os gates jurídicos/calibração/capacidade/recuperação permanecem pendentes para primeira ativação/expansão; não serão marcados aprovados para liberar a manutenção.
+
 ## Decisão aprovada pelo proprietário — fluxo de entrega sem aprovações repetidas
 
 Esta decisão detalha e substitui qualquer interpretação anterior que exija aprovação humana para cada push ou para o preflight somente-leitura:

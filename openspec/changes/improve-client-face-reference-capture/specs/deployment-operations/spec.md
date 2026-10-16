@@ -2,6 +2,17 @@
 
 ## ADDED Requirements
 
+### Requirement: Manutenção de captura é distinta da primeira ativação
+A entrega autorizada da captura SHALL atualizar somente o runtime já ativo no baseline `d9c8d3b118fc367af26cfa2b47772d7bff1ccd47`. O workflow SHALL conferir autorização versionada, baseline, escopo e blobs revisados, CI, inventário e aprovação protegida de produção. A manutenção SHALL NOT aprovar gates de primeira ativação ou expansão.
+
+#### Scenario: Atualização corretiva de recurso existente
+- **WHEN** o proprietário autoriza a atualização e todos os contratos de manutenção são conferidos
+- **THEN** a pendência documental dos gates de primeira ativação não bloqueia a entrega; configuração, flag ativa, acesso, modelo, índice, limiar, consentimento e retenção permanecem preservados e o job mutável aguarda a aprovação protegida
+
+#### Scenario: Estado ou escopo exige primeira ativação
+- **WHEN** a flag atual está desligada, o baseline diverge ou há alteração fora dos arquivos/blobs autorizados
+- **THEN** a manutenção é recusada, sem ativar recurso nem substituir as aprovações necessárias à expansão
+
 ### Requirement: Job de produção é disparado automaticamente após CI
 Um workflow SHALL iniciar automaticamente a publicação do SHA aprovado para `main` após CI e validações obrigatórias concluírem com sucesso. O job SHALL aguardar aprovação do ambiente protegido e SHALL repetir inventário de produção, conferir o SHA e limitar mutações aos serviços Pick-your-Pic explicitamente incluídos no plano aprovado.
 

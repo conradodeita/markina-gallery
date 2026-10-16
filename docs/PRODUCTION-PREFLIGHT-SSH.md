@@ -37,8 +37,10 @@ O preflight não reutiliza nem modifica a chave ou os secrets de deploy. A aprov
 
 ## Correção do diagnóstico de hash — 2026-10-16
 
+O fluxo foi esclarecido pelo proprietário: esta entrega corrige um runtime já ativo, sem primeira ativação ou ampliação de escopo. O preflight avalia a autorização de manutenção por baseline, arquivos/blobs revisados e flag já ativa, separadamente dos gates documentais de ativação/expansão. Inventário, CI e aprovação protegida continuam necessários. Os registros jurídicos/calibração pendentes não são marcados aprovados para liberar código de manutenção.
+
 A conclusão anterior de divergência real foi refutada. Compose 2.35.1 omite a resolução do `env_file` no hash direto, comportamento já registrado em `RELEASE-PAYMENT-STATUS-API-WEB.md`. Com o JSON resolvido somente em memória, `--no-interpolate` e `APP_VERSION` da API ativa, os hashes dos três serviços correspondem aos labels. Não é necessário recriar containers para corrigir essa falsa divergência.
 
 O script corrigido completou inventário remoto somente leitura, saúde dos três serviços, bind exclusivo `127.0.0.1:8080`, HTTPS 200 e fingerprint `141aa2f1f90286bc915ec6a5eed6b94b71e8a91f819846840901341bdf5987ec`, com alvo `57bbc7c`. A correção também relê hashes após a troca, aguarda saúde por até 120 segundos e valida/recarrega exclusivamente o nginx Markina antes do smoke. CI e instalação do novo blob fixado no wrapper devem preceder o próximo preflight automático. Isso não aprova os gates jurídicos, do corpus, capacidade ou restauração.
 
-O wrapper foi atualizado no host para fixar o blob `40e56f0aa22b18af931a6516cae7d3881a6ae616`; proprietário/modo conferidos `root:root 0755`, SHA-256 `9d44f17c5c20802f46e7d846ccc1ca519a2dcde921957dd6b2619214b66b5d5f`. A chave dedicada continuou recusando `whoami`. A execução automática positiva aguarda merge da correção; não houve reinício de serviço nem mudança de credencial.
+O wrapper foi atualizado no host para fixar o blob `b7d97991ec6e4b8eb3e7f44c0794dfef33327328`; proprietário/modo conferidos `root:root 0755`, SHA-256 `4515740d74259ebbcc602501512a04cd4ecb70d10cacb8de7640411312b4f267`. A chave dedicada continuou recusando `whoami`. A execução automática positiva aguarda merge da correção; não houve reinício de serviço nem mudança de credencial.

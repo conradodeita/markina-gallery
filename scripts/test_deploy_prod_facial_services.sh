@@ -10,6 +10,7 @@ readonly WORKER_HASH="$(printf 'c%.0s' {1..64})"
 readonly SYNTHETIC_CONFIG='{"services":{"api":{"environment":{"TOKEN":"synthetic-sensitive-$literal"}}}}'
 BAD_SERVICE=""
 UNHEALTHY_SERVICE=""
+FACIAL_RUNTIME=true
 
 compose() {
   case "$*" in
@@ -35,6 +36,7 @@ docker() {
   [[ "$1" == inspect && "$2" == --format ]] || return 1
   local format="$3" service="$4"
   case "$format" in
+    '{{json .Config.Env}}') printf '["FACIAL_PROCESSING_ENABLED=%s"]\n' "$FACIAL_RUNTIME" ;;
     *com.docker.compose.project.config_files*) echo "$COMPOSE_FILE_LABEL" ;;
     *com.docker.compose.project.working_dir*) echo /opt/markina-gallery/docker ;;
     *com.docker.compose.project*) echo markina-gallery ;;
@@ -70,5 +72,9 @@ if ( UNHEALTHY_SERVICE=api; runtime_snapshot ) >"$output" 2>&1; then
   echo 'serviço sem saúde não foi recusado' >&2; exit 1
 fi
 grep -q 'container api não está saudável' "$output"
+if ( FACIAL_RUNTIME=false; runtime_snapshot ) >"$output" 2>&1; then
+  echo 'manutenção não pode ativar runtime desligado' >&2; exit 1
+fi
+grep -q 'manutenção exige runtime facial já ativo' "$output"
 if grep -q 'synthetic-sensitive' "$output"; then echo 'configuração vazou no erro' >&2; exit 1; fi
 echo 'production resolved inventory: ok'

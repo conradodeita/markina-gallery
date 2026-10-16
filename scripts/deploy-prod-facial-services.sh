@@ -19,6 +19,7 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(web api face-search-worker)
+readonly MAINTENANCE_BASELINE_SHA="d9c8d3b118fc367af26cfa2b47772d7bff1ccd47"
 
 MODE=""
 TARGET_SHA=""
@@ -63,6 +64,17 @@ resolved_compose_hashes() {
     || fail "não foi possível calcular hashes da configuração resolvida"
 }
 
+require_existing_facial_runtime() {
+  local service id
+  for service in api face-search-worker; do
+    id="$(compose ps -q "$service")"
+    [[ -n "$id" && "$(wc -l <<<"$id" | tr -d ' ')" == "1" ]] || fail "runtime ativo de $service ausente"
+    docker inspect --format '{{json .Config.Env}}' "$id" \
+      | python3 -c 'import json,sys; values=json.load(sys.stdin); sys.exit(0 if "FACIAL_PROCESSING_ENABLED=true" in values else 1)' \
+      || fail "manutenção exige runtime facial já ativo em $service"
+  done
+}
+
 verify_repository() {
   local origin
   [[ "$(hostname)" == "$EXPECTED_HOST" ]] || fail "host diverge do alvo aprovado"
@@ -78,6 +90,7 @@ verify_repository() {
     *) fail "origin Git diverge do repositório esperado" ;;
   esac
   CHECKOUT_SHA="$(git rev-parse HEAD)"
+  [[ "$CHECKOUT_SHA" == "$MAINTENANCE_BASELINE_SHA" ]] || fail "baseline ativo diverge da manutenção autorizada"
   if [[ "$MODE" == "inventory" ]]; then
     local remote_sha
     remote_sha="$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')"
@@ -100,6 +113,7 @@ verify_repository() {
 
 runtime_snapshot() {
   local service id project actual_service workdir files hash health image config_hash hashes
+  require_existing_facial_runtime
   compose config --quiet 2>/dev/null || fail "configuração Compose inválida"
   hashes="$(resolved_compose_hashes)"
   config_hash="$(printf '%s\n' "$hashes" | LC_ALL=C sort | sha256sum | awk '{print $1}')"

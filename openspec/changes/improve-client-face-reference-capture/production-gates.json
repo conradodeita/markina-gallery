@@ -26,5 +26,18 @@
       "evidence": null
     }
   },
-  "note": "Atualizado em 2026-10-16 com confirmação humana e diagnóstico somente leitura; release_ready continua falso até evidências e aprovações verificáveis para todos os gates."
+  "note": "release_ready refere-se à primeira ativação/expansão e continua falso. A manutenção autorizada do runtime já ativo tem elegibilidade independente e restrita ao baseline/arquivos/blobs revisados; não aprova gates documentais pendentes.",
+  "maintenance_release": {
+    "authorized": true,
+    "scope": "existing_facial_runtime",
+    "baseline_sha": "d9c8d3b118fc367af26cfa2b47772d7bff1ccd47",
+    "evidence": "Autorização do proprietário para corrigir e publicar a busca já ativa, reiterada em 2026-10-16 ao esclarecer que pendências de base legal/consentimento/corpus não impedem a implementação no servidor. Preservar estado, configuração, acesso, modelo, índice, limiar, consentimento e retenção; exigir CI, inventário e aprovação protegida.",
+    "runtime_blobs": {
+      "backend/app/facial/provider.py": "705592a94ce36e51bced6f80852c7af072be8af8",
+      "backend/app/facial/reference.py": "8f0bf31007ee6ca3bd31a9c06b5add6973296ff6",
+      "backend/app/facial/search_worker.py": "3cd9b89615b7ba394aa54cad3af4852e3400fd60",
+      "frontend/app/globals.css": "6ec2bc9946c710bdebc5f5089bf2a1f94d5d6518",
+      "frontend/app/public-galleries/facial-search-panel.tsx": "96dc64440346553a4a98454fc1697cf05344771f"
+    }
+  }
 }

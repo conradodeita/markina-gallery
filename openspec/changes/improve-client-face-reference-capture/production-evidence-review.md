@@ -1,5 +1,9 @@
 # Evidências pendentes para liberação
 
+## Esclarecimento de escopo — manutenção autorizada
+
+O proprietário esclareceu em 2026-10-16 que esses registros não impedem a implementação/entrega desta correção no servidor já ativo. A interpretação anterior de bloqueio de qualquer deploy fica substituída para a manutenção do baseline `d9c8d3b`: flag já ligada, configurações/consentimento/acesso/modelo/índice/limiar/retencão preservados, runtime revisado fixado por blobs, CI, inventário e aprovação protegida. A seção abaixo registra pendências de primeira ativação/expansão; não aprova ficticiamente esses gates nem bloqueia essa manutenção autorizada.
+
 ## Estado confirmado pelo proprietário
 
 Em 2026-10-16, o proprietário informou que a aprovação documentada da base legal/consentimento e o conjunto autorizado para medir precisão ainda precisam ser definidos. A autorização para preparar e corrigir o fluxo técnico está vigente; não equivale à existência desses registros. `production-gates.json` SHALL continuar com `release_ready=false`.

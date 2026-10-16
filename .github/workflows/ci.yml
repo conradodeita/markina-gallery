@@ -152,6 +152,7 @@ jobs:
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
           bash scripts/test_deploy_prod_facial_services.sh
+          python scripts/test_prod_facial_release_gates.py
           python scripts/test_production_release_workflow_policy.py
 
   gitleaks:
@@ -255,7 +256,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Verificar configuração protegida
         shell: bash
         run: |
@@ -286,9 +287,9 @@ jobs:
           fingerprint="$(sed -nE 's/^approval_fingerprint=([0-9a-f]{64})$/\1/p' "$output_file" | tail -n1)"
           [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Inventário não forneceu fingerprint válido' >&2; exit 1; }
           echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
-      - name: Avaliar gates faciais versionados
+      - name: Avaliar manutenção autorizada sem primeira ativação
         id: gates
-        run: python scripts/check_prod_facial_release_gates.py | tee -a "$GITHUB_STEP_SUMMARY"
+        run: python scripts/check_prod_facial_release_gates.py --maintenance | tee -a "$GITHUB_STEP_SUMMARY"
 
   production-release:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.production-preflight.outputs.release_ready == 'true' }}"
