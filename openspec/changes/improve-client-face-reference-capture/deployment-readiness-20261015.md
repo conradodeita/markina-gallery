@@ -68,7 +68,7 @@ Mesmo limitado ao projeto `markina-gallery`, recriar API/web pode causar breve i
 
 - A PR #192 foi integrada automaticamente à `main` como `b191e1c` depois do CI #38836929107 passar. Não houve push extra para provocar merge.
 - No run da `main` #38839154615, os seis checks de CI passaram. O job `production-preflight` parou antes do SSH porque o checkout padrão raso não continha `b191e1c^`; o erro `fatal: bad revision` veio da comparação local que protege alterações em Compose e migrations. O inventário remoto não foi executado e nenhum serviço foi alterado.
-- A correção adiciona profundidade 2 ao checkout do preflight e valida essa condição no checker da política. O run da `main` seguinte deverá confirmar o inventário somente leitura; `production-release` permanece condicionado a todos os gates e deve continuar ignorado enquanto `production-gates.json` não contiver aprovações e evidências válidas.
+- A PR #193 integrou a correção de profundidade 2 no checkout do preflight. No run da `main` #38844941508, os seis checks passaram e a verificação local foi superada. O inventário remoto, porém, abortou ao encontrar hash Compose divergente em `api`; uma conferência separada somente de leitura confirmou que `web` corresponde e `api` e `face-search-worker` divergem. Nenhum fingerprint completo foi gerado e nenhum serviço foi alterado. `production-release` foi ignorado pelos gates faciais ainda sem aprovações válidas. A divergência precisa ser investigada e reconciliada com plano operacional próprio antes de repetir o preflight.
 
 ## Gates que impedem a execução
 
