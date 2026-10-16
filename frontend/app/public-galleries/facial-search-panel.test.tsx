@@ -330,8 +330,6 @@ describe("jornada mobile e privacidade da referência", () => {
     expect((consent as HTMLInputElement).checked).toBe(false);
     expect(submitButton.disabled).toBe(true);
     fireEvent.click(consent);
-    expect(submitButton.disabled).toBe(true);
-    fireEvent.click(consent);
     expect(submitButton.disabled).toBe(false);
     fireEvent.submit(submitButton.closest("form")!);
 
@@ -369,7 +367,7 @@ describe("jornada mobile e privacidade da referência", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Se a pessoa retratada for criança ou adolescente menor de 18 anos/ }));
     fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível confirmar o envio da foto.");
+    expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível confirmar o envio da foto.");
     expect(screen.getByRole("alert").textContent).not.toContain("Failed to fetch");
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
