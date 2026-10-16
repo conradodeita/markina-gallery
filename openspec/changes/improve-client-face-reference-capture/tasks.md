@@ -10,6 +10,8 @@
 
 Evidência de entrada: run 38955969200 publicou 7c7a4ad e os três serviços saudáveis, mas terminou em 502 no smoke imediatamente após reload. HTTPS posterior retornou 200. Proprietário confirmou uso e relatou falso múltiplo rosto/erro de confirmação no Android. Logs sanitizados confirmam dois POST Android aceitos (202) e um Windows aceito. Causa exata no navegador ainda não comprovada; nenhuma imagem ou biometria foi lida.
 
+PR #199, SHA a36691e: CI #38972811397 aprovou política operacional e OpenSpec; frontend passou lint e testes e iniciou build. Gitleaks identificou somente o SHA público da versão publicada no inventário, sem credencial. Exceção limitada ao fingerprint exato registrada e texto reformulado para evitar novo falso positivo. Nenhum teste local. Wrapper remoto instalado com hash conferido; ver deployment-readiness-20261016.md.
+
 ## 1. Extração robusta da referência
 
 - [x] 1.1 Atualizar o caminho de consulta para normalizar a orientação e detectar/alinha o rosto em resolução adequada sob limites de bytes, pixels, passes e latência, preservando YuNet + SFace, versão, dimensão e contrato do índice; verificar provider/worker no CI do GitHub, sem executar testes localmente. Evidência: CI GitHub #38815751058 no SHA `9891afb06f74722fd3aaabcd50b09fa4905164b1` passou backend/Ruff e suíte pytest (1.632 passaram, 23 ignorados), após corrigir a expectativa de forma do array NumPy para EXIF 6; nenhum teste local executado.

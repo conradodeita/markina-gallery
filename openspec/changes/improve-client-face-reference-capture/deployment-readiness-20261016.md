@@ -4,7 +4,7 @@
 
 Inspeção SSH somente leitura após o relato do proprietário, sem ler imagens ou embeddings:
 
-- Checkout e APP_VERSION da API: `7c7a4ad217343dc4faee57734436afd91bb1f6b1`.
+- Checkout e versão publicada: `7c7a4ad217343dc4faee57734436afd91bb1f6b1`.
 - Banco: `20261016_0082 (head)`.
 - Web, API, face-search-worker e Nginx Markina saudáveis. Demais serviços do projeto também saudáveis.
 - API e face-search-worker com processamento facial já ativo.
@@ -22,5 +22,7 @@ CI, merge automático e preflight permanecem no GitHub. O preflight remoto dever
 Rollback: preservar as imagens anteriores dos três serviços e SHA de origem; qualquer restauração exige inventário e aprovação operacional, sem downgrade de dados. O smoke HTTPS repete falhas transitórias dentro de orçamento limitado; indisponibilidade persistente mantém falha e não registra release saudável.
 
 ## Validação pendente
+
+Wrapper de inventário atualizado em 16/10/2026 para o blob revisado `8b57f5593d2672bbcac811907337dfece1ed8a33`, com root:root 0755. SHA-256 local/remoto idêntico: `f9f796565535601f10cca1369c80b6acd55c35a7bb099639670f38967553e192`. Nenhum serviço da aplicação foi alterado nesta instalação.
 
 Implementação e regressões serão validadas exclusivamente pelo CI do GitHub. Após publicação, o proprietário deverá confirmar retrato único, fundo com pessoas pequenas, ambiguidade entre dois rostos semelhantes, envio Android e captura em tela cheia. Não há corpus anotado para declarar ganho quantitativo de acurácia. A causa exata da interrupção de resposta no navegador permanece não comprovada.
