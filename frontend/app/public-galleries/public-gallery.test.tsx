@@ -314,7 +314,7 @@ describe("Galeria pública da cliente", () => {
     expect(screen.getByText(/Não há cadastro biométrico permanente/)).toBeTruthy();
     const file = new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), { target: { files: [file] } });
-    fireEvent.click(screen.getByRole("checkbox", { name: /Se a pessoa retratada for criança ou adolescente menor de 18 anos/ }));
+    expect((screen.getByRole("checkbox", { name: /Autorizo a busca facial/ }) as HTMLInputElement).checked).toBe(true);
     fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(

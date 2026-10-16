@@ -19,8 +19,8 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(web api face-search-worker)
-readonly MAINTENANCE_BASELINE_SHA="fe0a05a74dd1d6941b160e75c2081c78dad3bc05"
-readonly EXPECTED_DATABASE_REVISION="20261014_0081"
+readonly MAINTENANCE_BASELINE_SHA="7c7a4ad217343dc4faee57734436afd91bb1f6b1"
+readonly EXPECTED_DATABASE_REVISION="20261016_0082"
 readonly TARGET_DATABASE_REVISION="20261016_0082"
 
 MODE=""
@@ -186,7 +186,7 @@ inventory() {
   local fp
   fp="$(fingerprint)"
   printf 'approval_fingerprint=%s\n' "$fp"
-  echo "impacto=web,api,face-search-worker; migration aditiva facial 20261014_0081 -> 20261016_0082; pode haver breve indisponibilidade e atraso de fila"
+  echo "impacto=web,api,face-search-worker; schema 20261016_0082 preservado, sem nova migration; pode haver breve indisponibilidade e atraso de fila"
   echo "rollback=tags de imagem e SHA anterior preservados; restaurar somente os três serviços após novo inventário/aprovação"
   echo "nenhum comando de mutação foi executado"
 }
@@ -217,7 +217,9 @@ release() {
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário mudou durante o build; serviços preservados"
   [[ "$(COMPOSE_APP_VERSION="$ACTIVE_SHA" database_revision)" == "$EXPECTED_DATABASE_REVISION" ]] \
     || fail "revisão do banco mudou após inventário; migration não aplicada"
-  compose run --rm --no-deps api python -m alembic upgrade "$TARGET_DATABASE_REVISION"
+  if [[ "$EXPECTED_DATABASE_REVISION" != "$TARGET_DATABASE_REVISION" ]]; then
+    compose run --rm --no-deps api python -m alembic upgrade "$TARGET_DATABASE_REVISION"
+  fi
   local migrated_revision migration_output migration_revisions
   migration_output="$(compose run --rm --no-deps api python -m alembic current 2>/dev/null)" \
     || fail "não foi possível confirmar revisão após migration"
@@ -229,7 +231,12 @@ release() {
   runtime_snapshot
   compose exec -T nginx nginx -t || fail "configuração do nginx Markina inválida"
   compose exec -T nginx nginx -s reload || fail "reload do nginx Markina falhou"
-  for path in /healthz /api/health /; do curl -fsS --max-time 15 "$EXPECTED_URL$path" -o /dev/null || fail "smoke HTTPS falhou em $path"; done
+  # O reload é assíncrono: workers antigos podem ainda atender a primeira
+  # conexão com o upstream anterior. Espera limitada, mantendo falha persistente.
+  for path in /healthz /api/health /; do
+    curl -fsS --retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5 \
+      "$EXPECTED_URL$path" -o /dev/null || fail "smoke HTTPS falhou em $path"
+  done
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/facial-last-healthy.sha"
   rm -f "$STATE_DIR/facial-in-flight.sha"
   printf '%s %s release-facial-services %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ACTIVE_SHA" "$TARGET_SHA" >> "$STATE_DIR/facial-history.log"

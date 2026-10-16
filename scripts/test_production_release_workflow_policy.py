@@ -78,11 +78,13 @@ def main() -> None:
         raise AssertionError("hash direto omite env_file no Compose do host")
     require('APP_VERSION="$COMPOSE_APP_VERSION" docker compose', "metadado operacional preservado", script)
     require('--wait --wait-timeout 120', "espera de saúde limitada", script)
-    require('EXPECTED_DATABASE_REVISION="20261014_0081"', "revisão anterior do banco fixada", script)
+    require('EXPECTED_DATABASE_REVISION="20261016_0082"', "revisão já publicada do banco fixada", script)
     require('TARGET_DATABASE_REVISION="20261016_0082"', "revisão de destino fixada", script)
     release_script = script.split("release() {", 1)[1].split("main() {", 1)[0]
     require("runtime_snapshot", "releitura de hashes após recriação", release_script)
     require('alembic upgrade "$TARGET_DATABASE_REVISION"', "migration única aplicada após aprovação", release_script)
+    require('"$EXPECTED_DATABASE_REVISION" != "$TARGET_DATABASE_REVISION"', "não reaplica migration já publicada", release_script)
+    require('--retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5', "smoke tolera transição com orçamento limitado", release_script)
     require('migrated_revision" == "$TARGET_DATABASE_REVISION"', "revisão nova confirmada", release_script)
     if not (release_script.index('alembic upgrade') < release_script.index("compose up")):
         raise AssertionError("migration deve concluir antes da recriação de serviços")

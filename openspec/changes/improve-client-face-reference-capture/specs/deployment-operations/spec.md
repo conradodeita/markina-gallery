@@ -70,12 +70,19 @@ O preflight e o release SHALL comparar os labels ativos com hashes da configura�
 - **THEN** a liberação somente registra sucesso após espera limitada por saúde, leitura dos novos hashes, reload confinado ao nginx Markina e smoke HTTPS aprovados
 
 ### Requirement: Migration facial aditiva é validada e aplicada de forma isolada
-Quando a mudança aprovada exigir a ampliação aditiva da constraint de declaração facial, o workflow de produção SHALL verificar que o banco está exatamente na revisão `20261014_0081`, aplicar somente a revisão aprovada desta change antes de recriar os serviços e confirmar a revisão resultante. Divergência de revisão SHALL interromper o release antes da recriação de qualquer serviço. O preflight e fingerprint SHALL incluir a revisão atual do banco.
+Após publicação da ampliação aditiva da constraint de declaração facial, o workflow de manutenção SHALL verificar que o banco está exatamente na revisão `20261016_0082` e preservar essa revisão, sem reaplicar migrations. Divergência de revisão SHALL interromper o release antes da recriação de qualquer serviço. O preflight e fingerprint SHALL incluir a revisão atual do banco.
 
 #### Scenario: Banco está na revisão esperada
-- **WHEN** a aprovação de produção está vigente e o inventário confirma `20261014_0081`
-- **THEN** o job executa a revisão aditiva aprovada, confirma a revisão nova e segue com a recriação coordenada dos serviços Pick-your-Pic
+- **WHEN** a aprovação de produção está vigente e o inventário confirma `20261016_0082`
+- **THEN** o job preserva a revisão e segue com a recriação coordenada dos serviços Pick-your-Pic
 
 #### Scenario: Banco diverge da revisão esperada
 - **WHEN** o inventário ou a revalidação pós-aprovação encontra outra revisão ou múltiplas cabeças
 - **THEN** o job falha fechado sem migration, recriação ou alteração de serviços
+
+### Requirement: Smoke HTTPS tolera apenas transição limitada do proxy
+Após saúde dos containers e reload confinado ao Nginx Markina, o smoke SHALL tentar novamente respostas HTTP transitórias como 502, com no máximo cinco retentativas, intervalo de dois segundos e orçamento de quarenta segundos para novas tentativas por endpoint. Cada requisição SHALL ter timeout de cinco segundos. Falha persistente SHALL manter o job vermelho e SHALL NOT registrar release saudável.
+
+#### Scenario: Primeiro request ocorre durante reload
+- **WHEN** o primeiro request recebe 502 e um seguinte responde com sucesso dentro do orçamento
+- **THEN** o release continua para os demais endpoints e só registra sucesso após todos passarem
