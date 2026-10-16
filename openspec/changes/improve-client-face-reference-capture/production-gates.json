@@ -30,8 +30,8 @@
   "maintenance_release": {
     "authorized": true,
     "scope": "existing_facial_runtime",
-    "baseline_sha": "d9c8d3b118fc367af26cfa2b47772d7bff1ccd47",
-    "evidence": "Autorização do proprietário para corrigir e publicar a busca já ativa, reiterada em 2026-10-16. Preservar estado, configuração, acesso, modelo, índice, limiar e retenção. A change registra o novo consentimento condicional sem inferir idade; aplica somente a migration aditiva 20261016_0082 se o preflight confirmar 20261014_0081. Exigir CI, inventário, fingerprint e aprovação protegida; gates de primeira ativação permanecem independentes.",
+    "baseline_sha": "fe0a05a74dd1d6941b160e75c2081c78dad3bc05",
+    "evidence": "Autorização do proprietário para corrigir e publicar a busca já ativa, reiterada em 2026-10-16. O preflight pós-merge #38938071080 falhou fechado porque a PR #195 já havia atualizado o checkout de produção; conferência somente de leitura confirmou /opt/markina-gallery e APP_VERSION da API em fe0a05a74dd1d6941b160e75c2081c78dad3bc05, com FACIAL_PROCESSING_ENABLED=true na API e no worker. Este baseline verificado substitui d9c8d3b, sem alterar os blobs de runtime aprovados. Preservar estado, configuração, acesso, modelo, índice, limiar e retenção. A change registra o novo consentimento condicional sem inferir idade; aplica somente a migration aditiva 20261016_0082 se o preflight confirmar 20261014_0081. Exigir CI, inventário, fingerprint e aprovação protegida; gates de primeira ativação permanecem independentes.",
     "runtime_blobs": {
       "backend/app/auth.py": [
         "JY2mH/W",

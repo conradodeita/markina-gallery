@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Manutenção de captura é distinta da primeira ativação
-A entrega autorizada da captura SHALL atualizar somente o runtime já ativo no baseline `d9c8d3b118fc367af26cfa2b47772d7bff1ccd47`. O workflow SHALL conferir autorização versionada, baseline, escopo e blobs revisados, CI, inventário e aprovação protegida de produção. A manutenção SHALL NOT aprovar gates de primeira ativação ou expansão.
+A entrega autorizada da captura SHALL atualizar somente o runtime já ativo no baseline de produção verificado `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`, que sucede a referência histórica `d9c8d3b118fc367af26cfa2b47772d7bff1ccd47`. O workflow SHALL conferir autorização versionada, baseline, escopo e blobs revisados, CI, inventário e aprovação protegida de produção. A manutenção SHALL NOT aprovar gates de primeira ativação ou expansão.
 
 #### Scenario: Atualização corretiva de recurso existente
 - **WHEN** o proprietário autoriza a atualização e todos os contratos de manutenção são conferidos
