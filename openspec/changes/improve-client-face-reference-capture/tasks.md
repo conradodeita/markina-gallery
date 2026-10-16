@@ -33,6 +33,18 @@
 - Tasks 3.1–3.2 e 4.2–4.4 aguardam CI e/ou gates de produção. O workflow inicia preflight após CI no push para `main`, verifica inventário e SHA, e só considera release quando `production-gates.json` contém evidência aprovada para todos os gates. O inventário deve ser repetido imediatamente antes do release. Nenhum deploy foi iniciado.
 - Não iniciar mutações até que a diferença entre flag facial ativa e gates documentados seja resolvida, o inventário seja atualizado e o proprietário aprove o SHA/serviços/impacto/reversão da execução específica. O environment protegido e as credenciais não substituem esses gates.
 
+## Refinamento aprovado — automação até CI verde e uma aprovação de produção
+
+Esta decisão orienta o próximo executor e refina as tasks 3.1–3.3 acima. A aprovação em cada push deixa de ser necessária; a aprovação do environment `production` permanece uma única vez, depois do inventário.
+
+- [ ] 3.1a Continuar o ciclo GitHub Actions → logs da falha → correção pequena e sustentada por evidência → commit/push, sem solicitar aprovação por push, até os checks obrigatórios passarem. Não executar testes locais. Parar apenas quando a causa exigir decisão de produto/arquitetura, acesso ou credencial humana, registrando o bloqueio e seguindo tarefas independentes.
+- [ ] 3.1b Habilitar auto-merge no PR apenas após definir checks obrigatórios e revisões exigidas pelo repositório; confirmar que o merge ocorre após aprovação dos requisitos sem push adicional. Se auto-merge/regras de branch exigirem configuração do proprietário, registrar os passos e não declarar a task concluída.
+- [ ] 3.2a Separar o preflight somente-leitura do environment `production`. Configurar credencial SSH distinta, restrita via `authorized_keys` a inventário, sem shell/forwarding/escrita, e disponibilizá-la em environment de preflight sem required reviewers. Nunca reutilizar ou mover o segredo de deploy. A ausência dessa credencial é bloqueio para o preflight; continuar trabalho local e CI independente.
+- [ ] 3.2b Deixar o environment `production` somente no job mutável, para pedir uma aprovação após o inventário revisável; garantir mesmo run de CI, preflight e release, revalidação de SHA/fingerprint após aprovação e falha fechada em divergências.
+- [ ] 3.2c Validar no CI do GitHub que o fluxo pede exatamente uma aprovação em `production`, sem aprovação no preflight, e não exige push separado para passar do merge ao deploy. Nenhuma mutação de produção ocorre nesta validação.
+
+Estado inicial confirmado em 2026-10-15: `production` exige revisor `conradodeita`; segredos de deploy existem somente nesse ambiente; o workflow atual associa também o preflight a `production`, podendo solicitar duas aprovações. Não há evidência de auto-merge ou de chave read-only separada. Tasks acima permanecem pendentes e o deploy continua bloqueado pelos gates faciais/infantis/operacionais documentados.
+
 ## Evidências de CI
 
 - CI #38815751058 no SHA `9891afb06f74722fd3aaabcd50b09fa4905164b1` concluiu com sucesso: backend (1.632 passaram, 23 ignorados), frontend (lint/testes/build), runtime Gemma, OpenSpec, política de inventário e Gitleaks. As falhas anteriores de fixture EXIF e da varredura foram resolvidas/ausentes nesta execução. Nenhum teste local foi executado.

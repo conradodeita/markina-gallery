@@ -45,3 +45,14 @@ Consulte `proposal.md` e as specs desta change. `OpenCvSFaceProvider.observe_byt
 ## Migration Plan
 
 Sem migration de banco e sem reindexação. Após revisão do OpenSpec e implementação, abrir PR isolada com somente arquivos desta change. O GitHub executa CI e OpenSpec; após merge aprovado, inicia automaticamente o job de produção, que aguarda o gate do environment `production`. Antes da execução, registrar inventário atualizado do host, SHA, serviços/portas/subdomínio e plano de impacto zero. Após aprovação, publicar o conjunto necessário com rollback restrito ao projeto. O proprietário valida imediatamente o fluxo autenticado em produção e registra evidência no OpenSpec. Não executar rollback de dados nem alterar `.env`/secrets.
+
+## Decisão aprovada pelo proprietário — fluxo de entrega sem aprovações repetidas
+
+Esta decisão detalha e substitui qualquer interpretação anterior que exija aprovação humana para cada push ou para o preflight somente-leitura:
+
+- O executor SHALL conduzir os ciclos CI → leitura dos logs → correção verificável dentro do escopo → commit/push → novo CI, sem pedir aprovação por commit. Deve continuar até os checks obrigatórios ficarem verdes, exceto quando houver decisão de produto/arquitetura, credencial, acesso ou ação proibida que exija o proprietário.
+- O PR SHALL habilitar auto-merge após todos os checks obrigatórios e as revisões exigidas pela política do repositório. Não se deve enviar push extra apenas para iniciar o deploy.
+- Após CI e merge, o mesmo fluxo SHALL executar preflight SSH somente-leitura sem aprovação do ambiente. Para isso, exige uma chave separada, restrita no `authorized_keys` a um comando de inventário, sem shell interativo, forwarding ou escrita. A chave de deploy atual não pode ser reutilizada nesse job.
+- O preflight SHALL publicar inventário, SHA, serviços, portas, subdomínio, fingerprint, impacto e rollback como evidência revisável. Somente depois disso o job mutável SHALL referenciar `production` e aguardar a única aprovação humana do release.
+- O job mutável SHALL revalidar fingerprint e SHA após aprovação e executar apenas serviços Pick-your-Pic previstos. Os gates faciais, infantis, legais, de capacidade e de operação existentes continuam obrigatórios; esta decisão não os aprova.
+- A configuração GitHub ainda não tem evidência de auto-merge nem de credencial SSH read-only separada. Não enfraquecer o environment `production` nem alterar secrets; registrar como tarefa/bloqueio de configuração e continuar o trabalho independente.
