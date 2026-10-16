@@ -50,6 +50,8 @@ Estado atualizado em 2026-10-16: PRs #192, #193 e #194 foram integradas automati
 
 CI da PR #196 no SHA `de13d95`: checks de frontend, OpenSpec, Gitleaks, política de inventário e runtime passaram; backend reportou sete falhas em fixtures de consentimento que ainda enviavam os valores legados e em uma migração iniciada fora do head legado suportado. Fixtures atualizadas para `conditional` e `client-reference-conditional-v1`; teste da migração agora parte de `LEGACY_SCHEMA_HEAD`. Correção enviada para nova validação remota; nenhum teste local foi executado.
 
+CI #38927833638 no SHA `ef0dfe7`: os checks anteriores ao backend passaram e o frontend concluiu lint, Vitest e build. O job backend parou no Ruff antes do pytest por separação de imports ausente no teste da migration; correção aplicada para a execução seguinte. A imagem Gemma ainda estava construindo no momento da coleta; nenhum teste local foi executado.
+
 ## Evidências de CI
 
 - [ ] 3.2d Corrigir o cálculo dos hashes para usar configuração resolvida em memória e APP_VERSION ativo/alvo; corrigir releitura de hash pós-release, espera limitada e reload exclusivo do nginx Markina; validar cenários de igualdade/divergência e pós-condições no CI, sem testes locais. Diagnóstico remoto somente leitura em 2026-10-16 confirmou correspondência resolvida e saúde dos três serviços; o drift antes registrado foi refutado. Blob fixado já atualizado no wrapper root-owned e hash conferido; repetir preflight automático completo antes de marcar concluída.

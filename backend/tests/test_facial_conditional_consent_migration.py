@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect
+
 from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 
 
