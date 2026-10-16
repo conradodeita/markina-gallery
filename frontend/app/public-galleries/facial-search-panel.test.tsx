@@ -202,7 +202,9 @@ describe("polling da busca facial", () => {
   it("oferece reconsulta manual pelo mesmo identificador depois do limite automático", async () => {
     vi.useFakeTimers();
     let reads = 0;
-    const fetchMock = vi.fn((path: string) => {
+    const methods: string[] = [];
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
       if (path.endsWith("/facial-search")) return response({
         state: "consent_required", manual_selection_available: true,
         minor_search_available: false, consent_version: "consent-v1",
@@ -229,7 +231,7 @@ describe("polling da busca facial", () => {
 
     expect(screen.getByTestId("search-state").textContent).toBe("ready");
     expect(reads).toBe(5);
-    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    expect(methods.every((method) => method === "GET")).toBe(true);
   });
 
   it("encerra polling e remove retomada quando a consulta foi revogada", async () => {
