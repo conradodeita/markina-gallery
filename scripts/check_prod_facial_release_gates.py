@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import os
 import re
@@ -75,9 +77,13 @@ def evaluate_maintenance(payload: dict, root: Path) -> tuple[bool, str]:
                 continue
             return False, "arquivo_fora_do_escopo"
         for path, expected in blobs.items():
-            if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected):
+            try:
+                decoded = base64.b64decode(expected, validate=True) if isinstance(expected, str) else b""
+            except (ValueError, binascii.Error):
+                decoded = b""
+            if len(decoded) != 20:
                 return False, "blob_revisado_invalido"
-            if git(root, "rev-parse", "HEAD:" + path) != expected:
+            if git(root, "rev-parse", "HEAD:" + path) != decoded.hex():
                 return False, "runtime_diverge_do_blob_revisado"
         git(root, "diff", "--quiet", "HEAD", "--", *RUNTIME_FILES)
     except subprocess.CalledProcessError:

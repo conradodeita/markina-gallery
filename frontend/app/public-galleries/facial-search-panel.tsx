@@ -39,7 +39,7 @@ export function FacialSearchPanel({
   const [dialogOpen, setDialogOpen] = useState(false);
   const showDialog = dialogOpen;
   const [consented, setConsented] = useState(false);
-  const subjectDeclaration: "conditional" = "conditional";
+  const subjectDeclaration = "conditional" as const;
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);

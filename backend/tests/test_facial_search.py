@@ -753,7 +753,7 @@ def test_conditional_consent_is_required_for_every_reference(
     db, parent, client = _fixture(tmp_path, index_ready=True)
     settings = _settings(tmp_path)
 
-    available = search_availability(db, parent_gallery_id=parent.id, client_id=client.id, settings=settings)
+    search_availability(db, parent_gallery_id=parent.id, client_id=client.id, settings=settings)
     common = {"db": db, "parent_gallery_id": parent.id, "client_id": client.id,
               "consent_version": CLIENT_REFERENCE_CONSENT_VERSION, "subject_declaration": "conditional",
               "representation_reference": None, "payload": _jpeg(), "settings": settings}
