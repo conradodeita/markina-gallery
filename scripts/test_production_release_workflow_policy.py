@@ -1,6 +1,7 @@
 """Verifica a separação entre preflight somente-leitura e gate de produção."""
 
 import hashlib
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,8 @@ def main() -> None:
     release = WORKFLOW.split("  production-release:", 1)[1]
 
     require("environment: production-preflight", "environment sem revisor para preflight", preflight)
-    require("fetch-depth: 2", "histórico suficiente para comparar o SHA do preflight", preflight)
+    require("fetch-depth: 0", "histórico para comparar o baseline autorizado", preflight)
+    require("check_prod_facial_release_gates.py --maintenance", "gate próprio da manutenção autorizada", preflight)
     require("environment: production", "environment protegido no release", release)
     require(
         "secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY",
@@ -58,6 +60,29 @@ def main() -> None:
         raise AssertionError("wrapper não pode encaminhar comando arbitrário nem release")
     if "bash -s" in WRAPPER or "git fetch" in WRAPPER:
         raise AssertionError("wrapper não executa stdin nem altera refs locais do checkout")
+
+    script = INVENTORY_SCRIPT.decode("utf-8")
+    manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
+    maintenance = manifest["maintenance_release"]
+    require(f'MAINTENANCE_BASELINE_SHA="{maintenance["baseline_sha"]}"', "baseline do host igual ao manifesto", script)
+    require("require_existing_facial_runtime", "manutenção não ativa runtime desligado", script)
+    for path, expected in maintenance["runtime_blobs"].items():
+        data = (ROOT / path).read_bytes()
+        actual = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+        if actual != expected:
+            raise AssertionError("arquivo de runtime diverge do blob revisado")
+    require("config --no-interpolate --hash", "hash usa JSON resolvido sem nova interpolação", script)
+    if "compose config --hash" in script:
+        raise AssertionError("hash direto omite env_file no Compose do host")
+    require('APP_VERSION="$COMPOSE_APP_VERSION" docker compose', "metadado operacional preservado", script)
+    require('--wait --wait-timeout 120', "espera de saúde limitada", script)
+    release_script = script.split("release() {", 1)[1].split("main() {", 1)[0]
+    require("runtime_snapshot", "releitura de hashes após recriação", release_script)
+    require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)
+    require("compose exec -T nginx nginx -s reload", "renovação dos upstreams Markina", release_script)
+    if not (release_script.index("compose up") < release_script.index("runtime_snapshot")
+            < release_script.index("nginx -s reload") < release_script.index("smoke HTTPS")):
+        raise AssertionError("pós-condições precisam preceder o smoke final")
 
     print("production release workflow policy: ok")
 

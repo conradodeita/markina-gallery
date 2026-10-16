@@ -19,6 +19,7 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(web api face-search-worker)
+readonly MAINTENANCE_BASELINE_SHA="d9c8d3b118fc367af26cfa2b47772d7bff1ccd47"
 
 MODE=""
 TARGET_SHA=""
@@ -28,6 +29,7 @@ EXPECTED_URL="${MARKINA_PUBLIC_BASE_URL:-$PUBLIC_URL}"
 ACTIVE_SHA=""
 CHECKOUT_SHA=""
 INVENTORY_FINGERPRINT=""
+COMPOSE_APP_VERSION=""
 
 fail() { echo "deploy-prod-facial-services: $*" >&2; exit 1; }
 
@@ -50,7 +52,27 @@ parse_arguments() {
 compose() {
   local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
   for file in "${COMPOSE_EXTRA_FILES[@]}"; do files+=(-f "$file"); done
-  docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+  APP_VERSION="$COMPOSE_APP_VERSION" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+}
+
+resolved_compose_hashes() {
+  # Compose 2.35.1 não resolve env_file no --hash direto. O JSON pode conter
+  # segredos: trafega apenas pelo pipe, sem arquivo, log ou interpolação nova.
+  compose config --format json 2>/dev/null \
+    | docker compose -p "$PROJECT_NAME" -f - --profile facial --profile preview-adjustment \
+      config --no-interpolate --hash web,api,face-search-worker 2>/dev/null \
+    || fail "não foi possível calcular hashes da configuração resolvida"
+}
+
+require_existing_facial_runtime() {
+  local service id
+  for service in api face-search-worker; do
+    id="$(compose ps -q "$service")"
+    [[ -n "$id" && "$(wc -l <<<"$id" | tr -d ' ')" == "1" ]] || fail "runtime ativo de $service ausente"
+    docker inspect --format '{{json .Config.Env}}' "$id" \
+      | python3 -c 'import json,sys; values=json.load(sys.stdin); sys.exit(0 if "FACIAL_PROCESSING_ENABLED=true" in values else 1)' \
+      || fail "manutenção exige runtime facial já ativo em $service"
+  done
 }
 
 verify_repository() {
@@ -68,6 +90,7 @@ verify_repository() {
     *) fail "origin Git diverge do repositório esperado" ;;
   esac
   CHECKOUT_SHA="$(git rev-parse HEAD)"
+  [[ "$CHECKOUT_SHA" == "$MAINTENANCE_BASELINE_SHA" ]] || fail "baseline ativo diverge da manutenção autorizada"
   if [[ "$MODE" == "inventory" ]]; then
     local remote_sha
     remote_sha="$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')"
@@ -78,12 +101,22 @@ verify_repository() {
     git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ backend/migrations/ || fail "alteração de Compose/Docker ou migration exige outro plano"
   fi
   ACTIVE_SHA="$CHECKOUT_SHA"
+  local api_id api_version
+  api_id="$(compose ps -q api)"
+  [[ -n "$api_id" && "$(wc -l <<<"$api_id" | tr -d ' ')" == "1" ]] || fail "API ativa não é única"
+  api_version="$(docker inspect --format '{{json .Config.Env}}' "$api_id" \
+    | python3 -c 'import json,sys; values=json.load(sys.stdin); print(next((v.split("=",1)[1] for v in values if v.startswith("APP_VERSION=")), ""))')"
+  [[ "$api_version" =~ ^[0-9a-f]{40}$ && "$api_version" == "$CHECKOUT_SHA" ]] \
+    || fail "metadado de versão da API diverge do checkout"
+  COMPOSE_APP_VERSION="$api_version"
 }
 
 runtime_snapshot() {
-  local service id project actual_service workdir files hash health image config_hash
-  compose config --quiet || fail "configuração Compose inválida"
-  config_hash="$(for service in "${SERVICES[@]}"; do compose config --hash "$service"; done | sha256sum | awk '{print $1}')"
+  local service id project actual_service workdir files hash health image config_hash hashes
+  require_existing_facial_runtime
+  compose config --quiet 2>/dev/null || fail "configuração Compose inválida"
+  hashes="$(resolved_compose_hashes)"
+  config_hash="$(printf '%s\n' "$hashes" | LC_ALL=C sort | sha256sum | awk '{print $1}')"
   for service in "${SERVICES[@]}"; do
     id="$(compose ps -q "$service")"
     [[ -n "$id" && "$(wc -l <<<"$id" | tr -d ' ')" == "1" ]] || fail "deve haver exatamente um container $service"
@@ -96,8 +129,9 @@ runtime_snapshot() {
     hash="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.config-hash" }}' "$id")"
     [[ "$project" == "$PROJECT_NAME" && "$actual_service" == "$service" && "$workdir" == "/opt/markina-gallery/docker" && "$files" == "$COMPOSE_FILE_LABEL" ]] || fail "identidade do container $service diverge do inventário"
     local expected_hash
-    expected_hash="$(compose config --hash "$service" | awk -v service="$service" '$1 == service {print $2}')"
+    expected_hash="$(awk -v service="$service" '$1 == service {print $2}' <<<"$hashes")"
     expected_hash="${expected_hash#sha256:}"
+    [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || fail "hash resolvido de $service inválido"
     [[ "$hash" == "$expected_hash" ]] || fail "configuração ativa de $service diverge do Compose"
     [[ "$health" == "healthy" ]] || fail "container $service não está saudável"
     printf '%s|%s|%s|%s|%s\n' "$service" "$id" "$image" "$hash" "$health"
@@ -152,19 +186,17 @@ release() {
   printf '%s\n' "$ACTIVE_SHA" > "$STATE_DIR/facial-previous.sha"
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/facial-in-flight.sha"
   git switch --detach "$TARGET_SHA" >/dev/null
+  COMPOSE_APP_VERSION="$TARGET_SHA"
   compose config --quiet || fail "configuração Compose alvo inválida"
   compose build "${SERVICES[@]}"
-  compose up -d --no-deps --force-recreate "${SERVICES[@]}"
-  for service in "${SERVICES[@]}"; do
-    id="$(compose ps -q "$service")"
-    [[ -n "$id" ]] || fail "container $service ausente após release"
-    health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id")"
-    local expected_hash
-    expected_hash="$(compose config --hash "$service" | awk -v service="$service" '$1 == service {print $2}')"
-    expected_hash="${expected_hash#sha256:}"
-    [[ "$hash" == "$expected_hash" ]] || fail "configuração ativa de $service diverge do Compose"
-    [[ "$health" == "healthy" ]] || fail "container $service não ficou saudável: $health"
-  done
+  # O build pode ser longo: recusa mudança de containers/ambiente ocorrida
+  # desde o inventário aprovado, mantendo a versão ativa na comparação.
+  current_fp="$(COMPOSE_APP_VERSION="$ACTIVE_SHA" fingerprint)"
+  [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário mudou durante o build; serviços preservados"
+  compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
+  runtime_snapshot
+  compose exec -T nginx nginx -t || fail "configuração do nginx Markina inválida"
+  compose exec -T nginx nginx -s reload || fail "reload do nginx Markina falhou"
   for path in /healthz /api/health /; do curl -fsS --max-time 15 "$EXPECTED_URL$path" -o /dev/null || fail "smoke HTTPS falhou em $path"; done
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/facial-last-healthy.sha"
   rm -f "$STATE_DIR/facial-in-flight.sha"
@@ -178,4 +210,4 @@ main() {
   if [[ "$MODE" == "inventory" ]]; then inventory; else release; fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then main "$@"; fi

@@ -1,37 +1,117 @@
 #!/usr/bin/env python3
-"""Emite elegibilidade fail-closed para release facial de produção."""
+"""Separa manutenção autorizada dos gates de primeira ativação facial."""
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
 
-path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
-    "openspec/changes/improve-client-face-reference-capture/production-gates.json"
+RUNTIME_FILES = (
+    "backend/app/facial/provider.py",
+    "backend/app/facial/reference.py",
+    "backend/app/facial/search_worker.py",
+    "frontend/app/globals.css",
+    "frontend/app/public-galleries/facial-search-panel.tsx",
 )
-payload = json.loads(path.read_text(encoding="utf-8"))
-gates = payload.get("gates")
-ready = payload.get("release_ready") is True and isinstance(gates, dict) and bool(gates)
-pending: list[str] = []
-for name, gate in (gates.items() if isinstance(gates, dict) else []):
-    if (
-        not isinstance(gate, dict)
-        or gate.get("status") != "aprovado"
-        or not isinstance(gate.get("evidence"), str)
-        or not gate["evidence"].strip()
-    ):
-        ready = False
-        pending.append(str(name))
+OPERATIONS_FILES = {
+    ".github/workflows/ci.yml", ".gitleaksignore",
+    "scripts/check_prod_facial_release_gates.py",
+    "scripts/deploy-prod-facial-services.sh",
+    "scripts/production-preflight-ssh-wrapper.sh",
+    "scripts/test_deploy_homolog_policy.py",
+    "scripts/test_deploy_prod_facial_services.sh",
+    "scripts/test_production_release_workflow_policy.py",
+    "scripts/test_prod_facial_release_gates.py",
+    "backend/tests/test_facial_integration.py",
+    "backend/tests/test_facial_provider.py",
+    "backend/tests/test_facial_search_worker.py",
+    "frontend/app/public-galleries/facial-search-panel.test.tsx",
+}
 
-value = "true" if ready else "false"
-print(f"release_ready={value}")
-print(f"gates_pendentes={','.join(pending) if pending else 'nenhum'}")
-output = os.environ.get("GITHUB_OUTPUT")
-if output:
-    with open(output, "a", encoding="utf-8") as handle:
-        handle.write(f"release_ready={value}\n")
-if not ready:
-    print("Release facial bloqueado: cada gate precisa de status aprovado e evidência verificável.")
+
+def git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=root, capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
+def evaluate_maintenance(payload: dict, root: Path) -> tuple[bool, str]:
+    maintenance = payload.get("maintenance_release", {})
+    if not isinstance(maintenance, dict) or maintenance.get("authorized") is not True:
+        return False, "autorizacao_de_manutencao_ausente"
+    if maintenance.get("scope") != "existing_facial_runtime":
+        return False, "escopo_de_manutencao_invalido"
+    evidence = maintenance.get("evidence")
+    baseline = maintenance.get("baseline_sha", "")
+    if not isinstance(evidence, str) or not evidence.strip():
+        return False, "evidencia_de_autorizacao_ausente"
+    if not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{40}", baseline):
+        return False, "baseline_invalido"
+    blobs = maintenance.get("runtime_blobs")
+    if not isinstance(blobs, dict) or set(blobs) != set(RUNTIME_FILES):
+        return False, "manifesto_de_runtime_incompleto"
+    try:
+        git(root, "merge-base", "--is-ancestor", baseline, "HEAD")
+        for path in git(root, "diff", "--name-only", baseline, "HEAD").splitlines():
+            if path in RUNTIME_FILES or path in OPERATIONS_FILES:
+                continue
+            if path.startswith(("docs/", "openspec/")):
+                continue
+            return False, "arquivo_fora_do_escopo"
+        for path, expected in blobs.items():
+            if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected):
+                return False, "blob_revisado_invalido"
+            if git(root, "rev-parse", "HEAD:" + path) != expected:
+                return False, "runtime_diverge_do_blob_revisado"
+        git(root, "diff", "--quiet", "HEAD", "--", *RUNTIME_FILES)
+    except subprocess.CalledProcessError:
+        return False, "historico_ou_runtime_nao_comprovado"
+    return True, "manutencao_autorizada_sem_ativacao"
+
+
+def activation_status(payload: dict) -> tuple[bool, list[str]]:
+    gates = payload.get("gates")
+    ready = payload.get("release_ready") is True and isinstance(gates, dict) and bool(gates)
+    pending = []
+    for name, gate in (gates.items() if isinstance(gates, dict) else []):
+        if (not isinstance(gate, dict) or gate.get("status") != "aprovado"
+                or not isinstance(gate.get("evidence"), str)
+                or not gate["evidence"].strip()):
+            ready = False
+            pending.append(str(name))
+    return ready, pending
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("path", nargs="?", default="openspec/changes/improve-client-face-reference-capture/production-gates.json")
+    parser.add_argument("--maintenance", action="store_true")
+    args = parser.parse_args()
+    payload = json.loads(Path(args.path).read_text(encoding="utf-8"))
+    ready, pending = activation_status(payload)
+    reason = "ativacao_aprovada" if ready else "gates_de_ativacao_pendentes"
+    if args.maintenance:
+        ready, reason = evaluate_maintenance(payload, Path(__file__).resolve().parents[1])
+    value = "true" if ready else "false"
+    print("release_scope=" + ("maintenance_existing_runtime" if args.maintenance else "activation"))
+    print("release_ready=" + value)
+    print("criterio=" + reason)
+    print("gates_de_ativacao_pendentes=" + (",".join(pending) if pending else "nenhum"))
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a", encoding="utf-8") as handle:
+            handle.write("release_ready=" + value + "\n")
+    if args.maintenance and ready:
+        print("Elegível somente para manutenção do runtime já ativo; não aprova ativação ou expansão.")
+    return 1 if args.maintenance and not ready else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

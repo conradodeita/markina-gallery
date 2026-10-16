@@ -2,6 +2,17 @@
 
 ## ADDED Requirements
 
+### Requirement: Manutenção de captura é distinta da primeira ativação
+A entrega autorizada da captura SHALL atualizar somente o runtime já ativo no baseline `d9c8d3b118fc367af26cfa2b47772d7bff1ccd47`. O workflow SHALL conferir autorização versionada, baseline, escopo e blobs revisados, CI, inventário e aprovação protegida de produção. A manutenção SHALL NOT aprovar gates de primeira ativação ou expansão.
+
+#### Scenario: Atualização corretiva de recurso existente
+- **WHEN** o proprietário autoriza a atualização e todos os contratos de manutenção são conferidos
+- **THEN** a pendência documental dos gates de primeira ativação não bloqueia a entrega; configuração, flag ativa, acesso, modelo, índice, limiar, consentimento e retenção permanecem preservados e o job mutável aguarda a aprovação protegida
+
+#### Scenario: Estado ou escopo exige primeira ativação
+- **WHEN** a flag atual está desligada, o baseline diverge ou há alteração fora dos arquivos/blobs autorizados
+- **THEN** a manutenção é recusada, sem ativar recurso nem substituir as aprovações necessárias à expansão
+
 ### Requirement: Job de produção é disparado automaticamente após CI
 Um workflow SHALL iniciar automaticamente a publicação do SHA aprovado para `main` após CI e validações obrigatórias concluírem com sucesso. O job SHALL aguardar aprovação do ambiente protegido e SHALL repetir inventário de produção, conferir o SHA e limitar mutações aos serviços Pick-your-Pic explicitamente incluídos no plano aprovado.
 
@@ -42,3 +53,18 @@ Após CI e merge, o workflow SHALL executar preflight somente-leitura antes de q
 #### Scenario: Credencial somente-leitura ausente
 - **WHEN** não existe chave SSH separada e restrita à rotina de inventário
 - **THEN** o workflow falha fechado antes de conectar ao servidor e não reutiliza a chave de deploy nem reduz a proteção de produção
+
+### Requirement: Inventário compara a configuração efetiva e verifica a troca
+O preflight e o release SHALL comparar os labels ativos com hashes da configuração Compose efetivamente resolvida, incluindo `env_file` e o metadado operacional `APP_VERSION`. O JSON resolvido MUST permanecer em memória e SHALL NOT ser impresso ou persistido. Divergência real SHALL impedir o release. O script SHALL verificar novamente os hashes após a troca, esperar os serviços saudáveis por até 120 segundos e validar/recarregar somente o nginx da Markina antes de conferir HTTPS.
+
+#### Scenario: Hash direto omite resolução do env_file
+- **WHEN** a versão do Compose omite `env_file` no hash direto, mas o hash da configuração resolvida corresponde ao container
+- **THEN** o inventário aceita a correspondência efetiva, preserva o gate de igualdade e não altera serviços nem segredos
+
+#### Scenario: Configuração efetiva diverge
+- **WHEN** o hash resolvido não corresponde ao label de um serviço aprovado
+- **THEN** o inventário falha sem produzir aprovação válida e sem alterar o serviço
+
+#### Scenario: Serviço é recriado no release aprovado
+- **WHEN** web, API e worker de busca são recriados
+- **THEN** a liberação somente registra sucesso após espera limitada por saúde, leitura dos novos hashes, reload confinado ao nginx Markina e smoke HTTPS aprovados

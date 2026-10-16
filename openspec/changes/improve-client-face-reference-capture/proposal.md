@@ -27,6 +27,8 @@ Clientes relatam que buscas por fotos enviadas do dispositivo retornam zero, emb
 
 ## Impact
 
+Esclarecimento do proprietário em 2026-10-16: a publicação desta correção no recurso já ativo é manutenção do baseline `d9c8d3b`; os gates de primeira ativação/expansão não são pré-requisito de desenvolvimento/entrega corretiva que preserve estado, acesso, modelo e consentimento. A autorização de manutenção será verificada por baseline, diff/blobs restritos, CI, inventário e aprovação de produção; nenhum gate jurídico pendente será marcado como aprovado.
+
 - Provider e worker de consulta facial, fluxo de referência no portal cliente e mensagens de qualidade.
 - Workflow GitHub de CI/publicação e procedimento operacional de produção; a automação atual em `develop` publica homologação, enquanto o procedimento de produção existente é restrito ao serviço `web`.
 - Nenhuma alteração ao índice SFace, fotos indexadas, consentimento, fronteiras de autorização ou dependências externas de reconhecimento.

@@ -72,6 +72,10 @@ Mesmo limitado ao projeto `markina-gallery`, recriar API/web pode causar breve i
 
 ## Gates que impedem a execução
 
+Esclarecimento posterior do proprietário em 2026-10-16: os gates de primeira ativação/expansão abaixo não bloqueiam esta entrega corretiva no runtime já ativo. O release desta change usa autorização de manutenção específica, baseline `d9c8d3b`, blobs de código revisados, flag ativa em API/worker, configurações preservadas, CI, inventário e aprovação protegida. Este escopo não habilita ambiente desligado ou nova allowlist e não aprova gates documentais pendentes.
+
+Atualização 2026-10-16: a hipótese de drift nas notas pós-merge acima foi refutada por comparação resolvida em memória. O hash direto do Compose 2.35.1 omite `env_file`. API, web e worker correspondem aos labels e estão saudáveis. O inventário corrigido executado somente em leitura produziu fingerprint `141aa2f1f90286bc915ec6a5eed6b94b71e8a91f819846840901341bdf5987ec` para `57bbc7c`; não houve alteração de serviço. Ver `production-evidence-review.md` para a evidência e os critérios restantes. O proprietário confirmou que aprovação documentada de base legal/consentimento e corpus permitido ainda precisam ser definidos; os gates permanecem pendentes.
+
 1. Revalidar os gates da change `productionize-facial-search`: base legal, calibração/equidade com corpus autorizado, capacidade ARM, recuperação e o gate próprio de representação/consentimento para fluxo infantil. O registro versionado em `docs/PRODUCAO-FACIAL-INVENTARIO-E-PLANO.md` os mantém pendentes ou bloqueados; a flag atualmente ativa não os satisfaz.
 2. Implementar e validar workflow e preflight multi-serviço fail-closed sem permitir que secret ausente, inventário divergente ou aprovação ausente cause mutação.
 
