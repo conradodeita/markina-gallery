@@ -23,6 +23,7 @@ def main() -> None:
     release = WORKFLOW.split("  production-release:", 1)[1]
 
     require("environment: production-preflight", "environment sem revisor para preflight", preflight)
+    require("fetch-depth: 2", "histórico suficiente para comparar o SHA do preflight", preflight)
     require("environment: production", "environment protegido no release", release)
     require(
         "secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY",
