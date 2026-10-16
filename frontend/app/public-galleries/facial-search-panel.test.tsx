@@ -168,6 +168,70 @@ describe("polling da busca facial", () => {
     expect(reads).toBe(2);
   });
 
+  it("localiza falha transitória do polling e repete somente GET da busca existente", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required", manual_selection_available: true,
+        minor_search_available: false, consent_version: "consent-v1",
+      });
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches/request-1")) {
+        reads += 1;
+        return reads === 1
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : response({ ...queued, status: "ready", poll_after_ms: null });
+      }
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Harness />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(screen.getByRole("alert").textContent).toContain("tentaremos consultar novamente");
+    expect(screen.getByRole("alert").textContent).not.toContain("Failed to fetch");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(screen.getByTestId("search-state").textContent).toBe("ready");
+    expect(reads).toBe(2);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("oferece reconsulta manual pelo mesmo identificador depois do limite automático", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const fetchMock = vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required", manual_selection_available: true,
+        minor_search_available: false, consent_version: "consent-v1",
+      });
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches/request-1")) {
+        reads += 1;
+        return reads <= 4
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : response({ ...queued, status: "ready", poll_after_ms: null });
+      }
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Harness />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+
+    fireEvent.click(screen.getByRole("button", { name: "Atualizar busca" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(screen.getByTestId("search-state").textContent).toBe("ready");
+    expect(reads).toBe(5);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("encerra polling e remove retomada quando a consulta foi revogada", async () => {
     vi.useFakeTimers();
     window.sessionStorage.setItem(storageKey, "request-1");

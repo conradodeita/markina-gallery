@@ -41,15 +41,26 @@ A cliente autenticada e autorizada SHALL poder manter o envio de imagem do dispo
 - **THEN** o responsável continua podendo usar uma foto existente do dispositivo, sujeito às validações e consentimento vigentes
 
 ### Requirement: Consentimento único com declaração condicional de responsabilidade
-O diálogo de envio SHALL apresentar um único checkbox obrigatório para qualquer pessoa retratada, sem seletor adulto/menor. O texto SHALL autorizar de forma livre, informada e específica a busca nesta galeria e o tratamento temporário da foto e dos dados biométricos extraídos; SHALL declarar que, se a pessoa retratada for menor de 18 anos, a pessoa que aceita é pai, mãe ou responsável legal. A interface SHALL apresentar a declaração em português claro, registrar a modalidade `conditional` e manter registros históricos `adult` e `minor` sem alteração. O serviço SHALL exigir o checkbox aceito e a versão de consentimento vigente para toda nova busca por upload.
+O diálogo SHALL apresentar um único checkbox obrigatório para qualquer pessoa retratada, sem seletor adulto/menor. A declaração SHALL autorizar em português claro a busca nesta galeria e o tratamento temporário da foto e dos dados biométricos extraídos. Se a pessoa for menor de 18 anos, SHALL declarar que quem aceita é pai, mãe ou responsável legal.
 
 #### Scenario: Referência de pessoa adulta ou menor
 - **WHEN** a cliente aceita o checkbox único antes de enviar uma referência
-- **THEN** a busca registra o consentimento específico na versão vigente e a modalidade condicional, sem inferir ou registrar idade; se a pessoa for menor, a declaração aceita inclui responsabilidade legal
+- **THEN** a busca permite o envio após esse aceite, sem inferir a idade da pessoa; se for menor, a declaração aceita inclui responsabilidade legal
 
 #### Scenario: Checkbox não aceito ou declaração antiga
 - **WHEN** a cliente desmarca o checkbox ou um pedido novo omite a modalidade condicional
 - **THEN** o envio é bloqueado na interface ou recusado pela API, sem criar consulta
+
+### Requirement: Recibo de consentimento condicional preserva histórico
+O serviço SHALL registrar a modalidade `conditional` e a versão vigente para novas buscas. SHALL manter os registros históricos `adult` e `minor` sem alteração.
+
+#### Scenario: Nova busca registra a modalidade atual
+- **WHEN** a busca é criada com consentimento vigente
+- **THEN** o recibo registra `conditional` e a versão aceita
+
+#### Scenario: Registro histórico é consultado
+- **WHEN** um recibo antigo usa modalidade `adult` ou `minor`
+- **THEN** o sistema preserva seu valor original
 
 ### Requirement: Captura guiada prefere a câmera traseira e permite alternância
 A captura guiada SHALL solicitar a câmera traseira por padrão e SHALL oferecer alternância para a frontal e de volta quando o navegador suportar seleção de direção. A ação de alternância SHALL encerrar a trilha ativa antes de abrir a outra câmera. A captura explícita e as validações existentes SHALL continuar obrigatórias.
@@ -69,6 +80,10 @@ Quando o navegador rejeitar o envio antes de receber uma resposta HTTP, a interf
 - **WHEN** `fetch` rejeita sem resposta HTTP durante a criação da busca
 - **THEN** a cliente recebe uma mensagem localizada para conferir a conexão e o estado da busca antes de tentar novamente, sem mostrar `Failed to fetch`
 
+#### Scenario: Falha transitória ao atualizar busca já aceita
+- **WHEN** uma consulta GET do estado da busca é rejeitada sem resposta ou retorna falha transitória depois que a API aceitou o envio
+- **THEN** a interface apresenta orientação localizada e repete somente GET do mesmo UUID em número limitado; após as tentativas automáticas, permite atualização manual pelo mesmo GET, sem criar outra busca ou mostrar `Failed to fetch`
+
 ### Requirement: Referência e diagnósticos permanecem minimizados
 A melhoria da extração SHALL preservar autorização, consentimento, isolamento da galeria, cifragem, retenção e exclusão da referência já vigentes. Logs, auditoria e métricas SHALL NOT armazenar imagem, recorte facial, embedding, landmarks ou score biométrico.
 
@@ -77,19 +92,22 @@ A melhoria da extração SHALL preservar autorização, consentimento, isolament
 - **THEN** a referência temporária segue a política de exclusão existente e apenas estados e métricas técnicas agregadas podem permanecer
 
 ### Requirement: Referência prioriza um rosto visualmente dominante
-O processamento SHALL consolidar detecções repetidas do mesmo rosto entre escalas antes de contar candidatos. SHALL selecionar o maior rosto quando tiver confiança de pelo menos 0,85, menor lado de pelo menos 18% do maior lado da imagem e área pelo menos quatro vezes maior que cada outro candidato; SHALL então alinhar seu recorte nos pixels originais. A regra SHALL aplicar-se somente à referência, sem modificar indexação ou similaridade.
+Para a referência de consulta, o processamento SHALL selecionar o maior rosto quando sua confiança for pelo menos 0,85, seu menor lado tiver pelo menos 18% do maior lado da imagem e sua área for pelo menos quatro vezes a de cada outro candidato. A regra SHALL alinhar o recorte selecionado nos pixels originais e SHALL NOT alterar indexação ou similaridade.
 
 #### Scenario: Retrato com pessoas pequenas ao fundo
 - **WHEN** um rosto atende a todos os critérios de dominância sobre os demais
 - **THEN** apenas ele é alinhado e comparado, sujeito à qualidade mínima vigente
 
-#### Scenario: Detecção duplicada entre escalas
-- **WHEN** caixas possuem IoU de pelo menos 0,20 e todos os landmarks correspondentes estão a até 15% do menor lado das caixas
-- **THEN** o processamento consolida as detecções sem contar o mesmo rosto duas vezes
-
-#### Scenario: Dois rostos de tamanho semelhante
+#### Scenario: Faces distintas sem dominância clara
 - **WHEN** há mais de um candidato e nenhum atende aos critérios de dominância
-- **THEN** a busca termina sem comparação, explicando que não foi possível isolar um único rosto e solicitando recorte
+- **THEN** a busca termina sem comparação e solicita recorte para isolar um rosto
+
+### Requirement: Detecções repetidas entre escalas são consolidadas
+O processamento SHALL consolidar detecções repetidas comparando os cinco landmarks no espaço original, com tolerância máxima de 20% do menor lado das caixas, sem exigir IoU mínimo entre escalas.
+
+#### Scenario: Detecção repetida entre escalas com caixas de tamanhos diferentes
+- **WHEN** todos os landmarks correspondentes de duas detecções estão a até 20% do menor lado das caixas, ainda que o IoU seja inferior a 0,20
+- **THEN** o processamento consolida as detecções sem contar o mesmo rosto duas vezes
 
 ### Requirement: Confirmação de upload pode ser recuperada sem reenvio
 A API SHALL aceitar um UUID v4 opcional da tentativa e reservá-lo antes de qualquer escrita da referência ou retirada de buscas anteriores. A leitura SHALL continuar restrita ao cliente, tenant e galeria autorizados. Após falha de transporte ou resposta inválida, o frontend SHALL consultar exclusivamente esse UUID, SHALL NOT repetir o POST e SHALL oferecer conferência manual se ainda não houver confirmação.
