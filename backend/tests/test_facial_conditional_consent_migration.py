@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect
+from tests.tenant_fixtures import LEGACY_SCHEMA_HEAD
 
 
 def test_conditional_consent_migration_preserves_existing_declarations(tmp_path):
@@ -19,7 +20,7 @@ def test_conditional_consent_migration_preserves_existing_declarations(tmp_path)
             cwd=root, env=env, capture_output=True, check=True,
         )
 
-    migrate("20261014_0081")
+    migrate(LEGACY_SCHEMA_HEAD)
     migrate("20261016_0082")
     engine = create_engine(database_url)
     constraints = inspect(engine).get_check_constraints("facial_search_request")
