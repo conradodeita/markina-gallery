@@ -62,6 +62,8 @@ CI #38933642631 no SHA `dd41674` passou completamente (backend: 1.632 passaram, 
 
 O primeiro CI da atualização de baseline identificou que `scripts/deploy-prod-facial-services.sh` ainda fixava `d9c8d3b`; manifesto e constante precisam coincidir. A constante foi alinhada ao checkout verificado `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`. O CI seguinte detectou que o hash pinado no wrapper havia sido calculado sobre a cópia Windows com finais de linha CRLF, enquanto o gate compara o blob Git normalizado; o wrapper agora fixa o blob commitado `2c4b8be16991d5ee5e4c87cee8d88f006445eac3`. Nenhum código dos serviços ou blob de runtime foi alterado; a validação CI será repetida.
 
+Após o merge em `8481161`, a CI da `main` passou e o preflight confirmou checkout ativo `fe0a05a74dd1d6941b160e75c2081c78dad3bc05`, banco `20261014_0081`, serviços saudáveis e fingerprint `6b5e055f5cebb1385b190f3395381d71f88bdcdae841f8166d74276ca30ada7d`. Nenhuma mutação foi executada. A avaliação de manutenção retornou `arquivo_fora_do_escopo` devido a três testes diretamente relacionados; a allowlist operacional foi estendida a esses caminhos e precisa passar CI/preflight novamente.
+
 ## Evidências de CI
 
 - [ ] 3.2d Corrigir o cálculo dos hashes para usar configuração resolvida em memória e APP_VERSION ativo/alvo; corrigir releitura de hash pós-release, espera limitada e reload exclusivo do nginx Markina; validar cenários de igualdade/divergência e pós-condições no CI, sem testes locais. Diagnóstico remoto somente leitura em 2026-10-16 confirmou correspondência resolvida e saúde dos três serviços; o drift antes registrado foi refutado. Blob fixado já atualizado no wrapper root-owned e hash conferido; repetir preflight automático completo antes de marcar concluída.

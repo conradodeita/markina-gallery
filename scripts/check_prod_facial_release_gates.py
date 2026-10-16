@@ -37,12 +37,15 @@ OPERATIONS_FILES = {
     "scripts/test_production_release_workflow_policy.py",
     "scripts/test_prod_facial_release_gates.py",
     "backend/tests/test_facial_integration.py",
+    "backend/tests/test_direct_region_search.py",
+    "backend/tests/test_tenant_facial_maintenance.py",
     "backend/tests/test_facial_provider.py",
     "backend/tests/test_facial_conditional_consent_migration.py",
     "backend/tests/test_facial_search.py",
     "backend/tests/test_facial_search_worker.py",
     "frontend/app/facial-search-client.test.ts",
     "frontend/app/public-galleries/facial-search-panel.test.tsx",
+    "frontend/app/public-galleries/public-gallery.test.tsx",
 }
 
 

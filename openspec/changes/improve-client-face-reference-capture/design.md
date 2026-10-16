@@ -66,6 +66,8 @@ O proprietário determinou que a pendência dos registros de base legal, consent
 
 O workflow SHALL avaliar separadamente a autorização de manutenção e os gates de ativação. A manutenção exige baseline exato no host, flag já verdadeira em API/worker, configuração efetiva preservada, arquivos de runtime restritos à referência/captura e blobs revisados fixados no manifesto versionado, além de CI, inventário/fingerprint e aprovação protegida de produção. Arquivo de runtime não permitido ou blob divergente SHALL bloquear. O checkout do runner precisa do histórico para comparar baseline/candidata. O script de release SHALL NOT ligar flag, criar rollout, aumentar allowlist, mudar dados, modelos, limiar, consentimento ou retenção. Os gates jurídicos/calibração/capacidade/recuperação permanecem pendentes para primeira ativação/expansão; não serão marcados aprovados para liberar a manutenção.
 
+O primeiro preflight completo em `8481161` confirmou inventário remoto saudável e nenhum comando de mutação, mas a allowlist de manutenção rejeitou três testes diretamente relacionados à mudança (`backend/tests/test_direct_region_search.py`, `backend/tests/test_tenant_facial_maintenance.py` e `frontend/app/public-galleries/public-gallery.test.tsx`). A allowlist foi estendida somente a esses caminhos de teste; os caminhos de runtime permanecem restritos e pinados por blob.
+
 ## Decisão aprovada pelo proprietário — fluxo de entrega sem aprovações repetidas
 
 Esta decisão detalha e substitui qualquer interpretação anterior que exija aprovação humana para cada push ou para o preflight somente-leitura:
