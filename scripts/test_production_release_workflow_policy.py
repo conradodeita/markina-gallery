@@ -59,6 +59,20 @@ def main() -> None:
     if "bash -s" in WRAPPER or "git fetch" in WRAPPER:
         raise AssertionError("wrapper não executa stdin nem altera refs locais do checkout")
 
+    script = INVENTORY_SCRIPT.decode("utf-8")
+    require("config --no-interpolate --hash", "hash usa JSON resolvido sem nova interpolação", script)
+    if "compose config --hash" in script:
+        raise AssertionError("hash direto omite env_file no Compose do host")
+    require('APP_VERSION="$COMPOSE_APP_VERSION" docker compose', "metadado operacional preservado", script)
+    require('--wait --wait-timeout 120', "espera de saúde limitada", script)
+    release_script = script.split("release() {", 1)[1].split("main() {", 1)[0]
+    require("runtime_snapshot", "releitura de hashes após recriação", release_script)
+    require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)
+    require("compose exec -T nginx nginx -s reload", "renovação dos upstreams Markina", release_script)
+    if not (release_script.index("compose up") < release_script.index("runtime_snapshot")
+            < release_script.index("nginx -s reload") < release_script.index("smoke HTTPS")):
+        raise AssertionError("pós-condições precisam preceder o smoke final")
+
     print("production release workflow policy: ok")
 
 

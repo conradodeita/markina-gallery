@@ -46,6 +46,12 @@ Consulte `proposal.md` e as specs desta change. `OpenCvSFaceProvider.observe_byt
 
 Sem migration de banco e sem reindexação. Após revisão do OpenSpec e implementação, abrir PR isolada com somente arquivos desta change. O GitHub executa CI e OpenSpec; após merge aprovado, inicia automaticamente o job de produção, que aguarda o gate do environment `production`. Antes da execução, registrar inventário atualizado do host, SHA, serviços/portas/subdomínio e plano de impacto zero. Após aprovação, publicar o conjunto necessário com rollback restrito ao projeto. O proprietário valida imediatamente o fluxo autenticado em produção e registra evidência no OpenSpec. Não executar rollback de dados nem alterar `.env`/secrets.
 
+### Correção sustentada por diagnóstico — inventário resolvido
+
+O Compose 2.35.1 do host calcula `config --hash` sem resolver o `env_file` adicional. A evidência histórica de `release-payment-status-api-web` e a inspeção somente leitura de 2026-10-16 confirmaram que API, web e worker correspondem aos labels quando o JSON resolvido passa apenas em memória para `compose -f - config --no-interpolate --hash`. A hipótese anterior de drift foi refutada; não autoriza recriação para corrigir configuração.
+
+O preflight SHALL calcular hashes da configuração resolvida sem imprimir ou gravar seu conteúdo. A variável de processo `APP_VERSION` SHALL reproduzir o metadado da API ativa, validado contra o checkout; o release usa o SHA alvo sem editar `.env`. A igualdade de hashes continua obrigatória. Após recriar somente web/API/face-search-worker, o script SHALL esperar saúde por até 120 segundos, reler IDs/hashes/saúde e validar/recarregar exclusivamente o nginx Markina para renovar os upstreams, antes do smoke HTTPS. Não haverá rollback automático de dados nem alteração de proxy compartilhado. O wrapper root-owned SHALL fixar o novo blob revisado antes do próximo preflight.
+
 ## Decisão aprovada pelo proprietário — fluxo de entrega sem aprovações repetidas
 
 Esta decisão detalha e substitui qualquer interpretação anterior que exija aprovação humana para cada push ou para o preflight somente-leitura:

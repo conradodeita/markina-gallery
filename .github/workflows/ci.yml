@@ -151,6 +151,7 @@ jobs:
       - name: Validar política de preflight e aprovação única de produção
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
+          bash scripts/test_deploy_prod_facial_services.sh
           python scripts/test_production_release_workflow_policy.py
 
   gitleaks:

@@ -34,3 +34,9 @@ O environment existente `production` permanece protegido pelo revisor `conradode
 - O job `production-release` foi ignorado porque os gates faciais versionados seguem sem aprovação. A divergência operacional também precisa ser reconciliada antes de considerar o inventário válido. O release mutável não foi iniciado.
 
 O preflight não reutiliza nem modifica a chave ou os secrets de deploy. A aprovação de `production` permanece separada e protegida.
+
+## Correção do diagnóstico de hash — 2026-10-16
+
+A conclusão anterior de divergência real foi refutada. Compose 2.35.1 omite a resolução do `env_file` no hash direto, comportamento já registrado em `RELEASE-PAYMENT-STATUS-API-WEB.md`. Com o JSON resolvido somente em memória, `--no-interpolate` e `APP_VERSION` da API ativa, os hashes dos três serviços correspondem aos labels. Não é necessário recriar containers para corrigir essa falsa divergência.
+
+O script corrigido completou inventário remoto somente leitura, saúde dos três serviços, bind exclusivo `127.0.0.1:8080`, HTTPS 200 e fingerprint `141aa2f1f90286bc915ec6a5eed6b94b71e8a91f819846840901341bdf5987ec`, com alvo `57bbc7c`. A correção também relê hashes após a troca, aguarda saúde por até 120 segundos e valida/recarrega exclusivamente o nginx Markina antes do smoke. CI e instalação do novo blob fixado no wrapper devem preceder o próximo preflight automático. Isso não aprova os gates jurídicos, do corpus, capacidade ou restauração.

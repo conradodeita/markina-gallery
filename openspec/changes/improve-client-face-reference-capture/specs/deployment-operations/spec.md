@@ -42,3 +42,18 @@ Após CI e merge, o workflow SHALL executar preflight somente-leitura antes de q
 #### Scenario: Credencial somente-leitura ausente
 - **WHEN** não existe chave SSH separada e restrita à rotina de inventário
 - **THEN** o workflow falha fechado antes de conectar ao servidor e não reutiliza a chave de deploy nem reduz a proteção de produção
+
+### Requirement: Inventário compara a configuração efetiva e verifica a troca
+O preflight e o release SHALL comparar os labels ativos com hashes da configuração Compose efetivamente resolvida, incluindo `env_file` e o metadado operacional `APP_VERSION`. O JSON resolvido MUST permanecer em memória e SHALL NOT ser impresso ou persistido. Divergência real SHALL impedir o release. O script SHALL verificar novamente os hashes após a troca, esperar os serviços saudáveis por até 120 segundos e validar/recarregar somente o nginx da Markina antes de conferir HTTPS.
+
+#### Scenario: Hash direto omite resolução do env_file
+- **WHEN** a versão do Compose omite `env_file` no hash direto, mas o hash da configuração resolvida corresponde ao container
+- **THEN** o inventário aceita a correspondência efetiva, preserva o gate de igualdade e não altera serviços nem segredos
+
+#### Scenario: Configuração efetiva diverge
+- **WHEN** o hash resolvido não corresponde ao label de um serviço aprovado
+- **THEN** o inventário falha sem produzir aprovação válida e sem alterar o serviço
+
+#### Scenario: Serviço é recriado no release aprovado
+- **WHEN** web, API e worker de busca são recriados
+- **THEN** a liberação somente registra sucesso após espera limitada por saúde, leitura dos novos hashes, reload confinado ao nginx Markina e smoke HTTPS aprovados
