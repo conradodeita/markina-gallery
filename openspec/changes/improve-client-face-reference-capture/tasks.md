@@ -11,6 +11,8 @@
 
 Relato de produção em 2026-10-16: proprietário confirmou sucesso da câmera guiada; uma foto de dispositivo com um único rosto visualmente evidente foi recusada como múltiplas regiões. Também observou `Failed to fetch` após a busca iniciar. Não foi fornecido horário para correlacionar a falha com logs do servidor; a investigação do frontend encontrou mensagem bruta no polling e ausência de retry GET. A foto não foi armazenada no Git nem enviada a serviço externo.
 
+CI #38982185641 no SHA `7497f65` detectou que os blobs de runtime revisados em `reference.py` e `facial-search-panel.tsx` ainda não estavam pinados no manifesto de manutenção. As referências foram atualizadas para os blobs Git do commit; a nova execução do CI fica pendente. Nenhum teste local foi executado.
+
 Evidência de entrada: run 38955969200 publicou 7c7a4ad e os três serviços saudáveis, mas terminou em 502 no smoke imediatamente após reload. HTTPS posterior retornou 200. Proprietário confirmou uso e relatou falso múltiplo rosto/erro de confirmação no Android. Logs sanitizados confirmam dois POST Android aceitos (202) e um Windows aceito. Causa exata no navegador ainda não comprovada; nenhuma imagem ou biometria foi lida.
 
 PR #199, SHA a36691e: CI #38972811397 aprovou política operacional e OpenSpec; frontend passou lint e testes e iniciou build. Gitleaks identificou somente o SHA público da versão publicada no inventário, sem credencial. Exceção limitada ao fingerprint exato registrada e texto reformulado para evitar novo falso positivo. Nenhum teste local. Wrapper remoto instalado com hash conferido; ver deployment-readiness-20261016.md.
