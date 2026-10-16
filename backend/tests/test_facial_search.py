@@ -210,11 +210,13 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
 def test_upload_attempt_is_recoverable_and_collision_does_not_replace_reference(tmp_path):
     db, parent, client = _fixture(tmp_path, index_ready=True)
     request_id = uuid4()
-    kwargs = dict(parent_gallery_id=parent.id, client_id=client.id,
-                  consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
-                  subject_declaration="conditional", representation_reference=None,
-                  payload=_jpeg(), settings=_settings(tmp_path), consent_accepted=True,
-                  request_id=request_id)
+    kwargs = {
+        "parent_gallery_id": parent.id, "client_id": client.id,
+        "consent_version": CLIENT_REFERENCE_CONSENT_VERSION,
+        "subject_declaration": "conditional", "representation_reference": None,
+        "payload": _jpeg(), "settings": _settings(tmp_path), "consent_accepted": True,
+        "request_id": request_id,
+    }
     created = create_search_request(db, **kwargs)
     db.commit()
     assert created.id == request_id
