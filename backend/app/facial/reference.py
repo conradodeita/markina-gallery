@@ -35,7 +35,11 @@ def reference_candidates(detections: list[Detection], *, width: int, height: int
         duplicate = False
         for other in kept:
             tolerance = 0.20 * min(*candidate.row[2:4], *other.row[2:4])
-            if all(
+            center_distance = math.hypot(
+                candidate.row[0] + candidate.row[2] / 2 - other.row[0] - other.row[2] / 2,
+                candidate.row[1] + candidate.row[3] / 2 - other.row[1] - other.row[3] / 2,
+            )
+            if center_distance <= tolerance and all(
                 math.hypot(candidate.row[i] - other.row[i],
                            candidate.row[i + 1] - other.row[i + 1]) <= tolerance
                 for i in range(4, 14, 2)

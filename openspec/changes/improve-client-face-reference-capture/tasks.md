@@ -2,7 +2,7 @@
 
 ## 5. Refinamento após feedback de produção em 2026-10-16
 
-- [ ] 5.1 Consolidar detecções repetidas entre escalas por proximidade dos landmarks mesmo com IoU baixo, mantendo faces distintas ambíguas e priorizando rosto dominante; adicionar regressões de duplicação, fundo pequeno e ambiguidade para o CI.
+- [ ] 5.1 Consolidar detecções repetidas entre escalas por proximidade dos centros e landmarks mesmo com IoU baixo, mantendo faces distintas ambíguas e priorizando rosto dominante; adicionar regressões de duplicação, fundo pequeno e ambiguidade para o CI.
 - [x] 5.2 Correlacionar upload com UUID v4 reservado antes da gravação; recuperar confirmação por GET sem reenvio; verificar colisão, autorização e resposta perdida no CI. Evidência: CI da PR #199, run #38973178660, passou testes focados de provider/search (30) e suíte backend completa (1.639 passaram, 23 ignorados), incluindo recuperação pelo identificador e colisão sem sobrescrita; sem testes locais.
 - [ ] 5.3 Captura em tela cheia com guia fiel ao vídeo, foco/saída e trilhas; detalhes recolhíveis e checkbox inicialmente marcado com autorização explícita no envio; validar no CI e pelo proprietário após publicação.
 - [x] 5.4 Atualizar inventário/baseline/schema já publicado e pins de manutenção, corrigir smoke com espera limitada; CI e preflight protegidos antes do próximo deploy. Evidência: run `38976692654` passou preflight e release no SHA `f2ac110fb648e0158d1896923ade0661b006a276`; healthcheck HTTPS e inventário SSH pós-release confirmaram API `ok` e serviços Markina saudáveis.
@@ -11,7 +11,7 @@
 
 Relato de produção em 2026-10-16: proprietário confirmou sucesso da câmera guiada; uma foto de dispositivo com um único rosto visualmente evidente foi recusada como múltiplas regiões. Também observou `Failed to fetch` após a busca iniciar. Não foi fornecido horário para correlacionar a falha com logs do servidor; a investigação do frontend encontrou mensagem bruta no polling e ausência de retry GET. A foto não foi armazenada no Git nem enviada a serviço externo.
 
-CI #38982185641 no SHA `7497f65` detectou que os blobs de runtime revisados em `reference.py` e `facial-search-panel.tsx` ainda não estavam pinados no manifesto de manutenção. As referências foram atualizadas para os blobs Git do commit; a nova execução do CI fica pendente. Nenhum teste local foi executado.
+CI #38982185641 no SHA `7497f65` detectou que os blobs de runtime revisados em `reference.py` e `facial-search-panel.tsx` ainda não estavam pinados no manifesto de manutenção. As referências foram atualizadas. O mesmo CI encontrou um fixture sintético de rostos distintos com landmarks coincidentes; a consolidação agora também exige centros próximos. A correção e os novos pins aguardam nova execução; nenhum teste local foi executado.
 
 Evidência de entrada: run 38955969200 publicou 7c7a4ad e os três serviços saudáveis, mas terminou em 502 no smoke imediatamente após reload. HTTPS posterior retornou 200. Proprietário confirmou uso e relatou falso múltiplo rosto/erro de confirmação no Android. Logs sanitizados confirmam dois POST Android aceitos (202) e um Windows aceito. Causa exata no navegador ainda não comprovada; nenhuma imagem ou biometria foi lida.
 

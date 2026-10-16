@@ -103,10 +103,10 @@ Para a referência de consulta, o processamento SHALL selecionar o maior rosto q
 - **THEN** a busca termina sem comparação e solicita recorte para isolar um rosto
 
 ### Requirement: Detecções repetidas entre escalas são consolidadas
-O processamento SHALL consolidar detecções repetidas comparando os cinco landmarks no espaço original, com tolerância máxima de 20% do menor lado das caixas, sem exigir IoU mínimo entre escalas.
+O processamento SHALL consolidar detecções repetidas comparando os cinco landmarks e os centros das caixas no espaço original, com tolerância máxima de 20% do menor lado das caixas, sem exigir IoU mínimo entre escalas.
 
 #### Scenario: Detecção repetida entre escalas com caixas de tamanhos diferentes
-- **WHEN** todos os landmarks correspondentes de duas detecções estão a até 20% do menor lado das caixas, ainda que o IoU seja inferior a 0,20
+- **WHEN** os centros das caixas e todos os landmarks correspondentes de duas detecções estão a até 20% do menor lado das caixas, ainda que o IoU seja inferior a 0,20
 - **THEN** o processamento consolida as detecções sem contar o mesmo rosto duas vezes
 
 ### Requirement: Confirmação de upload pode ser recuperada sem reenvio

@@ -258,8 +258,8 @@ def test_reference_consolidates_same_landmarks_across_different_scale_boxes():
 
 def test_reference_consolidates_same_landmarks_when_scale_boxes_have_low_iou():
     main = _portrait_row(100, 100, 200)
-    # Mesmo rosto detectado em outra escala: landmarks iguais, mas a caixa menor
-    # tem IoU abaixo do limiar NMS por causa da diferença de tamanho.
+    # Mesmo rosto detectado em outra escala: centro e landmarks coincidem, mas a
+    # caixa menor tem IoU abaixo do limiar NMS por causa da diferença de tamanho.
     duplicate = (160, 160, 80, 80, *main[4:14], .95)
     result = reference_candidates([Detection(main, "global"), Detection(duplicate, "tile:0")],
                                   width=800, height=600, nms_iou=.4)
