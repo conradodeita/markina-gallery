@@ -6,6 +6,14 @@
 - O environment GitHub `production` foi configurado: revisor obrigatório `conradodeita`, branch permitida somente `main`, bypass administrativo desativado. Secrets adicionados a partir do arquivo SSH fornecido pelo proprietário: `PRODUCTION_SSH_PRIVATE_KEY` e `PRODUCTION_SSH_KNOWN_HOSTS`. Variáveis: `PRODUCTION_SSH_HOST`, `PRODUCTION_SSH_PORT`, `PRODUCTION_SSH_USER` e `PRODUCTION_PUBLIC_BASE_URL`. Nenhum valor privado foi exibido.
 - Inventário remoto somente de leitura coletado em `2026-10-15 23:13:51 UTC` com a chave fornecida. Nenhum comando de mutação foi executado.
 
+## Revalidação somente leitura — 2026-10-16 01:34:44 UTC
+
+- Host `clearbudget-vnic`, arquitetura `aarch64`, 4 CPUs; load `0.20 0.22 0.13`; RAM disponível `21.507.387.392` bytes; `/var/lib/docker` com `77.945.286.656` bytes livres (63% usado).
+- Checkout `/opt/markina-gallery` continuava limpo em `d9c8d3b118fc367af26cfa2b47772d7bff1ccd47`; Compose do projeto `markina-gallery`; Nginx somente em `127.0.0.1:8080`, API `8000/tcp` e web `3000/tcp` internos. Os serviços Markina listados pelo Compose estavam saudáveis; Evolution permaneceu fora do escopo.
+- `https://markina.pickyourpic.com.br/healthz`, `/api/health` e `/` retornaram HTTP 200.
+- O backup mais recente observado foi `predeploy-20261015T164654Z-71be3b296591.dump`, 71.128.950 bytes, modo `0600`, dono `ubuntu:ubuntu`, SHA-256 `549b6f6861f54a2280b521aa67bcf17db2be50ea93dd00628fe68f67f42a9f45`; seu manifesto aponta os SHAs anterior `350a802e9f8894a180a5beb1500db9ba50c8fded` e alvo `71be3b29659143293351968e15fb4886c2d72bf0`. Nenhuma restauração foi feita. `pg_restore` não está instalado no host e o arquivo não está montado no container PostgreSQL, então integridade restaurável não foi verificada.
+- O snapshot de recursos não é ensaio de carga e não aprova capacidade ARM. Nenhuma mutação, build, restart, consulta facial ou carga foi executada.
+
 ## Inventário atual
 
 | Item | Observação somente de leitura |
@@ -49,11 +57,11 @@ Mesmo limitado ao projeto `markina-gallery`, recriar API/web pode causar breve i
 ## Fluxo automático no GitHub
 
 - O CI roda em PR e em push para develop ou main. Um PR verde não publica nada; o merge gera um único evento push em main, e o job de preflight começa no mesmo run depois dos jobs obrigatórios. Não é necessário um segundo push para destravar deploy.
-- O preflight usa o environment protegido production para fazer inventário remoto somente leitura e calcular um fingerprint que liga SHA, containers, imagens, configuração e domínio. A aprovação dessa primeira etapa autoriza somente o inventário.
-- O workflow avalia production-gates.json. Enquanto qualquer gate não tiver status aprovado e referência de evidência verificável, production-release é ignorado; nenhum comando mutável é enviado ao host.
+- O preflight usa o environment separado `production-preflight` e uma chave dedicada, sem revisores, para fazer inventário remoto somente leitura. O wrapper root-owned valida a revisão e o comando forçado, busca o script de inventário por SHA imutável, confere o blob Git fixado e só permite `--mode inventory`; o fingerprint liga SHA, containers, imagens, configuração e domínio. Esse environment ainda precisa ser configurado e validado em execução real.
+- O workflow avalia `production-gates.json`. Enquanto qualquer gate não tiver status aprovado e referência de evidência verificável, `production-release` é ignorado; nenhum comando mutável é enviado ao host.
 - Quando todos os gates forem aprovados, o segundo job aguarda nova aprovação do environment production, após o inventário estar visível na mesma execução. Ele refaz as verificações e exige que o fingerprint ainda corresponda antes de construir e recriar somente web, api e face-search-worker.
 - O script não executa migration e falha se Compose, Docker ou migrations mudarem entre o SHA ativo e o alvo. Em caso de falha operacional não há rollback automático; imagens anteriores ficam etiquetadas e o rollback exige inventário e aprovação próprios.
-- Estado atual de production-gates.json: bloqueado por base legal, calibração/equidade, capacidade ARM, recuperação, representação/consentimento infantil e aprovação operacional ainda sem evidência. O job pode inventariar após CI verde e aprovação de leitura, mas não publica até esses registros serem atualizados com evidência.
+- Estado atual de `production-gates.json`: bloqueado por base legal, calibração/equidade e representação/consentimento infantil sem evidência humana. O snapshot de ARM foi registrado, mas falta carga autorizada; recuperação continua parcial porque backup e manifesto existem, mas restauração não foi verificada. Aprovação operacional também segue pendente. O preflight pode inventariar após CI verde e credencial dedicada; nenhum release é permitido até que cada gate exigido tenha status aprovado e evidência verificável.
 
 ## Gates que impedem a execução
 
