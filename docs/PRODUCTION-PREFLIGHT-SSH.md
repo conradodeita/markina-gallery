@@ -24,6 +24,11 @@ Criar o environment `production-preflight`, permitir somente a branch `main`, se
 
 O environment existente `production` permanece protegido pelo revisor `conradodeita` e continua contendo exclusivamente as credenciais mutáveis de deploy. O job `production-release` é o único que o referencia; assim o inventário fica disponível antes da única aprovação de release.
 
-## Bloqueios
+## Estado da configuração em 2026-10-16
 
-A configuração requer criar chave e entrada de `authorized_keys` no servidor e cadastrar os metadados no environment GitHub. Nenhum desses passos foi executado por este change. A publicação continua bloqueada até a configuração ser validada em um preflight real, e nenhum release deve reutilizar a credencial protegida de deploy para contornar o gate.
+- O wrapper root-owned foi instalado em `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper`, proprietário `root:root`, modo `0755`; SHA-256 conferido com a cópia versionada: `13257952b6fca0b37125201cdf503fc44867b51a2d647b7e527ed83c5b22349b`.
+- Uma chave ED25519 dedicada foi cadastrada em `/home/ubuntu/.ssh/authorized_keys` com `restrict` e comando forçado. Fingerprint: `SHA256:4MWJ/8ffnxxtIM6RBrA2Jj7sZmq0Y5hw5uJ6DfQVCLk`. Um comando arbitrário foi recusado pelo wrapper, sem tocar nos serviços.
+- O environment `production-preflight` foi criado sem revisores, restrito à branch `main`. As variáveis `PRODUCTION_PREFLIGHT_SSH_HOST`, `PRODUCTION_PREFLIGHT_SSH_PORT`, `PRODUCTION_PREFLIGHT_SSH_USER` e `PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL`, além dos secrets `PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY` e `PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS`, foram configurados; seus valores não foram lidos nem registrados.
+- A execução positiva de inventário continua pendente até a PR #192 ser integrada: o script pinado só estará em `main` depois do merge. O release mutável não foi iniciado e os gates de produção continuam bloqueando `production-release`.
+
+O preflight não reutiliza nem modifica a chave ou os secrets de deploy. A aprovação de `production` permanece separada e protegida.
