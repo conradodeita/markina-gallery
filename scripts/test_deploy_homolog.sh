@@ -8,7 +8,7 @@ readonly DEPLOY_SCRIPT="$SCRIPT_DIR/deploy-homolog.sh"
 output="$(mktemp)"
 err_probe="$(mktemp)"
 trap 'rm -f "$output" "$err_probe"' EXIT
-trap 'status=$?; echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"' ERR
+trap 'status=$?; if [[ "$-" == *e* ]]; then echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"; fi' ERR
 
 if MARKINA_EXPECTED_REPOSITORY="owner/repository" bash "$DEPLOY_SCRIPT" --sha 0000000000000000000000000000000000000000 >"$output" 2>&1; then
   echo "o deploy aceitou execução fora de /opt/markina-gallery" >&2
@@ -40,7 +40,7 @@ set -e
 [[ "$fail_status" -ne 0 ]]
 grep -Fq 'deploy-homolog: falha sintética pós-switch' "$output"
 grep -Fq 'trapped' "$err_probe"
-trap 'status=$?; echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"' ERR
+trap 'status=$?; if [[ "$-" == *e* ]]; then echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"; fi' ERR
 
 # The current database revision must not depend on the potentially stale migrate image.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
