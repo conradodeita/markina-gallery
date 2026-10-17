@@ -18,6 +18,7 @@
 ## 4. Integração e revisão
 
 - [x] 4.1 Executar validações focadas backend/frontend, lint, typecheck, build e OpenSpec estrito; registrar evidências e revisar diff/status sem tocar nas alterações locais preexistentes. Evidências locais: 9 testes backend focados passaram; 23 testes frontend focados passaram; Ruff passou; ESLint passou sem erros (31 avisos); TypeScript passou; build Next.js passou; validação estrita desta change passou; Alembic informa `20261016_0082 (head)`. Evidências CI `39000714156`: frontend e OpenSpec passaram; backend passou com 1632 testes e 23 skips, além de regressões PostgreSQL (4, 1 e 1 testes aprovados); Gemma e política do inventário passaram. Gitleaks é o único check vermelho, por ocorrências em histórico de branches não relacionadas a esta PR, confirmado em inspeção local. A validação OpenSpec estrita global ainda lista 29 problemas preexistentes em outras changes/specs.
+- [ ] 4.2 Classificar e suprimir somente os quatro falsos positivos históricos do Gitleaks por fingerprint exato, mantendo a varredura do histórico completo; confirmar Gitleaks local e CI. Evidência local: Gitleaks 8.24.3 passou com zero findings após ignorar quatro fingerprints que correspondiam a APP_VERSION/SHA, checksums de arquivos e fingerprint de configuração em documentos de evidência. CI após essa allowlist está pendente.
 
 ## Workflow follow-up
 
