@@ -7,8 +7,8 @@
 
 ## 2. Inventário e release API/web
 
-- [ ] 2.1 Implementar inventário somente-leitura para host, checkout, versão, schema, serviços, configuração Compose efetiva, portas e endpoints; verificar minimização de dados e fingerprint reproduzível.
-- [ ] 2.2 Implementar publicação e rollback aprovados de `api` e `web` com `--no-deps`, sem migration, preservando imagens/SHA e falhando fechado em fingerprint divergente; verificar todos os comandos por testes simulados.
+- [x] 2.1 Implementar inventário somente-leitura para host, checkout, versão, schema, serviços, configuração Compose efetiva, portas e endpoints; verificar minimização de dados e fingerprint reproduzível. Evidência local: `bash scripts/test_deploy_prod_app_services.sh` exercitou saída de host/domínio/porta/schema, endpoints HTTPS e fingerprint com fixtures; comprovou ausência de build/recriação/tag de imagens no inventário.
+- [x] 2.2 Implementar publicação e rollback aprovados de `api` e `web` com `--no-deps`, sem migration, preservando imagens/SHA e falhando fechado em fingerprint divergente; verificar todos os comandos por testes simulados. Evidência local: o mesmo teste simulou Compose/Docker/Git/curl, confirmou build/recriação somente de API/web, recusa antes de tocar imagem quando o fingerprint diverge e rollback com `--no-build --no-deps` somente dos dois serviços.
 - [x] 2.3 Expandir o wrapper restrito para aceitar apenas o comando app com SHA completo e blob Git fixado; verificar rejeição de comandos arbitrários, stdin, scripts e modos mutáveis. Evidência local: `python scripts/test_production_release_workflow_policy.py` passou e verificou regex estrita, hashes Git dos dois scripts, modo inventory fixo e ausência de execução de stdin/release no wrapper.
 
 ## 3. Integração CI e documentação
