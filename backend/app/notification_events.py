@@ -122,9 +122,13 @@ def record_restricted_folder_ready(
         client = owned_record(db, Client, client_id, tenant_id=parent.tenant_id)
         if not client:
             continue
+        event_key = f"private_photos_ready:{folder.id}:{batch_key}:{digest}:{grant_id}:{client_id}"
+        # Preserva chaves anteriores válidas e o contrato VARCHAR(192), sem perder identidade.
+        if len(event_key) > 192:
+            event_key = f"private_photos_ready:{sha256(event_key.encode()).hexdigest()}"
         enqueue_event(
             db, event_type="private_photos_ready",
-            event_key=f"private_photos_ready:{folder.id}:{batch_key}:{digest}:{grant_id}:{client_id}",
+            event_key=event_key,
             values={"galeria": parent.name, "cliente": client.full_name},
             target_path=f"/public-galleries/{parent.id}", recipients=[client_id],
             parent_gallery_id=parent.id, client_id=client_id, tenant_id=parent.tenant_id,

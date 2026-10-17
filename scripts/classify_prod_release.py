@@ -23,6 +23,9 @@ FACIAL_RUNTIME = {
     "backend/migrations/versions/20261016_0082_facial_conditional_consent.py",
     "frontend/app/facial-search-client.ts",
     "frontend/app/public-galleries/facial-search-panel.tsx",
+    "frontend/app/gallery-presentation.tsx",
+    "frontend/app/public-galleries/[galleryId]/page.tsx",
+    "docker/docker-compose.yml",
 }
 
 

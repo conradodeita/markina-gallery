@@ -77,6 +77,19 @@ class MaintenanceReleaseTests(unittest.TestCase):
         self.assertEqual(gates.evaluate_maintenance(self.payload, self.root),
                          (False, "arquivo_fora_do_escopo"))
 
+    def test_compose_and_results_are_in_the_exact_reviewed_manifest(self):
+        for path in (
+            "docker/docker-compose.yml",
+            "frontend/app/gallery-presentation.tsx",
+            "frontend/app/public-galleries/[galleryId]/page.tsx",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, self.payload["maintenance_release"]["runtime_blobs"])
+                payload = copy.deepcopy(self.payload)
+                payload["maintenance_release"]["runtime_blobs"].pop(path)
+                self.assertEqual(gates.evaluate_maintenance(payload, self.root),
+                                 (False, "manifesto_de_runtime_incompleto"))
+
     def test_missing_baseline_or_manifest_is_rejected(self):
         payload = copy.deepcopy(self.payload)
         payload["maintenance_release"]["baseline_sha"] = "0" * 40

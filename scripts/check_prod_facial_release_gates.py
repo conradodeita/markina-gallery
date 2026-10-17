@@ -25,6 +25,9 @@ RUNTIME_FILES = (
     "frontend/app/globals.css",
     "frontend/app/facial-search-client.ts",
     "frontend/app/public-galleries/facial-search-panel.tsx",
+    "frontend/app/gallery-presentation.tsx",
+    "frontend/app/public-galleries/[galleryId]/page.tsx",
+    "docker/docker-compose.yml",
 )
 OPERATIONS_FILES = {
     ".github/workflows/ci.yml", ".gitleaksignore",
@@ -52,9 +55,11 @@ OPERATIONS_FILES = {
     "backend/tests/test_facial_conditional_consent_migration.py",
     "backend/tests/test_facial_search.py",
     "backend/tests/test_facial_search_worker.py",
+    "backend/tests/test_facial_config.py",
     "frontend/app/facial-search-client.test.ts",
     "frontend/app/public-galleries/facial-search-panel.test.tsx",
     "frontend/app/public-galleries/public-gallery.test.tsx",
+    "frontend/app/gallery-presentation.test.tsx",
 }
 APP_RUNTIME_FILES = {
     "backend/app/main.py",

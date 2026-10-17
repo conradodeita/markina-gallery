@@ -16,6 +16,15 @@ class ReleaseClassifierTests(unittest.TestCase):
     def test_operations_only_does_not_trigger_release(self):
         self.assertEqual(classify({"docs/DEPLOY-PROD-APP.md", ".github/workflows/ci.yml"}), "none")
 
+    def test_reference_results_and_compose_use_facial_gate(self):
+        for path in (
+            "frontend/app/gallery-presentation.tsx",
+            "frontend/app/public-galleries/[galleryId]/page.tsx",
+            "docker/docker-compose.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(classify({path}), "facial")
+
 
 if __name__ == "__main__":
     unittest.main()

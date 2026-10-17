@@ -325,6 +325,7 @@ def test_canonical_restricted_folder_upload_notifies_only_after_closed_batch_is_
         assert len(events) == 1
         assert events[0].event_type == "private_photos_ready"
         assert events[0].client_id == client_id
+        assert len(events[0].event_key) <= 192  # contrato da coluna PostgreSQL
         deliveries = list(db.scalars(select(NotificationDelivery).where(
             NotificationDelivery.tenant_id == FIXTURE_TENANT_ID,
             NotificationDelivery.event_id == events[0].id,
