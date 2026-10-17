@@ -2,7 +2,7 @@
 
 ## Esclarecimento de escopo — manutenção autorizada
 
-O proprietário esclareceu em 2026-10-16 que esses registros não impedem a implementação/entrega desta correção no servidor já ativo. A interpretação anterior de bloqueio de qualquer deploy fica substituída para a manutenção do baseline `d9c8d3b`: flag já ligada, configurações/consentimento/acesso/modelo/índice/limiar/retencão preservados, runtime revisado fixado por blobs, CI, inventário e aprovação protegida. A seção abaixo registra pendências de primeira ativação/expansão; não aprova ficticiamente esses gates nem bloqueia essa manutenção autorizada.
+O proprietário esclareceu em 2026-10-16 que esses registros não impedem a implementação/entrega desta correção no servidor já ativo. A interpretação anterior de bloqueio de qualquer deploy fica substituída para a manutenção do runtime facial existente: flag já ligada, configurações/consentimento/acesso/modelo/índice/limiar/retenção preservados, runtime revisado fixado por blobs, CI, inventário e aprovação protegida. O checkout ativo será ancorado em `facial-last-healthy.sha`; essa manutenção não aprova ficticiamente os gates de ativação.
 
 ## Estado confirmado pelo proprietário
 

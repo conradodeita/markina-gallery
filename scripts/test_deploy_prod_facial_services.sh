@@ -79,11 +79,24 @@ fi
 grep -q 'manutenção exige runtime facial já ativo' "$output"
 if grep -q 'synthetic-sensitive' "$output"; then echo 'configuração vazou no erro' >&2; exit 1; fi
 
-printf '%s\n' "$(git rev-parse HEAD^)" > "$baseline_file"
 CHECKOUT_SHA="$(git rev-parse HEAD)"
+printf '%s\n' "$CHECKOUT_SHA" > "$baseline_file"
+verify_maintenance_baseline "$baseline_file"
+printf '%s\n' "$(git rev-parse HEAD^)" > "$baseline_file"
 verify_maintenance_baseline "$baseline_file"
 printf '%s\n' "$(printf '0%.0s' {1..40})" > "$baseline_file"
 if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
   echo 'baseline facial não ancestral foi aceito' >&2; exit 1
+fi
+printf 'invalid\n' > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'marcador facial malformado foi aceito' >&2; exit 1
+fi
+if ( verify_maintenance_baseline "$baseline_file.missing" ) >"$output" 2>&1; then
+  echo 'marcador facial ausente foi aceito' >&2; exit 1
+fi
+printf '%s\n%s\n' "$(git rev-parse HEAD^)" "$CHECKOUT_SHA" > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'marcador facial com mais de uma revisão foi aceito' >&2; exit 1
 fi
 echo 'production resolved inventory: ok'

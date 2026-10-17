@@ -97,8 +97,11 @@ def main() -> None:
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
+    require('baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"', "baseline facial usa o marcador operacional", script)
+    require("verify_maintenance_baseline", "checkout ativo confere marcador de release", script)
     require('git merge-base --is-ancestor "$baseline_sha" "$CHECKOUT_SHA"', "descendência após release app", script)
     require('git diff --quiet "$baseline_sha" "$CHECKOUT_SHA" -- "${FACIAL_BASELINE_FILES[@]}"', "runtime facial dedicado preservado", script)
+    require('git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA"', "alvo descende do checkout", script)
     require("require_existing_facial_runtime", "manutenção não ativa runtime desligado", script)
     for path, expected in maintenance["runtime_blobs"].items():
         actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
