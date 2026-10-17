@@ -34,6 +34,28 @@ DATABASE_REVISION=""
 
 fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
 
+verify_readonly_target_ancestry() (
+  set -Eeuo pipefail
+  local origin="$1" checkout_sha="$2" target_sha="$3" temp_root temp_repo fetched_sha current_sha
+  temp_root="$(mktemp -d "${TMPDIR:-/tmp}/markina-app-history.XXXXXX")" \
+    || fail "não foi possível criar repositório temporário de ancestralidade"
+  trap 'rm -rf -- "$temp_root"' EXIT
+  temp_repo="$temp_root/repository.git"
+  git init --quiet --bare "$temp_repo" || fail "não foi possível inicializar repositório temporário"
+  git -C "$temp_repo" config remote.origin.url "$origin"
+  git -C "$temp_repo" config remote.origin.promisor true
+  git -C "$temp_repo" config remote.origin.partialclonefilter blob:none
+  git -C "$temp_repo" fetch --quiet --filter=blob:none --no-tags origin \
+    refs/heads/main:refs/remotes/origin/main \
+    || fail "não foi possível obter histórico filtrado de main"
+  fetched_sha="$(git -C "$temp_repo" rev-parse refs/remotes/origin/main)"
+  [[ "$fetched_sha" == "$target_sha" ]] || fail "HEAD de main mudou durante o inventário"
+  git -C "$temp_repo" merge-base --is-ancestor "$checkout_sha" refs/remotes/origin/main \
+    || fail "SHA alvo não descende do runtime ativo"
+  current_sha="$(git ls-remote "$origin" refs/heads/main | awk 'NR == 1 {print $1}')"
+  [[ "$current_sha" == "$target_sha" ]] || fail "HEAD de main mudou durante o inventário"
+)
+
 parse_arguments() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -92,10 +114,11 @@ verify_repository() {
   [[ "$remote_sha" == "$TARGET_SHA" ]] || fail "SHA alvo não é o HEAD atual de origin/main"
   if [[ "$MODE" == release || "$MODE" == rollback ]]; then
     git fetch --quiet origin main
+    git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA" \
+      || fail "alvo não descende do runtime ativo"
   else
-    git fetch --quiet --no-write-fetch-head origin "$TARGET_SHA"
+    verify_readonly_target_ancestry "$origin" "$CHECKOUT_SHA" "$TARGET_SHA"
   fi
-  git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA" || fail "alvo não descende do runtime ativo"
   if [[ "$MODE" == "release" ]]; then
     git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ backend/migrations/ \
       || fail "Docker/Compose ou migrations fora do escopo"
