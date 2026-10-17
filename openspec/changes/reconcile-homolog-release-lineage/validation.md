@@ -11,7 +11,7 @@
 - CI pós-merge #204 `39032173810`: backend, frontend, Gemma, OpenSpec, Gitleaks e inventário passaram; `deploy-homolog` foi rejeitado antes de executar passos porque `develop` não estava protegida.
 - O ambiente `homolog` mantém `required_reviewers` e `protected_branches=true`. A branch `develop` agora exige os mesmos checks que `main` (`backend`, `frontend`, `gemma-runtime`, `openspec`, `homolog-inventory-policy`, `gitleaks`), bloqueia force-push e deleção e aplica as regras também a administradores. A regra de produção não foi alterada.
 
-## Reconciliação local em andamento
+## Reconciliação local — registro histórico
 
 - `main` tem 43 commits posteriores a `71be3b2`, incluindo a migration facial `20261016_0082`; `develop` e a migration de pastas da change #204 usavam outro arquivo com o mesmo identificador.
 - Integração simulada apresentou apenas conflito em `.gitleaksignore`; a resolução preserva os fingerprints exatos e comentários de ambos os lados.
@@ -22,8 +22,23 @@
 - `git diff --check`: sem erros.
 - CI `39036724855`: backend, frontend, Gemma e OpenSpec passaram; `homolog-inventory-policy` e Gitleaks falharam. Gitleaks apontou quatro fingerprints históricos conhecidos porque o conflito de `.gitleaksignore` havia concatenado linhas. As linhas foram restauradas; Gitleaks 8.24.3 local varreu 638 commits e não encontrou achados.
 - O teste de política de produção falhou porque a PR de homolog altera `auth.py` e `main.py`, blobs fixados pelo gate facial, embora as mudanças sejam somente de upload/métricas. O step desse gate agora roda em PRs/pushes de `main`; o teste de política de homologação verifica a condição, e o gate facial continua obrigatório em `main`. Testes locais `scripts/test_deploy_homolog_policy.py` e `scripts/test_deploy_homolog.sh` passaram.
-- Ainda pendentes: revisão do diff integrado, regressão PostgreSQL, CI integral no PR para `develop`, merge e deploy autorizado pelo gate do ambiente.
+- Naquele ponto estavam pendentes: revisão do diff integrado, regressão PostgreSQL, CI integral no PR para `develop`, merge e deploy autorizado pelo gate do ambiente. As evidências posteriores abaixo substituem esse estado.
 
 ## Sem alteração remota de aplicação
 
 Até a integração, o commit e o PR desta change, as atividades feitas no servidor foram somente os inventários aprovados. O job de deploy anterior falhou antes de iniciar; não houve backup, migration, build, restart ou alteração de dados.
+
+## Integração e publicação concluídas — 17/10/2026
+
+- PR #210 integrada em `develop` no commit `c9eaf6381cb95f53a1c88206f7b9d4fb638f7ef9`, com backend, frontend, Gemma, OpenSpec, política de homologação e Gitleaks aprovados. A correção posterior da leitura da revisão Alembic foi integrada pela PR #212 em `25cd338f7243a114e8151e6bda3d03204b12ae43`; sua causa e validação pertencem a `fix-homolog-deploy-stale-revision-probe`.
+- [CI/deploy 39046656588](https://github.com/conradodeita/markina-gallery/actions/runs/39046656588), alvo `25cd338`: os seis checks requeridos e `deploy-homolog` concluíram com sucesso. Backend: lint aprovado; regressão facial de migration `1 passed`; referências/confirmação `34 passed`; suíte completa `1650 passed, 23 skipped`; concorrência multi-tenant PostgreSQL `4 passed`; checkout concorrente `1 passed`; inventário de exclusão `1 passed`.
+- O job backend define as duas URLs de PostgreSQL sintético utilizadas pela fixture de `test_private_upload_batch_migration.py`. A regressão de escopo privado atravessa as revisões 0081, 0082 e 0083 e verifica schema/constraints; não se usa aqui o teste local ignorado como evidência de aprovação.
+- O deploy registrou backup lógico, atualização `20261016_0082 → 20261017_0083`, publicação de `25cd338` e serviços Markina saudáveis. [Inventário 39049112709](https://github.com/conradodeita/markina-gallery/actions/runs/39049112709) confirmou revisão 0083 e HTTP 200 em `/healthz` e `/api/health`.
+- A PR #214 (`c706679`) registra a evidência do probe e da publicação; seu CI de PR `39049217618` concluiu com sucesso. A alteração é documental e não requer repetir a migration ou o deploy funcional. O CI pós-merge `39051577413` ainda estava em andamento às 14:10 BRT; acompanhar seu resultado separadamente, sem declarar nova publicação.
+- Retomada pelo chat sucessor autorizada pelo proprietário em 17/10/2026. Conferência SSH somente leitura às 14:07 BRT confirmou checkout remoto limpo em `25cd338`, todos os serviços Markina saudáveis, entrada exclusiva `127.0.0.1:8080` e resposta saudável em `/api/health`. Nenhum recurso, configuração, dado ou mensagem foi alterado nesta conferência.
+
+## Limites e pendências de revisão
+
+A funcionalidade está implantada em homologação; o repositório precisava apenas reconciliar as marcações de tarefas com as evidências já existentes. Esta conferência não fez envio real de WhatsApp/push nem comprova recebimento em um dispositivo. Os testes existentes verificam criação/deduplicação/autorização e fronteiras de transporte simuladas. Nenhum resultado de produção é declarado.
+
+Sincronização das specs principais e arquivamento permanecem sujeitos à revisão humana. A correção facial em andamento é outra change/PR e não foi publicada por esta reconciliação.
