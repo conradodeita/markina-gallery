@@ -36,6 +36,18 @@ def batch_for(db: Session, batch_id: UUID, gallery_id: UUID, *, tenant_id: UUID,
     return batch
 
 
+def folder_batch_for(db: Session, batch_id: UUID, folder_id: UUID, *, tenant_id: UUID, open_only=False):
+    require_active_owner(db, tenant_id)
+    batch = db.scalar(select(PrivateUploadBatch).where(
+        PrivateUploadBatch.id == batch_id,
+        PrivateUploadBatch.tenant_id == tenant_id,
+        PrivateUploadBatch.folder_id == folder_id,
+    ).with_for_update())
+    if not batch or (open_only and batch.status != "open"):
+        raise ValueError("Lote indisponível para novos arquivos.")
+    return batch
+
+
 def batch_payload(db: Session, batch: PrivateUploadBatch) -> dict:
     assets = list(db.execute(select(PhotoAsset.id, PhotoAsset.filename, PhotoAsset.storage_key,
                                    MediaJob.status).join(
@@ -60,6 +72,19 @@ def create_batch(db: Session, gallery: DerivedGallery, admin_id: UUID) -> Privat
     return batch
 
 
+def create_folder_batch(db: Session, folder: PhotoFolder, admin_id: UUID) -> PrivateUploadBatch:
+    require_active_owner(db, folder.tenant_id)
+    if folder.audience_scope != "selected" or folder.derived_gallery_id is not None:
+        raise ValueError("Lotes de aviso só podem ser criados em pastas privadas canônicas.")
+    batch = PrivateUploadBatch(
+        tenant_id=folder.tenant_id, parent_gallery_id=folder.parent_gallery_id,
+        folder_id=folder.id, actor_admin_id=admin_id,
+    )
+    db.add(batch)
+    db.flush()
+    return batch
+
+
 def close_batch(db: Session, batch_id: UUID, gallery_id: UUID, *, tenant_id: UUID) -> PrivateUploadBatch:
     batch = batch_for(db, batch_id, gallery_id, tenant_id=tenant_id)
     if batch.status == "open":
@@ -71,6 +96,14 @@ def close_batch(db: Session, batch_id: UUID, gallery_id: UUID, *, tenant_id: UUI
         gallery = db.get(DerivedGallery, gallery_id)
         batch.recipient_ids = [str(member.client_id) for member in members if member.status == "active"] \
             if members else [str(gallery.client_id)]
+    return batch
+
+
+def close_folder_batch(db: Session, batch_id: UUID, folder_id: UUID, *, tenant_id: UUID) -> PrivateUploadBatch:
+    batch = folder_batch_for(db, batch_id, folder_id, tenant_id=tenant_id)
+    if batch.status == "open":
+        batch.status = "closed"
+        batch.closed_at = now()
     return batch
 
 
@@ -93,30 +126,45 @@ def process_ready_batches(db: Session) -> bool:
         if db.scalar(select(MediaJob.id).where(MediaJob.tenant_id == owner, MediaJob.photo_asset_id.in_(asset_ids),
                                                MediaJob.status.in_(["queued", "processing"]))):
             continue
-        ready_count = len(list(db.scalars(select(PhotoAsset.id).join(
+        ready_query = select(PhotoAsset.id).join(
             MediaDerivative, MediaDerivative.photo_asset_id == PhotoAsset.id,
         ).join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id).where(
             PhotoAsset.tenant_id == owner, MediaDerivative.tenant_id == owner, PhotoFolder.tenant_id == owner,
-            PhotoAsset.id.in_(asset_ids), PhotoAsset.derived_gallery_id == batch.derived_gallery_id,
-            PhotoAsset.available, PhotoFolder.purpose == "content", PhotoFolder.status == "released",
+            PhotoAsset.id.in_(asset_ids), PhotoAsset.available, PhotoFolder.purpose == "content",
+            PhotoFolder.status == "released",
             MediaDerivative.variant == "client_preview", MediaDerivative.status == "ready",
             MediaDerivative.relative_path.is_not(None),
-        ))))
-        gallery = owned_record(db, DerivedGallery, batch.derived_gallery_id, tenant_id=owner)
-        parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=owner) if gallery else None
-        if ready_count and gallery and gallery.access_enabled and parent and parent.active and parent.lifecycle_status == "active":
-            for raw_id in batch.recipient_ids:
-                client_id = UUID(raw_id)
-                client = owned_record(db, Client, client_id, tenant_id=owner)
-                if not client or not client_has_operational_membership(db, gallery=gallery, client_id=client_id):
-                    continue
-                enqueue_event(db, event_type="private_photos_ready",
-                              event_key=f"private_photos_ready:{batch.id}:{client_id}",
-                              values={"galeria": gallery.name, "cliente": client.full_name},
-                              target_path=f"/gallery/{gallery.id}", recipients=[client_id],
-                              parent_gallery_id=gallery.parent_gallery_id,
-                              derived_gallery_id=gallery.id, client_id=client_id, tenant_id=gallery.tenant_id)
-            batch.announced_at = now()
+        )
+        if batch.derived_gallery_id is not None:
+            ready_query = ready_query.where(PhotoAsset.derived_gallery_id == batch.derived_gallery_id)
+        else:
+            ready_query = ready_query.where(PhotoAsset.folder_id == batch.folder_id)
+        ready_photo_ids = set(db.scalars(ready_query))
+        if ready_photo_ids and batch.derived_gallery_id is not None:
+            gallery = owned_record(db, DerivedGallery, batch.derived_gallery_id, tenant_id=owner)
+            parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=owner) if gallery else None
+            if gallery and gallery.access_enabled and parent and parent.active and parent.lifecycle_status == "active":
+                for raw_id in batch.recipient_ids:
+                    client_id = UUID(raw_id)
+                    client = owned_record(db, Client, client_id, tenant_id=owner)
+                    if not client or not client_has_operational_membership(db, gallery=gallery, client_id=client_id):
+                        continue
+                    enqueue_event(db, event_type="private_photos_ready",
+                                  event_key=f"private_photos_ready:{batch.id}:{client_id}",
+                                  values={"galeria": gallery.name, "cliente": client.full_name},
+                                  target_path=f"/gallery/{gallery.id}", recipients=[client_id],
+                                  parent_gallery_id=gallery.parent_gallery_id,
+                                  derived_gallery_id=gallery.id, client_id=client_id, tenant_id=gallery.tenant_id)
+                batch.announced_at = now()
+        elif ready_photo_ids and batch.folder_id is not None:
+            folder = owned_record(db, PhotoFolder, batch.folder_id, tenant_id=owner)
+            if folder:
+                from app.notification_events import record_restricted_folder_ready
+
+                if record_restricted_folder_ready(
+                    db, folder=folder, photo_ids=ready_photo_ids, batch_key=str(batch.id),
+                ):
+                    batch.announced_at = now()
         require_active_owner(db, owner)
         batch.status = "completed"
         db.commit()

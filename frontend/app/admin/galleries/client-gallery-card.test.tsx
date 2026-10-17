@@ -88,7 +88,14 @@ it("mostra destinatárias legadas sem oferecer nova atribuição", async () => {
 
 it("envia ao escolher arquivos, mostra progresso e retenta só a falha", async () => {
   const posts: string[] = [];
+  const uploadBatchId = "batch-private-1";
   const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/upload-batches")) return Promise.resolve(new Response(JSON.stringify(
+      init?.method === "POST" ? { id: uploadBatchId } : { batches: [] },
+    ), { status: init?.method === "POST" ? 201 : 200 }));
+    if (path.endsWith(`/upload-batches/${uploadBatchId}/close`)) return Promise.resolve(new Response(
+      JSON.stringify({ id: uploadBatchId, status: "closed" }), { status: 200 },
+    ));
     if (init?.method === "POST") {
       posts.push(String(init.body));
       return Promise.resolve(new Response(JSON.stringify({ id: `photo-${posts.length}` }), { status: 201 }));
@@ -135,4 +142,6 @@ it("envia ao escolher arquivos, mostra progresso e retenta só a falha", async (
   expect(uploads.send.mock.calls.map((call) => call[1].name)).toEqual(["ok.jpg", "falha.jpg", "falha.jpg"]);
   expect(posts).toHaveLength(3);
   expect(JSON.parse(posts[1]).storage_key).toBe(JSON.parse(posts[2]).storage_key);
+  expect(posts.every((body) => JSON.parse(body).upload_batch_id === uploadBatchId)).toBe(true);
+  expect(fetcher.mock.calls.filter(([path]) => path.endsWith(`/upload-batches/${uploadBatchId}/close`))).toHaveLength(2);
 });
