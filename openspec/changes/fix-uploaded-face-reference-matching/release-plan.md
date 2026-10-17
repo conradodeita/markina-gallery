@@ -38,4 +38,14 @@ Depois da publicação aprovada, confirmar saúde, versão, faixas efetivas e ma
 
 ## Bloqueio atual
 
-CI/revisão da PR e autorização operacional do plano definitivo estão pendentes. Não houve merge, publicação, mudança de configuração remota, índice ou banco nesta execução. A task de publicação e validação visual permanece aberta; os testes locais automatizados não foram executados conforme a preferência vigente.
+CI/revisão da PR e autorização operacional do plano definitivo estão pendentes. Não houve merge, publicação, mudança de configuração remota, índice ou banco por este executor. A task de publicação e validação visual permanece aberta; os testes locais automatizados não foram executados conforme a preferência vigente.
+
+## Inventário atualizado e revisão de destino — 17/10/2026, 13:47–13:51 BRT
+
+Nova consulta somente leitura confirmou atualização externa do servidor para `25cd338f7243a114e8151e6bda3d03204b12ae43`, PR #212 em `develop`, e banco `20261017_0083`. Checkout limpo, serviços Markina saudáveis, entrada exclusiva `127.0.0.1:8080` e HTTPS `/api/health` saudável. Consulta da revisão do banco usou transação `READ ONLY`; não foi executada migration. Worker continua com `APP_ENV=staging`, limiar 750, faixa geral vazia, faixas específicas ausentes e os mesmos modelos/qualidade.
+
+`origin/main` permanece em `b695b2e`, enquanto `origin/develop` está em `25cd338`. A atualização externa inclui suporte de lote por pasta, migration 0083 e correções administrativas, além da reconciliação da homologação nas PRs #210/#212. Nenhum desses arquivos foi revertido. Os arquivos de busca facial/apresentação/Compose desta correção permanecem iguais ao baseline do diagnóstico; a descoberta não invalida a causa reproduzida, mas invalida o plano operacional anterior para este servidor.
+
+O script de produção preparado exige schema 0082 e descendência de main; não está apto ao servidor atual. Proposta para revisão do proprietário: redirecionar PR #213 para `develop`, integrar a linha atual preservando integralmente a atualização externa, resolver os conflitos operacionais e repetir os gates afetados. A publicação passaria pelo fluxo protegido `homolog` vigente, conservando banco 0083 e sem nova migration funcional desta correção; aprovação de publicação e testes reais continuam separadas. A integração não deve transferir essas atualizações para main implicitamente nem reaproveitar aprovação de produção. Até aceite da revisão de destino, nenhuma adaptação dependente será implementada.
+
+Aceite recebido em 17/10/2026: “Integrar na develop atual e validar”. Integração e CI autorizados; preservar o workflow de homologação e a separação vigente dos gates de produção. Publicação, instalação do wrapper e qualquer mutação remota continuam sem autorização. O plano de produção/0082 acima permanece histórico e não será aplicado a este servidor; o gate de produção preparado não se torna elegível por essa decisão.
