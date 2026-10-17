@@ -28,10 +28,10 @@
   },
   "note": "release_ready refere-se à primeira ativação/expansão e continua falso. A manutenção autorizada do runtime já ativo tem elegibilidade independente e restrita ao baseline/arquivos/blobs revisados; não aprova gates documentais pendentes.",
   "maintenance_release": {
-    "authorized": true,
+    "authorized": false,
     "scope": "existing_facial_runtime",
     "baseline_sha": "7c7a4ad217343dc4faee57734436afd91bb1f6b1",
-    "evidence": "Refinamento solicitado pelo proprietário em 2026-10-16 após teste em produção: priorização de rosto dominante, confirmação de upload por UUID e câmera em tela cheia, textos recolhíveis e checkbox inicialmente marcado com aceite no envio. A PR #199 teve preflight e release aprovados no run GitHub #38976692654, publicando o SHA f2ac110fb648e0158d1896923ade0661b006a276; schema 20261016_0082, runtime facial ativo e serviços saudáveis foram confirmados após release. O teste repetido em 2026-10-17 (08:07–08:10 BRT) retornou múltiplas regiões para uma foto com rosto em primeiro plano; este refinamento filtra observações de baixa qualidade e ajusta a dominância geométrica, preservando seleção ambígua quando múltiplos candidatos utilizáveis permanecem. O baseline_sha é a âncora imutável da autorização/diff restrito; o checkout operacional em cada release será conferido com facial-last-healthy.sha e o alvo precisará descender dele. Sem nova migration, reindexação ou alteração de modelo, limiar de similaridade, escopo, retenção ou segredos. Exigir CI, inventário/fingerprint e única aprovação protegida antes de recriar somente web/API/face-search-worker. Os gates de primeira ativação permanecem independentes.",
+    "evidence": "Refinamento solicitado pelo proprietário em 2026-10-16 após teste em produção: priorização de rosto dominante, confirmação de upload por UUID e câmera em tela cheia, textos recolhíveis e checkbox inicialmente marcado com aceite no envio. A PR #199 teve preflight e release aprovados no run GitHub #38976692654, publicando o SHA f2ac110fb648e0158d1896923ade0661b006a276; schema 20261016_0082, runtime facial ativo e serviços saudáveis foram confirmados após release. O teste repetido em 2026-10-17 (08:07–08:10 BRT) retornou múltiplas regiões para uma foto com rosto em primeiro plano; este refinamento filtra observações de baixa qualidade e ajusta a dominância geométrica, preservando seleção ambígua quando múltiplos candidatos utilizáveis permanecem. O baseline_sha é a âncora imutável da autorização/diff restrito; o checkout operacional em cada release será conferido com facial-last-healthy.sha e o alvo precisará descender dele. Sem nova migration, reindexação ou alteração de modelo, limiar de similaridade, escopo, retenção ou segredos. Exigir CI, inventário/fingerprint e única aprovação protegida antes de recriar somente web/API/face-search-worker. Os gates de primeira ativação permanecem independentes. Preparação sucessora em 2026-10-17: fix-uploaded-face-reference-matching, PR #213. O proprietário aprovou funcionalmente mínimos 500 para upload/câmera, 600 para toque e navegação aos resultados; nenhuma aprovação operacional para este novo runtime foi recebida. Os hashes preparados abaixo correspondem ao código candidato, não a um release aprovado. A autorização anterior não cobre estes novos limiares nem os arquivos de apresentação/Compose. authorized permanece false até revisão do plano, inventário e gate operacional próprios; gates de ativação continuam pendentes.",
     "runtime_blobs": {
       "backend/app/auth.py": [
         "JY2mH/W",
@@ -40,10 +40,10 @@
         "C12oLY="
       ],
       "backend/app/facial/config.py": [
-        "vIj71IL",
-        "VL4re3O",
-        "l4B14x+",
-        "V81pL4="
+        "i1MHTN5",
+        "1ZwapM3",
+        "2ZE3zOg",
+        "iI1nac="
       ],
       "backend/app/facial/provider.py": [
         "b56iq8w",
@@ -64,10 +64,10 @@
         "SjCcmQ="
       ],
       "backend/app/facial/search_worker.py": [
-        "8xvETXZ",
-        "uXZzrSA",
-        "B7wNfxr",
-        "qfSsvk="
+        "MnYdJyo",
+        "B6xwxe1",
+        "I+CK5L7",
+        "bobwr8="
       ],
       "backend/app/main.py": [
         "tbKoDn9",
@@ -94,10 +94,10 @@
         "+dEO4s="
       ],
       "frontend/app/public-galleries/facial-search-panel.tsx": [
-        "VE0mr1B",
-        "1Vhh/KI",
-        "dKt68Id",
-        "T3Eb5A="
+        "Zm/IL1m",
+        "ItzIZdH",
+        "8cJoo7y",
+        "A5SzSY="
       ]
     }
   }

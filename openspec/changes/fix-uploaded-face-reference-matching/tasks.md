@@ -20,5 +20,6 @@
 ## 4. Integração e entrega
 
 - [ ] 4.1 Revisar diff, validar OpenSpec, executar os gates aplicáveis pelo CI (backend, frontend, lint/typecheck/build e políticas operacionais) e corrigir falhas relacionadas.
+  - CI inicial identificou hashes anteriores no manifesto de manutenção. Preparar hashes atuais com autorização operacional falsa, preservando validação de escopo e gates; repetir CI.
 - [ ] 4.2 Preparar inventário/plano e publicar somente após aprovação operacional protegida; repetir os casos autorizados e confirmar visualmente o direcionamento aos resultados. Registrar revisão humana das possibilidades e seus limites.
 - [ ] 4.3 Reconciliar evidência final, bloqueios e rollback; sincronizar/arquivar somente após revisão humana.

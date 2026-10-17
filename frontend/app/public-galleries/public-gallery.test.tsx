@@ -138,7 +138,7 @@ describe("Galeria pública da cliente", () => {
     fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
   }
 
-  it.each(["library", "camera"] as const)("aguarda ready após 100%%, fecha a ampliação e revela o resultado de %s", async (source) => {
+  it.each(["library", "camera"] as const)("aguarda ready mesmo com barra completa e revela o resultado de %s", async (source) => {
     const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
     let finish!: (value: Response) => void;
     const pending = new Promise<Response>((resolve) => { finish = resolve; });
@@ -151,7 +151,7 @@ describe("Galeria pública da cliente", () => {
     await waitFor(() => expect(screen.getByRole("progressbar", { name: "Progresso da busca facial" }).getAttribute("value")).toBe("100"));
     expect(scroll).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "Possibilidades encontradas" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Foto 1" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Foto 1" })));
     expect(screen.getByRole("dialog")).toBeTruthy();
     await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => path.endsWith("/facial-searches/upload-1"))).toBe(true));
     await act(async () => finish(new Response(JSON.stringify(readyUpload))));
@@ -162,7 +162,7 @@ describe("Galeria pública da cliente", () => {
     expect(scroll.mock.instances[0]).toBe(heading);
     const body = fetchMock.mock.calls.find(([, init]) => init?.method === "POST" && init.body instanceof File)?.[1]?.body as File;
     expect(body.name).toBe(source === "camera" ? "captura-facial.jpg" : "referencia.jpg");
-    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Foto 1" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Foto 1" })));
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(scroll).toHaveBeenCalledTimes(1);
   });
