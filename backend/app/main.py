@@ -404,6 +404,7 @@ from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
 from app.raw_development.api import register_routes as register_raw_development_routes
+from app.statistics_report import commercial_report, report_csv, report_html
 from app.storage_metrics import measure_owned_photo_storage
 from app.tenancy import (
     TenantContextError,
@@ -8974,6 +8975,146 @@ def admin_statistics(
     }
 
 
+def _commercial_report_for_request(
+    db: Session,
+    request: Request,
+    *,
+    starts_at: datetime | None,
+    ends_at: datetime | None,
+    event_name: str | None,
+    client_id: UUID | None,
+    parent_gallery_id: UUID | None,
+    derived_gallery_id: UUID | None,
+    folder_id: UUID | None,
+    payment_method: str | None,
+    order_status: str | None,
+) -> dict[str, object]:
+    tenant_id = directory_tenant_id(db, request)
+    if payment_method not in (None, "pix", "credit_card", "not_required", "unknown"):
+        raise HTTPException(status_code=422, detail="Forma de pagamento inválida.")
+    if order_status not in (None, "pending", "confirmed", "cancelled", "not_required", "hold_or_corrected"):
+        raise HTTPException(status_code=422, detail="Status do pedido inválido.")
+    return commercial_report(
+        db, tenant_id=tenant_id, starts_at=starts_at, ends_at=ends_at, event_name=event_name,
+        client_id=client_id, parent_gallery_id=parent_gallery_id,
+        derived_gallery_id=derived_gallery_id, folder_id=folder_id,
+        payment_method=payment_method, order_status=order_status,
+    )
+
+
+@app.get("/admin/statistics/report")
+def admin_statistics_report(
+    request: Request,
+    response: Response,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    purchased_offset: int = Query(default=0, ge=0),
+    selected_offset: int = Query(default=0, ge=0),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    orders = data["orders"]
+    purchased = data["items"]
+    selected = data["selected_not_purchased"]
+    return {
+        **data,
+        "orders_total": len(orders), "orders": orders[offset:offset + limit],
+        "items": purchased[purchased_offset:purchased_offset + limit],
+        "purchased_total": len(purchased), "purchased_photos": purchased[purchased_offset:purchased_offset + limit],
+        "selected_not_purchased_total": len(selected),
+        "selected_not_purchased": selected[selected_offset:selected_offset + limit],
+        "selected_not_purchased_photos": selected[selected_offset:selected_offset + limit],
+    }
+
+
+@app.get("/admin/statistics/csv-access")
+def admin_statistics_csv_access(request: Request, db: Session = Depends(db_session)) -> JSONResponse:
+    session = require_admin(request)
+    directory_tenant_id(db, request)
+    from app.system_monitor.access import is_owner
+    return JSONResponse(
+        {"allowed": is_owner(db, session.subject_id)},
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/admin/statistics/report.html", response_class=HTMLResponse)
+def export_statistics_html(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    db: Session = Depends(db_session),
+) -> HTMLResponse:
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    return HTMLResponse(
+        report_html(data),
+        headers={"Content-Disposition": 'attachment; filename="relatorio-comercial.html"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/admin/statistics/report.csv")
+def export_statistics_csv(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    db: Session = Depends(db_session),
+) -> Response:
+    session = require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    # A identidade estável do proprietário é consultada antes de qualquer dado comercial.
+    from app.system_monitor.access import require_owner
+    require_owner(db, session.subject_id)
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    # Revalida proprietário e vínculo de tenant depois da consulta para evitar resposta em sessão alterada.
+    require_owner(db, session.subject_id)
+    if directory_tenant_id(db, request) != tenant_id:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    return Response(
+        content=report_csv(data["items"]), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="vendas.csv"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @app.get("/admin/statistics/filters")
 def admin_statistics_filters(
     request: Request, db: Session = Depends(db_session)
@@ -8990,6 +9131,10 @@ def admin_statistics_filters(
         )
     )
     galleries = list(db.scalars(select(DerivedGallery).where(DerivedGallery.tenant_id == tenant_id).order_by(DerivedGallery.name)))
+    folders = list(db.scalars(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id,
+        PhotoFolder.purpose == "content",
+    ).order_by(PhotoFolder.name)))
     return {
         "clients": [{"id": str(client.id), "name": client.full_name} for client in clients],
         "parent_galleries": [
@@ -9000,6 +9145,7 @@ def admin_statistics_filters(
             {"id": str(gallery.id), "name": gallery.name, "client_id": str(gallery.client_id)}
             for gallery in galleries
         ],
+        "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
     }
 
 
