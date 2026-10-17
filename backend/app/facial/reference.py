@@ -53,7 +53,7 @@ def reference_candidates(detections: list[Detection], *, width: int, height: int
         largest, second = kept[:2]
         if (largest.row[-1] >= 0.85
                 and min(largest.row[2:4]) >= 0.18 * max(width, height)
-                and largest.row[2] * largest.row[3] >= 4 * second.row[2] * second.row[3]):
+                and largest.row[2] * largest.row[3] >= 2 * second.row[2] * second.row[3]):
             return [largest]
     return kept
 
