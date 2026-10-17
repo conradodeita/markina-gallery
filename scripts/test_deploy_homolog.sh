@@ -39,6 +39,36 @@ set -e
 grep -Fq 'deploy-homolog: falha sintética pós-switch' "$output"
 grep -Fq 'trapped' "$err_probe"
 
+# The current database revision must not depend on the potentially stale migrate image.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    compose() {
+      [[ "$1" == exec && "$2" == -T && "$3" == db ]] || return 90
+      [[ "$*" == *"SELECT version_num FROM alembic_version ORDER BY version_num"* ]] || return 91
+      printf "20261016_0082\\n"
+    }
+    [[ "$(current_revision)" == "20261016_0082" ]]
+  ' >"output" 2>&1
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    compose() {
+      printf "postgresql://sensitive-value\\n" >&2
+      return 1
+    }
+    current_revision
+  ' >"$output" 2>&1; then
+  echo "falha no probe PostgreSQL foi aceita" >&2
+  exit 1
+fi
+grep -Fq 'probe da revisão Alembic falhou ao consultar o banco Markina' "$output"
+if grep -Fq 'sensitive-value' "$output"; then
+  echo "diagnóstico do probe expôs configuração sensível" >&2
+  exit 1
+fi
+
 # Optional modules are preserved by default; explicit deploy overrides remain available.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
@@ -290,6 +320,7 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     compose() {
       [[ "$*" == "build migrate" ]] && return 0
+      [[ "$*" == "run --rm --no-deps migrate alembic heads" ]] && { printf "20261017_0083 (head)\\n"; return 0; }
       [[ "$*" == "run --rm --no-deps migrate" ]] && return 42
       return 0
     }
@@ -471,6 +502,10 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
         [[ "$*" == "stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker raw-development-worker preview-adjustment-worker" ]] || return 80
         stopped=1
       fi
+      if [[ "$*" == "run --rm --no-deps migrate alembic heads" ]]; then
+        printf "20260929_0069 (head)\\n"
+        return 0
+      fi
       if [[ "$1" == "run" ]]; then
         [[ "$stopped" -eq 1 ]] || return 81
       fi
@@ -481,8 +516,8 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
       [[ "$*" != *"evolution"* ]] || return 83
       return 0
     }
-    current_revision() { echo "20260929_0069 (head)"; }
-    apply_target_migrations "20260928_0068 (head)"
+    current_revision() { echo "20260929_0069"; }
+    apply_target_migrations "20260928_0068"
     [[ "$MIGRATION_CHANGED" -eq 1 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 1 && "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 0 ]]
   ' >"$output" 2>&1
 
@@ -506,6 +541,7 @@ for failure in stop active; do
     bash -c '
       source "$MARKINA_DEPLOY_SCRIPT_PATH"
       compose() {
+        [[ "$*" == "run --rm --no-deps migrate alembic heads" ]] && { printf "20260929_0069 (head)\\n"; return 0; }
         [[ "$1" == "run" ]] && { echo UNEXPECTED-MIGRATION; return 0; }
         [[ "$1" == "stop" && "$FAILURE" == "stop" ]] && return 42
         return 0
