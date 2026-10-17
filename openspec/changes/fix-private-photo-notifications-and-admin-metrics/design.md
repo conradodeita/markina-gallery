@@ -49,4 +49,12 @@ Uploads de bytes em trânsito ainda não persistem um estado durável para pasta
 
 ## Migration Plan
 
+### Correção delimitada após teste real de 17/10/2026
+
+O teste autorizado revelou que o identificador composto do evento canônico (pasta UUID, lote UUID, digest de fotos de 24 caracteres, vínculo UUID e cliente UUID, separados por dois-pontos) possui 193 caracteres. A coluna existente `notification_event.event_key` aceita 192. O PostgreSQL rejeitou o INSERT em `enqueue_event`; o worker geral encerrou e a transação preservou o lote fechado e sem anúncio. As quatro fotos estavam disponíveis, com jobs completos e pasta liberada. A ausência de inscrição push do cliente é uma condição independente; não explica a falha de persistência que também impede WhatsApp.
+
+A correção SHALL manter a identidade completa do evento e o limite existente do banco sem migration: preservar a chave textual quando ela já cabe em 192 caracteres; para chaves maiores, usar o prefixo `private_photos_ready:` e SHA-256 hexadecimal da identidade completa. Não truncar UUIDs nem remover lote, conjunto de fotos, vínculo ou cliente da identidade. Isso mantém compatibilidade com eventos antigos válidos, deduplicação na retomada e distinção entre novos lotes/vínculos. Não alterar o worker para ignorar erros nem reiniciar em laço antes de corrigir a causa.
+
+Uma regressão em PostgreSQL sintético SHALL percorrer a conclusão do lote com UUIDs completos, gravar o evento e suas entregas, repetir a avaliação sem duplicar e distinguir outro lote das mesmas fotos. A regressão SQLite existente também verificará o contrato de 192 caracteres. O CI executará esses casos antes da suíte completa, sem transporte real. Reutilizar somente a evidência histórica de schema/deploy; a correção nova exige CI e publicação aprovados.
+
 Adicionar colunas nullable de escopo canônico a `private_upload_batch`, tornar `derived_gallery_id` nullable e adicionar check constraint que exige exatamente um dos escopos e valida os campos correspondentes. Preservar todos os lotes legados sem backfill nem exclusão; remover a restrição de unicidade por ativo e manter a chave lote/ativo para permitir retentativas. O downgrade recusa operação se houver lote canônico ou ativo em mais de um lote. Atualizar criação/consulta/fechamento de lotes e o worker de forma compatível com os registros existentes. Entregas históricas não serão recriadas. Validar localmente com testes direcionados e OpenSpec; qualquer publicação em servidor continua fora do escopo e exige gate operacional separado.

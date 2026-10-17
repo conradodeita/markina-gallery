@@ -29,6 +29,15 @@ O sistema SHALL criar o evento configurável `private_photos_ready` quando o lot
 - **WHEN** o mesmo lote é retomado ou processado novamente após gerar o aviso
 - **THEN** o sistema não cria entrega duplicada para a mesma cliente
 
+#### Scenario: Identidade composta excede o limite persistido
+- **WHEN** os UUIDs completos da pasta, lote, vínculo e cliente e o conjunto de fotos produzem uma chave maior que os 192 caracteres aceitos no banco
+- **THEN** o sistema SHALL persistir uma representação determinística que caiba no limite, preservando a identidade completa para deduplicação e sem interromper a conclusão do lote
+- **AND** chaves anteriores que já cabem no limite SHALL continuar identificando o mesmo aviso
+
+#### Scenario: Novo lote com as mesmas fotos
+- **WHEN** outro lote autorizado da mesma pasta contém as mesmas fotos para a mesma cliente
+- **THEN** o novo lote SHALL gerar seu próprio aviso e sua retomada SHALL manter somente uma entrega por canal/dispositivo elegível
+
 #### Scenario: Nenhuma prévia privada disponível
 - **WHEN** o lote privado termina sem qualquer nova prévia pronta e disponível
 - **THEN** o sistema não anuncia fotos indisponíveis
