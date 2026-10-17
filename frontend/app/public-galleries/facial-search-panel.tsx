@@ -49,12 +49,15 @@ export function FacialSearchPanel({
   const [cameraAspect, setCameraAspect] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [pollFailedRequestId, setPollFailedRequestId] = useState<string | null>(null);
+  const [manualPollAttempt, setManualPollAttempt] = useState(0);
   const libraryInput = useRef<HTMLInputElement>(null);
   const cameraVideo = useRef<HTMLVideoElement>(null);
   const cameraStream = useRef<MediaStream | null>(null);
   const cameraAttempt = useRef(0);
   const consentDialog = useRef<HTMLElement>(null);
   const polling = useRef({ signature: "", delay: 0 });
+  const manualPollRequest = useRef<string | null>(null);
   const restoreAllowed = useRef(true);
   const initialResult = useRef(result);
   const storageKey = useRef<string | null>(null);
@@ -233,30 +236,48 @@ export function FacialSearchPanel({
   useEffect(() => {
     if (!result || terminalStates.has(result.status)) return;
     let active = true;
+    let timer: number | undefined;
     const signature = `${result.status}:${result.progress.index.ready}:${result.progress.comparison.done}`;
     const baseDelay = result.poll_after_ms ?? 2000;
     polling.current = polling.current.signature === signature
       ? { signature, delay: Math.min(10_000, Math.max(baseDelay, Math.round(polling.current.delay * 1.5))) }
       : { signature, delay: baseDelay };
-    const timer = window.setTimeout(() => {
+    const requestedManually = manualPollRequest.current === result.id;
+    if (requestedManually) manualPollRequest.current = null;
+    const poll = async (retry: number) => {
       const version = contextVersion.current;
-      facialSearchApi.read(galleryId, result.id)
-        .then((value) => { if (active && version === contextVersion.current) onResult(value); })
-        .catch((cause) => {
-          if (!active || version !== contextVersion.current) return;
-          if (cause instanceof FacialApiError && [401, 403, 404].includes(cause.status)) {
-            contextVersion.current += 1;
-            clearFacialSearchStorage();
-            onResult(null);
-            closeDialog();
-            if (cause.status !== 404) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
-            return;
-          }
-          setError(cause instanceof Error ? cause.message : "Não foi possível atualizar a busca.");
-        });
-    }, polling.current.delay);
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [galleryId, onResult, result]);
+      try {
+        const value = await facialSearchApi.read(galleryId, result.id);
+        if (!active || version !== contextVersion.current) return;
+        setPollFailedRequestId(null);
+        setError("");
+        onResult(value);
+      } catch (cause) {
+        if (!active || version !== contextVersion.current) return;
+        if (cause instanceof FacialApiError && [401, 403, 404].includes(cause.status)) {
+          contextVersion.current += 1;
+          clearFacialSearchStorage();
+          onResult(null);
+          closeDialog();
+          if (cause.status !== 404) setAvailability({ state: "unavailable", manual_selection_available: true, minor_search_available: false });
+          return;
+        }
+        const transient = !(cause instanceof FacialApiError)
+          || cause.status === 429 || cause.status >= 500;
+        if (transient && retry < 3) {
+          setError("A busca foi iniciada, mas não conseguimos atualizar o resultado. Verifique sua conexão; tentaremos consultar novamente.");
+          timer = window.setTimeout(() => { void poll(retry + 1); }, Math.min(8000, 1000 * (2 ** retry)));
+          return;
+        }
+        setPollFailedRequestId(result.id);
+        setError(transient
+          ? "A busca foi iniciada, mas não conseguimos atualizar o resultado. Toque em Atualizar busca quando a conexão voltar."
+          : cause instanceof Error ? cause.message : "Não foi possível atualizar a busca.");
+      }
+    };
+    timer = window.setTimeout(() => { void poll(0); }, requestedManually ? 0 : polling.current.delay);
+    return () => { active = false; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [galleryId, manualPollAttempt, onResult, result]);
 
   useEffect(() => {
     if (!showDialog) return;
@@ -383,7 +404,7 @@ export function FacialSearchPanel({
           {result.status === "low_quality" ? <p>Envie outra foto com mais nitidez e melhor iluminação.</p> : null}
           {result.status === "no_candidates" ? <p>Não encontramos sugestões confiáveis com esta foto. Isso não confirma que a pessoa não esteja nesta galeria. Tente outra foto mais nítida ou continue pela seleção manual.</p> : null}
           {result.status === "index_incomplete" || result.status === "failed" ? <p>A seleção manual permanece disponível. Você também pode tentar uma nova busca.</p> : null}
-          <div className="gallery-access-actions"><MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => { void cancel(); }}>{terminalStates.has(result.status) ? "Excluir busca" : "Cancelar busca"}</MarkinaButton>{terminalStates.has(result.status) ? <MarkinaButton type="button" disabled={busy} onClick={() => { void cancel().then((removed) => { if (removed) setDialogOpen(true); }); }}>Nova busca</MarkinaButton> : null}</div>
+          <div className="gallery-access-actions">{pollFailedRequestId === result.id ? <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => { manualPollRequest.current = result.id; setPollFailedRequestId(null); setError(""); setManualPollAttempt((attempt) => attempt + 1); }}>Atualizar busca</MarkinaButton> : null}<MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => { void cancel(); }}>{terminalStates.has(result.status) ? "Excluir busca" : "Cancelar busca"}</MarkinaButton>{terminalStates.has(result.status) ? <MarkinaButton type="button" disabled={busy} onClick={() => { void cancel().then((removed) => { if (removed) setDialogOpen(true); }); }}>Nova busca</MarkinaButton> : null}</div>
         </div>
       )}
       {error && !showDialog ? <p className="form-message form-message--error" role="alert">{error}</p> : null}
