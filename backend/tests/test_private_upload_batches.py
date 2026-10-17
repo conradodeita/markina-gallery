@@ -333,6 +333,7 @@ def test_canonical_restricted_folder_upload_notifies_only_after_closed_batch_is_
         assert {(item.channel, item.status) for item in deliveries} == {
             ("push", "queued"), ("whatsapp", "queued"),
         }
+        assert all(recipient_allowed(db, events[0], item) for item in deliveries)
         db.delete(db.scalar(select(FolderClientGrant).where(
             FolderClientGrant.tenant_id == FIXTURE_TENANT_ID,
             FolderClientGrant.folder_id == folder_id,

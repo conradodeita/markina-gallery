@@ -1,5 +1,15 @@
 # Validação e continuidade — 17/10/2026
 
+## Teste real após deploy 4342a366 — estado atual
+
+CI/deploy `39067997576` publicou `4342a366` às 18h21 BRT. O proprietário confirmou login OTP e busca com DSC07382.jpg retornando 23 possibilidades, incluindo as duas fotos esperadas, com direcionamento automático. O worker geral e todos os workers faciais estavam saudáveis na consulta posterior, sem restart manual.
+
+O novo lote privado de seis fotos terminou e gerou evento às 18h29min33s BRT. Consulta em transação `READ ONLY` confirmou seis jobs `completed`, pasta `released`, lote `completed` e `announced_at` preenchido. A entrega WhatsApp ficou `cancelled`, zero tentativas, `last_error=transport_disabled`. API e worker têm `TRANSACTIONAL_WHATSAPP_ENABLED=false`; nenhum valor foi alterado. Não havia entrega push desse evento.
+
+Uma segunda consulta somente leitura confirmou `recipient_allowed=false` para a chave opaca de 85 caracteres da primeira correção. Portanto simplesmente ativar o gate não resolve o contrato de autorização. Preparação em andamento: preservar identificadores de pasta/vínculo numa chave v2 limitada e o hash da identidade completa; verificar o envio, e não somente enfileiramento. Eventos históricos opacos/cancelados não serão reabertos. O proprietário exige preservar a disponibilidade do OTP; nenhum restart, deploy ou mudança de configuração foi executado nesta investigação. Testes automatizados continuam no CI conforme preferência vigente.
+
+PR #218 (`e3e4abe`), CI `39072065552`: passaram lint, política de deploy, regressão da chave em PostgreSQL, regressões de autorização/transporte/OTP e login/reenvio OTP. Frontend, OpenSpec, inventário e Gitleaks verdes. A suíte completa estava em execução neste registro; não conta como integração concluída. O plano operacional `activation-plan.md` registra o inventário adicional, eventos afetados, parada controlada do deploy e recuperação, aguardando autorização específica para configuração.
+
 ## Publicação anterior e conferência visual
 
 As PRs #204/#210/#212 foram integradas em develop e publicadas em homologação no SHA `25cd338`. O CI/deploy `39046656588` e o inventário `39049112709` confirmaram schema 0083 e saúde. A PR #214 registra essa publicação. Esses resultados são históricos e não cobriram o erro de persistência descoberto no teste real posterior.

@@ -71,6 +71,14 @@ jobs:
         run: >-
           pytest backend/tests/test_private_notification_postgres.py
           backend/tests/test_private_upload_batches.py::test_canonical_restricted_folder_upload_notifies_only_after_closed_batch_is_ready -q
+      - name: Regressões de autorização dos avisos privados e OTP
+        run: >-
+          pytest backend/tests/test_private_notification_authorization.py
+          backend/tests/test_otp_privacy.py backend/tests/test_invite_only_otp.py
+          backend/tests/test_tenant_notification_transport.py -q
+
+      - name: Regressões do login e reenvio OTP
+        run: pytest backend/tests/test_auth.py -q -k otp
       - name: Testes (pytest)
         run: pytest backend/tests -q
       - name: Regressões de concorrência multi-tenant em PostgreSQL
