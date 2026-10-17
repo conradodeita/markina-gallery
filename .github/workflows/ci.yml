@@ -149,6 +149,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Validar sintaxe Bash do inventário
         run: bash -n scripts/inventory-homolog-readonly.sh
       - name: Testar política de escopo e SHA
