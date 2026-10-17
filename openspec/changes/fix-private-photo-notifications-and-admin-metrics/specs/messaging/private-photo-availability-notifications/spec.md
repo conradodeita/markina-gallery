@@ -34,6 +34,17 @@ O sistema SHALL criar o evento configurável `private_photos_ready` quando o lot
 - **THEN** o sistema SHALL persistir uma representação determinística que caiba no limite, preservando a identidade completa para deduplicação e sem interromper a conclusão do lote
 - **AND** chaves anteriores que já cabem no limite SHALL continuar identificando o mesmo aviso
 
+#### Scenario: Chave compacta mantém autorização de envio
+- **WHEN** um lote produz uma chave compacta e o destinatário mantém acesso ativo à pasta privada liberada
+- **THEN** o consumidor SHALL recuperar a identidade da pasta e do vínculo e permitir o transporte configurado, preservando as verificações de conta, galeria e cliente
+- **AND** revogar e recriar o vínculo SHALL invalidar o aviso associado ao vínculo anterior
+- **AND** uma chave opaca ou malformada SHALL ser recusada sem interromper o worker ou conceder acesso por inferência
+
+#### Scenario: Gate operacional de WhatsApp desligado
+- **WHEN** o evento possui WhatsApp habilitado no painel mas o gate global está desligado
+- **THEN** a entrega SHALL permanecer cancelada sem tentativa de transporte
+- **AND** ativar o gate posteriormente SHALL NOT reenviar esse histórico automaticamente nem alterar a fila de OTP
+
 #### Scenario: Novo lote com as mesmas fotos
 - **WHEN** outro lote autorizado da mesma pasta contém as mesmas fotos para a mesma cliente
 - **THEN** o novo lote SHALL gerar seu próprio aviso e sua retomada SHALL manter somente uma entrega por canal/dispositivo elegível

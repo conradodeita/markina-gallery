@@ -27,6 +27,7 @@ from app.auth import (
     Tenant,
     TenantAdmin,
 )
+from app.notification_delivery import recipient_allowed
 from app.notification_events import record_restricted_folder_ready
 from app.private_upload_batches import process_ready_batches
 from tests.test_tenant_migration import migrate
@@ -98,6 +99,7 @@ def test_private_notification_key_fits_postgres_preserves_retries_and_legacy_key
             assert first.client_id == client.id
             deliveries = list(db.scalars(select(NotificationDelivery).where(NotificationDelivery.event_id == first.id)))
             assert {(item.channel, item.status) for item in deliveries} == {("push", "queued"), ("whatsapp", "queued")}
+            assert all(recipient_allowed(db, first, item) for item in deliveries)
 
             assert not process_ready_batches(db)
             record_restricted_folder_ready(db, folder=folder, photo_ids={photo.id}, batch_key=str(batch.id))
@@ -124,5 +126,15 @@ def test_private_notification_key_fits_postgres_preserves_retries_and_legacy_key
             assert db.get(NotificationEvent, legacy_id).event_key == expected_key
             assert db.scalar(select(func.count()).select_from(NotificationEvent)) == 2
             assert db.scalar(select(func.count()).select_from(NotificationDelivery)) == 4
+
+            # A primeira chave opaca publicada não pode ser recriada/reanunciada.
+            full_key = f"private_photos_ready:{folder.id}:{batch.id}:{digest}:{grant.id}:{client.id}"
+            first.event_key = f"private_photos_ready:{sha256(full_key.encode()).hexdigest()}"
+            db.commit()
+            record_restricted_folder_ready(db, folder=folder, photo_ids={photo.id}, batch_key=str(batch.id))
+            db.commit()
+            assert db.scalar(select(func.count()).select_from(NotificationEvent)) == 2
+            assert db.scalar(select(func.count()).select_from(NotificationDelivery)) == 4
+            assert not recipient_allowed(db, first, deliveries[0])
     finally:
         engine.dispose()

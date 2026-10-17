@@ -6,6 +6,9 @@
 - [x] 1.2 Verificar entregas independentes e autorização no momento do envio; garantir que uploads de pastas públicas não criem evento privado; executar testes direcionados de notificações e vínculo sem chamadas externas reais. Evidência: `pytest tests/test_private_upload_batches.py tests/test_notification_payments.py -q` — 8 passed; upload público sem evento, dois canais habilitados enfileirados, autorização revalidada após revogação e retentativas sem duplicação.
 - [x] 1.3 Reproduzir em CI o limite da chave no fluxo real de lote canônico em PostgreSQL; preservar chaves antigas válidas, condensar deterministicamente somente chaves longas e verificar retomada sem duplicação e independência de lotes. CI `39054048258` reproduziu `StringDataRightTruncation`/193 > 192 antes da correção; step “Regressão da chave do aviso privado em PostgreSQL” do CI `39054318967` passou com a correção em `071343f`. Nenhuma migration ou chamada de transporte real. Suíte integral/publicação ainda em 4.3.
 
+- [ ] 1.4 Corrigir o contrato da chave compacta com autorização positiva de envio, revogação/recriação do vínculo, chave opaca/malformada e compatibilidade legada; validar persistência PostgreSQL, entrega sintética e regressões OTP no CI. Sem alteração do ciclo do worker ou configuração remota.
+- [ ] 1.5 Registrar o bloqueio `TRANSACTIONAL_WHATSAPP_ENABLED=false` e preparar ativação operacional separada, condicionada a autorização explícita e proteção do worker OTP. Não reenviar automaticamente entregas históricas canceladas.
+
 ## 2. Indicador de mensagens em Vendas e pagamentos
 
 - [x] 2.1 Remover o KPI agregado legado sem remover retry ou estados atuais por pedido; atualizar `frontend/app/admin/payments/page.test.tsx` e verificar renderização sem o card. Evidência: teste frontend focado passou e confirmou que “Falhas de mensagem” não aparece.

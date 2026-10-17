@@ -1,6 +1,7 @@
 """Consumidores independentes com lease, TTL e falhas sanitizadas."""
 
 import os
+import re
 from datetime import UTC, timedelta
 from uuid import UUID, uuid4
 
@@ -111,9 +112,16 @@ def recipient_allowed(db, event, item) -> bool:
     if event.event_type == "private_photos_ready" and not event.derived_gallery_id:
         try:
             key_parts = event.event_key.split(":")
-            if len(key_parts) != 6:
+            compact = re.fullmatch(
+                r"private_photos_ready:v2:([0-9a-f]{32}):([0-9a-f]{32}):[0-9a-f]{64}",
+                event.event_key,
+            )
+            if compact:
+                folder_id, grant_id = UUID(compact[1]), UUID(compact[2])
+            elif len(key_parts) == 6 and key_parts[0] == "private_photos_ready":
+                folder_id, grant_id = UUID(key_parts[1]), UUID(key_parts[4])
+            else:
                 return False
-            folder_id, grant_id = UUID(key_parts[1]), UUID(key_parts[4])
         except (ValueError, IndexError):
             return False
         folder = owned_record(db, PhotoFolder, folder_id, tenant_id=owner)
