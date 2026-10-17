@@ -129,6 +129,11 @@ def main() -> None:
                                 capture_output=True, text=True).stdout.strip()
         if actual != expected:
             raise AssertionError("arquivo de runtime app diverge do blob revisado")
+    app_script = APP_INVENTORY_SCRIPT.decode("utf-8")
+    ancestry_helper = app_script.split("verify_readonly_target_ancestry() (", 1)[1].split("\n)", 1)[0]
+    require('if [[ "$scope_mode" == app ]]', "inventário remoto também confere escopo ativo", ancestry_helper)
+    require('python3 "$scope_script" --base "$checkout_sha" --target "$target_sha" --manifest "$scope_manifest"', "manifesto é validado antes do fingerprint", ancestry_helper)
+    require('verify_readonly_target_ancestry "$origin" "$CHECKOUT_SHA" "$TARGET_SHA" app', "preflight app passa pelo gate de escopo remoto", app_script)
     require("config --no-interpolate --hash", "hash usa JSON resolvido sem nova interpolação", script)
     if "compose config --hash" in script:
         raise AssertionError("hash direto omite env_file no Compose do host")

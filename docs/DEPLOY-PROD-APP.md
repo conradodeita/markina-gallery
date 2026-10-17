@@ -20,6 +20,8 @@ Para iniciar ou repetir um preflight após a integração, execute manualmente o
 
 O preflight usa a chave de leitura e o wrapper SSH restrito, inventaria checkout, versão ativa, revisão do banco, estado saudável, hashes da configuração resolvida, portas e smoke HTTPS. O fingerprint cobre o SHA candidato e o estado ativo. O JSON Compose resolvido não é impresso nem gravado.
 
+Antes de emitir fingerprint, o próprio inventário compara o checkout ativo com o SHA candidato pelo manifesto de escopo. Mudanças faciais ou outros caminhos fora do escopo interrompem o preflight sem abrir a aprovação `production`.
+
 Somente após o inventário exato, o job `production` aguarda aprovação protegida. Ele recalcula o fingerprint, salva tags e referências das imagens anteriores, constrói `api` e `web`, recria apenas esses dois serviços, valida saúde, verifica e recarrega somente o Nginx da Markina e testa HTTPS. Falhas não disparam rollback automático. A recuperação é iniciada manualmente pelo `workflow_dispatch`: o preflight inventaria novamente o SHA anterior, as imagens e o runtime; depois, `production` exige aprovação própria antes de restaurar apenas API/web.
 
 ## Pré-requisito operacional
