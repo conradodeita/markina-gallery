@@ -241,6 +241,7 @@ def assert_catalog(connection):
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
         future_columns = {
             "facial_search_request": {"search_engine"},
+            "private_upload_batch": {"folder_id", "parent_gallery_id"},
             "sale_order": {"provider_payment_id"},
             "tenant": {"canonical_host"},
         }

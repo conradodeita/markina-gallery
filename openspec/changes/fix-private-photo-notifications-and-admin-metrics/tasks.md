@@ -3,7 +3,7 @@
 ## 1. Avisos de fotos privadas
 
 - [ ] 1.1 Estender o lote durável por migration preservadora de registros para uma pasta canônica restrita, associar ativos inclusive em retentativas e corrigir o gatilho ao fim do processamento; verificar lotes fechados/abertos, sem prévia, falha parcial, retomada e deduplicação em `backend/tests/test_private_upload_batches.py`.
-  - Implementação e testes locais de comportamento concluídos; aplicação da migration requer PostgreSQL e será validada pelo job backend do CI, pois o serviço PostgreSQL não está configurado localmente.
+  - Implementação e testes locais de comportamento concluídos; a suíte CI executou a migration com PostgreSQL. O primeiro job backend falhou em dois testes do contrato histórico 0070 porque sua expectativa de catálogo não excluía as colunas adicionadas somente na revisão 0082. Expectativa ajustada em `backend/tests/test_tenant_photographer_migration.py`; rerun integral do CI pendente.
 - [x] 1.2 Verificar entregas independentes e autorização no momento do envio; garantir que uploads de pastas públicas não criem evento privado; executar testes direcionados de notificações e vínculo sem chamadas externas reais. Evidência: `pytest tests/test_private_upload_batches.py tests/test_notification_payments.py -q` — 8 passed; upload público sem evento, dois canais habilitados enfileirados, autorização revalidada após revogação e retentativas sem duplicação.
 
 ## 2. Indicador de mensagens em Vendas e pagamentos
@@ -19,7 +19,7 @@
 ## 4. Integração e revisão
 
 - [ ] 4.1 Executar validações focadas backend/frontend, lint, typecheck, build e OpenSpec estrito; registrar evidências e revisar diff/status sem tocar nas alterações locais preexistentes.
-  - Evidências locais: 9 testes backend focados passaram; 23 testes frontend focados passaram; Ruff passou; ESLint passou sem erros (31 avisos); TypeScript passou; build Next.js passou; validação estrita desta change passou; Alembic informa `20261016_0082 (head)`. A validação estrita global reportou 29 falhas em outras changes/specs, enquanto esta change foi aprovada. A aplicação da migration e as suítes completas seguem para CI.
+  - Evidências locais: 9 testes backend focados passaram; 23 testes frontend focados passaram; Ruff passou; ESLint passou sem erros (31 avisos); TypeScript passou; build Next.js passou; validação estrita desta change passou; Alembic informa `20261016_0082 (head)`. A validação estrita global reportou 29 falhas em outras changes/specs. Primeiro CI: frontend, OpenSpec e demais checks independentes passaram; pytest passou 1630 testes e pulou 23, com duas falhas no contrato histórico 0070, agora corrigidas na expectativa de colunas futuras. Gitleaks falhou por ocorrências em histórico de branches alheias à PR, confirmado em inspeção local. O rerun do CI segue pendente.
 
 ## Workflow follow-up
 
