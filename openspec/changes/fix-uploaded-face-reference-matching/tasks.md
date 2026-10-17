@@ -9,7 +9,7 @@
 
 ## 2. Correspondência de referência enviada
 
-- [ ] 2.1 Implementar configuração opcional e escolha de faixa por origem SFace (upload/câmera 500, toque 600); preservar correspondências firmes, Gemma e critérios gerais existentes. Criar regressões de limites/classificação, origem/engine e desativação.
+- [x] 2.1 Implementar configuração opcional e escolha de faixa por origem SFace (upload/câmera 500, toque 600); preservar correspondências firmes, Gemma e critérios gerais existentes. Criar regressões de limites/classificação, origem/engine e desativação. CI integrado #39051251911 (`348be58`): step “Regressões dos limites faciais por origem” aprovado; suíte integral permanece em 2.2/4.1.
 - [ ] 2.2 Verificar isolamento, snapshot, fingerprints, retenção e ausência de scores/vetores na API/logs pelos testes relevantes do CI.
 
 ## 3. Apresentação do resultado
@@ -25,5 +25,5 @@
   - CI inicial identificou hashes anteriores no manifesto de manutenção. Preparar hashes atuais com autorização operacional falsa, preservando validação de escopo e gates; repetir CI.
   - Revisão posterior aprovada: “Integrar na develop atual e validar”. Integrar `25cd338` preservando schema 0083 e mudanças externas, redirecionar PR e repetir gates afetados; não reaproveitar a validação backend incompleta da base anterior.
 - [ ] 4.2 Preparar inventário/plano e publicar somente após aprovação operacional protegida; repetir os casos autorizados e confirmar visualmente o direcionamento aos resultados. Registrar revisão humana das possibilidades e seus limites.
-  - Inventário posterior encontrou deploy externo em develop `25cd338` e schema 0083. Plano anterior de produção/main/0082 bloqueado; proposta de redirecionar integração para develop e usar homolog protegido aguarda revisão do proprietário. Não reverter a atualização externa.
+  - Inventário posterior encontrou deploy externo em develop `25cd338` e schema 0083. Integração em develop aprovada e concluída em `348be58`; plano vigente de homologação documenta backup, parada de writers, runner sem migration nova e reinícios Markina do fluxo existente. Publicação/inventário final e validação real ainda pendentes. Não aplicar o plano histórico de produção/0082.
 - [ ] 4.3 Reconciliar evidência final, bloqueios e rollback; sincronizar/arquivar somente após revisão humana.
