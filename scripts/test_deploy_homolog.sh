@@ -319,8 +319,14 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
         return 0
       fi
       [[ "$1" == "ps" ]] && { printf "worker-facial-saudavel\\n"; return 0; }
-      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then printf "exited\\n"; return 0; fi
-      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then printf "1\\n"; return 0; fi
+      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "exited\\n" || printf "healthy\\n"
+        return 0
+      fi
+      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "1\\n" || printf "0\\n"
+        return 0
+      fi
       if [[ "$1" == "inspect" && "$*" == *".Config.Env"* ]]; then printf "FACIAL_PROCESSING_ENABLED=true\\n"; return 0; fi
       if [[ "$1" == "logs" ]]; then printf "value too long for type character varying(192)\\n"; return 0; fi
       [[ "$1" == "inspect" ]] && { printf "healthy\\n"; return 0; }
@@ -352,8 +358,14 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
         return 0
       fi
       [[ "$1" == "ps" ]] && { printf "worker-facial-saudavel\\n"; return 0; }
-      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then printf "exited\\n"; return 0; fi
-      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then printf "1\\n"; return 0; fi
+      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "exited\\n" || printf "healthy\\n"
+        return 0
+      fi
+      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "1\\n" || printf "0\\n"
+        return 0
+      fi
       if [[ "$1" == "inspect" && "$*" == *".Config.Env"* ]]; then printf "FACIAL_PROCESSING_ENABLED=true\\n"; return 0; fi
       if [[ "$1" == "logs" ]]; then printf "value too long for type character varying(192)\\n"; return 0; fi
       [[ "$1" == "inspect" ]] && { printf "healthy\\n"; return 0; }
