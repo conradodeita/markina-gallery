@@ -8,6 +8,7 @@ readonly DEPLOY_SCRIPT="$SCRIPT_DIR/deploy-homolog.sh"
 output="$(mktemp)"
 err_probe="$(mktemp)"
 trap 'rm -f "$output" "$err_probe"' EXIT
+trap 'status=$?; echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"' ERR
 
 if MARKINA_EXPECTED_REPOSITORY="owner/repository" bash "$DEPLOY_SCRIPT" --sha 0000000000000000000000000000000000000000 >"$output" 2>&1; then
   echo "o deploy aceitou execução fora de /opt/markina-gallery" >&2
@@ -325,8 +326,17 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
     }
     verify_facial_deploy_state "$FACIAL_ENV"
     [[ "$WORKER_RECOVERY_PENDING" -eq 1 ]]
-  ' >"$output" 2>&1
-grep -Fq 'worker anterior exited (1); SHA contém a correção da chave; recuperação será validada após a troca' "$output"
+  ' >"$output" 2>&1 || {
+    cat "$output" >&2
+    echo "worker com falha conhecida e correção no SHA não passou pelo preflight" >&2
+    exit 1
+  }
+grep -Fq 'worker anterior exited (1); SHA contém a correção da chave; recuperação será validada após a troca' "$output" || {
+  cat "$output" >&2
+  echo "preflight não registrou a recuperação limitada do worker" >&2
+  exit 1
+}
+echo "preflight aceitou somente a recuperação compatível do worker parado"
 
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
@@ -352,7 +362,12 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
   echo "worker encerrado foi aceito sem correção no SHA alvo" >&2
   exit 1
 fi
-grep -Fq 'SHA alvo não contém a correção da chave de aviso' "$output"
+grep -Fq 'SHA alvo não contém a correção da chave de aviso' "$output" || {
+  cat "$output" >&2
+  echo "falha do worker sem fix no SHA não foi bloqueada pelo preflight" >&2
+  exit 1
+}
+echo "preflight recusou worker parado quando o SHA não contém o fix"
 
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
