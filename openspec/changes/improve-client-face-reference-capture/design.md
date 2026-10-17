@@ -80,7 +80,7 @@ O preflight SHALL calcular hashes da configuração resolvida sem imprimir ou gr
 
 O preflight SHALL validar o SHA ativo contra `/var/lib/markina-gallery/deploy-state/facial-last-healthy.sha`, escrito somente ao concluir smoke HTTPS saudável. O candidato de release SHALL descender do checkout ativo e permanecer igual ao HEAD atual de `origin/main`; marcador ausente, inválido ou divergente bloqueia a execução. `production-gates.json:maintenance_release.baseline_sha` permanece a âncora da autorização para limitar o diff/blobs revisados, não uma cópia redundante do SHA ativo a atualizar manualmente após cada release.
 
-O checkout remoto pode não conter os objetos Git do candidato recém-publicado. O inventário SHALL confirmar a igualdade do alvo com `ls-remote` e verificar sua ancestralidade em um repositório bare temporário, buscando somente a ponta de `main` com filtro de blobs; não deve buscar nem atualizar refs/objetos no checkout de produção. A ponta obtida no repositório temporário SHALL continuar igual ao SHA candidato, e qualquer divergência SHALL bloquear o preflight.
+O checkout remoto pode não conter os objetos Git do candidato recém-publicado. O inventário SHALL confirmar a igualdade do alvo com `ls-remote` e verificar sua ancestralidade em um repositório bare temporário configurado como partial clone, buscando somente a ponta de `main` com filtro de blobs; não deve buscar nem atualizar refs/objetos no checkout de produção. A ponta obtida no repositório temporário SHALL continuar igual ao SHA candidato, e qualquer divergência SHALL bloquear o preflight.
 
 ### Escopo operacional esclarecido pelo proprietário — 2026-10-16
 
