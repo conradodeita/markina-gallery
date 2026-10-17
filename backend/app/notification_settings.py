@@ -73,15 +73,17 @@ def render_text(event_type: str, body: str, values: dict[str, str], limit: int) 
     return rendered
 
 
-def render_whatsapp_text(event_type: str, body: str, values: dict[str, str], limit: int) -> str:
-    """Render approved text values and a server-generated purchase URL only."""
+def render_whatsapp_text(event_type: str, body: str, values: dict[str, str], limit: int,
+                         *, expected_gallery_host: str | None = None) -> str:
+    """Render approved text values and server-generated transactional URLs only."""
     from urllib.parse import urlsplit
     from uuid import UUID
 
     body = validate_text(event_type, body, limit, channel="whatsapp")
     placeholders = set(PLACEHOLDER.findall(body))
+    url_placeholders = placeholders.intersection({"link_compras", "link_galeria"})
     safe = {key: re.sub(r"[^\w .’'\-]", "", str(values.get(key, "")), flags=re.UNICODE)
-            for key in placeholders if key != "link_compras"}
+            for key in placeholders if key not in url_placeholders}
     safe = {key: re.sub(r"(?:https?|www|data)\S*", "", value, flags=re.IGNORECASE)
             for key, value in safe.items()}
     if "link_compras" in placeholders:
@@ -103,9 +105,41 @@ def render_whatsapp_text(event_type: str, body: str, values: dict[str, str], lim
                 or parsed.username is not None or parsed.password is not None or port is not None or parsed.query):
             link = ""
         safe["link_compras"] = link
+    if "link_galeria" in placeholders:
+        link = str(values.get("link_galeria", ""))
+        try:
+            parsed = urlsplit(link)
+            port = parsed.port
+            gallery_id = re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                parsed.path.removeprefix("/public-galleries/"), re.IGNORECASE,
+            ) if parsed.path.startswith("/public-galleries/") else None
+            if gallery_id:
+                UUID(gallery_id[0])
+            from app.tenant_hosts import normalize_canonical_host
+            valid_host = (
+                parsed.hostname is not None
+                and normalize_canonical_host(parsed.hostname) == parsed.hostname
+                and expected_gallery_host is not None
+                and parsed.hostname == expected_gallery_host
+            )
+        except (ValueError, TypeError):
+            parsed, port, valid_host, gallery_id = None, None, False, None
+        if (event_type != "private_photos_ready" or not parsed or parsed.scheme != "https"
+                or not valid_host or parsed.netloc != parsed.hostname or not gallery_id
+                or parsed.username is not None or parsed.password is not None or port is not None
+                or parsed.query or parsed.fragment):
+            link = ""
+        safe["link_galeria"] = link
     rendered = PLACEHOLDER.sub(lambda match: safe[match[1]], body)
     while len(rendered) > limit:
-        longest = max(safe, key=lambda key: len(safe[key]))
+        reducible = [key for key in safe if key not in url_placeholders and safe[key]]
+        if not reducible:
+            for key in url_placeholders:
+                safe[key] = ""
+            rendered = PLACEHOLDER.sub(lambda match: safe[match[1]], body)
+            break
+        longest = max(reducible, key=lambda key: len(safe[key]))
         value = safe[longest].rstrip("…")
         safe[longest] = value[:-2] + "…" if len(value) > 2 else ""
         rendered = PLACEHOLDER.sub(lambda match: safe[match[1]], body)
@@ -199,7 +233,9 @@ def setting_payload(setting: NotificationSetting) -> dict:
                 setting.event_type, setting.whatsapp_body,
                 {"cliente": "Cliente", "galeria": "Galeria", "pedido": "1234abcd",
                  "contexto_pagamento": "da compra 1234abcd",
-                 "link_compras": "https://fotografo.exemplo/library/purchases#order-00000000-0000-4000-8000-000000000000"}, 500),
+                 "link_compras": "https://fotografo.exemplo/library/purchases#order-00000000-0000-4000-8000-000000000000",
+                 "link_galeria": "https://fotografo.exemplo/public-galleries/00000000-0000-4000-8000-000000000000"},
+                500, expected_gallery_host="fotografo.exemplo"),
         },
     }
 
@@ -277,6 +313,41 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
         return existing
     setting = setting_for(db, event_type, tenant_id=tenant_id)
     whatsapp_values = dict(values)
+    gallery_hostname = None
+    whatsapp_gallery_link_required = (event_type == "private_photos_ready"
+                                      and "{{link_galeria}}" in setting.whatsapp_body)
+    whatsapp_gallery_link_available = not whatsapp_gallery_link_required
+    if whatsapp_gallery_link_required:
+        from app.tenant_hosts import (
+            CanonicalHostError,
+            canonical_host_for_tenant,
+            public_gallery_url_for_tenant,
+        )
+
+        tenant = db.get(Tenant, tenant_id, populate_existing=True)
+        parent = db.scalar(select(ParentGallery).where(
+            ParentGallery.id == parent_gallery_id,
+            ParentGallery.tenant_id == tenant_id,
+        ).execution_options(populate_existing=True)) if parent_gallery_id else None
+        related_gallery = None
+        if derived_gallery_id:
+            related_gallery = db.scalar(select(DerivedGallery).where(
+                DerivedGallery.id == derived_gallery_id,
+                DerivedGallery.tenant_id == tenant_id,
+            ).execution_options(populate_existing=True))
+        try:
+            if not tenant or not parent or (derived_gallery_id and (
+                not related_gallery or related_gallery.parent_gallery_id != parent.id
+            )):
+                raise CanonicalHostError("Origem da galeria indisponível.")
+            gallery_hostname = canonical_host_for_tenant(db, tenant)
+            if not gallery_hostname:
+                raise CanonicalHostError("Hostname canônico indisponível.")
+            whatsapp_values["link_galeria"] = public_gallery_url_for_tenant(db, tenant, parent.id)
+            whatsapp_gallery_link_available = True
+        except CanonicalHostError:
+            # WhatsApp is channel-local; keep the business transaction and push intact.
+            whatsapp_values["link_galeria"] = ""
     whatsapp_link_required = (event_type == "order_delivery_ready"
                               and "{{link_compras}}" in setting.whatsapp_body)
     whatsapp_link_available = not whatsapp_link_required
@@ -298,6 +369,16 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
             # Keep the business action (album availability) committed; the
             # worker revalidates and cancels this delivery without a valid URL.
             whatsapp_values["link_compras"] = ""
+    whatsapp_body = render_whatsapp_text(
+        event_type, setting.whatsapp_body, whatsapp_values, 500,
+        expected_gallery_host=gallery_hostname,
+    )
+    if (whatsapp_gallery_link_required and whatsapp_values.get("link_galeria")
+            and whatsapp_values["link_galeria"] not in whatsapp_body):
+        whatsapp_gallery_link_available = False
+    if (whatsapp_link_required and whatsapp_values.get("link_compras")
+            and whatsapp_values["link_compras"] not in whatsapp_body):
+        whatsapp_link_available = False
     try:
         with notification_savepoint(db):
             event = NotificationEvent(
@@ -307,8 +388,7 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
                 sale_order_id=sale_order_id, template_version=setting.version,
                 push_title=render_text(event_type, setting.push_title, values, 60),
                 push_body=render_text(event_type, setting.push_body, values, 140),
-                whatsapp_body=render_whatsapp_text(event_type, setting.whatsapp_body,
-                                                   whatsapp_values, 500),
+                whatsapp_body=whatsapp_body,
                 target_path=target_path, expires_at=now() + timedelta(hours=1),
             )
             db.add(event)
@@ -321,6 +401,8 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
                     ) else "cancelled"
                     whatsapp_error = None if whatsapp_status == "queued" else "transport_disabled"
                     if not whatsapp_link_available:
+                        whatsapp_status, whatsapp_error = "cancelled", "canonical_host_unavailable"
+                    if not whatsapp_gallery_link_available:
                         whatsapp_status, whatsapp_error = "cancelled", "canonical_host_unavailable"
                     db.add(NotificationDelivery(tenant_id=tenant_id, event_id=event.id, channel="whatsapp",
                                                recipient_role=definition.recipient,

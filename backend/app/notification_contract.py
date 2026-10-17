@@ -26,6 +26,8 @@ DEFINITIONS = {
     "private_photos_ready": NotificationDefinition(
         "Novas fotos privadas", "client", "Novas fotos",
         "Novas fotos disponíveis na sua galeria.", ("cliente", "galeria"),
+        "Essa mensagem é automática! Novas fotos disponíveis na sua galeria. Acesso no link: {{link_galeria}}.",
+        ("link_galeria",),
     ),
     "payment_reported": NotificationDefinition(
         "Pagamento informado", "admin", "Pagamento informado",
