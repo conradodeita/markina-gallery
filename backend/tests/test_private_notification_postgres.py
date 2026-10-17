@@ -28,8 +28,9 @@ from app.auth import (
 )
 from app.notification_events import record_restricted_folder_ready
 from app.private_upload_batches import process_ready_batches
-from tests.test_private_upload_batch_migration import private_batch_migration_database as private_batch_migration_database
 from tests.test_tenant_migration import migrate
+
+pytest_plugins = ("tests.test_private_upload_batch_migration",)
 
 
 def test_private_notification_key_fits_postgres_preserves_retries_and_legacy_keys(
