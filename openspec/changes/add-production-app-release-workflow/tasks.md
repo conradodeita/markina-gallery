@@ -14,9 +14,9 @@
 ## 3. Integração CI e documentação
 
 - [x] 3.1 Classificar alterações em app, facial, misto ou sem release; verificar que app usa apenas o fluxo API/web, facial mantém o fluxo existente e misturas falham fechadas. Evidência local: `python scripts/test_classify_prod_release.py` (4 testes aprovados).
-- [ ] 3.2 Integrar jobs de preflight e release protegidos ao CI, condicionados a CI verde e ao classificador; verificar que app não dispara o job facial e que nenhum job de produção roda em PR.
+- [x] 3.2 Integrar jobs de preflight e release protegidos ao CI, condicionados a CI verde e ao classificador; verificar que app não dispara o job facial e que nenhum job de produção roda em PR. Evidência: `python scripts/test_production_release_workflow_policy.py` passou; no CI #38992126934, o job `homolog-inventory-policy` passou no SHA `221047b391740af261cc749f22eec75eeb23dad5`.
 - [x] 3.3 Documentar alvo, manifesto Compose, porta/domínio, interrupção possível, wrapper e rollback em português; verificar os comandos documentados contra os testes de política. Evidência local: `docs/DEPLOY-PROD-APP.md`, conferido pela política do workflow e sintaxe YAML aprovada.
-- [ ] 3.4 Executar validações de script, políticas, OpenSpec estrito, CI completo do PR e revisão do diff; registrar SHAs e resultados sem marcar release como publicado.
+- [x] 3.4 Executar validações de script, políticas, OpenSpec estrito, CI completo do PR e revisão do diff; registrar SHAs e resultados sem marcar release como publicado. Evidência: CI #38992126934 concluído com sucesso no SHA `221047b391740af261cc749f22eec75eeb23dad5` (backend, frontend, Gemma, OpenSpec, Gitleaks e política de inventário); revisão local do diff executada; PR #202 segue sem aprovação e merge bloqueado.
 
 ## 4. Gates operacionais humanos
 
@@ -30,8 +30,8 @@
 
 ## Evidência e bloqueios em 2026-10-17
 
-- PR #202, SHA atual `b77fcd07f5d703fddd3b69fcc6acdbe458b4ec8e`, estava atrás da `main` `f89f2e3`. CI #38989166580 passou frontend, OpenSpec e Gitleaks; `homolog-inventory-policy` falhou porque o pin facial não contemplava o runtime compartilhado alterado pela Estatística; backend ainda estava em execução no último snapshot.
+- PR #202 está atualizado com a `main` `f89f2e3`; SHA validado pelo CI completo: `221047b391740af261cc749f22eec75eeb23dad5`. O CI #38992126934 passou em todos os jobs: backend (incluindo regressões PostgreSQL), frontend, Gemma, OpenSpec, Gitleaks e `homolog-inventory-policy`.
 - O release saudável de produção confirmado continua em `f2ac110fb648e0158d1896923ade0661b006a276`. A `main` contém mudanças faciais posteriores ainda não presentes nesse baseline, incluindo `backend/app/facial/reference.py` e `frontend/app/public-galleries/facial-search-panel.tsx`. O verificador app compara o candidato com o checkout ativo e as recusa; não publicar esses blobs pelo fluxo API/web.
 - A política local do workflow API/web passou; o verificador executado contra `origin/main` desde `f2ac110` recusou como esperado (`arquivo_fora_do_escopo`) por esses runtimes faciais dedicados. Essa recusa precede qualquer build, container ou aprovação de produção.
 - A cópia root-owned `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` ainda precisa receber e ter conferido o comando/app blob antes de inventário remoto. Nenhuma ação remota ou alteração de produção foi executada nesta implementação.
-- O script inclui fingerprint, backup de imagens e release API/web; o inventário/rollback aprovado ainda não está implementado nem validado, portanto a task 2.2 permanece aberta.
+- O script de API/web inclui inventário, fingerprint, preservação de imagens/SHA, release e inventário/rollback com aprovação própria. A task 2.2 foi validada por simulação local; nenhum inventário ou rollback remoto foi executado. Permanecem os gates operacionais 4.1–4.3.
