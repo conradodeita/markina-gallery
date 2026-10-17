@@ -57,30 +57,6 @@ docker() {
 output="$(mktemp)"
 baseline_file="$(mktemp)"
 trap 'rm -f "$output" "$baseline_file"' EXIT
-
-CHECKOUT_SHA="$(printf 'a%.0s' {1..40})"
-printf '%s\n' "$CHECKOUT_SHA" > "$baseline_file"
-verify_maintenance_baseline "$baseline_file"
-printf '%s\n' "$(printf 'b%.0s' {1..40})" > "$baseline_file"
-if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
-  echo 'checkout diferente do último release saudável foi aceito' >&2; exit 1
-fi
-grep -q 'checkout ativo diverge do último release saudável' "$output"
-if ( verify_maintenance_baseline "$baseline_file.missing" ) >"$output" 2>&1; then
-  echo 'marcador ausente do último release saudável foi aceito' >&2; exit 1
-fi
-grep -q 'marcador do último release saudável ausente' "$output"
-printf 'invalid\n' > "$baseline_file"
-if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
-  echo 'marcador inválido do último release saudável foi aceito' >&2; exit 1
-fi
-grep -q 'marcador do último release saudável inválido' "$output"
-printf '%s\n%s\n' "$(printf 'a%.0s' {1..40})" "$(printf 'b%.0s' {1..40})" > "$baseline_file"
-if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
-  echo 'marcador com múltiplos SHA foi aceito' >&2; exit 1
-fi
-grep -q 'marcador do último release saudável inválido' "$output"
-
 runtime_snapshot >"$output"
 grep -q '^api|api|sha256:synthetic-api|' "$output"
 grep -q '^face-search-worker|face-search-worker|' "$output"
@@ -102,4 +78,25 @@ if ( FACIAL_RUNTIME=false; runtime_snapshot ) >"$output" 2>&1; then
 fi
 grep -q 'manutenção exige runtime facial já ativo' "$output"
 if grep -q 'synthetic-sensitive' "$output"; then echo 'configuração vazou no erro' >&2; exit 1; fi
+
+CHECKOUT_SHA="$(git rev-parse HEAD)"
+printf '%s\n' "$CHECKOUT_SHA" > "$baseline_file"
+verify_maintenance_baseline "$baseline_file"
+printf '%s\n' "$(git rev-parse HEAD^)" > "$baseline_file"
+verify_maintenance_baseline "$baseline_file"
+printf '%s\n' "$(printf '0%.0s' {1..40})" > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'baseline facial não ancestral foi aceito' >&2; exit 1
+fi
+printf 'invalid\n' > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'marcador facial malformado foi aceito' >&2; exit 1
+fi
+if ( verify_maintenance_baseline "$baseline_file.missing" ) >"$output" 2>&1; then
+  echo 'marcador facial ausente foi aceito' >&2; exit 1
+fi
+printf '%s\n%s\n' "$(git rev-parse HEAD^)" "$CHECKOUT_SHA" > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'marcador facial com mais de uma revisão foi aceito' >&2; exit 1
+fi
 echo 'production resolved inventory: ok'

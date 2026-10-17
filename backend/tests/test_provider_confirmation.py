@@ -217,6 +217,8 @@ def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch)
         db.commit()
         orders = list(db.scalars(select(SaleOrder).where(SaleOrder.provider_payment_id == payment_id)))
         expected_revenue = sum(order.total_cents for order in orders)
+        from app.statistics_report import commercial_report
+        commercial = commercial_report(db, tenant_id=payment.tenant_id, client_id=payment.client_id)
         result = main.list_payment_communications(
             request, query=None, parent_gallery_id=None, financial_status=None,
             delivery_status=None, created_from=None, created_to=None,
@@ -235,6 +237,9 @@ def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch)
     assert order_payload["financial_status"] == "confirmed_undelivered"
     assert result["summary"]["confirmed_cents"] == expected_revenue
     assert sum(row["revenue_cents"] for row in statistics) == expected_revenue
+    assert commercial["confirmed_order_count"] == len(orders)
+    assert {order["payment_method"] for order in commercial["orders"]} == {"credit_card"}
+    assert {order["destination"] for order in commercial["orders"]} == {"InfinityPay"}
 
 
 def test_correcao_auditada_poe_em_hold_e_bloqueia_replay_antigo(monkeypatch):
@@ -271,6 +276,11 @@ def test_correcao_auditada_poe_em_hold_e_bloqueia_replay_antigo(monkeypatch):
         assert payment.state == "hold" and payment.provider_transaction_nsu == result.transaction_nsu
         assert orders[0].delivery_revision == 2
         assert all(order.payment_status == "pending" and order.confirmed_at is None for order in orders)
+        from app.statistics_report import commercial_report
+        statistics = commercial_report(db, tenant_id=payment.tenant_id, client_id=payment.client_id)
+        assert statistics["revenue_cents"] == 0
+        assert statistics["items"] == []
+        assert all(order["status"] == "hold_or_corrected" for order in statistics["orders"])
         assert not notification_delivery.recipient_allowed(db, event, item)
         assert db.scalar(select(func.count(ProviderPaymentCorrection.id)).where(
             ProviderPaymentCorrection.payment_id == payment_id)) == 1

@@ -19,6 +19,17 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(web api face-search-worker)
+readonly FACIAL_BASELINE_FILES=(
+  backend/app/auth.py
+  backend/app/facial/config.py
+  backend/app/facial/provider.py
+  backend/app/facial/reference.py
+  backend/app/facial/search.py
+  backend/app/facial/search_worker.py
+  backend/migrations/versions/20261016_0082_facial_conditional_consent.py
+  frontend/app/facial-search-client.ts
+  frontend/app/public-galleries/facial-search-panel.tsx
+)
 readonly EXPECTED_DATABASE_REVISION="20261016_0082"
 readonly TARGET_DATABASE_REVISION="20261016_0082"
 
@@ -161,8 +172,10 @@ verify_maintenance_baseline() {
   baseline_sha="${baseline_lines[0]}"
   [[ "$baseline_sha" =~ ^[0-9a-f]{40}$ ]] \
     || fail "marcador do último release saudável inválido"
-  [[ "$CHECKOUT_SHA" == "$baseline_sha" ]] \
-    || fail "checkout ativo diverge do último release saudável"
+  git merge-base --is-ancestor "$baseline_sha" "$CHECKOUT_SHA" \
+    || fail "checkout ativo não descende do último release facial saudável"
+  git diff --quiet "$baseline_sha" "$CHECKOUT_SHA" -- "${FACIAL_BASELINE_FILES[@]}" \
+    || fail "runtime facial dedicado mudou desde o último release saudável"
 }
 
 runtime_snapshot() {
