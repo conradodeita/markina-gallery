@@ -73,6 +73,12 @@ export class FacialApiError extends Error {
   }
 }
 
+export class FacialUploadUnconfirmedError extends FacialApiError {
+  constructor(readonly requestId: string) {
+    super("Ainda não foi possível confirmar o envio. Toque em Conferir envio para consultar esta tentativa sem enviar a foto novamente.", 0, null);
+  }
+}
+
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...init });
   const payload = await response.json().catch(() => null);
@@ -99,23 +105,40 @@ export const facialSearchApi = {
     }),
   availability: (galleryId: string) =>
     jsonRequest<FacialSearchAvailability>(`/api/public-galleries/${galleryId}/facial-search`),
-  create: (
+  create: async (
     galleryId: string,
     file: File,
     consentVersion: string,
-    subjectDeclaration: "adult" | "minor",
+    subjectDeclaration: "conditional",
     representationReference?: string,
-  ) => jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches`, {
-    method: "POST",
-    headers: {
-      "content-type": "image/jpeg",
-      "x-facial-consent-version": consentVersion,
-      "x-facial-consent-accepted": "true",
-      "x-facial-subject-declaration": subjectDeclaration,
-      ...(representationReference ? { "x-facial-representation-reference": representationReference } : {}),
-    },
-    body: file,
-  }),
+  ): Promise<FacialSearchResult> => {
+    const requestId = crypto.randomUUID();
+    try {
+      const created = await jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches`, {
+        method: "POST",
+        headers: {
+          "content-type": "image/jpeg",
+          "x-facial-consent-version": consentVersion,
+          "x-facial-consent-accepted": "true",
+          "x-facial-subject-declaration": subjectDeclaration,
+          "x-facial-upload-attempt": requestId,
+          ...(representationReference ? { "x-facial-representation-reference": representationReference } : {}),
+        },
+        body: file,
+      });
+      if (!created?.id || !created?.status || !created?.progress) throw new Error("Invalid upload response");
+      return created;
+    } catch (cause) {
+      if (cause instanceof FacialApiError && cause.status < 500) throw cause;
+      try {
+        const recovered = await facialSearchApi.read(galleryId, requestId);
+        if (recovered?.id === requestId && recovered.status && recovered.progress) return recovered;
+      } catch (readError) {
+        if (readError instanceof FacialApiError && [401, 403].includes(readError.status)) throw readError;
+      }
+      throw new FacialUploadUnconfirmedError(requestId);
+    }
+  },
   read: (galleryId: string, requestId: string) =>
     jsonRequest<FacialSearchResult>(`/api/public-galleries/${galleryId}/facial-searches/${requestId}`),
   latest: (galleryId: string) =>

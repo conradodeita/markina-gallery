@@ -31,7 +31,7 @@ from app.auth import (
     PhotoFolder,
 )
 from app.facial.capacity import FacialSearchCapacityError, measure_search_queue
-from app.facial.config import FacialSettings
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
 from app.facial.search import (
     FacialSearchError,
     create_search_request,
@@ -61,7 +61,7 @@ def _settings(tmp_path: Path, *, enabled: bool = True) -> FacialSettings:
         quality_version="quality-v1",
         calibration_version="calibration-v1",
         legal_notice_version="notice-v1",
-        consent_version="consent-v1",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
@@ -143,7 +143,7 @@ def _fixture(tmp_path: Path, *, index_ready: bool):
             quality_version="quality-v1",
             calibration_version="calibration-v1",
             legal_notice_version="notice-v1",
-            consent_version="consent-v1",
+            consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
             legal_basis_reference="synthetic-only",
             retention_policy_version="retention-v1",
         )
@@ -195,7 +195,7 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
 
     assert available["state"] == "consent_required"
     assert available["index"] == {"state": "processing", "ready": 0, "total": 1}
-    assert available["consent_version"] == "consent-v1"
+    assert available["consent_version"] == CLIENT_REFERENCE_CONSENT_VERSION
     assert available["max_reference_bytes"] == 31_457_280
     assert available["engine"] == "opencv-yunet-sface"
     assert available["minor_search_available"] is True
@@ -205,6 +205,34 @@ def test_availability_exposes_versions_and_real_index_progress(tmp_path: Path) -
         "minor_search_available": False,
         "max_reference_bytes": 31_457_280,
     }
+
+
+def test_upload_attempt_is_recoverable_and_collision_does_not_replace_reference(tmp_path):
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    request_id = uuid4()
+    kwargs = {
+        "parent_gallery_id": parent.id, "client_id": client.id,
+        "consent_version": CLIENT_REFERENCE_CONSENT_VERSION,
+        "subject_declaration": "conditional", "representation_reference": None,
+        "payload": _jpeg(), "settings": _settings(tmp_path), "consent_accepted": True,
+        "request_id": request_id,
+    }
+    created = create_search_request(db, **kwargs)
+    db.commit()
+    assert created.id == request_id
+    assert created.status == "queued"
+    recovered, _ = read_search_result(db, parent_gallery_id=parent.id, client_id=client.id,
+                                     request_id=request_id)
+    assert recovered.id == request_id
+    stored = {p: p.read_bytes() for p in (tmp_path / "references").rglob("*") if p.is_file()}
+    assert stored
+    db.expunge_all()
+    with pytest.raises(FacialSearchError, match="reservar"):
+        create_search_request(db, **kwargs)
+    db.rollback()
+    assert db.get(FacialSearchRequest, request_id).status == "queued"
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 1
+    assert {p: p.read_bytes() for p in (tmp_path / "references").rglob("*") if p.is_file()} == stored
 
 
 @pytest.mark.parametrize(
@@ -265,8 +293,8 @@ def test_gallery_engine_uses_gemma_only_with_complete_current_coverage(
         db,
         parent_gallery_id=parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=_settings(tmp_path),
@@ -312,8 +340,8 @@ def test_search_admission_requires_gallery_in_active_rollout(
             db,
             parent_gallery_id=parent.id,
             client_id=client.id,
-            consent_version="consent-v1",
-            subject_declaration="adult",
+            consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+            subject_declaration="conditional", consent_accepted=True,
             representation_reference=None,
             payload=_jpeg(),
             settings=_settings(tmp_path),
@@ -353,8 +381,8 @@ def test_saturated_search_queue_refuses_before_storing_reference(
             db,
             parent_gallery_id=parent.id,
             client_id=client.id,
-            consent_version="consent-v1",
-            subject_declaration="adult",
+            consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+            subject_declaration="conditional", consent_accepted=True,
             representation_reference=None,
             payload=_jpeg(),
             settings=settings,
@@ -365,7 +393,7 @@ def test_saturated_search_queue_refuses_before_storing_reference(
     assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 0
 
 
-def test_adult_consent_creates_durable_request_without_private_gallery(
+def test_conditional_consent_creates_durable_request_without_private_gallery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
@@ -374,8 +402,8 @@ def test_adult_consent_creates_durable_request_without_private_gallery(
         db,
         parent_gallery_id=parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=_settings(tmp_path),
@@ -452,8 +480,8 @@ def test_accepts_one_hundred_isolated_durable_client_searches(
             db,
             parent_gallery_id=parent.id,
             client_id=client.id,
-            consent_version="consent-v1",
-            subject_declaration="adult",
+            consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+            subject_declaration="conditional", consent_accepted=True,
             representation_reference=None,
             payload=_jpeg(),
             settings=_settings(tmp_path),
@@ -478,8 +506,8 @@ def test_latest_search_repeats_client_gallery_authorization_and_expiry(
         db,
         parent_gallery_id=parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=_settings(tmp_path),
@@ -562,12 +590,12 @@ def test_search_snapshot_and_results_respect_restricted_folder_grant(
     db.commit()
     owner_search = create_search_request(
         db, parent_gallery_id=parent.id, client_id=owner.id,
-        consent_version="consent-v1", subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION, subject_declaration="conditional", consent_accepted=True,
         representation_reference=None, payload=_jpeg(), settings=_settings(tmp_path),
     )
     other_search = create_search_request(
         db, parent_gallery_id=parent.id, client_id=other.id,
-        consent_version="consent-v1", subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION, subject_declaration="conditional", consent_accepted=True,
         representation_reference=None, payload=_jpeg(), settings=_settings(tmp_path),
     )
     owner_ids = set(db.scalars(select(FacialSearchSnapshotItem.photo_asset_id).where(
@@ -663,7 +691,7 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
                 quality_version="quality-v1",
                 calibration_version="calibration-v1",
                 legal_notice_version="notice-v1",
-                consent_version="consent-v1",
+                consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
                 legal_basis_reference="synthetic-only",
                 retention_policy_version="retention-v1",
             ),
@@ -685,8 +713,8 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
         db,
         parent_gallery_id=first_parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=_settings(tmp_path),
@@ -695,8 +723,8 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
         db,
         parent_gallery_id=second_parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=_settings(tmp_path),
@@ -718,7 +746,7 @@ def test_latest_search_isolated_between_two_concurrent_galleries(
     assert restored_first.id != restored_second.id
 
 
-def test_stale_consent_and_minor_search_fail_before_persisting_reference(
+def test_stale_consent_and_missing_checkbox_fail_before_persisting_reference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
@@ -734,36 +762,35 @@ def test_stale_consent_and_minor_search_fail_before_persisting_reference(
     with pytest.raises(FacialSearchError, match="revisto"):
         create_search_request(
             consent_version="old-consent",
-            subject_declaration="adult",
+            subject_declaration="conditional", consent_accepted=True,
             **common,
         )
-    with pytest.raises(FacialSearchError, match="consentimento específico"):
+    with pytest.raises(FacialSearchError, match="consentimento facial"):
         create_search_request(
-            consent_version="consent-v1",
-            subject_declaration="minor",
+            consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+            subject_declaration="conditional",
             **common,
         )
     assert not (tmp_path / "references").exists()
 
 
-def test_authorized_minor_reference_requires_guardian_confirmation(
+def test_conditional_consent_is_required_for_every_reference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     db, parent, client = _fixture(tmp_path, index_ready=True)
     settings = _settings(tmp_path)
 
-    available = search_availability(db, parent_gallery_id=parent.id, client_id=client.id, settings=settings)
-    assert available["minor_search_available"] is True
+    search_availability(db, parent_gallery_id=parent.id, client_id=client.id, settings=settings)
     common = {"db": db, "parent_gallery_id": parent.id, "client_id": client.id,
-              "consent_version": "consent-v1", "subject_declaration": "minor",
+              "consent_version": CLIENT_REFERENCE_CONSENT_VERSION, "subject_declaration": "conditional",
               "representation_reference": None, "payload": _jpeg(), "settings": settings}
-    with pytest.raises(FacialSearchError, match="consentimento específico"):
+    with pytest.raises(FacialSearchError, match="consentimento facial"):
         create_search_request(**common)
     item = create_search_request(**common, consent_accepted=True)
     db.commit()
     assert item.status == "queued"
-    assert item.subject_declaration == "minor"
+    assert item.subject_declaration == "conditional"
     assert item.representation_reference is None
     assert item.authorization_method == "explicit_consent"
     from app.facial.search_worker import _request_is_authorized
@@ -798,8 +825,8 @@ def test_terminal_index_failure_is_excluded_without_blocking_client_search(
         db,
         parent_gallery_id=parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=_settings(tmp_path),

@@ -127,7 +127,12 @@ def main() -> int:
     forbid(r'echo\s+.*\$signing_key', "impressão do segredo de assinatura", SCRIPT)
     forbid(r'echo\s+.*\$generated', "impressão do segredo de payload", SCRIPT)
 
-    require('branches: [develop]', "gatilho restrito a develop", WORKFLOW)
+    require('branches: [develop, main]', "CI dispara em develop e main", WORKFLOW)
+    require(
+        "if: \"${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}\"",
+        "deploy de homologação continua restrito a develop",
+        WORKFLOW,
+    )
     require(
         'pip install -r backend/requirements.txt -r backend/face-requirements.txt',
         "dependências do runtime facial nos testes backend",

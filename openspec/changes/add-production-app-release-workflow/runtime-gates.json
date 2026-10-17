@@ -1,0 +1,9 @@
+{
+  "scope": "api_web_only",
+  "runtime_blobs": {
+    "backend/app/main.py": "ddb96a655aba4f812187f342a1ce677ceaf455ff",
+    "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
+    "frontend/app/globals.css": "8aa1c117cd9d032fc5847766fe3b238ca15da0d8",
+    "frontend/app/admin/statistics/page.tsx": "b3f74605c9031f5b3469eccdaf1c18c2063ddc45"
+  }
+}

@@ -37,7 +37,7 @@ from app.auth import (
     now,
 )
 from app.facial.capacity import FacialSearchCapacityError
-from app.facial.config import FacialSettings
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
 from app.facial.crypto import FacialCipher
 from app.facial.engine import replace_photo_index
 from app.facial.jobs import FacialJobRepository
@@ -96,6 +96,10 @@ class Provider:
             raise RuntimeError("detalhe sensível que não deve persistir")
         return self.query_observations
 
+    def observe_reference_bytes(self, payload: bytes, *, max_pixels: int):
+        assert max_pixels > 0
+        return self.observe_bytes(payload)
+
 
 class Messenger:
     def __init__(self, *, failure: Exception | None = None) -> None:
@@ -121,7 +125,7 @@ def _settings(tmp_path: Path) -> FacialSettings:
         quality_version="quality-v1",
         calibration_version="calibration-v1",
         legal_notice_version="notice-v1",
-        consent_version="consent-v1",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
@@ -179,7 +183,7 @@ def _base(tmp_path: Path):
         quality_version="quality-v1",
         calibration_version="calibration-v1",
         legal_notice_version="notice-v1",
-        consent_version="consent-v1",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
     )
@@ -264,8 +268,8 @@ def _create_request(db, parent, client, settings):
         db,
         parent_gallery_id=parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=settings,
@@ -436,7 +440,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                         quality_version="quality-v1",
                         calibration_version="calibration-v1",
                         legal_notice_version="notice-v1",
-                        consent_version="consent-v1",
+                        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
                         legal_basis_reference="synthetic-only",
                         retention_policy_version="retention-v1",
                     ),
@@ -474,8 +478,8 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                 session,
                 parent_gallery_id=gallery_id,
                 client_id=client_id,
-                consent_version="consent-v1",
-                subject_declaration="adult",
+                consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+                subject_declaration="conditional", consent_accepted=True,
                 representation_reference=None,
                 payload=payload,
                 settings=settings,
@@ -505,8 +509,8 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                 session,
                 parent_gallery_id=gallery_id,
                 client_id=client_id,
-                consent_version="consent-v1",
-                subject_declaration="adult",
+                consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+                subject_declaration="conditional", consent_accepted=True,
                 representation_reference=None,
                 payload=payload,
                 settings=settings,

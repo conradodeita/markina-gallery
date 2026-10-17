@@ -412,6 +412,7 @@ from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
 from app.raw_development.api import register_routes as register_raw_development_routes
+from app.statistics_report import commercial_report, report_csv, report_html
 from app.storage_metrics import measure_owned_photo_storage
 from app.tenancy import (
     TenantContextError,
@@ -9079,6 +9080,146 @@ def admin_statistics(
     }
 
 
+def _commercial_report_for_request(
+    db: Session,
+    request: Request,
+    *,
+    starts_at: datetime | None,
+    ends_at: datetime | None,
+    event_name: str | None,
+    client_id: UUID | None,
+    parent_gallery_id: UUID | None,
+    derived_gallery_id: UUID | None,
+    folder_id: UUID | None,
+    payment_method: str | None,
+    order_status: str | None,
+) -> dict[str, object]:
+    tenant_id = directory_tenant_id(db, request)
+    if payment_method not in (None, "pix", "credit_card", "not_required", "unknown"):
+        raise HTTPException(status_code=422, detail="Forma de pagamento inválida.")
+    if order_status not in (None, "pending", "confirmed", "cancelled", "not_required", "hold_or_corrected"):
+        raise HTTPException(status_code=422, detail="Status do pedido inválido.")
+    return commercial_report(
+        db, tenant_id=tenant_id, starts_at=starts_at, ends_at=ends_at, event_name=event_name,
+        client_id=client_id, parent_gallery_id=parent_gallery_id,
+        derived_gallery_id=derived_gallery_id, folder_id=folder_id,
+        payment_method=payment_method, order_status=order_status,
+    )
+
+
+@app.get("/admin/statistics/report")
+def admin_statistics_report(
+    request: Request,
+    response: Response,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    purchased_offset: int = Query(default=0, ge=0),
+    selected_offset: int = Query(default=0, ge=0),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    orders = data["orders"]
+    purchased = data["items"]
+    selected = data["selected_not_purchased"]
+    return {
+        **data,
+        "orders_total": len(orders), "orders": orders[offset:offset + limit],
+        "items": purchased[purchased_offset:purchased_offset + limit],
+        "purchased_total": len(purchased), "purchased_photos": purchased[purchased_offset:purchased_offset + limit],
+        "selected_not_purchased_total": len(selected),
+        "selected_not_purchased": selected[selected_offset:selected_offset + limit],
+        "selected_not_purchased_photos": selected[selected_offset:selected_offset + limit],
+    }
+
+
+@app.get("/admin/statistics/csv-access")
+def admin_statistics_csv_access(request: Request, db: Session = Depends(db_session)) -> JSONResponse:
+    session = require_admin(request)
+    directory_tenant_id(db, request)
+    from app.system_monitor.access import is_owner
+    return JSONResponse(
+        {"allowed": is_owner(db, session.subject_id)},
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/admin/statistics/report.html", response_class=HTMLResponse)
+def export_statistics_html(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    db: Session = Depends(db_session),
+) -> HTMLResponse:
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    return HTMLResponse(
+        report_html(data),
+        headers={"Content-Disposition": 'attachment; filename="relatorio-comercial.html"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/admin/statistics/report.csv")
+def export_statistics_csv(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    db: Session = Depends(db_session),
+) -> Response:
+    session = require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    # A identidade estável do proprietário é consultada antes de qualquer dado comercial.
+    from app.system_monitor.access import require_owner
+    require_owner(db, session.subject_id)
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    # Revalida proprietário e vínculo de tenant depois da consulta para evitar resposta em sessão alterada.
+    require_owner(db, session.subject_id)
+    if directory_tenant_id(db, request) != tenant_id:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    return Response(
+        content=report_csv(data["items"]), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="vendas.csv"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @app.get("/admin/statistics/filters")
 def admin_statistics_filters(
     request: Request, db: Session = Depends(db_session)
@@ -9095,6 +9236,10 @@ def admin_statistics_filters(
         )
     )
     galleries = list(db.scalars(select(DerivedGallery).where(DerivedGallery.tenant_id == tenant_id).order_by(DerivedGallery.name)))
+    folders = list(db.scalars(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id,
+        PhotoFolder.purpose == "content",
+    ).order_by(PhotoFolder.name)))
     return {
         "clients": [{"id": str(client.id), "name": client.full_name} for client in clients],
         "parent_galleries": [
@@ -9105,6 +9250,7 @@ def admin_statistics_filters(
             {"id": str(gallery.id), "name": gallery.name, "client_id": str(gallery.client_id)}
             for gallery in galleries
         ],
+        "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
     }
 
 
@@ -10691,7 +10837,7 @@ class FaceRegionSearchInput(BaseModel):
     face_region_id: UUID
     # Compatibilidade de transporte; não são registrados como novo consentimento.
     consent_version: str | None = Field(default=None, max_length=120)
-    subject_declaration: Literal["adult", "minor"] | None = None
+    subject_declaration: Literal["adult", "minor", "conditional"] | None = None
     representation_reference: str | None = Field(default=None, max_length=200)
 
 
@@ -10752,6 +10898,13 @@ async def create_public_gallery_facial_search(
         ip_address=request.client.host if request.client else "unknown",
     )
     consent_version = request.headers.get("x-facial-consent-version", "").strip()
+    upload_attempt = request.headers.get("x-facial-upload-attempt")
+    try:
+        upload_request_id = UUID(upload_attempt) if upload_attempt else None
+        if upload_request_id is not None and upload_request_id.version != 4:
+            raise ValueError("UUID v4 required")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Identificador de tentativa inválido.") from exc
     subject_declaration = request.headers.get(
         "x-facial-subject-declaration", ""
     ).strip()
@@ -10775,6 +10928,7 @@ async def create_public_gallery_facial_search(
             payload=payload,
             settings=settings,
             consent_accepted=request.headers.get("x-facial-consent-accepted") == "true",
+            request_id=upload_request_id,
         )
         db.commit()
         FACIAL_ADMISSION_COUNTER.record("accepted")
@@ -12064,8 +12218,8 @@ def list_payment_communications(
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
     financial_status: Literal[
-        "awaiting_payment", "reported", "confirmed", "not_found", "overdue",
-        "verifying", "exception", "hold",
+        "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
+        "not_found", "overdue", "verifying", "exception", "hold",
     ]
     | None = Query(default=None),
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
@@ -12232,9 +12386,7 @@ def list_payment_communications(
         selection_query = selection_query.where(PhotoSelection.created_at >= created_from)
     if created_to:
         selection_query = selection_query.where(PhotoSelection.created_at <= created_to)
-    include_open_selections = (
-        financial_status in (None, "awaiting_payment") and delivery_status is None
-    )
+    include_open_selections = financial_status is None and delivery_status is None
     selection_rows = list(db.execute(selection_query)) if include_open_selections else []
     selection_groups: dict[tuple[UUID, UUID], dict[str, object]] = {}
     selection_parents: dict[tuple[UUID, UUID], ParentGallery | None] = {}
@@ -12417,26 +12569,37 @@ def list_payment_communications(
                     "confirmed_cents": 0,
                 },
                 "orders": [],
+                "financial_status": order_payload["financial_status"],
+                "_sort_priority": _payment_financial_priority(order_payload["financial_status"]),
                 "_sort_created_at": sort_created_at,
             },
         )
         group["orders"].append(order_payload)
+        order_priority = _payment_financial_priority(order_payload["financial_status"])
+        if order_priority < group["_sort_priority"]:
+            group["financial_status"] = order_payload["financial_status"]
+            group["_sort_priority"] = order_priority
+            group["_sort_created_at"] = sort_created_at
+        elif order_priority == group["_sort_priority"]:
+            group["_sort_created_at"] = min(group["_sort_created_at"], sort_created_at)
         group["totals"]["orders"] += 1
         if order_payload["financial_status"] == "reported":
             group["totals"]["reported_orders"] += 1
             group["totals"]["reported_cents"] += order_payload["total_cents"]
-        elif order_payload["financial_status"] == "confirmed":
+        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
             group["totals"]["confirmed_orders"] += 1
             group["totals"]["confirmed_cents"] += order_payload["total_cents"]
         # Compatibilidade temporária: `total_cents` passa a representar somente
         # pedidos cujo pagamento foi comunicado e ainda aguarda conferência.
         group["totals"]["total_cents"] = group["totals"]["reported_cents"]
-        group["_sort_created_at"] = max(group["_sort_created_at"], sort_created_at)
 
     all_groups = sorted(
         grouped.values(),
-        key=lambda group: (group["_sort_created_at"], group["client"]["id"]),
-        reverse=True,
+        key=lambda group: (
+            group["_sort_priority"],
+            group["_sort_created_at"].isoformat(),
+            group["client"]["id"],
+        ),
     )
     cursor_key = _decode_payment_cursor(cursor) if cursor else None
     if cursor_key:
@@ -12444,10 +12607,10 @@ def list_payment_communications(
             group
             for group in all_groups
             if (
+                group["_sort_priority"],
                 group["_sort_created_at"].isoformat(),
                 group["client"]["id"],
-            )
-            < cursor_key
+            ) > cursor_key
         ]
 
     page_groups = all_groups[:limit]
@@ -12456,10 +12619,13 @@ def list_payment_communications(
     if has_next_page and page_groups:
         last_group = page_groups[-1]
         next_cursor = _encode_payment_cursor(
-            last_group["_sort_created_at"], last_group["client"]["id"]
+            last_group["_sort_created_at"],
+            last_group["client"]["id"],
+            priority=last_group["_sort_priority"],
         )
     for group in page_groups:
         group.pop("_sort_created_at", None)
+        group.pop("_sort_priority", None)
 
     financial_counts: dict[str, int] = defaultdict(int)
     delivery_counts: dict[str, int] = defaultdict(int)
@@ -12473,7 +12639,7 @@ def list_payment_communications(
         if order_payload["financial_status"] == "reported":
             reported_orders += 1
             reported_cents += order_payload["total_cents"]
-        elif order_payload["financial_status"] == "confirmed":
+        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
             confirmed_orders += 1
             confirmed_cents += order_payload["total_cents"]
         for state in order_payload["delivery_statuses"]:
@@ -12551,7 +12717,7 @@ def _payment_financial_status(
     provider_payment: ProviderPayment | None = None,
 ) -> str:
     if provider_payment:
-        return {
+        financial_state = {
             "creating": "awaiting_payment",
             "awaiting_payment": "awaiting_payment",
             "verification_required": "verifying",
@@ -12560,8 +12726,11 @@ def _payment_financial_status(
             "exception": "exception",
             "hold": "hold",
         }[provider_payment.state]
+        if financial_state == "confirmed" and not order.delivery_album_url:
+            return "confirmed_undelivered"
+        return financial_state
     if order.payment_status == "confirmed":
-        return "confirmed"
+        return "confirmed" if order.delivery_album_url else "confirmed_undelivered"
     if order.payment_status == "cancelled":
         return "not_found"
     if latest_communication and latest_communication.status == "pending_review":
@@ -12569,6 +12738,20 @@ def _payment_financial_status(
     if gallery and gallery.selection_expires_at and expired(gallery.selection_expires_at):
         return "overdue"
     return "awaiting_payment"
+
+
+def _payment_financial_priority(financial_status: str) -> int:
+    return {
+        "reported": 0,
+        "confirmed": 1,
+        "confirmed_undelivered": 2,
+        "awaiting_payment": 3,
+        "not_found": 4,
+        "overdue": 5,
+        "verifying": 6,
+        "exception": 7,
+        "hold": 8,
+    }.get(financial_status, 9)
 
 
 def _admin_payment_communication_payload(
@@ -12626,15 +12809,17 @@ def _admin_payment_communication_payload(
     }
 
 
-def _encode_payment_cursor(created_at: datetime, client_id: str) -> str:
+def _encode_payment_cursor(
+    created_at: datetime, client_id: str, *, priority: int = 0
+) -> str:
     raw = json.dumps(
-        {"created_at": created_at.isoformat(), "client_id": client_id},
+        {"priority": priority, "created_at": created_at.isoformat(), "client_id": client_id},
         separators=(",", ":"),
     ).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _decode_payment_cursor(cursor: str) -> tuple[str, str]:
+def _decode_payment_cursor(cursor: str) -> tuple[int, str, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
@@ -12642,7 +12827,7 @@ def _decode_payment_cursor(cursor: str) -> tuple[str, str]:
         client_id = UUID(payload["client_id"])
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail="Cursor de pagamentos inválido.") from exc
-    return created_at.isoformat(), str(client_id)
+    return int(payload.get("priority", 0)), created_at.isoformat(), str(client_id)
 
 
 def _delivery_payload(

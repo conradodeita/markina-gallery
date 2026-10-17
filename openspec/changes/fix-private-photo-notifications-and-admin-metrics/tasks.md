@@ -2,7 +2,7 @@
 
 ## 1. Avisos de fotos privadas
 
-- [x] 1.1 Estender o lote durável por migration preservadora de registros para uma pasta canônica restrita, associar ativos inclusive em retentativas e corrigir o gatilho ao fim do processamento; verificar lotes fechados/abertos, sem prévia, falha parcial, retomada e deduplicação em `backend/tests/test_private_upload_batches.py`. Evidência: CI PostgreSQL executou migration e suíte backend — 1632 passed, 23 skipped; contrato histórico 0070 verifica colunas, nulidade e unicidade anteriores à revisão 0082.
+- [ ] 1.1 Estender o lote durável por migration preservadora de registros para uma pasta canônica restrita, associar ativos inclusive em retentativas e corrigir o gatilho ao fim do processamento; verificar lotes fechados/abertos, sem prévia, falha parcial, retomada e deduplicação em `backend/tests/test_private_upload_batches.py`. Revalidar no grafo reconciliado, com migration privada `20261017_0083` encadeada após `20261016_0082`.
 - [x] 1.2 Verificar entregas independentes e autorização no momento do envio; garantir que uploads de pastas públicas não criem evento privado; executar testes direcionados de notificações e vínculo sem chamadas externas reais. Evidência: `pytest tests/test_private_upload_batches.py tests/test_notification_payments.py -q` — 8 passed; upload público sem evento, dois canais habilitados enfileirados, autorização revalidada após revogação e retentativas sem duplicação.
 
 ## 2. Indicador de mensagens em Vendas e pagamentos
@@ -17,7 +17,7 @@
 
 ## 4. Integração e revisão
 
-- [x] 4.1 Executar validações focadas backend/frontend, lint, typecheck, build e OpenSpec estrito; registrar evidências e revisar diff/status sem tocar nas alterações locais preexistentes. Evidências locais: 9 testes backend focados passaram; 23 testes frontend focados passaram; Ruff passou; ESLint passou sem erros (31 avisos); TypeScript passou; build Next.js passou; validação estrita desta change passou; Alembic informa `20261016_0082 (head)`. CI `39023880662`: frontend, OpenSpec, Gemma, inventário, Gitleaks e backend passaram; backend concluiu 1632 testes e 23 skips, além das regressões PostgreSQL (4, 1 e 1 testes aprovados). A validação OpenSpec estrita global ainda lista 29 problemas preexistentes em outras changes/specs.
+- [ ] 4.1 Reexecutar CI integral e validar o grafo Alembic reconciliado (`20261017_0083` como head) após integrar a base atualmente instalada em homologação.
 - [x] 4.2 Classificar e suprimir somente os quatro falsos positivos históricos do Gitleaks por fingerprint exato, mantendo a varredura do histórico completo; confirmar Gitleaks local e CI. Evidências: Gitleaks 8.24.3 encontrou zero findings localmente; o check Gitleaks do CI `39023880662` passou. Os quatro fingerprints correspondiam a APP_VERSION/SHA, checksums de arquivos e fingerprint de configuração em documentos de evidência.
 
 ## Workflow follow-up
