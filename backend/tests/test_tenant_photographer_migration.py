@@ -241,13 +241,20 @@ def assert_catalog(connection):
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
         future_columns = {
             "facial_search_request": {"search_engine"},
+            "private_upload_batch": {"folder_id", "parent_gallery_id"},
             "sale_order": {"provider_payment_id"},
             "tenant": {"canonical_host"},
         }
+        future_nullability = {
+            "private_upload_batch": {"derived_gallery_id": False},
+        }
         historical_columns = [column for column in target.c if column.name not in future_columns.get(name, set())]
         assert set(actual_columns) == {column.name for column in historical_columns}, name
-        assert all(actual_columns[column.name]["nullable"] == column.nullable
-                   for column in historical_columns), name
+        assert all(
+            actual_columns[column.name]["nullable"]
+            == future_nullability.get(name, {}).get(column.name, column.nullable)
+            for column in historical_columns
+        ), name
         actual_fk = {
             (tuple(f["constrained_columns"]), f["referred_table"], tuple(f["referred_columns"]))
             for f in inspector.get_foreign_keys(name)
@@ -265,6 +272,9 @@ def assert_catalog(connection):
             for u in target.constraints
             if isinstance(u, sa.UniqueConstraint) and u.name != "uq_tenant_canonical_host"
         }
+        expected_unique |= {
+            ("tenant_id", "photo_asset_id"),
+        } if name == "private_upload_batch_asset" else set()
         assert actual_unique == expected_unique, name
         actual_indexes = {i["name"]: (tuple(i["column_names"]), i["unique"])
                           for i in inspector.get_indexes(name) if not i.get("duplicates_constraint")}

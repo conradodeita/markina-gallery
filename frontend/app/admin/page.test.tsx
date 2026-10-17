@@ -38,6 +38,8 @@ const summary = {
     parent_galleries: 1,
     derived_galleries: 2,
     imports: { processing: 1 },
+    folders_with_active_imports: 1,
+    photos_in_folders_with_active_imports: 4,
     folders_preparing: 1,
     folders_released: 3,
   },
@@ -71,7 +73,8 @@ describe("painel operacional", () => {
         name: "Seu próximo passo está à vista.",
       }),
     ).toBeTruthy();
-    expect(screen.getByText("Pastas em preparação")).toBeTruthy();
+    expect(screen.getByText("Pastas com importação ativa")).toBeTruthy();
+    expect(screen.getByText("4 fotos nas pastas ativas")).toBeTruthy();
     expect(screen.getByText("Galerias públicas")).toBeTruthy();
     expect(screen.getByText("Armazenamento de fotos")).toBeTruthy();
     expect(screen.getByText("512 MB")).toBeTruthy();

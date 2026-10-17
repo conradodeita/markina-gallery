@@ -79,7 +79,6 @@ type Dashboard = {
     confirmed_orders: number;
     confirmed_cents: number;
     financial_statuses: Record<string, number>;
-    failed_messages: number;
   };
   facets: {
     parent_galleries: Array<{ id: string; name: string; count: number }>;
@@ -302,7 +301,6 @@ function PaymentsDashboard() {
       <MetricCard label="Valor das fotos selecionadas" value={money(dashboard.summary.selected_cents)} detail={`${dashboard.summary.selected_carts} carrinho(s) sem pagamento comunicado${dashboard.summary.selected_pricing_unavailable ? ` · ${dashboard.summary.selected_pricing_unavailable} sem preço disponível` : ""}`} />
       <MetricCard label="Valor dos pedidos" value={money(dashboard.summary.reported_cents)} detail={`${dashboard.summary.reported_orders} pagamento(s) comunicado(s)`} tone="warning" />
       <MetricCard label="Receita confirmada" value={money(dashboard.summary.confirmed_cents)} detail={`${dashboard.summary.confirmed_orders} depósito(s) confirmado(s)`} tone="success" />
-      <MetricCard label="Falhas de mensagem" value={dashboard.summary.failed_messages} detail="Entregas que exigem atenção" tone={dashboard.summary.failed_messages ? "danger" : "success"} />
     </section>
 
     {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
