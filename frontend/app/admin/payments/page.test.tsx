@@ -43,6 +43,7 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
     },
     groups: [{
       client: { id: `client-${name}`, name },
+      financial_status: "reported",
       totals: { orders: 2, total_cents: 1200, reported_orders: 1, reported_cents: 1200, confirmed_orders: 1, confirmed_cents: 800 },
       orders: [{
         id: `${name.toLowerCase()}-order-12345678`,
@@ -58,6 +59,16 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
         folders: [],
         payment_message_snapshot: null,
       }],
+    }],
+    selections_without_order: [{
+      client: { id: "client-cart", name: "Bia" },
+      gallery: { id: "gallery-cart", name: "Formatura" },
+      parent_gallery: { id: "gallery-public-1", name: "Formatura" },
+      selected_count: 1,
+      total_cents: 500,
+      pricing_available: true,
+      created_at: "2026-08-29T09:00:00Z",
+      folders: [{ id: "folder-1", name: "Turma", items: [{ id: "photo-1", name: "Foto 1" }] }],
     }],
     page: { next_cursor: nextCursor, limit: 12 },
   };
@@ -145,7 +156,7 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.queryByRole("button", { name: "Tentar enviar novamente" })).toBeNull();
   });
 
-  it("mostra o download HTML ao confirmar e o remove após corrigir a confirmação", async () => {
+  it.each(["confirmed", "confirmed_undelivered"])("mostra o download HTML em %s e o remove após corrigir a confirmação", async (financialStatus) => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     let current = dashboard();
     const fetchMock = vi.fn((path: string, options?: RequestInit) => {
@@ -153,7 +164,7 @@ describe("controle operacional de pagamentos", () => {
       if (options?.method === "POST" && path.endsWith("/decision")) {
         const confirmed = { ...communication, status: "confirmed", can_decide: false, can_correct: true };
         current = dashboard();
-        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: "confirmed", communication: confirmed, communications: [confirmed] };
+        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: financialStatus, communication: confirmed, communications: [confirmed] };
         return Promise.resolve(new Response(JSON.stringify({ status: "confirmed" })));
       }
       if (options?.method === "POST" && path.endsWith("/correction")) {
@@ -201,13 +212,35 @@ describe("controle operacional de pagamentos", () => {
 
     fireEvent.change(screen.getByLabelText("Cliente / telefone"), { target: { value: "Inexistente" } });
     fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reported" } });
-    fireEvent.change(screen.getByLabelText("Entrega de mensagem"), { target: { value: "failed" } });
     fireEvent.click(screen.getByRole("button", { name: "Aplicar filtros" }));
 
     expect(await screen.findByText("Nenhum pagamento neste filtro")).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("query=Inexistente") && String(path).includes("financial_status=reported") && String(path).includes("delivery_status=failed"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("query=Inexistente") && String(path).includes("financial_status=reported") && !String(path).includes("delivery_status"))).toBe(true);
+    expect(screen.queryByLabelText("Entrega de mensagem")).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "Limpar filtros" })[1]);
     expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+  });
+
+  it("aplica as cores financeiras e deixa No carrinho depois dos pedidos", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(
+      JSON.stringify(path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : dashboard()),
+      { status: 200 },
+    ))));
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    const financialFilter = screen.getByLabelText("Situação financeira") as HTMLSelectElement;
+    const undelivered = financialFilter.querySelector('option[value="confirmed_undelivered"]') as HTMLOptionElement;
+    expect(undelivered.textContent).toBe("Pagamento confirmado - fotos não entregue");
+    expect(undelivered.style.color).toBe("var(--payment-status-confirmed-undelivered)");
+    expect(screen.queryByLabelText("Entrega de mensagem")).toBeNull();
+
+    const reportedCard = screen.getByRole("heading", { name: "Ana" }).closest(".payment-client-card");
+    const cartBadge = screen.getByText("No carrinho");
+    const cartCard = cartBadge.closest(".payment-order");
+    expect(reportedCard?.className).toContain("payment-client-card--reported");
+    expect(cartCard?.className).toContain("payment-order--cart");
+    expect(reportedCard && cartCard && (reportedCard.compareDocumentPosition(cartCard) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
   });
 
   it("carrega a próxima página sem substituir os grupos anteriores", async () => {

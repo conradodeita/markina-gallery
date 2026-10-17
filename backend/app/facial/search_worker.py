@@ -170,7 +170,15 @@ def process_claimed_search_job(
                 data_version=request.consent_version,
                 locator=_reference_locator(request),
             )
-            analysis = analyze_query(provider.observe_bytes(payload))
+            reference_observer = getattr(provider, "observe_reference_bytes", None)
+            observations = (
+                reference_observer(
+                    payload, max_pixels=settings.max_reference_pixels
+                )
+                if callable(reference_observer)
+                else provider.observe_bytes(payload)
+            )
+            analysis = analyze_query(observations)
             if analysis.status != "ready" or analysis.observation is None:
                 _finish_request(db, request, status=analysis.status, store=store, cipher=cipher, settings=settings)
                 return repository.complete(db, claim)
@@ -339,7 +347,10 @@ def _request_is_authorized(
     require_active_owner(db, request.tenant_id)
     if request.status in {"cancelled", "expired"}:
         return False
-    if request.authorization_method != "direct_region" and request.consent_version != settings.consent_version:
+    from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION
+    if request.authorization_method != "direct_region" and request.consent_version not in {
+        settings.consent_version, CLIENT_REFERENCE_CONSENT_VERSION,
+    }:
         return False
     if request.subject_declaration == "minor" and request.authorization_method == "legacy":
         from app.facial.representation import (

@@ -1,0 +1,104 @@
+{
+  "release_ready": false,
+  "gates": {
+    "base_legal": {
+      "status": "pendente",
+      "evidence": "O proprietário confirmou em 2026-10-16 que a aprovação documentada ainda precisa ser definida; critérios em production-evidence-review.md. Não aprovado."
+    },
+    "calibracao_e_equidade": {
+      "status": "bloqueado",
+      "evidence": "O proprietário confirmou em 2026-10-16 que o corpus autorizado ainda precisa ser definido; nenhum ensaio representativo foi presumido."
+    },
+    "capacidade_arm": {
+      "status": "pendente",
+      "evidence": "Inventário somente leitura de 2026-10-16T01:34:44Z: host ARM64 com 4 CPUs, load 0.20/0.22/0.13, RAM disponível 21.507.387.392 bytes e 77.945.286.656 bytes livres em /var/lib/docker. Snapshot não é ensaio de carga facial; p50/p95, throughput, fila, CPU e memória sob carga ainda não foram medidos."
+    },
+    "recuperacao": {
+      "status": "parcial",
+      "evidence": "Inventário somente leitura de 2026-10-16T01:34:44Z encontrou backup Markina de 71.128.950 bytes, manifesto com SHA anterior/alvo e SHA-256 549b6f6861f54a2280b521aa67bcf17db2be50ea93dd00628fe68f67f42a9f45. Nenhuma restauração foi ensaiada; pg_restore não está instalado no host e o backup não está montado no container PostgreSQL. Integridade restaurável permanece sem comprovação."
+    },
+    "representacao_e_consentimento_infantil": {
+      "status": "bloqueado",
+      "evidence": "A decisão simplify-mobile-gallery-face-search admite checkbox único sem prova administrativa prévia para novas consultas; aprovação jurídica/operacional de produção ainda não documentada, conforme resposta do proprietário em 2026-10-16."
+    },
+    "aprovacao_operacional": {
+      "status": "pendente",
+      "evidence": null
+    }
+  },
+  "note": "release_ready refere-se à primeira ativação/expansão e continua falso. A manutenção autorizada do runtime já ativo tem elegibilidade independente e restrita ao baseline/arquivos/blobs revisados; não aprova gates documentais pendentes.",
+  "maintenance_release": {
+    "authorized": true,
+    "scope": "existing_facial_runtime",
+    "baseline_sha": "7c7a4ad217343dc4faee57734436afd91bb1f6b1",
+    "evidence": "Refinamento solicitado pelo proprietário em 2026-10-16 após teste em produção: priorização de rosto dominante, confirmação de upload por UUID e câmera em tela cheia, textos recolhíveis e checkbox inicialmente marcado com aceite no envio. Inventário remoto somente leitura confirmou checkout/API 7c7a4ad217343dc4faee57734436afd91bb1f6b1, schema 20261016_0082, runtime facial já ativo e serviços saudáveis. Sem nova migration, reindexação ou alteração de modelo, limiar de similaridade, escopo, retenção ou segredos. Exigir CI, inventário/fingerprint e única aprovação protegida antes de recriar somente web/API/face-search-worker. Os gates de primeira ativação permanecem independentes.",
+    "runtime_blobs": {
+      "backend/app/auth.py": [
+        "JY2mH/W",
+        "xk4PLdx",
+        "N48ILtE",
+        "C12oLY="
+      ],
+      "backend/app/facial/config.py": [
+        "vIj71IL",
+        "VL4re3O",
+        "l4B14x+",
+        "V81pL4="
+      ],
+      "backend/app/facial/provider.py": [
+        "cFWSqUz",
+        "jblG87W",
+        "+AhSx68",
+        "HK+ivg="
+      ],
+      "backend/app/facial/reference.py": [
+        "bxvKjyv",
+        "k/EhgcF",
+        "M6GxLtA",
+        "prSPO8="
+      ],
+      "backend/app/facial/search.py": [
+        "zBbEYvs",
+        "jxJCSAx",
+        "zn4o2Ua",
+        "SjCcmQ="
+      ],
+      "backend/app/facial/search_worker.py": [
+        "8xvETXZ",
+        "uXZzrSA",
+        "B7wNfxr",
+        "qfSsvk="
+      ],
+      "backend/app/main.py": [
+        "tbKoDn9",
+        "di50jMv",
+        "uLDxnOB",
+        "B3PtXc="
+      ],
+      "backend/migrations/versions/20261016_0082_facial_conditional_consent.py": [
+        "CE9p1+1",
+        "Kac0sIM",
+        "1WaUB8p",
+        "o7wnHA="
+      ],
+      "frontend/app/globals.css": [
+        "2gYgjr1",
+        "3AVSg/X",
+        "DQ0JNpB",
+        "X/z0kc="
+      ],
+      "frontend/app/facial-search-client.ts": [
+        "Dtfq1DX",
+        "RmVqQdU",
+        "vMXpiO8",
+        "+dEO4s="
+      ],
+      "frontend/app/public-galleries/facial-search-panel.tsx": [
+        "VE0mr1B",
+        "1Vhh/KI",
+        "dKt68Id",
+        "T3Eb5A="
+      ]
+    }
+  }
+}

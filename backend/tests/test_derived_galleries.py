@@ -3629,18 +3629,15 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         "confirmed_cents": 800,
         "financial_statuses": {
             "awaiting_payment": 2,
-            "confirmed": 1,
+            "confirmed_undelivered": 1,
             "reported": 1,
         },
         "failed_messages": 1,
     }
     assert len(payload["groups"]) == 1
-    assert payload["groups"][0]["client"]["name"] == "Bia Histórica"
-    assert payload["groups"][0]["orders"][0]["gallery"] == {
-        "id": str(removed_gallery_id),
-        "name": "Galeria preservada",
-        "removed": True,
-    }
+    assert payload["groups"][0]["client"]["name"] == "Ana Pagamentos"
+    assert payload["groups"][0]["financial_status"] == "reported"
+    assert len(payload["groups"][0]["orders"]) == 3
     assert payload["page"]["next_cursor"]
     # Template e regras de preço acrescentam consultas constantes; o limite
     # continua independente da quantidade de clientes, pedidos, itens e comunicações.
@@ -3654,19 +3651,17 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
     )
     assert second_page.status_code == 200
     second_payload = second_page.json()
-    assert second_payload["groups"][0]["client"]["name"] == "Ana Pagamentos"
-    assert len(second_payload["groups"][0]["orders"]) == 3
-    assert second_payload["groups"][0]["totals"] == {
-        "orders": 3,
-        "total_cents": 1200,
-        "reported_orders": 1,
-        "reported_cents": 1200,
-        "confirmed_orders": 1,
-        "confirmed_cents": 800,
+    assert second_payload["groups"][0]["client"]["name"] == "Bia Histórica"
+    assert second_payload["groups"][0]["financial_status"] == "awaiting_payment"
+    assert second_payload["groups"][0]["orders"][0]["gallery"] == {
+        "id": str(removed_gallery_id),
+        "name": "Galeria preservada",
+        "removed": True,
     }
     assert second_payload["selections_without_order"][0]["total_cents"] == 700
-    assert second_payload["communications"][0]["id"] == str(communication_id)
-    assert second_payload["communications"][0]["photographer_notification"]["last_error"] == "Falha temporária de entrega."
+    assert payload["communications"][0]["id"] == str(communication_id)
+    assert payload["communications"][0]["photographer_notification"]["last_error"] == "Falha temporária de entrega."
+    assert second_payload["communications"] == []
     assert "Falha temporária sanitizada" not in second_page.text
 
 

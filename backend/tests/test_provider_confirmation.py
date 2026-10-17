@@ -233,7 +233,8 @@ def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch)
         ) for order in orders]
     assert order_payload["payment_method"] == "credit_card"
     assert order_payload["provider_payment_state"] == "confirmed"
-    assert order_payload["financial_status"] == "confirmed"
+    assert all(order.delivery_album_url is None for order in orders)
+    assert order_payload["financial_status"] == "confirmed_undelivered"
     assert result["summary"]["confirmed_cents"] == expected_revenue
     assert sum(row["revenue_cents"] for row in statistics) == expected_revenue
     assert commercial["confirmed_order_count"] == len(orders)

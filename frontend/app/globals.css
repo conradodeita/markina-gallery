@@ -811,7 +811,50 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .payment-filters .filter-grid { margin:0; padding:22px 24px 24px; }
 .payment-filter-actions { display:flex; align-self:end; flex-wrap:wrap; gap:8px; }
 .payment-client-groups { display:grid; gap:20px; }
-.payment-client-card { margin-top:0; padding:clamp(18px,3vw,28px); background:var(--mk-surface-subtle); }
+.payments-dashboard {
+  --payment-status-reported:#a16207; --payment-status-confirmed:#15803d;
+  --payment-status-confirmed-undelivered:#b91c1c; --payment-status-awaiting:#1d4ed8;
+  --payment-status-not-found:#475569; --payment-status-overdue:#7e22ce;
+  --payment-status-verifying:#0e7490; --payment-status-exception:#c2410c;
+  --payment-status-hold:#4f46e5; --payment-status-cart:#0f766e;
+  --payment-status-reported-soft:#fef3c7; --payment-status-confirmed-soft:#dcfce7;
+  --payment-status-confirmed-undelivered-soft:#fee2e2; --payment-status-awaiting-soft:#dbeafe;
+  --payment-status-not-found-soft:#e2e8f0; --payment-status-overdue-soft:#f3e8ff;
+  --payment-status-verifying-soft:#cffafe; --payment-status-exception-soft:#ffedd5;
+  --payment-status-hold-soft:#e0e7ff; --payment-status-cart-soft:#ccfbf1;
+}
+:root[data-theme="dark"] .payments-dashboard {
+  --payment-status-reported:#fcd34d; --payment-status-confirmed:#86efac;
+  --payment-status-confirmed-undelivered:#fca5a5; --payment-status-awaiting:#93c5fd;
+  --payment-status-not-found:#cbd5e1; --payment-status-overdue:#d8b4fe;
+  --payment-status-verifying:#67e8f9; --payment-status-exception:#fdba74;
+  --payment-status-hold:#a5b4fc; --payment-status-cart:#5eead4;
+  --payment-status-reported-soft:#3b321a; --payment-status-confirmed-soft:#1d3828;
+  --payment-status-confirmed-undelivered-soft:#3e2528; --payment-status-awaiting-soft:#202f43;
+  --payment-status-not-found-soft:#30363d; --payment-status-overdue-soft:#382943;
+  --payment-status-verifying-soft:#17383c; --payment-status-exception-soft:#402a1d;
+  --payment-status-hold-soft:#292c49; --payment-status-cart-soft:#1d3937;
+}
+.payment-client-card { margin-top:0; padding:clamp(18px,3vw,28px); border-left:6px solid var(--payment-client-accent); background:var(--payment-client-surface); }
+.payment-client-card--reported { --payment-client-accent:var(--payment-status-reported); --payment-client-surface:var(--payment-status-reported-soft); }
+.payment-client-card--confirmed { --payment-client-accent:var(--payment-status-confirmed); --payment-client-surface:var(--payment-status-confirmed-soft); }
+.payment-client-card--confirmed_undelivered { --payment-client-accent:var(--payment-status-confirmed-undelivered); --payment-client-surface:var(--payment-status-confirmed-undelivered-soft); }
+.payment-client-card--awaiting_payment { --payment-client-accent:var(--payment-status-awaiting); --payment-client-surface:var(--payment-status-awaiting-soft); }
+.payment-client-card--not_found { --payment-client-accent:var(--payment-status-not-found); --payment-client-surface:var(--payment-status-not-found-soft); }
+.payment-client-card--overdue { --payment-client-accent:var(--payment-status-overdue); --payment-client-surface:var(--payment-status-overdue-soft); }
+.payment-client-card--verifying { --payment-client-accent:var(--payment-status-verifying); --payment-client-surface:var(--payment-status-verifying-soft); }
+.payment-client-card--exception { --payment-client-accent:var(--payment-status-exception); --payment-client-surface:var(--payment-status-exception-soft); }
+.payment-client-card--hold { --payment-client-accent:var(--payment-status-hold); --payment-client-surface:var(--payment-status-hold-soft); }
+.payment-status-badge--reported { background:var(--payment-status-reported-soft); color:var(--payment-status-reported); }
+.payment-status-badge--confirmed { background:var(--payment-status-confirmed-soft); color:var(--payment-status-confirmed); }
+.payment-status-badge--confirmed_undelivered { background:var(--payment-status-confirmed-undelivered-soft); color:var(--payment-status-confirmed-undelivered); }
+.payment-status-badge--awaiting_payment { background:var(--payment-status-awaiting-soft); color:var(--payment-status-awaiting); }
+.payment-status-badge--not_found { background:var(--payment-status-not-found-soft); color:var(--payment-status-not-found); }
+.payment-status-badge--overdue { background:var(--payment-status-overdue-soft); color:var(--payment-status-overdue); }
+.payment-status-badge--verifying { background:var(--payment-status-verifying-soft); color:var(--payment-status-verifying); }
+.payment-status-badge--exception { background:var(--payment-status-exception-soft); color:var(--payment-status-exception); }
+.payment-status-badge--hold { background:var(--payment-status-hold-soft); color:var(--payment-status-hold); }
+.payment-status-badge--cart { background:var(--payment-status-cart-soft); color:var(--payment-status-cart); }
 .payment-client-card > header { display:flex; justify-content:space-between; gap:20px; align-items:start; margin-bottom:18px; }
 .payment-client-card > header h2 { margin:2px 0 0; }
 .payment-client-total { display:grid; justify-items:end; }
@@ -819,10 +862,16 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .payment-client-total span { color:var(--muted); font-size:.85rem; }
 .payment-orders { display:grid; gap:12px; }
 .payment-order { padding:18px; border:1px solid var(--mk-border); border-left:5px solid var(--mk-border); border-radius:13px; background:var(--mk-surface); }
-.payment-order--reported { border-left-color:var(--mk-border); }
-.payment-order--confirmed { border-left-color:var(--mk-border); }
-.payment-order--not_found { border-left-color:var(--mk-border); }
-.payment-order--overdue { border-left-color:var(--mk-border); }
+.payment-order--reported { border-left-color:var(--payment-status-reported); }
+.payment-order--confirmed { border-left-color:var(--payment-status-confirmed); }
+.payment-order--confirmed_undelivered { border-left-color:var(--payment-status-confirmed-undelivered); }
+.payment-order--awaiting_payment { border-left-color:var(--payment-status-awaiting); }
+.payment-order--not_found { border-left-color:var(--payment-status-not-found); }
+.payment-order--overdue { border-left-color:var(--payment-status-overdue); }
+.payment-order--verifying { border-left-color:var(--payment-status-verifying); }
+.payment-order--exception { border-left-color:var(--payment-status-exception); }
+.payment-order--hold { border-left-color:var(--payment-status-hold); }
+.payment-order--cart { border-left-color:var(--payment-status-cart); background:var(--payment-status-cart-soft); }
 .payment-order__heading { display:flex; justify-content:space-between; gap:16px; align-items:start; }
 .payment-order__heading h3 { margin:9px 0 2px; font-size:1.02rem; }
 .payment-order__heading p { margin:0; color:var(--muted); font-size:.84rem; }
@@ -899,7 +948,10 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .facial-consent-header h2 { font-size:clamp(1.65rem,5vw,2.2rem); letter-spacing:-.035em; }
 .facial-consent-privacy { display:grid; gap:6px; margin:0 26px; padding:14px 16px; border:1px solid var(--mk-border); border-radius:13px; background:var(--mk-surface-subtle); }
 .facial-consent-privacy p,.facial-consent-privacy small { margin:0; line-height:1.45; }
-.facial-consent-privacy strong { color:var(--mk-brand); font-size:.9rem; }
+.facial-consent-privacy summary,.facial-consent-details summary { cursor:pointer; color:var(--mk-brand); font-size:.9rem; font-weight:750; }
+.facial-consent-privacy[open] p,.facial-consent-privacy[open] small { display:block; margin-top:8px; }
+.facial-consent-details { padding:12px; border:1px solid var(--mk-border); border-radius:11px; }
+.facial-consent-details p { margin:10px 0 0; font-size:.88rem; line-height:1.5; }
 .facial-consent-dialog form { display:grid; flex:none; gap:16px; padding:20px 26px 26px; }
 .facial-consent-step { display:grid; gap:13px; margin:0; padding:16px; border:1px solid var(--mk-border); border-radius:14px; background:var(--mk-surface); }
 .facial-consent-step-heading { display:flex; align-items:flex-start; gap:11px; }
@@ -911,6 +963,14 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .facial-reference-actions { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
 .facial-reference-actions .mk-button { width:100%; min-height:48px; }
 .facial-reference-selected { margin:0; padding:10px 12px; border-radius:10px; background:var(--mk-success-soft); color:var(--mk-brand) !important; font-size:.88rem; font-weight:750; }
+.facial-guided-camera { display:grid; min-height:100%; grid-template-rows:auto 1fr auto auto; gap:12px; padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); background:#171a1d; color:#fff; }
+.facial-guided-camera h2 { margin:0; color:#fff; font-size:1.35rem; }
+.facial-guided-camera-stage { display:grid; min-height:0; place-items:center; }
+.facial-guided-camera-frame { position:relative; display:grid; max-height:60dvh; justify-self:center; overflow:hidden; place-items:center; border-radius:10px; background:#000; }
+.facial-guided-camera-frame::after { position:absolute; inset:10% 27%; border:2px solid #fff; border-radius:48% 48% 44% 44%; box-shadow:0 0 0 999px #0005; content:""; pointer-events:none; }
+.facial-guided-camera video { width:100%; height:100%; object-fit:contain; }
+.facial-guided-camera p { margin:0; color:#fff; font-size:.85rem; line-height:1.45; }
+.facial-guided-camera .facial-reference-actions { grid-template-columns:1fr 1fr; }
 .facial-consent-subject { padding-top:12px; }
 .facial-consent-subject legend { display:flex; align-items:center; gap:9px; padding:0 5px; color:var(--ink); font-weight:800; }
 .facial-consent-dialog .gallery-toggle { display:flex; min-height:46px; align-items:flex-start; gap:10px; padding:11px 12px; border:1px solid var(--mk-border); border-radius:11px; background:var(--mk-surface); color:var(--ink); font-weight:650; line-height:1.4; cursor:pointer; }
@@ -927,6 +987,8 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .gallery-featured-results > header > p:last-child,.gallery-featured-results .gallery-presentation-collection-heading p { color:var(--mk-ink-muted); }
 .gallery-presentation-marker--reject { background:var(--mk-surface); color:var(--mk-ink); }
 @media (max-width:700px) { .facial-search-panel { align-items:stretch; flex-direction:column; }.facial-search-status { min-width:0; }.gallery-featured-results { padding:13px; }.gallery-featured-results .gallery-presentation-collection-heading { align-items:start; flex-direction:column; }.facial-consent-backdrop { place-items:end center; padding:8px 8px 0; }.facial-consent-dialog { width:calc(100vw - 16px); max-width:calc(100vw - 16px); max-height:calc(100dvh - 8px); border-radius:20px 20px 0 0; scrollbar-gutter:auto; }.facial-consent-header { padding:18px 16px 14px; }.facial-consent-header h2 { font-size:clamp(1.45rem,7vw,1.85rem); }.facial-consent-privacy { margin-inline:16px; padding:12px 14px; }.facial-consent-dialog form { gap:14px; padding:16px; }.facial-consent-step { gap:11px; padding:14px; }.facial-reference-actions { grid-template-columns:1fr; }.facial-consent-actions { position:static; bottom:auto; z-index:auto; grid-template-columns:1fr; margin:0 -16px -16px; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); }.facial-consent-actions .mk-button--primary { order:-1; } }
+
+.facial-consent-dialog.facial-consent-dialog--camera { position:fixed; inset:0; z-index:100; width:100vw; max-width:none; height:100dvh; max-height:none; margin:0; padding:0; border:0; border-radius:0; scrollbar-gutter:auto; background:#171a1d; }
 
 @media (max-width: 900px) {
   .gallery-presentation-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
