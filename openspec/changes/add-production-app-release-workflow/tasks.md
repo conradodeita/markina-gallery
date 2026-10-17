@@ -18,6 +18,7 @@
 - [x] 3.2 Integrar jobs de preflight e release protegidos ao CI, condicionados a CI verde e ao classificador; verificar que app não dispara o job facial e que nenhum job de produção roda em PR. Evidência: `python scripts/test_production_release_workflow_policy.py` passou; no CI #38992126934, o job `homolog-inventory-policy` passou no SHA `221047b391740af261cc749f22eec75eeb23dad5`.
 - [x] 3.3 Documentar alvo, manifesto Compose, porta/domínio, interrupção possível, wrapper e rollback em português; verificar os comandos documentados contra os testes de política. Evidência local: `docs/DEPLOY-PROD-APP.md`, conferido pela política do workflow e sintaxe YAML aprovada.
 - [x] 3.4 Executar validações de script, políticas, OpenSpec estrito, CI completo do PR e revisão do diff; registrar SHAs e resultados sem marcar release como publicado. Evidência: CI #38994704285 concluído com sucesso no SHA `300405555630764f6bdb328a8ab32d0faa0e54f8` (backend, frontend, Gemma, OpenSpec, Gitleaks e política de inventário); revisão local do diff executada; PR #202 está sem conflitos, aguardando aprovação humana.
+- [ ] 3.5 Habilitar despacho manual explícito de `app-release` somente na `main`, inerte por padrão, sem disparar rollback; exigir CI completo, manifesto de runtime, inventário remoto e aprovação protegida por fingerprint. Registrar teste de política e validação do workflow.
 
 ## 4. Gates operacionais humanos
 
