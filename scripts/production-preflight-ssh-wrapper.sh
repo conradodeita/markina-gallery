@@ -8,7 +8,7 @@ umask 077
 readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
-readonly INVENTORY_SCRIPT_BLOB_SHA="8b57f5593d2672bbcac811907337dfece1ed8a33"
+readonly INVENTORY_SCRIPT_BLOB_SHA="2ed22f25cb5facc7f8849fffac33ab9880461412"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 

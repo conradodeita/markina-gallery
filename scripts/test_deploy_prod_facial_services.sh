@@ -55,7 +55,32 @@ docker() {
 }
 
 output="$(mktemp)"
-trap 'rm -f "$output"' EXIT
+baseline_file="$(mktemp)"
+trap 'rm -f "$output" "$baseline_file"' EXIT
+
+CHECKOUT_SHA="$(printf 'a%.0s' {1..40})"
+printf '%s\n' "$CHECKOUT_SHA" > "$baseline_file"
+verify_maintenance_baseline "$baseline_file"
+printf '%s\n' "$(printf 'b%.0s' {1..40})" > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'checkout diferente do último release saudável foi aceito' >&2; exit 1
+fi
+grep -q 'checkout ativo diverge do último release saudável' "$output"
+if ( verify_maintenance_baseline "$baseline_file.missing" ) >"$output" 2>&1; then
+  echo 'marcador ausente do último release saudável foi aceito' >&2; exit 1
+fi
+grep -q 'marcador do último release saudável ausente' "$output"
+printf 'invalid\n' > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'marcador inválido do último release saudável foi aceito' >&2; exit 1
+fi
+grep -q 'marcador do último release saudável inválido' "$output"
+printf '%s\n%s\n' "$(printf 'a%.0s' {1..40})" "$(printf 'b%.0s' {1..40})" > "$baseline_file"
+if ( verify_maintenance_baseline "$baseline_file" ) >"$output" 2>&1; then
+  echo 'marcador com múltiplos SHA foi aceito' >&2; exit 1
+fi
+grep -q 'marcador do último release saudável inválido' "$output"
+
 runtime_snapshot >"$output"
 grep -q '^api|api|sha256:synthetic-api|' "$output"
 grep -q '^face-search-worker|face-search-worker|' "$output"
