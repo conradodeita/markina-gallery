@@ -92,7 +92,7 @@ A melhoria da extração SHALL preservar autorização, consentimento, isolament
 - **THEN** a referência temporária segue a política de exclusão existente e apenas estados e métricas técnicas agregadas podem permanecer
 
 ### Requirement: Referência prioriza um rosto visualmente dominante
-Para a referência de consulta, o processamento SHALL selecionar o maior rosto quando sua confiança for pelo menos 0,85, seu menor lado tiver pelo menos 18% do maior lado da imagem e sua área for pelo menos quatro vezes a de cada outro candidato. A regra SHALL alinhar o recorte selecionado nos pixels originais e SHALL NOT alterar indexação ou similaridade.
+Para a referência, o processamento SHALL selecionar o maior rosto se sua confiança for ≥0,85, seu lado menor for ≥18% do lado maior da imagem e sua área for ≥2× cada outro candidato. Antes da ambiguidade, SHALL desconsiderar candidatos abaixo dos limites mínimos de tamanho, nitidez e confiança. SHALL alinhar apenas o rosto selecionado nos pixels originais e SHALL NOT alterar indexação ou similaridade.
 
 #### Scenario: Retrato com pessoas pequenas ao fundo
 - **WHEN** um rosto atende a todos os critérios de dominância sobre os demais
@@ -101,6 +101,14 @@ Para a referência de consulta, o processamento SHALL selecionar o maior rosto q
 #### Scenario: Faces distintas sem dominância clara
 - **WHEN** há mais de um candidato e nenhum atende aos critérios de dominância
 - **THEN** a busca termina sem comparação e solicita recorte para isolar um rosto
+
+#### Scenario: Detecção incidental de baixa qualidade junto ao rosto principal
+- **WHEN** uma observação não atende ao limite mínimo de tamanho, nitidez ou confiança, mas há exatamente um rosto utilizável
+- **THEN** a detecção incidental não bloqueia a busca e somente o rosto utilizável é comparado
+
+#### Scenario: Dois rostos utilizáveis sem dominância
+- **WHEN** dois ou mais candidatos atendem aos limites mínimos de qualidade e nenhum satisfaz a regra de dominância
+- **THEN** a busca termina com estado de múltiplos rostos e solicita recorte, sem comparar qualquer candidato
 
 ### Requirement: Detecções repetidas entre escalas são consolidadas
 O processamento SHALL consolidar detecções repetidas comparando os cinco landmarks e os centros das caixas no espaço original, com tolerância máxima de 20% do menor lado das caixas, sem exigir IoU mínimo entre escalas.
