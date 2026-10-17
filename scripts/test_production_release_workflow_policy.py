@@ -101,7 +101,10 @@ def main() -> None:
     require("verify_maintenance_baseline", "checkout ativo confere marcador de release", script)
     require('git merge-base --is-ancestor "$baseline_sha" "$CHECKOUT_SHA"', "descendência após release app", script)
     require('git diff --quiet "$baseline_sha" "$CHECKOUT_SHA" -- "${FACIAL_BASELINE_FILES[@]}"', "runtime facial dedicado preservado", script)
-    require('git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA"', "alvo descende do checkout", script)
+    require("target_descends_from_checkout", "ancestralidade verificada em repositório temporário", script)
+    require('git -C "$git_dir" fetch --quiet --no-tags --filter=blob:none "$origin" refs/heads/main', "commits da main buscados sem blobs em diretório temporário", script)
+    require('[[ "$target_sha" == "$TARGET_SHA" ]]', "alvo buscado permanece igual ao HEAD verificado", script)
+    require('git -C "$git_dir" merge-base --is-ancestor "$CHECKOUT_SHA" "$target_sha"', "candidato descende do baseline ativo", script)
     require("require_existing_facial_runtime", "manutenção não ativa runtime desligado", script)
     for path, expected in maintenance["runtime_blobs"].items():
         actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
