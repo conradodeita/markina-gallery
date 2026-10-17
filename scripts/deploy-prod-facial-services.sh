@@ -88,6 +88,20 @@ require_existing_facial_runtime() {
   done
 }
 
+target_descends_from_checkout() (
+  local origin="$1" git_dir target_sha
+  git_dir="$(mktemp -d "${TMPDIR:-/tmp}/markina-preflight-git.XXXXXX")" || return 1
+  trap 'rm -rf -- "$git_dir"' EXIT
+  git init --bare --quiet "$git_dir" || return 1
+  # The production checkout can be many releases behind and need not contain
+  # the candidate commit. Resolve ancestry in an ephemeral object database so
+  # the read-only inventory does not update refs or objects in the live checkout.
+  git -C "$git_dir" fetch --quiet --no-tags --filter=blob:none "$origin" refs/heads/main || return 1
+  target_sha="$(git -C "$git_dir" rev-parse 'FETCH_HEAD^{commit}')" || return 1
+  [[ "$target_sha" == "$TARGET_SHA" ]] || return 1
+  git -C "$git_dir" merge-base --is-ancestor "$CHECKOUT_SHA" "$target_sha"
+)
+
 verify_repository() {
   local origin
   [[ "$(hostname)" == "$EXPECTED_HOST" ]] || fail "host diverge do alvo aprovado"
@@ -108,7 +122,7 @@ verify_repository() {
     local remote_sha
     remote_sha="$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')"
     [[ "$remote_sha" == "$TARGET_SHA" ]] || fail "SHA alvo não é o HEAD atual de origin/main"
-    git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA" \
+    target_descends_from_checkout "$origin" \
       || fail "SHA alvo não descende do último release saudável"
   else
     git fetch --quiet origin main

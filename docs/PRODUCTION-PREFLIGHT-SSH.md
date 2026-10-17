@@ -35,6 +35,10 @@ O environment existente `production` permanece protegido pelo revisor `conradode
 
 O preflight não reutiliza nem modifica a chave ou os secrets de deploy. A aprovação de `production` permanece separada e protegida.
 
+## Verificação de ancestralidade do candidato
+
+O checkout de produção pode não conter o commit recém-mergeado em `main`. Para verificar que o SHA candidato descende do último release saudável sem alterar refs ou objetos do checkout ativo, o inventário busca a ponta de `main` com filtro de blobs em um repositório Git bare temporário, confirma que ela continua igual ao SHA solicitado e verifica a ancestralidade nesse banco temporário. O diretório é removido ao terminar; qualquer falha ou mudança da ponta de `main` faz o preflight falhar fechado antes de produzir o fingerprint.
+
 ## Correção do diagnóstico de hash — 2026-10-16
 
 O fluxo foi esclarecido pelo proprietário: esta entrega corrige um runtime já ativo, sem primeira ativação ou ampliação de escopo. O preflight avalia a autorização de manutenção por baseline, arquivos/blobs revisados e flag já ativa, separadamente dos gates documentais de ativação/expansão. Inventário, CI e aprovação protegida continuam necessários. Os registros jurídicos/calibração pendentes não são marcados aprovados para liberar código de manutenção.
