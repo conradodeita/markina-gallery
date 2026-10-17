@@ -40,6 +40,15 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest), (True, "somente_api_web"))
 
+    def test_release_classifier_and_its_test_are_allowed_policy_files(self):
+        for name in ("scripts/classify_prod_release.py", "scripts/test_classify_prod_release.py"):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("classification policy\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
     def test_docker_monitor_worker_migration_and_unlisted_runtime_are_rejected(self):
         for name in ("docker/docker-compose.yml", "backend/app/system_monitor.py",
                      "backend/app/face_worker.py", "backend/migrations/versions/change.py",

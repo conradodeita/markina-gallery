@@ -3,7 +3,7 @@
 ## 1. Separação das políticas de release
 
 - [x] 1.1 Adaptar a verificação facial ao marcador `facial-last-healthy.sha` para permitir avanço do checkout por releases app sem alterar os arquivos faciais dedicados; preservar pins faciais exatos e verificar com regressão do release facial e evidência do run #38976692654. Evidência local: o teste Bash `scripts/test_deploy_prod_facial_services.sh` aceitou baseline ancestral e recusou SHA inválido; `python scripts/test_prod_facial_release_gates.py` aprovou 6 testes; CI #38976692654 documenta o último release saudável em `f2ac110`.
-- [x] 1.2 Criar manifesto e verificador do escopo da publicação API/web para a estatística; verificar que caminhos, blobs, migration, Docker/Compose, Monitor, runtime facial dedicado e workers fora do escopo são recusados. Evidência local: `python scripts/test_prod_app_release_scope.py` (3 testes aprovados), incluindo paths Docker, migration, worker, Monitor, runtime facial e blob divergente.
+- [x] 1.2 Criar manifesto e verificador do escopo da publicação API/web para a estatística; verificar que caminhos, blobs, migration, Docker/Compose, Monitor, runtime facial dedicado e workers fora do escopo são recusados. Evidência local: `python scripts/test_prod_app_release_scope.py` (4 testes aprovados), incluindo paths Docker, migration, worker, Monitor, runtime facial, blob divergente e arquivos do classificador de release permitidos.
 
 ## 2. Inventário e release API/web
 

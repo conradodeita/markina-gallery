@@ -22,9 +22,11 @@ ALLOWED_PREFIXES = ("backend/tests/", "frontend/app/admin/statistics/", "openspe
 ALLOWED_OPERATIONS = {
     ".github/workflows/ci.yml",
     "scripts/check_prod_app_release_scope.py",
+    "scripts/classify_prod_release.py",
     "scripts/deploy-prod-app-services.sh",
     "scripts/production-preflight-ssh-wrapper.sh",
     "scripts/test_prod_app_release_scope.py",
+    "scripts/test_classify_prod_release.py",
     "scripts/test_deploy_prod_app_services.sh",
     "scripts/test_production_release_workflow_policy.py",
     "scripts/check_prod_facial_release_gates.py",
