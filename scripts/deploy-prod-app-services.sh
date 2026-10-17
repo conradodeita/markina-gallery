@@ -36,7 +36,7 @@ fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
 
 verify_readonly_target_ancestry() (
   set -Eeuo pipefail
-  local origin="$1" checkout_sha="$2" target_sha="$3" temp_root temp_repo fetched_sha current_sha
+  local origin="$1" checkout_sha="$2" target_sha="$3" scope_mode="${4:-}" temp_root temp_repo fetched_sha current_sha scope_script scope_manifest
   temp_root="$(mktemp -d "${TMPDIR:-/tmp}/markina-app-history.XXXXXX")" \
     || fail "não foi possível criar repositório temporário de ancestralidade"
   trap 'rm -rf -- "$temp_root"' EXIT
@@ -52,6 +52,17 @@ verify_readonly_target_ancestry() (
   [[ "$fetched_sha" == "$target_sha" ]] || fail "HEAD de main mudou durante o inventário"
   git -C "$temp_repo" merge-base --is-ancestor "$checkout_sha" refs/remotes/origin/main \
     || fail "SHA alvo não descende do runtime ativo"
+  if [[ "$scope_mode" == app ]]; then
+    scope_script="$temp_root/check_prod_app_release_scope.py"
+    scope_manifest="$temp_root/runtime-gates.json"
+    git -C "$temp_repo" show "$target_sha:scripts/check_prod_app_release_scope.py" > "$scope_script" \
+      || fail "verificador de escopo ausente no alvo"
+    git -C "$temp_repo" show "$target_sha:openspec/changes/add-production-app-release-workflow/runtime-gates.json" > "$scope_manifest" \
+      || fail "manifesto de runtime app ausente no alvo"
+    GIT_DIR="$temp_repo" \
+      python3 "$scope_script" --base "$checkout_sha" --target "$target_sha" --manifest "$scope_manifest" \
+      || fail "escopo ou blobs API/web não aprovados"
+  fi
   current_sha="$(git ls-remote "$origin" refs/heads/main | awk 'NR == 1 {print $1}')"
   [[ "$current_sha" == "$target_sha" ]] || fail "HEAD de main mudou durante o inventário"
 )
@@ -117,7 +128,11 @@ verify_repository() {
     git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA" \
       || fail "alvo não descende do runtime ativo"
   else
-    verify_readonly_target_ancestry "$origin" "$CHECKOUT_SHA" "$TARGET_SHA"
+    if [[ "$MODE" == inventory ]]; then
+      verify_readonly_target_ancestry "$origin" "$CHECKOUT_SHA" "$TARGET_SHA" app
+    else
+      verify_readonly_target_ancestry "$origin" "$CHECKOUT_SHA" "$TARGET_SHA"
+    fi
   fi
   if [[ "$MODE" == "release" ]]; then
     git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ backend/migrations/ \

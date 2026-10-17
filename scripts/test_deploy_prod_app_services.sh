@@ -80,6 +80,57 @@ fi
 grep -q 'HEAD de main mudou durante o inventário' "$tmpdir/ancestry-divergence.out"
 [[ -z "$(find "$tmpdir" -maxdepth 1 -type d -name 'markina-app-history.*' -print -quit)" ]]
 
+# The read-only app preflight must reject out-of-scope runtime changes from
+# the active production checkout before it produces an approval fingerprint.
+scope_source="$tmpdir/scope-source"
+scope_origin="$tmpdir/scope-origin.git"
+mkdir -p "$scope_source/scripts" "$scope_source/openspec/changes/add-production-app-release-workflow" \
+  "$scope_source/backend/app" "$scope_source/frontend/app/admin/statistics"
+cp scripts/check_prod_app_release_scope.py "$scope_source/scripts/"
+cp openspec/changes/add-production-app-release-workflow/runtime-gates.json \
+  "$scope_source/openspec/changes/add-production-app-release-workflow/"
+for path in backend/app/main.py backend/app/statistics_report.py frontend/app/globals.css frontend/app/admin/statistics/page.tsx; do
+  mkdir -p "$scope_source/$(dirname "$path")"
+  cp "$path" "$scope_source/$path"
+done
+git init --quiet "$scope_source"
+git -C "$scope_source" symbolic-ref HEAD refs/heads/main
+git -C "$scope_source" config user.name "Release test"
+git -C "$scope_source" config user.email "release-test@example.invalid"
+git -C "$scope_source" add .
+git -C "$scope_source" commit --quiet -m app-base
+scope_checkout_sha="$(git -C "$scope_source" rev-parse HEAD)"
+git clone --quiet --bare "$scope_source" "$scope_origin"
+git -C "$scope_origin" config uploadpack.allowFilter true
+scope_active="$tmpdir/scope-active"
+git clone --quiet "$scope_origin" "$scope_active"
+git -C "$scope_active" checkout --quiet --detach "$scope_checkout_sha"
+(
+  cd "$scope_active"
+  TMPDIR="$tmpdir" verify_readonly_target_ancestry "$scope_origin" "$scope_checkout_sha" "$scope_checkout_sha" app
+)
+scope_refs_before="$(git -C "$scope_active" for-each-ref --format='%(refname) %(objectname)')"
+scope_status_before="$(git -C "$scope_active" status --porcelain)"
+scope_fetch_head_before="$(cat "$scope_active/.git/FETCH_HEAD" 2>/dev/null || true)"
+mkdir -p "$scope_source/backend/app/facial"
+printf 'out-of-scope\n' > "$scope_source/backend/app/facial/provider.py"
+git -C "$scope_source" add backend/app/facial/provider.py
+git -C "$scope_source" commit --quiet -m facial-change
+git -C "$scope_source" push --quiet "$scope_origin" main
+scope_target_sha="$(git -C "$scope_origin" rev-parse refs/heads/main)"
+if (
+  cd "$scope_active"
+  TMPDIR="$tmpdir" verify_readonly_target_ancestry "$scope_origin" "$scope_checkout_sha" "$scope_target_sha" app
+) > "$tmpdir/app-scope.out" 2>&1; then
+  echo 'preflight aceitou runtime facial fora do manifesto app' >&2; exit 1
+fi
+grep -q 'criterio=arquivo_fora_do_escopo' "$tmpdir/app-scope.out"
+[[ "$(git -C "$scope_active" rev-parse HEAD)" == "$scope_checkout_sha" ]]
+[[ "$(git -C "$scope_active" for-each-ref --format='%(refname) %(objectname)')" == "$scope_refs_before" ]]
+[[ "$(git -C "$scope_active" status --porcelain)" == "$scope_status_before" ]]
+[[ "$(cat "$scope_active/.git/FETCH_HEAD" 2>/dev/null || true)" == "$scope_fetch_head_before" ]]
+[[ -z "$(find "$tmpdir" -maxdepth 1 -type d -name 'markina-app-history.*' -print -quit)" ]]
+
 CALL_LOG="$tmpdir/calls"
 CHECKOUT_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ACTIVE_SHA="$CHECKOUT_SHA"
