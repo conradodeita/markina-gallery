@@ -25,6 +25,7 @@ from app.auth import (
     PrivateUploadBatchAsset,
     PushSubscription,
     Tenant,
+    TenantAdmin,
 )
 from app.notification_events import record_restricted_folder_ready
 from app.private_upload_batches import process_ready_batches
@@ -67,6 +68,7 @@ def test_private_notification_key_fits_postgres_preserves_retries_and_legacy_key
             )
             db.add_all([
                 grant, photo,
+                TenantAdmin(tenant_id=owner.id, admin_user_id=admin.id),
                 NotificationSetting(
                     tenant_id=owner.id, event_type="private_photos_ready", push_enabled=True, whatsapp_enabled=True,
                     push_title="Novas fotos", push_body="Novas fotos disponíveis.", whatsapp_body="Novas fotos disponíveis.",
