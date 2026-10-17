@@ -32,8 +32,9 @@ EXPECTED_SHA="${EXPECTED_SHA,,}"
 [[ -d .git ]] || fail "checkout Git da Markina ausente"
 
 DEPLOYED_SHA="$(git rev-parse HEAD)"
-[[ "$DEPLOYED_SHA" == "$EXPECTED_SHA" ]] || \
-  fail "HEAD implantado diverge do SHA esperado; nenhuma consulta foi executada"
+if [[ "$DEPLOYED_SHA" != "$EXPECTED_SHA" ]]; then
+  fail "HEAD implantado diverge do SHA esperado; esperado=$EXPECTED_SHA observado=$DEPLOYED_SHA; nenhuma consulta foi executada"
+fi
 [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" ]] || fail "Compose ou ambiente homolog da Markina ausente"
 
 compose() {

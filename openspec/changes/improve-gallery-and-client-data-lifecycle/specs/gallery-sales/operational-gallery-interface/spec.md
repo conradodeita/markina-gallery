@@ -60,7 +60,7 @@ O sistema SHALL permitir ao fotógrafo configurar no backend cada Galeria públi
 
 ### Requirement: Interface orientada pelo backend
 
-O sistema SHALL obter dados, permissões, disponibilidade e resultados de ações administrativas exclusivamente de APIs autenticadas do backend. A interface SHALL NOT criar autorização, registros, métricas, progresso de upload ou liberação simulados no browser.
+O sistema SHALL obter dados, permissões, disponibilidade e resultados de ações administrativas exclusivamente de APIs autenticadas do backend. Estatísticas SHALL oferecer filtros combináveis por período, evento, galeria, pasta, cliente, meio de pagamento e status do pedido; tabelas e indicadores SHALL refletir o mesmo escopo. Valores consolidados SHALL permitir abrir os registros detalhados correspondentes. A interface SHALL NOT conceder acesso ao CSV por ocultação de botão apenas nem criar autorização, registros, progresso de upload ou liberação simulados no browser.
 
 #### Scenario: Estado administrativo
 
@@ -71,6 +71,16 @@ O sistema SHALL obter dados, permissões, disponibilidade e resultados de açõe
 
 - **WHEN** o fotógrafo busca por nome ou telefone na ficha de uma Galeria pública
 - **THEN** o sistema retorna somente vínculos, contadores e estados autorizados da consulta e permite abrir a ficha individual da seleção
+
+#### Scenario: Filtros combinados
+
+- **WHEN** o fotógrafo combina período, galeria, pasta, cliente ou forma de pagamento
+- **THEN** indicadores, detalhamento HTML e subtotais refletem exatamente o mesmo conjunto autorizado de itens e pedidos
+
+#### Scenario: Acesso a exportação CSV
+
+- **WHEN** a interface apresenta a ação de CSV
+- **THEN** o backend ainda revalida a autorização do proprietário para a URL direta e a ação
 
 ### Requirement: Exclusão segura de galeria privada
 

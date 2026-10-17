@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import delete, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.acervo_context import client_tenant_id
@@ -24,7 +25,7 @@ from app.auth import (
     now,
 )
 from app.facial.capacity import require_search_capacity
-from app.facial.config import FacialSettings
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
 from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
 from app.facial.jobs import FacialJobRepository
@@ -114,7 +115,7 @@ def search_availability(
         "state": "consent_required",
         "manual_selection_available": True,
         "minor_search_available": True,
-        "consent_version": settings.consent_version,
+        "consent_version": CLIENT_REFERENCE_CONSENT_VERSION,
         "legal_notice_version": policy.legal_notice_version,
         "reference_retention_seconds": settings.reference_retention_seconds,
         "candidate_retention_seconds": settings.candidate_retention_seconds,
@@ -144,6 +145,7 @@ def create_search_request(
     repository: FacialJobRepository | None = None,
     reference_region_id: UUID | None = None,
     consent_accepted: bool = False,
+    request_id: UUID | None = None,
 ) -> FacialSearchRequest:
     tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
@@ -164,12 +166,12 @@ def create_search_request(
             raise FacialSearchError("Consulta por região não aceita arquivo.")
         consent_version = subject_declaration = representation_reference = None
     else:
-        if consent_version != settings.consent_version:
+        if consent_version != CLIENT_REFERENCE_CONSENT_VERSION:
             raise FacialSearchError("O consentimento facial precisa ser revisto.")
-        if subject_declaration not in {"adult", "minor"}:
-            raise FacialSearchError("Declaração do sujeito inválida.")
-        if subject_declaration == "minor" and not consent_accepted:
-            raise FacialSearchError("O consentimento específico do responsável é obrigatório.")
+        if subject_declaration != "conditional":
+            raise FacialSearchError("A declaração condicional de consentimento é obrigatória.")
+        if not consent_accepted:
+            raise FacialSearchError("O consentimento facial é obrigatório.")
         # A nova autorização é autodeclarada; nunca fabricar comprovação externa.
         representation_reference = None
     require_search_capacity(db, settings)
@@ -182,7 +184,9 @@ def create_search_request(
                           region_id=reference_region_id, settings=settings,
                           model_id=search_engine)
 
-    request_id = uuid4()
+    request_id = request_id or uuid4()
+    if request_id.version != 4:
+        raise FacialSearchError("Identificador de tentativa inválido.")
     snapshot = _build_snapshot(
         db,
         request_id=request_id,
@@ -233,6 +237,13 @@ def create_search_request(
         max_pixels=settings.max_reference_pixels,
     )
     _require_search_context(db, parent_gallery_id, client_id)
+    # Reservar a chave antes de qualquer escrita no store ou retirada de buscas.
+    # A PK também serializa tentativas concorrentes com o mesmo UUID.
+    try:
+        db.add(item)
+        db.flush()
+    except IntegrityError as exc:
+        raise FacialSearchError("Não foi possível reservar esta tentativa de busca.") from exc
     stored = None if reference_region_id else store.store(
         request_id=item.id,
         gallery_id=parent_gallery_id,
@@ -251,6 +262,7 @@ def create_search_request(
             parent_gallery_id=parent_gallery_id,
             client_id=client_id,
             store=store,
+            except_request_id=item.id,
         )
         db.add(item)
         db.add_all(snapshot)
@@ -382,6 +394,7 @@ def _retire_prior_searches(
     parent_gallery_id: UUID,
     client_id: UUID,
     store: FacialReferenceStore,
+    except_request_id: UUID,
 ) -> None:
     tenant_id = _require_search_context(db, parent_gallery_id, client_id)
     prior_requests = list(
@@ -389,6 +402,7 @@ def _retire_prior_searches(
             select(FacialSearchRequest).where(
                 FacialSearchRequest.tenant_id == tenant_id, FacialSearchRequest.parent_gallery_id == parent_gallery_id,
                 FacialSearchRequest.client_id == client_id,
+                FacialSearchRequest.id != except_request_id,
                 FacialSearchRequest.status != "cancelled",
             )
         )

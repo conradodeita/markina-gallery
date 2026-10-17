@@ -31,7 +31,7 @@ def private_batch_migration_database():
 
 def test_private_upload_batch_scope_migration_preserves_legacy_schema(private_batch_migration_database: str) -> None:
     migrate(private_batch_migration_database, "upgrade", "20261014_0081")
-    migrate(private_batch_migration_database, "upgrade", "20261016_0082")
+    migrate(private_batch_migration_database, "upgrade", "20261017_0083")
 
     engine = sa.create_engine(private_batch_migration_database)
     with engine.connect() as connection:
@@ -46,6 +46,6 @@ def test_private_upload_batch_scope_migration_preserves_legacy_schema(private_ba
         assert "fk_private_upload_batch_folder_parent_tenant" in foreign_keys
         asset_uniques = inspector.get_unique_constraints("private_upload_batch_asset")
         assert not any("photo_asset_id" in item["column_names"] for item in asset_uniques)
-        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20261016_0082"
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20261017_0083"
     engine.dispose()
 

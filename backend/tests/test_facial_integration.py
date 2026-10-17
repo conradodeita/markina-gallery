@@ -30,7 +30,7 @@ from app.auth import (
     PhotoSelection,
     PriceRule,
 )
-from app.facial.config import facial_settings_from_environment
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, facial_settings_from_environment
 from app.facial.crypto import FacialCipher
 from app.facial.jobs import FacialJobRepository
 from app.facial.policy import revoke_policy
@@ -69,6 +69,10 @@ class SyntheticAdultProvider:
         return [_face()]
 
     def observe_bytes(self, _payload: bytes):
+        return self.query_faces
+
+    def observe_reference_bytes(self, _payload: bytes, *, max_pixels: int):
+        assert max_pixels > 0
         return self.query_faces
 
 
@@ -236,8 +240,9 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
         db,
         parent_gallery_id=gallery.id,
         client_id=client.id,
-        consent_version=settings.consent_version,
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional",
+        consent_accepted=True,
         representation_reference=None,
         payload=_jpeg((200, 180, 170)),
         settings=settings,
@@ -282,8 +287,9 @@ def test_synthetic_upload_filter_selection_quote_and_revocation(
         db,
         parent_gallery_id=gallery.id,
         client_id=client.id,
-        consent_version=settings.consent_version,
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional",
+        consent_accepted=True,
         representation_reference=None,
         payload=_jpeg((190, 190, 190)),
         settings=settings,

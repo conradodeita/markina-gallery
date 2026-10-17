@@ -110,8 +110,13 @@ fi
                 text=True,
                 check=False,
             )
+            observed_sha = subprocess.check_output(
+                ["git", "-C", str(project), "rev-parse", "HEAD"], text=True
+            ).strip()
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("HEAD implantado diverge", result.stderr)
+            self.assertIn(f"esperado={'0' * 40}", result.stderr)
+            self.assertIn(f"observado={observed_sha}", result.stderr)
             self.assertIn("nenhuma consulta foi executada", result.stderr)
             self.assertFalse(docker_calls.exists())
 

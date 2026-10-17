@@ -127,7 +127,12 @@ def main() -> int:
     forbid(r'echo\s+.*\$signing_key', "impressão do segredo de assinatura", SCRIPT)
     forbid(r'echo\s+.*\$generated', "impressão do segredo de payload", SCRIPT)
 
-    require('branches: [develop]', "gatilho restrito a develop", WORKFLOW)
+    require('branches: [develop, main]', "CI dispara em develop e main", WORKFLOW)
+    require(
+        "if: \"${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}\"",
+        "deploy de homologação continua restrito a develop",
+        WORKFLOW,
+    )
     require(
         'pip install -r backend/requirements.txt -r backend/face-requirements.txt',
         "dependências do runtime facial nos testes backend",
@@ -140,6 +145,14 @@ def main() -> int:
     require('--memory 6g --memory-swap 6g --cpus 1', "inferência Gemma limitada", WORKFLOW)
     require('--network none', "inferência sintética sem rede", WORKFLOW)
     require('environment: homolog', "Environment protegido", WORKFLOW)
+    production_policy_step = WORKFLOW.split(
+        "- name: Validar política de preflight e aprovação única de produção", 1
+    )[1].split("run:", 1)[0]
+    require(
+        "if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}",
+        "gate de release facial executa somente no fluxo protegido de main",
+        production_policy_step,
+    )
     require('secrets.HOMOLOG_SSH_PRIVATE_KEY', "chave via secret", WORKFLOW)
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)

@@ -2662,7 +2662,7 @@ class FacialSearchRequest(Base):
             name="ck_facial_search_status",
         ),
         CheckConstraint(
-            "subject_declaration IN ('adult', 'minor')",
+            "subject_declaration IN ('adult', 'minor', 'conditional')",
             name="ck_facial_search_subject_declaration",
         ),
         CheckConstraint(

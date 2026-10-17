@@ -16,6 +16,7 @@ from app.facial.model_assets import load_manifest, verify_models
 DEFAULT_MANIFEST_PATH = (
     Path(__file__).resolve().parents[2] / "facial-assets" / "model-manifest.json"
 )
+CLIENT_REFERENCE_CONSENT_VERSION = "client-reference-conditional-v1"
 
 
 class FacialConfigurationError(RuntimeError):
