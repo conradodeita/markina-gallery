@@ -31,3 +31,5 @@ O gerador preserva chaves textuais que já cabem em 192 caracteres e condensa so
 As regressões verificam gravação em PostgreSQL, conclusão do lote, os dois canais, repetição sem duplicação, distinção entre novos lotes das mesmas fotos e compatibilidade com uma chave curta preexistente. Testes automatizados executados somente no CI, conforme preferência vigente.
 
 CI positivo completo, publicação e confirmação real da retomada estão pendentes. A entrega será integrada à correção facial para validar/publicar a combinação preservando develop e schema 0083. O deploy continua exigindo inventário atualizado e aprovação operacional; nenhum restart, deploy, alteração de configuração ou disparo manual foi executado por este chat.
+
+Integração `cf21eca` concluída na branch da PR #213, preservando a correção facial, a correção de chave e as duas regressões focadas do workflow. A entrega originada na PR #215 será revisada em conjunto na PR #213; não publicar duas revisões concorrentes. CI positivo da combinação e aprovação operacional ainda pendentes.
