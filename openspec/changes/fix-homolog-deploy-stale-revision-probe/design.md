@@ -41,3 +41,9 @@ See `proposal.md`. O estado observado é `origin/develop` no commit `c9eaf6381cb
 5. Confirmar SHA e revisão 0083 com inventário somente leitura.
 
 Em falha antes de migration, manter checkout/containers antigos. Em falha após migration, não fazer downgrade automático; manter o banco e solicitar diagnóstico humano, conforme a política atual.
+
+## Evidências
+
+- O CI do PR #212 (run `39045028311`) passou em todos os checks obrigatórios; o PR foi mergeado em `develop` no commit `25cd338f7243a114e8151e6bda3d03204b12ae43`.
+- O CI pós-merge e deploy de homologação (run `39046656588`) terminou com sucesso, registrou o backup lógico exclusivo, a migration `20261016_0082 → 20261017_0083`, o SHA implantado e containers Markina saudáveis.
+- O inventário somente leitura pós-deploy (run `39049112709`) confirmou o SHA esperado, `alembic_revision=20261017_0083`, `/healthz: HTTP 200` e `/api/health: HTTP 200`. Nenhuma consulta de PII, alteração persistente ou ação de deploy ocorreu nesse inventário.

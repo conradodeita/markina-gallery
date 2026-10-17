@@ -11,5 +11,5 @@
 
 ## 3. Integração e release
 
-- [ ] 3.1 Executar validação OpenSpec, policy suite de homologação e `alembic heads`; abrir PR somente com diff da change e acompanhar todos os checks obrigatórios até merge.
-- [ ] 3.2 Após merge e gate autorizado, executar o workflow de deploy; confirmar backup criado, SHA alvo, revisão `20261017_0083` e health checks locais/públicos HTTP 200 por inventário somente leitura.
+- [x] 3.1 Executar validação OpenSpec, policy suite de homologação e `alembic heads`; abrir PR #212 e confirmar checks obrigatórios verdes e merge em `develop` no commit `25cd338`.
+- [x] 3.2 Após merge e gate autorizado, executar o workflow `39046656588`; confirmar backup, SHA `25cd338`, migration `20261016_0082 → 20261017_0083` e health checks locais/públicos; inventário somente leitura `39049112709` confirmou revisão `20261017_0083` e HTTP 200 em `/healthz` e `/api/health`.
