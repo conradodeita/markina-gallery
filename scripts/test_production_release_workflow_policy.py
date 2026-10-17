@@ -1,8 +1,9 @@
 """Verifica a separação entre preflight somente-leitura e gate de produção."""
 
-import hashlib
 import base64
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,7 @@ WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
     encoding="utf-8"
 )
 INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes()
+APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
 
 
 def require(fragment: str, label: str, content: str) -> None:
@@ -23,12 +25,28 @@ def main() -> None:
         "  production-release:", 1
     )[0]
     release = WORKFLOW.split("  production-release:", 1)[1]
+    app_preflight = WORKFLOW.split("  production-app-preflight:", 1)[1].split(
+        "  production-app-release:", 1
+    )[0]
+    app_release = WORKFLOW.split("  production-app-release:", 1)[1]
+    rollback_preflight = WORKFLOW.split("  production-app-rollback-preflight:", 1)[1].split(
+        "  production-app-rollback:", 1
+    )[0]
+    rollback_release = WORKFLOW.split("  production-app-rollback:", 1)[1]
 
     require("environment: production-preflight", "environment sem revisor para preflight", preflight)
     require("fetch-depth: 0", "histórico para comparar o baseline autorizado", preflight)
     require("check_prod_facial_release_gates.py --maintenance", "gate próprio da manutenção autorizada", preflight)
     require("20261016_0082_facial_conditional_consent.py", "única migration aditiva aprovada", preflight)
     require("environment: production", "environment protegido no release", release)
+    require("needs.release-scope.outputs.scope == 'facial'", "fluxo facial isolado", preflight)
+    require("needs.release-scope.outputs.scope == 'app'", "preflight API/web condicionado ao classificador", app_preflight)
+    require("MARKINA_APP_TARGET_SHA=$GITHUB_SHA", "inventário API/web restrito", app_preflight)
+    require("environment: production", "aprovação protegida para API/web", app_release)
+    require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
+    require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)
+    require("MARKINA_APP_ROLLBACK_SHA=$GITHUB_SHA", "inventário de rollback read-only", rollback_preflight)
+    require("environment: production", "rollback protegido", rollback_release)
     require(
         "secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY",
         "chave dedicada de preflight",
@@ -44,20 +62,31 @@ def main() -> None:
         raise AssertionError("preflight não pode executar script enviado pelo runner")
 
     require('^MARKINA_TARGET_SHA=([0-9a-f]{40})$', "comando SSH validado por regex estrita", WRAPPER)
-    require("--mode inventory", "wrapper fixa modo somente-leitura", WRAPPER)
-    blob_header = f"blob {len(INVENTORY_SCRIPT)}\0".encode()
-    blob_sha = hashlib.sha1(blob_header + INVENTORY_SCRIPT).hexdigest()
+    require('inventory_mode="inventory"', "wrapper fixa modo somente-leitura padrão", WRAPPER)
+    require('inventory_mode="rollback-inventory"', "wrapper limita o segundo modo a inventário de rollback", WRAPPER)
+    require('--mode "$inventory_mode"', "wrapper não encaminha modo enviado pelo cliente", WRAPPER)
+    inventory_text = INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
+    blob_header = f"blob {len(inventory_text)}\0".encode()
+    blob_sha = hashlib.sha1(blob_header + inventory_text).hexdigest()
     require(
-        f'INVENTORY_SCRIPT_BLOB_SHA="{blob_sha}"',
+        f'FACIAL_SCRIPT_BLOB_SHA="{blob_sha}"',
         "wrapper fixa o conteúdo exato do script somente-leitura",
         WRAPPER,
     )
     require(
-        'https://raw.githubusercontent.com/$EXPECTED_REPOSITORY/$target_sha/scripts/deploy-prod-facial-services.sh',
-        "script buscado por SHA imutável após merge",
+        'https://raw.githubusercontent.com/$EXPECTED_REPOSITORY/$target_sha/scripts/$script_name',
+        "script selecionado por SHA imutável após merge",
         WRAPPER,
     )
+    require('script_name="deploy-prod-facial-services.sh"', "wrapper mantém caminho facial", WRAPPER)
+    require('script_name="deploy-prod-app-services.sh"', "wrapper inclui caminho app isolado", WRAPPER)
     require('git hash-object "$script_file"', "integridade do script conferida sem gravá-lo no Git", WRAPPER)
+    app_inventory_text = APP_INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
+    app_blob_header = f"blob {len(app_inventory_text)}\0".encode()
+    app_blob_sha = hashlib.sha1(app_blob_header + app_inventory_text).hexdigest()
+    require(f'APP_SCRIPT_BLOB_SHA="{app_blob_sha}"', "wrapper fixa o script API/web exato", WRAPPER)
+    require("MARKINA_APP_TARGET_SHA=([0-9a-f]{40})", "wrapper aceita somente SHA app completo", WRAPPER)
+    require("MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})", "wrapper aceita apenas SHA para inventário de rollback", WRAPPER)
     if "--mode release" in WRAPPER or '"$SSH_ORIGINAL_COMMAND"' in WRAPPER:
         raise AssertionError("wrapper não pode encaminhar comando arbitrário nem release")
     if "bash -s" in WRAPPER or "git fetch" in WRAPPER:
@@ -66,13 +95,25 @@ def main() -> None:
     script = INVENTORY_SCRIPT.decode("utf-8")
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
-    require(f'MAINTENANCE_BASELINE_SHA="{maintenance["baseline_sha"]}"', "baseline do host igual ao manifesto", script)
+    app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
+    require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
+    require('git merge-base --is-ancestor "$baseline_sha" "$CHECKOUT_SHA"', "descendência após release app", script)
+    require('git diff --quiet "$baseline_sha" "$CHECKOUT_SHA" -- "${FACIAL_BASELINE_FILES[@]}"', "runtime facial dedicado preservado", script)
     require("require_existing_facial_runtime", "manutenção não ativa runtime desligado", script)
     for path, expected in maintenance["runtime_blobs"].items():
-        data = (ROOT / path).read_bytes()
-        actual = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
-        if actual != base64.b64decode("".join(expected), validate=True).hex():
+        actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
+                                capture_output=True, text=True).stdout.strip()
+        face_blob = base64.b64decode("".join(expected), validate=True).hex()
+        if path in {"backend/app/main.py", "frontend/app/globals.css"}:
+            if actual != app_manifest["runtime_blobs"].get(path):
+                raise AssertionError("runtime compartilhado diverge do manifesto app exato")
+        elif actual != face_blob:
             raise AssertionError("arquivo de runtime diverge do blob revisado")
+    for path, expected in app_manifest["runtime_blobs"].items():
+        actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
+                                capture_output=True, text=True).stdout.strip()
+        if actual != expected:
+            raise AssertionError("arquivo de runtime app diverge do blob revisado")
     require("config --no-interpolate --hash", "hash usa JSON resolvido sem nova interpolação", script)
     if "compose config --hash" in script:
         raise AssertionError("hash direto omite env_file no Compose do host")

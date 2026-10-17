@@ -86,3 +86,14 @@ Após saúde dos containers e reload confinado ao Nginx Markina, o smoke SHALL t
 #### Scenario: Primeiro request ocorre durante reload
 - **WHEN** o primeiro request recebe 502 e um seguinte responde com sucesso dentro do orçamento
 - **THEN** o release continua para os demais endpoints e só registra sucesso após todos passarem
+
+### Requirement: Manutenção parte do último release saudável
+O preflight SHALL confirmar que o checkout ativo corresponde exatamente ao SHA registrado em `/var/lib/markina-gallery/deploy-state/facial-last-healthy.sha`. O SHA alvo MUST descender desse checkout e ser o HEAD atual de `origin/main`. Marcador ausente, inválido, divergente ou histórico não ancestral SHALL interromper o preflight sem mutação. Isso SHALL permitir releases corretivos sucessivos sem fixar no código o SHA do deploy anterior.
+
+#### Scenario: Release saudável anterior
+- **WHEN** o marcador, checkout e versão ativa da API concordam e o alvo atual da `main` descende do checkout
+- **THEN** o preflight prossegue com a verificação de configuração e inventário existentes
+
+#### Scenario: Baseline remoto diverge ou falta
+- **WHEN** o marcador está ausente, inválido, diverge do checkout ou o candidato não descende do checkout
+- **THEN** o preflight falha fechado antes de qualquer aprovação ou mutação

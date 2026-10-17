@@ -13,7 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 RUNTIME_FILES = (
     "backend/app/auth.py",
     "backend/app/facial/config.py",
@@ -30,11 +29,21 @@ RUNTIME_FILES = (
 OPERATIONS_FILES = {
     ".github/workflows/ci.yml", ".gitleaksignore",
     "scripts/check_prod_facial_release_gates.py",
+    "scripts/check_prod_app_release_scope.py",
+    "scripts/classify_prod_release.py",
+    "scripts/test_classify_prod_release.py",
+    "scripts/deploy-prod-app-services.sh",
+    "scripts/test_prod_app_release_scope.py",
+    "scripts/test_deploy_prod_app_services.sh",
     "scripts/deploy-prod-facial-services.sh",
     "scripts/production-preflight-ssh-wrapper.sh",
     "scripts/test_deploy_homolog_policy.py",
     "scripts/test_deploy_prod_facial_services.sh",
     "scripts/test_production_release_workflow_policy.py",
+    "backend/tests/test_derived_galleries.py",
+    "backend/tests/test_provider_confirmation.py",
+    "backend/tests/test_statistics_report.py",
+    "frontend/app/admin/statistics/page.test.tsx",
     "scripts/test_prod_facial_release_gates.py",
     "backend/tests/test_facial_integration.py",
     "backend/tests/test_direct_region_search.py",
@@ -46,6 +55,12 @@ OPERATIONS_FILES = {
     "frontend/app/facial-search-client.test.ts",
     "frontend/app/public-galleries/facial-search-panel.test.tsx",
     "frontend/app/public-galleries/public-gallery.test.tsx",
+}
+APP_RUNTIME_FILES = {
+    "backend/app/main.py",
+    "backend/app/statistics_report.py",
+    "frontend/app/globals.css",
+    "frontend/app/admin/statistics/page.tsx",
 }
 
 
@@ -73,8 +88,15 @@ def evaluate_maintenance(payload: dict, root: Path) -> tuple[bool, str]:
         return False, "manifesto_de_runtime_incompleto"
     try:
         git(root, "merge-base", "--is-ancestor", baseline, "HEAD")
+        app_manifest = json.loads(
+            (Path(__file__).resolve().parents[1] / "openspec/changes/add-production-app-release-workflow/runtime-gates.json")
+            .read_text(encoding="utf-8")
+        )
+        app_blobs = app_manifest.get("runtime_blobs", {})
         for path in git(root, "diff", "--name-only", baseline, "HEAD").splitlines():
             if path in RUNTIME_FILES or path in OPERATIONS_FILES:
+                continue
+            if path in APP_RUNTIME_FILES and app_blobs.get(path) == git(root, "rev-parse", "HEAD:" + path):
                 continue
             if path.startswith(("docs/", "openspec/")):
                 continue
@@ -89,7 +111,11 @@ def evaluate_maintenance(payload: dict, root: Path) -> tuple[bool, str]:
                 decoded = b""
             if len(decoded) != 20:
                 return False, "blob_revisado_invalido"
-            if git(root, "rev-parse", "HEAD:" + path) != decoded.hex():
+            actual = git(root, "rev-parse", "HEAD:" + path)
+            if path in APP_RUNTIME_FILES and actual != decoded.hex():
+                if app_blobs.get(path) != actual:
+                    return False, "runtime_diverge_do_blob_revisado"
+            elif actual != decoded.hex():
                 return False, "runtime_diverge_do_blob_revisado"
         git(root, "diff", "--quiet", "HEAD", "--", *RUNTIME_FILES)
     except subprocess.CalledProcessError:
