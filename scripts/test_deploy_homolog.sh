@@ -25,6 +25,7 @@ if MARKINA_EXPECTED_REPOSITORY="owner/repository" \
 fi
 grep -Fq 'o deploy só pode executar em /opt/markina-gallery' "$output"
 
+trap - ERR
 set +e
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" \
   MARKINA_EXPECTED_REPOSITORY="owner/repository" \
@@ -39,6 +40,7 @@ set -e
 [[ "$fail_status" -ne 0 ]]
 grep -Fq 'deploy-homolog: falha sintética pós-switch' "$output"
 grep -Fq 'trapped' "$err_probe"
+trap 'status=$?; echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"' ERR
 
 # The current database revision must not depend on the potentially stale migrate image.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
