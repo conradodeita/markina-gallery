@@ -8,6 +8,8 @@ Manter `environment: homolog` para segredos, trilha do GitHub Actions e polític
 
 O deploy continua usando o fluxo atual, com inventário, backup, validação do Compose, escopo do projeto `markina-gallery` e verificações de saúde. Esta mudança não encurta nem contorna esses passos. Uma falha de preflight ou de healthcheck continua impedindo ou reprovando o deploy.
 
+O SHA candidato será buscado de `origin/develop`, validado como commit e ancestral da branch, antes do preflight facial que lê arquivos desse SHA. Essa busca de objetos Git ocorre depois de validar raiz, checkout limpo e origem confiável, e antes de qualquer backup, parada ou substituição de containers. O preflight facial continua usando a configuração persistida anterior quando avalia o estado atual.
+
 ## Efeito observável
 
 Após todos os checks que antecedem o job de homologação concluírem com sucesso, o deploy deixa de aguardar aprovação manual do ambiente e começa automaticamente. O release continua limitado à branch protegida `develop`; produção permanece sujeita aos seus gates próprios.

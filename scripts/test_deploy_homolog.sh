@@ -260,8 +260,41 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
 fi
 grep -Fq 'checkout remoto possui alterações locais' "$dirty_output"
 
+# The candidate commit must be fetched and authenticated before facial preflight
+# reads its notification fix, without moving the preflight past publication.
+sha_fetch_log="$(mktemp)"
+sha_fetch_marker="$(mktemp)"
+rm -f "$sha_fetch_marker"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  SHA_FETCH_LOG="$sha_fetch_log" SHA_FETCH_MARKER="$sha_fetch_marker" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    DEPLOY_SHA=1111111111111111111111111111111111111111
+    git() {
+      printf "%s\n" "$*" >> "$SHA_FETCH_LOG"
+      case "$*" in
+        "fetch --quiet origin develop") return 0 ;;
+        "fetch --quiet origin $DEPLOY_SHA") touch "$SHA_FETCH_MARKER"; return 0 ;;
+        "cat-file -e ${DEPLOY_SHA}^{commit}") [[ -f "$SHA_FETCH_MARKER" ]] ;;
+        "merge-base --is-ancestor $DEPLOY_SHA origin/develop") [[ -f "$SHA_FETCH_MARKER" ]] ;;
+        "show $DEPLOY_SHA:backend/app/notification_events.py")
+          [[ -f "$SHA_FETCH_MARKER" ]] || return 1
+          printf "target source available\n"
+          ;;
+        *) return 90 ;;
+      esac
+    }
+    fetch_and_verify_deploy_sha
+    [[ "$(git show "$DEPLOY_SHA:backend/app/notification_events.py")" == "target source available" ]]
+  ' >"$output" 2>&1
+fetch_develop_line="$(grep -nFx 'fetch --quiet origin develop' "$sha_fetch_log" | cut -d: -f1)"
+fetch_target_line="$(grep -nFx 'fetch --quiet origin 1111111111111111111111111111111111111111' "$sha_fetch_log" | cut -d: -f1)"
+show_target_line="$(grep -nFx 'show 1111111111111111111111111111111111111111:backend/app/notification_events.py' "$sha_fetch_log" | cut -d: -f1)"
+[[ -n "$fetch_develop_line" && -n "$fetch_target_line" && -n "$show_target_line" ]]
+(( fetch_develop_line < fetch_target_line && fetch_target_line < show_target_line ))
+
 facial_env="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$payload_env" "$invalid_payload_env" "$facial_env"' EXIT
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$payload_env" "$invalid_payload_env" "$facial_env" "$sha_fetch_log" "$sha_fetch_marker"' EXIT
 printf 'FACIAL_PROCESSING_ENABLED=false\n' >"$facial_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
