@@ -66,7 +66,9 @@ def main() -> None:
     script = INVENTORY_SCRIPT.decode("utf-8")
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
-    require(f'MAINTENANCE_BASELINE_SHA="{maintenance["baseline_sha"]}"', "baseline do host igual ao manifesto", script)
+    require('baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"', "baseline operacional usa o último release saudável", script)
+    require("verify_maintenance_baseline", "checkout ativo confere com o marcador de release", script)
+    require('git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA"', "candidato descende do baseline ativo", script)
     require("require_existing_facial_runtime", "manutenção não ativa runtime desligado", script)
     for path, expected in maintenance["runtime_blobs"].items():
         data = (ROOT / path).read_bytes()

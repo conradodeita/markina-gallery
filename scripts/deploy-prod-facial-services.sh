@@ -19,7 +19,6 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(web api face-search-worker)
-readonly MAINTENANCE_BASELINE_SHA="7c7a4ad217343dc4faee57734436afd91bb1f6b1"
 readonly EXPECTED_DATABASE_REVISION="20261016_0082"
 readonly TARGET_DATABASE_REVISION="20261016_0082"
 
@@ -104,11 +103,13 @@ verify_repository() {
     *) fail "origin Git diverge do repositório esperado" ;;
   esac
   CHECKOUT_SHA="$(git rev-parse HEAD)"
-  [[ "$CHECKOUT_SHA" == "$MAINTENANCE_BASELINE_SHA" ]] || fail "baseline ativo diverge da manutenção autorizada"
+  verify_maintenance_baseline
   if [[ "$MODE" == "inventory" ]]; then
     local remote_sha
     remote_sha="$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')"
     [[ "$remote_sha" == "$TARGET_SHA" ]] || fail "SHA alvo não é o HEAD atual de origin/main"
+    git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA" \
+      || fail "SHA alvo não descende do último release saudável"
   else
     git fetch --quiet origin main
     git merge-base --is-ancestor "$TARGET_SHA" origin/main || fail "SHA alvo não pertence à main atual"
@@ -130,6 +131,20 @@ verify_repository() {
   DATABASE_REVISION="$(database_revision)"
   [[ "$MODE" != "release" || "$DATABASE_REVISION" == "$EXPECTED_DATABASE_REVISION" ]] \
     || fail "revisão do banco diverge do preflight aprovado"
+}
+
+verify_maintenance_baseline() {
+  local baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"
+  local baseline_sha
+  local -a baseline_lines
+  [[ -f "$baseline_file" ]] || fail "marcador do último release saudável ausente"
+  mapfile -t baseline_lines < "$baseline_file"
+  [[ "${#baseline_lines[@]}" == "1" ]] || fail "marcador do último release saudável inválido"
+  baseline_sha="${baseline_lines[0]}"
+  [[ "$baseline_sha" =~ ^[0-9a-f]{40}$ ]] \
+    || fail "marcador do último release saudável inválido"
+  [[ "$CHECKOUT_SHA" == "$baseline_sha" ]] \
+    || fail "checkout ativo diverge do último release saudável"
 }
 
 runtime_snapshot() {

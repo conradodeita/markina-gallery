@@ -31,7 +31,7 @@ Clientes relatam que buscas por fotos enviadas do dispositivo retornam zero, emb
 
 ## Impact
 
-Esclarecimento do proprietário em 2026-10-16: a publicação desta correção no recurso já ativo é manutenção do baseline verificado `7c7a4ad217343dc4faee57734436afd91bb1f6b1`; os gates de primeira ativação/expansão não são pré-requisito de desenvolvimento/entrega corretiva. A autorização de manutenção será verificada por baseline, diff/blobs restritos, CI, inventário e aprovação de produção; nenhum gate jurídico pendente será marcado como aprovado. O refinamento de consentimento solicitado mantém autorização específica no botão de envio e recibo condicional.
+Esclarecimento do proprietário em 2026-10-16: a publicação desta correção no recurso já ativo é manutenção do runtime facial existente; os gates de primeira ativação/expansão não são pré-requisito de desenvolvimento/entrega corretiva. A autorização de manutenção é verificada por diff/blobs restritos, CI, inventário e aprovação de produção; o baseline operacional ativo SHALL corresponder ao SHA do último release saudável registrado no servidor, e o candidato SHALL ser seu descendente. Nenhum gate jurídico pendente será marcado como aprovado. O refinamento de consentimento solicitado mantém autorização específica no botão de envio e recibo condicional.
 
 - Provider e worker de consulta facial, fluxo de referência no portal cliente e mensagens de qualidade.
 - Workflow GitHub de CI/publicação e procedimento operacional de produção; a automação atual em `develop` publica homologação, enquanto o procedimento de produção existente é restrito ao serviço `web`.
