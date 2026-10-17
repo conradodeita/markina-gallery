@@ -371,7 +371,15 @@ from app.private_membership import (
     unblock_private_membership,
     unlink_private_membership,
 )
-from app.private_upload_batches import batch_for, batch_payload, close_batch, create_batch
+from app.private_upload_batches import (
+    batch_for,
+    batch_payload,
+    close_batch,
+    close_folder_batch,
+    create_batch,
+    create_folder_batch,
+    folder_batch_for,
+)
 from app.product_brand import PRODUCT_NAME
 from app.provider_checkout import issue_provider_payment, prepare_provider_payment
 from app.provider_confirmation import apply_payment_check
@@ -2906,6 +2914,27 @@ def admin_validation_summary(
     for job in jobs:
         job_states[job.status] += 1
     legacy_gallery_count = db.scalar(select(func.count(DerivedGallery.id)).where(DerivedGallery.tenant_id == tenant_id)) or 0
+    active_import_folders = (
+        select(PhotoFolder.id.label("folder_id"))
+        .join(PhotoAsset, (PhotoAsset.folder_id == PhotoFolder.id) & (PhotoAsset.tenant_id == tenant_id))
+        .join(MediaJob, (MediaJob.photo_asset_id == PhotoAsset.id) & (MediaJob.tenant_id == tenant_id))
+        .where(
+            PhotoFolder.tenant_id == tenant_id,
+            PhotoFolder.purpose == "content",
+            MediaJob.status.in_(("queued", "processing")),
+        )
+        .distinct()
+        .subquery()
+    )
+    active_import_folder_count = db.scalar(
+        select(func.count()).select_from(active_import_folders)
+    ) or 0
+    active_import_photo_count = db.scalar(
+        select(func.count(PhotoAsset.id)).where(
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoAsset.folder_id.in_(select(active_import_folders.c.folder_id)),
+        )
+    ) or 0
     galleries = list(db.scalars(select(ParentGallery).where(ParentGallery.tenant_id == tenant_id).where(
         ParentGallery.lifecycle_status != "deleted"
     ).order_by(ParentGallery.created_at.desc()).limit(5)))
@@ -2929,6 +2958,8 @@ def admin_validation_summary(
             ),
             "derived_galleries": legacy_gallery_count,
             "imports": dict(job_states),
+            "folders_with_active_imports": active_import_folder_count,
+            "photos_in_folders_with_active_imports": active_import_photo_count,
             "folders_preparing": len(
                 list(db.scalars(select(PhotoFolder.id).where(PhotoFolder.tenant_id == tenant_id).where(PhotoFolder.status == "preparing")))
             ),
@@ -5063,10 +5094,13 @@ def register_folder_photo_asset(
         if not parent.active:
             raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas fotos.")
     if payload.upload_batch_id:
-        if not folder.derived_gallery_id:
-            raise HTTPException(status_code=422, detail="Lote exclusivo para galeria privada.")
         try:
-            batch_for(db, payload.upload_batch_id, folder.derived_gallery_id, open_only=True, tenant_id=tenant_id)
+            if folder.derived_gallery_id:
+                batch_for(db, payload.upload_batch_id, folder.derived_gallery_id,
+                          open_only=True, tenant_id=tenant_id)
+            else:
+                folder_batch_for(db, payload.upload_batch_id, folder.id,
+                                 open_only=True, tenant_id=tenant_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     existing = db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id,
@@ -5080,9 +5114,20 @@ def register_folder_photo_asset(
     if existing:
         if existing.folder_id != folder.id or existing.derived_gallery_id != folder.derived_gallery_id:
             raise HTTPException(status_code=409, detail="Arquivo já cadastrado em outro escopo.")
-        existing_batch = db.scalar(select(PrivateUploadBatchAsset.batch_id).where(PrivateUploadBatchAsset.tenant_id == tenant_id).where(
-            PrivateUploadBatchAsset.photo_asset_id == existing.id))
-        return {"id": str(existing.id), "duplicate": "false" if existing_batch == payload.upload_batch_id else "true"}
+        existing_batch_ids = set(
+            db.scalars(
+                select(PrivateUploadBatchAsset.batch_id).where(
+                    PrivateUploadBatchAsset.tenant_id == tenant_id,
+                    PrivateUploadBatchAsset.photo_asset_id == existing.id,
+                )
+            )
+        )
+        if payload.upload_batch_id and payload.upload_batch_id not in existing_batch_ids:
+            db.add(PrivateUploadBatchAsset(
+                batch_id=payload.upload_batch_id, photo_asset_id=existing.id, tenant_id=tenant_id,
+            ))
+            db.commit()
+        return {"id": str(existing.id), "duplicate": "false" if payload.upload_batch_id in existing_batch_ids else "true"}
     asset = PhotoAsset(
         tenant_id=tenant_id,
         parent_gallery_id=folder.parent_gallery_id,
@@ -5158,8 +5203,13 @@ def _publish_photo_folder(
                 except ValueError:
                     logger.warning("Indexação facial adiada: caminho da prévia indisponível")
     if ready_ids and folder.audience_scope == "selected" and folder.derived_gallery_id is None:
+        batched_photo_ids = set(db.scalars(select(PrivateUploadBatchAsset.photo_asset_id).where(
+            PrivateUploadBatchAsset.tenant_id == folder.tenant_id,
+            PrivateUploadBatchAsset.photo_asset_id.in_(ready_ids),
+        )))
+        unbatched_ready_ids = ready_ids - batched_photo_ids
         record_restricted_folder_ready(
-            db, folder=folder, photo_ids=ready_ids, batch_key="publish"
+            db, folder=folder, photo_ids=unbatched_ready_ids, batch_key="publish"
         )
     failed_ids = (
         set(
@@ -8212,6 +8262,61 @@ def finish_private_upload_batch(gallery_id: UUID, batch_id: UUID, request: Reque
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     audit(db, "private_upload_batch.closed", str(batch.id), tenant_id=tenant_id)
+    db.commit()
+    return batch_payload(db, batch)
+
+
+@app.post("/admin/photo-folders/{folder_id}/upload-batches", status_code=201)
+def begin_restricted_folder_upload_batch(folder_id: UUID, request: Request,
+                                         db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    session = require_admin(request)
+    require_same_origin(request)
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id, PhotoFolder.id == folder_id,
+        PhotoFolder.purpose == "content", PhotoFolder.audience_scope == "selected",
+        PhotoFolder.derived_gallery_id.is_(None),
+    ).with_for_update())
+    if not folder or folder.status not in {"preparing", "released"}:
+        raise HTTPException(status_code=404, detail="Pasta privada não encontrada ou indisponível.")
+    require_parent_gallery_mutable(db, folder.parent_gallery_id, tenant_id=tenant_id)
+    batch = create_folder_batch(db, folder, session.subject_id)
+    audit(db, "private_folder_upload_batch.created", str(batch.id), tenant_id=tenant_id)
+    db.commit()
+    return batch_payload(db, batch)
+
+
+@app.get("/admin/photo-folders/{folder_id}/upload-batches")
+def list_restricted_folder_upload_batches(folder_id: UUID, request: Request,
+                                          db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id, PhotoFolder.id == folder_id,
+        PhotoFolder.purpose == "content", PhotoFolder.audience_scope == "selected",
+        PhotoFolder.derived_gallery_id.is_(None),
+    ))
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta privada não encontrada.")
+    batches = db.scalars(select(PrivateUploadBatch).where(
+        PrivateUploadBatch.tenant_id == tenant_id,
+        PrivateUploadBatch.folder_id == folder.id,
+        PrivateUploadBatch.status == "open",
+    ).order_by(PrivateUploadBatch.created_at))
+    return {"batches": [batch_payload(db, batch) for batch in batches]}
+
+
+@app.post("/admin/photo-folders/{folder_id}/upload-batches/{batch_id}/close")
+def finish_restricted_folder_upload_batch(folder_id: UUID, batch_id: UUID, request: Request,
+                                          db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    require_same_origin(request)
+    try:
+        batch = close_folder_batch(db, batch_id, folder_id, tenant_id=tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(db, "private_folder_upload_batch.closed", str(batch.id), tenant_id=tenant_id)
     db.commit()
     return batch_payload(db, batch)
 
@@ -12582,7 +12687,6 @@ def list_payment_communications(
             "confirmed_orders": confirmed_orders,
             "confirmed_cents": confirmed_cents,
             "financial_statuses": dict(financial_counts),
-            "failed_messages": delivery_counts.get("failed", 0),
         },
         "facets": {
             "parent_galleries": [
