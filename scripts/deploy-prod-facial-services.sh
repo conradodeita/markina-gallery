@@ -93,10 +93,14 @@ target_descends_from_checkout() (
   git_dir="$(mktemp -d "${TMPDIR:-/tmp}/markina-preflight-git.XXXXXX")" || return 1
   trap 'rm -rf -- "$git_dir"' EXIT
   git init --bare --quiet "$git_dir" || return 1
+  git -C "$git_dir" remote add origin "$origin" || return 1
+  git -C "$git_dir" config extensions.partialClone origin || return 1
+  git -C "$git_dir" config remote.origin.promisor true || return 1
+  git -C "$git_dir" config remote.origin.partialclonefilter blob:none || return 1
   # The production checkout can be many releases behind and need not contain
   # the candidate commit. Resolve ancestry in an ephemeral object database so
   # the read-only inventory does not update refs or objects in the live checkout.
-  git -C "$git_dir" fetch --quiet --no-tags --filter=blob:none "$origin" refs/heads/main || return 1
+  git -C "$git_dir" fetch --quiet --no-tags --filter=blob:none origin refs/heads/main || return 1
   target_sha="$(git -C "$git_dir" rev-parse 'FETCH_HEAD^{commit}')" || return 1
   [[ "$target_sha" == "$TARGET_SHA" ]] || return 1
   git -C "$git_dir" merge-base --is-ancestor "$CHECKOUT_SHA" "$target_sha"
