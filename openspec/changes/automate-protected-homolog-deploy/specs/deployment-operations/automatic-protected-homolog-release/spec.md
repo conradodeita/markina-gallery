@@ -21,6 +21,11 @@ O workflow SHALL publicar automaticamente em homologação após o sucesso dos c
 - **WHEN** o worker Compose `worker` existente está `exited` com código 1, os logs contêm o erro `value too long for type character varying(192)`, a configuração facial persistida coincide com a do container e o SHA alvo contém a correção limitada da chave do aviso privado
 - **THEN** o preflight pode continuar sem iniciar o worker antigo, preserva backup e checks de escritores/migration, recria o worker com a versão alvo e só conclui após o worker e healthchecks Markina ficarem saudáveis
 
+#### Scenario: SHA de destino ainda não existe no checkout remoto
+
+- **WHEN** o preflight precisa ler um arquivo do SHA candidato que ainda não está no banco de objetos Git local
+- **THEN** o script busca e valida o commit como ancestral de `origin/develop` antes de ler o arquivo e antes de backup, parada ou substituição de serviços
+
 #### Scenario: Worker ausente, estado inesperado ou alvo sem a correção
 
 - **WHEN** o container do worker não existe, seu estado/código de saída diverge do caso de recuperação conhecido, sua configuração difere da persistida ou o SHA alvo não contém a correção

@@ -567,6 +567,8 @@ verify_target() {
   origin_url="$(git remote get-url origin)"
   [[ "$origin_url" =~ github\.com[:/]${EXPECTED_REPOSITORY//\//\/}(\.git)?$ ]] || fail "origin não aponta para o repositório GitHub esperado"
 
+  fetch_and_verify_deploy_sha
+
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
   PREVIOUS_FACIAL_ENABLED="$(read_facial_enabled)"
   FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
@@ -587,6 +589,13 @@ verify_target() {
     [[ "$FACIAL_DEPLOY_ENABLED" == "$PREVIOUS_FACIAL_ENABLED" ]] || FACIAL_ENV_CHANGED=1
   fi
   compose config --quiet
+}
+
+fetch_and_verify_deploy_sha() {
+  git fetch --quiet origin develop
+  git fetch --quiet origin "$DEPLOY_SHA"
+  git cat-file -e "${DEPLOY_SHA}^{commit}"
+  git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop || fail "o SHA não pertence a origin/develop"
 }
 
 record_revision() {
@@ -870,11 +879,6 @@ main() {
   BRANDING_REQUIRED=1
   trap 'rollback_code_if_safe $?' ERR
   verify_target
-
-  git fetch --quiet origin develop
-  git fetch --quiet origin "$DEPLOY_SHA"
-  git cat-file -e "${DEPLOY_SHA}^{commit}"
-  git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop || fail "o SHA não pertence a origin/develop"
 
   PREVIOUS_SHA="$(git rev-parse HEAD)"
   record_revision "previous" "$PREVIOUS_SHA"
