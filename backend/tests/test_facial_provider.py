@@ -215,6 +215,20 @@ def test_query_requires_exactly_one_technically_usable_face() -> None:
     assert ready.observation is not None
 
 
+def test_query_ignores_incidental_face_candidate_below_quality_floor() -> None:
+    main = _face()
+    incidental = _face(blur=2.0, confidence=0.79)
+
+    result = analyze_query([incidental, main])
+
+    assert result.status == "ready"
+    assert result.observation is main
+
+
+def test_query_remains_ambiguous_when_two_faces_are_technically_usable() -> None:
+    assert analyze_query([_face(), _face()]).status == "multiple_faces"
+
+
 def _portrait_row(x, y, size, confidence=0.99):
     return (x, y, size, size,
             x + size * .3, y + size * .35,
@@ -244,6 +258,22 @@ def test_reference_aligns_dominant_portrait_in_original_pixels(tmp_path):
     assert analyze_query(observations).status == "ready"
     assert len(aligned_inputs) == 1
     assert aligned_inputs[0][0] is image
+
+
+def test_reference_prioritizes_clear_dominant_face_over_small_background_region():
+    main = _portrait_row(100, 100, 240, .90)
+    # Área ~2,25x menor: região incidental não deve bloquear o retrato dominante.
+    background = _portrait_row(500, 100, 160, .92)
+
+    result = reference_candidates(
+        [Detection(background, "tile:0"), Detection(main, "global")],
+        width=1200,
+        height=900,
+        nms_iou=.4,
+    )
+
+    assert len(result) == 1
+    assert result[0].row == main
 
 
 def test_reference_consolidates_same_landmarks_across_different_scale_boxes():

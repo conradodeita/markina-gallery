@@ -63,16 +63,21 @@ def analyze_query(
 ) -> QueryAnalysis:
     if not observations:
         return QueryAnalysis(status="no_face")
-    if len(observations) != 1:
-        return QueryAnalysis(status="multiple_faces")
-    face = observations[0]
-    if (
-        min(face.box[2:]) < minimum_face_pixels
-        or face.blur_variance < minimum_blur_variance
-        or face.detection_confidence < minimum_detection_confidence
-    ):
+
+    # Detecções incidentais de baixa qualidade (por exemplo, fundo com textura
+    # parecida com um rosto) não devem tornar ambíguo o único rosto utilizável.
+    usable = [
+        face
+        for face in observations
+        if min(face.box[2:]) >= minimum_face_pixels
+        and face.blur_variance >= minimum_blur_variance
+        and face.detection_confidence >= minimum_detection_confidence
+    ]
+    if not usable:
         return QueryAnalysis(status="low_quality")
-    return QueryAnalysis(status="ready", observation=face)
+    if len(usable) != 1:
+        return QueryAnalysis(status="multiple_faces")
+    return QueryAnalysis(status="ready", observation=usable[0])
 
 
 class FaceEmbeddingProvider(Protocol):
