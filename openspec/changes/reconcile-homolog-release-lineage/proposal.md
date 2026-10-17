@@ -9,6 +9,7 @@ O inventário somente leitura confirmou que homologação está no commit `0779b
 - Integrar à linha `develop` a base já presente em homologação, preservando a change de fotos privadas.
 - Encadear a migration de escopo das pastas privadas depois da revisão facial `20261016_0082`, com um identificador novo e único.
 - Manter a aprovação de revisores do ambiente `homolog` e permitir a publicação controlada por `develop` sem abrir acesso para outras branches.
+- Manter a verificação de blobs do gate facial nas PRs/pushes de `main`, sem fazê-la bloquear PRs de homologação em `develop` que alterem arquivos compartilhados por funcionalidades não faciais.
 - Registrar o inventário, a reconciliação e as validações antes de repetir o deploy.
 
 ## Capabilities

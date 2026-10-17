@@ -156,6 +156,7 @@ jobs:
       - name: Testar política de escopo e SHA
         run: python scripts/test_readonly_homolog_inventory_policy.py
       - name: Validar política de preflight e aprovação única de produção
+        if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
           bash scripts/test_deploy_prod_facial_services.sh

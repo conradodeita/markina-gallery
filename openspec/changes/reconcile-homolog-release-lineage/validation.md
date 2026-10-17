@@ -20,6 +20,8 @@
 - `python -m pytest tests/test_private_upload_batch_migration.py -q`: 1 teste ignorado localmente porque o PostgreSQL sintético não está configurado; a regressão será executada no CI do PR.
 - `openspec validate reconcile-homolog-release-lineage --strict`, `openspec validate fix-private-photo-notifications-and-admin-metrics --strict` e `openspec validate reveal-homolog-sha-on-inventory-mismatch --strict`: válidos.
 - `git diff --check`: sem erros.
+- CI `39036724855`: backend, frontend, Gemma e OpenSpec passaram; `homolog-inventory-policy` e Gitleaks falharam. Gitleaks apontou quatro fingerprints históricos conhecidos porque o conflito de `.gitleaksignore` havia concatenado linhas. As linhas foram restauradas; Gitleaks 8.24.3 local varreu 638 commits e não encontrou achados.
+- O teste de política de produção falhou porque a PR de homolog altera `auth.py` e `main.py`, blobs fixados pelo gate facial, embora as mudanças sejam somente de upload/métricas. O step desse gate agora roda em PRs/pushes de `main`; o teste de política de homologação verifica a condição, e o gate facial continua obrigatório em `main`. Testes locais `scripts/test_deploy_homolog_policy.py` e `scripts/test_deploy_homolog.sh` passaram.
 - Ainda pendentes: revisão do diff integrado, regressão PostgreSQL, CI integral no PR para `develop`, merge e deploy autorizado pelo gate do ambiente.
 
 ## Sem alteração remota de aplicação

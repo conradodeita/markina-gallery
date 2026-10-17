@@ -1,1 +1,8 @@
-# Falso positivo: SHA-256 da configuração normalizada registrada na evidência do deploy.58daa02cb9ac4200c859f4442fe2131f923185fe:openspec/changes/release-payment-status-api-web/validation.md:generic-api-key:89# Falso positivo: hash de blob Git registrado antes de codificar o manifesto de runtime.8b79e8df39bf0ae174a0e45a09ef38f444d3cd3a:openspec/changes/improve-client-face-reference-capture/production-gates.json:generic-api-key:36# Falso positivo: SHA-1 Git em base64 no manifesto de runtime.6658494505421f5cc6a95786ecb86b96b2569c51:openspec/changes/improve-client-face-reference-capture/production-gates.json:generic-api-key:36# Falso positivo: SHA público do checkout/API no inventário de manutenção.a36691e75cc66d6bb6d2da703ec129aa4ee51053:openspec/changes/improve-client-face-reference-capture/deployment-readiness-20261016.md:generic-api-key:7
+# Falso positivo: SHA público do checkout/API no inventário de manutenção.
+a36691e75cc66d6bb6d2da703ec129aa4ee51053:openspec/changes/improve-client-face-reference-capture/deployment-readiness-20261016.md:generic-api-key:7
+# Falso positivo: SHA-256 da configuração normalizada registrada na evidência do deploy.
+58daa02cb9ac4200c859f4442fe2131f923185fe:openspec/changes/release-payment-status-api-web/validation.md:generic-api-key:89
+# Falso positivo: SHA-1 Git em base64 no manifesto de runtime.
+6658494505421f5cc6a95786ecb86b96b2569c51:openspec/changes/improve-client-face-reference-capture/production-gates.json:generic-api-key:36
+# Falso positivo: hash de blob Git registrado antes de codificar o manifesto de runtime.
+8b79e8df39bf0ae174a0e45a09ef38f444d3cd3a:openspec/changes/improve-client-face-reference-capture/production-gates.json:generic-api-key:36

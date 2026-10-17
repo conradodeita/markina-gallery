@@ -24,3 +24,12 @@ O fluxo de publicação de homologação SHALL usar uma revisão descendente da 
 
 - **WHEN** o job de deploy usa a branch homologada pelo fluxo, mas a política do ambiente a rejeita
 - **THEN** o fluxo SHALL manter a aprovação de reviewer e habilitar somente a branch de deploy designada, sem remover controles de produção
+
+### Requirement: Separar gates de produção da validação de homologação
+
+A CI SHALL executar as verificações de blobs e autorização do release facial em PRs com destino `main` e em pushes para `main`. A CI de `develop` SHALL manter seus testes de homologação e NÃO SHALL alterar, ignorar ou ampliar a lista de blobs autorizados para production.
+
+#### Scenario: PR de homologação modifica arquivo também fixado pelo gate facial
+
+- **WHEN** uma PR de `develop` altera um arquivo compartilhado, mas não muda comportamento facial
+- **THEN** a CI SHALL validar o escopo da homologação sem executar o gate de release facial; o gate facial SHALL continuar obrigatório para qualquer PR direcionada a `main`

@@ -10,6 +10,7 @@
 - [ ] 2.1 Renumerar a migration de escopo privado como revisão única imediatamente após `20261016_0082`.
 - [ ] 2.2 Atualizar regressões para migrar de `20261016_0082` à nova head e verificar constraints/colunas.
 - [ ] 2.3 Executar os testes focados e validação OpenSpec estrita; registrar hashes e resultados verificáveis.
+- [ ] 2.4 Restringir o teste de blobs do release facial a PRs/pushes de `main`, mantendo a validação de homologação em `develop`; proteger essa condição com teste de política e sem alterar `production-gates.json`.
 
 ## 3. Publicar com escopo controlado
 
