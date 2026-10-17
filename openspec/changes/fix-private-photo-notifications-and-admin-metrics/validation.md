@@ -33,3 +33,9 @@ As regressões verificam gravação em PostgreSQL, conclusão do lote, os dois c
 CI positivo completo, publicação e confirmação real da retomada estão pendentes. A entrega será integrada à correção facial para validar/publicar a combinação preservando develop e schema 0083. O deploy continua exigindo inventário atualizado e aprovação operacional; nenhum restart, deploy, alteração de configuração ou disparo manual foi executado por este chat.
 
 Integração `cf21eca` concluída na branch da PR #213, preservando a correção facial, a correção de chave e as duas regressões focadas do workflow. A entrega originada na PR #215 será revisada em conjunto na PR #213; não publicar duas revisões concorrentes. CI positivo da combinação e aprovação operacional ainda pendentes.
+
+## Validação positiva focada e configuração do OTP
+
+CI combinado `39054318967`, revisão `071343f`: steps “Regressões dos limites faciais por origem” e “Regressão da chave do aviso privado em PostgreSQL” aprovados; frontend, Gemma, OpenSpec, Gitleaks e política de homologação também aprovados. Backend integral ainda em execução neste checkpoint. Não tratar o step focado como conclusão da suíte completa ou confirmação no servidor.
+
+Consulta somente leitura da configuração do cliente de teste confirmou binding Evolution válido, canal `staging` em estado `ready`, remetente correspondente e verificação registrada às 17:31:25 UTC. Nenhuma conexão foi refeita ou credencial alterada. A configuração consultada não revelou outro bloqueio; o worker geral parado continua impedindo consumo da fila. Após retomada aprovada, solicitar um OTP novo pelo fluxo normal e confirmar recebimento com o proprietário.

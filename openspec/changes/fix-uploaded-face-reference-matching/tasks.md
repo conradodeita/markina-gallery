@@ -10,7 +10,7 @@
 ## 2. Correspondência de referência enviada
 
 - [x] 2.1 Implementar configuração opcional e escolha de faixa por origem SFace (upload/câmera 500, toque 600); preservar correspondências firmes, Gemma e critérios gerais existentes. Criar regressões de limites/classificação, origem/engine e desativação. CI integrado #39051251911 (`348be58`): step “Regressões dos limites faciais por origem” aprovado; suíte integral permanece em 2.2/4.1.
-- [ ] 2.2 Verificar isolamento, snapshot, fingerprints, retenção e ausência de scores/vetores na API/logs pelos testes relevantes do CI.
+- [x] 2.2 Verificar isolamento, snapshot, fingerprints, retenção e ausência de scores/vetores na API/logs pelos testes relevantes do CI. CI completo `39052070853` no facial `effff85`: backend `1678 passed, 23 skipped`; regressões PostgreSQL posteriores também aprovadas. A integração de notificações não altera esses contratos; novo CI completo da combinação permanece em 4.1.
 
 ## 3. Apresentação do resultado
 

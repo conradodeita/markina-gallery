@@ -24,6 +24,7 @@ SCHEMA_ROLLBACK_UNSAFE=0
 SHA_SWITCHED=0
 FACIAL_ENV_CHANGED=0
 FACIAL_DEPLOY_ENABLED="false"
+WORKER_RECOVERY_PENDING=0
 BRANDING_REQUIRED=0
 BRANDING_PRESERVED=0
 PREVIEW_WORKER_ACTIVE=0
@@ -155,8 +156,9 @@ set_facial_enabled() {
 }
 
 verify_facial_deploy_state() {
-  local env_file="${1:-$ENV_FILE}" expected service container status
+  local env_file="${1:-$ENV_FILE}" expected service container status running exit_code
   expected="$(read_facial_enabled "$env_file")"
+  WORKER_RECOVERY_PENDING=0
   for service in "${FACIAL_SERVICES[@]}"; do
     # O script novo roda por stdin enquanto o checkout remoto ainda aponta para
     # a versão anterior. Consulte os labels Docker diretamente para que o
@@ -175,14 +177,45 @@ verify_facial_deploy_state() {
     [[ "$status" == "healthy" ]] || fail "$service diverge do estado saudável esperado: $status"
   done
   if [[ "$expected" == "true" ]]; then
-    for service in api worker "${FACIAL_SERVICES[@]}"; do
+    for service in api "${FACIAL_SERVICES[@]}"; do
       compose exec -T "$service" python -c '
 from app.facial.config import facial_settings_from_environment
 assert facial_settings_from_environment(verify_runtime_assets=False).enabled
 ' || fail "$service diverge da configuração facial persistente"
     done
+    container="$(docker ps --all --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter 'label=com.docker.compose.service=worker')"
+    [[ -n "$container" ]] || fail "worker geral ausente com flag facial habilitada"
+    running="$(docker ps --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter 'label=com.docker.compose.service=worker')"
+    if [[ -n "$running" ]]; then
+      compose exec -T worker python -c '
+from app.facial.config import facial_settings_from_environment
+assert facial_settings_from_environment(verify_runtime_assets=False).enabled
+' || fail "worker diverge da configuração facial persistente"
+    else
+      status="$(docker inspect --format '{{.State.Status}}' "$container")"
+      exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container")"
+      [[ "$status" == "exited" && "$exit_code" == "1" ]] || fail "worker geral parado fora do caso de recuperação conhecido"
+      docker logs --tail 200 "$container" 2>&1 \
+        | grep -F -- 'value too long for type character varying(192)' >/dev/null \
+        || fail "worker encerrado por causa diferente do limite conhecido da chave"
+      docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" \
+        | grep -Fxq "FACIAL_PROCESSING_ENABLED=$expected" \
+        || fail "worker encerrado diverge da configuração facial persistente"
+      local target_notification_events
+      target_notification_events="$(git show "$DEPLOY_SHA:backend/app/notification_events.py" 2>/dev/null)" \
+        || fail "não foi possível verificar a correção de avisos no SHA alvo"
+      [[ "$target_notification_events" == *"if len(event_key) > 192:"* \
+        && "$target_notification_events" == *"sha256(event_key.encode()).hexdigest()"* ]] \
+        || fail "worker encerrado; SHA alvo não contém a correção da chave de aviso"
+      WORKER_RECOVERY_PENDING=1
+      echo "worker anterior exited (1); SHA contém a correção da chave; recuperação será validada após a troca"
+    fi
   fi
-  echo "estado facial coerente confirmado: flag=$expected workers=$([[ "$expected" == "true" ]] && echo saudáveis || echo ausentes)"
+  echo "estado facial coerente confirmado: flag=$expected workers=$([[ "$expected" == "true" ]] && echo saudáveis || echo ausentes) worker_recovery=$WORKER_RECOVERY_PENDING"
 }
 
 ensure_pii_fingerprint_salt() {

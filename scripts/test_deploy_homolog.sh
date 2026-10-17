@@ -299,6 +299,61 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
   ' >"$output" 2>&1
 grep -Fq 'flag=true workers=saudáveis' "$output"
 
+# An exited general worker may be recovered only for exit 1, matching persisted
+# facial configuration and a target containing the bounded private-event key.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    DEPLOY_SHA=1111111111111111111111111111111111111111
+    compose() { [[ "$1" == "exec" ]] && return 0; }
+    git() {
+      [[ "$*" == "show $DEPLOY_SHA:backend/app/notification_events.py" ]] || return 1
+      printf "if len(event_key) > 192:\\nevent_key = sha256(event_key.encode()).hexdigest()\\n"
+    }
+    docker() {
+      if [[ "$1" == "ps" && "$*" == *"service=worker"* ]]; then
+        [[ "$*" == *"--all"* ]] && printf "worker-parado\\n"
+        return 0
+      fi
+      [[ "$1" == "ps" ]] && { printf "worker-facial-saudavel\\n"; return 0; }
+      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then printf "exited\\n"; return 0; fi
+      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then printf "1\\n"; return 0; fi
+      if [[ "$1" == "inspect" && "$*" == *".Config.Env"* ]]; then printf "FACIAL_PROCESSING_ENABLED=true\\n"; return 0; fi
+      if [[ "$1" == "logs" ]]; then printf "value too long for type character varying(192)\\n"; return 0; fi
+      [[ "$1" == "inspect" ]] && { printf "healthy\\n"; return 0; }
+      return 1
+    }
+    verify_facial_deploy_state "$FACIAL_ENV"
+    [[ "$WORKER_RECOVERY_PENDING" -eq 1 ]]
+  ' >"$output" 2>&1
+grep -Fq 'worker anterior exited (1); SHA contém a correção da chave; recuperação será validada após a troca' "$output"
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    DEPLOY_SHA=1111111111111111111111111111111111111111
+    compose() { [[ "$1" == "exec" ]] && return 0; }
+    git() { printf "no compatible recovery fix\\n"; }
+    docker() {
+      if [[ "$1" == "ps" && "$*" == *"service=worker"* ]]; then
+        [[ "$*" == *"--all"* ]] && printf "worker-parado\\n"
+        return 0
+      fi
+      [[ "$1" == "ps" ]] && { printf "worker-facial-saudavel\\n"; return 0; }
+      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then printf "exited\\n"; return 0; fi
+      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then printf "1\\n"; return 0; fi
+      if [[ "$1" == "inspect" && "$*" == *".Config.Env"* ]]; then printf "FACIAL_PROCESSING_ENABLED=true\\n"; return 0; fi
+      if [[ "$1" == "logs" ]]; then printf "value too long for type character varying(192)\\n"; return 0; fi
+      [[ "$1" == "inspect" ]] && { printf "healthy\\n"; return 0; }
+      return 1
+    }
+    verify_facial_deploy_state "$FACIAL_ENV"
+  ' >"$output" 2>&1; then
+  echo "worker encerrado foi aceito sem correção no SHA alvo" >&2
+  exit 1
+fi
+grep -Fq 'SHA alvo não contém a correção da chave de aviso' "$output"
+
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
