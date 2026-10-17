@@ -1,0 +1,29 @@
+# Design
+
+## Context
+
+Servidor `0779b3e`, origem HTTPS `markina.pickyourpic.com.br`, entrada Markina `127.0.0.1:8080`. Consulta por toque em `LIV00862.jpg` retornou dez candidatas; três uploads terminaram `no_candidates` após comparação completa. Diagnóstico autorizado por SSH, em transação PostgreSQL READ ONLY, confirmou SFace/128, índice highres-v1/fingerprints atuais, limiar 750 e ausência de faixa ambígua. Os pesos e o OpenCV 4.12.0 foram conferidos; a configuração de detecção é default. Vetores permaneceram em memória e não foram exportados em relatórios.
+
+Para o par positivo informado, a referência fica abaixo de 750 e acima de 500 no vetor persistido. A mesma imagem, quando processada localmente como referência e como acervo, produz vetor numericamente coincidente: não há evidência para reindexar ou trocar o detector. Contagens e limites estão em `validation.md`.
+
+## Goals / Non-Goals
+
+**Goals:** recuperar possibilidades úteis sem afirmar identidade; preservar correspondências firmes e o isolamento das políticas por origem; tornar o resultado concluído visível; permitir desligar a faixa específica; validar isolamento e lifecycle existentes.
+
+**Non-Goals:** reduzir a exigência de autorização; garantir todas as identidades/poses; usar um par como calibração de produção; inferir atributos pessoais; trocar SFace ou pesos; agrupar identidades; treinar com feedback; reindexar; ampliar rollout; alterar secrets ou implantar sem aprovação.
+
+## Decisions
+
+1. **Políticas por origem, aprovadas em 17/10/2026.** Adicionar `reference_ambiguous_threshold_milli` e `region_ambiguous_threshold_milli` opcionais: defaults de ambiente 500 para upload/câmera e 600 para toque, conforme pedidos expressos do proprietário. Em cada variável, valor vazio desativa a faixa específica; intervalo 0–1000. O limiar firme continua o configurado, 750 no ambiente observado. O limite efetivo de possibilidades é o menor entre limiar firme, faixa ambígua geral explicitamente configurada e faixa da origem aplicável. Configuração geral mais permissiva não é restringida e nenhum candidato abaixo do firme vira `matched`. Construtores internos têm defaults `None`, preservando compatibilidade; o parser de ambiente e Compose introduzem os valores aprovados.
+2. **Escolha pelo contexto persistido, não por parâmetro cliente.** Aplicar a faixa da origem somente a engine SFace: `reference_source=upload` usa 500 e `indexed_region` usa 600. Gemma e origem legada desconhecida conservam a política geral vigente. Não gerar outro vetor nem outro job para ampliar candidatas. Classificação e ordenação continuam no comparador existente, repetindo autorização, snapshot e fingerprints.
+3. **Possibilidades exigem conferência.** Reutilizar o grupo visual `Possíveis correspondências` e a mensagem de conferência humana. Nenhuma seleção, acesso ou associação de pessoa é criada automaticamente. A configuração e a revisão implantada identificam a política; nenhum score/vetor é enviado à API ou aos logs.
+4. **Conclusão baseada no estado terminal, não no percentual.** Registrar admissão de consulta nova na página tanto para upload confirmado/recuperado quanto para toque. `ready` com candidatas e fotos carregadas fecha ampliação e leva uma única vez ao título/bloco de resultados, com foco acessível sem segunda rolagem. O mesmo UUID recebido de novo, troca de pasta, seleção, restauração de sessão e polling não provocam novo salto. O percentual 100 isolado ainda em comparação/organização não aciona navegação.
+5. **Falha/ausência de resultados.** Estados `no_candidates`, falha, cancelamento e expiração continuam explicados no painel; não navegar para um bloco inexistente. Conservar navegação manual e possibilidade de nova busca.
+6. **Validação e entrega.** Preservar a preferência registrada por suítes automatizadas no CI, sem executar novas suítes locais. Fixtures sintéticas de vetores com similaridades conhecidas protegem classificação e isolamento; testes React cobrem admissão, polling, foco e conclusão. Nenhum dado real entra em testes/Git. Preparar PR e CI; a execução protegida de produção requer inventário e aprovação específica antes da mutação.
+
+## Risks / Trade-offs
+
+- A faixa aumenta a recuperação e pode incluir outras pessoas. As 23/18/53 candidatas em 500 não foram todas anotadas; não declarar precisão/recall real. Mostrar como possibilidades e exigir revisão humana do proprietário antes de considerar a qualidade aceita.
+- Os defaults 500/600 receberam aceite explícito. A aprovação reconhece a possibilidade de pessoas erradas; não constitui medição de precisão nem autorização operacional de deploy.
+- A rolagem precisa aguardar a existência de resultados no DOM e a carga de fotos, sem deslocar o usuário após restauração ou durante seleção.
+- Configurações específicas explicitamente vazias e a política geral anterior permitem rollback de admissão de possibilidades; não há operação destrutiva de índice ou dados comerciais.
