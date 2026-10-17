@@ -272,6 +272,9 @@ def assert_catalog(connection):
             for u in target.constraints
             if isinstance(u, sa.UniqueConstraint) and u.name != "uq_tenant_canonical_host"
         }
+        expected_unique |= {
+            ("tenant_id", "photo_asset_id"),
+        } if name == "private_upload_batch_asset" else set()
         assert actual_unique == expected_unique, name
         actual_indexes = {i["name"]: (tuple(i["column_names"]), i["unique"])
                           for i in inspector.get_indexes(name) if not i.get("duplicates_constraint")}
