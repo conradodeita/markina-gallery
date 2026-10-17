@@ -14,6 +14,7 @@ readonly BACKUP_DIR="/var/lib/markina-gallery/backups"
 readonly EXPECTED_REPOSITORY="${MARKINA_EXPECTED_REPOSITORY:?MARKINA_EXPECTED_REPOSITORY é obrigatório}"
 
 DEPLOY_SHA=""
+TARGET_HEAD_REVISION=""
 PUBLIC_BASE_URL="${MARKINA_PUBLIC_BASE_URL:-}"
 REQUESTED_FACIAL_ENABLED=""
 PREVIOUS_SHA=""
@@ -563,7 +564,18 @@ record_revision() {
 }
 
 current_revision() {
-  compose run --rm --no-deps migrate alembic current 2>/dev/null | tr -d '\r' | tail -n 1
+  local revision
+  if ! revision="$(compose exec -T db sh -ceu \
+    'psql -X -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version ORDER BY version_num"' \
+    2>/dev/null | tr -d '\r')"; then
+    echo "deploy-homolog: probe da revisão Alembic falhou ao consultar o banco Markina" >&2
+    return 1
+  fi
+  if [[ ! "$revision" =~ ^[[:alnum:]_]+$ ]]; then
+    echo "deploy-homolog: probe da revisão Alembic retornou valor vazio ou múltiplas revisões" >&2
+    return 1
+  fi
+  printf '%s\n' "$revision"
 }
 
 stop_application_writers() {
@@ -599,7 +611,7 @@ stop_application_writers() {
 }
 
 apply_target_migrations() {
-  local previous_revision="$1" next_revision
+  local previous_revision="$1" next_revision target_heads
 
   # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.
   # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente
@@ -608,6 +620,16 @@ apply_target_migrations() {
     fail "não foi possível construir a migration do SHA alvo"
     return 1
   }
+
+  target_heads="$(compose run --rm --no-deps migrate alembic heads 2>/dev/null | awk 'NF { print $1 }' | sort -u)" || {
+    fail "não foi possível identificar a head Alembic do SHA alvo"
+    return 1
+  }
+  if [[ ! "$target_heads" =~ ^[[:alnum:]_]+$ ]]; then
+    fail "o SHA alvo deve possuir exatamente uma head Alembic"
+    return 1
+  fi
+  TARGET_HEAD_REVISION="$target_heads"
 
   stop_application_writers || return 1
 
@@ -620,11 +642,11 @@ apply_target_migrations() {
     return 1
   }
   next_revision="$(current_revision)" || {
-    fail "não foi possível confirmar a revisão após a migration"
+    fail "probe da revisão após a migration falhou"
     return 1
   }
-  [[ -n "$next_revision" && "$next_revision" == *"(head)"* ]] || {
-    fail "migration não alcançou o head do SHA alvo"
+  [[ "$next_revision" == "$TARGET_HEAD_REVISION" ]] || {
+    fail "revisão do banco não corresponde à head Alembic do SHA alvo"
     return 1
   }
   echo "migration Markina: ${previous_revision:-sem revisão} -> $next_revision"

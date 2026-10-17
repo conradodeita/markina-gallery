@@ -49,9 +49,21 @@ def main() -> int:
     require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
     require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
     require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('SELECT version_num FROM alembic_version', "revisão consultada diretamente no PostgreSQL", SCRIPT)
+    forbid(
+        r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s+alembic\s+current',
+        "probe pré-deploy dependente da imagem antiga migrate",
+        SCRIPT,
+    )
+    require('alembic heads', "head do SHA alvo identificada antes da parada dos writers", SCRIPT)
+    require('TARGET_HEAD_REVISION', "revisão aplicada comparada com a head do SHA alvo", SCRIPT)
+    require('probe da revisão Alembic falhou ao consultar o banco Markina', "falha de consulta reportada sem segredos", SCRIPT)
     require('SCHEMA_ROLLBACK_UNSAFE=1', "bloqueio conservador após início da migration", SCRIPT)
     require('SCHEMA_ROLLBACK_UNSAFE=0', "liberação somente após revisão inalterada", SCRIPT)
-    require('next_revision" == *"(head)"*', "confirmação de migration no head alvo", SCRIPT)
+    require('next_revision" == "$TARGET_HEAD_REVISION"', "confirmação de migration na head única do SHA alvo", SCRIPT)
+    require('ORDER BY version_num', "consulta determinística das revisões persistidas", SCRIPT)
+    require('compose exec -T db', "probe independente da imagem migration anterior", SCRIPT)
+    require('alembic heads', "head Alembic do alvo verificada antes de parar writers", SCRIPT)
     require('echo "migration Markina:', "registro não sensível da revisão aplicada", SCRIPT)
     require(
         'git switch --detach "$DEPLOY_SHA"\n'
@@ -67,6 +79,11 @@ def main() -> int:
         '  # as revisions do commit que será iniciado nos demais serviços.\n'
         '  compose build migrate || {',
         "build da migration antes de sua execução",
+        SCRIPT,
+    )
+    require(
+        '  TARGET_HEAD_REVISION="$target_heads"\n\n  stop_application_writers || return 1',
+        "head única identificada antes de interromper writers",
         SCRIPT,
     )
     require('compose up -d --build --no-deps api web worker', "recriação limitada de serviços", SCRIPT)

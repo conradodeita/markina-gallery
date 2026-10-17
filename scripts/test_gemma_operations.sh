@@ -28,6 +28,10 @@ done
   GEMMA_WORKER_ACTIVE=1
   stopped=0
   compose() {
+    if [[ "$*" == 'run --rm --no-deps migrate alembic heads' ]]; then
+      printf '20261011_0074 (head)\n'
+      return 0
+    fi
     printf '%s\n' "$*"
     if [[ "$1" == stop ]]; then
       [[ "$*" == 'stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker face-gemma-index-worker' ]] || return 80
@@ -38,8 +42,8 @@ done
   docker() {
     [[ "$*" == *project=markina-gallery* && "$*" != *evolution* && "$*" != *firefly* ]] || return 82
   }
-  current_revision() { echo '20261011_0074 (head)'; }
-  apply_target_migrations '20261009_0072 (head)'
+  current_revision() { echo '20261011_0074'; }
+  apply_target_migrations '20261009_0072'
   [[ "$MIGRATION_CHANGED" == 1 ]]
 ) >"$gemma_test_output" 2>&1
 grep -Fq 'stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker face-gemma-index-worker' "$gemma_test_output"
@@ -68,6 +72,7 @@ if (
   source "$gemma_test_root/scripts/deploy-homolog.sh"
   GEMMA_WORKER_ACTIVE=1
   compose() {
+    [[ "$*" == 'run --rm --no-deps migrate alembic heads' ]] && { printf '20261011_0074 (head)\n'; return 0; }
     [[ "$1" == stop ]] && return 42
     [[ "$1" == run ]] && echo UNEXPECTED-MIGRATION
     return 0
@@ -83,7 +88,10 @@ if grep -Fq UNEXPECTED-MIGRATION "$gemma_test_output"; then exit 1; fi
 if (
   source "$gemma_test_root/scripts/deploy-homolog.sh"
   GEMMA_WORKER_ACTIVE=1
-  compose() { [[ "$1" != run ]] || echo UNEXPECTED-MIGRATION; }
+  compose() {
+    [[ "$*" == 'run --rm --no-deps migrate alembic heads' ]] && { printf '20261011_0074 (head)\n'; return 0; }
+    [[ "$1" != run ]] || echo UNEXPECTED-MIGRATION
+  }
   docker() { [[ "$*" != *service=face-gemma-index-worker* ]] || echo synthetic-still-running; }
   apply_target_migrations '20261009_0072 (head)'
 ) >"$gemma_test_output" 2>&1; then
