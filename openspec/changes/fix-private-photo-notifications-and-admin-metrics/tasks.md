@@ -2,8 +2,9 @@
 
 ## 1. Avisos de fotos privadas
 
-- [ ] 1.1 Estender o lote durável por migration preservadora de registros para uma pasta canônica restrita, associar ativos inclusive em retentativas e corrigir o gatilho ao fim do processamento; verificar lotes fechados/abertos, sem prévia, falha parcial, retomada e deduplicação em `backend/tests/test_private_upload_batches.py`. Revalidar no grafo reconciliado, com migration privada `20261017_0083` encadeada após `20261016_0082`.
+- [ ] 1.1 Estender o lote durável por migration preservadora de registros para uma pasta canônica restrita, associar ativos inclusive em retentativas e corrigir o gatilho ao fim do processamento; verificar lotes fechados/abertos, sem prévia, falha parcial, retomada e deduplicação em `backend/tests/test_private_upload_batches.py`. CI histórico `39046656588` aprovado e migration 0083 publicada, mas teste real de 17/10/2026 reabriu esta task: chave canônica de 193 caracteres excede `VARCHAR(192)` e encerra o worker. Concluir somente após a regressão e correção abaixo; evidência histórica não cobre essa falha.
 - [x] 1.2 Verificar entregas independentes e autorização no momento do envio; garantir que uploads de pastas públicas não criem evento privado; executar testes direcionados de notificações e vínculo sem chamadas externas reais. Evidência: `pytest tests/test_private_upload_batches.py tests/test_notification_payments.py -q` — 8 passed; upload público sem evento, dois canais habilitados enfileirados, autorização revalidada após revogação e retentativas sem duplicação.
+- [ ] 1.3 Reproduzir em CI o limite da chave no fluxo real de lote canônico em PostgreSQL; preservar chaves antigas válidas, condensar deterministicamente somente chaves longas e verificar retomada sem duplicação e independência de lotes. Nenhuma migration ou chamada de transporte real.
 
 ## 2. Indicador de mensagens em Vendas e pagamentos
 
@@ -17,9 +18,13 @@
 
 ## 4. Integração e revisão
 
-- [ ] 4.1 Reexecutar CI integral e validar o grafo Alembic reconciliado (`20261017_0083` como head) após integrar a base atualmente instalada em homologação.
+- [x] 4.1 Reexecutar CI integral e validar o grafo Alembic reconciliado (`20261017_0083` como head) após integrar a base atualmente instalada em homologação. PR #210 integrada em `c9eaf638`; CI `39046656588` aprovado no alvo `25cd338`, com backend, frontend, Gemma, OpenSpec, Gitleaks e política de homologação verdes. Deploy e inventário `39049112709` confirmaram schema 0083 e saúde HTTP 200.
 - [x] 4.2 Classificar e suprimir somente os quatro falsos positivos históricos do Gitleaks por fingerprint exato, mantendo a varredura do histórico completo; confirmar Gitleaks local e CI. Evidências: Gitleaks 8.24.3 encontrou zero findings localmente; o check Gitleaks do CI `39023880662` passou. Os quatro fingerprints correspondiam a APP_VERSION/SHA, checksums de arquivos e fingerprint de configuração em documentos de evidência.
+- [ ] 4.3 Validar a correção do limite em CI completo, revisar diff e publicar somente após inventário/aprovação operacional; confirmar retomada do lote durável e estado da entrega do teste sem criar reenvio manual ou duplicata. Recebimento no celular depende de conferência do proprietário; inscrição push precisa estar ativa antes do evento.
 
 ## Workflow follow-up
 
 - Sincronizar os deltas para as specs principais e arquivar somente após revisão humana, conforme o fluxo OpenSpec do repositório.
+- Estado vigente após teste real: correção de chave e CI pendentes; worker geral encerrou às 17:17:51 UTC com `StringDataRightTruncation`. Nenhum restart/deploy foi executado por este chat. Publicação/retomada e confirmação do aviso do teste exigem validação e aprovação operacional final.
+- Conferência de continuidade em 17/10/2026 neste chat sucessor: versão funcional `25cd338` publicada, checkout remoto limpo, serviços Markina saudáveis e `/api/health` com resposta saudável. PR #214 integrada apenas para registrar a evidência do probe/deploy; seu CI de PR `39049217618` passou. O CI pós-merge `39051577413` ainda estava em andamento na conferência; ele não é evidência de uma nova publicação. Não houve disparo de mensagens reais, novo deploy, migration ou alteração de configuração nesta conferência. A entrega real de WhatsApp/push não foi revalidada nesta retomada.
+- Após o proprietário liberar acesso administrativo, conferência visual autenticada em 17/10/2026 confirmou o card `Pastas com importação ativa` com `0` e `0 fotos nas pastas ativas`, ausência de `Falhas de mensagem` no painel financeiro carregado e os dois canais habilitados no evento `Novas fotos privadas`. Somente navegação/leitura; nenhum formulário salvo ou aviso enviado. Capturas locais ignoradas pelo Git, sem dados de clientes nos artefatos versionados.
