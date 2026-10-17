@@ -10,6 +10,7 @@ Três referências reais autorizadas foram aceitas, mas retornaram zero candidat
 - Manter a classificação explícita `matched`/`ambiguous`, acesso autorizado, consentimento, retenção, modelo, índice, seleção e histórico.
 - Conduzir uma única vez ao bloco efetivo de resultados quando uma consulta iniciada nesta página concluir com candidatas, tanto por upload/câmera quanto por toque. Fechar ampliação aberta e preservar rolagem de consultas restauradas e atualizações posteriores.
 - Validar política e navegação pelo CI, e preparar entrega com inventário e aprovação protegida; testes reais continuam restritos aos arquivos e à galeria autorizados.
+- Preparar o gate restrito aprovado separadamente em 17/10/2026: hashes exatos dos novos arquivos de apresentação/Compose e recusa de Docker fora desse escopo, sem instalar wrapper ou publicar antes da aprovação final.
 
 ## Capabilities
 
@@ -20,6 +21,7 @@ Três referências reais autorizadas foram aceitas, mas retornaram zero candidat
 ### Modified Capabilities
 
 - `gallery-sales/original-gallery-experience`: conclusão de busca iniciada na página conduz ao bloco de resultados, com foco acessível e sem saltos repetidos.
+- `deployment-operations/facial-maintenance-scope`: manutenção admite exclusivamente o Compose revisado por blob e os arquivos relacionados, preservando autorização operacional separada.
 
 ## Impact
 

@@ -110,6 +110,8 @@ def main() -> None:
     require('git merge-base --is-ancestor "$baseline_sha" "$CHECKOUT_SHA"', "checkout descende do último release saudável", script)
     require("check_prod_facial_release_gates.py --maintenance", "manifesto confere escopo e blobs exatos", preflight)
     require("target_descends_from_checkout", "ancestralidade verificada em repositório temporário", script)
+    require('verify_reviewed_docker_changes "$git_dir"', "Compose alvo conferido no repositório temporário", script)
+    require('verify_reviewed_docker_changes "$PROJECT_ROOT"', "Compose revisado conferido antes de release", script)
     require('git -C "$git_dir" config extensions.partialClone origin', "filtro de blobs habilitado no repositório temporário", script)
     require('git -C "$git_dir" fetch --quiet --no-tags --filter=blob:none origin refs/heads/main', "commits da main buscados sem blobs em diretório temporário", script)
     require('[[ "$target_sha" == "$TARGET_SHA" ]]', "alvo buscado permanece igual ao HEAD verificado", script)
@@ -137,6 +139,10 @@ def main() -> None:
     require('EXPECTED_DATABASE_REVISION="20261016_0082"', "revisão já publicada do banco fixada", script)
     require('TARGET_DATABASE_REVISION="20261016_0082"', "revisão de destino fixada", script)
     release_script = script.split("release() {", 1)[1].split("main() {", 1)[0]
+    require('fingerprint_with_baseline_compose "$baseline_compose_yaml"', "drift relê ambiente com Compose anterior", release_script)
+    if not (release_script.index('baseline_compose_yaml="$(git show') < release_script.index('git switch --detach')
+            < release_script.index('compose build') < release_script.index('fingerprint_with_baseline_compose') < release_script.index('compose up')):
+        raise AssertionError("Compose anterior deve ser preservado em memória para a conferência antes da recriação")
     require("runtime_snapshot", "releitura de hashes após recriação", release_script)
     require('alembic upgrade "$TARGET_DATABASE_REVISION"', "migration única aplicada após aprovação", release_script)
     require('"$EXPECTED_DATABASE_REVISION" != "$TARGET_DATABASE_REVISION"', "não reaplica migration já publicada", release_script)

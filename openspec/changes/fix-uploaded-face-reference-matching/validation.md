@@ -41,3 +41,11 @@ Proprietário aprovou em 17/10/2026 a faixa 500 para upload/câmera e a navegaç
 - Navegação: confirmação normal/recuperada marca consulta iniciada nesta página; `ready` com fotos renderizáveis fecha ampliação, foca e rola para o título real uma vez. Restauração não marca nova admissão. Pasta e interações posteriores são preservadas.
 - Regressões preparadas: parser de ambas as faixas (default, vazio, limites e inválidos); worker real com índice sintético e cossenos conhecidos nas fronteiras, classificação, origem e limpeza; engine Gemma positiva/ortogonal; React com upload/câmera, 100% em ranking, fotos tardias, confirmação incerta, restauração/polling, terminais vazios e repetição do mesmo UUID.
 - `openspec validate fix-uploaded-face-reference-matching --strict` e `git diff --check` passaram antes do envio. Isso não substitui CI nem teste visual do runtime publicado.
+
+## CI e preparação operacional
+
+Primeiro run #39048489914 (`f30d3de`): frontend aprovado (549 testes, lint, TypeScript e build), Gemma, OpenSpec e Gitleaks aprovados; política operacional recusou os hashes antigos do manifesto. A suíte backend desse run não foi concluída: a execução foi substituída pela revisão corrigida para não manter suítes duplicadas.
+
+Run #39049267177 (`a0dcf41`): frontend, Gemma, OpenSpec, Gitleaks e política operacional aprovados; backend em execução no momento deste registro. O manifesto preparado mantém autorização operacional falsa, sem reutilizar a aprovação do runtime anterior.
+
+O proprietário aprovou separadamente preparar o gate restrito. Implementação operacional preparada inclui os três novos blobs exatos, classificação da release, verificação Docker no repositório temporário e no release, pin versionado atualizado e fingerprint que relê o ambiente com YAML anterior em memória. Regressões sintéticas protegem autorização, hash, manifesto inválido, arquivo Docker fora do escopo e equivalência Compose arquivo/stdin com env_file raw e bind relativo. Nenhum wrapper foi instalado no servidor; essa preparação ainda precisa passar pelo CI.

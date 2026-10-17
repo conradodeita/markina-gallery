@@ -19,6 +19,8 @@
 
 ## 4. Integração e entrega
 
+- [x] 4.0a Receber revisão da preparação operacional restrita: proprietário respondeu “Aprovar a preparação do gate restrito” em 17/10/2026, preservando inventário/aprovação final antes de mutação remota.
+- [ ] 4.0b Preparar manifesto/listas exatas, verificação de Compose no inventário/release, pin versionado e regressões negativas/positivas no CI; manter autorização operacional falsa e wrapper remoto intacto.
 - [ ] 4.1 Revisar diff, validar OpenSpec, executar os gates aplicáveis pelo CI (backend, frontend, lint/typecheck/build e políticas operacionais) e corrigir falhas relacionadas.
   - CI inicial identificou hashes anteriores no manifesto de manutenção. Preparar hashes atuais com autorização operacional falsa, preservando validação de escopo e gates; repetir CI.
 - [ ] 4.2 Preparar inventário/plano e publicar somente após aprovação operacional protegida; repetir os casos autorizados e confirmar visualmente o direcionamento aos resultados. Registrar revisão humana das possibilidades e seus limites.
