@@ -2,8 +2,7 @@
 
 ## 1. Avisos de fotos privadas
 
-- [ ] 1.1 Estender o lote durável por migration preservadora de registros para uma pasta canônica restrita, associar ativos inclusive em retentativas e corrigir o gatilho ao fim do processamento; verificar lotes fechados/abertos, sem prévia, falha parcial, retomada e deduplicação em `backend/tests/test_private_upload_batches.py`.
-  - Implementação e testes locais de comportamento concluídos; a suíte CI executou a migration com PostgreSQL. O último job backend concluiu 1630 passed e 23 skipped; dois testes do contrato histórico 0070 falharam porque a expectativa precisava refletir colunas e nulidade novas, além da unicidade `(tenant_id, photo_asset_id)` removida na revisão 0082. As diferenças estão agora documentadas na expectativa em `backend/tests/test_tenant_photographer_migration.py`; novo CI pendente.
+- [x] 1.1 Estender o lote durável por migration preservadora de registros para uma pasta canônica restrita, associar ativos inclusive em retentativas e corrigir o gatilho ao fim do processamento; verificar lotes fechados/abertos, sem prévia, falha parcial, retomada e deduplicação em `backend/tests/test_private_upload_batches.py`. Evidência: CI PostgreSQL executou migration e suíte backend — 1632 passed, 23 skipped; contrato histórico 0070 verifica colunas, nulidade e unicidade anteriores à revisão 0082.
 - [x] 1.2 Verificar entregas independentes e autorização no momento do envio; garantir que uploads de pastas públicas não criem evento privado; executar testes direcionados de notificações e vínculo sem chamadas externas reais. Evidência: `pytest tests/test_private_upload_batches.py tests/test_notification_payments.py -q` — 8 passed; upload público sem evento, dois canais habilitados enfileirados, autorização revalidada após revogação e retentativas sem duplicação.
 
 ## 2. Indicador de mensagens em Vendas e pagamentos
@@ -18,8 +17,7 @@
 
 ## 4. Integração e revisão
 
-- [ ] 4.1 Executar validações focadas backend/frontend, lint, typecheck, build e OpenSpec estrito; registrar evidências e revisar diff/status sem tocar nas alterações locais preexistentes.
-  - Evidências locais: 9 testes backend focados passaram; 23 testes frontend focados passaram; Ruff passou; ESLint passou sem erros (31 avisos); TypeScript passou; build Next.js passou; validação estrita desta change passou; Alembic informa `20261016_0082 (head)`. A validação estrita global reportou 29 falhas em outras changes/specs. Três CIs: frontend, OpenSpec e checks independentes passaram; cada pytest concluiu com 1630 passed e 23 skipped, mas dois testes do contrato histórico 0070 falharam por diferenças de esquema introduzidas na revisão 0082. A expectativa agora cobre colunas, nulidade e unicidade históricas; novo CI pendente. Gitleaks falhou nos três CIs por ocorrências em histórico de branches alheias à PR, confirmado em inspeção local.
+- [x] 4.1 Executar validações focadas backend/frontend, lint, typecheck, build e OpenSpec estrito; registrar evidências e revisar diff/status sem tocar nas alterações locais preexistentes. Evidências locais: 9 testes backend focados passaram; 23 testes frontend focados passaram; Ruff passou; ESLint passou sem erros (31 avisos); TypeScript passou; build Next.js passou; validação estrita desta change passou; Alembic informa `20261016_0082 (head)`. Evidências CI `39000714156`: frontend e OpenSpec passaram; backend passou com 1632 testes e 23 skips, além de regressões PostgreSQL (4, 1 e 1 testes aprovados); Gemma e política do inventário passaram. Gitleaks é o único check vermelho, por ocorrências em histórico de branches não relacionadas a esta PR, confirmado em inspeção local. A validação OpenSpec estrita global ainda lista 29 problemas preexistentes em outras changes/specs.
 
 ## Workflow follow-up
 
