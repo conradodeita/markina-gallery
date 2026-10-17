@@ -20,6 +20,10 @@ Antes de publicar, o sistema SHALL validar CI verde, SHA completo alcançável e
 - **WHEN** os pré-requisitos de código, checkout, configuração efetiva, serviços e schema correspondem ao plano
 - **THEN** o fluxo apresenta SHA atual e alvo, serviços, portas, domínio, fingerprint, impacto e rollback sem exibir valores secretos
 
+#### Scenario: Repetição manual do preflight de aplicação
+- **WHEN** um operador seleciona explicitamente `app-release` em `main` após integração e CI completo
+- **THEN** o workflow executa o mesmo classificador, validação de manifesto, inventário somente-leitura e gate de aprovação protegida; a operação manual padrão permanece inerte e não inicia rollback
+
 #### Scenario: Inventário ou estado muda
 - **WHEN** o checkout, configuração resolvida, versão da API, revisão do banco, saúde, portas ou domínio divergem entre inventário e aprovação
 - **THEN** o release é recusado antes de trocar qualquer container

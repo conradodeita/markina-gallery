@@ -5,6 +5,16 @@ on:
   push:
     branches: [develop, main]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Operação manual protegida em produção
+        type: choice
+        required: true
+        default: none
+        options:
+          - none
+          - app-release
+          - app-rollback
 
 jobs:
   backend:
@@ -247,18 +257,30 @@ jobs:
           ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$maintenance_command" < scripts/maintain-homolog-data.sh
 
   release-scope:
-    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+    if: "${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     outputs:
       scope: ${{ steps.classify.outputs.release_scope }}
+      base_sha: ${{ steps.classify.outputs.base_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Classificar fluxo de release
         id: classify
-        run: python scripts/classify_prod_release.py --base '${{ github.event.before }}' --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            base_sha='${{ github.event.before }}'
+            python scripts/classify_prod_release.py --base "$base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            base_sha="$(git rev-parse "$GITHUB_SHA^")"
+            python scripts/check_prod_app_release_scope.py --base "$base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo 'release_scope=app' >> "$GITHUB_OUTPUT"
+          fi
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
 
   production-preflight:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'facial' }}"
@@ -356,7 +378,7 @@ jobs:
             < scripts/deploy-prod-facial-services.sh
 
   production-app-preflight:
-    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' }}"
+    if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, release-scope]
     runs-on: ubuntu-latest
     environment: production-preflight
@@ -372,6 +394,7 @@ jobs:
       PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
+      APP_SCOPE_BASE_SHA: ${{ needs.release-scope.outputs.base_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -381,7 +404,7 @@ jobs:
         id: gates
         run: |
           set -Eeuo pipefail
-          python scripts/check_prod_app_release_scope.py --base '${{ github.event.before }}' --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          python scripts/check_prod_app_release_scope.py --base "$APP_SCOPE_BASE_SHA" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
           echo 'release_ready=true' >> "$GITHUB_OUTPUT"
       - name: Inventário remoto API/web somente leitura
         id: inventory
@@ -406,7 +429,7 @@ jobs:
           echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
 
   production-app-release:
-    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && needs.production-app-preflight.outputs.release_ready == 'true' }}"
+    if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && needs.production-app-preflight.outputs.release_ready == 'true' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-preflight]
     runs-on: ubuntu-latest
     environment: production
@@ -440,7 +463,7 @@ jobs:
             < scripts/deploy-prod-app-services.sh
 
   production-app-rollback-preflight:
-    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}"
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'app-rollback' }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     environment: production-preflight
@@ -484,7 +507,7 @@ jobs:
           echo 'release_ready=true' >> "$GITHUB_OUTPUT"
 
   production-app-rollback:
-    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.production-app-rollback-preflight.outputs.release_ready == 'true' }}"
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'app-rollback' && needs.production-app-rollback-preflight.outputs.release_ready == 'true' }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, production-app-rollback-preflight]
     runs-on: ubuntu-latest
     environment: production
