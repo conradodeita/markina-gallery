@@ -30,7 +30,7 @@
 
 ## Evidência e bloqueios em 2026-10-17
 
-- PR #202 está atualizado com a `main` `f89f2e3`; SHA validado pelo CI completo: `221047b391740af261cc749f22eec75eeb23dad5`. O CI #38992126934 passou em todos os jobs: backend (incluindo regressões PostgreSQL), frontend, Gemma, OpenSpec, Gitleaks e `homolog-inventory-policy`.
+- PR #202 foi reconciliado com a `main` `1e69e7887e9c04f4162e8a3a507302056b253aa4` no merge `b5a5cc9`; o CI #38992126934 passou em todos os jobs no SHA anterior `221047b391740af261cc749f22eec75eeb23dad5` (backend, incluindo regressões PostgreSQL, frontend, Gemma, OpenSpec, Gitleaks e `homolog-inventory-policy`). A validação de política e as regressões de release facial e API/web também passaram localmente após a reconciliação; CI do SHA reconciliado pendente.
 - O release saudável de produção confirmado continua em `f2ac110fb648e0158d1896923ade0661b006a276`. A `main` contém mudanças faciais posteriores ainda não presentes nesse baseline, incluindo `backend/app/facial/reference.py` e `frontend/app/public-galleries/facial-search-panel.tsx`. O verificador app compara o candidato com o checkout ativo e as recusa; não publicar esses blobs pelo fluxo API/web.
 - A política local do workflow API/web passou; o verificador executado contra `origin/main` desde `f2ac110` recusou como esperado (`arquivo_fora_do_escopo`) por esses runtimes faciais dedicados. Essa recusa precede qualquer build, container ou aprovação de produção.
 - A cópia root-owned `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` ainda precisa receber e ter conferido o comando/app blob antes de inventário remoto. Nenhuma ação remota ou alteração de produção foi executada nesta implementação.
