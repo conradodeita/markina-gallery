@@ -245,10 +245,16 @@ def assert_catalog(connection):
             "sale_order": {"provider_payment_id"},
             "tenant": {"canonical_host"},
         }
+        future_nullability = {
+            "private_upload_batch": {"derived_gallery_id": False},
+        }
         historical_columns = [column for column in target.c if column.name not in future_columns.get(name, set())]
         assert set(actual_columns) == {column.name for column in historical_columns}, name
-        assert all(actual_columns[column.name]["nullable"] == column.nullable
-                   for column in historical_columns), name
+        assert all(
+            actual_columns[column.name]["nullable"]
+            == future_nullability.get(name, {}).get(column.name, column.nullable)
+            for column in historical_columns
+        ), name
         actual_fk = {
             (tuple(f["constrained_columns"]), f["referred_table"], tuple(f["referred_columns"]))
             for f in inspector.get_foreign_keys(name)
