@@ -9,7 +9,7 @@ readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly FACIAL_SCRIPT_BLOB_SHA="bc07f8a4acb90526ed98b74ea5a8acd23cc0d90e"
-readonly APP_SCRIPT_BLOB_SHA="6767d0ba092adb23666ab612db505af2e0900b35"
+readonly APP_SCRIPT_BLOB_SHA="94d63fb618ca480fff9f3e5cdc92dd07d94bd255"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
@@ -40,16 +40,12 @@ cd "$PROJECT_ROOT"
 # Busca-se o arquivo da revisão imutável, valida-se seu blob Git e aceita-se
 # apenas o modo inventário. O script repete a checagem de que o SHA é o HEAD
 # de origin/main; o cliente SSH nunca fornece stdin ou argumentos adicionais.
-script_file="$(mktemp "${TMPDIR:-/tmp}/markina-preflight.XXXXXX")"
-trap 'rm -f "$script_file"' EXIT
 raw_url="https://raw.githubusercontent.com/$EXPECTED_REPOSITORY/$target_sha/scripts/$script_name"
-curl --location --fail --silent --show-error --proto '=https' --proto-redir '=https' \
-  --tlsv1.2 --output "$script_file" "$raw_url" \
-  || fail "não foi possível obter o script de inventário da revisão candidata"
-actual_blob_sha="$(git hash-object "$script_file")"
-[[ "$actual_blob_sha" == "$script_blob_sha" ]] \
-  || fail "script de inventário diverge da versão revisada e fixada no wrapper"
+script_body="$(curl --location --fail --silent --show-error --proto '=https' --proto-redir '=https' \
+  --tlsv1.2 "$raw_url")" || fail "não foi possível obter o inventário candidato"
+actual_blob_sha="$(printf '%s\n' "$script_body" | git hash-object --stdin)"
+[[ "$actual_blob_sha" == "$script_blob_sha" ]] || fail "script diverge do blob revisado"
 
-MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
-MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" \
-  bash "$script_file" --mode "$inventory_mode" --sha "$target_sha" </dev/null
+# Stdin vem exclusivamente do conteúdo cujo hash acabou de ser validado.
+printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
+  MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha"

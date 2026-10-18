@@ -52,6 +52,8 @@ class AppReleaseScopeTests(unittest.TestCase):
     def test_exact_release_coordination_scripts_are_allowed(self):
         names = (
             "scripts/deploy-prod-lock.sh",
+            "scripts/deploy-prod-state.sh",
+            "scripts/test_prod_release_state.py",
             "scripts/deploy-prod-web.sh",
             "scripts/test_deploy_prod_web.sh",
             "scripts/test_deploy_prod_web_policy.py",
