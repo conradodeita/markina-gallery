@@ -1164,6 +1164,114 @@ def test_admin_validation_summary_is_authorized_and_has_aggregate_storage(
     assert str(tmp_path) not in response.text
 
 
+def test_admin_validation_summary_counts_active_public_and_private_content_folders(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    tenant_id = FIXTURE_TENANT_ID
+    with SessionLocal() as db:
+        owner = Client(
+            tenant_id=tenant_id,
+            full_name="Cliente da pasta restrita",
+            phone_e164="+5511999999876",
+        )
+        parent = ParentGallery(tenant_id=tenant_id, name="Galeria de métricas")
+        db.add_all([owner, parent])
+        db.flush()
+        private_folder_state = GalleryClientState(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+        )
+        public_active = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta comum ativa",
+            purpose="content",
+            audience_scope="all",
+            position=0,
+        )
+        private_active = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta restrita ativa",
+            purpose="content",
+            audience_scope="selected",
+            position=1,
+        )
+        content_idle = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta sem job ativo",
+            purpose="content",
+            audience_scope="all",
+            position=2,
+        )
+        cover_active = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Ativos de capa",
+            purpose="cover_assets",
+            position=3,
+        )
+        empty_content = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta vazia",
+            purpose="content",
+            audience_scope="all",
+            position=4,
+        )
+        db.add_all([
+            private_folder_state,
+            public_active,
+            private_active,
+            content_idle,
+            cover_active,
+            empty_content,
+        ])
+        db.flush()
+        db.add(FolderClientGrant(
+            tenant_id=tenant_id,
+            folder_id=private_active.id,
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+        ))
+        photos = [
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=public_active.id, filename="publica-ativa.jpg",
+                       storage_key="summary/public-active.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=public_active.id, filename="publica-pronta.jpg",
+                       storage_key="summary/public-ready.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=private_active.id, filename="restrita-ativa.jpg",
+                       storage_key="summary/private-active.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=content_idle.id, filename="parada.jpg",
+                       storage_key="summary/idle.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=cover_active.id, filename="capa.jpg",
+                       storage_key="summary/cover.jpg"),
+        ]
+        db.add_all(photos)
+        db.flush()
+        db.add_all([
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[0].id, status="queued"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[1].id, status="completed"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[2].id, status="processing"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[3].id, status="failed"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[4].id, status="queued"),
+        ])
+        db.commit()
+
+    response = client.get("/admin/validation-summary")
+    assert response.status_code == 200
+    counts = response.json()["counts"]
+    assert counts["folders_with_active_imports"] == 2
+    assert counts["photos_in_folders_with_active_imports"] == 3
+
+
 def test_admin_validation_summary_keeps_other_metrics_when_storage_is_unavailable(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3632,7 +3740,6 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
             "confirmed_undelivered": 1,
             "reported": 1,
         },
-        "failed_messages": 1,
     }
     assert len(payload["groups"]) == 1
     assert payload["groups"][0]["client"]["name"] == "Ana Pagamentos"

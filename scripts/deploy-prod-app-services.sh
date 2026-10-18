@@ -34,6 +34,10 @@ DATABASE_REVISION=""
 
 fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
 
+verify_database_revision() {
+  [[ "$1" == "$EXPECTED_DATABASE_REVISION" ]] || fail "revisão de banco diverge do inventário aprovado"
+}
+
 verify_readonly_target_ancestry() (
   set -Eeuo pipefail
   local origin="$1" checkout_sha="$2" target_sha="$3" temp_root temp_repo fetched_sha current_sha
@@ -157,8 +161,7 @@ verify_repository() {
   [[ "$api_version" == "$CHECKOUT_SHA" ]] || fail "APP_VERSION da API diverge do checkout"
   COMPOSE_APP_VERSION="$api_version"
   DATABASE_REVISION="$(database_revision)"
-  [[ ("$MODE" != release && "$MODE" != rollback) || "$DATABASE_REVISION" == "$EXPECTED_DATABASE_REVISION" ]] \
-    || fail "revisão de banco diverge do inventário aprovado"
+  verify_database_revision "$DATABASE_REVISION"
 }
 
 runtime_snapshot() {

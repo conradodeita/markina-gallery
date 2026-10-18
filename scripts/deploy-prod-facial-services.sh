@@ -53,8 +53,17 @@ parse_arguments() {
 
 compose() {
   local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
+  if [[ -n "${COMPOSE_PRIMARY_YAML:-}" ]]; then
+    # Revalidar a configuração anterior após checkout do alvo, relendo o
+    # ambiente protegido atual sem persistir JSON resolvido ou segredos.
+    files=(--project-directory "$PROJECT_ROOT/docker" --env-file "$PROJECT_ROOT/$ENV_FILE" -p "$PROJECT_NAME" -f -)
+  fi
   for file in "${COMPOSE_EXTRA_FILES[@]}"; do files+=(-f "$file"); done
-  APP_VERSION="$COMPOSE_APP_VERSION" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+  if [[ -n "${COMPOSE_PRIMARY_YAML:-}" ]]; then
+    APP_VERSION="$COMPOSE_APP_VERSION" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" <<<"$COMPOSE_PRIMARY_YAML"
+  else
+    APP_VERSION="$COMPOSE_APP_VERSION" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+  fi
 }
 
 resolved_compose_hashes() {
@@ -88,6 +97,30 @@ require_existing_facial_runtime() {
   done
 }
 
+verify_reviewed_docker_changes() {
+  local git_root="$1" changed expected actual
+  changed="$(git -C "$git_root" diff --name-only "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/)" || fail "diff Docker indisponível"
+  [[ -n "$changed" ]] || return 0
+  [[ "$changed" == "$COMPOSE_FILE" ]] || fail "arquivo Docker fora do escopo revisado"
+  expected="$(git -C "$git_root" show "$TARGET_SHA:openspec/changes/improve-client-face-reference-capture/production-gates.json" \
+    | python3 -c 'import base64,json,sys
+try:
+    m=json.load(sys.stdin)["maintenance_release"]
+    if m["authorized"] is not True or m["scope"] != "existing_facial_runtime":
+        raise ValueError()
+    value=m["runtime_blobs"]["docker/docker-compose.yml"]
+    if not isinstance(value,list) or not all(isinstance(part,str) for part in value):
+        raise ValueError()
+    blob=base64.b64decode("".join(value),validate=True)
+    if len(blob)!=20:
+        raise ValueError()
+    print(blob.hex())
+except (KeyError,ValueError,TypeError,AssertionError):
+    sys.exit(1)')" || fail "Compose sem manifesto autorizado válido"
+  actual="$(git -C "$git_root" rev-parse "$TARGET_SHA:$COMPOSE_FILE")" || fail "blob Compose alvo ausente"
+  [[ "$actual" == "$expected" ]] || fail "Compose diverge do blob autorizado"
+}
+
 target_descends_from_checkout() (
   local origin="$1" git_dir target_sha
   git_dir="$(mktemp -d "${TMPDIR:-/tmp}/markina-preflight-git.XXXXXX")" || return 1
@@ -103,7 +136,8 @@ target_descends_from_checkout() (
   git -C "$git_dir" fetch --quiet --no-tags --filter=blob:none origin refs/heads/main || return 1
   target_sha="$(git -C "$git_dir" rev-parse 'FETCH_HEAD^{commit}')" || return 1
   [[ "$target_sha" == "$TARGET_SHA" ]] || return 1
-  git -C "$git_dir" merge-base --is-ancestor "$CHECKOUT_SHA" "$target_sha"
+  git -C "$git_dir" merge-base --is-ancestor "$CHECKOUT_SHA" "$target_sha" || return 1
+  verify_reviewed_docker_changes "$git_dir"
 )
 
 verify_repository() {
@@ -131,7 +165,7 @@ verify_repository() {
   else
     git fetch --quiet origin main
     git merge-base --is-ancestor "$TARGET_SHA" origin/main || fail "SHA alvo não pertence à main atual"
-    git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ || fail "alteração de Compose/Docker exige outro plano"
+    verify_reviewed_docker_changes "$PROJECT_ROOT"
     local migration_paths
     migration_paths="$(git diff --name-only "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/)"
     [[ -z "$migration_paths" || "$migration_paths" == "backend/migrations/versions/20261016_0082_facial_conditional_consent.py" ]] \
@@ -203,6 +237,12 @@ fingerprint() {
   { printf '%s\n' "inventory" "$TARGET_SHA" "$ACTIVE_SHA" "$CHECKOUT_SHA" "$EXPECTED_URL" "database_revision=$DATABASE_REVISION"; runtime_snapshot; } | sha256sum | awk '{print $1}'
 }
 
+fingerprint_with_baseline_compose() {
+  local COMPOSE_PRIMARY_YAML="$1"
+  local COMPOSE_APP_VERSION="$ACTIVE_SHA"
+  fingerprint
+}
+
 inventory() {
   verify_repository
   compose config --quiet || fail "configuração Compose inválida"
@@ -225,10 +265,11 @@ inventory() {
 }
 
 release() {
-  local current_fp service id image ref tag
+  local current_fp service id image ref tag baseline_compose_yaml
   verify_repository
   current_fp="$(fingerprint)"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário mudou desde a aprovação; nada foi alterado"
+  baseline_compose_yaml="$(git show "$CHECKOUT_SHA:$COMPOSE_FILE")" || fail "Compose anterior indisponível"
   for service in "${SERVICES[@]}"; do
     id="$(compose ps -q "$service")"
     image="$(docker inspect --format '{{.Image}}' "$id")"
@@ -246,7 +287,7 @@ release() {
   compose build "${SERVICES[@]}"
   # O build pode ser longo: recusa mudança de containers/ambiente ocorrida
   # desde o inventário aprovado, mantendo a versão ativa na comparação.
-  current_fp="$(COMPOSE_APP_VERSION="$ACTIVE_SHA" fingerprint)"
+  current_fp="$(fingerprint_with_baseline_compose "$baseline_compose_yaml")"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário mudou durante o build; serviços preservados"
   [[ "$(COMPOSE_APP_VERSION="$ACTIVE_SHA" database_revision)" == "$EXPECTED_DATABASE_REVISION" ]] \
     || fail "revisão do banco mudou após inventário; migration não aplicada"

@@ -33,7 +33,7 @@ export function FacialSearchPanel({
 }: {
   galleryId: string;
   result: FacialSearchResult | null;
-  onResult: (result: FacialSearchResult | null) => void;
+  onResult: (result: FacialSearchResult | null, initiatedHere?: boolean) => void;
 }) {
   const [availability, setAvailability] = useState<FacialSearchAvailability | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -304,7 +304,7 @@ export function FacialSearchPanel({
       );
       if (version !== contextVersion.current) return;
       rememberFacialSearch(storageKey.current, created.id);
-      onResult(created);
+      onResult(created, true);
       closeDialog();
     } catch (cause) {
       if (version !== contextVersion.current) return;
@@ -340,7 +340,7 @@ export function FacialSearchPanel({
       if (version !== contextVersion.current) return;
       if (recovered?.id !== unconfirmedRequest || !recovered.status || !recovered.progress) throw new Error("Invalid confirmation");
       rememberFacialSearch(storageKey.current, recovered.id);
-      onResult(recovered);
+      onResult(recovered, true);
       setError("");
       closeDialog();
     } catch (cause) {

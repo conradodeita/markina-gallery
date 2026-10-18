@@ -34,7 +34,6 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
       confirmed_orders: 1,
       confirmed_cents: 800,
       financial_statuses: { reported: 1, confirmed: 1 },
-      failed_messages: 1,
     },
     facets: {
       parent_galleries: [{ id: "gallery-public-1", name: "Formatura", count: 1 }],
@@ -75,7 +74,7 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
 }
 
 const emptyDashboard = {
-  summary: { clients: 0, orders: 0, total_cents: 0, selected_carts: 0, selected_cents: 0, selected_pricing_unavailable: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0, confirmed_cents: 0, financial_statuses: {}, failed_messages: 0 },
+  summary: { clients: 0, orders: 0, total_cents: 0, selected_carts: 0, selected_cents: 0, selected_pricing_unavailable: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0, confirmed_cents: 0, financial_statuses: {} },
   facets: { parent_galleries: [], financial_statuses: {}, delivery_statuses: {} },
   groups: [],
   page: { next_cursor: null, limit: 12 },
@@ -135,6 +134,7 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.getByText("Valor das fotos selecionadas")).toBeTruthy();
     expect(screen.getByText("Valor dos pedidos")).toBeTruthy();
     expect(screen.getByText("Receita confirmada")).toBeTruthy();
+    expect(screen.queryByText("Falhas de mensagem")).toBeNull();
     expect(screen.getByText("1 carrinho(s) sem pagamento comunicado")).toBeTruthy();
     expect(screen.getByText("1 pagamento(s) comunicado(s)")).toBeTruthy();
     expect(screen.getByText("1 depósito(s) confirmado(s)")).toBeTruthy();

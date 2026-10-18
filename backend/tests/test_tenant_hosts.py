@@ -5,6 +5,7 @@ from app.tenant_hosts import (
     CanonicalHostError,
     canonical_host_for_tenant,
     normalize_canonical_host,
+    public_gallery_url_for_tenant,
     purchase_url_for_tenant,
     request_hostname,
     tenant_for_host,
@@ -51,6 +52,9 @@ def test_origem_publica_suplanta_host_apenas_para_tenant_unico(tenant_db, monkey
     assert purchase_url_for_tenant(tenant_db, tenant, tenant.id) == (
         f"https://markina.example.com/library/purchases#order-{tenant.id}"
     )
+    assert public_gallery_url_for_tenant(tenant_db, tenant, tenant.id) == (
+        f"https://markina.example.com/public-galleries/{tenant.id}"
+    )
     assert tenant_for_host(tenant_db, "attacker.example.com") is None
 
 
@@ -91,3 +95,5 @@ def test_origem_nao_usa_host_recebido_quando_configuracao_ausente(tenant_db, mon
     assert canonical_host_for_tenant(tenant_db, tenant) is None
     with pytest.raises(CanonicalHostError):
         purchase_url_for_tenant(tenant_db, tenant, tenant.id)
+    with pytest.raises(CanonicalHostError):
+        public_gallery_url_for_tenant(tenant_db, tenant, tenant.id)

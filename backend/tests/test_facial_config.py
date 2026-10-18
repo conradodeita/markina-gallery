@@ -25,6 +25,9 @@ def _clear_facial_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "FACIAL_MINOR_POLICY_VERSION",
         "FACIAL_MINOR_SEARCH_ENABLED",
         "FACIAL_SIMILARITY_THRESHOLD_MILLI",
+        "FACIAL_AMBIGUOUS_THRESHOLD_MILLI",
+        "FACIAL_REFERENCE_AMBIGUOUS_THRESHOLD_MILLI",
+        "FACIAL_REGION_AMBIGUOUS_THRESHOLD_MILLI",
         "FACIAL_AEAD_ACTIVE_KEY_ID",
         "FACIAL_AEAD_KEYS_JSON",
         "FACIAL_REFERENCE_RETENTION_SECONDS",
@@ -140,3 +143,49 @@ def test_enabled_facial_configuration_rejects_unsafe_retention_and_ignores_legac
 def test_removed_minor_flag_is_absent_from_runtime_configuration() -> None:
     config_path = Path(__file__).resolve().parents[1] / "app" / "facial" / "config.py"
     assert "FACIAL_MINOR_SEARCH_ENABLED" not in config_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("raw, expected", [(None, 500), ("", None), ("  ", None), ("0", 0), ("450", 450), ("1000", 1000)])
+def test_reference_candidate_policy_is_configurable_and_explicitly_disabled(
+    monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: int | None
+) -> None:
+    _clear_facial_environment(monkeypatch)
+    if raw is not None:
+        monkeypatch.setenv("FACIAL_REFERENCE_AMBIGUOUS_THRESHOLD_MILLI", raw)
+    settings = facial_settings_from_environment()
+    assert settings.reference_ambiguous_threshold_milli == expected
+    assert settings.similarity_threshold_milli == 750
+    assert settings.ambiguous_threshold_milli is None
+
+
+@pytest.mark.parametrize("raw", ["-1", "1001", "invalid", "500.0"])
+def test_reference_candidate_policy_rejects_invalid_configuration(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    _clear_facial_environment(monkeypatch)
+    monkeypatch.setenv("FACIAL_REFERENCE_AMBIGUOUS_THRESHOLD_MILLI", raw)
+    with pytest.raises(FacialConfigurationError, match="FACIAL_REFERENCE_AMBIGUOUS_THRESHOLD_MILLI"):
+        facial_settings_from_environment()
+
+
+@pytest.mark.parametrize("raw, expected", [(None, 600), ("", None), ("  ", None), ("0", 0), ("550", 550), ("1000", 1000)])
+def test_region_candidate_policy_is_independent_and_explicitly_disabled(
+    monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: int | None
+) -> None:
+    _clear_facial_environment(monkeypatch)
+    if raw is not None:
+        monkeypatch.setenv("FACIAL_REGION_AMBIGUOUS_THRESHOLD_MILLI", raw)
+    settings = facial_settings_from_environment()
+    assert settings.region_ambiguous_threshold_milli == expected
+    assert settings.reference_ambiguous_threshold_milli == 500
+    assert settings.similarity_threshold_milli == 750
+
+
+@pytest.mark.parametrize("raw", ["-1", "1001", "invalid", "600.0"])
+def test_region_candidate_policy_rejects_invalid_configuration(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    _clear_facial_environment(monkeypatch)
+    monkeypatch.setenv("FACIAL_REGION_AMBIGUOUS_THRESHOLD_MILLI", raw)
+    with pytest.raises(FacialConfigurationError, match="FACIAL_REGION_AMBIGUOUS_THRESHOLD_MILLI"):
+        facial_settings_from_environment()

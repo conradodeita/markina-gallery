@@ -97,8 +97,7 @@ verify_repository() {
   CHECKOUT_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   ACTIVE_SHA="$CHECKOUT_SHA"
   DATABASE_REVISION="$TEST_DATABASE_REVISION"
-  [[ ("$MODE" != release && "$MODE" != rollback) || "$DATABASE_REVISION" == "$EXPECTED_DATABASE_REVISION" ]] \
-    || fail "revisão de banco diverge do inventário aprovado"
+  verify_database_revision "$DATABASE_REVISION"
   printf 'verify\n' >> "$CALL_LOG"
 }
 hostname() { printf 'clearbudget-vnic\n'; }
@@ -155,6 +154,18 @@ if grep -Eq '^docker |^compose (build|up)|^git switch' "$CALL_LOG"; then
   echo 'schema divergente alterou serviço ou imagem antes de abortar' >&2; exit 1
 fi
 TEST_DATABASE_REVISION="20261017_0084"
+
+: > "$CALL_LOG"
+MODE="inventory"
+TEST_DATABASE_REVISION="20261017_0083"
+if ( inventory ) >"$tmpdir/inventory-schema-divergence.out" 2>&1; then
+  echo 'inventário aceitou schema divergente' >&2; exit 1
+fi
+if grep -Eq '^docker |^compose (build|up)|^git switch' "$CALL_LOG"; then
+  echo 'inventário divergente alterou serviço ou imagem' >&2; exit 1
+fi
+TEST_DATABASE_REVISION="20261017_0084"
+MODE="release"
 
 : > "$CALL_LOG"
 INVENTORY_FINGERPRINT="$(printf 'e%.0s' {1..64})"

@@ -3099,8 +3099,14 @@ class PrivateUploadBatch(Base):
         ForeignKey("tenant.id"), index=True,
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(
-        ForeignKey("derived_gallery.id", ondelete="CASCADE"), index=True
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        index=True, nullable=True
+    )
+    folder_id: Mapped[UUID | None] = mapped_column(
+        index=True, nullable=True
     )
     actor_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
     status: Mapped[str] = mapped_column(String(16), default="open")
@@ -3108,7 +3114,26 @@ class PrivateUploadBatch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    __table_args__ = (CheckConstraint("status IN ('open', 'closed', 'completed')"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'closed', 'completed')"),
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "tenant_id"],
+            ["parent_gallery.id", "parent_gallery.tenant_id"],
+            name="fk_private_upload_batch_parent_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["folder_id", "parent_gallery_id", "tenant_id"],
+            ["photo_folder.id", "photo_folder.parent_gallery_id", "photo_folder.tenant_id"],
+            name="fk_private_upload_batch_folder_parent_tenant",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "(derived_gallery_id IS NOT NULL AND parent_gallery_id IS NULL AND folder_id IS NULL) OR "
+            "(derived_gallery_id IS NULL AND parent_gallery_id IS NOT NULL AND folder_id IS NOT NULL)",
+            name="ck_private_upload_batch_scope",
+        ),
+    )
 
 
 class PrivateUploadBatchAsset(Base):
@@ -3120,7 +3145,7 @@ class PrivateUploadBatchAsset(Base):
         ForeignKey("private_upload_batch.id", ondelete="CASCADE"), primary_key=True
     )
     photo_asset_id: Mapped[UUID] = mapped_column(
-        ForeignKey("photo_asset.id", ondelete="CASCADE"), primary_key=True, unique=True
+        ForeignKey("photo_asset.id", ondelete="CASCADE"), primary_key=True
     )
 
 

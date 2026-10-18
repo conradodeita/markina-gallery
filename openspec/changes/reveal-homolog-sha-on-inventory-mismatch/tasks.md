@@ -12,5 +12,5 @@
 
 ## 3. Integrar e usar o diagnóstico
 
-- [ ] 3.1 Abrir PR para `main` e integrar somente após CI verde e revisão humana; não publicar aplicação.
-- [ ] 3.2 Executar o inventário com o SHA previamente confirmado, registrar qualquer divergência sem consultar serviços e reconciliar o plano operacional antes do deploy da change de produto.
+- [x] 3.1 Abrir PR #208 para `main` e integrar após CI verde e autorização explícita do proprietário; não publicar aplicação. Evidência: merge `57f5a951` após CI `39033921405` verde.
+- [x] 3.2 Executar o inventário com o SHA confirmado, registrar divergência sem consultas quando necessário e reconciliar o plano operacional antes do deploy. Evidência: workflow `39036156815` bloqueou sem consultas (`71be3b2` esperado, `0779b3e` observado); workflow `39036197944`, esperado `0779b3e`, concluiu inventário somente leitura. A reconciliação está especificada em `openspec/changes/reconcile-homolog-release-lineage/`.

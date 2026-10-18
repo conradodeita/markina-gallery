@@ -14,6 +14,34 @@ const folders = [
 ];
 
 describe("apresentação editorial compartilhada", () => {
+  it("revela uma vez por consulta, fecha ampliação e preserva pasta e interação posterior", () => {
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    const featuredGroups = [{ id: "matched", title: "Correspondências", detail: "Confira a pessoa.", photos: [folders[0].photos[0]] }];
+    const props = { galleryName: "Evento", folders, featuredGroups };
+    const { rerender } = render(<GalleryPresentation {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Encerramento (1 fotos)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Sem dimensões.jpg" }));
+    rerender(<GalleryPresentation {...props} revealFeaturedRequestId="request-1" />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Possibilidades encontradas" }));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Encerramento (1 fotos)" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Sem dimensões.jpg" }));
+    rerender(<GalleryPresentation {...props} featuredGroups={[...featuredGroups]} revealFeaturedRequestId="request-1" />);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(scroll).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    rerender(<GalleryPresentation {...props} revealFeaturedRequestId={null} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar prévia protegida de Sem dimensões.jpg" }));
+    rerender(<GalleryPresentation {...props} revealFeaturedRequestId="request-2" />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(scroll).toHaveBeenCalledTimes(2);
+    rerender(<GalleryPresentation {...props} revealFeaturedRequestId={null} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    scroll.mockRestore();
+  });
   it("exibe a capa limpa com título sem retirar proteção das fotos comuns", () => {
     render(<GalleryPresentation galleryName="Evento" coverUrl="/cover-preview" folders={folders.slice(0, 1)} titleStyle={{ fontSize:74, color:"#ffcc00" }} />);
     const cover = screen.getByRole("img", { name:"Capa de Evento" });

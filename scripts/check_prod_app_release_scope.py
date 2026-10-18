@@ -15,8 +15,11 @@ MANIFEST = ROOT / "openspec/changes/add-production-app-release-workflow/runtime-
 RUNTIME_FILES = {
     "backend/app/main.py",
     "backend/app/statistics_report.py",
+    "backend/app/private_folder_overview.py",
     "frontend/app/globals.css",
     "frontend/app/admin/statistics/page.tsx",
+    "frontend/app/admin/galleries/private-folder-client-overview.tsx",
+    "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
 }
 ALLOWED_PREFIXES = (
     "backend/tests/",
