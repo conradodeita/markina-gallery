@@ -1,5 +1,8 @@
+import json
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,6 +73,61 @@ class ReleaseClassifierTests(unittest.TestCase):
 
     def test_facial_only(self):
         self.assertEqual(classify(set(FACIAL_RUNTIME)), "facial")
+
+    def test_cli_uses_deployed_baseline_and_exports_it_to_app_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = dict(os.environ, GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                       GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.invalid")
+
+            def git(*args):
+                return subprocess.run(["git", *args], cwd=root, env=env, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            def commit():
+                git("add", ".")
+                git("commit", "-qm", "fixture")
+                return git("rev-parse", "HEAD")
+
+            git("init", "-q")
+            (root / "backend/app").mkdir(parents=True)
+            (root / "backend/app/main.py").write_text("existing app\n", encoding="utf-8")
+            auth = root / "backend/app/auth.py"
+            auth.write_text("previous OTP\n", encoding="utf-8")
+            previous_main = commit()
+            auth.write_text("already deployed OTP fix\n", encoding="utf-8")
+            baseline = commit()
+            manifest = root / "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"production_baseline_sha": baseline,
+                                           "expected_database_revision": "20261017_0084"}), encoding="utf-8")
+            (root / "scripts").mkdir()
+            shutil.copyfile(Path(__file__).with_name("classify_prod_release.py"), root / "scripts/classify_prod_release.py")
+            commit()
+            output = root / ".git/github-output"
+            cli_env = dict(env, GITHUB_OUTPUT=str(output))
+
+            def classify_cli():
+                output.write_text("", encoding="utf-8")
+                result = subprocess.run([sys.executable, "scripts/classify_prod_release.py", "--base", previous_main,
+                                         "--target", "HEAD"], cwd=root, env=cli_env, check=False, capture_output=True, text=True)
+                return result, output.read_text(encoding="utf-8")
+
+            result, outputs = classify_cli()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("release_scope=none", outputs)
+            self.assertIn(f"base_sha={baseline}", outputs)
+            (root / "backend/app/main.py").write_text("new app feature\n", encoding="utf-8")
+            commit()
+            result, outputs = classify_cli()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("release_scope=app", outputs)
+            self.assertIn(f"base_sha={baseline}", outputs)
+            auth.write_text("new facial/auth change\n", encoding="utf-8")
+            commit()
+            result, outputs = classify_cli()
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("release_scope=mixed", outputs)
 
     def test_mixed_is_distinct(self):
         self.assertEqual(classify({"backend/app/statistics_report.py", "backend/app/facial/search.py"}), "mixed")
