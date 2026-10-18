@@ -45,6 +45,27 @@ it("preserva modo protegido legado ao salvar outro campo", async () => {
   expect(payload).not.toHaveProperty("access_mode");
 });
 
+it("identifica os proprietários das pastas privadas na etapa de imagens", async () => {
+  const fetcher = vi.fn((path: string) => {
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.endsWith("/private-folders")) return response({ galleries: [{
+      id: "private-1", name: "Ensaio Ana", owner: { id: "ana", name: "Ana Cliente" },
+      active_members: [{ id: "ana", name: "Ana Cliente" }],
+      folders: [{ id: "private-folder-1", name: "Retratos da Ana", status: "released", photo_count: 6 }],
+    }] });
+    if (path.includes("/folders?")) return response({ total: 1, folders: [{ id: "public-folder-1", name: "Pasta pública", status: "released", photo_count: 1 }] });
+    return response({});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
+  const privateSection = await screen.findByRole("region", { name: "Pastas de galerias privadas" });
+  expect(await within(privateSection).findByText("Responsável principal: Ana Cliente")).toBeTruthy();
+  expect(within(privateSection).getByText("Retratos da Ana")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Abrir pasta Pasta pública" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Abrir pasta Retratos da Ana" })).toBeNull();
+});
+
 function response(value: object, status = 200) {
   return Promise.resolve(new Response(status === 204 ? null : JSON.stringify(value), { status, headers: { "content-type": "application/json" } }));
 }

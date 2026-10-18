@@ -4468,6 +4468,18 @@ def admin_parent_gallery_available_photos(
     }
 
 
+@app.get("/admin/parent-galleries/{parent_gallery_id}/private-folders")
+def admin_parent_gallery_private_folders(
+    parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    _parent_gallery_or_404(db, parent_gallery_id, tenant_id=tenant_id)
+    from app.private_folder_overview import private_folder_overview
+
+    return {"galleries": private_folder_overview(db, parent_gallery_id, tenant_id=tenant_id)}
+
+
 @app.get("/admin/parent-galleries/{parent_gallery_id}/folders")
 def admin_parent_gallery_folders(
     parent_gallery_id: UUID,

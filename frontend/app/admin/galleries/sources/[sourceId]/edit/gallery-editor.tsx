@@ -12,6 +12,7 @@ import {
   ClientEditorDialog,
 } from "../../../../clients/client-controls";
 import { ClientGalleryCard, type ClientGalleryRow } from "../../../client-gallery-card";
+import { PrivateFolderClientOverview } from "../../../private-folder-client-overview";
 import { FolderUploadProgress, type FolderUpload } from "../../../folder-upload-progress";
 import { FolderProcessingPanel } from "../../../folder-processing-panel";
 import { GlobalPixSummary, type GlobalPix } from "../../../../settings/pix-panel";
@@ -870,6 +871,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept={rawCapabilities.enabled ? `image/jpeg,.jpg,.jpeg,${rawCapabilities.formats.join(",")}` : "image/jpeg"} multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload || uploading} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
             </div>
           ) : null}
+          <PrivateFolderClientOverview key={sourceId} sourceId={sourceId} refreshToken={refresh} />
         </section>
       ) : null}
 
