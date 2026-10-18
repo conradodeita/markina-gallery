@@ -3,12 +3,12 @@
   "production_baseline_sha": "b4f15abd6a71585082758062feba7fcfcc225587",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
-    "backend/app/main.py": "9bd8a29865a02144bc356d57099501132c2d2684",
+    "backend/app/main.py": "040fdf0174571c9dc9b23ed5be6918de2e4a99e6",
     "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
     "frontend/app/globals.css": "8aa1c117cd9d032fc5847766fe3b238ca15da0d8",
     "frontend/app/admin/statistics/page.tsx": "b3f74605c9031f5b3469eccdaf1c18c2063ddc45",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx": "47eb3ba7bdc21faffc583f3ec455f0bc2f178266",
-    "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx": "fc24daef801045bce902d25ae4c935f3fa5f50a0"
+    "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx": "d3ec9f39db7d79bf2c7372afcbe9ce616f1f1159"
   }
 }

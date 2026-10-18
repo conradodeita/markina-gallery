@@ -4505,6 +4505,20 @@ def admin_parent_gallery_folders(
             .order_by(PhotoFolder.position, PhotoFolder.created_at)
         )
     )
+    client_names_by_folder: dict[UUID, list[str]] = {}
+    if include_restricted and folders:
+        for folder_id, client_name in db.execute(
+            select(FolderClientGrant.folder_id, Client.full_name)
+            .join(Client, Client.id == FolderClientGrant.client_id)
+            .where(
+                FolderClientGrant.tenant_id == tenant_id,
+                Client.tenant_id == tenant_id,
+                FolderClientGrant.parent_gallery_id == parent_gallery_id,
+                FolderClientGrant.folder_id.in_([folder.id for folder in folders]),
+            )
+            .order_by(FolderClientGrant.folder_id, Client.full_name, Client.id)
+        ):
+            client_names_by_folder.setdefault(folder_id, []).append(client_name)
     rows = []
     for folder in folders:
         count = (
@@ -4552,6 +4566,7 @@ def admin_parent_gallery_folders(
                 "id": str(folder.id),
                 "name": folder.name,
                 "audience_scope": folder.audience_scope or "all",
+                "client_names": client_names_by_folder.get(folder.id, []),
                 "status": folder.status,
                 "position": folder.position,
                 "photo_count": count,
