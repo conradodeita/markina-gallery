@@ -264,7 +264,7 @@ flock() {{ return 0; }}
 
     def mode(self, mode, flow="web", approval=None, extra="", ok=True, args=""):
         flag = "--approval-code" if flow == "web" else "--approval-fingerprint"
-        return self.run_shell(f'main --mode {mode} --sha {SHA_MAIN} {flag+" "+approval if approval else ""} {args}', flow, extra, ok)
+        return self.run_shell(f'main --mode {mode} --sha {self.model["main"]} {flag+" "+approval if approval else ""} {args}', flow, extra, ok)
 
     def fingerprint(self, mode="inventory", flow="web", args=""):
         result = self.mode(mode, flow, args=args)
@@ -437,7 +437,15 @@ flock() {{ return 0; }}
         self.mode("release", flow="app-services", approval=fp)
         receipt = (self.state / "web-current.identity").read_text().split()
         self.assertEqual(receipt[:2], [SHA_MAIN, IMAGE_NEW])
-        self.fingerprint()
+        self.reload()
+        next_sha, next_image = "c" * 40, "sha256:" + "f" * 64
+        self.model["built"]["web"] = next_image
+        self.mutate(main=next_sha, remote=next_sha)
+        api_before = dict(self.model["services"]["api"])
+        self.release()
+        self.assertEqual(self.reload()["services"]["api"], api_before)
+        self.assertEqual(self.model["api_version"], SHA_MAIN)
+        self.assertEqual((self.state / "web-current.identity").read_text().split()[:2], [next_sha, next_image])
 
     def test_web_then_app_inventory_preserves_api_version(self):
         self.release()
@@ -447,6 +455,8 @@ flock() {{ return 0; }}
 
     def test_web_then_app_release_and_rollback_preserve_independent_versions(self):
         self.release()
+        self.reload()
+        self.mutate(main="c" * 40, remote="c" * 40)
         fp = self.fingerprint(flow="app-services")
         self.mode("release", flow="app-services", approval=fp)
         self.assertEqual((self.state / "app-api-rollback.version").read_text().strip(), SHA_OLD)
@@ -499,6 +509,28 @@ flock() {{ return 0; }}
         self.mode("release", approval=fp, ok=False)
         self.assertTrue((self.state / "web-pending.identity").exists())
         self.assertEqual((self.state / "web-current.identity").read_text().strip(), self.current)
+
+    def test_recovery_rejects_image_outside_the_failed_attempt(self):
+        fp = self.fingerprint()
+        self.mutate(health_fail=True)
+        self.mode("release", approval=fp, ok=False)
+        self.reload()
+        unexpected = "sha256:" + "e" * 64
+        self.model["services"]["web"].update(image=unexpected, health="healthy")
+        self.model["images"]["unrelated-release"] = unexpected
+        self.mutate(health_fail=False)
+        before = self.snapshot()
+        self.mode("recover-inventory", ok=False)
+        self.assertEqual(before, self.snapshot())
+
+    def test_rollback_accepts_unhealthy_current_image_with_valid_identity(self):
+        self.release()
+        self.reload()
+        self.model["services"]["web"]["health"] = "unhealthy"
+        self.save()
+        fp = self.fingerprint("rollback-inventory")
+        self.mode("rollback", approval=fp)
+        self.assertEqual(self.reload()["services"]["web"]["image"], IMAGE_OLD)
 
     def test_wrapper_validates_body_in_memory_and_rejects_tampering(self):
         # Fronteiras curl/bash são stubs; a lógica de regex e blob do wrapper é real.

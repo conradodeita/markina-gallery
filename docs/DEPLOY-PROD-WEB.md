@@ -18,7 +18,7 @@ O workflow de `develop` publica vários serviços e pode migrar dados. Não usar
 
 `web-current.identity` é o recibo compartilhado pelos fluxos web e app, em `/var/lib/markina-gallery/deploy-state`. Quatro campos: SHA de origem, ID Docker `sha256:...`, hash Compose web e checkout conhecido. Os scripts conferem imagem/configuração efetivamente executadas com esse recibo. Não usam `web-last-healthy.sha`, `app-last-healthy.sha` ou `last-healthy.sha` para inferir a imagem atual.
 
-`web-previous.identity` identifica a recuperação após release saudável. `web-pending.identity`, `web-pending.services`, `web-pending.compose` e `web-pending.target` preservam imagem, checkout, serviços, arquivos Compose e SHA do procedimento antes do build. O registro pending impede outro release até conclusão/recuperação. O ID atual é preservado sob `markina-gallery-web:rollback-<64 hex do ID>`; a tag precisa resolver ao ID registrado. Tag conflitante nunca é sobrescrita. Tags são referências mutáveis; somente o ID identifica o conteúdo.
+`web-previous.identity` identifica a recuperação após release saudável. `web-pending.identity`, `web-pending.services`, `web-pending.compose` e `web-pending.target` e `web-pending.image` preservam imagem, checkout, serviços, arquivos Compose e SHA do procedimento antes do build. O registro pending impede outro release até conclusão/recuperação. O ID atual é preservado sob `markina-gallery-web:rollback-<64 hex do ID>`; a tag precisa resolver ao ID registrado. Tag conflitante nunca é sobrescrita. Tags são referências mutáveis; somente o ID identifica o conteúdo.
 
 Os fluxos app/web usam o mesmo lock existente, aberto somente para leitura e adquirido com flock exclusivo em operações mutáveis. Lock ausente/symlink/ocupado ou tentativa do outro fluxo bloqueia. Inventários não adquirem lock, não escrevem, não fazem fetch e não criam temporários. São snapshots revalidados sob lock antes de qualquer mutação.
 
@@ -89,7 +89,7 @@ run_web --mode recover-inventory --sha "$APPROVED_SHA"
 run_web --mode recover --sha "$APPROVED_SHA" --approval-code CODIGO_DE_RECUPERACAO_ATUAL
 ```
 
-`recover` usa o pending do release/rollback interrompido. Aceita web unhealthy ou ausente, mas exige o mesmo SHA de procedimento, imagem e tag anteriores existentes/iguais, seis Compose e serviços não-web inalterados. Não depende de main remota continuar parada; a recuperação permanece vinculada ao código aprovado já local. Restaura imagem padrão pelo ID e checkout original. Se o container anterior continua saudável e usa o ID anterior (por exemplo, build falhou), não o recria. Caso contrário recria somente web e repete saúde/ID/HTTPS/404/snapshot. Falha conserva pending; não declarar recuperação concluída.
+`recover` usa o pending do release/rollback interrompido. Aceita web unhealthy ou ausente após a troca planejada; recusa imagem corrente diferente do ID anterior e do ID construído registrado. Exige o mesmo SHA de procedimento, imagem e tag anteriores existentes/iguais, seis Compose e serviços não-web inalterados. Não depende de main remota continuar parada; a recuperação permanece vinculada ao código aprovado já local. Restaura imagem padrão pelo ID e checkout original. Se o container anterior continua saudável e usa o ID anterior (por exemplo, build falhou), não o recria. Caso contrário recria somente web e repete saúde/ID/HTTPS/404/snapshot. Falha conserva pending; não declarar recuperação concluída.
 
 Para reverter um release já concluído, usar o recibo anterior com inventário novo:
 

@@ -49,3 +49,11 @@ O verificador app SHALL admitir somente `scripts/deploy-prod-state.sh` e `script
 #### Scenario: Integração de engenharia
 - **WHEN** a main recebe somente esta correção de procedimento e documentação
 - **THEN** CI e revisão verificam release_scope=none e jobs de ambiente SHALL permanecer ignorados
+
+#### Scenario: Outra imagem substitui a tentativa
+- **WHEN** a imagem corrente não é a anterior preservada nem a construída e registrada na tentativa interrompida
+- **THEN** recuperação SHALL recusar antes de mutar, mantendo evidência para investigar uma intervenção concorrente
+
+#### Scenario: Release saudável degrada depois da conclusão
+- **WHEN** o web fica unhealthy após um release concluído, mas sua identidade coincide com o recibo atual
+- **THEN** rollback aprovado SHALL poder restaurar o ID anterior, mantendo todos os gates de configuração e serviços não-web

@@ -14,7 +14,7 @@
 
 ## Evidências deste checkpoint
 
-30 contratos Linux aprovados em 164,262 s; flock real, mocks Docker/Git/HTTPS, wrapper verificado e falhas de recuperação. Políticas web/workflow, 10 testes de escopo e 12 de classificação aprovados. OpenSpec 1.14.0 estrito: 122/122. Dois Code Reviews somente leitura sem defeitos acionáveis; ver `validation.md`. Nenhum teste ou comando SSH executado contra produção. CI/merge ainda pendentes.
+32 contratos Linux aprovados em 156,953 s; flock real, mocks Docker/Git/HTTPS, wrapper verificado e falhas de recuperação. Políticas web/workflow, 11 testes de escopo e 12 de classificação aprovados. OpenSpec 1.14.0 estrito: 122/122. Três Code Reviews somente leitura sem defeitos acionáveis; ver `validation.md`. Nenhum teste ou comando SSH executado contra produção. CI/merge ainda pendentes.
 
 ## Fora desta autorização
 

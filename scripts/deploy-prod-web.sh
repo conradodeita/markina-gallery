@@ -30,6 +30,7 @@ WEB_STATUS="" WEB_IMAGE_ID="" CURRENT_RECORD="" RESTORE_RECORD="" NON_WEB=""
 RECOVERY_IMAGE="" RECOVERY_SHA="" RECOVERY_CONFIG="" RECOVERY_CHECKOUT=""
 API_VERSION="" RUNTIME_REF="" NON_WEB_BEFORE=""
 COMPOSE_DIGEST=""
+PENDING_IMAGE=""
 
 fail() { echo "deploy-prod-web: $*" >&2; exit 1; }
 
@@ -113,7 +114,7 @@ verify_runtime_web() {
     RUNTIME_REF="$(docker inspect --format '{{.Config.Image}}' "$WEB_CONTAINER")"
     [[ "$RUNTIME_REF" == "$PROJECT_NAME-web" || "$RUNTIME_REF" == "$PROJECT_NAME-web:latest" ]] || fail 'referência web inesperada'
     WEB_CONFIG_HASH="$TARGET_CONFIG_HASH"
-    if [[ "$MODE" != recover* ]]; then [[ "$WEB_STATUS" == healthy ]] || fail 'web não saudável'; fi
+    if [[ "$MODE" != recover* && "$MODE" != rollback* ]]; then [[ "$WEB_STATUS" == healthy ]] || fail 'web não saudável'; fi
   fi
   nginx="$(compose ps -q nginx)"
   [[ -n "$nginx" && "$nginx" != *$'\n'* ]] || fail 'nginx ausente/duplicado'
@@ -169,6 +170,16 @@ prepare_inventory() {
   esac
   if [[ -n "$RESTORE_RECORD" ]]; then
     read -r RECOVERY_SHA RECOVERY_IMAGE RECOVERY_CONFIG RECOVERY_CHECKOUT <<< "$RESTORE_RECORD"
+    if [[ "$MODE" == recover* ]]; then
+      [[ -f "$STATE_DIR/web-pending.image" && ! -L "$STATE_DIR/web-pending.image" ]] || fail 'ID da tentativa ausente'
+      PENDING_IMAGE="$(cat "$STATE_DIR/web-pending.image")"
+      [[ "$PENDING_IMAGE" == unbuilt || "$PENDING_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'ID da tentativa inválido'
+      if [[ "$WEB_STATUS" == missing ]]; then
+        [[ "$PENDING_IMAGE" != unbuilt ]] || fail 'web desapareceu antes da troca planejada'
+      else
+        [[ "$WEB_IMAGE_ID" == "$RECOVERY_IMAGE" || "$WEB_IMAGE_ID" == "$PENDING_IMAGE" ]] || fail 'imagem atual não pertence à tentativa; investigar antes de recuperar'
+      fi
+    fi
     [[ "$RECOVERY_CONFIG" == "$WEB_CONFIG_HASH" ]] || fail 'configuração de recuperação diverge'
     git cat-file -e "$RECOVERY_CHECKOUT^{commit}" || fail 'checkout de recuperação ausente'
     git merge-base --is-ancestor "$RECOVERY_CHECKOUT" "$TARGET_SHA" || fail 'recuperação fora da história aprovada'
@@ -182,7 +193,7 @@ approval_fingerprint() {
   local mode="${MODE%-inventory}"
   [[ "$mode" == inventory ]] && mode=release
   printf '%s\n' "$mode" "$TARGET_SHA" "$CHECKOUT_SHA" "$API_VERSION" "$CURRENT_RECORD" "$RESTORE_RECORD" \
-    "$WEB_CONTAINER" "$WEB_IMAGE_ID" "$WEB_STATUS" "$WEB_CONFIG_HASH" "$COMPOSE_DIGEST" "$NON_WEB" "$PUBLIC_URL" | sha256sum | awk '{print $1}'
+    "$WEB_CONTAINER" "$WEB_IMAGE_ID" "$WEB_STATUS" "$WEB_CONFIG_HASH" "$COMPOSE_DIGEST" "$PENDING_IMAGE" "$NON_WEB" "$PUBLIC_URL" | sha256sum | awk '{print $1}'
 }
 
 inventory() {
@@ -191,6 +202,7 @@ inventory() {
   printf 'web_image=%s health=%s identity=%s\n' "$WEB_IMAGE_ID" "$WEB_STATUS" "$CURRENT_RECORD"
   printf 'restore_identity=%s\nnon_web_snapshot_sha256=%s\n' "$RESTORE_RECORD" "$(printf '%s' "$NON_WEB" | sha256sum | awk '{print $1}')"
   printf 'compose_files_sha256:\n%s\n' "$COMPOSE_DIGEST"
+  printf 'pending_target_image=%s\n' "$PENDING_IMAGE"
   printf 'approval_code=%s\n' "$(approval_fingerprint)"
   echo 'escopo=web; possível breve interrupção; inventário é snapshot sem escrita'
 }
@@ -229,6 +241,7 @@ begin_attempt() {
   release_write_file web-pending.services "$NON_WEB" || fail 'não salvou snapshot'
   release_write_file web-pending.compose "$COMPOSE_DIGEST" || fail 'não salvou configuração'
   release_write_file web-pending.target "$TARGET_SHA" || fail 'não salvou SHA do procedimento'
+  release_write_file web-pending.image unbuilt || fail 'não inicializou ID da tentativa'
   release_write_file web-pending.identity "$previous" || fail 'não salvou recibo de recuperação'
 }
 
@@ -237,7 +250,7 @@ finish_attempt() {
   release_write_file web-current.identity "$record" || fail 'não salvou identidade saudável'
   release_write_file web-last-healthy.sha "${record%% *}" || fail 'não salvou marcador histórico'
   printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event" "$record" >> "$STATE_DIR/web-history.log"
-  rm -f "$STATE_DIR/web-in-flight.sha" "$STATE_DIR/web-pending.identity" "$STATE_DIR/web-pending.services" "$STATE_DIR/web-pending.target" "$STATE_DIR/web-pending.compose"
+  rm -f "$STATE_DIR/web-in-flight.sha" "$STATE_DIR/web-pending.identity" "$STATE_DIR/web-pending.services" "$STATE_DIR/web-pending.target" "$STATE_DIR/web-pending.compose" "$STATE_DIR/web-pending.image"
 }
 
 execute_release() {
@@ -259,6 +272,7 @@ execute_release() {
     && "$(release_non_web_snapshot | LC_ALL=C sort)" == "$old_non_web" ]] || fail 'runtime mudou durante build; não recriar'
   [[ "$TARGET_SHA" == "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" ]] || fail 'main mudou durante build'
   release_check_image "$old_image" true || fail 'backup perdido durante build'
+  release_write_file web-pending.image "$built_image" || fail 'não registrou ID construído'
   release_write_file web-in-flight.sha "$TARGET_SHA" || fail 'não registrou tentativa'
   recreate_web_only || fail 'recriação falhou; recuperação necessária'
   check_web_after_change "$built_image"
@@ -274,7 +288,12 @@ execute_restore() {
   verify_approval
   previous="${CURRENT_RECORD% *} $CHECKOUT_SHA"
   NON_WEB_BEFORE="$NON_WEB"
-  if [[ "$MODE" == rollback ]]; then begin_attempt "$previous"; else event=recover-web; fi
+  if [[ "$MODE" == rollback ]]; then
+    begin_attempt "$previous"
+    release_write_file web-pending.image "$RECOVERY_IMAGE" || fail 'não registrou ID a restaurar'
+  else
+    event=recover-web
+  fi
   # ID e tag já foram conferidos no inventário, antes de qualquer checkout.
   docker image tag "$RECOVERY_IMAGE" "$PROJECT_NAME-web" || fail 'restauração da referência falhou'
   [[ "$(release_image_id "$PROJECT_NAME-web")" == "$RECOVERY_IMAGE" ]] || fail 'referência restaurada incorreta'
