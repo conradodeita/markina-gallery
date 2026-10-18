@@ -16,6 +16,7 @@ from test_facial_search_worker import (
 )
 
 from app.auth import FacialSearchNotificationOutbox, PhotoFaceEmbedding
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION
 from app.facial.crypto import FacialCipher
 from app.facial.jobs import FacialJobRepository
 from app.facial.search import FacialSearchError, cancel_search_request, create_search_request
@@ -96,7 +97,7 @@ def test_minor_consent_runs_without_representation_and_can_be_revoked(tmp_path, 
     photo = _add_photo(db, gallery, folder, tmp_path)
     _index_photo(db, photo, tmp_path, settings, cipher)
     request = create_search_request(db, parent_gallery_id=gallery.id, client_id=client.id,
-                                    consent_version=settings.consent_version, subject_declaration="minor",
+                                    consent_version=CLIENT_REFERENCE_CONSENT_VERSION, subject_declaration="conditional",
                                     consent_accepted=True, representation_reference=None,
                                     payload=_jpeg(), settings=settings)
     db.commit()

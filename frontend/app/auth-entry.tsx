@@ -1,7 +1,7 @@
 "use client";
 
 import { BrandLogo } from "./brand-logo";
-import { safeAdminReturn, safeClientGalleryReturn } from "./session-recovery";
+import { safeAdminReturn, safeClientGalleryReturn, safeClientPurchaseReturn } from "./session-recovery";
 
 
 import { FormEvent, useEffect, useState } from "react";
@@ -70,7 +70,8 @@ export function AuthEntry({
     };
   });
   const contextualClientReauthentication = recoveryContext === "client"
-    && safeClientGalleryReturn(invitation.returnTo) !== null;
+    && (safeClientGalleryReturn(invitation.returnTo) !== null
+      || safeClientPurchaseReturn(invitation.returnTo) !== null);
   useEffect(() => {
     const controller = new AbortController();
     const brandingUrl = invitation.accessToken
@@ -109,7 +110,13 @@ export function AuthEntry({
   useEffect(() => {
     let active = true;
     if (recoveryContext === "admin" && !invitation.accessToken) return;
-    fetch("/api/auth/destination", { credentials: "same-origin" })
+    const clientPurchaseReturn = recoveryContext === "client"
+      ? safeClientPurchaseReturn(invitation.returnTo)
+      : null;
+    const destinationUrl = clientPurchaseReturn
+      ? `/api/auth/destination?return_to=${encodeURIComponent(clientPurchaseReturn.path)}`
+      : "/api/auth/destination";
+    fetch(destinationUrl, { credentials: "same-origin" })
       .then(async (sessionResponse) => {
         if (!active || !sessionResponse.ok) return;
         if (!invitation.accessToken) {
@@ -118,7 +125,7 @@ export function AuthEntry({
             const clientReturn = recoveryContext === "client"
               ? safeClientGalleryReturn(invitation.returnTo)
               : null;
-            navigate(clientReturn?.path ?? session.destination);
+            navigate(clientPurchaseReturn ? session.destination : clientReturn?.path ?? session.destination);
           }
           return;
         }
@@ -152,6 +159,9 @@ export function AuthEntry({
       const clientGalleryReturn = context === "client"
         ? safeClientGalleryReturn(invitation.returnTo)
         : null;
+      const clientPurchaseReturn = context === "client"
+        ? safeClientPurchaseReturn(invitation.returnTo)
+        : null;
       const response = await fetch(
         context === "client"
           ? "/api/auth/client/challenge"
@@ -162,10 +172,11 @@ export function AuthEntry({
           body: JSON.stringify(
             context === "client"
               ? {
-                  full_name: data.get("fullName"),
+                  ...(data.get("fullName") ? { full_name: data.get("fullName") } : {}),
                   phone: clientPhoneE164,
                   ...(invitation.accessToken ? { access_token: invitation.accessToken } : {}),
-                  ...(invitation.returnTo ? { return_to: invitation.returnTo } : {}),
+                  ...(clientPurchaseReturn ? { return_to: clientPurchaseReturn.path }
+                    : invitation.returnTo ? { return_to: invitation.returnTo } : {}),
                   ...(clientGalleryReturn ? { parent_gallery_id: clientGalleryReturn.galleryId } : {}),
                 }
               : { email: data.get("email"), password: data.get("password") },
@@ -365,10 +376,10 @@ export function AuthEntry({
           <form onSubmit={requestCode} className="auth-form">
             {context === "client" ? (
               <>
-                <label>
+                {!safeClientPurchaseReturn(invitation.returnTo) ? <label>
                   Nome completo
                   <input name="fullName" autoComplete="name" required />
-                </label>
+                </label> : null}
                 <div className="auth-phone-field">
                   <label htmlFor="client-phone">WhatsApp</label>
                   <div className="auth-phone-control">

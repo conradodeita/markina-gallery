@@ -32,7 +32,12 @@ O sistema SHALL fornecer ao fotógrafo autenticado uma interface para criar e op
 
 ### Requirement: Estados operacionais claros
 
-O sistema SHALL apresentar estados de carregamento, vazio, erro, preparação, progresso, sucesso, bloqueio e expiração nas telas administrativas e da cliente, com linguagem compreensível e ação de recuperação quando aplicável.
+O sistema SHALL apresentar estados de carregamento, vazio, erro, preparação, progresso, sucesso, bloqueio e expiração nas telas administrativas e da cliente, com linguagem compreensível e ação de recuperação quando aplicável. A página Estatísticas SHALL apresentar estados distintos para ausência de vendas, seleções sem compra, dados indisponíveis e falha de consulta, sem substituir falhas ou dados não instrumentados por zero, e preservar os filtros durante a recuperação.
+
+#### Scenario: Falha ao consultar estatísticas
+
+- **WHEN** a API de Estatísticas falha
+- **THEN** a página informa erro recuperável, preserva filtros e não exibe receita zero como se fosse resultado real
 
 #### Scenario: Importação em processamento
 
@@ -44,9 +49,24 @@ O sistema SHALL apresentar estados de carregamento, vazio, erro, preparação, p
 - **WHEN** o fotógrafo conclui a liberação de uma pasta
 - **THEN** a interface confirma o público efetivo retornado pelo backend e as clientes alcançadas, sem sugerir atualização de galerias derivadas
 
+#### Scenario: Galeria sem prazo de seleção configurado
+
+- **WHEN** a galeria/cliente não tem prazo de seleção persistido ou ele ainda não expirou
+- **THEN** suas seleções não são classificadas como abandonadas e nenhum prazo ou valor potencial é inventado
+
 ### Requirement: Interface orientada pelo backend
 
-O sistema SHALL obter dados, permissões, disponibilidade e resultados de ações administrativas exclusivamente de APIs autenticadas do backend. A interface SHALL NOT criar autorização, registros, progresso de upload ou liberação simulados no browser.
+O sistema SHALL obter dados, permissões, disponibilidade e resultados de ações administrativas exclusivamente de APIs autenticadas do backend. Estatísticas SHALL oferecer filtros combináveis por período, evento, galeria, pasta, cliente, meio de pagamento e status do pedido; tabelas e indicadores SHALL refletir o mesmo escopo. Valores consolidados SHALL permitir abrir os registros detalhados correspondentes. A interface SHALL NOT conceder acesso ao CSV por ocultação de botão apenas nem criar autorização, registros, progresso de upload ou liberação simulados no browser.
+
+#### Scenario: Filtros combinados
+
+- **WHEN** o fotógrafo combina período, galeria, pasta, cliente ou forma de pagamento
+- **THEN** indicadores, detalhamento HTML e subtotais refletem exatamente o mesmo conjunto autorizado de itens e pedidos
+
+#### Scenario: Acesso a exportação CSV
+
+- **WHEN** a interface apresenta a ação de CSV
+- **THEN** o backend ainda revalida a autorização do proprietário para a URL direta e a ação
 
 #### Scenario: Estado administrativo
 
@@ -175,3 +195,36 @@ Com `Pagamento obrigatório?` desmarcado, o sistema SHALL permitir salvar regras
 
 - **WHEN** a cliente reúne uma galeria paga e outra sem cobrança
 - **THEN** o grupo sem cobrança mantém finalização independente, mesmo se o grupo pago tiver erro de configuração
+
+### Requirement: Busca de cliente por nome ou telefone em Vendas e pagamentos
+
+A área Vendas e pagamentos SHALL manter um único filtro de cliente que localize registros por nome ou telefone cadastrado e ofereça sugestões de clientes correspondentes durante a digitação.
+
+#### Scenario: Sugestões de nome
+
+- **WHEN** o fotógrafo digita parte do nome de uma cliente no filtro existente
+- **THEN** a área sugere nomes correspondentes e permite escolher uma cliente sem criar outro campo de busca
+
+#### Scenario: Seleção exata ou busca livre
+
+- **WHEN** o fotógrafo escolhe uma sugestão ou aplica texto parcial de nome/telefone
+- **THEN** a área filtra seleções abertas e pedidos pela identidade escolhida ou pelo texto informado, respectivamente
+
+#### Scenario: Paginação com busca
+
+- **WHEN** a busca por cliente possui resultados em mais de uma página
+- **THEN** carregar clientes adicionais preserva o mesmo critério de nome ou telefone
+
+### Requirement: Filtros de vendas visíveis no topo durante a rolagem
+
+A área Vendas e pagamentos SHALL posicionar o filtro existente antes dos resumos e listas operacionais e mantê-lo acessível abaixo da navegação administrativa durante a rolagem, sem cobrir conteúdo nem controles em telas pequenas.
+
+#### Scenario: Consulta inicial
+
+- **WHEN** o fotógrafo abre Vendas e pagamentos
+- **THEN** encontra o filtro antes de Seleções em aberto, pedidos e demais cards operacionais
+
+#### Scenario: Rolagem do painel
+
+- **WHEN** o fotógrafo rola pelos cards e listas
+- **THEN** o filtro permanece acessível no topo abaixo da navegação e não encobre os controles operacionais

@@ -63,16 +63,21 @@ def analyze_query(
 ) -> QueryAnalysis:
     if not observations:
         return QueryAnalysis(status="no_face")
-    if len(observations) != 1:
-        return QueryAnalysis(status="multiple_faces")
-    face = observations[0]
-    if (
-        min(face.box[2:]) < minimum_face_pixels
-        or face.blur_variance < minimum_blur_variance
-        or face.detection_confidence < minimum_detection_confidence
-    ):
+
+    # Detecções incidentais de baixa qualidade (por exemplo, fundo com textura
+    # parecida com um rosto) não devem tornar ambíguo o único rosto utilizável.
+    usable = [
+        face
+        for face in observations
+        if min(face.box[2:]) >= minimum_face_pixels
+        and face.blur_variance >= minimum_blur_variance
+        and face.detection_confidence >= minimum_detection_confidence
+    ]
+    if not usable:
         return QueryAnalysis(status="low_quality")
-    return QueryAnalysis(status="ready", observation=face)
+    if len(usable) != 1:
+        return QueryAnalysis(status="multiple_faces")
+    return QueryAnalysis(status="ready", observation=usable[0])
 
 
 class FaceEmbeddingProvider(Protocol):
@@ -137,6 +142,18 @@ class OpenCvSFaceProvider:
         except (ImportError, Exception) as exc:
             raise FacialProviderError("Imagem facial não pôde ser lida.") from exc
         return self.observe_image(image)
+
+    def observe_reference_bytes(
+        self, payload: bytes, *, max_pixels: int, config=None
+    ) -> list[FaceObservation]:
+        """Analisa JPEG de consulta em resolução original, sem arquivo em claro."""
+        from app.facial.reference import (
+            decode_reference_bytes,
+            observe_reference_image,
+        )
+
+        image = decode_reference_bytes(payload, max_pixels=max_pixels)
+        return observe_reference_image(self, image, config=config)
 
     def observe_image(self, image: Any, *, include_embedding: bool = True) -> list[FaceObservation]:
         if image is None or not hasattr(image, "shape") or len(image.shape) < 2:

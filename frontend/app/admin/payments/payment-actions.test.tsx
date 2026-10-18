@@ -27,15 +27,21 @@ describe("atalhos por pedido", () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "confirmed" })));
     vi.stubGlobal("fetch", fetch);
     const refresh = vi.fn();
-    render(<PaymentActions order={{ ...order, payment_group: { id: "group-1", total_cents: 2100,
-      galleries: [{ order_id: "order-1", name: "Galeria 1", total_cents: 700 },
-        { order_id: "order-2", name: "Galeria 2", total_cents: 1400 }] } }} clientName="Ana" onRefresh={refresh} />);
+    render(<PaymentActions order={{ ...order, payment_group: { id: "group-12345678", total_cents: 2100,
+      galleries: [{ order_id: "order-12345678", name: "Galeria 1", total_cents: 700 },
+        { order_id: "order-23456789", name: "Galeria 2", total_cents: 1400 }] } }} clientName="Ana" onRefresh={refresh} />);
+    expect(screen.getByRole("region", { name: "Compra group-12" })).toBeTruthy();
+    expect(screen.getByText(/Pedido order-12 · Galeria 1/)).toBeTruthy();
+    expect(screen.getByText(/Pedido order-23 · Galeria 2/)).toBeTruthy();
+    expect(screen.getByText("A confirmação, recusa ou correção afeta toda a compra.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
     expect(confirm.mock.calls[0][0]).toContain("21,00");
+    expect(confirm.mock.calls[0][0]).toContain("Compra group-12");
+    expect(confirm.mock.calls[0][0]).toContain("Pedido order-23");
     expect(confirm.mock.calls[0][0]).toContain("Galeria 2");
-    expect(confirm.mock.calls[0][0]).toContain("todos esses pedidos");
-    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ decision: "confirmed", payment_group_id: "group-1" });
+    expect(confirm.mock.calls[0][0]).toContain("toda esta compra e aos pedidos listados");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ decision: "confirmed", payment_group_id: "group-12345678" });
   });
   it("identifica pedidos e confirma apenas a compra escolhida", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);

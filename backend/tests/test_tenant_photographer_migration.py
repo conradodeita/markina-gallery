@@ -26,7 +26,7 @@ from tests.tenant_fixtures import insert_legacy_model as insert_model
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261014_0080"
+CURRENT_SCHEMA = "20261014_0081"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
@@ -239,11 +239,22 @@ def assert_catalog(connection):
         if name in POST_TRANSITION_TABLES:
             continue
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
-        future_columns = {"facial_search_request": {"search_engine"}, "sale_order": {"provider_payment_id"}}
+        future_columns = {
+            "facial_search_request": {"search_engine"},
+            "private_upload_batch": {"folder_id", "parent_gallery_id"},
+            "sale_order": {"provider_payment_id"},
+            "tenant": {"canonical_host"},
+        }
+        future_nullability = {
+            "private_upload_batch": {"derived_gallery_id": False},
+        }
         historical_columns = [column for column in target.c if column.name not in future_columns.get(name, set())]
         assert set(actual_columns) == {column.name for column in historical_columns}, name
-        assert all(actual_columns[column.name]["nullable"] == column.nullable
-                   for column in historical_columns), name
+        assert all(
+            actual_columns[column.name]["nullable"]
+            == future_nullability.get(name, {}).get(column.name, column.nullable)
+            for column in historical_columns
+        ), name
         actual_fk = {
             (tuple(f["constrained_columns"]), f["referred_table"], tuple(f["referred_columns"]))
             for f in inspector.get_foreign_keys(name)
@@ -256,8 +267,14 @@ def assert_catalog(connection):
         assert actual_fk == expected_fk, name
         assert set(inspector.get_pk_constraint(name)["constrained_columns"]) == set(target.primary_key.columns.keys())
         actual_unique = {tuple(u["column_names"]) for u in inspector.get_unique_constraints(name)}
-        expected_unique = {tuple(column.name for column in u.columns)
-                           for u in target.constraints if isinstance(u, sa.UniqueConstraint)}
+        expected_unique = {
+            tuple(column.name for column in u.columns)
+            for u in target.constraints
+            if isinstance(u, sa.UniqueConstraint) and u.name != "uq_tenant_canonical_host"
+        }
+        expected_unique |= {
+            ("tenant_id", "photo_asset_id"),
+        } if name == "private_upload_batch_asset" else set()
         assert actual_unique == expected_unique, name
         actual_indexes = {i["name"]: (tuple(i["column_names"]), i["unique"])
                           for i in inspector.get_indexes(name) if not i.get("duplicates_constraint")}

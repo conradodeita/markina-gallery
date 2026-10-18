@@ -24,7 +24,7 @@ Somente `api` e worker geral recebem os placeholders do Compose. Não são abert
 | Variável | Finalidade |
 |---|---|
 | `WEB_PUSH_ENABLED` | Gate do transporte push; padrão `false` |
-| `TRANSACTIONAL_WHATSAPP_ENABLED` | Gate dos três eventos novos via WhatsApp; padrão `false`. Pagamentos preservam ativação anterior e respeitam interruptor da central |
+| `TRANSACTIONAL_WHATSAPP_ENABLED` | Gate WhatsApp dos três eventos novos (`first_access`, `first_selection`, `private_photos_ready`); padrão `false`. Pagamentos e o evento existente `order_delivery_ready` usam seus interruptores próprios da central |
 | `WEB_PUSH_VAPID_PUBLIC_KEY` | Chave pública P-256, ponto não comprimido em base64url; única chave enviada ao navegador |
 | `WEB_PUSH_VAPID_PRIVATE_KEY` | Chave privada VAPID codificada em base64url, nunca caminho de arquivo; par gerado por ferramenta padrão py-vapid |
 | `WEB_PUSH_VAPID_SUBJECT` | Contato operacional `mailto:` do responsável pelo serviço |

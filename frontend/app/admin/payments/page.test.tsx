@@ -34,7 +34,6 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
       confirmed_orders: 1,
       confirmed_cents: 800,
       financial_statuses: { reported: 1, confirmed: 1 },
-      failed_messages: 1,
     },
     facets: {
       parent_galleries: [{ id: "gallery-public-1", name: "Formatura", count: 1 }],
@@ -43,6 +42,7 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
     },
     groups: [{
       client: { id: `client-${name}`, name },
+      financial_status: "reported",
       totals: { orders: 2, total_cents: 1200, reported_orders: 1, reported_cents: 1200, confirmed_orders: 1, confirmed_cents: 800 },
       orders: [{
         id: `${name.toLowerCase()}-order-12345678`,
@@ -59,18 +59,41 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
         payment_message_snapshot: null,
       }],
     }],
+    selections_without_order: [{
+      client: { id: "client-cart", name: "Bia" },
+      gallery: { id: "gallery-cart", name: "Formatura" },
+      parent_gallery: { id: "gallery-public-1", name: "Formatura" },
+      selected_count: 1,
+      total_cents: 500,
+      pricing_available: true,
+      created_at: "2026-08-29T09:00:00Z",
+      folders: [{ id: "folder-1", name: "Turma", items: [{ id: "photo-1", name: "Foto 1" }] }],
+    }],
     page: { next_cursor: nextCursor, limit: 12 },
   };
 }
 
 const emptyDashboard = {
-  summary: { clients: 0, orders: 0, total_cents: 0, selected_carts: 0, selected_cents: 0, selected_pricing_unavailable: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0, confirmed_cents: 0, financial_statuses: {}, failed_messages: 0 },
+  summary: { clients: 0, orders: 0, total_cents: 0, selected_carts: 0, selected_cents: 0, selected_pricing_unavailable: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0, confirmed_cents: 0, financial_statuses: {} },
   facets: { parent_galleries: [], financial_statuses: {}, delivery_statuses: {} },
   groups: [],
   page: { next_cursor: null, limit: 12 },
 };
 
 describe("controle operacional de pagamentos", () => {
+  it("mostra o código da compra agrupada junto ao código preservado do pedido", async () => {
+    const data = dashboard();
+    Object.assign(data.groups[0].orders[0].communication, { payment_group: {
+      id: "group-12345678", total_cents: 2100,
+      galleries: [{ order_id: "12345678-order", name: "Formatura", total_cents: 1200 }],
+    } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(data))));
+    render(<AdminPaymentsPage />);
+    const galleryHeading = await screen.findByRole("heading", { name: "Formatura privada" });
+    expect(galleryHeading.closest(".payment-order")?.querySelector(".payment-order__heading")?.textContent)
+      .toContain("Compra group-12 · Pedido ana-orde");
+  });
+
   it("mantém o resultado do envio de entrega visível após atualizar a lista", async () => {
     const album = "https://photos.app.goo.gl/SyntheticAlbum";
     let sent = false;
@@ -89,7 +112,7 @@ describe("controle operacional de pagamentos", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminPaymentsPage />);
     fireEvent.click(await screen.findByText("Ver pedido e entrega"));
-    fireEvent.change(screen.getByLabelText("Link do álbum no Google Photos"), { target: { value: album } });
+    fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: album } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
     expect(await screen.findByText("Fotos disponíveis em Compras. Aviso agendado.")).toBeTruthy();
     await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path.startsWith("/api/admin/payment-communications"))).toHaveLength(2));
@@ -111,6 +134,7 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.getByText("Valor das fotos selecionadas")).toBeTruthy();
     expect(screen.getByText("Valor dos pedidos")).toBeTruthy();
     expect(screen.getByText("Receita confirmada")).toBeTruthy();
+    expect(screen.queryByText("Falhas de mensagem")).toBeNull();
     expect(screen.getByText("1 carrinho(s) sem pagamento comunicado")).toBeTruthy();
     expect(screen.getByText("1 pagamento(s) comunicado(s)")).toBeTruthy();
     expect(screen.getByText("1 depósito(s) confirmado(s)")).toBeTruthy();
@@ -119,8 +143,8 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.getAllByText(/12,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pagamento comunicado").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Aviso ao fotógrafo: falha de mensagem/i)).toBeNull();
-    expect(screen.getByLabelText("Link do álbum no Google Photos")).toBeTruthy();
-    expect(screen.queryByText(/copia e cola|telefone|api key/i)).toBeNull();
+    expect(screen.getByLabelText("Link externo do álbum")).toBeTruthy();
+    expect(screen.queryByText(/copia e cola|api key/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Confirmar pagamento" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -132,6 +156,36 @@ describe("controle operacional de pagamentos", () => {
     expect(screen.queryByRole("button", { name: "Tentar enviar novamente" })).toBeNull();
   });
 
+  it.each(["confirmed", "confirmed_undelivered"])("mostra o download HTML em %s e o remove após corrigir a confirmação", async (financialStatus) => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let current = dashboard();
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      if (options?.method === "POST" && path.endsWith("/decision")) {
+        const confirmed = { ...communication, status: "confirmed", can_decide: false, can_correct: true };
+        current = dashboard();
+        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: financialStatus, communication: confirmed, communications: [confirmed] };
+        return Promise.resolve(new Response(JSON.stringify({ status: "confirmed" })));
+      }
+      if (options?.method === "POST" && path.endsWith("/correction")) {
+        const pending = { ...communication, status: "pending_review", can_decide: true, can_correct: false };
+        current = dashboard();
+        current.groups[0].orders[0] = { ...current.groups[0].orders[0], financial_status: "reported", communication: pending, communications: [pending] };
+        return Promise.resolve(new Response(JSON.stringify({ status: "pending_review" })));
+      }
+      return Promise.resolve(new Response(JSON.stringify(current)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar pagamento" }));
+    const download = await screen.findByRole("link", { name: "Baixar fotos compradas" });
+    expect(download.getAttribute("href")).toBe("/api/admin/parent-galleries/gallery-public-1/clients/client-Ana/selection/export.html");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Corrigir confirmação" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Baixar fotos compradas" })).toBeNull());
+  });
+
   it("omite o cartão de mensagens globais e preserva filtros e estado vazio", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : emptyDashboard,
@@ -141,7 +195,7 @@ describe("controle operacional de pagamentos", () => {
 
     expect(await screen.findByText("Nenhum pedido ainda")).toBeTruthy();
     expect(screen.getByText(/Pedidos e comunicações aparecerão aqui/)).toBeTruthy();
-    expect(screen.getByText("Filtros")).toBeTruthy();
+    expect(screen.getByText("Mais filtros")).toBeTruthy();
     expect(screen.queryByText("Mensagem global após conferência")).toBeNull();
     expect(screen.queryByText("Ver prévias")).toBeNull();
     expect(screen.queryByRole("link", { name: "Editar em Notificações" })).toBeNull();
@@ -156,15 +210,37 @@ describe("controle operacional de pagamentos", () => {
     render(<AdminPaymentsPage />);
     await screen.findByRole("heading", { name: "Ana" });
 
-    fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "Inexistente" } });
+    fireEvent.change(screen.getByLabelText("Cliente / telefone"), { target: { value: "Inexistente" } });
     fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reported" } });
-    fireEvent.change(screen.getByLabelText("Entrega de mensagem"), { target: { value: "failed" } });
     fireEvent.click(screen.getByRole("button", { name: "Aplicar filtros" }));
 
     expect(await screen.findByText("Nenhum pagamento neste filtro")).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("query=Inexistente") && String(path).includes("financial_status=reported") && String(path).includes("delivery_status=failed"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("query=Inexistente") && String(path).includes("financial_status=reported") && !String(path).includes("delivery_status"))).toBe(true);
+    expect(screen.queryByLabelText("Entrega de mensagem")).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "Limpar filtros" })[1]);
     expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+  });
+
+  it("aplica as cores financeiras e deixa No carrinho depois dos pedidos", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(
+      JSON.stringify(path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : dashboard()),
+      { status: 200 },
+    ))));
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    const financialFilter = screen.getByLabelText("Situação financeira") as HTMLSelectElement;
+    const undelivered = financialFilter.querySelector('option[value="confirmed_undelivered"]') as HTMLOptionElement;
+    expect(undelivered.textContent).toBe("Pagamento confirmado - fotos não entregue");
+    expect(undelivered.style.color).toBe("var(--payment-status-confirmed-undelivered)");
+    expect(screen.queryByLabelText("Entrega de mensagem")).toBeNull();
+
+    const reportedCard = screen.getByRole("heading", { name: "Ana" }).closest(".payment-client-card");
+    const cartBadge = screen.getByText("No carrinho");
+    const cartCard = cartBadge.closest(".payment-order");
+    expect(reportedCard?.className).toContain("payment-client-card--reported");
+    expect(cartCard?.className).toContain("payment-order--cart");
+    expect(reportedCard && cartCard && (reportedCard.compareDocumentPosition(cartCard) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
   });
 
   it("carrega a próxima página sem substituir os grupos anteriores", async () => {
@@ -206,6 +282,113 @@ describe("controle operacional de pagamentos", () => {
       "/api/admin/gallery-reopening-requests/reopening-1/decision",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "approved", selection_expires_at: "2026-09-15T23:59:59.000Z" }) }),
     ));
+  });
+});
+
+describe("filtro de cliente com sugestões", () => {
+  it("mantém a faixa antes do resumo e ajusta o sticky à altura real do cabeçalho", async () => {
+    const header = document.createElement("header");
+    header.className = "admin-topbar";
+    Object.defineProperty(header, "getBoundingClientRect", {
+      value: () => ({ height: 146, width: 390, top: 0, left: 0, right: 390, bottom: 146, x: 0, y: 0, toJSON: () => ({}) }),
+    });
+    document.body.prepend(header);
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(
+      JSON.stringify(path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : dashboard()),
+      { status: 200 },
+    ))));
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    const body = screen.getByLabelText("Cliente / telefone").closest(".payment-dashboard-body")!;
+    const sticky = body.querySelector(".payment-filter-sticky")!;
+    const summary = screen.getByRole("region", { name: "Resumo de pagamentos" });
+    expect(sticky.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await waitFor(() => expect(sticky.getAttribute("style")).toContain("top: 146px"));
+    header.remove();
+  });
+
+  it("cancela a consulta anterior, seleciona identidade exata e limpa a identidade ao editar o texto", async () => {
+    const fetchMock = vi.fn((path: string) => {
+      if (path.startsWith("/api/admin/clients?")) {
+        return Promise.resolve(new Response(JSON.stringify({ clients: [
+          { id: "client-marta", name: "Marta Silva", phone: "+5511999999999" },
+          { id: "client-maria", name: "Maria Souza", phone: "+5511888888888" },
+        ] }), { status: 200 }));
+      }
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      return Promise.resolve(new Response(JSON.stringify(dashboard()), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+
+    const clientInput = screen.getByLabelText("Cliente / telefone");
+    expect(screen.getAllByLabelText("Cliente / telefone")).toHaveLength(1);
+    fireEvent.change(clientInput, { target: { value: "Ma" } });
+    fireEvent.change(clientInput, { target: { value: "Mar" } });
+    fireEvent.click(await screen.findByRole("option", { name: "Marta Silva" }));
+    expect(screen.queryByText("+5511999999999")).toBeNull();
+    const suggestionRequests = fetchMock.mock.calls.map(([path]) => String(path)).filter((path) => path.startsWith("/api/admin/clients?"));
+    expect(suggestionRequests).toHaveLength(1);
+    expect(new URL(suggestionRequests[0], "http://localhost").searchParams.get("query")).toBe("Mar");
+    fireEvent.change(clientInput, { target: { value: "1199" } });
+    fireEvent.click(await screen.findByRole("option", { name: "Marta Silva" }));
+    const phoneSuggestionRequest = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/clients?") && new URL(path, "http://localhost").searchParams.get("query") === "1199");
+    expect(phoneSuggestionRequest).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Mais filtros"));
+    fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reported" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?") && new URL(path, "http://localhost").searchParams.has("client_id"));
+      expect(request).toBeTruthy();
+      const params = new URL(request!, "http://localhost").searchParams;
+      expect(params.get("query")).toBe("Marta Silva");
+      expect(params.get("financial_status")).toBe("reported");
+    });
+
+    const refreshedInput = await screen.findByLabelText("Cliente / telefone");
+    fireEvent.change(refreshedInput, { target: { value: "Marta nova" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?") && new URL(path, "http://localhost").searchParams.get("query") === "Marta nova");
+      expect(request).toBeTruthy();
+      expect(new URL(request!, "http://localhost").searchParams.has("client_id")).toBe(false);
+    });
+  });
+
+  it("seleciona sugestões pelo teclado, fecha com Escape e informa vazio ou erro", async () => {
+    let failSuggestions = false;
+    const fetchMock = vi.fn((path: string) => {
+      if (path.startsWith("/api/admin/clients?")) {
+        if (failSuggestions) return Promise.resolve(new Response("{}", { status: 503 }));
+        const query = new URL(path, "http://localhost").searchParams.get("query");
+        return Promise.resolve(new Response(JSON.stringify({ clients: query === "Ma" ? [{ id: "client-marta", name: "Marta Silva" }] : [] }), { status: 200 }));
+      }
+      if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [] })));
+      return Promise.resolve(new Response(JSON.stringify(dashboard()), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+    const clientInput = screen.getByLabelText("Cliente / telefone");
+
+    fireEvent.change(clientInput, { target: { value: "Ma" } });
+    await screen.findByRole("option", { name: "Marta Silva" });
+    fireEvent.keyDown(clientInput, { key: "ArrowDown" });
+    fireEvent.keyDown(clientInput, { key: "Enter" });
+    expect((clientInput as HTMLInputElement).value).toBe("Marta Silva");
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    fireEvent.change(clientInput, { target: { value: "Marta" } });
+    expect((await screen.findAllByText("Nenhuma cliente encontrada.")).length).toBeGreaterThan(0);
+    fireEvent.keyDown(clientInput, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    failSuggestions = true;
+    fireEvent.change(clientInput, { target: { value: "Erro" } });
+    expect((await screen.findAllByText("Não foi possível carregar sugestões de clientes.")).length).toBeGreaterThan(0);
   });
 });
 

@@ -70,6 +70,11 @@ def main():
     assert set(on) == {"workflow_dispatch"}
     assert on["workflow_dispatch"]["inputs"]["mode"]["options"] == ["inventory", "execute", "owner-inventory", "owner-execute"]
     job = workflow["jobs"]["homolog-data"]
+    assert job["if"] == "github.ref == 'refs/heads/develop'"
+    registration = workflow["jobs"]["registration"]
+    assert registration["if"] == "github.ref != 'refs/heads/develop'"
+    assert "environment" not in registration and "env" not in registration
+    assert "ssh" not in str(registration["steps"])
     assert job["environment"] == "homolog"
     assert job["permissions"] == {"contents": "read"}
     for guard in ("refs/heads/develop", "RESET_HOMOLOG_TO_OWNER_AND_DELETE_164_DUMPS_WITHOUT_BACKUP", "EXPECTED_APP_SHA", "--owner-email", "--expected-sha"):

@@ -13,6 +13,7 @@ from app.auth import (
     ParentGalleryRegistration,
     now,
 )
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION
 from app.facial.jobs import FacialJobError, FacialJobRepository
 from app.facial.policy import ensure_automatic_policy
 from app.facial.search import (
@@ -196,8 +197,8 @@ def searches(db, graph, tmp_path):
 
 def create(db, row, settings):
     return create_search_request(db, parent_gallery_id=row["parent"].id, client_id=row["client"].id,
-        consent_version=settings.consent_version, subject_declaration="adult", representation_reference=None,
-        payload=_jpeg(), settings=settings)
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION, subject_declaration="conditional", consent_accepted=True,
+        representation_reference=None, payload=_jpeg(), settings=settings)
 
 
 def test_busca_sintetica_A_B_mesmo_telefone_cancelamento_e_referencia_isolados(client_db, graph, links, tmp_path):
@@ -224,8 +225,8 @@ def test_criacao_alheia_recusada_antes_de_armazenar_envelope(client_db, graph, l
     settings = searches(client_db, graph, tmp_path)
     with pytest.raises(FacialSearchError):
         create_search_request(client_db, parent_gallery_id=graph[1]["parent"].id, client_id=graph[0]["client"].id,
-            consent_version=settings.consent_version, subject_declaration="adult", representation_reference=None,
-            payload=_jpeg(), settings=settings)
+            consent_version=CLIENT_REFERENCE_CONSENT_VERSION, subject_declaration="conditional", consent_accepted=True,
+            representation_reference=None, payload=_jpeg(), settings=settings)
     assert not settings.reference_root.exists()
 
 

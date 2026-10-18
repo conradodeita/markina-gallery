@@ -170,7 +170,15 @@ def process_claimed_search_job(
                 data_version=request.consent_version,
                 locator=_reference_locator(request),
             )
-            analysis = analyze_query(provider.observe_bytes(payload))
+            reference_observer = getattr(provider, "observe_reference_bytes", None)
+            observations = (
+                reference_observer(
+                    payload, max_pixels=settings.max_reference_pixels
+                )
+                if callable(reference_observer)
+                else provider.observe_bytes(payload)
+            )
+            analysis = analyze_query(observations)
             if analysis.status != "ready" or analysis.observation is None:
                 _finish_request(db, request, status=analysis.status, store=store, cipher=cipher, settings=settings)
                 return repository.complete(db, claim)
@@ -208,6 +216,17 @@ def process_claimed_search_job(
                 db, request, photo_id, fingerprints.get(photo_id),
             )
 
+        ambiguous_threshold = settings.ambiguous_threshold_milli
+        source_threshold = {
+            "upload": settings.reference_ambiguous_threshold_milli,
+            "indexed_region": settings.region_ambiguous_threshold_milli,
+        }.get(request.reference_source)
+        if request.search_engine == "opencv-yunet-sface" and source_threshold is not None:
+            ambiguous_threshold = min(
+                settings.similarity_threshold_milli,
+                source_threshold,
+                ambiguous_threshold if ambiguous_threshold is not None else settings.similarity_threshold_milli,
+            )
         matches = search_gallery_index(
             db,
             gallery_id=request.parent_gallery_id,
@@ -217,7 +236,7 @@ def process_claimed_search_job(
             settings=settings,
             threshold_milli=settings.similarity_threshold_milli,
             allowed_fingerprints=fingerprints,
-            ambiguous_threshold_milli=settings.ambiguous_threshold_milli,
+            ambiguous_threshold_milli=ambiguous_threshold,
             authorize=authorize_comparison,
             on_progress=publish_progress,
             model_id=request.search_engine,
@@ -339,7 +358,10 @@ def _request_is_authorized(
     require_active_owner(db, request.tenant_id)
     if request.status in {"cancelled", "expired"}:
         return False
-    if request.authorization_method != "direct_region" and request.consent_version != settings.consent_version:
+    from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION
+    if request.authorization_method != "direct_region" and request.consent_version not in {
+        settings.consent_version, CLIENT_REFERENCE_CONSENT_VERSION,
+    }:
         return False
     if request.subject_declaration == "minor" and request.authorization_method == "legacy":
         from app.facial.representation import (

@@ -1,0 +1,122 @@
+{
+  "release_ready": false,
+  "gates": {
+    "base_legal": {
+      "status": "pendente",
+      "evidence": "O proprietário confirmou em 2026-10-16 que a aprovação documentada ainda precisa ser definida; critérios em production-evidence-review.md. Não aprovado."
+    },
+    "calibracao_e_equidade": {
+      "status": "bloqueado",
+      "evidence": "O proprietário confirmou em 2026-10-16 que o corpus autorizado ainda precisa ser definido; nenhum ensaio representativo foi presumido."
+    },
+    "capacidade_arm": {
+      "status": "pendente",
+      "evidence": "Inventário somente leitura de 2026-10-16T01:34:44Z: host ARM64 com 4 CPUs, load 0.20/0.22/0.13, RAM disponível 21.507.387.392 bytes e 77.945.286.656 bytes livres em /var/lib/docker. Snapshot não é ensaio de carga facial; p50/p95, throughput, fila, CPU e memória sob carga ainda não foram medidos."
+    },
+    "recuperacao": {
+      "status": "parcial",
+      "evidence": "Inventário somente leitura de 2026-10-16T01:34:44Z encontrou backup Markina de 71.128.950 bytes, manifesto com SHA anterior/alvo e SHA-256 549b6f6861f54a2280b521aa67bcf17db2be50ea93dd00628fe68f67f42a9f45. Nenhuma restauração foi ensaiada; pg_restore não está instalado no host e o backup não está montado no container PostgreSQL. Integridade restaurável permanece sem comprovação."
+    },
+    "representacao_e_consentimento_infantil": {
+      "status": "bloqueado",
+      "evidence": "A decisão simplify-mobile-gallery-face-search admite checkbox único sem prova administrativa prévia para novas consultas; aprovação jurídica/operacional de produção ainda não documentada, conforme resposta do proprietário em 2026-10-16."
+    },
+    "aprovacao_operacional": {
+      "status": "pendente",
+      "evidence": null
+    }
+  },
+  "note": "release_ready refere-se à primeira ativação/expansão e continua falso. A manutenção autorizada do runtime já ativo tem elegibilidade independente e restrita ao baseline/arquivos/blobs revisados; não aprova gates documentais pendentes.",
+  "maintenance_release": {
+    "authorized": false,
+    "scope": "existing_facial_runtime",
+    "baseline_sha": "7c7a4ad217343dc4faee57734436afd91bb1f6b1",
+    "evidence": "Refinamento solicitado pelo proprietário em 2026-10-16 após teste em produção: priorização de rosto dominante, confirmação de upload por UUID e câmera em tela cheia, textos recolhíveis e checkbox inicialmente marcado com aceite no envio. A PR #199 teve preflight e release aprovados no run GitHub #38976692654, publicando o SHA f2ac110fb648e0158d1896923ade0661b006a276; schema 20261016_0082, runtime facial ativo e serviços saudáveis foram confirmados após release. O teste repetido em 2026-10-17 (08:07–08:10 BRT) retornou múltiplas regiões para uma foto com rosto em primeiro plano; este refinamento filtra observações de baixa qualidade e ajusta a dominância geométrica, preservando seleção ambígua quando múltiplos candidatos utilizáveis permanecem. O baseline_sha é a âncora imutável da autorização/diff restrito; o checkout operacional em cada release será conferido com facial-last-healthy.sha e o alvo precisará descender dele. Sem nova migration, reindexação ou alteração de modelo, limiar de similaridade, escopo, retenção ou segredos. Exigir CI, inventário/fingerprint e única aprovação protegida antes de recriar somente web/API/face-search-worker. Os gates de primeira ativação permanecem independentes. Preparação sucessora em 2026-10-17: fix-uploaded-face-reference-matching, PR #213. O proprietário aprovou funcionalmente mínimos 500 para upload/câmera, 600 para toque e navegação aos resultados; nenhuma aprovação operacional para este novo runtime foi recebida. Os hashes preparados abaixo correspondem ao código candidato, não a um release aprovado. A autorização anterior não cobre estes novos limiares nem os arquivos de apresentação/Compose. authorized permanece false até revisão do plano, inventário e gate operacional próprios; gates de ativação continuam pendentes. Preparação do gate restrito aprovada separadamente pelo proprietário em 2026-10-17; arquivos exatos de apresentação e Compose incluídos, com conferência de blob autorizado no inventário/release e pin versionado. Isso não autoriza instalação do wrapper remoto nem publicação; authorized permanece false.",
+    "runtime_blobs": {
+      "backend/app/auth.py": [
+        "JY2mH/W",
+        "xk4PLdx",
+        "N48ILtE",
+        "C12oLY="
+      ],
+      "backend/app/facial/config.py": [
+        "i1MHTN5",
+        "1ZwapM3",
+        "2ZE3zOg",
+        "iI1nac="
+      ],
+      "backend/app/facial/provider.py": [
+        "b56iq8w",
+        "kkYEWoZ",
+        "yU+jqci",
+        "+74M4M="
+      ],
+      "backend/app/facial/reference.py": [
+        "Hqm9SFu",
+        "tYb35SJ",
+        "Fdxrz+B",
+        "RVHQso="
+      ],
+      "backend/app/facial/search.py": [
+        "zBbEYvs",
+        "jxJCSAx",
+        "zn4o2Ua",
+        "SjCcmQ="
+      ],
+      "backend/app/facial/search_worker.py": [
+        "MnYdJyo",
+        "B6xwxe1",
+        "I+CK5L7",
+        "bobwr8="
+      ],
+      "backend/app/main.py": [
+        "tbKoDn9",
+        "di50jMv",
+        "uLDxnOB",
+        "B3PtXc="
+      ],
+      "backend/migrations/versions/20261016_0082_facial_conditional_consent.py": [
+        "CE9p1+1",
+        "Kac0sIM",
+        "1WaUB8p",
+        "o7wnHA="
+      ],
+      "frontend/app/globals.css": [
+        "2gYgjr1",
+        "3AVSg/X",
+        "DQ0JNpB",
+        "X/z0kc="
+      ],
+      "frontend/app/facial-search-client.ts": [
+        "Dtfq1DX",
+        "RmVqQdU",
+        "vMXpiO8",
+        "+dEO4s="
+      ],
+      "frontend/app/public-galleries/facial-search-panel.tsx": [
+        "Zm/IL1m",
+        "ItzIZdH",
+        "8cJoo7y",
+        "A5SzSY="
+      ],
+      "frontend/app/gallery-presentation.tsx": [
+        "fya8jkD",
+        "+Ha9Xm6",
+        "+3GM3t6",
+        "GbyST4="
+      ],
+      "frontend/app/public-galleries/[galleryId]/page.tsx": [
+        "ZWl4bJW",
+        "KMi8oH8",
+        "suVeRZ/",
+        "BfMiSk="
+      ],
+      "docker/docker-compose.yml": [
+        "iGgDXXr",
+        "H8mTLzT",
+        "wqPs4At",
+        "YcGuLM="
+      ]
+    }
+  }
+}

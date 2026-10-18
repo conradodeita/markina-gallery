@@ -14,6 +14,7 @@ readonly BACKUP_DIR="/var/lib/markina-gallery/backups"
 readonly EXPECTED_REPOSITORY="${MARKINA_EXPECTED_REPOSITORY:?MARKINA_EXPECTED_REPOSITORY é obrigatório}"
 
 DEPLOY_SHA=""
+TARGET_HEAD_REVISION=""
 PUBLIC_BASE_URL="${MARKINA_PUBLIC_BASE_URL:-}"
 REQUESTED_FACIAL_ENABLED=""
 PREVIOUS_SHA=""
@@ -23,6 +24,7 @@ SCHEMA_ROLLBACK_UNSAFE=0
 SHA_SWITCHED=0
 FACIAL_ENV_CHANGED=0
 FACIAL_DEPLOY_ENABLED="false"
+WORKER_RECOVERY_PENDING=0
 BRANDING_REQUIRED=0
 BRANDING_PRESERVED=0
 PREVIEW_WORKER_ACTIVE=0
@@ -154,8 +156,9 @@ set_facial_enabled() {
 }
 
 verify_facial_deploy_state() {
-  local env_file="${1:-$ENV_FILE}" expected service container status
+  local env_file="${1:-$ENV_FILE}" expected service container status running exit_code
   expected="$(read_facial_enabled "$env_file")"
+  WORKER_RECOVERY_PENDING=0
   for service in "${FACIAL_SERVICES[@]}"; do
     # O script novo roda por stdin enquanto o checkout remoto ainda aponta para
     # a versão anterior. Consulte os labels Docker diretamente para que o
@@ -174,14 +177,45 @@ verify_facial_deploy_state() {
     [[ "$status" == "healthy" ]] || fail "$service diverge do estado saudável esperado: $status"
   done
   if [[ "$expected" == "true" ]]; then
-    for service in api worker "${FACIAL_SERVICES[@]}"; do
+    for service in api "${FACIAL_SERVICES[@]}"; do
       compose exec -T "$service" python -c '
 from app.facial.config import facial_settings_from_environment
 assert facial_settings_from_environment(verify_runtime_assets=False).enabled
 ' || fail "$service diverge da configuração facial persistente"
     done
+    container="$(docker ps --all --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter 'label=com.docker.compose.service=worker')"
+    [[ -n "$container" ]] || fail "worker geral ausente com flag facial habilitada"
+    running="$(docker ps --quiet \
+      --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter 'label=com.docker.compose.service=worker')"
+    if [[ -n "$running" ]]; then
+      compose exec -T worker python -c '
+from app.facial.config import facial_settings_from_environment
+assert facial_settings_from_environment(verify_runtime_assets=False).enabled
+' || fail "worker diverge da configuração facial persistente"
+    else
+      status="$(docker inspect --format '{{.State.Status}}' "$container")"
+      exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container")"
+      [[ "$status" == "exited" && "$exit_code" == "1" ]] || fail "worker geral parado fora do caso de recuperação conhecido"
+      docker logs --tail 200 "$container" 2>&1 \
+        | grep -F -- 'value too long for type character varying(192)' >/dev/null \
+        || fail "worker encerrado por causa diferente do limite conhecido da chave"
+      docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" \
+        | grep -Fxq "FACIAL_PROCESSING_ENABLED=$expected" \
+        || fail "worker encerrado diverge da configuração facial persistente"
+      local target_notification_events
+      target_notification_events="$(git show "$DEPLOY_SHA:backend/app/notification_events.py" 2>/dev/null)" \
+        || fail "não foi possível verificar a correção de avisos no SHA alvo"
+      [[ "$target_notification_events" == *"if len(event_key) > 192:"* \
+        && "$target_notification_events" == *"sha256(event_key.encode()).hexdigest()"* ]] \
+        || fail "worker encerrado; SHA alvo não contém a correção da chave de aviso"
+      WORKER_RECOVERY_PENDING=1
+      echo "worker anterior exited (1); SHA contém a correção da chave; recuperação será validada após a troca"
+    fi
   fi
-  echo "estado facial coerente confirmado: flag=$expected workers=$([[ "$expected" == "true" ]] && echo saudáveis || echo ausentes)"
+  echo "estado facial coerente confirmado: flag=$expected workers=$([[ "$expected" == "true" ]] && echo saudáveis || echo ausentes) worker_recovery=$WORKER_RECOVERY_PENDING"
 }
 
 ensure_pii_fingerprint_salt() {
@@ -533,6 +567,8 @@ verify_target() {
   origin_url="$(git remote get-url origin)"
   [[ "$origin_url" =~ github\.com[:/]${EXPECTED_REPOSITORY//\//\/}(\.git)?$ ]] || fail "origin não aponta para o repositório GitHub esperado"
 
+  fetch_and_verify_deploy_sha
+
   mkdir -p "$STATE_DIR" "$BACKUP_DIR"
   PREVIOUS_FACIAL_ENABLED="$(read_facial_enabled)"
   FACIAL_DEPLOY_ENABLED="$PREVIOUS_FACIAL_ENABLED"
@@ -555,6 +591,13 @@ verify_target() {
   compose config --quiet
 }
 
+fetch_and_verify_deploy_sha() {
+  git fetch --quiet origin develop
+  git fetch --quiet origin "$DEPLOY_SHA"
+  git cat-file -e "${DEPLOY_SHA}^{commit}"
+  git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop || fail "o SHA não pertence a origin/develop"
+}
+
 record_revision() {
   local label="$1"
   local sha="$2"
@@ -563,7 +606,18 @@ record_revision() {
 }
 
 current_revision() {
-  compose run --rm --no-deps migrate alembic current 2>/dev/null | tr -d '\r' | tail -n 1
+  local revision
+  if ! revision="$(compose exec -T db sh -ceu \
+    'psql -X -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version ORDER BY version_num"' \
+    2>/dev/null | tr -d '\r')"; then
+    echo "deploy-homolog: probe da revisão Alembic falhou ao consultar o banco Markina" >&2
+    return 1
+  fi
+  if [[ ! "$revision" =~ ^[[:alnum:]_]+$ ]]; then
+    echo "deploy-homolog: probe da revisão Alembic retornou valor vazio ou múltiplas revisões" >&2
+    return 1
+  fi
+  printf '%s\n' "$revision"
 }
 
 stop_application_writers() {
@@ -599,7 +653,7 @@ stop_application_writers() {
 }
 
 apply_target_migrations() {
-  local previous_revision="$1" next_revision
+  local previous_revision="$1" next_revision target_heads
 
   # A imagem do serviço migrate pode pertencer ao SHA anteriormente publicado.
   # Reconstrua-a após selecionar o alvo para que o Alembic enxergue exatamente
@@ -608,6 +662,16 @@ apply_target_migrations() {
     fail "não foi possível construir a migration do SHA alvo"
     return 1
   }
+
+  target_heads="$(compose run --rm --no-deps migrate alembic heads 2>/dev/null | awk 'NF { print $1 }' | sort -u)" || {
+    fail "não foi possível identificar a head Alembic do SHA alvo"
+    return 1
+  }
+  if [[ ! "$target_heads" =~ ^[[:alnum:]_]+$ ]]; then
+    fail "o SHA alvo deve possuir exatamente uma head Alembic"
+    return 1
+  fi
+  TARGET_HEAD_REVISION="$target_heads"
 
   stop_application_writers || return 1
 
@@ -620,11 +684,11 @@ apply_target_migrations() {
     return 1
   }
   next_revision="$(current_revision)" || {
-    fail "não foi possível confirmar a revisão após a migration"
+    fail "probe da revisão após a migration falhou"
     return 1
   }
-  [[ -n "$next_revision" && "$next_revision" == *"(head)"* ]] || {
-    fail "migration não alcançou o head do SHA alvo"
+  [[ "$next_revision" == "$TARGET_HEAD_REVISION" ]] || {
+    fail "revisão do banco não corresponde à head Alembic do SHA alvo"
     return 1
   }
   echo "migration Markina: ${previous_revision:-sem revisão} -> $next_revision"
@@ -815,11 +879,6 @@ main() {
   BRANDING_REQUIRED=1
   trap 'rollback_code_if_safe $?' ERR
   verify_target
-
-  git fetch --quiet origin develop
-  git fetch --quiet origin "$DEPLOY_SHA"
-  git cat-file -e "${DEPLOY_SHA}^{commit}"
-  git merge-base --is-ancestor "$DEPLOY_SHA" origin/develop || fail "o SHA não pertence a origin/develop"
 
   PREVIOUS_SHA="$(git rev-parse HEAD)"
   record_revision "previous" "$PREVIOUS_SHA"

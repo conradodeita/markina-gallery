@@ -16,6 +16,7 @@ from app.facial.model_assets import load_manifest, verify_models
 DEFAULT_MANIFEST_PATH = (
     Path(__file__).resolve().parents[2] / "facial-assets" / "model-manifest.json"
 )
+CLIENT_REFERENCE_CONSENT_VERSION = "client-reference-conditional-v1"
 
 
 class FacialConfigurationError(RuntimeError):
@@ -110,6 +111,8 @@ class FacialSettings:
     search_queue_max_age_seconds: int = 300
     search_retry_after_seconds: int = 15
     ambiguous_threshold_milli: int | None = None
+    reference_ambiguous_threshold_milli: int | None = None
+    region_ambiguous_threshold_milli: int | None = None
 
     @property
     def active_key(self) -> bytes:
@@ -150,6 +153,22 @@ def facial_settings_from_environment(
         ambiguous_threshold_milli=(
             _integer("FACIAL_AMBIGUOUS_THRESHOLD_MILLI", 750, minimum=0, maximum=1000)
             if _text("FACIAL_AMBIGUOUS_THRESHOLD_MILLI") else None
+        ),
+        reference_ambiguous_threshold_milli=(
+            None
+            if os.getenv("FACIAL_REFERENCE_AMBIGUOUS_THRESHOLD_MILLI") is not None
+            and not _text("FACIAL_REFERENCE_AMBIGUOUS_THRESHOLD_MILLI")
+            else _integer(
+                "FACIAL_REFERENCE_AMBIGUOUS_THRESHOLD_MILLI", 500, minimum=0, maximum=1000
+            )
+        ),
+        region_ambiguous_threshold_milli=(
+            None
+            if os.getenv("FACIAL_REGION_AMBIGUOUS_THRESHOLD_MILLI") is not None
+            and not _text("FACIAL_REGION_AMBIGUOUS_THRESHOLD_MILLI")
+            else _integer(
+                "FACIAL_REGION_AMBIGUOUS_THRESHOLD_MILLI", 600, minimum=0, maximum=1000
+            )
         ),
         active_key_id=_text("FACIAL_AEAD_ACTIVE_KEY_ID"),
         aead_keys=_keys(),

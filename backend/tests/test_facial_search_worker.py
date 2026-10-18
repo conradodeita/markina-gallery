@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
+from math import sqrt
 from pathlib import Path
 from threading import Barrier
 from uuid import uuid4
@@ -37,7 +38,7 @@ from app.auth import (
     now,
 )
 from app.facial.capacity import FacialSearchCapacityError
-from app.facial.config import FacialSettings
+from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
 from app.facial.crypto import FacialCipher
 from app.facial.engine import replace_photo_index
 from app.facial.jobs import FacialJobRepository
@@ -96,6 +97,10 @@ class Provider:
             raise RuntimeError("detalhe sensível que não deve persistir")
         return self.query_observations
 
+    def observe_reference_bytes(self, payload: bytes, *, max_pixels: int):
+        assert max_pixels > 0
+        return self.observe_bytes(payload)
+
 
 class Messenger:
     def __init__(self, *, failure: Exception | None = None) -> None:
@@ -121,7 +126,7 @@ def _settings(tmp_path: Path) -> FacialSettings:
         quality_version="quality-v1",
         calibration_version="calibration-v1",
         legal_notice_version="notice-v1",
-        consent_version="consent-v1",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
         minor_policy_version="minor-disabled-v1",
@@ -179,7 +184,7 @@ def _base(tmp_path: Path):
         quality_version="quality-v1",
         calibration_version="calibration-v1",
         legal_notice_version="notice-v1",
-        consent_version="consent-v1",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
         legal_basis_reference="synthetic-only",
         retention_policy_version="retention-v1",
     )
@@ -264,8 +269,8 @@ def _create_request(db, parent, client, settings):
         db,
         parent_gallery_id=parent.id,
         client_id=client.id,
-        consent_version="consent-v1",
-        subject_declaration="adult",
+        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+        subject_declaration="conditional", consent_accepted=True,
         representation_reference=None,
         payload=_jpeg(),
         settings=settings,
@@ -274,9 +279,80 @@ def _create_request(db, parent, client, settings):
     return item
 
 
-@pytest.mark.parametrize("reference_source", ["upload", "indexed_region"])
+@pytest.mark.parametrize(
+    "source, specific, region_floor, general, firm, expected",
+    [
+        ("upload", 500, None, None, 750, {500: "ambiguous", 599: "ambiguous", 600: "ambiguous", 749: "ambiguous", 750: "matched", 900: "matched"}),
+        ("indexed_region", 500, None, None, 750, {750: "matched", 900: "matched"}),
+        ("indexed_region", 500, 600, None, 750, {600: "ambiguous", 749: "ambiguous", 750: "matched", 900: "matched"}),
+        ("upload", None, None, None, 750, {750: "matched", 900: "matched"}),
+        ("upload", 500, None, 400, 750, {400: "ambiguous", 499: "ambiguous", 500: "ambiguous", 599: "ambiguous", 600: "ambiguous", 749: "ambiguous", 750: "matched", 900: "matched"}),
+        ("upload", None, None, 400, 750, {400: "ambiguous", 499: "ambiguous", 500: "ambiguous", 599: "ambiguous", 600: "ambiguous", 749: "ambiguous", 750: "matched", 900: "matched"}),
+        ("upload", 500, None, None, 400, {400: "matched", 499: "matched", 500: "matched", 599: "matched", 600: "matched", 749: "matched", 750: "matched", 900: "matched"}),
+    ],
+)
+def test_reference_possibilities_preserve_firm_matches_region_policy_and_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    source: str, specific: int | None, region_floor: int | None, general: int | None, firm: int, expected: dict[int, str],
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    engine, db, parent, client, folder = _base(tmp_path)
+    settings = replace(
+        _settings(tmp_path), reference_ambiguous_threshold_milli=specific, region_ambiguous_threshold_milli=region_floor,
+        ambiguous_threshold_milli=general, similarity_threshold_milli=firm,
+    )
+    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
+    by_similarity = {}
+    # Cossenos conhecidos contra (1, 0, ...), sem depender de fotos/modelos reais.
+    for milli in (399, 400, 499, 500, 599, 600, 749, 750, 900, 1000):
+        cosine = milli / 1000
+        vector = _vector(cosine, sqrt(1 - cosine * cosine))
+        monkeypatch.setattr(Provider, "observe_path", lambda self, path, v=vector: [_face(v)])
+        photo = _add_photo(db, parent, folder, tmp_path)
+        _index_photo(db, photo, tmp_path, settings, cipher)
+        by_similarity[milli] = photo.id
+    if source == "indexed_region":
+        region = db.scalar(select(PhotoFaceEmbedding).where(PhotoFaceEmbedding.photo_asset_id == by_similarity[1000]))
+        region.bbox_x, region.bbox_y, region.bbox_width, region.bbox_height = .1, .1, .2, .2
+        db.commit()
+        request = create_search_request(
+            db, parent_gallery_id=parent.id, client_id=client.id,
+            consent_version=None, subject_declaration=None, representation_reference=None,
+            payload=b"", reference_region_id=region.id, settings=settings,
+        )
+        db.commit()
+    else:
+        request = _create_request(db, parent, client, settings)
+    assert request.reference_source == source
+    repository = FacialJobRepository()
+    claim = repository.claim_next(db, lease_seconds=60)
+    assert claim is not None
+    process_claimed_search_job(
+        db, claim, repository=repository, provider=Provider([_face(_vector(1))]),
+        cipher=cipher, settings=settings,
+    )
+    result, candidates = read_search_result(
+        db, parent_gallery_id=parent.id, client_id=client.id, request_id=request.id,
+    )
+    assert result.status == "ready"
+    assert {c.photo_asset_id: c.match_class for c in candidates} == {
+        **{by_similarity[milli]: match_class for milli, match_class in expected.items()},
+        by_similarity[1000]: "matched",
+    }
+    classes = [c.match_class for c in candidates]
+    assert classes == sorted(classes, key=lambda value: value != "matched")
+    assert result.reference_deleted_at is not None
+    assert result.reference_locator_ciphertext is None
+    assert result.compare_done == result.compare_total == 10
+    assert db.scalar(select(func.count()).select_from(PhotoSelection)) == 0
+    assert all(not hasattr(c, "similarity") and not hasattr(c, "embedding") for c in candidates)
+    db.close()
+    engine.dispose()
+
+
+@pytest.mark.parametrize("reference_source, query_matches", [("upload", True), ("upload", False), ("indexed_region", True)])
 def test_gemma_query_worker_searches_the_pinned_768_dimension_namespace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_source: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_source: str, query_matches: bool
 ) -> None:
     from app.facial.gemma_provider import (
         GEMMA_EMBEDDING_DIMENSION,
@@ -288,7 +364,7 @@ def test_gemma_query_worker_searches_the_pinned_768_dimension_namespace(
     monkeypatch.setenv("APP_ENV", "test")
     root = tmp_path / "derivatives"
     engine, db, parent, client, folder = _base(tmp_path)
-    settings = _settings(tmp_path)
+    settings = replace(_settings(tmp_path), reference_ambiguous_threshold_milli=0, region_ambiguous_threshold_milli=0)
     cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
     photo = _add_photo(db, parent, folder, root)
     vector = normalize_embedding([1.0, *([0.0] * (GEMMA_EMBEDDING_DIMENSION - 1))], GEMMA_EMBEDDING_DIMENSION)
@@ -302,9 +378,11 @@ def test_gemma_query_worker_searches_the_pinned_768_dimension_namespace(
             return [_face(vector)]
 
         def observe_bytes(self, _payload: bytes):
-            return [_face(vector)]
+            query = vector if query_matches else normalize_embedding([0.0, 1.0, *([0.0] * (GEMMA_EMBEDDING_DIMENSION - 2))], GEMMA_EMBEDDING_DIMENSION)
+            return [_face(query)]
 
     provider = GemmaQueryProvider()
+    # Uma referência ortogonal não pode entrar pela faixa SFace em consultas Gemma.
     assert replace_photo_index(
         db,
         tenant_id=FIXTURE_TENANT_ID,
@@ -379,8 +457,8 @@ def test_gemma_query_worker_searches_the_pinned_768_dimension_namespace(
         request_id=request.id,
     )
 
-    assert result.status == "ready"
-    assert [candidate.photo_asset_id for candidate in candidates] == [photo.id]
+    assert result.status == ("ready" if query_matches else "no_candidates")
+    assert [candidate.photo_asset_id for candidate in candidates] == ([photo.id] if query_matches else [])
     engine.dispose()
 
 
@@ -436,7 +514,7 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                         quality_version="quality-v1",
                         calibration_version="calibration-v1",
                         legal_notice_version="notice-v1",
-                        consent_version="consent-v1",
+                        consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
                         legal_basis_reference="synthetic-only",
                         retention_policy_version="retention-v1",
                     ),
@@ -474,8 +552,8 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                 session,
                 parent_gallery_id=gallery_id,
                 client_id=client_id,
-                consent_version="consent-v1",
-                subject_declaration="adult",
+                consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+                subject_declaration="conditional", consent_accepted=True,
                 representation_reference=None,
                 payload=payload,
                 settings=settings,
@@ -505,8 +583,8 @@ def test_one_hundred_concurrent_searches_survive_backpressure_and_worker_restart
                 session,
                 parent_gallery_id=gallery_id,
                 client_id=client_id,
-                consent_version="consent-v1",
-                subject_declaration="adult",
+                consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+                subject_declaration="conditional", consent_accepted=True,
                 representation_reference=None,
                 payload=payload,
                 settings=settings,

@@ -9,17 +9,27 @@ from app.auth import (
     AdminUser,
     Base,
     Client,
+    DerivedGallery,
     NotificationDelivery,
     NotificationEvent,
+    NotificationSetting,
+    ParentGallery,
     PaymentMessageTemplate,
     PushSubscription,
     SessionLocal,
+    Tenant,
     engine,
     now,
     token_hash,
 )
 from app.main import app
-from app.notification_settings import enqueue_event, render_text, save_setting, setting_for
+from app.notification_settings import (
+    enqueue_event,
+    render_text,
+    render_whatsapp_text,
+    save_setting,
+    setting_for,
+)
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
@@ -68,6 +78,11 @@ def test_configuration_api_is_admin_only_and_validates_templates():
     assert response.status_code == 200
     settings = response.json()["settings"]
     assert len(settings) == 7
+    private_photos = next(item for item in settings if item["event_type"] == "private_photos_ready")
+    assert "link_galeria" not in private_photos["allowed_variables"]
+    assert "link_galeria" in private_photos["whatsapp_variables"]
+    assert private_photos["whatsapp_body"].endswith("{{link_galeria}}.")
+    assert "https://fotografo.exemplo/public-galleries/" in private_photos["preview"]["whatsapp_body"]
     item = settings[0]
     payload = {key: item[key] for key in ("version", "whatsapp_enabled", "push_enabled",
                                          "whatsapp_body", "push_title", "push_body")}
@@ -85,12 +100,152 @@ def test_configuration_api_is_admin_only_and_validates_templates():
     assert client.put("/admin/notification-settings/first_access", json=payload).status_code == 422
 
 
+def test_link_compras_is_validated_and_rendered_only_for_delivery_whatsapp():
+    link = "https://a.fotografo.example.com/library/purchases#order-00000000-0000-4000-8000-000000000001"
+    body = "Fotos prontas: {{link_compras}}"
+    assert render_whatsapp_text("order_delivery_ready", body, {"link_compras": link}, 500) == f"Fotos prontas: {link}"
+    assert render_whatsapp_text("order_delivery_ready", body, {"link_compras": "https://evil.example/path"}, 500) == "Fotos prontas: "
+    assert render_whatsapp_text("order_delivery_ready", body, {"link_compras": "https://a.example.com:bad/library/purchases#order-00000000-0000-4000-8000-000000000001"}, 500) == "Fotos prontas: "
+    with pytest.raises(ValueError):
+        render_text("order_delivery_ready", body, {"link_compras": link}, 500)
+    with pytest.raises(ValueError):
+        render_whatsapp_text("payment_confirmed", body, {"link_compras": link}, 500)
+
+
+def test_link_galeria_is_validated_and_rendered_only_for_private_photo_whatsapp():
+    gallery_id = "00000000-0000-4000-8000-000000000001"
+    link = f"https://a.fotografo.example.com/public-galleries/{gallery_id}"
+    body = "Acesso: {{link_galeria}}"
+    assert render_whatsapp_text("private_photos_ready", body, {"link_galeria": link}, 500,
+                                expected_gallery_host="a.fotografo.example.com") == f"Acesso: {link}"
+    for invalid in (
+        f"http://a.fotografo.example.com/public-galleries/{gallery_id}",
+        f"https://evil.example.com/public-galleries/{gallery_id}",
+        f"https://a.fotografo.example.com:443/public-galleries/{gallery_id}",
+        f"https://user@a.fotografo.example.com/public-galleries/{gallery_id}",
+        f"https://a.fotografo.example.com/public-galleries/{gallery_id}?next=evil",
+        f"https://a.fotografo.example.com/public-galleries/{gallery_id}#fragment",
+        "https://a.fotografo.example.com/library/purchases",
+    ):
+        assert render_whatsapp_text("private_photos_ready", body, {"link_galeria": invalid}, 500,
+                                    expected_gallery_host="a.fotografo.example.com") == "Acesso: "
+    with pytest.raises(ValueError):
+        render_text("private_photos_ready", body, {"link_galeria": link}, 500)
+    with pytest.raises(ValueError):
+        render_whatsapp_text("payment_confirmed", body, {"link_galeria": link}, 500)
+
+
+def test_private_photo_event_uses_parent_gallery_and_cancels_only_whatsapp_without_canonical_host():
+    with SessionLocal() as db:
+        tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+        tenant.status, tenant.canonical_host = "active", "photos.example.com"
+        client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511999999630")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria principal")
+        db.add_all([client, parent])
+        db.flush()
+        derived = DerivedGallery(
+            tenant_id=tenant.id, parent_gallery_id=parent.id,
+            client_id=client.id, name="Pasta privada",
+        )
+        db.add(derived)
+        db.flush()
+        supplied = "https://attacker.example/path"
+        event = enqueue_event(
+            db, event_type="private_photos_ready", event_key="private-ready:valid-host",
+            values={"cliente": "Cliente", "galeria": "Galeria principal", "link_galeria": supplied},
+            target_path=f"/public-galleries/{parent.id}", recipients=[client.id],
+            parent_gallery_id=parent.id, derived_gallery_id=derived.id,
+            client_id=client.id, tenant_id=tenant.id,
+        )
+        assert event.whatsapp_body.endswith(f"https://photos.example.com/public-galleries/{parent.id}.")
+        assert supplied not in event.whatsapp_body
+        restricted_event = enqueue_event(
+            db, event_type="private_photos_ready", event_key="private-ready:restricted-folder",
+            values={"cliente": "Cliente", "galeria": "Galeria principal"},
+            target_path=f"/public-galleries/{parent.id}", recipients=[client.id],
+            parent_gallery_id=parent.id, client_id=client.id, tenant_id=tenant.id,
+        )
+        assert restricted_event.whatsapp_body.endswith(
+            f"https://photos.example.com/public-galleries/{parent.id}."
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        db.add(Tenant(id=uuid4(), status="active"))
+        tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+        tenant.canonical_host = None
+        client = db.scalar(select(Client).where(Client.tenant_id == tenant.id))
+        parent = db.scalar(select(ParentGallery).where(ParentGallery.tenant_id == tenant.id))
+        subscription = PushSubscription(
+            tenant_id=tenant.id, endpoint_fingerprint="2" * 64, encrypted_subscription="ciphertext",
+            role="client", subject_id=client.id, client_subject_id=client.id,
+        )
+        db.add(subscription)
+        event = enqueue_event(
+            db, event_type="private_photos_ready", event_key="private-ready:no-host",
+            values={"cliente": "Cliente", "galeria": "Galeria principal"},
+            target_path=f"/public-galleries/{parent.id}", recipients=[client.id],
+            parent_gallery_id=parent.id, client_id=client.id, tenant_id=tenant.id,
+        )
+        db.flush()
+        deliveries = {item.channel: item for item in db.scalars(
+            select(NotificationDelivery).where(NotificationDelivery.event_id == event.id)
+        )}
+        assert deliveries["whatsapp"].status == "cancelled"
+        assert deliveries["whatsapp"].last_error == "canonical_host_unavailable"
+        assert deliveries["push"].status == "queued"
+        assert "https://" not in event.whatsapp_body
+
+
+def test_private_photo_event_without_source_cancels_only_whatsapp():
+    with SessionLocal() as db:
+        tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+        tenant.status, tenant.canonical_host = "active", "photos.example.com"
+        client = Client(tenant_id=tenant.id, full_name="Cliente", phone_e164="+5511999999630")
+        db.add(client)
+        db.flush()
+        db.add(PushSubscription(
+            tenant_id=tenant.id, endpoint_fingerprint="3" * 64, encrypted_subscription="ciphertext",
+            role="client", subject_id=client.id, client_subject_id=client.id,
+        ))
+        event = enqueue_event(
+            db, event_type="private_photos_ready", event_key="private-ready:no-source",
+            values={"cliente": "Cliente", "galeria": "Galeria principal"},
+            target_path="/public-galleries/unavailable", recipients=[client.id],
+            client_id=client.id, tenant_id=tenant.id,
+        )
+        deliveries = {item.channel: item for item in db.scalars(
+            select(NotificationDelivery).where(NotificationDelivery.event_id == event.id)
+        )}
+        assert deliveries["whatsapp"].status == "cancelled"
+        assert deliveries["push"].status == "queued"
+        assert "https://" not in event.whatsapp_body
+
+
 def test_payment_legacy_api_delegates_to_the_single_source():
+    assert TestClient(app).get("/admin/payment-message-templates/migration-preview").status_code == 403
     with SessionLocal() as db:
         db.add(PaymentMessageTemplate(tenant_id=FIXTURE_TENANT_ID, kind="confirmed", body="Texto antigo {{cliente}}"))
+        db.add(NotificationSetting(
+            tenant_id=FIXTURE_TENANT_ID,
+            event_type="payment_reported",
+            whatsapp_body="{{cliente}} informou pagamento do pedido {{pedido}}.",
+            push_title="Pagamento informado",
+            push_body="{{cliente}} informou pagamento do pedido {{pedido}}.",
+        ))
         db.commit()
     client = authenticated()
     assert client.get("/admin/payment-message-templates").json()["templates"]["confirmed"] == "Texto antigo {{cliente}}"
+    preview_response = client.get("/admin/payment-message-templates/migration-preview")
+    assert preview_response.status_code == 200
+    assert preview_response.json()["templates"]["payment_confirmed.whatsapp_body"]["before"] == "Texto antigo {{cliente}}"
+    assert preview_response.json()["templates"]["payment_confirmed.whatsapp_body"]["changed"] is False
+    reported_preview = preview_response.json()["templates"]["payment_reported.whatsapp_body"]
+    assert reported_preview["after"] == "{{cliente}} informou pagamento {{contexto_pagamento}}."
+    with SessionLocal() as db:
+        assert db.get(NotificationSetting, (FIXTURE_TENANT_ID, "payment_reported")).whatsapp_body == (
+            "{{cliente}} informou pagamento do pedido {{pedido}}."
+        )
     response = client.put("/admin/payment-message-templates/confirmed", json={"body": "Novo {{cliente}}"})
     assert response.status_code == 200
     assert client.get("/admin/payment-message-templates").json()["templates"]["confirmed"] == "Novo {{cliente}}"

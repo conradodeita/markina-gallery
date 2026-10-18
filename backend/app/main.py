@@ -6,7 +6,9 @@ import base64
 import csv
 import json
 import logging
+import re
 import secrets
+import unicodedata
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -16,7 +18,7 @@ from io import BytesIO, StringIO
 from os import getenv
 from pathlib import Path
 from typing import Annotated, Literal
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -314,6 +316,7 @@ from app.notification_events import (
 from app.notification_settings import (
     notification_savepoint,
     payment_template_bodies,
+    payment_template_migration_sources,
     save_setting,
     setting_for,
     setting_payload,
@@ -336,7 +339,11 @@ from app.payment_availability import (
     require_payment_method,
 )
 from app.payment_provider import PaymentCheckRequest, operational_provider
-from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, validate_template
+from app.payment_templates import (
+    DEFAULT_PAYMENT_TEMPLATES,
+    preview_payment_template_migration,
+    validate_template,
+)
 from app.pix import PixCodeError, pix_qr_data_url
 from app.preview_adjustment.api import register_routes as register_preview_adjustment_routes
 from app.preview_adjustment.service import presentation_path
@@ -364,7 +371,15 @@ from app.private_membership import (
     unblock_private_membership,
     unlink_private_membership,
 )
-from app.private_upload_batches import batch_for, batch_payload, close_batch, create_batch
+from app.private_upload_batches import (
+    batch_for,
+    batch_payload,
+    close_batch,
+    close_folder_batch,
+    create_batch,
+    create_folder_batch,
+    folder_batch_for,
+)
 from app.product_brand import PRODUCT_NAME
 from app.provider_checkout import issue_provider_payment, prepare_provider_payment
 from app.provider_confirmation import apply_payment_check
@@ -397,12 +412,14 @@ from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
 from app.raw_development.api import register_routes as register_raw_development_routes
+from app.statistics_report import commercial_report, report_csv, report_html
 from app.storage_metrics import measure_owned_photo_storage
 from app.tenancy import (
     TenantContextError,
     domain_session,
     require_admin_tenant,
 )
+from app.tenant_hosts import tenant_for_host
 from app.unified_checkout import (
     cart_payload,
     communication_join,
@@ -1499,6 +1516,18 @@ def client_challenge_context(
             raise neutral_error()
         return challenge.tenant_id
 
+    if not access_token:
+        challenge = db.scalar(select(AuthChallenge).where(
+            AuthChallenge.id == challenge_id,
+            AuthChallenge.kind == "client_otp",
+        ).with_for_update())
+        if challenge and _purchase_return_order_id(challenge.return_to):
+            tenant = tenant_for_host(db, request.headers.get("host"))
+            if (not tenant or tenant.id != challenge.tenant_id or not challenge.subject
+                    or not _client_has_verified_phone(db, tenant_id=tenant.id, phone=challenge.subject)):
+                raise neutral_error()
+            return tenant.id
+
     tenant_id, presented, _parent = client_link_context(db, request, access_token)
     challenge = db.scalar(select(AuthChallenge).where(
         AuthChallenge.id == challenge_id, AuthChallenge.tenant_id == tenant_id,
@@ -1516,6 +1545,39 @@ def client_challenge_context(
     if parent_gallery_id and challenge.parent_gallery_id != parent_gallery_id:
         raise neutral_error()
     return tenant_id
+
+
+def _purchase_return_order_id(value: str | None) -> UUID | None:
+    prefix = "/library/purchases#order-"
+    if not isinstance(value, str) or not value.startswith(prefix):
+        return None
+    try:
+        order_id = UUID(value.removeprefix(prefix))
+    except (ValueError, AttributeError):
+        return None
+    return order_id if value == f"{prefix}{order_id}" else None
+
+
+def _purchase_return_destination(db: Session, value: str | None, *, tenant_id: UUID,
+                                 client_id: UUID) -> str:
+    order_id = _purchase_return_order_id(value)
+    if not order_id:
+        return "/library"
+    order = db.scalar(select(SaleOrder.id).where(
+        SaleOrder.id == order_id,
+        SaleOrder.tenant_id == tenant_id,
+        SaleOrder.client_id == client_id,
+    ))
+    return f"/library/purchases#order-{order_id}" if order else "/library"
+
+
+def _client_has_verified_phone(db: Session, *, tenant_id: UUID, phone: str) -> bool:
+    return bool(db.scalar(select(ClientPhone.id).where(
+        ClientPhone.tenant_id == tenant_id,
+        ClientPhone.phone_e164 == phone,
+        ClientPhone.active.is_(True),
+        ClientPhone.verified_at.is_not(None),
+    )))
 
 
 def _active_client_reauthentication_parent(
@@ -1556,14 +1618,29 @@ def client_challenge(
     payload: ClientLinkChallengeInput, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, str]:
     phone = normalize_e164(payload.phone)
-    client_name = " ".join(payload.full_name.split())
-    if len(client_name) < 3:
-        raise HTTPException(status_code=422, detail="Informe o nome completo.")
+    client_name = " ".join((payload.full_name or "").split())
     # Proteção global precede resolução para cobrir também links inválidos.
     ip_address = request.client.host if request.client else "unknown"
     enforce_rate_limit(db, "client_otp.entry", pii_fingerprint(phone), ip_address)
+    purchase_reauthentication = (
+        not payload.access_token and not payload.parent_gallery_id
+        and _purchase_return_order_id(payload.return_to) is not None
+    )
+    if purchase_reauthentication:
+        tenant = tenant_for_host(db, request.headers.get("host"))
+        if not tenant:
+            audit(db, "client_otp.context_rejected", "invalid")
+            db.commit()
+            return {"challenge_id": str(uuid4()),
+                    "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp."}
+        tenant_id, capability, parent = tenant.id, None, None
+    else:
+        if len(client_name) < 3:
+            raise HTTPException(status_code=422, detail="Informe o nome completo.")
     contextual_reauthentication = not payload.access_token and payload.parent_gallery_id is not None
-    if contextual_reauthentication:
+    if purchase_reauthentication:
+        pass
+    elif contextual_reauthentication:
         try:
             parent = _active_client_reauthentication_parent(db, payload.parent_gallery_id)
         except HTTPException:
@@ -1586,6 +1663,16 @@ def client_challenge(
     client_auth_rate_limit(db, "client_otp.challenge", pii_fingerprint(phone), ip_address,
                                 tenant_id=tenant_id,
                             )
+    if purchase_reauthentication:
+        try:
+            client = resolve_client_by_phone(db, phone, tenant_id=tenant_id)
+        except ClientIdentityConflict:
+            client = None
+        if not client or not _client_has_verified_phone(db, tenant_id=tenant_id, phone=phone):
+            audit(db, "client_otp.context_rejected", "invalid", tenant_id=tenant_id)
+            db.commit()
+            return {"challenge_id": str(uuid4()),
+                    "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp."}
     if contextual_reauthentication and not _registered_client_for_gallery(db, parent, phone):
         audit(db, "client_otp.context_rejected", "invalid", tenant_id=tenant_id)
         db.commit()
@@ -1593,16 +1680,19 @@ def client_challenge(
             "challenge_id": str(uuid4()),
             "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
         }
-    deliver = client_otp_delivery_allowed(db, parent=parent, phone_e164=phone, capability=capability)
+    deliver = (True if purchase_reauthentication else
+               client_otp_delivery_allowed(db, parent=parent, phone_e164=phone, capability=capability))
     challenge, code = create_challenge(
         db, "client_otp", phone, code=None if deliver else secrets.token_urlsafe(32),
-        tenant_id=tenant_id, client_name=client_name,
+        tenant_id=tenant_id, client_name=None if purchase_reauthentication else client_name,
         parent_gallery_id=parent.id if parent else None,
         gallery_capability_id=capability.id if capability else None,
         return_to=(
             f"/public-galleries/{parent.id}"
             if contextual_reauthentication and parent
-            else safe_internal_return(payload.return_to, "/library") if payload.return_to else None
+            else (f"/library/purchases#order-{_purchase_return_order_id(payload.return_to)}"
+                  if purchase_reauthentication else safe_internal_return(payload.return_to, "/library"))
+            if payload.return_to or contextual_reauthentication else None
         ),
     )
     if deliver:
@@ -1672,6 +1762,7 @@ def client_verify(
     parent_gallery = (
         db.get(ParentGallery, challenge.parent_gallery_id) if challenge.parent_gallery_id else None
     )
+    purchase_reauthentication = _purchase_return_order_id(challenge.return_to) is not None
     capability = active_capability_by_id(db, challenge.gallery_capability_id)
     if not client:
         can_register_from_link = bool(
@@ -1696,6 +1787,8 @@ def client_verify(
             audit(db, "client_otp.unlinked_denied", fingerprint, tenant_id=tenant_id)
             minimize_client_challenge_pii(db, challenge)
             db.commit()
+            if purchase_reauthentication:
+                raise neutral_error()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -1903,6 +1996,10 @@ def client_verify(
             gallery=destination_gallery if capability and capability.scope in {
                 "private_invite", "private_client_invite", "private_gallery_link"
             } else None,
+        )
+    elif purchase_reauthentication:
+        destination = _purchase_return_destination(
+            db, challenge.return_to, tenant_id=tenant_id, client_id=client.id,
         )
     else:
         destination = _client_journey_destination(db, client.id, tenant_id=tenant_id)
@@ -2153,11 +2250,16 @@ def confirm_admin_email(
 
 
 @app.get("/auth/destination")
-def destination(request: Request) -> dict[str, str]:
+def destination(request: Request, return_to: str | None = Query(default=None, max_length=512)) -> dict[str, str]:
     session = current_session(request, invalid_session_status=401)
     if session.role == Role.ADMIN.value:
         return {"destination": "/admin"}
     with SessionLocal() as db:
+        purchase_destination = _purchase_return_destination(
+            db, return_to, tenant_id=session.tenant_id, client_id=session.subject_id,
+        ) if isinstance(return_to, str) and return_to else None
+        if purchase_destination:
+            return {"destination": purchase_destination}
         client_destination = _client_journey_destination(db, session.subject_id, tenant_id=session.tenant_id)
     return {"destination": client_destination}
 
@@ -2812,6 +2914,27 @@ def admin_validation_summary(
     for job in jobs:
         job_states[job.status] += 1
     legacy_gallery_count = db.scalar(select(func.count(DerivedGallery.id)).where(DerivedGallery.tenant_id == tenant_id)) or 0
+    active_import_folders = (
+        select(PhotoFolder.id.label("folder_id"))
+        .join(PhotoAsset, (PhotoAsset.folder_id == PhotoFolder.id) & (PhotoAsset.tenant_id == tenant_id))
+        .join(MediaJob, (MediaJob.photo_asset_id == PhotoAsset.id) & (MediaJob.tenant_id == tenant_id))
+        .where(
+            PhotoFolder.tenant_id == tenant_id,
+            PhotoFolder.purpose == "content",
+            MediaJob.status.in_(("queued", "processing")),
+        )
+        .distinct()
+        .subquery()
+    )
+    active_import_folder_count = db.scalar(
+        select(func.count()).select_from(active_import_folders)
+    ) or 0
+    active_import_photo_count = db.scalar(
+        select(func.count(PhotoAsset.id)).where(
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoAsset.folder_id.in_(select(active_import_folders.c.folder_id)),
+        )
+    ) or 0
     galleries = list(db.scalars(select(ParentGallery).where(ParentGallery.tenant_id == tenant_id).where(
         ParentGallery.lifecycle_status != "deleted"
     ).order_by(ParentGallery.created_at.desc()).limit(5)))
@@ -2835,6 +2958,8 @@ def admin_validation_summary(
             ),
             "derived_galleries": legacy_gallery_count,
             "imports": dict(job_states),
+            "folders_with_active_imports": active_import_folder_count,
+            "photos_in_folders_with_active_imports": active_import_photo_count,
             "folders_preparing": len(
                 list(db.scalars(select(PhotoFolder.id).where(PhotoFolder.tenant_id == tenant_id).where(PhotoFolder.status == "preparing")))
             ),
@@ -4969,10 +5094,13 @@ def register_folder_photo_asset(
         if not parent.active:
             raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas fotos.")
     if payload.upload_batch_id:
-        if not folder.derived_gallery_id:
-            raise HTTPException(status_code=422, detail="Lote exclusivo para galeria privada.")
         try:
-            batch_for(db, payload.upload_batch_id, folder.derived_gallery_id, open_only=True, tenant_id=tenant_id)
+            if folder.derived_gallery_id:
+                batch_for(db, payload.upload_batch_id, folder.derived_gallery_id,
+                          open_only=True, tenant_id=tenant_id)
+            else:
+                folder_batch_for(db, payload.upload_batch_id, folder.id,
+                                 open_only=True, tenant_id=tenant_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     existing = db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id,
@@ -4986,9 +5114,20 @@ def register_folder_photo_asset(
     if existing:
         if existing.folder_id != folder.id or existing.derived_gallery_id != folder.derived_gallery_id:
             raise HTTPException(status_code=409, detail="Arquivo já cadastrado em outro escopo.")
-        existing_batch = db.scalar(select(PrivateUploadBatchAsset.batch_id).where(PrivateUploadBatchAsset.tenant_id == tenant_id).where(
-            PrivateUploadBatchAsset.photo_asset_id == existing.id))
-        return {"id": str(existing.id), "duplicate": "false" if existing_batch == payload.upload_batch_id else "true"}
+        existing_batch_ids = set(
+            db.scalars(
+                select(PrivateUploadBatchAsset.batch_id).where(
+                    PrivateUploadBatchAsset.tenant_id == tenant_id,
+                    PrivateUploadBatchAsset.photo_asset_id == existing.id,
+                )
+            )
+        )
+        if payload.upload_batch_id and payload.upload_batch_id not in existing_batch_ids:
+            db.add(PrivateUploadBatchAsset(
+                batch_id=payload.upload_batch_id, photo_asset_id=existing.id, tenant_id=tenant_id,
+            ))
+            db.commit()
+        return {"id": str(existing.id), "duplicate": "false" if payload.upload_batch_id in existing_batch_ids else "true"}
     asset = PhotoAsset(
         tenant_id=tenant_id,
         parent_gallery_id=folder.parent_gallery_id,
@@ -5064,8 +5203,13 @@ def _publish_photo_folder(
                 except ValueError:
                     logger.warning("Indexação facial adiada: caminho da prévia indisponível")
     if ready_ids and folder.audience_scope == "selected" and folder.derived_gallery_id is None:
+        batched_photo_ids = set(db.scalars(select(PrivateUploadBatchAsset.photo_asset_id).where(
+            PrivateUploadBatchAsset.tenant_id == folder.tenant_id,
+            PrivateUploadBatchAsset.photo_asset_id.in_(ready_ids),
+        )))
+        unbatched_ready_ids = ready_ids - batched_photo_ids
         record_restricted_folder_ready(
-            db, folder=folder, photo_ids=ready_ids, batch_key="publish"
+            db, folder=folder, photo_ids=unbatched_ready_ids, batch_key="publish"
         )
     failed_ids = (
         set(
@@ -6439,6 +6583,16 @@ def _selection_html_preview(db: Session, item: SaleOrderItem) -> str:
     return f'<img src="data:image/jpeg;base64,{encoded}" alt="Prévia de {escape(item.filename_snapshot)}">'
 
 
+def _purchased_photos_content_disposition(client_name: str | None) -> str:
+    safe_name = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', "", client_name or "")
+    safe_name = re.sub(r"\s+", " ", safe_name).strip(" .")[:120].strip(" .") or "Cliente"
+    unicode_filename = f"fotos-compradas-{safe_name}.html"
+    ascii_name = unicodedata.normalize("NFKD", safe_name).encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "-", ascii_name).strip(".-_") or "Cliente"
+    fallback = f"fotos-compradas-{ascii_name[:120]}.html"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(unicode_filename, safe='')}"
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/selection/export.{format}")
 def export_selection(
     gallery_id: UUID,
@@ -6512,7 +6666,7 @@ h1 {{ margin: 0 0 10px; font-size: 25px; }} p {{ margin: 5px 0; color: #5f5a53; 
         db.commit()
         return HTMLResponse(
             content,
-            headers={"Content-Disposition": 'attachment; filename="fotos-compradas.html"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+            headers={"Content-Disposition": _purchased_photos_content_disposition(owner.full_name if owner else None), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
         )
     rows = []
     for selection in db.scalars(
@@ -6621,7 +6775,7 @@ def export_canonical_selection(
         audit(db, "selection.exported", str(parent_gallery_id), tenant_id=tenant_id)
         db.commit()
         return HTMLResponse(content, headers={
-            "Content-Disposition": 'attachment; filename="fotos-compradas.html"',
+            "Content-Disposition": _purchased_photos_content_disposition(owner.full_name),
             "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
         })
 
@@ -8112,6 +8266,61 @@ def finish_private_upload_batch(gallery_id: UUID, batch_id: UUID, request: Reque
     return batch_payload(db, batch)
 
 
+@app.post("/admin/photo-folders/{folder_id}/upload-batches", status_code=201)
+def begin_restricted_folder_upload_batch(folder_id: UUID, request: Request,
+                                         db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    session = require_admin(request)
+    require_same_origin(request)
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id, PhotoFolder.id == folder_id,
+        PhotoFolder.purpose == "content", PhotoFolder.audience_scope == "selected",
+        PhotoFolder.derived_gallery_id.is_(None),
+    ).with_for_update())
+    if not folder or folder.status not in {"preparing", "released"}:
+        raise HTTPException(status_code=404, detail="Pasta privada não encontrada ou indisponível.")
+    require_parent_gallery_mutable(db, folder.parent_gallery_id, tenant_id=tenant_id)
+    batch = create_folder_batch(db, folder, session.subject_id)
+    audit(db, "private_folder_upload_batch.created", str(batch.id), tenant_id=tenant_id)
+    db.commit()
+    return batch_payload(db, batch)
+
+
+@app.get("/admin/photo-folders/{folder_id}/upload-batches")
+def list_restricted_folder_upload_batches(folder_id: UUID, request: Request,
+                                          db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id, PhotoFolder.id == folder_id,
+        PhotoFolder.purpose == "content", PhotoFolder.audience_scope == "selected",
+        PhotoFolder.derived_gallery_id.is_(None),
+    ))
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta privada não encontrada.")
+    batches = db.scalars(select(PrivateUploadBatch).where(
+        PrivateUploadBatch.tenant_id == tenant_id,
+        PrivateUploadBatch.folder_id == folder.id,
+        PrivateUploadBatch.status == "open",
+    ).order_by(PrivateUploadBatch.created_at))
+    return {"batches": [batch_payload(db, batch) for batch in batches]}
+
+
+@app.post("/admin/photo-folders/{folder_id}/upload-batches/{batch_id}/close")
+def finish_restricted_folder_upload_batch(folder_id: UUID, batch_id: UUID, request: Request,
+                                          db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    require_same_origin(request)
+    try:
+        batch = close_folder_batch(db, batch_id, folder_id, tenant_id=tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(db, "private_folder_upload_batch.closed", str(batch.id), tenant_id=tenant_id)
+    db.commit()
+    return batch_payload(db, batch)
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/folders")
 def admin_private_gallery_folders(
     gallery_id: UUID, request: Request, db: Session = Depends(db_session)
@@ -8871,6 +9080,146 @@ def admin_statistics(
     }
 
 
+def _commercial_report_for_request(
+    db: Session,
+    request: Request,
+    *,
+    starts_at: datetime | None,
+    ends_at: datetime | None,
+    event_name: str | None,
+    client_id: UUID | None,
+    parent_gallery_id: UUID | None,
+    derived_gallery_id: UUID | None,
+    folder_id: UUID | None,
+    payment_method: str | None,
+    order_status: str | None,
+) -> dict[str, object]:
+    tenant_id = directory_tenant_id(db, request)
+    if payment_method not in (None, "pix", "credit_card", "not_required", "unknown"):
+        raise HTTPException(status_code=422, detail="Forma de pagamento inválida.")
+    if order_status not in (None, "pending", "confirmed", "cancelled", "not_required", "hold_or_corrected"):
+        raise HTTPException(status_code=422, detail="Status do pedido inválido.")
+    return commercial_report(
+        db, tenant_id=tenant_id, starts_at=starts_at, ends_at=ends_at, event_name=event_name,
+        client_id=client_id, parent_gallery_id=parent_gallery_id,
+        derived_gallery_id=derived_gallery_id, folder_id=folder_id,
+        payment_method=payment_method, order_status=order_status,
+    )
+
+
+@app.get("/admin/statistics/report")
+def admin_statistics_report(
+    request: Request,
+    response: Response,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    purchased_offset: int = Query(default=0, ge=0),
+    selected_offset: int = Query(default=0, ge=0),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    orders = data["orders"]
+    purchased = data["items"]
+    selected = data["selected_not_purchased"]
+    return {
+        **data,
+        "orders_total": len(orders), "orders": orders[offset:offset + limit],
+        "items": purchased[purchased_offset:purchased_offset + limit],
+        "purchased_total": len(purchased), "purchased_photos": purchased[purchased_offset:purchased_offset + limit],
+        "selected_not_purchased_total": len(selected),
+        "selected_not_purchased": selected[selected_offset:selected_offset + limit],
+        "selected_not_purchased_photos": selected[selected_offset:selected_offset + limit],
+    }
+
+
+@app.get("/admin/statistics/csv-access")
+def admin_statistics_csv_access(request: Request, db: Session = Depends(db_session)) -> JSONResponse:
+    session = require_admin(request)
+    directory_tenant_id(db, request)
+    from app.system_monitor.access import is_owner
+    return JSONResponse(
+        {"allowed": is_owner(db, session.subject_id)},
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/admin/statistics/report.html", response_class=HTMLResponse)
+def export_statistics_html(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    db: Session = Depends(db_session),
+) -> HTMLResponse:
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    return HTMLResponse(
+        report_html(data),
+        headers={"Content-Disposition": 'attachment; filename="relatorio-comercial.html"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/admin/statistics/report.csv")
+def export_statistics_csv(
+    request: Request,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    event_name: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    derived_gallery_id: UUID | None = None,
+    folder_id: UUID | None = None,
+    payment_method: str | None = None,
+    order_status: str | None = None,
+    db: Session = Depends(db_session),
+) -> Response:
+    session = require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    # A identidade estável do proprietário é consultada antes de qualquer dado comercial.
+    from app.system_monitor.access import require_owner
+    require_owner(db, session.subject_id)
+    data = _commercial_report_for_request(
+        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
+        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
+        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
+    )
+    # Revalida proprietário e vínculo de tenant depois da consulta para evitar resposta em sessão alterada.
+    require_owner(db, session.subject_id)
+    if directory_tenant_id(db, request) != tenant_id:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    return Response(
+        content=report_csv(data["items"]), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="vendas.csv"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @app.get("/admin/statistics/filters")
 def admin_statistics_filters(
     request: Request, db: Session = Depends(db_session)
@@ -8887,6 +9236,10 @@ def admin_statistics_filters(
         )
     )
     galleries = list(db.scalars(select(DerivedGallery).where(DerivedGallery.tenant_id == tenant_id).order_by(DerivedGallery.name)))
+    folders = list(db.scalars(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id,
+        PhotoFolder.purpose == "content",
+    ).order_by(PhotoFolder.name)))
     return {
         "clients": [{"id": str(client.id), "name": client.full_name} for client in clients],
         "parent_galleries": [
@@ -8897,6 +9250,7 @@ def admin_statistics_filters(
             {"id": str(gallery.id), "name": gallery.name, "client_id": str(gallery.client_id)}
             for gallery in galleries
         ],
+        "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
     }
 
 
@@ -10483,7 +10837,7 @@ class FaceRegionSearchInput(BaseModel):
     face_region_id: UUID
     # Compatibilidade de transporte; não são registrados como novo consentimento.
     consent_version: str | None = Field(default=None, max_length=120)
-    subject_declaration: Literal["adult", "minor"] | None = None
+    subject_declaration: Literal["adult", "minor", "conditional"] | None = None
     representation_reference: str | None = Field(default=None, max_length=200)
 
 
@@ -10544,6 +10898,13 @@ async def create_public_gallery_facial_search(
         ip_address=request.client.host if request.client else "unknown",
     )
     consent_version = request.headers.get("x-facial-consent-version", "").strip()
+    upload_attempt = request.headers.get("x-facial-upload-attempt")
+    try:
+        upload_request_id = UUID(upload_attempt) if upload_attempt else None
+        if upload_request_id is not None and upload_request_id.version != 4:
+            raise ValueError("UUID v4 required")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Identificador de tentativa inválido.") from exc
     subject_declaration = request.headers.get(
         "x-facial-subject-declaration", ""
     ).strip()
@@ -10567,6 +10928,7 @@ async def create_public_gallery_facial_search(
             payload=payload,
             settings=settings,
             consent_accepted=request.headers.get("x-facial-consent-accepted") == "true",
+            request_id=upload_request_id,
         )
         db.commit()
         FACIAL_ADMISSION_COUNTER.record("accepted")
@@ -11816,8 +12178,18 @@ def list_payment_templates(
             kind: configured.get(kind, default)
             for kind, default in DEFAULT_PAYMENT_TEMPLATES.items()
         },
-        "allowed_variables": sorted(["cliente", "pedido", "galeria"]),
+        "allowed_variables": sorted(["cliente", "pedido", "galeria", "contexto_pagamento"]),
     }
+
+
+@app.get("/admin/payment-message-templates/migration-preview")
+def preview_payment_template_migration_api(
+    request: Request, db: Session = Depends(db_session)
+) -> dict[str, object]:
+    session = require_admin(request)
+    return {"templates": preview_payment_template_migration(
+        payment_template_migration_sources(db, tenant_id=session.tenant_id)
+    )}
 
 
 @app.get("/admin/removed-photo-movements")
@@ -11843,10 +12215,11 @@ def admin_removed_photo_movements(
 def list_payment_communications(
     request: Request,
     query: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
     financial_status: Literal[
-        "awaiting_payment", "reported", "confirmed", "not_found", "overdue",
-        "verifying", "exception", "hold",
+        "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
+        "not_found", "overdue", "verifying", "exception", "hold",
     ]
     | None = Query(default=None),
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
@@ -11873,12 +12246,23 @@ def list_payment_communications(
         .order_by(SaleOrder.created_at.desc(), SaleOrder.id.desc())
     )
     normalized_query = query.strip().lower() if query else ""
-    if normalized_query:
-        order_query = order_query.where(
+    if normalized_query and not client_id:
+        phone_query = "".join(character for character in normalized_query if character.isdigit())
+        search_criteria = [
             func.lower(
                 func.coalesce(Client.full_name, SaleOrder.client_name_snapshot, "")
             ).like(f"%{normalized_query}%")
-        )
+        ]
+        if phone_query:
+            search_criteria.extend(
+                [
+                    Client.phone_e164.contains(phone_query),
+                    SaleOrder.client_phone_snapshot.contains(phone_query),
+                ]
+            )
+        order_query = order_query.where(or_(*search_criteria))
+    if client_id:
+        order_query = order_query.where(SaleOrder.client_id == client_id)
     if parent_gallery_id:
         order_query = order_query.where(
             SaleOrder.parent_gallery_id_snapshot == parent_gallery_id
@@ -11986,10 +12370,14 @@ def list_payment_communications(
         ))
         .order_by(PhotoSelection.created_at.desc())
     )
-    if normalized_query:
-        selection_query = selection_query.where(
-            func.lower(Client.full_name).like(f"%{normalized_query}%")
-        )
+    if normalized_query and not client_id:
+        phone_query = "".join(character for character in normalized_query if character.isdigit())
+        search_criteria = [func.lower(Client.full_name).like(f"%{normalized_query}%")]
+        if phone_query:
+            search_criteria.append(Client.phone_e164.contains(phone_query))
+        selection_query = selection_query.where(or_(*search_criteria))
+    if client_id:
+        selection_query = selection_query.where(PhotoSelection.client_id == client_id)
     if parent_gallery_id:
         selection_query = selection_query.where(
             ParentGallery.id == parent_gallery_id
@@ -11998,9 +12386,7 @@ def list_payment_communications(
         selection_query = selection_query.where(PhotoSelection.created_at >= created_from)
     if created_to:
         selection_query = selection_query.where(PhotoSelection.created_at <= created_to)
-    include_open_selections = (
-        financial_status in (None, "awaiting_payment") and delivery_status is None
-    )
+    include_open_selections = financial_status is None and delivery_status is None
     selection_rows = list(db.execute(selection_query)) if include_open_selections else []
     selection_groups: dict[tuple[UUID, UUID], dict[str, object]] = {}
     selection_parents: dict[tuple[UUID, UUID], ParentGallery | None] = {}
@@ -12183,26 +12569,37 @@ def list_payment_communications(
                     "confirmed_cents": 0,
                 },
                 "orders": [],
+                "financial_status": order_payload["financial_status"],
+                "_sort_priority": _payment_financial_priority(order_payload["financial_status"]),
                 "_sort_created_at": sort_created_at,
             },
         )
         group["orders"].append(order_payload)
+        order_priority = _payment_financial_priority(order_payload["financial_status"])
+        if order_priority < group["_sort_priority"]:
+            group["financial_status"] = order_payload["financial_status"]
+            group["_sort_priority"] = order_priority
+            group["_sort_created_at"] = sort_created_at
+        elif order_priority == group["_sort_priority"]:
+            group["_sort_created_at"] = min(group["_sort_created_at"], sort_created_at)
         group["totals"]["orders"] += 1
         if order_payload["financial_status"] == "reported":
             group["totals"]["reported_orders"] += 1
             group["totals"]["reported_cents"] += order_payload["total_cents"]
-        elif order_payload["financial_status"] == "confirmed":
+        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
             group["totals"]["confirmed_orders"] += 1
             group["totals"]["confirmed_cents"] += order_payload["total_cents"]
         # Compatibilidade temporária: `total_cents` passa a representar somente
         # pedidos cujo pagamento foi comunicado e ainda aguarda conferência.
         group["totals"]["total_cents"] = group["totals"]["reported_cents"]
-        group["_sort_created_at"] = max(group["_sort_created_at"], sort_created_at)
 
     all_groups = sorted(
         grouped.values(),
-        key=lambda group: (group["_sort_created_at"], group["client"]["id"]),
-        reverse=True,
+        key=lambda group: (
+            group["_sort_priority"],
+            group["_sort_created_at"].isoformat(),
+            group["client"]["id"],
+        ),
     )
     cursor_key = _decode_payment_cursor(cursor) if cursor else None
     if cursor_key:
@@ -12210,10 +12607,10 @@ def list_payment_communications(
             group
             for group in all_groups
             if (
+                group["_sort_priority"],
                 group["_sort_created_at"].isoformat(),
                 group["client"]["id"],
-            )
-            < cursor_key
+            ) > cursor_key
         ]
 
     page_groups = all_groups[:limit]
@@ -12222,10 +12619,13 @@ def list_payment_communications(
     if has_next_page and page_groups:
         last_group = page_groups[-1]
         next_cursor = _encode_payment_cursor(
-            last_group["_sort_created_at"], last_group["client"]["id"]
+            last_group["_sort_created_at"],
+            last_group["client"]["id"],
+            priority=last_group["_sort_priority"],
         )
     for group in page_groups:
         group.pop("_sort_created_at", None)
+        group.pop("_sort_priority", None)
 
     financial_counts: dict[str, int] = defaultdict(int)
     delivery_counts: dict[str, int] = defaultdict(int)
@@ -12239,7 +12639,7 @@ def list_payment_communications(
         if order_payload["financial_status"] == "reported":
             reported_orders += 1
             reported_cents += order_payload["total_cents"]
-        elif order_payload["financial_status"] == "confirmed":
+        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
             confirmed_orders += 1
             confirmed_cents += order_payload["total_cents"]
         for state in order_payload["delivery_statuses"]:
@@ -12287,7 +12687,6 @@ def list_payment_communications(
             "confirmed_orders": confirmed_orders,
             "confirmed_cents": confirmed_cents,
             "financial_statuses": dict(financial_counts),
-            "failed_messages": delivery_counts.get("failed", 0),
         },
         "facets": {
             "parent_galleries": [
@@ -12318,7 +12717,7 @@ def _payment_financial_status(
     provider_payment: ProviderPayment | None = None,
 ) -> str:
     if provider_payment:
-        return {
+        financial_state = {
             "creating": "awaiting_payment",
             "awaiting_payment": "awaiting_payment",
             "verification_required": "verifying",
@@ -12327,8 +12726,11 @@ def _payment_financial_status(
             "exception": "exception",
             "hold": "hold",
         }[provider_payment.state]
+        if financial_state == "confirmed" and not order.delivery_album_url:
+            return "confirmed_undelivered"
+        return financial_state
     if order.payment_status == "confirmed":
-        return "confirmed"
+        return "confirmed" if order.delivery_album_url else "confirmed_undelivered"
     if order.payment_status == "cancelled":
         return "not_found"
     if latest_communication and latest_communication.status == "pending_review":
@@ -12336,6 +12738,20 @@ def _payment_financial_status(
     if gallery and gallery.selection_expires_at and expired(gallery.selection_expires_at):
         return "overdue"
     return "awaiting_payment"
+
+
+def _payment_financial_priority(financial_status: str) -> int:
+    return {
+        "reported": 0,
+        "confirmed": 1,
+        "confirmed_undelivered": 2,
+        "awaiting_payment": 3,
+        "not_found": 4,
+        "overdue": 5,
+        "verifying": 6,
+        "exception": 7,
+        "hold": 8,
+    }.get(financial_status, 9)
 
 
 def _admin_payment_communication_payload(
@@ -12393,15 +12809,17 @@ def _admin_payment_communication_payload(
     }
 
 
-def _encode_payment_cursor(created_at: datetime, client_id: str) -> str:
+def _encode_payment_cursor(
+    created_at: datetime, client_id: str, *, priority: int = 0
+) -> str:
     raw = json.dumps(
-        {"created_at": created_at.isoformat(), "client_id": client_id},
+        {"priority": priority, "created_at": created_at.isoformat(), "client_id": client_id},
         separators=(",", ":"),
     ).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _decode_payment_cursor(cursor: str) -> tuple[str, str]:
+def _decode_payment_cursor(cursor: str) -> tuple[int, str, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
@@ -12409,7 +12827,7 @@ def _decode_payment_cursor(cursor: str) -> tuple[str, str]:
         client_id = UUID(payload["client_id"])
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail="Cursor de pagamentos inválido.") from exc
-    return created_at.isoformat(), str(client_id)
+    return int(payload.get("priority", 0)), created_at.isoformat(), str(client_id)
 
 
 def _delivery_payload(

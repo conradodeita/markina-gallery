@@ -135,25 +135,35 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
     const failed: File[] = [];
     const errors: string[] = [];
     try {
-      for (const [index, file] of files.entries()) {
-        const state = { current: index + 1, total: files.length, completed,
-          filename: file.name, fileBytes: 0, fileTotal: file.size };
-        setUploadState({ ...state, phase: "preparing" });
-        try {
-          const storageKey = await jpegStorageKey(parentGalleryId, folderId, file);
-          const photo = await collectionRequest(`/api/admin/photo-folders/${folderId}/photos`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: file.name, storage_key: storageKey }),
-          }) as { id: string };
-          await uploadJpeg(`/api/admin/photo-assets/${photo.id}/source`, file,
-            () => setUploadState({ ...state, phase: "waiting" }),
-            (loaded, total) => setUploadState({ ...state, phase: "uploading",
-              fileBytes: loaded, fileTotal: total }));
-          completed++;
-        } catch (error) {
-          failed.push(file);
-          errors.push(`${file.name}: ${error instanceof Error ? error.message : "falha no envio"}`);
+      const openBatches = await collectionRequest(`/api/admin/photo-folders/${folderId}/upload-batches`) as { batches: Array<{ id: string }> };
+      const batch = openBatches.batches[0] ?? await collectionRequest(`/api/admin/photo-folders/${folderId}/upload-batches`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      }) as { id: string };
+      try {
+        for (const [index, file] of files.entries()) {
+          const state = { current: index + 1, total: files.length, completed,
+            filename: file.name, fileBytes: 0, fileTotal: file.size };
+          setUploadState({ ...state, phase: "preparing" });
+          try {
+            const storageKey = await jpegStorageKey(parentGalleryId, folderId, file);
+            const photo = await collectionRequest(`/api/admin/photo-folders/${folderId}/photos`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ filename: file.name, storage_key: storageKey, upload_batch_id: batch.id }),
+            }) as { id: string };
+            await uploadJpeg(`/api/admin/photo-assets/${photo.id}/source`, file,
+              () => setUploadState({ ...state, phase: "waiting" }),
+              (loaded, total) => setUploadState({ ...state, phase: "uploading",
+                fileBytes: loaded, fileTotal: total }));
+            completed++;
+          } catch (error) {
+            failed.push(file);
+            errors.push(`${file.name}: ${error instanceof Error ? error.message : "falha no envio"}`);
+          }
         }
+      } finally {
+        await collectionRequest(`/api/admin/photo-folders/${folderId}/upload-batches/${batch.id}/close`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
       }
       setRetryFiles(failed);
       setUploadState({ phase: failed.length ? "error" : "success", current: files.length,

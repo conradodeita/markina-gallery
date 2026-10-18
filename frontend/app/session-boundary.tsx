@@ -83,7 +83,7 @@ function ProtectedSession({ pathname, children, navigate }: {
             clearFacialSearchStorage();
             setAuthorized(false);
             setExpired(true);
-            navigate(recoveryLocation(pathname));
+            navigate(recoveryLocation(pathname, window.location.hash));
             return;
           }
           if (response.status === 403) {
@@ -193,7 +193,7 @@ function ProtectedSession({ pathname, children, navigate }: {
           ? "Conexão confirmada. Confira o resultado da ação anterior antes de tentar novamente."
           : "Acesso negado para esta operação ou área. Confira suas permissões ou os dados informados."}</p>
       {notice === "recovered" ? <button type="button" className="mk-button mk-button--secondary" onClick={() => { uncertainMutation.current = false; setNotice(null); }}>Fechar aviso</button> : null}
-      {notice === "forbidden" && !authorized ? <a href={recoveryLocation(pathname)}>Voltar à entrada</a> : null}
+      {notice === "forbidden" && !authorized ? <a href={recoveryLocation(pathname, window.location.hash)}>Voltar à entrada</a> : null}
     </section> : null}
     {!authorized && !expired && !notice ? <p role="status">Verificando sua sessão…</p> : null}
     {authorized && !expired ? children : null}

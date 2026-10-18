@@ -195,10 +195,18 @@ class FacialEmbeddingExperimentSetting(Base):
 class Tenant(Base):
     __tablename__ = "tenant"
     __table_args__ = (
+        UniqueConstraint("canonical_host", name="uq_tenant_canonical_host"),
         CheckConstraint("status IN ('active', 'suspended')", name="ck_tenant_status"),
+        CheckConstraint(
+            "canonical_host IS NULL OR (canonical_host = lower(canonical_host) "
+            "AND length(canonical_host) BETWEEN 1 AND 253 "
+            "AND canonical_host NOT LIKE '%/%' AND canonical_host NOT LIKE '%:%')",
+            name="ck_tenant_canonical_host",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    canonical_host: Mapped[str | None] = mapped_column(String(253), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -2654,7 +2662,7 @@ class FacialSearchRequest(Base):
             name="ck_facial_search_status",
         ),
         CheckConstraint(
-            "subject_declaration IN ('adult', 'minor')",
+            "subject_declaration IN ('adult', 'minor', 'conditional')",
             name="ck_facial_search_subject_declaration",
         ),
         CheckConstraint(
@@ -3091,8 +3099,14 @@ class PrivateUploadBatch(Base):
         ForeignKey("tenant.id"), index=True,
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    derived_gallery_id: Mapped[UUID] = mapped_column(
-        ForeignKey("derived_gallery.id", ondelete="CASCADE"), index=True
+    derived_gallery_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("derived_gallery.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    parent_gallery_id: Mapped[UUID | None] = mapped_column(
+        index=True, nullable=True
+    )
+    folder_id: Mapped[UUID | None] = mapped_column(
+        index=True, nullable=True
     )
     actor_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
     status: Mapped[str] = mapped_column(String(16), default="open")
@@ -3100,7 +3114,26 @@ class PrivateUploadBatch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    __table_args__ = (CheckConstraint("status IN ('open', 'closed', 'completed')"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'closed', 'completed')"),
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "tenant_id"],
+            ["parent_gallery.id", "parent_gallery.tenant_id"],
+            name="fk_private_upload_batch_parent_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["folder_id", "parent_gallery_id", "tenant_id"],
+            ["photo_folder.id", "photo_folder.parent_gallery_id", "photo_folder.tenant_id"],
+            name="fk_private_upload_batch_folder_parent_tenant",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "(derived_gallery_id IS NOT NULL AND parent_gallery_id IS NULL AND folder_id IS NULL) OR "
+            "(derived_gallery_id IS NULL AND parent_gallery_id IS NOT NULL AND folder_id IS NOT NULL)",
+            name="ck_private_upload_batch_scope",
+        ),
+    )
 
 
 class PrivateUploadBatchAsset(Base):
@@ -3112,7 +3145,7 @@ class PrivateUploadBatchAsset(Base):
         ForeignKey("private_upload_batch.id", ondelete="CASCADE"), primary_key=True
     )
     photo_asset_id: Mapped[UUID] = mapped_column(
-        ForeignKey("photo_asset.id", ondelete="CASCADE"), primary_key=True, unique=True
+        ForeignKey("photo_asset.id", ondelete="CASCADE"), primary_key=True
     )
 
 
@@ -3157,7 +3190,7 @@ apply_ownership_constraints(Base.metadata)
 
 
 class ClientChallengeInput(BaseModel):
-    full_name: str = Field(min_length=3, max_length=200)
+    full_name: str | None = Field(default=None, min_length=3, max_length=200)
     phone: str = Field(min_length=8, max_length=32)
 
 
@@ -3612,6 +3645,19 @@ def current_session(
                     raise TenantContextError("Acesso negado.")
             elif session.role == Role.CLIENT.value:
                 require_client_auth_tenant(db, session.tenant_id)
+                tenant = db.get(Tenant, session.tenant_id, populate_existing=True)
+                if tenant:
+                    from app.tenant_hosts import (
+                        CanonicalHostError,
+                        canonical_host_for_tenant,
+                        request_hostname,
+                    )
+                    try:
+                        canonical_host = canonical_host_for_tenant(db, tenant)
+                        if canonical_host and request_hostname(request.headers.get("host")) != canonical_host:
+                            raise TenantContextError("Acesso negado.")
+                    except CanonicalHostError as exc:
+                        raise TenantContextError("Acesso negado.") from exc
                 if session.client_subject_id != session.subject_id or not db.scalar(select(Client.id).where(
                     Client.id == session.subject_id, Client.tenant_id == session.tenant_id,
                 )):

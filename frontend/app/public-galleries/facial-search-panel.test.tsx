@@ -11,6 +11,7 @@ import { FacialSearchPanel } from "./facial-search-panel";
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.sessionStorage.clear();
   window.localStorage.clear();
 });
@@ -167,6 +168,72 @@ describe("polling da busca facial", () => {
     expect(reads).toBe(2);
   });
 
+  it("localiza falha transitória do polling e repete somente GET da busca existente", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required", manual_selection_available: true,
+        minor_search_available: false, consent_version: "consent-v1",
+      });
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches/request-1")) {
+        reads += 1;
+        return reads === 1
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : response({ ...queued, status: "ready", poll_after_ms: null });
+      }
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Harness />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(screen.getByRole("alert").textContent).toContain("tentaremos consultar novamente");
+    expect(screen.getByRole("alert").textContent).not.toContain("Failed to fetch");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(screen.getByTestId("search-state").textContent).toBe("ready");
+    expect(reads).toBe(2);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("oferece reconsulta manual pelo mesmo identificador depois do limite automático", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const methods: string[] = [];
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required", manual_selection_available: true,
+        minor_search_available: false, consent_version: "consent-v1",
+      });
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches/request-1")) {
+        reads += 1;
+        return reads <= 4
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : response({ ...queued, status: "ready", poll_after_ms: null });
+      }
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Harness />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+
+    fireEvent.click(screen.getByRole("button", { name: "Atualizar busca" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(screen.getByTestId("search-state").textContent).toBe("ready");
+    expect(reads).toBe(5);
+    expect(methods.every((method) => method === "GET")).toBe(true);
+  });
+
   it("encerra polling e remove retomada quando a consulta foi revogada", async () => {
     vi.useFakeTimers();
     window.sessionStorage.setItem(storageKey, "request-1");
@@ -226,27 +293,42 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(screen.getByText(/semelhante a foto de documento/)).toBeTruthy();
     expect(screen.getByText(/Não fotografe nem envie documento de identidade/)).toBeTruthy();
     const libraryInput = screen.getByLabelText("Escolher foto JPEG da galeria do celular") as HTMLInputElement;
-    const cameraInput = screen.getByLabelText("Tirar foto JPEG com a câmera") as HTMLInputElement;
     expect(libraryInput.accept).toBe("image/jpeg");
     expect(libraryInput.getAttribute("capture")).toBeNull();
     expect(libraryInput.hidden).toBe(true);
-    expect(cameraInput.accept).toBe("image/jpeg");
-    expect(cameraInput.getAttribute("capture")).toBe("user");
-    expect(cameraInput.hidden).toBe(true);
+    expect(screen.queryByLabelText("Tirar foto JPEG com a câmera")).toBeNull();
     const libraryClick = vi.spyOn(libraryInput, "click");
-    const cameraClick = vi.spyOn(cameraInput, "click");
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
+    vi.stubGlobal("navigator", Object.create(navigator, {
+      mediaDevices: { configurable: true, value: { getUserMedia } },
+    }));
     fireEvent.click(screen.getByRole("button", { name: "Escolher foto do celular" }));
+    const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
     fireEvent.click(screen.getByRole("button", { name: "Usar câmera" }));
     expect(libraryClick).toHaveBeenCalledOnce();
-    expect(cameraClick).toHaveBeenCalledOnce();
-    const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
+    expect(await screen.findByRole("button", { name: "Capturar rosto" })).toBeTruthy();
+    expect(screen.getByRole("dialog").classList.contains("facial-consent-dialog--camera")).toBe(true);
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(screen.queryByRole("button", { name: "Autorizar e procurar fotos" })).toBeNull();
+    expect(screen.getByText(/mantenha o celular firme/)).toBeTruthy();
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      video: expect.objectContaining({ facingMode: { ideal: "environment" } }),
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Usar câmera frontal" }));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      video: expect.objectContaining({ facingMode: { ideal: "user" } }),
+    }));
+    expect(submitButton.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar câmera" }));
+    await waitFor(() => expect(stopTrack).toHaveBeenCalledTimes(2));
     const reference = new File(["private-reference-bytes"], "referencia.jpg", { type: "image/jpeg" });
     Object.defineProperty(reference, "size", { value: 31_457_280 });
     fireEvent.change(libraryInput, { target: { files: [reference] } });
     expect(screen.getByText("Foto selecionada e pronta para envio.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Autorizo, de forma livre, informada e específica/ }));
+    expect((screen.getByRole("checkbox", { name: /Autorizo a busca facial/ }) as HTMLInputElement).checked).toBe(true);
     expect(submitButton.disabled).toBe(false);
     fireEvent.submit(submitButton.closest("form")!);
 
@@ -290,14 +372,14 @@ describe("jornada mobile e privacidade da referência", () => {
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 
-  it("exige somente um consentimento infantil sem registro prévio de representação", async () => {
+  it("exige um único consentimento condicional para qualquer pessoa retratada", async () => {
     const created = { ...queued, id: "minor-request" };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/facial-search")) return response({
         state: "consent_required",
         manual_selection_available: true,
         minor_search_available: true,
-        consent_version: "consent-v2",
+        consent_version: "client-reference-conditional-v1",
         legal_notice_version: "notice-v2",
       });
       if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
@@ -310,19 +392,18 @@ describe("jornada mobile e privacidade da referência", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
     const reference = new File(["minor-reference"], "referencia.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), { target: { files: [reference] } });
-    fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
-
     const submitButton = screen.getByRole("button", { name: "Autorizar e procurar fotos" }) as HTMLButtonElement;
-    const consent = screen.getByRole("checkbox", { name: /Sou pai, mãe ou responsável legal/ });
+    const consent = screen.getByRole("checkbox", { name: /Autorizo a busca facial/ });
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
-    expect((consent as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect((consent as HTMLInputElement).checked).toBe(true);
+    expect(submitButton.disabled).toBe(false);
+    expect(screen.getByText("Uso temporário e restrito").closest("details")?.open).toBe(false);
+    expect(screen.getByText("Leia a declaração de consentimento").closest("details")?.open).toBe(false);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    fireEvent.click(consent);
     expect(submitButton.disabled).toBe(true);
     fireEvent.click(consent);
-    fireEvent.click(screen.getByRole("radio", { name: "Pessoa adulta" }));
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(screen.getByRole("radio", { name: "Criança ou adolescente" }));
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(screen.getByRole("checkbox"));
     expect(submitButton.disabled).toBe(false);
     fireEvent.submit(submitButton.closest("form")!);
 
@@ -333,12 +414,91 @@ describe("jornada mobile e privacidade da referência", () => {
         method: "POST",
         body: reference,
         headers: expect.objectContaining({
-          "x-facial-consent-version": "consent-v2",
-          "x-facial-subject-declaration": "minor",
+          "x-facial-consent-version": "client-reference-conditional-v1",
+          "x-facial-subject-declaration": "conditional",
           "x-facial-consent-accepted": "true",
         }),
       }),
     );
+  });
+
+  it("localiza falha de transporte sem repetir automaticamente o envio", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required", manual_selection_available: true,
+        minor_search_available: true, consent_version: "client-reference-conditional-v1",
+      });
+      if (path.endsWith("/latest")) return response({ detail: "not found" }, 404);
+      if (path.endsWith("/facial-searches") && init?.method === "POST") return Promise.reject(new TypeError("Failed to fetch"));
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmptyHarness />);
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), {
+      target: { files: [new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Ainda não foi possível confirmar o envio.");
+    expect(screen.getByRole("button", { name: "Conferir envio" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).not.toContain("Failed to fetch");
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("confere uma tentativa incerta pelo mesmo UUID e não reenvia o arquivo", async () => {
+    const attempt = "a047be80-2163-4f80-a39e-73bb54190a42";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(attempt);
+    let confirmations = 0;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) return response({
+        state: "consent_required", manual_selection_available: true,
+        minor_search_available: true, consent_version: "client-reference-conditional-v1",
+      });
+      if (init?.method === "POST") return Promise.reject(new TypeError("Failed to fetch"));
+      if (path.endsWith(attempt)) {
+        confirmations += 1;
+        return confirmations === 1 ? response({ detail: "not found" }, 404) : response({ ...queued, id: attempt });
+      }
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmptyHarness />);
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), {
+      target: { files: [new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
+    fireEvent.click(await screen.findByRole("button", { name: "Conferir envio" }));
+    await waitFor(() => expect(screen.getByTestId("search-state").textContent).toBe("queued"));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(confirmations).toBe(2);
+    expect(window.sessionStorage.getItem(storageKey)).toBe(attempt);
+  });
+
+  it("aceita confirmação pendente após voltar o foco no mesmo contexto", async () => {
+    let finishUpload: ((value: Response) => void) | undefined;
+    let availabilityReads = 0;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/facial-search")) {
+        availabilityReads += 1;
+        return response({ state: "consent_required", manual_selection_available: true,
+          minor_search_available: true, consent_version: "client-reference-conditional-v1" });
+      }
+      if (init?.method === "POST") return new Promise<Response>((resolve) => { finishUpload = resolve; });
+      return response({ detail: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmptyHarness />);
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar foto para procurar" }));
+    fireEvent.change(screen.getByLabelText("Escolher foto JPEG da galeria do celular"), {
+      target: { files: [new File(["jpeg"], "referencia.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.submit(screen.getByRole("button", { name: "Autorizar e procurar fotos" }).closest("form")!);
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(availabilityReads).toBe(2));
+    await act(async () => { finishUpload?.(new Response(JSON.stringify(queued), { status: 202 })); });
+    await waitFor(() => expect(screen.getByTestId("search-state").textContent).toBe("queued"));
   });
 
   it("mantém o diálogo rolável e alcançável na viewport mobile", () => {
@@ -357,8 +517,9 @@ describe("jornada mobile e privacidade da referência", () => {
 
   it.each([
     ["no_face", "Nenhum rosto foi detectado", "Tente uma foto frontal, bem iluminada e com o rosto inteiro."],
-    ["multiple_faces", "A foto enviada contém mais de um rosto", "Recorte a imagem para manter somente a pessoa procurada."],
+    ["multiple_faces", "Não foi possível isolar um único rosto", "Detectamos mais de uma região possível. Recorte a imagem para manter somente o rosto da pessoa procurada."],
     ["low_quality", "A foto não tem qualidade suficiente", "Envie outra foto com mais nitidez e melhor iluminação."],
+    ["no_candidates", "Nenhuma possibilidade foi encontrada", "Não encontramos sugestões confiáveis com esta foto. Isso não confirma que a pessoa não esteja nesta galeria. Tente outra foto mais nítida ou continue pela seleção manual."],
   ] as const)("mostra mensagem sanitizada para %s sem renderizar a referência", async (status, title, guidance) => {
     const terminal = { ...queued, status, reference_deleted: true, poll_after_ms: null };
     window.sessionStorage.setItem(storageKey, terminal.id);

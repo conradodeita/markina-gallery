@@ -39,6 +39,7 @@ type GalleryPresentationProps<TPhoto extends GalleryPresentationPhoto> = {
   renderPhotoMarkers?: (photo: TPhoto) => ReactNode;
   featuredGroups?: Array<{ id: string; title: string; detail: string; photos: TPhoto[] }>;
   separateFeaturedPhotos?: boolean;
+  revealFeaturedRequestId?: string | null;
   renderFeaturedPhotoMarkers?: (photo: TPhoto) => ReactNode;
   renderExpandedPhotoContent?: (photo: TPhoto) => ReactNode;
   renderExpandedMedia?: (photo: TPhoto, close: () => void) => ReactNode;
@@ -76,6 +77,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   renderPhotoMarkers,
   featuredGroups = [],
   separateFeaturedPhotos = false,
+  revealFeaturedRequestId = null,
   renderFeaturedPhotoMarkers,
   renderExpandedPhotoContent,
   renderExpandedMedia,
@@ -85,12 +87,18 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
 }: GalleryPresentationProps<TPhoto>) {
   const availableFolders = folders.filter((folder) => folder.photos.length > 0);
   const [activeFolderId, setActiveFolderId] = useState(availableFolders[0]?.id ?? "");
-  const [expandedPhotoId, setExpandedPhotoId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<{ photoId: string; requestId: string | null } | null>(null);
   const [protectionMessage, setProtectionMessage] = useState("Prévia protegida: cópias e downloads diretos estão desativados.");
   const [copyrightDialogOpen, setCopyrightDialogOpen] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
   const copyrightDialog = useRef<HTMLDivElement>(null);
   const touchStartX = useRef<number | null>(null);
+  const featuredTitle = useRef<HTMLHeadingElement>(null);
+  const revealedRequest = useRef<string | null>(null);
+  const hasFeaturedPhotos = featuredGroups.some((group) => group.photos.length > 0);
+  const completedAnotherSearch = Boolean(revealFeaturedRequestId && hasFeaturedPhotos && expanded && expanded.requestId !== revealFeaturedRequestId);
+  if (completedAnotherSearch) setExpanded(null);
+  const expandedPhotoId = completedAnotherSearch ? null : expanded?.photoId;
   const photos = useMemo(() => availableFolders.flatMap((folder) => folder.photos), [availableFolders]);
   const activeFolder = availableFolders.find((folder) => folder.id === activeFolderId) ?? availableFolders[0];
   const featuredIds = new Set(featuredGroups.flatMap((group) => group.photos.map((photo) => photo.id)));
@@ -98,6 +106,14 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
     .map((folder) => separateFeaturedPhotos ? { ...folder, photos: folder.photos.filter((photo) => !featuredIds.has(photo.id)) } : folder);
   const expandedIndex = photos.findIndex((photo) => photo.id === expandedPhotoId);
   const expandedPhoto = expandedIndex >= 0 ? photos[expandedIndex] : null;
+
+  useEffect(() => {
+    if (!revealFeaturedRequestId || revealedRequest.current === revealFeaturedRequestId || !hasFeaturedPhotos || !featuredTitle.current) return;
+    revealedRequest.current = revealFeaturedRequestId;
+    onExpandedPhotoChange?.(null);
+    featuredTitle.current.focus({ preventScroll: true });
+    featuredTitle.current.scrollIntoView({ behavior: "instant", block: "start" });
+  }, [revealFeaturedRequestId, hasFeaturedPhotos, onExpandedPhotoChange]);
 
   useEffect(() => {
     if (expandedPhoto) dialog.current?.focus();
@@ -112,7 +128,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
       if (event.key === "PrintScreen") {
         setProtectionMessage("Captura detectada. O navegador não consegue impedir screenshots; a prévia continua identificada pela marca-d’água.");
         if (showCopyrightProtectionDialog) {
-          setExpandedPhotoId(null);
+          setExpanded(null);
           onExpandedPhotoChange?.(null);
           setCopyrightDialogOpen(true);
         }
@@ -123,7 +139,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
         event.preventDefault();
         setProtectionMessage("Conteúdo protegido: o download direto está desativado. A marca-d’água identifica esta prévia.");
         if (showCopyrightProtectionDialog) {
-          setExpandedPhotoId(null);
+          setExpanded(null);
           onExpandedPhotoChange?.(null);
           setCopyrightDialogOpen(true);
         }
@@ -150,12 +166,12 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   }
 
   function openExpanded(photo: TPhoto) {
-    setExpandedPhotoId(photo.id);
+    setExpanded({ photoId: photo.id, requestId: revealFeaturedRequestId ?? revealedRequest.current });
     onExpandedPhotoChange?.(photo);
   }
 
   function closeExpanded() {
-    setExpandedPhotoId(null);
+    setExpanded(null);
     onExpandedPhotoChange?.(null);
   }
 
@@ -197,7 +213,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
         </div>
       </div> : null}
 
-      {featuredGroups.some((group) => group.photos.length) ? <section className="gallery-featured-results" aria-labelledby="gallery-featured-title"><header><p className="eyebrow">Filtro da sua busca</p><h2 id="gallery-featured-title">Possibilidades encontradas</h2><p>Confira os resultados e selecione apenas as fotos que desejar. {separateFeaturedPhotos ? "As outras fotos continuam abaixo." : "O acervo completo continua abaixo."}</p></header>{featuredGroups.filter((group) => group.photos.length).map((group) => <section key={group.id} aria-labelledby={`featured-${group.id}`}><div className="gallery-presentation-collection-heading"><div><h3 id={`featured-${group.id}`}>{group.title}</h3><p>{group.detail}</p></div><span>{group.photos.length} foto{group.photos.length === 1 ? "" : "s"}</span></div><div className="gallery-presentation-grid">{group.photos.map((photo) => renderPhoto(photo, renderFeaturedPhotoMarkers ?? renderPhotoMarkers))}</div></section>)}</section> : null}
+      {featuredGroups.some((group) => group.photos.length) ? <section className="gallery-featured-results" aria-labelledby="gallery-featured-title"><header><p className="eyebrow">Filtro da sua busca</p><h2 id="gallery-featured-title" ref={featuredTitle} tabIndex={-1}>Possibilidades encontradas</h2><p>Confira os resultados e selecione apenas as fotos que desejar. {separateFeaturedPhotos ? "As outras fotos continuam abaixo." : "O acervo completo continua abaixo."}</p></header>{featuredGroups.filter((group) => group.photos.length).map((group) => <section key={group.id} aria-labelledby={`featured-${group.id}`}><div className="gallery-presentation-collection-heading"><div><h3 id={`featured-${group.id}`}>{group.title}</h3><p>{group.detail}</p></div><span>{group.photos.length} foto{group.photos.length === 1 ? "" : "s"}</span></div><div className="gallery-presentation-grid">{group.photos.map((photo) => renderPhoto(photo, renderFeaturedPhotoMarkers ?? renderPhotoMarkers))}</div></section>)}</section> : null}
 
       {folderDisplayMode === "individual" && availableFolders.length > 1 ? (
         <section className="gallery-presentation-folder-section" aria-labelledby="gallery-folders-title">

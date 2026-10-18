@@ -1,6 +1,7 @@
 """Consumidores independentes com lease, TTL e falhas sanitizadas."""
 
 import os
+import re
 from datetime import UTC, timedelta
 from uuid import UUID, uuid4
 
@@ -37,6 +38,7 @@ from app.messaging import (
     WhatsAppConfigurationError,
     WhatsAppDeliveryError,
 )
+from app.notification_contract import whatsapp_event_gate_open
 from app.order_delivery import EVENT_TYPE as ORDER_DELIVERY_EVENT
 from app.order_delivery import delivery_notice_allowed
 from app.private_membership import client_has_operational_membership
@@ -56,8 +58,8 @@ def utc(value):
 def channel_enabled(event_type: str, channel: str) -> bool:
     if channel == "push":
         return push_enabled()
-    # Fluxos de pagamento já ativos permanecem; três eventos novos exigem ativação operacional.
-    return event_type.startswith("payment_") or os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true"
+    global_gate_enabled = os.getenv("TRANSACTIONAL_WHATSAPP_ENABLED", "false").lower() == "true"
+    return whatsapp_event_gate_open(event_type, global_gate_enabled=global_gate_enabled)
 
 
 def mirror_payment_projection(db, event, item):
@@ -110,9 +112,16 @@ def recipient_allowed(db, event, item) -> bool:
     if event.event_type == "private_photos_ready" and not event.derived_gallery_id:
         try:
             key_parts = event.event_key.split(":")
-            if len(key_parts) != 6:
+            compact = re.fullmatch(
+                r"private_photos_ready:v2:([0-9a-f]{32}):([0-9a-f]{32}):[0-9a-f]{64}",
+                event.event_key,
+            )
+            if compact:
+                folder_id, grant_id = UUID(compact[1]), UUID(compact[2])
+            elif len(key_parts) == 6 and key_parts[0] == "private_photos_ready":
+                folder_id, grant_id = UUID(key_parts[1]), UUID(key_parts[4])
+            else:
                 return False
-            folder_id, grant_id = UUID(key_parts[1]), UUID(key_parts[4])
         except (ValueError, IndexError):
             return False
         folder = owned_record(db, PhotoFolder, folder_id, tenant_id=owner)

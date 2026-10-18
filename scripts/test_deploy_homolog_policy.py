@@ -49,9 +49,21 @@ def main() -> int:
     require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
     require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
     require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('SELECT version_num FROM alembic_version', "revisão consultada diretamente no PostgreSQL", SCRIPT)
+    forbid(
+        r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s+alembic\s+current',
+        "probe pré-deploy dependente da imagem antiga migrate",
+        SCRIPT,
+    )
+    require('alembic heads', "head do SHA alvo identificada antes da parada dos writers", SCRIPT)
+    require('TARGET_HEAD_REVISION', "revisão aplicada comparada com a head do SHA alvo", SCRIPT)
+    require('probe da revisão Alembic falhou ao consultar o banco Markina', "falha de consulta reportada sem segredos", SCRIPT)
     require('SCHEMA_ROLLBACK_UNSAFE=1', "bloqueio conservador após início da migration", SCRIPT)
     require('SCHEMA_ROLLBACK_UNSAFE=0', "liberação somente após revisão inalterada", SCRIPT)
-    require('next_revision" == *"(head)"*', "confirmação de migration no head alvo", SCRIPT)
+    require('next_revision" == "$TARGET_HEAD_REVISION"', "confirmação de migration na head única do SHA alvo", SCRIPT)
+    require('ORDER BY version_num', "consulta determinística das revisões persistidas", SCRIPT)
+    require('compose exec -T db', "probe independente da imagem migration anterior", SCRIPT)
+    require('alembic heads', "head Alembic do alvo verificada antes de parar writers", SCRIPT)
     require('echo "migration Markina:', "registro não sensível da revisão aplicada", SCRIPT)
     require(
         'git switch --detach "$DEPLOY_SHA"\n'
@@ -67,6 +79,11 @@ def main() -> int:
         '  # as revisions do commit que será iniciado nos demais serviços.\n'
         '  compose build migrate || {',
         "build da migration antes de sua execução",
+        SCRIPT,
+    )
+    require(
+        '  TARGET_HEAD_REVISION="$target_heads"\n\n  stop_application_writers || return 1',
+        "head única identificada antes de interromper writers",
         SCRIPT,
     )
     require('compose up -d --build --no-deps api web worker', "recriação limitada de serviços", SCRIPT)
@@ -127,7 +144,12 @@ def main() -> int:
     forbid(r'echo\s+.*\$signing_key', "impressão do segredo de assinatura", SCRIPT)
     forbid(r'echo\s+.*\$generated', "impressão do segredo de payload", SCRIPT)
 
-    require('branches: [develop]', "gatilho restrito a develop", WORKFLOW)
+    require('branches: [develop, main]', "CI dispara em develop e main", WORKFLOW)
+    require(
+        "if: \"${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}\"",
+        "deploy de homologação continua restrito a develop",
+        WORKFLOW,
+    )
     require(
         'pip install -r backend/requirements.txt -r backend/face-requirements.txt',
         "dependências do runtime facial nos testes backend",
@@ -140,6 +162,14 @@ def main() -> int:
     require('--memory 6g --memory-swap 6g --cpus 1', "inferência Gemma limitada", WORKFLOW)
     require('--network none', "inferência sintética sem rede", WORKFLOW)
     require('environment: homolog', "Environment protegido", WORKFLOW)
+    production_policy_step = WORKFLOW.split(
+        "- name: Validar política de preflight e aprovação única de produção", 1
+    )[1].split("run:", 1)[0]
+    require(
+        "if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}",
+        "gate de release facial executa somente no fluxo protegido de main",
+        production_policy_step,
+    )
     require('secrets.HOMOLOG_SSH_PRIVATE_KEY', "chave via secret", WORKFLOW)
     require('StrictHostKeyChecking=yes', "verificação de host SSH", WORKFLOW)
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)

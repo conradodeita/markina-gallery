@@ -12,6 +12,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import main
 from app.auth import (
     AdminUser,
     AuditEvent,
@@ -32,6 +33,7 @@ from app.auth import (
     ParentGallery,
     ParentGalleryRegistration,
     PaymentCommunication,
+    PaymentGroup,
     PaymentNotificationOutbox,
     PhotoAsset,
     PhotoFolder,
@@ -51,9 +53,10 @@ from app.checkout import create_pending_checkout
 from app.client_commerce import client_carts_by_gallery_payload
 from app.gallery_access import issue_gallery_capability
 from app.global_pix import normalize_configuration
-from app.main import app
+from app.main import _purchased_photos_content_disposition, app
 from app.media import generate_derivatives
 from app.private_derivation import derive_admin_gallery, ensure_private_photo_reference
+from app.system_monitor.models import PlatformOwner
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 VALID_PIX_A = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17"
@@ -1161,6 +1164,114 @@ def test_admin_validation_summary_is_authorized_and_has_aggregate_storage(
     assert str(tmp_path) not in response.text
 
 
+def test_admin_validation_summary_counts_active_public_and_private_content_folders(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    tenant_id = FIXTURE_TENANT_ID
+    with SessionLocal() as db:
+        owner = Client(
+            tenant_id=tenant_id,
+            full_name="Cliente da pasta restrita",
+            phone_e164="+5511999999876",
+        )
+        parent = ParentGallery(tenant_id=tenant_id, name="Galeria de métricas")
+        db.add_all([owner, parent])
+        db.flush()
+        private_folder_state = GalleryClientState(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+        )
+        public_active = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta comum ativa",
+            purpose="content",
+            audience_scope="all",
+            position=0,
+        )
+        private_active = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta restrita ativa",
+            purpose="content",
+            audience_scope="selected",
+            position=1,
+        )
+        content_idle = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta sem job ativo",
+            purpose="content",
+            audience_scope="all",
+            position=2,
+        )
+        cover_active = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Ativos de capa",
+            purpose="cover_assets",
+            position=3,
+        )
+        empty_content = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=parent.id,
+            name="Pasta vazia",
+            purpose="content",
+            audience_scope="all",
+            position=4,
+        )
+        db.add_all([
+            private_folder_state,
+            public_active,
+            private_active,
+            content_idle,
+            cover_active,
+            empty_content,
+        ])
+        db.flush()
+        db.add(FolderClientGrant(
+            tenant_id=tenant_id,
+            folder_id=private_active.id,
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+        ))
+        photos = [
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=public_active.id, filename="publica-ativa.jpg",
+                       storage_key="summary/public-active.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=public_active.id, filename="publica-pronta.jpg",
+                       storage_key="summary/public-ready.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=private_active.id, filename="restrita-ativa.jpg",
+                       storage_key="summary/private-active.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=content_idle.id, filename="parada.jpg",
+                       storage_key="summary/idle.jpg"),
+            PhotoAsset(tenant_id=tenant_id, parent_gallery_id=parent.id,
+                       folder_id=cover_active.id, filename="capa.jpg",
+                       storage_key="summary/cover.jpg"),
+        ]
+        db.add_all(photos)
+        db.flush()
+        db.add_all([
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[0].id, status="queued"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[1].id, status="completed"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[2].id, status="processing"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[3].id, status="failed"),
+            MediaJob(tenant_id=tenant_id, photo_asset_id=photos[4].id, status="queued"),
+        ])
+        db.commit()
+
+    response = client.get("/admin/validation-summary")
+    assert response.status_code == 200
+    counts = response.json()["counts"]
+    assert counts["folders_with_active_imports"] == 2
+    assert counts["photos_in_folders_with_active_imports"] == 3
+
+
 def test_admin_validation_summary_keeps_other_metrics_when_storage_is_unavailable(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1654,7 +1765,7 @@ def test_confirmed_purchase_download_embeds_preview_without_server_export(
     after = {path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file()}
     assert exported.status_code == 200
     assert exported.headers["content-type"].startswith("text/html")
-    assert exported.headers["content-disposition"] == 'attachment; filename="fotos-compradas.html"'
+    assert exported.headers["content-disposition"] == 'attachment; filename="fotos-compradas-Ana-Bia.html"; filename*=UTF-8\'\'fotos-compradas-Ana%20%26%20Bia.html'
     assert exported.headers["cache-control"] == "private, no-store"
     assert "Ana &amp; Bia" in exported.text
     assert "FOTO_001.jpg" in exported.text
@@ -1662,6 +1773,14 @@ def test_confirmed_purchase_download_embeds_preview_without_server_export(
     assert base64.b64encode(image.getvalue()).decode("ascii") in exported.text
     assert "<img src=\"data:image/jpeg;base64," in exported.text
     assert before == after
+
+
+def test_purchased_photos_filename_safely_supports_unicode_and_special_characters():
+    disposition = _purchased_photos_content_disposition('Ána / Bia:*? "Equipe" <foto>|\x01')
+
+    assert disposition == 'attachment; filename="fotos-compradas-Ana-Bia-Equipe-foto.html"; filename*=UTF-8\'\'fotos-compradas-%C3%81na%20Bia%20Equipe%20foto.html'
+    assert "\r" not in disposition and "\n" not in disposition
+    assert disposition.endswith(".html")
 
 
 def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
@@ -1687,7 +1806,7 @@ def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
     assert client.get("/admin/derived-galleries?tab=active").json()["total"] == 1
 
 
-def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
+def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient, monkeypatch):
     with SessionLocal() as db:
         first_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Primeiro cliente", phone_e164="+5511333333333")
         second_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Segundo cliente", phone_e164="+5511222222222")
@@ -1730,11 +1849,21 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
         )
         db.add_all([bought, selected, other, first_gallery, second_gallery])
         db.flush()
+        first_pix_group = PaymentGroup(tenant_id=FIXTURE_TENANT_ID, client_id=first_client.id,
+            state="confirmed", revision="statistics-pix-revision", total_cents=1_250,
+            pix_copy_paste_snapshot="synthetic-pix", pix_configuration_snapshot={"synthetic": True})
+        db.add(first_pix_group)
+        db.flush()
         db.add_all(
             [
                 DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=first_gallery.id, photo_asset_id=bought.id),
                 DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=first_gallery.id, photo_asset_id=selected.id),
                 DerivedGalleryPhoto(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=second_gallery.id, photo_asset_id=other.id),
+                PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
+                    derived_gallery_id=first_gallery.id,
+                    photo_asset_id=bought.id,
+                    client_id=first_client.id,
+                ),
                 PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=first_gallery.id,
                     photo_asset_id=selected.id,
@@ -1749,6 +1878,7 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
         )
         first_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=first_gallery.id,
+            payment_group_id=first_pix_group.id,
             client_id=first_client.id,
             payment_status="confirmed",
             total_cents=1_250,
@@ -1758,7 +1888,7 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
             derived_gallery_id=second_gallery.id,
             client_id=second_client.id,
             payment_status="confirmed",
-            total_cents=800,
+            total_cents=750,
             confirmed_at=now(),
         )
         reported_order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
@@ -1795,7 +1925,9 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
         )
         db.commit()
     assert client.get("/admin/statistics").status_code == 403
+    assert client.get("/admin/statistics/report.csv").status_code == 403
     authenticate_admin(client)
+    assert client.get("/admin/statistics/csv-access").json() == {"allowed": False}
     filters = client.get("/admin/statistics/filters")
     assert filters.status_code == 200
     assert filters.json()["clients"] == [
@@ -1816,6 +1948,100 @@ def test_admin_statistics_filter_lists_exports_and_revenue(client: TestClient):
     assert "Primeiro cliente" not in exported.text
     purchased_export = client.get(f"/admin/statistics/purchased.txt?client_id={first_client.id}")
     assert purchased_export.text == f"{bought.id}\tcomprada.jpg\n"
+    report = client.get(f"/admin/statistics/report?client_id={first_client.id}")
+    assert report.status_code == 200
+    assert report.headers["cache-control"] == "private, no-store"
+    assert report.headers["x-content-type-options"] == "nosniff"
+    assert report.json()["revenue_cents"] == 1_250
+    assert report.json()["confirmed_order_count"] == 1
+    assert report.json()["sold_photo_count"] == 1
+    assert report.json()["orders_total"] == 2
+    assert report.json()["orders"][0]["payment_method"] == "pix"
+    assert report.json()["orders"][0]["destination"] == "Nubank"
+    assert report.json()["eligible_selection_count"] == 1
+    assert report.json()["converted_selection_count"] == 1
+    assert report.json()["conversion_rate_percent"] == 100
+    assert len(report.json()["selected_not_purchased"]) == 1
+    full_report = client.get("/admin/statistics/report")
+    assert any(row["difference_cents"] == -50 for row in full_report.json()["reconciliations"])
+    full_html = client.get("/admin/statistics/report.html")
+    assert "R$ -0.50" in full_html.text
+    csv_denied = client.get(f"/admin/statistics/report.csv?client_id={first_client.id}")
+    assert csv_denied.status_code == 403
+    assert csv_denied.headers["cache-control"] == "private, no-store"
+    original_report = main.commercial_report
+    monkeypatch.setattr(main, "commercial_report", lambda *_args, **_kwargs: pytest.fail("dados foram consultados antes da autorização"))
+    assert client.get(f"/admin/statistics/report.csv?client_id={first_client.id}").status_code == 403
+    monkeypatch.setattr(main, "commercial_report", original_report)
+    with SessionLocal() as db:
+        admin = db.scalar(select(AdminUser).where(AdminUser.email == "foto@markina.test"))
+        db.add(PlatformOwner(singleton=1, admin_user_id=admin.id, authorization_reference="synthetic-test"))
+        admin.email = "email-atualizado@example.invalid"
+        db.commit()
+    csv_response = client.get(f"/admin/statistics/report.csv?client_id={first_client.id}&tenant_id=00000000-0000-4000-8000-000000000099")
+    assert csv_response.status_code == 200
+    assert client.get("/admin/statistics/csv-access").json() == {"allowed": True}
+    assert csv_response.headers["content-type"].startswith("text/csv; charset=utf-8")
+    assert csv_response.headers["x-content-type-options"] == "nosniff"
+    assert "pedido_id;cliente_nome;cliente_telefone;data" in csv_response.text
+    assert "Primeiro cliente" in csv_response.text
+    assert "Segundo cliente" not in csv_response.text
+    assert "Nubank" in csv_response.text
+    assert "12.50" in csv_response.text
+    html_response = client.get(f"/admin/statistics/report.html?client_id={first_client.id}")
+    assert html_response.status_code == 200
+    assert "offline" not in html_response.text.lower()  # documento autocontido
+    assert "Relatório comercial" in html_response.text
+    assert "12.50" in html_response.text
+
+
+def test_statistics_abandonment_requires_expired_gallery_without_any_order(client: TestClient):
+    with SessionLocal() as db:
+        abandoned_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Seleção vencida", phone_e164="+5511999998451")
+        ordered_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Pedido pendente", phone_e164="+5511999998452")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria com prazo")
+        db.add_all([abandoned_client, ordered_client, parent])
+        db.flush()
+        db.add_all([
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                client_id=abandoned_client.id, selection_expires_at=now() - timedelta(days=1)),
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                client_id=ordered_client.id, selection_expires_at=now() - timedelta(days=1)),
+        ])
+        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            name="Fotos", status="released", released_at=now())
+        db.add(folder)
+        db.flush()
+        first_photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            folder_id=folder.id, filename="selecionada-vencida.jpg", storage_key="statistics/expired.jpg")
+        second_photo = PhotoAsset(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            folder_id=folder.id, filename="selecionada-pendente.jpg", storage_key="statistics/pending.jpg")
+        db.add_all([first_photo, second_photo])
+        db.flush()
+        db.add_all([
+            PhotoSelection(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                client_id=abandoned_client.id, photo_asset_id=first_photo.id),
+            PhotoSelection(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                client_id=ordered_client.id, photo_asset_id=second_photo.id),
+            SaleOrder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+                parent_gallery_id_snapshot=parent.id, parent_gallery_name_snapshot=parent.name,
+                derived_gallery_name_snapshot="Galeria privada", client_id=ordered_client.id,
+                payment_status="pending", total_cents=500, frozen_at=now()),
+        ])
+        db.commit()
+    authenticate_admin(client)
+    response = client.get(f"/admin/statistics/report?client_id={abandoned_client.id}")
+    assert response.status_code == 200
+    abandoned = response.json()["abandoned"]
+    assert len(abandoned) == 1
+    assert abandoned[0]["photo_count"] == 1
+    assert abandoned[0]["potential_value_cents"] is None
+    assert response.json()["eligible_selection_count"] == 1
+    assert response.json()["conversion_rate_percent"] == 0
+    ordered = client.get(f"/admin/statistics/report?client_id={ordered_client.id}")
+    assert ordered.json()["orders"][0]["status"] == "pending"
+    assert ordered.json()["abandoned"] == []
+    assert ordered.json()["eligible_selection_count"] == 0
 
 
 def test_admin_statistics_isolates_shared_members_and_preserves_item_snapshots(client: TestClient):
@@ -3511,18 +3737,14 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
         "confirmed_cents": 800,
         "financial_statuses": {
             "awaiting_payment": 2,
-            "confirmed": 1,
+            "confirmed_undelivered": 1,
             "reported": 1,
         },
-        "failed_messages": 1,
     }
     assert len(payload["groups"]) == 1
-    assert payload["groups"][0]["client"]["name"] == "Bia Histórica"
-    assert payload["groups"][0]["orders"][0]["gallery"] == {
-        "id": str(removed_gallery_id),
-        "name": "Galeria preservada",
-        "removed": True,
-    }
+    assert payload["groups"][0]["client"]["name"] == "Ana Pagamentos"
+    assert payload["groups"][0]["financial_status"] == "reported"
+    assert len(payload["groups"][0]["orders"]) == 3
     assert payload["page"]["next_cursor"]
     # Template e regras de preço acrescentam consultas constantes; o limite
     # continua independente da quantidade de clientes, pedidos, itens e comunicações.
@@ -3536,19 +3758,17 @@ def test_admin_payment_dashboard_groups_orders_uses_snapshots_and_paginates_with
     )
     assert second_page.status_code == 200
     second_payload = second_page.json()
-    assert second_payload["groups"][0]["client"]["name"] == "Ana Pagamentos"
-    assert len(second_payload["groups"][0]["orders"]) == 3
-    assert second_payload["groups"][0]["totals"] == {
-        "orders": 3,
-        "total_cents": 1200,
-        "reported_orders": 1,
-        "reported_cents": 1200,
-        "confirmed_orders": 1,
-        "confirmed_cents": 800,
+    assert second_payload["groups"][0]["client"]["name"] == "Bia Histórica"
+    assert second_payload["groups"][0]["financial_status"] == "awaiting_payment"
+    assert second_payload["groups"][0]["orders"][0]["gallery"] == {
+        "id": str(removed_gallery_id),
+        "name": "Galeria preservada",
+        "removed": True,
     }
     assert second_payload["selections_without_order"][0]["total_cents"] == 700
-    assert second_payload["communications"][0]["id"] == str(communication_id)
-    assert second_payload["communications"][0]["photographer_notification"]["last_error"] == "Falha temporária de entrega."
+    assert payload["communications"][0]["id"] == str(communication_id)
+    assert payload["communications"][0]["photographer_notification"]["last_error"] == "Falha temporária de entrega."
+    assert second_payload["communications"] == []
     assert "Falha temporária sanitizada" not in second_page.text
 
 
@@ -3642,7 +3862,12 @@ def test_admin_payment_templates_are_controlled_and_have_safe_defaults(client: T
     defaults = client.get("/admin/payment-message-templates")
     assert defaults.status_code == 200
     assert set(defaults.json()["templates"]) == {"confirmed", "refused"}
-    assert defaults.json()["allowed_variables"] == ["cliente", "galeria", "pedido"]
+    assert defaults.json()["allowed_variables"] == [
+        "cliente",
+        "contexto_pagamento",
+        "galeria",
+        "pedido",
+    ]
     invalid = client.put(
         "/admin/payment-message-templates/confirmed",
         json={"body": "Acesse https://exemplo.invalid/{{pedido}}"},
@@ -5526,3 +5751,107 @@ def test_folder_deletion_removes_temporary_highres_analysis(client, monkeypatch,
         assert db.get(PhotoAnalysis, photo_id) is None
         assert db.get(PhotoAsset, photo_id) is None
     assert not (tmp_path / "highres.jpg").exists()
+
+
+def test_admin_payment_dashboard_searches_phone_and_exact_client_without_exposing_phone(
+    client: TestClient,
+):
+    reference = now()
+    with SessionLocal() as db:
+        target = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Marta Telefone",
+            phone_e164="+5511998765432",
+        )
+        other = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Maria Outra",
+            phone_e164="+5511888123456",
+        )
+        parent = ParentGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            name="Evento de busca por cliente",
+        )
+        db.add_all([target, other, parent])
+        db.flush()
+        target_gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=target.id,
+            name="Marta privada",
+        )
+        other_gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=other.id,
+            name="Maria privada",
+        )
+        db.add_all([target_gallery, other_gallery])
+        db.flush()
+        folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Fotos",
+        )
+        db.add(folder)
+        db.flush()
+        photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="selecionada.jpg",
+            storage_key="payment-search/selecionada.jpg",
+        )
+        db.add(photo)
+        db.flush()
+        db.add_all(
+            [
+                PhotoSelection(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    derived_gallery_id=target_gallery.id,
+                    photo_asset_id=photo.id,
+                    client_id=target.id,
+                    created_at=reference,
+                ),
+                SaleOrder(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    derived_gallery_id=target_gallery.id,
+                    client_id=target.id,
+                    payment_status="pending",
+                    total_cents=1200,
+                    created_at=reference,
+                ),
+                SaleOrder(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    derived_gallery_id=other_gallery.id,
+                    client_id=other.id,
+                    payment_status="pending",
+                    total_cents=900,
+                    created_at=reference,
+                ),
+            ]
+        )
+        db.commit()
+        target_id = target.id
+
+    authenticate_admin(client)
+    phone_search = client.get(
+        "/admin/payment-communications", params={"query": "998765432"}
+    )
+    assert phone_search.status_code == 200
+    phone_payload = phone_search.json()
+    assert phone_payload["summary"]["orders"] == 1
+    assert phone_payload["groups"][0]["client"]["name"] == "Marta Telefone"
+    assert phone_payload["selections_without_order"][0]["client"]["name"] == "Marta Telefone"
+    assert "+5511998765432" not in phone_search.text
+    assert "998765432" not in phone_search.text
+
+    exact_search = client.get(
+        "/admin/payment-communications",
+        params={"query": "Maria", "client_id": str(target_id)},
+    )
+    assert exact_search.status_code == 200
+    exact_payload = exact_search.json()
+    assert exact_payload["summary"]["orders"] == 1
+    assert exact_payload["groups"][0]["client"]["name"] == "Marta Telefone"
+    assert exact_payload["selections_without_order"][0]["client"]["name"] == "Marta Telefone"
