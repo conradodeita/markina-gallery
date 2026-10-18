@@ -240,3 +240,47 @@ O release da melhoria de situações financeiras SHALL preservar os comportament
 #### Scenario: Recuperação necessária
 - **WHEN** o release falha e a recuperação das imagens anteriores foi explicitamente aprovada
 - **THEN** o executor restaura somente API/web e checkout anterior, recarrega o nginx da Markina e verifica saúde, sem tocar banco ou recursos de terceiros
+
+### Requirement: Runtime de Vendas e pagamentos tem allowlist API/web exata
+O verificador de release API/web SHALL reconhecer somente os arquivos de runtime de pagamentos e exportação enumerados no manifesto, com hashes de blob correspondentes ao candidato.
+
+#### Scenario: Candidato revisado de pagamentos
+- **WHEN** o candidato altera os runtimes enumerados e o manifesto contém seus blobs exatos
+- **THEN** o classificador aceita o escopo API/web, mantendo o restante da allowlist fechado
+
+#### Scenario: Runtime fora da lista
+- **WHEN** o candidato altera um caminho de runtime não enumerado
+- **THEN** o verificador recusa o release por divergência de escopo ou blob
+
+### Requirement: Remoção da página de Estatísticas é uma exceção exata do escopo API/web
+O verificador SHALL tratar como aposentados somente a página e o teste antigos de Estatísticas, sem listá-los como runtimes ativos.
+
+#### Scenario: Remoção autorizada da rota antiga
+- **WHEN** o candidato remove `frontend/app/admin/statistics/page.tsx` e `frontend/app/admin/statistics/page.test.tsx`
+- **THEN** o classificador aceita somente essas duas remoções exatas
+
+#### Scenario: Outro caminho de Estatísticas
+- **WHEN** o candidato altera qualquer outro caminho sob `frontend/app/admin/statistics/`
+- **THEN** o verificador recusa o release por caminho fora do escopo
+
+### Requirement: Sincronizar hashes não aprova uma publicação
+Atualizar hashes de runtime MUST NOT alterar baseline de produção, revisão do banco ou estados dos gates operacionais. Um release ainda requer inventário somente-leitura e aprovação protegida do fingerprint e SHA exatos.
+
+#### Scenario: Manifestos sincronizados sem inventário
+- **WHEN** os hashes do candidato são sincronizados, sem inventário aprovado
+- **THEN** o fluxo não publica nem declara release autorizado
+
+### Requirement: O escopo API/web admite somente os arquivos exatos de coordenação de release já revisados
+O verificador de release API/web SHALL permitir, além dos runtimes e artefatos previamente enumerados, somente os arquivos `scripts/deploy-prod-lock.sh`, `scripts/deploy-prod-web.sh`, `scripts/test_deploy_prod_web.sh` e `scripts/test_deploy_prod_web_policy.py` como delta operacional desta integração. A allowlist SHALL NOT aceitar outros caminhos operacionais por diretório ou padrão aproximado.
+
+#### Scenario: Delta inclui a coordenação de release aprovada
+- **WHEN** o diff desde o baseline contém um ou mais dos quatro caminhos exatos de coordenação e nenhum caminho fora da allowlist
+- **THEN** o verificador mantém elegível somente o escopo API/web com os hashes de runtime já aprovados
+
+#### Scenario: Delta inclui operação não listada
+- **WHEN** o diff inclui outro script de deploy ou um arquivo semelhante não enumerado
+- **THEN** o verificador recusa o candidato antes do inventário remoto
+
+#### Scenario: Allowlist operacional é reconciliada
+- **WHEN** os quatro caminhos exatos são permitidos
+- **THEN** o baseline, os hashes de runtime, a revisão do banco e os gates de inventário e aprovação permanecem inalterados

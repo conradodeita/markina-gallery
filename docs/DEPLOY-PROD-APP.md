@@ -14,7 +14,7 @@ Este fluxo publica somente `api` e `web` para uma mudança comercial previamente
 
 ## Gates
 
-CI verde e classificação `app` são pré-requisitos. O manifesto registra a base saudável `b4f15abd6a71585082758062feba7fcfcc225587` e o schema observado `20261017_0084`. O classificador usa essa base em vez do `before` da branch: uma reconciliação de `main` com commits que já estão implantados resulta em `none`, enquanto um delta descendente pode selecionar um release. Após cada release saudável, a base deve ser avançada para o novo SHA confirmado, sem runtime adicional, e o manifesto de blobs deve refletir o estado aprovado.
+CI verde e classificação `app` são pré-requisitos. O manifesto registra a base saudável `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f`, publicada em 18/10/2026, e o schema observado `20261017_0084`. O classificador usa essa base em vez do `before` da branch: uma reconciliação de `main` com commits que já estão implantados resulta em `none`, enquanto um delta descendente pode selecionar um release. Após cada release saudável, a base deve ser avançada para o novo SHA confirmado, sem runtime adicional, e o manifesto de blobs deve refletir o estado aprovado.
 
 Para a identificação de responsáveis em pastas privadas, o manifesto fixa `backend/app/main.py`, `backend/app/private_folder_overview.py`, `frontend/app/admin/galleries/private-folder-client-overview.tsx` e `frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx`, além dos runtimes já permitidos. Testes, OpenSpec e runbooks podem acompanhar. Alterações em Docker/Compose, migrations, workers, código do Monitor ou outros runtimes bloqueiam o fluxo. O preflight também compara o candidato com o checkout ativo; alterações faciais não são publicadas junto com o app.
 
@@ -28,7 +28,9 @@ O servidor usa um wrapper root-owned em `/usr/local/sbin/markina-gallery-preflig
 
 O run `39025690297` registrou que a cópia instalada recusou `MARKINA_APP_TARGET_SHA` como comando não permitido. Portanto, a existência das regras novas neste repositório não comprova que o wrapper do host foi atualizado; até instalar e conferir a cópia root-owned, nenhum preflight app válido nem publicação pode ser declarado.
 
-O inventário SSH posterior confirmou que o wrapper instalado já reconhece os comandos app, mas ainda fixa o blob anterior `6542f2c` do script. Para esta publicação ele precisa receber o pin revisado, mantendo owner `root:root`, modo `0755` e os comandos restritos. A alteração do pin não reinicia containers.
+Em 18/10/2026, a comparação SSH confirmou que a única diferença da cópia instalada era o pin app `37e9c17b4affe5e8a823a8be93e186b4e4ad226d`. A cópia root-owned foi atualizada para o wrapper revisado de `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f`, com owner `root:root`, modo `0755`, blob Git `95f04139093a146c8f66ddd60e299ff76f57e2b3` e SHA-256 `253f9407a322822122d8339216ea9895482e386749b795c6724d524de4f8bfb2`. O pin app passou a `6767d0ba092adb23666ab612db505af2e0900b35`; o pin facial permaneceu igual. A chave restrita continuou recusando comandos arbitrários. A cópia anterior foi preservada em `/var/backups/markina-gallery-preflight-ssh-wrapper-20261018-fe1f3bc6`.
+
+O run `39135274157`, tentativa 2, concluiu preflight e release API/web com aprovação protegida do proprietário, sem migrations. O checkout anterior era `ffea8c437b9940498487476f6167fdeec1067e2e`; API/web novos e demais serviços ficaram saudáveis. Evidências e limites em `docs/RELEASE-SALES-PAYMENTS-20261018.md`.
 
 As variáveis e chaves existentes do GitHub Environment `production-preflight` e `production` são reutilizadas. Nenhum segredo deve ser copiado para o repositório, logs, manifestos ou arquivos `.env`.
 ## Exclusão mútua com o release web-only
