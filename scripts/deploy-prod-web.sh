@@ -2,7 +2,7 @@
 # Release manual web-only. Suporte carregado do SHA aprovado, nunca do checkout legado.
 set -Eeuo pipefail
 umask 077
-export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1
+export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 PYTHONDONTWRITEBYTECODE=1
 
 readonly RELEASE_STATE_BLOB="9ce3c7b70f7b1b8e8381f6c778458ca39c72a100"
 readonly RELEASE_LOCK_BLOB="b95712afefc977e3aa8afe95a879c908103a6f79"

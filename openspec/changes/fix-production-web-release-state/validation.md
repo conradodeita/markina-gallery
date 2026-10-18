@@ -39,3 +39,5 @@ PR #177 permanece aberto para develop, head e9ce8405c1d53b8015e72b7f1f55a098329b
 ## Gates ainda não concluídos neste checkpoint
 
 CI do PR, merge e CI posterior ainda precisam de resultado definitivo antes de marcar a engenharia concluída. Publicação continua não autorizada; nenhum comando SSH foi executado nesta fase de engenharia.
+
+A conferência final desabilitou também a criação de bytecode Python nos entrypoints de inventário, além de optional locks/lazy fetch. O pin app foi recalculado. O CI inicial do PR #227 será substituído por esse head; execução anterior cancelada não conta como aprovação do head final.
