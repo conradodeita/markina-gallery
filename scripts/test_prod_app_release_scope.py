@@ -49,6 +49,29 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (True, "somente_api_web"))
 
+    def test_exact_release_coordination_scripts_are_allowed(self):
+        names = (
+            "scripts/deploy-prod-lock.sh",
+            "scripts/deploy-prod-web.sh",
+            "scripts/test_deploy_prod_web.sh",
+            "scripts/test_deploy_prod_web_policy.py",
+        )
+        for name in names:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("reviewed release coordination\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
+    def test_unlisted_release_coordination_script_is_rejected(self):
+        path = self.root / "scripts/deploy-prod-unreviewed.sh"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("unreviewed operation\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
     def test_docker_monitor_worker_migration_and_unlisted_runtime_are_rejected(self):
         for name in ("docker/docker-compose.yml", "backend/app/system_monitor.py",
                      "backend/app/face_worker.py", "backend/migrations/versions/change.py",
