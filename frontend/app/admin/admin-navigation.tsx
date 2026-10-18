@@ -11,7 +11,6 @@ const navigation = [
   { href: "/admin/payments", label: "Vendas e pagamentos" },
   { href: "/admin/notifications", label: "Notificações" },
   { href: "/admin/pricing", label: "Tabelas de preço" },
-  { href: "/admin/statistics", label: "Estatísticas" },
   { href: "/admin/settings", label: "Configurações" },
 ];
 

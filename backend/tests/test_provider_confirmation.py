@@ -226,17 +226,11 @@ def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch)
         )
         order_payload = next(item for group in result["groups"] for item in group["orders"]
                              if item.get("provider_payment_id") == str(payment_id))
-        statistics = [main.statistics_data(
-            db, tenant_id=payment.tenant_id, starts_at=None, ends_at=None,
-            client_id=payment.client_id, parent_gallery_id=None,
-            derived_gallery_id=order.derived_gallery_id, event_name=None,
-        ) for order in orders]
     assert order_payload["payment_method"] == "credit_card"
     assert order_payload["provider_payment_state"] == "confirmed"
     assert all(order.delivery_album_url is None for order in orders)
     assert order_payload["financial_status"] == "confirmed_undelivered"
     assert result["summary"]["confirmed_cents"] == expected_revenue
-    assert sum(row["revenue_cents"] for row in statistics) == expected_revenue
     assert commercial["confirmed_order_count"] == len(orders)
     assert {order["payment_method"] for order in commercial["orders"]} == {"credit_card"}
     assert {order["destination"] for order in commercial["orders"]} == {"InfinityPay"}

@@ -3,12 +3,16 @@
   "production_baseline_sha": "b4f15abd6a71585082758062feba7fcfcc225587",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
-    "backend/app/main.py": "6744219c3c6d2bd98215f2fb503776ed4c938d01",
+    "backend/app/main.py": "f5bd9e3a232ba1e13c45b64a5a940cbd67dd7a85",
     "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
-    "frontend/app/globals.css": "8aa1c117cd9d032fc5847766fe3b238ca15da0d8",
-    "frontend/app/admin/statistics/page.tsx": "b3f74605c9031f5b3469eccdaf1c18c2063ddc45",
+    "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx": "47eb3ba7bdc21faffc583f3ec455f0bc2f178266",
-    "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx": "d3ec9f39db7d79bf2c7372afcbe9ce616f1f1159"
+    "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx": "d3ec9f39db7d79bf2c7372afcbe9ce616f1f1159",
+    "backend/app/payment_export.py": "e7742d5fdd271c93a4af42870284f17b11adc3a2",
+    "frontend/app/admin/admin-navigation.tsx": "d055eaa6ae784d16c39761fb1023fc3b5621bbe6",
+    "frontend/app/admin/payments/page.tsx": "e4fd706e91db83aaa12a6be14d9046b50b975d15",
+    "frontend/app/admin/payments/order-photos.tsx": "40f2163974f1f075c0e1fd139ac1319a51592831",
+    "frontend/app/admin/payments/payments.module.css": "7a24498537c5767823d9497b34c98f72ddc5e548"
   }
 }

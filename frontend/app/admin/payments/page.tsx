@@ -1,12 +1,14 @@
 "use client";
 
-import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
 import { PaymentActions } from "./payment-actions";
 
 import RemovedHistory from "./removed-history";
 import { OrderDeliveryForm, type OrderDelivery } from "./order-delivery";
+import styles from "./payments.module.css";
+import { OrderPhotos, type OrderFolder } from "./order-photos";
 
 type Delivery = {
   id: string;
@@ -50,7 +52,7 @@ type Order = {
   communications: Communication[];
   communication: Communication | null;
   delivery_statuses: string[];
-  folders: Array<{ id: string | null; name: string; items: Array<{ id: string; photo_id: string; name: string; unit_price_cents: number }> }>;
+  folders: OrderFolder[];
   delivery?: OrderDelivery;
 };
 type ClientGroup = {
@@ -67,6 +69,8 @@ type ClientGroup = {
   orders: Order[];
 };
 type Dashboard = {
+  templates: Record<"confirmed" | "refused", string>;
+  templates_are_global: boolean;
   selections_without_order?: Array<{ client: { id: string; name: string }; gallery: { id: string; name: string }; parent_gallery: { id: string; name: string }; selected_count: number; total_cents: number | null; pricing_available: boolean; created_at: string; folders: Array<{ id: string; name: string; items: Array<{ id: string; name: string }> }> }>;
   summary: {
     clients: number;
@@ -98,6 +102,7 @@ type Filters = {
   created_from?: string;
   created_to?: string;
 };
+const defaultFilters: Filters = { financial_status: "priority" };
 
 const financialPresentation: Record<FinancialStatus, { label: string; tone: "neutral" | "success" | "warning" | "danger" | "dark" }> = {
   reported: { label: "Pagamento comunicado", tone: "warning" },
@@ -153,20 +158,21 @@ function requestPath(filters: Filters, cursor?: string | null) {
 
 export default function AdminPaymentsPage() {
   const [view, setView] = useState("payments");
-  return <main className="admin-shell payments-dashboard">
-    <p className="eyebrow">Operação financeira · decisão manual</p>
-    <h1>Vendas e pagamentos</h1>
-    <label className="admin-card">Exibir<select value={view} onChange={(event) => setView(event.target.value)}>
+  return <main className={`admin-shell payments-dashboard ${styles.page}`}>
+    <header className={styles.pageHeading}><div><p className="eyebrow">Operação financeira · decisão manual</p>
+    <h1>Vendas e pagamentos</h1></div>
+    <label className={styles.mode}>Exibir<select value={view} onChange={(event) => setView(event.target.value)}>
       <option value="payments">Pedidos e pagamentos</option>
       <option value="removed">Histórico de acervo excluído</option>
-    </select></label>
+    </select></label></header>
     {view === "removed" ? <RemovedHistory /> : <PaymentsDashboard />}
   </main>;
 }
 
 function PaymentsDashboard() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
-  const [filters, setFilters] = useState<Filters>({});
+  const [filters, setFilters] = useState<Filters>({ ...defaultFilters });
+  const [draftFilters, setDraftFilters] = useState<Filters>({ ...defaultFilters });
   const [clientQuery, setClientQuery] = useState("");
   const [selectedClientId, setSelectedClientId] = useState("");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
@@ -176,6 +182,11 @@ function PaymentsDashboard() {
   const [busyAction, setBusyAction] = useState("");
   const [message, setMessage] = useState("");
   const [reopenings, setReopenings] = useState<Reopening[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
+  const loadRequest = useRef<AbortController | null>(null);
+  const exportRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const header = document.querySelector<HTMLElement>(".admin-topbar");
@@ -193,37 +204,34 @@ function PaymentsDashboard() {
   }, []);
 
   const load = useCallback(async (nextFilters: Filters, cursor?: string | null, append = false) => {
+    loadRequest.current?.abort();
+    const controller = new AbortController();
+    loadRequest.current = controller;
+    setFailed(false);
+    setRefreshing(!append);
     if (append) setLoadingMore(true);
     try {
-      const response = await fetch(requestPath(nextFilters, cursor), { credentials: "same-origin" });
+      const response = await fetch(requestPath(nextFilters, cursor), { credentials: "same-origin", signal: controller.signal });
       if (!response.ok) throw new Error();
       const payload = await response.json() as Dashboard;
+      if (controller.signal.aborted) return;
       setDashboard((current) => append && current ? {
         ...payload,
         groups: [...current.groups, ...payload.groups],
       } : payload);
       setFailed(false);
     } catch {
-      setFailed(true);
+      if (!controller.signal.aborted) setFailed(true);
     } finally {
-      setLoadingMore(false);
+      if (!controller.signal.aborted) { setLoadingMore(false); setRefreshing(false); }
     }
   }, []);
 
   useEffect(() => {
     let active = true;
-    fetch(requestPath({}), { credentials: "same-origin" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const payload = await response.json() as Dashboard;
-        if (active) {
-          setDashboard(payload);
-          setFailed(false);
-        }
-      })
-      .catch(() => { if (active) setFailed(true); });
-    return () => { active = false; };
-  }, []);
+    queueMicrotask(() => { if (active) void load(defaultFilters); });
+    return () => { active = false; loadRequest.current?.abort(); exportRequest.current?.abort(); };
+  }, [load]);
   const loadReopenings = useCallback(() => fetch("/api/admin/gallery-reopening-requests", { credentials: "same-origin" }).then(async (response) => { if (!response.ok) throw new Error(); setReopenings((await response.json()).requests ?? []); }).catch(() => setReopenings([])), []);
   useEffect(() => { void loadReopenings(); }, [loadReopenings]);
   useEffect(() => {
@@ -260,22 +268,50 @@ function PaymentsDashboard() {
       created_to: dateBoundary(data.get("created_to"), true),
     };
     setFilters(nextFilters);
-    setDashboard(null);
+    setDraftFilters(nextFilters);
     void load(nextFilters);
   }
 
   function clearFilters() {
-    setFilters({});
+    setFilters({ ...defaultFilters });
+    setDraftFilters({ ...defaultFilters });
     setClientQuery("");
     setSelectedClientId("");
-    setDashboard(null);
-    void load({});
+    void load(defaultFilters);
+  }
+
+  function selectClient(suggestion: ClientSuggestion) {
+    setClientQuery(suggestion.name); setSelectedClientId(suggestion.id);
+    const next = { ...filters, query: suggestion.name, client_id: suggestion.id };
+    setFilters(next); setDraftFilters(next);
+    void load(next);
+  }
+
+  async function exportCsv() {
+    if (exportRequest.current) return;
+    const controller = new AbortController(); exportRequest.current = controller;
+    setExporting(true); setExportMessage("");
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    try {
+      const response = await fetch(`/api/admin/payment-communications/export.csv?${params}`, { credentials: "same-origin", signal: controller.signal });
+      if (response.status === 204) { setExportMessage("Nenhum pedido nos filtros aplicados para exportar."); return; }
+      if (!response.ok) throw new Error();
+      const blob = await response.blob();
+      if (controller.signal.aborted) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = "pick-your-pic-vendas-pagamentos.csv";
+      document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+      setExportMessage("CSV exportado com todos os pedidos dos filtros aplicados.");
+    } catch { if (!controller.signal.aborted) setExportMessage("Não foi possível exportar o CSV. Tente novamente."); }
+    finally { exportRequest.current = null; if (!controller.signal.aborted) setExporting(false); }
   }
 
   if (failed && !dashboard) return <SystemState tone="error" title="Pagamentos indisponíveis" detail="Não foi possível carregar os pedidos e as comunicações para revisão." />;
   if (!dashboard) return <SystemState tone="loading" title="Carregando pagamentos" detail="Consultando pedidos, decisões e entregas transacionais." />;
 
-  const hasFilters = Object.values(filters).some(Boolean);
+  const hasFilters = filters.financial_status !== "priority" || Object.entries(filters).some(([key, value]) => key !== "financial_status" && Boolean(value));
   return <section>
     <p className="intro">A comunicação da cliente não confirma o PIX. Revise cada pedido e registre uma única decisão; o histórico comercial permanece mesmo quando a galeria é removida.</p>
 
@@ -285,10 +321,11 @@ function PaymentsDashboard() {
           value={clientQuery}
           selectedClientId={selectedClientId}
           onChange={(value) => { setClientQuery(value); setSelectedClientId(""); }}
-          onSelect={(suggestion) => { setClientQuery(suggestion.name); setSelectedClientId(suggestion.id); }}
+          onSelect={selectClient}
         />
         <div className="payment-filter-bar__actions">
           <MarkinaButton type="submit" form="payment-dashboard-filter">Aplicar</MarkinaButton>
+          <MarkinaButton variant="secondary" disabled={exporting} onClick={() => void exportCsv()}>{exporting ? "Exportando…" : "Exportar CSV"}</MarkinaButton>
         </div>
       </div>
       <form id="payment-dashboard-filter" className="payment-filter-form" onSubmit={applyFilters}>
@@ -296,15 +333,17 @@ function PaymentsDashboard() {
         <summary>Mais filtros {hasFilters ? "· filtros ativos" : ""}</summary>
         <div>
         <div className="filter-grid">
-          <label>Galeria pública<select name="parent_gallery_id" defaultValue={filters.parent_gallery_id ?? ""}><option value="">Todas</option>{dashboard.facets.parent_galleries.map((gallery) => <option key={gallery.id} value={gallery.id}>{gallery.name} ({gallery.count})</option>)}</select></label>
-          <label>Situação financeira<select name="financial_status" defaultValue={filters.financial_status ?? ""}><option value="">Todas</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}</select></label>
-          <label>De<input type="date" name="created_from" defaultValue={filters.created_from?.slice(0, 10) ?? ""} /></label>
-          <label>Até<input type="date" name="created_to" defaultValue={filters.created_to?.slice(0, 10) ?? ""} /></label>
+          <label>Galeria pública<select name="parent_gallery_id" value={draftFilters.parent_gallery_id ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, parent_gallery_id: event.target.value })}><option value="">Todas</option>{dashboard.facets.parent_galleries.map((gallery) => <option key={gallery.id} value={gallery.id}>{gallery.name} ({gallery.count})</option>)}</select></label>
+          <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}</select></label>
+          <label>De<input type="date" name="created_from" value={draftFilters.created_from?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_from: event.target.value })} /></label>
+          <label>Até<input type="date" name="created_to" value={draftFilters.created_to?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_to: event.target.value })} /></label>
           <div className="payment-filter-actions"><MarkinaButton type="submit">Aplicar filtros</MarkinaButton>{hasFilters ? <MarkinaButton type="button" variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}</div>
         </div>
         </div>
       </details>
       </form>
+      {refreshing ? <p role="status">Atualizando resultados…</p> : null}
+      {exportMessage ? <p className="form-message" role="status">{exportMessage}</p> : null}
 
     <section aria-label="Resumo de pagamentos" className="payment-summary">
       <MetricCard label="Clientes no resultado" value={dashboard.summary.clients} detail="Com atividade no filtro atual" />
@@ -313,24 +352,24 @@ function PaymentsDashboard() {
       <MetricCard label="Receita confirmada" value={money(dashboard.summary.confirmed_cents)} detail={`${dashboard.summary.confirmed_orders} depósito(s) confirmado(s)`} tone="success" />
     </section>
 
+
     {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
 
     {failed ? <p className="form-message form-message--error" role="alert">Não foi possível atualizar. Os dados carregados continuam visíveis.</p> : null}
-    {!dashboard.groups.length ? <SystemState title={hasFilters ? "Nenhum pagamento neste filtro" : "Nenhum pedido ainda"} detail={hasFilters ? "Limpe os filtros para voltar a ver todos os pedidos." : "Pedidos e comunicações aparecerão aqui sem comprovantes ou dados bancários."} /> : null}
+    {!dashboard.groups.length ? <SystemState title={filters.financial_status === "priority" && !hasFilters ? "Nenhuma pendência prioritária" : hasFilters ? "Nenhum pagamento neste filtro" : "Nenhum pedido ainda"} detail="Ajuste os filtros ou selecione Todos para consultar outras situações." /> : null}
     {!dashboard.groups.length && hasFilters ? <MarkinaButton variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}
 
     <div className="payment-client-groups">
       {dashboard.groups.map((group) => <section className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
-        <header><div><p className="eyebrow">Cliente</p><StatusBadge tone={financialPresentation[group.financial_status].tone} className={`payment-status-badge--${group.financial_status}`}>{financialPresentation[group.financial_status].label}</StatusBadge><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
+        <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p><StatusBadge tone={financialPresentation[group.financial_status].tone} className={`payment-status-badge--${group.financial_status}`}>{financialPresentation[group.financial_status].label}</StatusBadge><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
           {group.orders.map((order) => <OrderCard key={order.id} order={order} clientId={group.client.id} onRefresh={() => load(filters)} />)}
         </div>
       </section>)}
     </div>
 
-    {dashboard.selections_without_order?.length ? <section className="admin-card payment-open-selections"><div className="section-heading"><div><h2>Seleções em aberto</h2><p>Fotos selecionadas sem pedido preparado; aparecem depois dos estados financeiros.</p></div><StatusBadge tone="neutral" className="payment-status-badge--cart">{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order payment-order--cart" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral" className="payment-status-badge--cart">No carrinho</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><div className="payment-client-total"><strong>{selection.total_cents === null ? "Preço indisponível" : money(selection.total_cents)}</strong><span>{selection.selected_count} foto(s)</span></div></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
-
     {dashboard.page.next_cursor ? <div className="payment-pagination"><MarkinaButton variant="secondary" disabled={loadingMore} onClick={() => void load(filters, dashboard.page.next_cursor, true)}>{loadingMore ? "Carregando…" : "Carregar mais clientes"}</MarkinaButton></div> : null}
+    {dashboard.selections_without_order?.length ? <section className="admin-card payment-open-selections"><div className="section-heading"><div><h2>Seleções em aberto</h2><p>Fotos selecionadas sem pedido preparado; aparecem depois dos estados financeiros.</p></div><StatusBadge tone="neutral" className="payment-status-badge--cart">{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order payment-order--cart" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral" className="payment-status-badge--cart">No carrinho</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><div className="payment-client-total"><strong>{selection.total_cents === null ? "Preço indisponível" : money(selection.total_cents)}</strong><span>{selection.selected_count} foto(s)</span></div></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
     {message ? <p className="form-message" role="status">{message}</p> : null}
     </div>
   </section>;
@@ -459,26 +498,44 @@ function ClientAutocomplete({
 }
 
 function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void> }) {
+  const [expanded, setExpanded] = useState(false);
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
   const paymentGroup = communication?.payment_group;
+  const quantity = order.folders.reduce((total, folder) => total + folder.items.length, 0);
   const canDownloadPurchasedPhotos = (order.financial_status === "confirmed" || order.financial_status === "confirmed_undelivered") && !order.assets_removed && !order.gallery.removed;
-  const downloadPurchasedPhotos = canDownloadPurchasedPhotos ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${encodeURIComponent(order.parent_gallery.id)}/clients/${encodeURIComponent(clientId)}/selection/export.html`}>Baixar fotos compradas</a> : null;
+  const downloadPurchasedPhotos = canDownloadPurchasedPhotos
+    ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${encodeURIComponent(order.parent_gallery.id)}/clients/${encodeURIComponent(clientId)}/selection/export.html`}>Baixar fotos compradas</a>
+    : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""}</p></div><strong>{money(order.total_cents)}</strong></div>
-    <details>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
+      <div className={styles.orderDetail}>
       <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div>{order.selection_expires_at ? <div><dt>Prazo</dt><dd>{new Date(order.selection_expires_at).toLocaleDateString("pt-BR")}</dd></div> : null}</dl>
-      {order.folders?.length ? <div>{order.folders.map((folder) => <section key={folder.id ?? folder.name}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name} · {money(item.unit_price_cents)}</li>)}</ul></section>)}</div> : null}
-      {order.payment_method === "credit_card" ? <><p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>{downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}</> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
+      <section className={styles.photoSection} aria-label="Fotografias do pedido"><h4>Fotografias do pedido <span>· {quantity}</span></h4>
+      {expanded && order.folders?.length ? <OrderPhotos folders={order.folders} /> : !order.folders?.length ? <p>Nenhuma fotografia disponível.</p> : null}
+      <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p></section>
+      <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
+      {order.payment_method === "credit_card" ? <>
+        <p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
+        {downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}
+      </> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
         <div className="dashboard-actions">
-          <PaymentActions order={{ ...communication, quantity: order.folders.reduce((total, folder) => total + folder.items.length, 0) }} clientName={communication.client_name} onRefresh={onRefresh} />
+          <PaymentActions order={{ ...communication, quantity }} clientName={communication.client_name} onRefresh={onRefresh} />
           {downloadPurchasedPhotos}
         </div>
       </>}
+      </section>
+      <section className={styles.deliverySection} aria-label="Entrega do pedido"><h4>Entrega</h4><p>{order.delivery?.album_url && isConfirmedFinancialStatus(order.financial_status) ? "Fotos disponíveis" : "Fotos indisponíveis"}</p>
       <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
+      </section></div>
     </details>
   </article>;
+}
+
+function isConfirmedFinancialStatus(status: FinancialStatus) {
+  return status === "confirmed" || status === "confirmed_undelivered";
 }

@@ -87,7 +87,9 @@ describe("controle operacional de pagamentos", () => {
       id: "group-12345678", total_cents: 2100,
       galleries: [{ order_id: "12345678-order", name: "Formatura", total_cents: 1200 }],
     } });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(data))));
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : data,
+    ), { status: 200 }))));
     render(<AdminPaymentsPage />);
     const galleryHeading = await screen.findByRole("heading", { name: "Formatura privada" });
     expect(galleryHeading.closest(".payment-order")?.querySelector(".payment-order__heading")?.textContent)
@@ -193,9 +195,9 @@ describe("controle operacional de pagamentos", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminPaymentsPage />);
 
-    expect(await screen.findByText("Nenhum pedido ainda")).toBeTruthy();
-    expect(screen.getByText(/Pedidos e comunicações aparecerão aqui/)).toBeTruthy();
-    expect(screen.getByText("Mais filtros")).toBeTruthy();
+    expect(await screen.findByText("Nenhuma pendência prioritária")).toBeTruthy();
+    expect(screen.getByText(/Ajuste os filtros ou selecione Todos/)).toBeTruthy();
+    expect(screen.getByText(/^Mais filtros/)).toBeTruthy();
     expect(screen.queryByText("Mensagem global após conferência")).toBeNull();
     expect(screen.queryByText("Ver prévias")).toBeNull();
     expect(screen.queryByRole("link", { name: "Editar em Notificações" })).toBeNull();
@@ -337,11 +339,11 @@ describe("filtro de cliente com sugestões", () => {
     const phoneSuggestionRequest = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/clients?") && new URL(path, "http://localhost").searchParams.get("query") === "1199");
     expect(phoneSuggestionRequest).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Mais filtros"));
+    fireEvent.click(screen.getByText(/^Mais filtros/));
     fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reported" } });
     fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
     await waitFor(() => {
-      const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?") && new URL(path, "http://localhost").searchParams.has("client_id"));
+      const request = fetchMock.mock.calls.map(([path]) => String(path)).findLast((path) => String(path).startsWith("/api/admin/payment-communications?") && new URL(String(path), "http://localhost").searchParams.has("client_id"));
       expect(request).toBeTruthy();
       const params = new URL(request!, "http://localhost").searchParams;
       expect(params.get("query")).toBe("Marta Silva");
