@@ -36,3 +36,12 @@ As variáveis e chaves existentes do GitHub Environment `production-preflight` e
 ## Exclusão mútua com o release web-only
 
 As operações mutáveis `release` e `rollback` adquirem o lock exclusivo `/var/lib/markina-gallery/deploy-state/production-release.lock`. O procedimento `deploy-prod-web.sh` usa o mesmo arquivo de lock e recusa iniciar enquanto houver release API/web em andamento ou tentativa API/web sem conclusão. Se o lock estiver ocupado, ausente ou houver uma tentativa web-only pendente, a operação falha antes de alterar serviços. Os modos de inventário permanecem somente-leitura e não disputam o lock de mutação.
+
+
+## Coordenação com web-only — correção de outubro/2026
+
+A change `fix-production-web-release-state` substitui a inferência do web por marcador pelo recibo `web-current.identity` (origem, ID Docker, hash Compose e checkout). App publica esse recibo após sucesso e restaura o recibo anterior em rollback; após web-only, API APP_VERSION pode permanecer anterior ao checkout desde que backend seja idêntico. IDs de recuperação e versão API anterior são conferidos independentemente do SHA de checkout. Tags de preservação usam ID, sem sobrescrever conflitos. Tentativa interrompida mantém bloqueio/recuperação aprovada; API indisponível para conferir schema continua bloqueio, sem enfraquecer o gate de banco.
+
+Inventário app e wrapper candidato não criam temporários nem fazem fetch. Os objetos do alvo/helpers pinados devem ser obtidos previamente em preparação autorizada. O wrapper versionado valida corpo em memória por blob antes de alimentar o Bash; não executa stdin arbitrário do cliente. Sua instalação remota depende de autorização própria e não faz parte da publicação web-only de segurança. O pin antigo instalado impede automaticamente usar um script app diferente, preservando falha fechada.
+
+Este fluxo app continua limitado a API/web, com revisão do banco, allowlist, aprovação protegida e recarga nginx anteriormente especificadas. Não deve ser usado para a atualização de dependências. O runbook `DEPLOY-PROD-WEB.md` define a publicação restrita e a solicitação conjunta de preparação/publicação/validação/recuperação.

@@ -91,7 +91,7 @@ def main() -> None:
     )
     require('script_name="deploy-prod-facial-services.sh"', "wrapper mantém caminho facial", WRAPPER)
     require('script_name="deploy-prod-app-services.sh"', "wrapper inclui caminho app isolado", WRAPPER)
-    require('git hash-object "$script_file"', "integridade do script conferida sem gravá-lo no Git", WRAPPER)
+    require('git hash-object --stdin', "integridade do script conferida sem gravá-lo no Git", WRAPPER)
     app_inventory_text = APP_INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
     app_blob_header = f"blob {len(app_inventory_text)}\0".encode()
     app_blob_sha = hashlib.sha1(app_blob_header + app_inventory_text).hexdigest()
@@ -100,9 +100,10 @@ def main() -> None:
     require("MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})", "wrapper aceita apenas SHA para inventário de rollback", WRAPPER)
     if "--mode release" in WRAPPER or '"$SSH_ORIGINAL_COMMAND"' in WRAPPER:
         raise AssertionError("wrapper não pode encaminhar comando arbitrário nem release")
-    if "bash -s" in WRAPPER or "git fetch" in WRAPPER:
-        raise AssertionError("wrapper não executa stdin nem altera refs locais do checkout")
+    if "mktemp" in WRAPPER or "git fetch" in WRAPPER:
+        raise AssertionError("wrapper não cria temporários nem altera refs locais do checkout")
 
+    require("printf '%s\\n' \"$script_body\" | MARKINA_EXPECTED_REPOSITORY=", "somente conteúdo validado alimenta stdin", WRAPPER)
     script = INVENTORY_SCRIPT.decode("utf-8")
     app_script = APP_INVENTORY_SCRIPT.decode("utf-8")
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))

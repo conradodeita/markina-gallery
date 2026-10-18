@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import check_prod_app_release_scope as policy
 
@@ -15,6 +16,10 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.run_git("init", "-q")
+        # Git recente destaca maintenance em background até em fixtures pequenas.
+        # Nenhum processo deve continuar escrevendo depois do cleanup do teste.
+        self.run_git("config", "maintenance.auto", "false")
+        self.run_git("config", "gc.auto", "0")
         for name in policy.RUNTIME_FILES | policy.RETIRED_STATISTICS_FILES:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -26,8 +31,19 @@ class AppReleaseScopeTests(unittest.TestCase):
     def run_git(self, *args):
         env = dict(os.environ, GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
                    GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.invalid")
-        return subprocess.run(["git", *args], cwd=self.root, env=env, check=True,
-                              capture_output=True, text=True).stdout.strip()
+        result = subprocess.run(["git", *args], cwd=self.root, env=env, check=True,
+                                capture_output=True, text=True)
+        self.last_git_stderr = result.stderr
+        return result.stdout.strip()
+
+    def test_fixture_does_not_start_background_maintenance(self):
+        (self.root / "fixture-change").write_text("isolated fixture\n", encoding="utf-8")
+        self.run_git("add", "fixture-change")
+        with patch.dict(os.environ, {"GIT_TRACE": "1"}):
+            self.run_git("commit", "-qm", "fixture without detached processes")
+        self.assertNotIn("maintenance run", self.last_git_stderr)
+        self.assertEqual(self.run_git("config", "--bool", "maintenance.auto"), "false")
+        self.assertEqual(self.run_git("config", "--get", "gc.auto"), "0")
 
     def commit(self):
         self.run_git("add", ".")
@@ -52,6 +68,8 @@ class AppReleaseScopeTests(unittest.TestCase):
     def test_exact_release_coordination_scripts_are_allowed(self):
         names = (
             "scripts/deploy-prod-lock.sh",
+            "scripts/deploy-prod-state.sh",
+            "scripts/test_prod_release_state.py",
             "scripts/deploy-prod-web.sh",
             "scripts/test_deploy_prod_web.sh",
             "scripts/test_deploy_prod_web_policy.py",

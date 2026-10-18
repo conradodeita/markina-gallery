@@ -61,6 +61,8 @@ class ReleaseClassifierTests(unittest.TestCase):
                                       capture_output=True, text=True).stdout.strip()
 
             git("init", "-q")
+            git("config", "maintenance.auto", "false")
+            git("config", "gc.auto", "0")
             (root / "fixture").write_text("baseline\n", encoding="utf-8")
             git("add", "fixture")
             git("commit", "-qm", "baseline")

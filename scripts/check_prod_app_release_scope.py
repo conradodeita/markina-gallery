@@ -49,6 +49,8 @@ ALLOWED_OPERATIONS = {
     "scripts/test_prod_facial_release_gates.py",
     "scripts/test_deploy_prod_facial_services.sh",
     "scripts/deploy-prod-lock.sh",
+    "scripts/deploy-prod-state.sh",
+    "scripts/test_prod_release_state.py",
     "scripts/deploy-prod-web.sh",
     "scripts/test_deploy_prod_web.sh",
     "scripts/test_deploy_prod_web_policy.py",

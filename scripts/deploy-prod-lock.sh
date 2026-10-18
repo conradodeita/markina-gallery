@@ -17,7 +17,8 @@ acquire_production_deploy_lock() {
     echo "deploy-prod-lock: flock indisponível; nenhuma operação foi executada" >&2
     return 1
   }
-  exec {production_deploy_lock_fd}>"$state_dir/production-release.lock"
+  [[ -f "$state_dir/production-release.lock" && ! -L "$state_dir/production-release.lock" ]] || return 1
+  exec {production_deploy_lock_fd}<"$state_dir/production-release.lock"
   if ! flock -n "$production_deploy_lock_fd"; then
     echo "deploy-prod-lock: outro inventário ou release está em andamento" >&2
     return 1
@@ -28,7 +29,7 @@ acquire_production_deploy_lock() {
   else
     other_in_flight="$state_dir/web-in-flight.sha"
   fi
-  if [[ -e "$other_in_flight" ]]; then
+  if [[ -e "$other_in_flight" || ( "$flow" == web && -e "$state_dir/app-rollback-in-flight.sha" ) || ( "$flow" == app && -e "$state_dir/web-pending.identity" ) ]]; then
     echo "deploy-prod-lock: tentativa do outro fluxo sem conclusão; reconciliação/rollback pelo fluxo correspondente é necessária" >&2
     return 1
   fi
