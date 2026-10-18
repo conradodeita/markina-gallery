@@ -14,6 +14,7 @@ function preview(text: string, contextoPagamento = "da compra 1234abcd", whatsap
   const values: Record<string, string> = {
     cliente: "Cliente", galeria: "Galeria", pedido: "1234abcd", contexto_pagamento: contextoPagamento,
     link_compras: whatsapp ? "https://fotografo.exemplo/library/purchases#order-00000000-0000-4000-8000-000000000000" : "",
+    link_galeria: whatsapp ? "https://fotografo.exemplo/public-galleries/00000000-0000-4000-8000-000000000000" : "",
   };
   return text.replace(/\{\{(\w+)\}\}/g, (match, key) => values[key] ?? match);
 }

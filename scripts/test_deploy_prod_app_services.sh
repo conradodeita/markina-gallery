@@ -4,6 +4,7 @@ set -Eeuo pipefail
 script="$(cat scripts/deploy-prod-app-services.sh)"
 require() { [[ "$script" == *"$1"* ]] || { echo "trecho de release ausente: $1" >&2; exit 1; }; }
 require 'readonly SERVICES=(api web)'
+require 'readonly EXPECTED_DATABASE_REVISION="20261017_0084"'
 require 'GIT_WORK_TREE="$PROJECT_ROOT"'
 require 'verify_readonly_target_ancestry'
 require '--filter=blob:none'
@@ -86,7 +87,8 @@ ACTIVE_SHA="$CHECKOUT_SHA"
 TARGET_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ROLLBACK_SHA="$CHECKOUT_SHA"
 EXPECTED_URL="https://markina.pickyourpic.com.br"
-DATABASE_REVISION="20261016_0082"
+DATABASE_REVISION="20261017_0084"
+TEST_DATABASE_REVISION="20261017_0084"
 COMPOSE_APP_VERSION="$CHECKOUT_SHA"
 APPROVAL_FINGERPRINT="$(printf 'f%.0s' {1..64})"
 INVENTORY_FINGERPRINT="$APPROVAL_FINGERPRINT"
@@ -94,12 +96,13 @@ INVENTORY_FINGERPRINT="$APPROVAL_FINGERPRINT"
 verify_repository() {
   CHECKOUT_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   ACTIVE_SHA="$CHECKOUT_SHA"
-  DATABASE_REVISION="20261016_0082"
+  DATABASE_REVISION="$TEST_DATABASE_REVISION"
+  verify_database_revision "$DATABASE_REVISION"
   printf 'verify\n' >> "$CALL_LOG"
 }
 hostname() { printf 'clearbudget-vnic\n'; }
 fingerprint() { printf '%s\n' "$INVENTORY_FINGERPRINT"; }
-database_revision() { printf '20261016_0082\n'; }
+database_revision() { printf '%s\n' "$TEST_DATABASE_REVISION"; }
 runtime_snapshot() {
   printf 'runtime_snapshot\n' >> "$CALL_LOG"
   printf 'api|container-api|sha256:api|%064d|healthy\n' 0
@@ -126,7 +129,7 @@ curl() { printf 'curl %s\n' "$*" >> "$CALL_LOG"; }
 MODE="inventory"
 inventory > "$tmpdir/inventory.out"
 grep -q '^host=clearbudget-vnic projeto=markina-gallery domínio=https://markina.pickyourpic.com.br' "$tmpdir/inventory.out"
-grep -q '^serviços=api,web revisão_schema=20261016_0082 portas=nginx:127.0.0.1:8080$' "$tmpdir/inventory.out"
+grep -q '^serviços=api,web revisão_schema=20261017_0084 portas=nginx:127.0.0.1:8080$' "$tmpdir/inventory.out"
 grep -q '^approval_fingerprint=' "$tmpdir/inventory.out"
 for endpoint in /healthz /api/health /; do grep -Fq "curl -fsS --max-time 10 https://markina.pickyourpic.com.br$endpoint" "$CALL_LOG"; done
 if grep -Eq '^compose (build|up)|^docker image tag|^git switch' "$CALL_LOG"; then
@@ -141,6 +144,28 @@ grep -Fq 'compose up -d --no-deps --force-recreate --wait --wait-timeout 120 api
 if grep -Eq 'face-search-worker|alembic upgrade|compose run|docker compose down' "$CALL_LOG"; then
   echo 'release app simulou serviço ou migration fora do escopo' >&2; exit 1
 fi
+
+: > "$CALL_LOG"
+TEST_DATABASE_REVISION="20261017_0083"
+if ( release ) >"$tmpdir/schema-divergence.out" 2>&1; then
+  echo 'schema divergente foi aceito pelo release app' >&2; exit 1
+fi
+if grep -Eq '^docker |^compose (build|up)|^git switch' "$CALL_LOG"; then
+  echo 'schema divergente alterou serviço ou imagem antes de abortar' >&2; exit 1
+fi
+TEST_DATABASE_REVISION="20261017_0084"
+
+: > "$CALL_LOG"
+MODE="inventory"
+TEST_DATABASE_REVISION="20261017_0083"
+if ( inventory ) >"$tmpdir/inventory-schema-divergence.out" 2>&1; then
+  echo 'inventário aceitou schema divergente' >&2; exit 1
+fi
+if grep -Eq '^docker |^compose (build|up)|^git switch' "$CALL_LOG"; then
+  echo 'inventário divergente alterou serviço ou imagem' >&2; exit 1
+fi
+TEST_DATABASE_REVISION="20261017_0084"
+MODE="release"
 
 : > "$CALL_LOG"
 INVENTORY_FINGERPRINT="$(printf 'e%.0s' {1..64})"

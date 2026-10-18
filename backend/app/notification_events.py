@@ -14,6 +14,7 @@ from app.auth import (
     DerivedGallery,
     FolderClientGrant,
     GalleryClientState,
+    NotificationEvent,
     NotificationMilestone,
     ParentGallery,
     ParentGalleryRegistration,
@@ -122,9 +123,21 @@ def record_restricted_folder_ready(
         client = owned_record(db, Client, client_id, tenant_id=parent.tenant_id)
         if not client:
             continue
+        event_key = f"private_photos_ready:{folder.id}:{batch_key}:{digest}:{grant_id}:{client_id}"
+        # Preserva chaves anteriores válidas e o contrato VARCHAR(192), sem perder identidade.
+        if len(event_key) > 192:
+            identity = sha256(event_key.encode()).hexdigest()
+            previous_key = f"private_photos_ready:{identity}"
+            previous_event = db.scalar(select(NotificationEvent.id).where(
+                NotificationEvent.tenant_id == parent.tenant_id,
+                NotificationEvent.event_key == previous_key,
+            ))
+            event_key = previous_key if previous_event else (
+                f"private_photos_ready:v2:{folder.id.hex}:{grant_id.hex}:{identity}"
+            )
         enqueue_event(
             db, event_type="private_photos_ready",
-            event_key=f"private_photos_ready:{folder.id}:{batch_key}:{digest}:{grant_id}:{client_id}",
+            event_key=event_key,
             values={"galeria": parent.name, "cliente": client.full_name},
             target_path=f"/public-galleries/{parent.id}", recipients=[client_id],
             parent_gallery_id=parent.id, client_id=client_id, tenant_id=parent.tenant_id,

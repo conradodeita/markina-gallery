@@ -118,3 +118,11 @@ def purchase_url_for_tenant(db: Session, tenant: Tenant, order_id: UUID) -> str:
     if not hostname:
         raise CanonicalHostError("Hostname canônico indisponível.")
     return f"https://{hostname}/library/purchases#order-{order_id}"
+
+
+def public_gallery_url_for_tenant(db: Session, tenant: Tenant, parent_gallery_id: UUID) -> str:
+    """Build the OTP-protected public gallery URL from the tenant's canonical host."""
+    hostname = canonical_host_for_tenant(db, tenant)
+    if not hostname:
+        raise CanonicalHostError("Hostname canônico indisponível.")
+    return f"https://{hostname}/public-galleries/{parent_gallery_id}"

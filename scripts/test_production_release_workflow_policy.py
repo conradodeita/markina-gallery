@@ -13,6 +13,8 @@ WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
 )
 INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes()
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
+APP_RUNBOOK = (ROOT / "docs/DEPLOY-PROD-APP.md").read_text(encoding="utf-8")
+CLASSIFIER = (ROOT / "scripts/classify_prod_release.py").read_text(encoding="utf-8")
 
 
 def require(fragment: str, label: str, content: str) -> None:
@@ -21,6 +23,15 @@ def require(fragment: str, label: str, content: str) -> None:
 
 
 def main() -> None:
+    require("base_sha={baseline}", "classificador exporta a base de produção", CLASSIFIER)
+    require("base_sha: ${{ steps.classify.outputs.base_sha }}", "workflow encaminha a base de produção", WORKFLOW)
+    if 'echo "base_sha=$base_sha"' in WORKFLOW:
+        raise AssertionError("workflow não pode sobrescrever a base de produção com o pai do evento")
+    require(
+        "Classificar delta desde o SHA saudável registrado",
+        "classificador documenta a base real do runtime",
+        WORKFLOW,
+    )
     preflight = WORKFLOW.split("  production-preflight:", 1)[1].split(
         "  production-release:", 1
     )[0]
@@ -41,15 +52,10 @@ def main() -> None:
     require("environment: production", "environment protegido no release", release)
     require("needs.release-scope.outputs.scope == 'facial'", "fluxo facial isolado", preflight)
     require("needs.release-scope.outputs.scope == 'app'", "preflight API/web condicionado ao classificador", app_preflight)
-    require("inputs.operation == 'app-release'", "release manual somente por escolha explícita", app_preflight)
-    require("APP_SCOPE_BASE_SHA: ${{ needs.release-scope.outputs.base_sha }}", "dispatch usa base SHA explícita", app_preflight)
-    require('python scripts/check_prod_app_release_scope.py --base "$APP_SCOPE_BASE_SHA" --target "$GITHUB_SHA"', "dispatch valida manifesto e diff", app_preflight)
     require("MARKINA_APP_TARGET_SHA=$GITHUB_SHA", "inventário API/web restrito", app_preflight)
     require("environment: production", "aprovação protegida para API/web", app_release)
     require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
     require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)
-    require("default: none", "dispatch manual permanece inerte por padrão", WORKFLOW)
-    require("inputs.operation == 'app-rollback'", "rollback exige escolha explícita", rollback_preflight)
     require("MARKINA_APP_ROLLBACK_SHA=$GITHUB_SHA", "inventário de rollback read-only", rollback_preflight)
     require("environment: production", "rollback protegido", rollback_release)
     require(
@@ -98,9 +104,14 @@ def main() -> None:
         raise AssertionError("wrapper não executa stdin nem altera refs locais do checkout")
 
     script = INVENTORY_SCRIPT.decode("utf-8")
+    app_script = APP_INVENTORY_SCRIPT.decode("utf-8")
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
+    if app_manifest.get("production_baseline_sha") != "b4f15abd6a71585082758062feba7fcfcc225587":
+        raise AssertionError("baseline de produção diverge do inventário registrado")
+    if app_manifest.get("expected_database_revision") != "20261017_0084":
+        raise AssertionError("revisão de banco app diverge do inventário registrado")
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
     require('baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"', "baseline facial usa o marcador operacional", script)
     require("verify_maintenance_baseline", "checkout ativo confere marcador de release", script)
@@ -110,6 +121,8 @@ def main() -> None:
     require('git merge-base --is-ancestor "$baseline_sha" "$CHECKOUT_SHA"', "checkout descende do último release saudável", script)
     require("check_prod_facial_release_gates.py --maintenance", "manifesto confere escopo e blobs exatos", preflight)
     require("target_descends_from_checkout", "ancestralidade verificada em repositório temporário", script)
+    require('verify_reviewed_docker_changes "$git_dir"', "Compose alvo conferido no repositório temporário", script)
+    require('verify_reviewed_docker_changes "$PROJECT_ROOT"', "Compose revisado conferido antes de release", script)
     require('git -C "$git_dir" config extensions.partialClone origin', "filtro de blobs habilitado no repositório temporário", script)
     require('git -C "$git_dir" fetch --quiet --no-tags --filter=blob:none origin refs/heads/main', "commits da main buscados sem blobs em diretório temporário", script)
     require('[[ "$target_sha" == "$TARGET_SHA" ]]', "alvo buscado permanece igual ao HEAD verificado", script)
@@ -123,7 +136,12 @@ def main() -> None:
             if actual != app_manifest["runtime_blobs"].get(path):
                 raise AssertionError("runtime compartilhado diverge do manifesto app exato")
         elif actual != face_blob:
-            raise AssertionError("arquivo de runtime diverge do blob revisado")
+            baseline_blob = subprocess.run(
+                ["git", "rev-parse", f'{app_manifest["production_baseline_sha"]}:{path}'],
+                cwd=ROOT, check=True, capture_output=True, text=True,
+            ).stdout.strip()
+            if actual != baseline_blob:
+                raise AssertionError("runtime facial diverge do blob revisado e da versão já implantada")
     for path, expected in app_manifest["runtime_blobs"].items():
         actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
                                 capture_output=True, text=True).stdout.strip()
@@ -137,6 +155,10 @@ def main() -> None:
     require('EXPECTED_DATABASE_REVISION="20261016_0082"', "revisão já publicada do banco fixada", script)
     require('TARGET_DATABASE_REVISION="20261016_0082"', "revisão de destino fixada", script)
     release_script = script.split("release() {", 1)[1].split("main() {", 1)[0]
+    require('fingerprint_with_baseline_compose "$baseline_compose_yaml"', "drift relê ambiente com Compose anterior", release_script)
+    if not (release_script.index('baseline_compose_yaml="$(git show') < release_script.index('git switch --detach')
+            < release_script.index('compose build') < release_script.index('fingerprint_with_baseline_compose') < release_script.index('compose up')):
+        raise AssertionError("Compose anterior deve ser preservado em memória para a conferência antes da recriação")
     require("runtime_snapshot", "releitura de hashes após recriação", release_script)
     require('alembic upgrade "$TARGET_DATABASE_REVISION"', "migration única aplicada após aprovação", release_script)
     require('"$EXPECTED_DATABASE_REVISION" != "$TARGET_DATABASE_REVISION"', "não reaplica migration já publicada", release_script)
@@ -144,6 +166,19 @@ def main() -> None:
     require('migrated_revision" == "$TARGET_DATABASE_REVISION"', "revisão nova confirmada", release_script)
     if not (release_script.index('alembic upgrade') < release_script.index("compose up")):
         raise AssertionError("migration deve concluir antes da recriação de serviços")
+
+    require('EXPECTED_DATABASE_REVISION="20261017_0084"', "schema atual da aplicação fixado", app_script)
+    require('readonly SERVICES=(api web)', "release app inclui somente API e web", app_script)
+    require('compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
+            "release app não recria dependências", app_script)
+    for fragment, label in (
+        ("20261017_0084", "schema app documentado"),
+        ("b4f15abd6a71585082758062feba7fcfcc225587", "baseline app documentado"),
+        ("127.0.0.1:8080", "porta Markina documentada"),
+        ("https://markina.pickyourpic.com.br", "domínio documentado"),
+        ("worker OTP", "exclusão do worker OTP documentada"),
+    ):
+        require(fragment, label, APP_RUNBOOK)
     require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)
     require("compose exec -T nginx nginx -s reload", "renovação dos upstreams Markina", release_script)
     if not (release_script.index("compose up") < release_script.index("runtime_snapshot")

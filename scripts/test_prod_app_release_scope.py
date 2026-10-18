@@ -67,6 +67,24 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "runtime_diverge_do_blob_aprovado"))
 
+    def test_exact_gallery_feature_tests_are_allowed(self):
+        for name in ("frontend/app/admin/galleries/gallery-editor.test.tsx",
+                     "frontend/app/admin/galleries/private-folder-client-overview.test.tsx"):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("test contract\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
+    def test_unlisted_gallery_runtime_is_rejected(self):
+        path = self.root / "frontend/app/admin/galleries/unreviewed.tsx"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("unreviewed\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
 
 if __name__ == "__main__":
     unittest.main()

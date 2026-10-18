@@ -19,7 +19,7 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(api web)
-readonly EXPECTED_DATABASE_REVISION="20261016_0082"
+readonly EXPECTED_DATABASE_REVISION="20261017_0084"
 
 MODE=""
 TARGET_SHA=""
@@ -33,6 +33,10 @@ COMPOSE_APP_VERSION=""
 DATABASE_REVISION=""
 
 fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
+
+verify_database_revision() {
+  [[ "$1" == "$EXPECTED_DATABASE_REVISION" ]] || fail "revisão de banco diverge do inventário aprovado"
+}
 
 verify_readonly_target_ancestry() (
   set -Eeuo pipefail
@@ -157,8 +161,7 @@ verify_repository() {
   [[ "$api_version" == "$CHECKOUT_SHA" ]] || fail "APP_VERSION da API diverge do checkout"
   COMPOSE_APP_VERSION="$api_version"
   DATABASE_REVISION="$(database_revision)"
-  [[ ("$MODE" != release && "$MODE" != rollback) || "$DATABASE_REVISION" == "$EXPECTED_DATABASE_REVISION" ]] \
-    || fail "revisão de banco diverge do inventário aprovado"
+  verify_database_revision "$DATABASE_REVISION"
 }
 
 runtime_snapshot() {

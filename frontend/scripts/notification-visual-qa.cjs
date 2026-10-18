@@ -11,7 +11,7 @@ fs.mkdirSync(output, { recursive: true });
 const definitions = [
   ['first_access', 'Primeiro acesso', 'admin', '{{cliente}} acessou {{galeria}}.'],
   ['first_selection', 'Primeira seleção', 'admin', '{{cliente}} começou a escolher em {{galeria}}.'],
-  ['private_photos_ready', 'Novas fotos disponíveis', 'client', 'Novas fotos disponíveis na sua galeria.'],
+  ['private_photos_ready', 'Novas fotos disponíveis', 'client', 'Essa mensagem é automática! Novas fotos disponíveis na sua galeria. Acesso no link: {{link_galeria}}.'],
   ['payment_reported', 'Pagamento informado', 'admin', '{{cliente}} informou pagamento do pedido {{pedido}}.'],
   ['payment_confirmed', 'Pagamento confirmado', 'client', 'Confirmamos o pagamento do seu pedido.'],
   ['payment_refused', 'Pagamento não localizado', 'client', 'Não localizamos seu pagamento. Confira seu pedido.'],

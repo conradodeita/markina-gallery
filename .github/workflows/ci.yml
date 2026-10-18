@@ -73,6 +73,22 @@ jobs:
         run: pytest backend/tests/test_facial_conditional_consent_migration.py -q
       - name: Regressões focadas da referência facial e confirmação de envio
         run: pytest backend/tests/test_facial_provider.py backend/tests/test_facial_search.py -q
+      - name: Regressões dos limites faciais por origem
+        run: >-
+          pytest backend/tests/test_facial_config.py backend/tests/test_facial_search_worker.py
+          -q -k 'candidate_policy or reference_possibilities or gemma_query_worker'
+      - name: Regressão da chave do aviso privado em PostgreSQL
+        run: >-
+          pytest backend/tests/test_private_notification_postgres.py
+          backend/tests/test_private_upload_batches.py::test_canonical_restricted_folder_upload_notifies_only_after_closed_batch_is_ready -q
+      - name: Regressões de autorização dos avisos privados e OTP
+        run: >-
+          pytest backend/tests/test_private_notification_authorization.py
+          backend/tests/test_otp_privacy.py backend/tests/test_invite_only_otp.py
+          backend/tests/test_tenant_notification_transport.py -q
+
+      - name: Regressões do login e reenvio OTP
+        run: pytest backend/tests/test_auth.py -q -k otp
       - name: Testes (pytest)
         run: pytest backend/tests -q
       - name: Regressões de concorrência multi-tenant em PostgreSQL
@@ -165,7 +181,15 @@ jobs:
         run: bash -n scripts/inventory-homolog-readonly.sh
       - name: Testar política de escopo e SHA
         run: python scripts/test_readonly_homolog_inventory_policy.py
+      - name: Regressões do gate restrito facial em homologação
+        if: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
+        run: |
+          bash -n scripts/production-preflight-ssh-wrapper.sh
+          bash scripts/test_deploy_prod_facial_services.sh
+          python scripts/test_prod_facial_release_gates.py
+          python scripts/test_classify_prod_release.py
       - name: Validar política de preflight e aprovação única de produção
+        if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
           bash scripts/test_deploy_prod_facial_services.sh
@@ -267,20 +291,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Classificar fluxo de release
+      - name: Classificar delta desde o SHA saudável registrado
         id: classify
         shell: bash
         run: |
           set -Eeuo pipefail
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            base_sha='${{ github.event.before }}'
-            python scripts/classify_prod_release.py --base "$base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            event_base_sha='${{ github.event.before }}'
           else
-            base_sha="$(git rev-parse "$GITHUB_SHA^")"
-            python scripts/check_prod_app_release_scope.py --base "$base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
-            echo 'release_scope=app' >> "$GITHUB_OUTPUT"
+            event_base_sha="$(git rev-parse "$GITHUB_SHA^")"
           fi
-          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          python scripts/classify_prod_release.py --base "$event_base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
 
   production-preflight:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'facial' }}"

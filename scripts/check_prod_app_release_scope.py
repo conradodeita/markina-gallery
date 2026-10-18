@@ -15,10 +15,18 @@ MANIFEST = ROOT / "openspec/changes/add-production-app-release-workflow/runtime-
 RUNTIME_FILES = {
     "backend/app/main.py",
     "backend/app/statistics_report.py",
+    "backend/app/private_folder_overview.py",
     "frontend/app/globals.css",
     "frontend/app/admin/statistics/page.tsx",
+    "frontend/app/admin/galleries/private-folder-client-overview.tsx",
+    "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
 }
-ALLOWED_PREFIXES = ("backend/tests/", "frontend/app/admin/statistics/", "openspec/", "docs/")
+ALLOWED_PREFIXES = (
+    "backend/tests/",
+    "frontend/app/admin/statistics/",
+    "openspec/",
+    "docs/",
+)
 ALLOWED_OPERATIONS = {
     ".github/workflows/ci.yml",
     "scripts/check_prod_app_release_scope.py",
@@ -33,6 +41,8 @@ ALLOWED_OPERATIONS = {
     "scripts/deploy-prod-facial-services.sh",
     "scripts/test_prod_facial_release_gates.py",
     "scripts/test_deploy_prod_facial_services.sh",
+    "frontend/app/admin/galleries/gallery-editor.test.tsx",
+    "frontend/app/admin/galleries/private-folder-client-overview.test.tsx",
     "openspec/changes/improve-client-face-reference-capture/production-gates.json",
     "openspec/changes/improve-client-face-reference-capture/tasks.md",
     "openspec/changes/improve-client-face-reference-capture/specs/deployment-operations/spec.md",

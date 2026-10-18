@@ -8,6 +8,7 @@ readonly DEPLOY_SCRIPT="$SCRIPT_DIR/deploy-homolog.sh"
 output="$(mktemp)"
 err_probe="$(mktemp)"
 trap 'rm -f "$output" "$err_probe"' EXIT
+trap 'status=$?; if [[ "$-" == *e* ]]; then echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"; fi' ERR
 
 if MARKINA_EXPECTED_REPOSITORY="owner/repository" bash "$DEPLOY_SCRIPT" --sha 0000000000000000000000000000000000000000 >"$output" 2>&1; then
   echo "o deploy aceitou execução fora de /opt/markina-gallery" >&2
@@ -24,6 +25,7 @@ if MARKINA_EXPECTED_REPOSITORY="owner/repository" \
 fi
 grep -Fq 'o deploy só pode executar em /opt/markina-gallery' "$output"
 
+trap - ERR
 set +e
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" \
   MARKINA_EXPECTED_REPOSITORY="owner/repository" \
@@ -38,6 +40,37 @@ set -e
 [[ "$fail_status" -ne 0 ]]
 grep -Fq 'deploy-homolog: falha sintética pós-switch' "$output"
 grep -Fq 'trapped' "$err_probe"
+trap 'status=$?; if [[ "$-" == *e* ]]; then echo "deploy-homolog test failed at line $LINENO (exit $status); captured output:" >&2; tail -n 100 "$output" >&2; exit "$status"; fi' ERR
+
+# The current database revision must not depend on the potentially stale migrate image.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    compose() {
+      [[ "$1" == exec && "$2" == -T && "$3" == db ]] || return 90
+      [[ "$*" == *"SELECT version_num FROM alembic_version ORDER BY version_num"* ]] || return 91
+      printf "20261016_0082\\n"
+    }
+    [[ "$(current_revision)" == "20261016_0082" ]]
+  ' >"output" 2>&1
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    compose() {
+      printf "postgresql://sensitive-value\\n" >&2
+      return 1
+    }
+    current_revision
+  ' >"$output" 2>&1; then
+  echo "falha no probe PostgreSQL foi aceita" >&2
+  exit 1
+fi
+grep -Fq 'probe da revisão Alembic falhou ao consultar o banco Markina' "$output"
+if grep -Fq 'sensitive-value' "$output"; then
+  echo "diagnóstico do probe expôs configuração sensível" >&2
+  exit 1
+fi
 
 # Optional modules are preserved by default; explicit deploy overrides remain available.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
@@ -227,8 +260,41 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
 fi
 grep -Fq 'checkout remoto possui alterações locais' "$dirty_output"
 
+# The candidate commit must be fetched and authenticated before facial preflight
+# reads its notification fix, without moving the preflight past publication.
+sha_fetch_log="$(mktemp)"
+sha_fetch_marker="$(mktemp)"
+rm -f "$sha_fetch_marker"
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+  SHA_FETCH_LOG="$sha_fetch_log" SHA_FETCH_MARKER="$sha_fetch_marker" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    DEPLOY_SHA=1111111111111111111111111111111111111111
+    git() {
+      printf "%s\n" "$*" >> "$SHA_FETCH_LOG"
+      case "$*" in
+        "fetch --quiet origin develop") return 0 ;;
+        "fetch --quiet origin $DEPLOY_SHA") touch "$SHA_FETCH_MARKER"; return 0 ;;
+        "cat-file -e ${DEPLOY_SHA}^{commit}") [[ -f "$SHA_FETCH_MARKER" ]] ;;
+        "merge-base --is-ancestor $DEPLOY_SHA origin/develop") [[ -f "$SHA_FETCH_MARKER" ]] ;;
+        "show $DEPLOY_SHA:backend/app/notification_events.py")
+          [[ -f "$SHA_FETCH_MARKER" ]] || return 1
+          printf "target source available\n"
+          ;;
+        *) return 90 ;;
+      esac
+    }
+    fetch_and_verify_deploy_sha
+    [[ "$(git show "$DEPLOY_SHA:backend/app/notification_events.py")" == "target source available" ]]
+  ' >"$output" 2>&1
+fetch_develop_line="$(grep -nFx 'fetch --quiet origin develop' "$sha_fetch_log" | cut -d: -f1)"
+fetch_target_line="$(grep -nFx 'fetch --quiet origin 1111111111111111111111111111111111111111' "$sha_fetch_log" | cut -d: -f1)"
+show_target_line="$(grep -nFx 'show 1111111111111111111111111111111111111111:backend/app/notification_events.py' "$sha_fetch_log" | cut -d: -f1)"
+[[ -n "$fetch_develop_line" && -n "$fetch_target_line" && -n "$show_target_line" ]]
+(( fetch_develop_line < fetch_target_line && fetch_target_line < show_target_line ))
+
 facial_env="$(mktemp)"
-trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$payload_env" "$invalid_payload_env" "$facial_env"' EXIT
+trap 'rm -f "$output" "$err_probe" "$dirty_output" "$migration_output" "$health_output" "$rollback_log" "$secrets_env" "$same_secret_env" "$origin_env" "$payload_env" "$invalid_payload_env" "$facial_env" "$sha_fetch_log" "$sha_fetch_marker"' EXIT
 printf 'FACIAL_PROCESSING_ENABLED=false\n' >"$facial_env"
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
@@ -269,6 +335,87 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
   ' >"$output" 2>&1
 grep -Fq 'flag=true workers=saudáveis' "$output"
 
+# An exited general worker may be recovered only for exit 1, matching persisted
+# facial configuration and a target containing the bounded private-event key.
+MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    DEPLOY_SHA=1111111111111111111111111111111111111111
+    compose() { [[ "$1" == "exec" ]] && return 0; }
+    git() {
+      [[ "$*" == "show $DEPLOY_SHA:backend/app/notification_events.py" ]] || return 1
+      printf "if len(event_key) > 192:\\nevent_key = sha256(event_key.encode()).hexdigest()\\n"
+    }
+    docker() {
+      if [[ "$1" == "ps" && "$*" == *"service=worker"* ]]; then
+        [[ "$*" == *"--all"* ]] && printf "worker-parado\\n"
+        return 0
+      fi
+      [[ "$1" == "ps" ]] && { printf "worker-facial-saudavel\\n"; return 0; }
+      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "exited\\n" || printf "healthy\\n"
+        return 0
+      fi
+      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "1\\n" || printf "0\\n"
+        return 0
+      fi
+      if [[ "$1" == "inspect" && "$*" == *".Config.Env"* ]]; then printf "FACIAL_PROCESSING_ENABLED=true\\n"; return 0; fi
+      if [[ "$1" == "logs" ]]; then printf "value too long for type character varying(192)\\n"; return 0; fi
+      [[ "$1" == "inspect" ]] && { printf "healthy\\n"; return 0; }
+      return 1
+    }
+    verify_facial_deploy_state "$FACIAL_ENV"
+    [[ "$WORKER_RECOVERY_PENDING" -eq 1 ]]
+  ' >"$output" 2>&1 || {
+    cat "$output" >&2
+    echo "worker com falha conhecida e correção no SHA não passou pelo preflight" >&2
+    exit 1
+  }
+grep -Fq 'worker anterior exited (1); SHA contém a correção da chave; recuperação será validada após a troca' "$output" || {
+  cat "$output" >&2
+  echo "preflight não registrou a recuperação limitada do worker" >&2
+  exit 1
+}
+echo "preflight aceitou somente a recuperação compatível do worker parado"
+
+if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
+  bash -c '
+    source "$MARKINA_DEPLOY_SCRIPT_PATH"
+    DEPLOY_SHA=1111111111111111111111111111111111111111
+    compose() { [[ "$1" == "exec" ]] && return 0; }
+    git() { printf "no compatible recovery fix\\n"; }
+    docker() {
+      if [[ "$1" == "ps" && "$*" == *"service=worker"* ]]; then
+        [[ "$*" == *"--all"* ]] && printf "worker-parado\\n"
+        return 0
+      fi
+      [[ "$1" == "ps" ]] && { printf "worker-facial-saudavel\\n"; return 0; }
+      if [[ "$1" == "inspect" && "$*" == *".State.Status"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "exited\\n" || printf "healthy\\n"
+        return 0
+      fi
+      if [[ "$1" == "inspect" && "$*" == *".State.ExitCode"* ]]; then
+        [[ "$*" == *worker-parado ]] && printf "1\\n" || printf "0\\n"
+        return 0
+      fi
+      if [[ "$1" == "inspect" && "$*" == *".Config.Env"* ]]; then printf "FACIAL_PROCESSING_ENABLED=true\\n"; return 0; fi
+      if [[ "$1" == "logs" ]]; then printf "value too long for type character varying(192)\\n"; return 0; fi
+      [[ "$1" == "inspect" ]] && { printf "healthy\\n"; return 0; }
+      return 1
+    }
+    verify_facial_deploy_state "$FACIAL_ENV"
+  ' >"$output" 2>&1; then
+  echo "worker encerrado foi aceito sem correção no SHA alvo" >&2
+  exit 1
+fi
+grep -Fq 'SHA alvo não contém a correção da chave de aviso' "$output" || {
+  cat "$output" >&2
+  echo "falha do worker sem fix no SHA não foi bloqueada pelo preflight" >&2
+  exit 1
+}
+echo "preflight recusou worker parado quando o SHA não contém o fix"
+
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FACIAL_ENV="$facial_env" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
@@ -290,6 +437,7 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     compose() {
       [[ "$*" == "build migrate" ]] && return 0
+      [[ "$*" == "run --rm --no-deps migrate alembic heads" ]] && { printf "20261017_0083 (head)\\n"; return 0; }
       [[ "$*" == "run --rm --no-deps migrate" ]] && return 42
       return 0
     }
@@ -471,6 +619,10 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
         [[ "$*" == "stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker raw-development-worker preview-adjustment-worker" ]] || return 80
         stopped=1
       fi
+      if [[ "$*" == "run --rm --no-deps migrate alembic heads" ]]; then
+        printf "20260929_0069 (head)\\n"
+        return 0
+      fi
       if [[ "$1" == "run" ]]; then
         [[ "$stopped" -eq 1 ]] || return 81
       fi
@@ -481,8 +633,8 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
       [[ "$*" != *"evolution"* ]] || return 83
       return 0
     }
-    current_revision() { echo "20260929_0069 (head)"; }
-    apply_target_migrations "20260928_0068 (head)"
+    current_revision() { echo "20260929_0069"; }
+    apply_target_migrations "20260928_0068"
     [[ "$MIGRATION_CHANGED" -eq 1 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 1 && "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 0 ]]
   ' >"$output" 2>&1
 
@@ -506,6 +658,7 @@ for failure in stop active; do
     bash -c '
       source "$MARKINA_DEPLOY_SCRIPT_PATH"
       compose() {
+        [[ "$*" == "run --rm --no-deps migrate alembic heads" ]] && { printf "20260929_0069 (head)\\n"; return 0; }
         [[ "$1" == "run" ]] && { echo UNEXPECTED-MIGRATION; return 0; }
         [[ "$1" == "stop" && "$FAILURE" == "stop" ]] && return 42
         return 0

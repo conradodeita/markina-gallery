@@ -216,6 +216,17 @@ def process_claimed_search_job(
                 db, request, photo_id, fingerprints.get(photo_id),
             )
 
+        ambiguous_threshold = settings.ambiguous_threshold_milli
+        source_threshold = {
+            "upload": settings.reference_ambiguous_threshold_milli,
+            "indexed_region": settings.region_ambiguous_threshold_milli,
+        }.get(request.reference_source)
+        if request.search_engine == "opencv-yunet-sface" and source_threshold is not None:
+            ambiguous_threshold = min(
+                settings.similarity_threshold_milli,
+                source_threshold,
+                ambiguous_threshold if ambiguous_threshold is not None else settings.similarity_threshold_milli,
+            )
         matches = search_gallery_index(
             db,
             gallery_id=request.parent_gallery_id,
@@ -225,7 +236,7 @@ def process_claimed_search_job(
             settings=settings,
             threshold_milli=settings.similarity_threshold_milli,
             allowed_fingerprints=fingerprints,
-            ambiguous_threshold_milli=settings.ambiguous_threshold_milli,
+            ambiguous_threshold_milli=ambiguous_threshold,
             authorize=authorize_comparison,
             on_progress=publish_progress,
             model_id=request.search_engine,

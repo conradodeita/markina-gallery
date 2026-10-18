@@ -22,6 +22,8 @@ type Summary = {
     parent_galleries: number;
     derived_galleries: number;
     imports: Record<string, number>;
+    folders_with_active_imports: number;
+    photos_in_folders_with_active_imports: number;
     folders_preparing?: number;
     folders_released?: number;
   };
@@ -71,10 +73,9 @@ export default function AdminPage() {
         detail="Consultando suas galerias e operações."
       />
     );
-  const processing =
-    (summary.counts.imports.queued ?? 0) +
-    (summary.counts.imports.processing ?? 0);
-  const preparing = summary.counts.folders_preparing ?? 0;
+  const activeImportFolders = summary.counts.folders_with_active_imports;
+  const photosInActiveImportFolders =
+    summary.counts.photos_in_folders_with_active_imports;
   return (
     <div className="admin-dashboard">
       <PageHeading
@@ -103,10 +104,10 @@ export default function AdminPage() {
           tone="success"
         />
         <MetricCard
-          label="Pastas em preparação"
-          value={preparing}
-          detail={`${processing} importação(ões) em andamento`}
-          tone={preparing ? "warning" : "success"}
+          label="Pastas com importação ativa"
+          value={activeImportFolders}
+          detail={`${photosInActiveImportFolders} ${photosInActiveImportFolders === 1 ? "foto nas" : "fotos nas"} pastas ativas`}
+          tone={activeImportFolders ? "warning" : "success"}
         />
         <MetricCard
           label="Pastas liberadas"
