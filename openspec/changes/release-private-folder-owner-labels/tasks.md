@@ -16,8 +16,8 @@
 ## 3. Validar e preparar integração do código aprovado
 
 - [x] 3.1 Executar testes de escopo/classificador, script simulado, política do workflow, validação OpenSpec estrita, revisão do diff e checks aplicáveis; registrar logs/resultados e corrigir falhas antes de abrir PR. Evidência local: classificador 10/10, app scope 4/4, simulação de release/rollback API-web aprovada (inclui schema divergente sem mutação), política do workflow aprovada, Ruff aprovado, `git diff --check` limpo e OpenSpec CLI 1.14.0 `validate --all --strict` com 111 aprovados/0 falhas.
-- [ ] 3.2 Integrar localmente o gate e o commit original do recurso na PR #220, preservando o histórico de `main` e do SHA instalado; verificar ancestralidade sem force-push.
-- [ ] 3.3 Conferir que a classificação e o gate app recebem o SHA instalado como base e aceitam somente o delta aprovado, sem migrations ou workers; verificar o candidato real e a reconciliação sem runtime por testes.
+- [x] 3.2 Integrar localmente o gate e o commit original do recurso na PR #220, preservando o histórico de `main` e do SHA instalado; verificar ancestralidade sem force-push.
+- [x] 3.3 Conferir que a classificação e o gate app recebem o SHA instalado como base e aceitam somente o delta aprovado, sem migrations ou workers; verificar o candidato real e a reconciliação sem runtime por testes.
 - [ ] 3.4 Retargetar a PR #220 para `main`, revisar o delta desde o runtime instalado e acompanhar CI completo antes da integração e do preflight protegido.
 
 ## 4. Executar gates de produção autorizados

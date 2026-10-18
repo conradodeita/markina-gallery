@@ -20,3 +20,9 @@
 - Preservada a proteção de ancestralidade somente-leitura da linha `main` no script app e os testes correspondentes; preservados os runtimes de produto já instalados de `develop` e o commit original da PR #220.
 - A política de CI reconhece `auth.py` idêntico ao baseline instalado, preservando o fix OTP. O manifesto facial não é reescrito, e o gate app continua recusando alterações em runtime facial após o baseline.
 - Publicação ainda pendente: concluir commit candidato, conferir diff real, executar CI e preflight protegido antes de qualquer recriação de serviços.
+
+## Candidato reconciliado
+
+- Merge `0be3e44` preserva os SHAs originais de `main`, do servidor e da PR #220 como ancestrais.
+- Execução real do classificador: `release_scope=app`, base `b4f15abd6a71585082758062feba7fcfcc225587`.
+- Execução real do gate app desde o SHA instalado: `app_release_ready=true`, critério `somente_api_web`. O diff de publicação não contém migrations, Docker/Compose, workers nem runtime facial dedicado.

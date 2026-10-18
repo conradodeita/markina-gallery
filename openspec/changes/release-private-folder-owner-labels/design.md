@@ -44,4 +44,3 @@ O release app é executado somente em push a `main`. O inventário disponível i
 5. Atualizar/conferir a cópia root-owned do wrapper conforme o procedimento do servidor. Executar preflight read-only no SHA candidato e apresentar ao proprietário SHA atual/alvo, schema, serviços, portas, domínio, fingerprint, impacto e rollback.
 6. Após aprovação específica do inventário/fingerprint e do Environment `production`, recriar somente `api` e `web`; confirmar SHA, schema invariável, smoke tests e estado do worker OTP.
 7. Se houver falha, não executar rollback automático. Preparar inventário de rollback limitado a API/web e aguardar autorização específica.
-
