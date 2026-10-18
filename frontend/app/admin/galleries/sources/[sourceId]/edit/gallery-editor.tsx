@@ -12,7 +12,6 @@ import {
   ClientEditorDialog,
 } from "../../../../clients/client-controls";
 import { ClientGalleryCard, type ClientGalleryRow } from "../../../client-gallery-card";
-import { PrivateFolderClientOverview } from "../../../private-folder-client-overview";
 import { FolderUploadProgress, type FolderUpload } from "../../../folder-upload-progress";
 import { FolderProcessingPanel } from "../../../folder-processing-panel";
 import { GlobalPixSummary, type GlobalPix } from "../../../../settings/pix-panel";
@@ -24,7 +23,7 @@ type CoverReadiness = { status: "missing" | "processing" | "failed" | "ready"; m
 type Editor = { cover_readiness?: CoverReadiness; gallery: { id: string; name: string; event_name: string; description: string; active: boolean; access_mode: "standard" | "invite_only" | "collective_protected"; unlisted_link: string | null; public_link?: { status: string; capability_id: string | null; expires_at: string | null; secret_available: boolean }; cover_photo_id: string | null; cover_preview_url: string | null; folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean; can_complete?: boolean } };
 type PublicationCounts = { published: number; ready_to_publish: number; processing: number; failed: number };
 type RawUploadCapabilities = { enabled: boolean; formats: string[] };
-type Folder = { audience_scope?: "all" | "selected"; id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null; publication_counts?: PublicationCounts };
+type Folder = { audience_scope?: "all" | "selected"; client_names?: string[]; id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null; publication_counts?: PublicationCounts };
 type Photo = { id: string; name: string; preview_url: string | null; status: string; publication_state?: "published" | "ready_to_publish" | "processing" | "failed"; available?: boolean; width?: number | null; height?: number | null; error: string | null; can_delete: boolean; is_cover: boolean };
 type ClientRow = ClientGalleryRow;
 type ClientOption = ClientDirectoryItem;
@@ -646,30 +645,65 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       setUploads((current) => ({ ...current, [folderId]: { folderId, folderName, ...value } }));
     }
     updateUpload({ phase: "uploading", current: 0, progress: 0, total: files.length });
-    for (const [index, file] of files.entries()) {
-      updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name });
-      try {
-        const storageKey = await jpegStorageKey(sourceId, folderId, file);
-        const photo = await jsonRequest(`/api/admin/photo-folders/${folderId}/photos`, {
+    let batchId: string | null = null;
+    let firstFailure: { error: unknown; file: File; index: number } | null = null;
+    let closeFailure: unknown = null;
+    try {
+      if (folders.find((folder) => folder.id === folderId)?.audience_scope === "selected") {
+        const batch = await jsonRequest(`/api/admin/photo-folders/${folderId}/upload-batches`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            filename: file.name,
-            storage_key: storageKey,
-          }),
+          body: "{}",
         });
-        if (isRawFilename(file.name) && !rawCapabilities.enabled) throw new Error("O envio RAW está desabilitado nas configurações.");
-        if (isRawFilename(file.name) && !rawCapabilities.formats.includes(file.name.slice(file.name.lastIndexOf(".")).toLowerCase())) throw new Error("Este formato RAW não está habilitado pelo motor selecionado.");
-        await uploadPhotoSource(`/api/admin/photo-assets/${photo.id}/source`, file, () => updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name, waiting: true }),
-          (loaded, total) => updateUpload({ phase: "uploading", current: index + 1, progress: index + loaded / Math.max(total, 1), total: files.length, filename: file.name }));
-      } catch (error) {
-        updateUpload({ phase: "error", current: index, total: files.length, filename: file.name });
-        setMessage(error instanceof Error ? error.message : `Falha ao enviar ${file.name}.`);
-        return;
+        batchId = batch.id;
       }
+      try {
+        for (const [index, file] of files.entries()) {
+          updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name });
+          try {
+            const storageKey = await jpegStorageKey(sourceId, folderId, file);
+            const photo = await jsonRequest(`/api/admin/photo-folders/${folderId}/photos`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ filename: file.name, storage_key: storageKey, ...(batchId ? { upload_batch_id: batchId } : {}) }),
+            });
+            if (isRawFilename(file.name) && !rawCapabilities.enabled) throw new Error("O envio RAW está desabilitado nas configurações.");
+            if (isRawFilename(file.name) && !rawCapabilities.formats.includes(file.name.slice(file.name.lastIndexOf(".")).toLowerCase())) throw new Error("Este formato RAW não está habilitado pelo motor selecionado.");
+            await uploadPhotoSource(`/api/admin/photo-assets/${photo.id}/source`, file, () => updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name, waiting: true }),
+              (loaded, total) => updateUpload({ phase: "uploading", current: index + 1, progress: index + loaded / Math.max(total, 1), total: files.length, filename: file.name }));
+          } catch (error) {
+            firstFailure ??= { error, file, index };
+          }
+        }
+      } finally {
+        if (batchId) {
+          try {
+            await jsonRequest(`/api/admin/photo-folders/${folderId}/upload-batches/${batchId}/close`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: "{}",
+            });
+          } catch (error) {
+            closeFailure = error;
+          }
+        }
+      }
+    } catch (error) {
+      firstFailure ??= { error, file: files[0], index: 0 };
     }
-    updateUpload({ phase: "success", current: files.length, total: files.length });
-    setMessage(`${files.length} foto(s) enviada(s). As prévias serão preparadas e disponibilizadas automaticamente.`);
+    if (closeFailure) {
+      const error = closeFailure instanceof Error ? closeFailure.message : "Não foi possível encerrar o lote de upload.";
+      updateUpload({ phase: "error", current: files.length, total: files.length, filename: firstFailure?.file.name ?? files.at(-1)?.name });
+      setMessage(firstFailure ? `${firstFailure.error instanceof Error ? firstFailure.error.message : `Falha ao enviar ${firstFailure.file.name}.`} ${error}` : error);
+      return;
+    }
+    if (firstFailure) {
+      updateUpload({ phase: "error", current: firstFailure.index, total: files.length, filename: firstFailure.file.name });
+      setMessage(firstFailure.error instanceof Error ? firstFailure.error.message : `Falha ao enviar ${firstFailure.file.name}.`);
+    } else {
+      updateUpload({ phase: "success", current: files.length, total: files.length });
+      setMessage(`${files.length} foto(s) enviada(s). As prévias serão preparadas e disponibilizadas automaticamente.`);
+    }
     setRefresh((value) => value + 1);
     if (selectedFolderId.current === folderId) await inspectFolder(folderId);
     formElement.reset();
@@ -863,7 +897,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           </fieldset>
           <form className="gallery-inline-form" onSubmit={createFolder}><label>Nome da nova pasta<input name="name" required placeholder="Ex.: Apresentação da manhã" /></label><MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton></form>
           <FolderUploadProgress uploads={uploads} />
-          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" aria-label={`Abrir pasta ${folder.name}`} disabled={folderDeleteBusy} onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{folder.name}</strong><small>{folder.audience_scope === "selected" ? "Privada · " : "Pública · "}{folder.status === "released" ? "Disponível" : "Preparando prévias"}</small><FolderPublicationSummary folder={folder} />{uploads[folder.id] ? <small>{uploads[folder.id].current}/{uploads[folder.id].total} · {uploads[folder.id].phase === "uploading" ? "Enviando" : uploads[folder.id].phase === "success" ? "Enviado" : "Interrompido"}</small> : null}</button><div className="gallery-folder-actions">{folder.status === "preparing" ? <button type="button" className="link-button" disabled={folderDeleteBusy} onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button> : null}<button type="button" className="link-button danger-action" disabled={folderDeleteBusy || bulkDeleteBusy || uploading} onClick={() => deleteFolder(folder)} aria-label={`Excluir pasta ${folder.name}`}>{folderDeleteBusy ? "Excluindo…" : "Excluir pasta"}</button></div></article>)}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
+          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => { const title = folder.audience_scope === "selected" && folder.client_names?.length ? `${folder.name} — ${folder.client_names.join(", ")}` : folder.name; return <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" aria-label={`Abrir pasta ${title}`} disabled={folderDeleteBusy} onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{title}</strong><small>{folder.audience_scope === "selected" ? "Privada · " : "Pública · "}{folder.status === "released" ? "Disponível" : "Preparando prévias"}</small><FolderPublicationSummary folder={folder} />{uploads[folder.id] ? <small>{uploads[folder.id].current}/{uploads[folder.id].total} · {uploads[folder.id].phase === "uploading" ? "Enviando" : uploads[folder.id].phase === "success" ? "Enviado" : "Interrompido"}</small> : null}</button><div className="gallery-folder-actions">{folder.status === "preparing" ? <button type="button" className="link-button" disabled={folderDeleteBusy} onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button> : null}<button type="button" className="link-button danger-action" disabled={folderDeleteBusy || bulkDeleteBusy || uploading} onClick={() => deleteFolder(folder)} aria-label={`Excluir pasta ${folder.name}`}>{folderDeleteBusy ? "Excluindo…" : "Excluir pasta"}</button></div></article>; })}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
           {selectedFolder ? (
             <div className="gallery-folder-workspace">
               <FolderProcessingPanel key={selectedFolder.id} folderId={selectedFolder.id} folderName={selectedFolder.name} uploading={uploads[selectedFolder.id]?.phase === "uploading"} />
@@ -871,7 +905,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept={rawCapabilities.enabled ? `image/jpeg,.jpg,.jpeg,${rawCapabilities.formats.join(",")}` : "image/jpeg"} multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload || uploading} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
             </div>
           ) : null}
-          <PrivateFolderClientOverview key={sourceId} sourceId={sourceId} refreshToken={refresh} />
         </section>
       ) : null}
 

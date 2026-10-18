@@ -79,6 +79,8 @@ def test_public_autosave_requeues_only_its_folder_and_monitor_counts_real_work(a
 
 
 def test_folder_processing_api_auth_and_override(api_client):
+    from app.auth import Client, FolderClientGrant, GalleryClientState
+
     client, factory, photo_id = api_client
     with factory() as db:
         photo = db.get(PhotoAsset, photo_id)
@@ -87,9 +89,24 @@ def test_folder_processing_api_auth_and_override(api_client):
         cover = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Capa", purpose="cover_assets", position=2)
         private = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Acervo", purpose="content",
                               audience_scope="selected", position=3)
-        db.add_all((other, cover, private))
+        unassigned = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, name="Sem atribuição", purpose="content",
+                                 audience_scope="selected", position=4)
+        db.add_all((other, cover, private, unassigned))
+        first_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Ana Responsável", phone_e164="+5511999997011")
+        second_client = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Bia Compartilhada", phone_e164="+5511999997012")
+        db.add_all((first_client, second_client))
+        db.flush()
+        db.add_all((
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, client_id=first_client.id),
+            GalleryClientState(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, client_id=second_client.id),
+        ))
+        db.flush()
+        db.add_all((
+            FolderClientGrant(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, folder_id=private.id, client_id=first_client.id),
+            FolderClientGrant(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery_id, folder_id=private.id, client_id=second_client.id),
+        ))
         db.commit()
-        other_id, cover_id, private_id = other.id, cover.id, private.id
+        other_id, cover_id, private_id, unassigned_id = other.id, cover.id, private.id, unassigned.id
     endpoint = f"/admin/photo-folders/{folder_id}/processing"
     assert client.get(endpoint).status_code == 403
     client.cookies.set("markina_session", "adjustment-client")
@@ -115,6 +132,9 @@ def test_folder_processing_api_auth_and_override(api_client):
     all_listing = client.get(f"/admin/parent-galleries/{gallery_id}/folders?include_restricted=true").json()["folders"]
     private_summary = next(item for item in all_listing if item["id"] == str(private_id))
     assert private_summary["audience_scope"] == "selected"
+    assert private_summary["client_names"] == ["Ana Responsável", "Bia Compartilhada"]
+    unassigned_summary = next(item for item in all_listing if item["id"] == str(unassigned_id))
+    assert unassigned_summary["client_names"] == []
     assert (private_initial.json()["preview_mode"], private_initial.json()["facial_mode"]) == ("custom", "on")
     assert (private_initial.json()["preview_strength"], private_initial.json()["preview_exposure_tenths"]) == (75, 0)
     private_saved = client.patch(private_endpoint, json={"preview_mode": "off", "facial_mode": "off",

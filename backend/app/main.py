@@ -4505,6 +4505,20 @@ def admin_parent_gallery_folders(
             .order_by(PhotoFolder.position, PhotoFolder.created_at)
         )
     )
+    client_names_by_folder: dict[UUID, list[str]] = {}
+    if include_restricted and folders:
+        for folder_id, client_name in db.execute(
+            select(FolderClientGrant.folder_id, Client.full_name)
+            .join(Client, Client.id == FolderClientGrant.client_id)
+            .where(
+                FolderClientGrant.tenant_id == tenant_id,
+                Client.tenant_id == tenant_id,
+                FolderClientGrant.parent_gallery_id == parent_gallery_id,
+                FolderClientGrant.folder_id.in_([folder.id for folder in folders]),
+            )
+            .order_by(FolderClientGrant.folder_id, Client.full_name, Client.id)
+        ):
+            client_names_by_folder.setdefault(folder_id, []).append(client_name)
     rows = []
     for folder in folders:
         count = (
@@ -4547,21 +4561,22 @@ def admin_parent_gallery_folders(
         }
         for photo, job, derivative in state_rows:
             state_counts[_photo_publication_state(photo, job, derivative)] += 1
-        rows.append(
-            {
-                "id": str(folder.id),
-                "name": folder.name,
-                "audience_scope": folder.audience_scope or "all",
-                "status": folder.status,
-                "position": folder.position,
-                "photo_count": count,
-                "publication_counts": state_counts,
-                "preview_url": f"/admin/photo-assets/{preview_photo_id}/watermarked-preview"
-                if preview_photo_id
-                else None,
-                "released_at": folder.released_at.isoformat() if folder.released_at else None,
-            }
-        )
+        folder_row = {
+            "id": str(folder.id),
+            "name": folder.name,
+            "audience_scope": folder.audience_scope or "all",
+            "status": folder.status,
+            "position": folder.position,
+            "photo_count": count,
+            "publication_counts": state_counts,
+            "preview_url": f"/admin/photo-assets/{preview_photo_id}/watermarked-preview"
+            if preview_photo_id
+            else None,
+            "released_at": folder.released_at.isoformat() if folder.released_at else None,
+        }
+        if include_restricted and folder.audience_scope == "selected":
+            folder_row["client_names"] = client_names_by_folder.get(folder.id, [])
+        rows.append(folder_row)
     return {"total": len(rows), "folders": rows[offset : offset + limit]}
 
 

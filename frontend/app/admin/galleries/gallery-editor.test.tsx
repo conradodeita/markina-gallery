@@ -45,25 +45,26 @@ it("preserva modo protegido legado ao salvar outro campo", async () => {
   expect(payload).not.toHaveProperty("access_mode");
 });
 
-it("identifica os proprietários das pastas privadas na etapa de imagens", async () => {
+it("identifica clientes atribuídas no título da própria pasta restrita", async () => {
   const fetcher = vi.fn((path: string) => {
     if (path.endsWith("/editor")) return response(editor);
-    if (path.endsWith("/private-folders")) return response({ galleries: [{
-      id: "private-1", name: "Ensaio Ana", owner: { id: "ana", name: "Ana Cliente" },
-      active_members: [{ id: "ana", name: "Ana Cliente" }],
-      folders: [{ id: "private-folder-1", name: "Retratos da Ana", status: "released", photo_count: 6 }],
-    }] });
-    if (path.includes("/folders?")) return response({ total: 1, folders: [{ id: "public-folder-1", name: "Pasta pública", status: "released", photo_count: 1 }] });
+    if (path.includes("/folders?")) return response({ total: 3, folders: [
+      { id: "public-folder-1", name: "Pasta pública", audience_scope: "all", status: "released", photo_count: 1 },
+      { id: "private-folder-1", name: "Retratos", audience_scope: "selected", client_names: ["Ana Cliente", "Bia Cliente"], status: "released", photo_count: 6 },
+      { id: "unassigned-folder", name: "Sem responsável", audience_scope: "selected", client_names: [], status: "preparing", photo_count: 0 },
+    ] });
     return response({});
   });
   vi.stubGlobal("fetch", fetcher);
   render(<GalleryEditor sourceId="source-1" step="imagens" />);
   expect(await screen.findByRole("heading", { name: "Imagens e pastas" })).toBeTruthy();
-  const privateSection = await screen.findByRole("region", { name: "Pastas de galerias privadas" });
-  expect(await within(privateSection).findByText("Responsável principal: Ana Cliente")).toBeTruthy();
-  expect(within(privateSection).getByText("Retratos da Ana")).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Abrir pasta Retratos — Ana Cliente, Bia Cliente" })).toBeTruthy();
+  expect(screen.getByText("Retratos — Ana Cliente, Bia Cliente")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Abrir pasta Sem responsável" })).toBeTruthy();
+  expect(screen.getByText("Sem responsável", { selector: "strong" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Abrir pasta Pasta pública" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Abrir pasta Retratos da Ana" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Pastas de galerias privadas" })).toBeNull();
+  expect(fetcher.mock.calls.some(([path]) => String(path).endsWith("/private-folders"))).toBe(false);
 });
 
 function response(value: object, status = 200) {
@@ -1398,6 +1399,87 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
     expect(screen.getByText("Enviando foto 1 de 1")).toBeTruthy();
     await act(async () => finishUpload?.());
     expect(await screen.findByText("Upload concluído · 1 de 1 fotos")).toBeTruthy();
+  });
+
+  it("fecha o lote de uma pasta privada enviada pela etapa Imagens mesmo com falha parcial", async () => {
+    vi.spyOn(sourceUpload, "jpegStorageKey").mockImplementation(async (_sourceId, _folderId, file) => `private/${file.name}`);
+    vi.spyOn(sourceUpload, "uploadPhotoSource").mockImplementation(async (_path, file) => {
+      if (file.name === "falha.jpg") throw new Error("Transferência interrompida");
+    });
+    const batchCalls: Array<{ path: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      batchCalls.push({ path, init });
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{
+        id: "private-folder", name: "Retratos", audience_scope: "selected", client_names: ["Ana"],
+        status: "released", position: 0, photo_count: 0, preview_url: null,
+      }] });
+      if (path.endsWith("/upload-batches") && init?.method === "POST") return response({ id: "batch-private" }, 201);
+      if (path.endsWith("/upload-batches/batch-private/close")) return response({ status: "closed" });
+      if (path.endsWith("/photos") && init?.method === "POST") {
+        return response({ id: JSON.parse(String(init.body)).filename === "falha.jpg" ? "photo-fail" : "photo-ok" }, 201);
+      }
+      if (path.endsWith("/photos")) return response({ photos: [] });
+      if (path.endsWith("/processing")) return response({
+        revision: 1, preview_strength: 50, preview_exposure_tenths: 0, facial_mode: "on",
+        effective_preview: { enabled: true }, facial_available: true, facial_allowed: true, total_photos: 0,
+        preview_counts: { queued: 0, processing: 0, ready: 0, failed: 0, cancelled: 0 },
+        facial_counts: { completed: 0, queued: 0, processing: 0, failed: 0 }, comparison_photo_id: null,
+        facial_progress: { state: "completed", total: 0, waiting_previews: 0, unindexed: 0, detected_faces: 0 },
+      });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="private-folder" />);
+    const input = await waitFor(() => {
+      const found = container.querySelector('input[name="jpeg"]') as HTMLInputElement | null;
+      if (!found) throw new Error("Upload ainda não foi montado");
+      return found;
+    });
+    const form = input.closest("form")!;
+    vi.spyOn(form, "requestSubmit").mockImplementation(() => { fireEvent.submit(form); });
+    fireEvent.change(input, { target: { files: [
+      new File(["jpeg"], "falha.jpg", { type: "image/jpeg" }),
+      new File(["jpeg"], "ok.jpg", { type: "image/jpeg" }),
+    ] } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/photo-folders/private-folder/upload-batches/batch-private/close",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const registrations = batchCalls.filter(({ path, init }) => path.endsWith("/photos") && init?.method === "POST");
+    expect(registrations).toHaveLength(2);
+    expect(registrations.map(({ init }) => JSON.parse(String(init?.body)).upload_batch_id)).toEqual([
+      "batch-private", "batch-private",
+    ]);
+    expect(await screen.findByText("Transferência interrompida")).toBeTruthy();
+  });
+
+  it("não cria lote de notificação para upload de pasta pública na etapa Imagens", async () => {
+    vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("public/file.jpg");
+    vi.spyOn(sourceUpload, "uploadPhotoSource").mockResolvedValue();
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{
+        id: "public-folder", name: "Pública", audience_scope: "all", status: "released", position: 0, photo_count: 0, preview_url: null,
+      }] });
+      if (path.endsWith("/photos") && init?.method === "POST") return response({ id: "photo-public" }, 201);
+      if (path.endsWith("/photos")) return response({ photos: [] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="public-folder" />);
+    const input = await waitFor(() => {
+      const found = container.querySelector('input[name="jpeg"]') as HTMLInputElement | null;
+      if (!found) throw new Error("Upload ainda não foi montado");
+      return found;
+    });
+    const form = input.closest("form")!;
+    vi.spyOn(form, "requestSubmit").mockImplementation(() => { fireEvent.submit(form); });
+    fireEvent.change(input, { target: { files: [new File(["jpeg"], "public.jpg", { type: "image/jpeg" })] } });
+    await screen.findByText("Upload concluído · 1 de 1 fotos");
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/upload-batches"))).toBe(false);
+    const registration = fetchMock.mock.calls.find(([path, init]) => String(path).endsWith("/photos") && init?.method === "POST");
+    expect(JSON.parse(String(registration?.[1]?.body))).not.toHaveProperty("upload_batch_id");
   });
 
 it("usa um painel único entre pasta pública e dez pastas privadas sem enfileirar pela seleção", async () => {
