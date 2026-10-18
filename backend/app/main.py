@@ -412,7 +412,6 @@ from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
 from app.raw_development.api import register_routes as register_raw_development_routes
-from app.statistics_report import commercial_report, report_csv, report_html
 from app.storage_metrics import measure_owned_photo_storage
 from app.tenancy import (
     TenantContextError,
@@ -427,7 +426,6 @@ from app.unified_checkout import (
     finalize_selection,
     group_payload,
     lock_payment_scope,
-    payment_scope,
     payment_scopes,
     prepare_group,
     report_group,
@@ -1154,125 +1152,8 @@ def _client_journey_destination(db: Session, client_id: UUID, *, tenant_id: UUID
     return "/library"
 
 
-def statistics_data(
-    db: Session,
-    *,
-    tenant_id: UUID,
-    starts_at: datetime | None,
-    ends_at: datetime | None,
-    client_id: UUID | None,
-    parent_gallery_id: UUID | None,
-    derived_gallery_id: UUID | None,
-    event_name: str | None,
-) -> dict[str, object]:
-    require_active_owner(db, tenant_id)
-    if client_id and not owned_record(db, Client, client_id, tenant_id=tenant_id):
-        return {"purchased": [], "selected_not_purchased": [], "revenue_cents": 0, "revenue_by_day": []}
-    gallery_query = select(DerivedGallery.id).where(DerivedGallery.tenant_id == tenant_id).join(
-        ParentGallery,
-        (DerivedGallery.parent_gallery_id == ParentGallery.id)
-        & (DerivedGallery.tenant_id == ParentGallery.tenant_id),
-    )
-    if client_id:
-        authorized_ids = {
-            gallery.id
-            for gallery in operational_galleries_for_client(
-                db,
-                client_id=client_id,
-                require_access_enabled=False,
-            )
-        }
-        if not authorized_ids:
-            return {
-                "purchased": [],
-                "selected_not_purchased": [],
-                "revenue_cents": 0,
-                "revenue_by_day": [],
-            }
-        gallery_query = gallery_query.where(DerivedGallery.id.in_(authorized_ids))
-    if parent_gallery_id:
-        gallery_query = gallery_query.where(DerivedGallery.parent_gallery_id == parent_gallery_id)
-    if derived_gallery_id:
-        gallery_query = gallery_query.where(DerivedGallery.id == derived_gallery_id)
-    if event_name:
-        gallery_query = gallery_query.where(ParentGallery.event_name == event_name)
-    gallery_ids = set(db.scalars(gallery_query))
-    if not gallery_ids:
-        return {
-            "purchased": [],
-            "selected_not_purchased": [],
-            "revenue_cents": 0,
-            "revenue_by_day": [],
-        }
-
-    order_filters = [
-        SaleOrder.tenant_id == tenant_id,
-        SaleOrder.payment_status == "confirmed",
-        SaleOrder.derived_gallery_id.in_(gallery_ids),
-    ]
-    if client_id:
-        order_filters.append(SaleOrder.client_id == client_id)
-    orders_query = select(SaleOrder).where(SaleOrder.tenant_id == tenant_id).where(*order_filters)
-    if starts_at:
-        orders_query = orders_query.where(SaleOrder.confirmed_at >= starts_at)
-    if ends_at:
-        orders_query = orders_query.where(SaleOrder.confirmed_at <= ends_at)
-    confirmed_orders = list(db.scalars(orders_query))
-    order_ids = {order.id for order in confirmed_orders}
-    purchased_by_photo: dict[UUID, str] = {}
-    if order_ids:
-        for item in db.scalars(
-            select(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id.in_(order_ids))
-        ):
-            photo_id = item.photo_asset_id or item.photo_asset_id_snapshot
-            if photo_id is not None:
-                purchased_by_photo.setdefault(photo_id, item.filename_snapshot)
-
-    selection_filters = [PhotoSelection.tenant_id == tenant_id, PhotoSelection.derived_gallery_id.in_(gallery_ids)]
-    if client_id:
-        selection_filters.append(PhotoSelection.client_id == client_id)
-    selections_query = select(PhotoSelection).where(PhotoSelection.tenant_id == tenant_id).where(*selection_filters)
-    if starts_at:
-        selections_query = selections_query.where(PhotoSelection.created_at >= starts_at)
-    if ends_at:
-        selections_query = selections_query.where(PhotoSelection.created_at <= ends_at)
-    selected_ids = set(
-        db.scalars(selections_query.with_only_columns(PhotoSelection.photo_asset_id))
-    )
-    selected_not_purchased_ids = selected_ids - set(purchased_by_photo)
-    selected_names: dict[UUID, str] = {}
-    if selected_not_purchased_ids:
-        for photo in db.scalars(
-            select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.id.in_(selected_not_purchased_ids))
-        ):
-            selected_names[photo.id] = photo.filename
-
-    revenue_by_day: defaultdict[str, int] = defaultdict(int)
-    for order in confirmed_orders:
-        if order.confirmed_at:
-            revenue_by_day[order.confirmed_at.date().isoformat()] += order.total_cents
-    return {
-        "purchased": [
-            {"id": str(photo_id), "filename": filename}
-            for photo_id, filename in sorted(purchased_by_photo.items(), key=lambda item: item[1])
-        ],
-        "selected_not_purchased": [
-            {"id": str(photo_id), "filename": filename}
-            for photo_id, filename in sorted(selected_names.items(), key=lambda item: item[1])
-        ],
-        "revenue_cents": sum(order.total_cents for order in confirmed_orders),
-        "revenue_by_day": [
-            {"date": day, "revenue_cents": cents} for day, cents in sorted(revenue_by_day.items())
-        ],
-    }
 
 
-def statistics_txt(entries: list[dict[str, str]]) -> PlainTextResponse:
-    content = "".join(f"{entry['id']}\t{entry['filename']}\n" for entry in entries)
-    return PlainTextResponse(
-        content,
-        headers={"Content-Disposition": 'attachment; filename="pick-your-pic-lista.txt"'},
-    )
 
 
 @app.get("/health")
@@ -9061,276 +8942,6 @@ def retry_gallery_reopening_notification(
     return {"status": notification.status}
 
 
-@app.get("/admin/statistics")
-def admin_statistics(
-    request: Request,
-    starts_at: datetime | None = None,
-    ends_at: datetime | None = None,
-    client_id: UUID | None = None,
-    parent_gallery_id: UUID | None = None,
-    derived_gallery_id: UUID | None = None,
-    event_name: str | None = Query(default=None, max_length=200),
-    offset: int | None = Query(default=None, ge=0),
-    purchased_offset: int = Query(default=0, ge=0),
-    selected_offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
-    db: Session = Depends(db_session),
-) -> dict[str, object]:
-    tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
-    data = statistics_data(
-        db,
-        starts_at=starts_at,
-        ends_at=ends_at,
-        client_id=client_id,
-        parent_gallery_id=parent_gallery_id,
-        derived_gallery_id=derived_gallery_id,
-        event_name=event_name,
-        tenant_id=tenant_id,
-    )
-    purchased = data["purchased"]
-    selected_not_purchased = data["selected_not_purchased"]
-    if offset is not None:
-        purchased_offset = offset
-        selected_offset = offset
-    return {
-        "purchased_count": len(purchased),
-        "selected_not_purchased_count": len(selected_not_purchased),
-        "purchased_total": len(purchased),
-        "selected_not_purchased_total": len(selected_not_purchased),
-        "revenue_cents": data["revenue_cents"],
-        "revenue_by_day": data["revenue_by_day"],
-        "purchased_photos": purchased[purchased_offset : purchased_offset + limit],
-        "selected_not_purchased_photos": selected_not_purchased[
-            selected_offset : selected_offset + limit
-        ],
-    }
-
-
-def _commercial_report_for_request(
-    db: Session,
-    request: Request,
-    *,
-    starts_at: datetime | None,
-    ends_at: datetime | None,
-    event_name: str | None,
-    client_id: UUID | None,
-    parent_gallery_id: UUID | None,
-    derived_gallery_id: UUID | None,
-    folder_id: UUID | None,
-    payment_method: str | None,
-    order_status: str | None,
-) -> dict[str, object]:
-    tenant_id = directory_tenant_id(db, request)
-    if payment_method not in (None, "pix", "credit_card", "not_required", "unknown"):
-        raise HTTPException(status_code=422, detail="Forma de pagamento inválida.")
-    if order_status not in (None, "pending", "confirmed", "cancelled", "not_required", "hold_or_corrected"):
-        raise HTTPException(status_code=422, detail="Status do pedido inválido.")
-    return commercial_report(
-        db, tenant_id=tenant_id, starts_at=starts_at, ends_at=ends_at, event_name=event_name,
-        client_id=client_id, parent_gallery_id=parent_gallery_id,
-        derived_gallery_id=derived_gallery_id, folder_id=folder_id,
-        payment_method=payment_method, order_status=order_status,
-    )
-
-
-@app.get("/admin/statistics/report")
-def admin_statistics_report(
-    request: Request,
-    response: Response,
-    starts_at: datetime | None = None,
-    ends_at: datetime | None = None,
-    event_name: str | None = Query(default=None, max_length=200),
-    client_id: UUID | None = None,
-    parent_gallery_id: UUID | None = None,
-    derived_gallery_id: UUID | None = None,
-    folder_id: UUID | None = None,
-    payment_method: str | None = None,
-    order_status: str | None = None,
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
-    purchased_offset: int = Query(default=0, ge=0),
-    selected_offset: int = Query(default=0, ge=0),
-    db: Session = Depends(db_session),
-) -> dict[str, object]:
-    require_admin(request)
-    response.headers["Cache-Control"] = "private, no-store"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    data = _commercial_report_for_request(
-        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
-        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
-        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
-    )
-    orders = data["orders"]
-    purchased = data["items"]
-    selected = data["selected_not_purchased"]
-    return {
-        **data,
-        "orders_total": len(orders), "orders": orders[offset:offset + limit],
-        "items": purchased[purchased_offset:purchased_offset + limit],
-        "purchased_total": len(purchased), "purchased_photos": purchased[purchased_offset:purchased_offset + limit],
-        "selected_not_purchased_total": len(selected),
-        "selected_not_purchased": selected[selected_offset:selected_offset + limit],
-        "selected_not_purchased_photos": selected[selected_offset:selected_offset + limit],
-    }
-
-
-@app.get("/admin/statistics/csv-access")
-def admin_statistics_csv_access(request: Request, db: Session = Depends(db_session)) -> JSONResponse:
-    session = require_admin(request)
-    directory_tenant_id(db, request)
-    from app.system_monitor.access import is_owner
-    return JSONResponse(
-        {"allowed": is_owner(db, session.subject_id)},
-        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
-    )
-
-
-@app.get("/admin/statistics/report.html", response_class=HTMLResponse)
-def export_statistics_html(
-    request: Request,
-    starts_at: datetime | None = None,
-    ends_at: datetime | None = None,
-    event_name: str | None = Query(default=None, max_length=200),
-    client_id: UUID | None = None,
-    parent_gallery_id: UUID | None = None,
-    derived_gallery_id: UUID | None = None,
-    folder_id: UUID | None = None,
-    payment_method: str | None = None,
-    order_status: str | None = None,
-    db: Session = Depends(db_session),
-) -> HTMLResponse:
-    data = _commercial_report_for_request(
-        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
-        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
-        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
-    )
-    return HTMLResponse(
-        report_html(data),
-        headers={"Content-Disposition": 'attachment; filename="relatorio-comercial.html"',
-                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
-    )
-
-
-@app.get("/admin/statistics/report.csv")
-def export_statistics_csv(
-    request: Request,
-    starts_at: datetime | None = None,
-    ends_at: datetime | None = None,
-    event_name: str | None = Query(default=None, max_length=200),
-    client_id: UUID | None = None,
-    parent_gallery_id: UUID | None = None,
-    derived_gallery_id: UUID | None = None,
-    folder_id: UUID | None = None,
-    payment_method: str | None = None,
-    order_status: str | None = None,
-    db: Session = Depends(db_session),
-) -> Response:
-    session = require_admin(request)
-    tenant_id = directory_tenant_id(db, request)
-    # A identidade estável do proprietário é consultada antes de qualquer dado comercial.
-    from app.system_monitor.access import require_owner
-    require_owner(db, session.subject_id)
-    data = _commercial_report_for_request(
-        db, request, starts_at=starts_at, ends_at=ends_at, event_name=event_name, client_id=client_id,
-        parent_gallery_id=parent_gallery_id, derived_gallery_id=derived_gallery_id,
-        folder_id=folder_id, payment_method=payment_method, order_status=order_status,
-    )
-    # Revalida proprietário e vínculo de tenant depois da consulta para evitar resposta em sessão alterada.
-    require_owner(db, session.subject_id)
-    if directory_tenant_id(db, request) != tenant_id:
-        raise HTTPException(status_code=403, detail="Acesso negado.")
-    return Response(
-        content=report_csv(data["items"]), media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="vendas.csv"',
-                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
-    )
-
-
-@app.get("/admin/statistics/filters")
-def admin_statistics_filters(
-    request: Request, db: Session = Depends(db_session)
-) -> dict[str, list[dict[str, str]]]:
-    """Opções mínimas para os filtros operacionais, sem expor telefone de clientes."""
-    tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
-    clients = list(db.scalars(select(Client).where(Client.tenant_id == tenant_id).order_by(Client.full_name)))
-    parents = list(
-        db.scalars(
-            select(ParentGallery).where(ParentGallery.tenant_id == tenant_id)
-            .where(ParentGallery.lifecycle_status != "deleted")
-            .order_by(ParentGallery.name)
-        )
-    )
-    galleries = list(db.scalars(select(DerivedGallery).where(DerivedGallery.tenant_id == tenant_id).order_by(DerivedGallery.name)))
-    folders = list(db.scalars(select(PhotoFolder).where(
-        PhotoFolder.tenant_id == tenant_id,
-        PhotoFolder.purpose == "content",
-    ).order_by(PhotoFolder.name)))
-    return {
-        "clients": [{"id": str(client.id), "name": client.full_name} for client in clients],
-        "parent_galleries": [
-            {"id": str(gallery.id), "name": gallery.name, "event_name": gallery.event_name or ""}
-            for gallery in parents
-        ],
-        "derived_galleries": [
-            {"id": str(gallery.id), "name": gallery.name, "client_id": str(gallery.client_id)}
-            for gallery in galleries
-        ],
-        "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
-    }
-
-
-@app.get("/admin/statistics/selected-not-purchased.txt", response_class=PlainTextResponse)
-def export_selected_not_purchased_txt(
-    request: Request,
-    starts_at: datetime | None = None,
-    ends_at: datetime | None = None,
-    client_id: UUID | None = None,
-    parent_gallery_id: UUID | None = None,
-    derived_gallery_id: UUID | None = None,
-    event_name: str | None = Query(default=None, max_length=200),
-    db: Session = Depends(db_session),
-) -> PlainTextResponse:
-    tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
-    data = statistics_data(
-        db,
-        starts_at=starts_at,
-        ends_at=ends_at,
-        client_id=client_id,
-        parent_gallery_id=parent_gallery_id,
-        derived_gallery_id=derived_gallery_id,
-        event_name=event_name,
-        tenant_id=tenant_id,
-    )
-    return statistics_txt(data["selected_not_purchased"])
-
-
-@app.get("/admin/statistics/purchased.txt", response_class=PlainTextResponse)
-def export_purchased_txt(
-    request: Request,
-    starts_at: datetime | None = None,
-    ends_at: datetime | None = None,
-    client_id: UUID | None = None,
-    parent_gallery_id: UUID | None = None,
-    derived_gallery_id: UUID | None = None,
-    event_name: str | None = Query(default=None, max_length=200),
-    db: Session = Depends(db_session),
-) -> PlainTextResponse:
-    tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
-    data = statistics_data(
-        db,
-        starts_at=starts_at,
-        ends_at=ends_at,
-        client_id=client_id,
-        parent_gallery_id=parent_gallery_id,
-        derived_gallery_id=derived_gallery_id,
-        event_name=event_name,
-        tenant_id=tenant_id,
-    )
-    return statistics_txt(data["purchased"])
 
 
 @app.get("/library")
@@ -12238,6 +11849,82 @@ def admin_removed_photo_movements(
                                   offset=offset, limit=limit)
 
 
+PaymentFinancialFilter = Literal[
+    "priority", "reported", "confirmed", "confirmed_undelivered",
+    "awaiting_payment", "not_found", "overdue", "verifying", "exception", "hold",
+]
+
+
+@app.get("/admin/orders/{order_id}/items/{item_id}/preview")
+def admin_order_item_preview(
+    order_id: UUID, item_id: UUID, request: Request,
+    size: Literal["thumbnail", "preview"] = "thumbnail",
+    db: Session = Depends(db_session),
+) -> FileResponse:
+    require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    order = db.scalar(
+        select(SaleOrder).where(SaleOrder.id == order_id, SaleOrder.tenant_id == tenant_id)
+    )
+    item = db.scalar(select(SaleOrderItem).where(
+        SaleOrderItem.id == item_id, SaleOrderItem.sale_order_id == order_id,
+        SaleOrderItem.tenant_id == tenant_id,
+    ))
+    if not order or order.assets_removed_at or not item or not item.photo_asset_id:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    photo = db.scalar(
+        select(PhotoAsset).where(
+            PhotoAsset.id == item.photo_asset_id, PhotoAsset.tenant_id == tenant_id
+        )
+    )
+    if not photo or not photo.available or photo.id != item.photo_asset_id_snapshot:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    derivative = db.scalar(select(MediaDerivative).where(
+        MediaDerivative.photo_asset_id == photo.id,
+        MediaDerivative.tenant_id == tenant_id,
+        MediaDerivative.variant == ("thumbnail" if size == "thumbnail" else "admin_preview"),
+        MediaDerivative.status == "ready",
+    ))
+    if not derivative:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    try:
+        path = safe_derivative_path(derivative)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.") from exc
+    audit(db, "media_preview.order_item_viewed", str(item.id))
+    db.commit()
+    return protected_preview_response(path, f"pedido-{item.filename_snapshot}")
+
+
+@app.get("/admin/payment-communications/export.csv")
+def export_payment_orders(
+    request: Request,
+    query: str | None = Query(default=None, max_length=200),
+    client_id: UUID | None = None,
+    parent_gallery_id: UUID | None = None,
+    financial_status: PaymentFinancialFilter | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    db: Session = Depends(db_session),
+) -> Response:
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    from app.payment_export import payment_orders_csv
+
+    data = _payment_dashboard_data(
+        db, tenant_id=tenant_id, query=query, client_id=client_id, parent_gallery_id=parent_gallery_id,
+        financial_status=financial_status, created_from=created_from, created_to=created_to,
+        export_all=True, include_selections=False,
+    )
+    if not data["groups"]:
+        return Response(status_code=204)
+    return Response(
+        payment_orders_csv(data["groups"]), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="pick-your-pic-vendas-pagamentos.csv"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @app.get("/admin/payment-communications")
 def list_payment_communications(
     request: Request,
@@ -12245,10 +11932,9 @@ def list_payment_communications(
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
     financial_status: Literal[
-        "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
+        "priority", "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
         "not_found", "overdue", "verifying", "exception", "hold",
-    ]
-    | None = Query(default=None),
+    ] | None = Query(default=None),
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
     | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
@@ -12259,6 +11945,18 @@ def list_payment_communications(
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
+    return _payment_dashboard_data(
+        db, tenant_id=tenant_id, query=query, client_id=client_id, parent_gallery_id=parent_gallery_id,
+        financial_status=financial_status, delivery_status=delivery_status,
+        created_from=created_from, created_to=created_to, cursor=cursor, limit=limit,
+    )
+
+
+def _payment_dashboard_data(
+    db: Session, *, tenant_id: UUID, query=None, client_id=None, parent_gallery_id=None,
+    financial_status=None, delivery_status=None, created_from=None, created_to=None,
+    cursor=None, limit=20, export_all=False, include_selections=True,
+) -> dict[str, object]:
     if created_from and created_to and created_from > created_to:
         raise HTTPException(
             status_code=422,
@@ -12328,7 +12026,13 @@ def list_payment_communications(
         if item.sale_order_id == order.id or (order.payment_group_id and
                                              item.payment_group_id == order.payment_group_id)]
         for order in order_entities}
-    scopes_by_communication = {item.id: payment_scope(db, item) for item in communication_rows}
+    scopes = payment_scopes(
+        db,
+        {item.payment_group_id for item in communication_rows if item.payment_group_id},
+        tenant_id=tenant_id,
+    )
+    scopes_by_communication = {item.id: scopes.get(item.payment_group_id)
+                               for item in communication_rows}
 
     communication_ids = [communication.id for communication in communication_rows]
     correction_rows = (
@@ -12413,7 +12117,9 @@ def list_payment_communications(
         selection_query = selection_query.where(PhotoSelection.created_at >= created_from)
     if created_to:
         selection_query = selection_query.where(PhotoSelection.created_at <= created_to)
-    include_open_selections = financial_status is None and delivery_status is None
+    include_open_selections = (
+        include_selections and financial_status is None and delivery_status is None
+    )
     selection_rows = list(db.execute(selection_query)) if include_open_selections else []
     selection_groups: dict[tuple[UUID, UUID], dict[str, object]] = {}
     selection_parents: dict[tuple[UUID, UUID], ParentGallery | None] = {}
@@ -12495,7 +12201,11 @@ def list_payment_communications(
         if financial_state == "awaiting_payment" and canonical_state and canonical_state.selection_expires_at and expired(canonical_state.selection_expires_at):
             financial_state = "overdue"
         delivery_states = {notification.status for notification in order_notifications} or {"none"}
-        if financial_status and financial_state != financial_status:
+        if financial_status == "priority" and financial_state not in {
+            "reported", "confirmed_undelivered",
+        }:
+            continue
+        if financial_status and financial_status != "priority" and financial_state != financial_status:
             continue
         if delivery_status and delivery_status not in delivery_states:
             continue
@@ -12532,6 +12242,10 @@ def list_payment_communications(
                     "photo_id": str(item.photo_asset_id_snapshot),
                     "name": item.filename_snapshot,
                     "unit_price_cents": item.unit_price_cents,
+                    "thumbnail_url": (f"/admin/orders/{order.id}/items/{item.id}/preview?size=thumbnail"
+                                      if item.photo_asset_id and not order.assets_removed_at else None),
+                    "preview_url": (f"/admin/orders/{order.id}/items/{item.id}/preview?size=preview"
+                                    if item.photo_asset_id and not order.assets_removed_at else None),
                 }
             )
         prepared_orders.append(
@@ -12553,6 +12267,9 @@ def list_payment_communications(
                    if provider_payment or order.payment_group_id or latest_communication else {}),
                 **({"provider_payment_state": provider_payment.state,
                     "provider_payment_id": str(provider_payment.id)} if provider_payment else {}),
+                "confirmed_at": (order.confirmed_at.isoformat()
+                                 if order.payment_status == "confirmed" and order.confirmed_at
+                                 else None),
                 "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 "created_at": order.created_at.isoformat(),
@@ -12640,8 +12357,8 @@ def list_payment_communications(
             ) > cursor_key
         ]
 
-    page_groups = all_groups[:limit]
-    has_next_page = len(all_groups) > limit
+    page_groups = all_groups if export_all else all_groups[:limit]
+    has_next_page = not export_all and len(all_groups) > limit
     next_cursor = None
     if has_next_page and page_groups:
         last_group = page_groups[-1]
@@ -12838,9 +12555,13 @@ def _admin_payment_communication_payload(
 
 def _encode_payment_cursor(
     created_at: datetime, client_id: str, *, priority: int = 0
-) -> str:
+ ) -> str:
     raw = json.dumps(
-        {"priority": priority, "created_at": created_at.isoformat(), "client_id": client_id},
+        {
+            "priority": priority,
+            "created_at": created_at.isoformat(),
+            "client_id": client_id,
+        },
         separators=(",", ":"),
     ).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
@@ -12852,6 +12573,9 @@ def _decode_payment_cursor(cursor: str) -> tuple[int, str, str]:
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
         created_at = datetime.fromisoformat(payload["created_at"])
         client_id = UUID(payload["client_id"])
+        priority = payload["priority"]
+        if not isinstance(priority, int) or priority < 0:
+            raise ValueError("Invalid priority")
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail="Cursor de pagamentos inválido.") from exc
     return int(payload.get("priority", 0)), created_at.isoformat(), str(client_id)

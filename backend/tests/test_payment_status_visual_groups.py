@@ -17,8 +17,8 @@ from app.auth import (
     now,
 )
 from app.main import app
-from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_derived_galleries import (  # noqa: F401
+    FIXTURE_TENANT_ID,
     authenticate_admin,
     clean_database,
     set_test_global_pix,
@@ -145,7 +145,7 @@ def test_open_selection_is_only_returned_when_financial_filter_is_all(admin_brow
         db.add_all([parent, client])
         db.flush()
         gallery = DerivedGallery(
-            tenant_id=FIXTURE_TENANT_ID,
+                tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id,
             client_id=client.id,
             name="Galeria carrinho",

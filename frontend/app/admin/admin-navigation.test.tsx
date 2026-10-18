@@ -15,6 +15,7 @@ describe("navegação administrativa", () => {
     expect(screen.getByRole("link", { name: "Galerias" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Notificações" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Operação" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Estatísticas" })).toBeNull();
   });
 
   it("expõe o diretório global e indica a rota ativa", () => {
