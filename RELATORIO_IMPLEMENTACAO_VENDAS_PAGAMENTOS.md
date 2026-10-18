@@ -2,7 +2,9 @@
 
 Data da execução: 17/10/2026, no ambiente local informado pelo proprietário.
 
-Change: `openspec/changes/modernize-sales-payments-and-retire-statistics/`.
+Estado final em 18/10/2026: publicado em produção no SHA `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f`. O run `39135274157`, tentativa 2, terminou verde, com preflight e release API/web aprovados. Evidências em `docs/RELEASE-SALES-PAYMENTS-20261018.md`; os bloqueios das etapas anteriores abaixo foram resolvidos.
+
+Change: `openspec/changes/archive/2026-10-18-modernize-sales-payments-and-retire-statistics/`.
 
 Escopo autorizado: prompt de implementação anexado pelo proprietário, que substituiu a etapa anterior de documentação sem alterações. A implementação foi continuada sobre o workspace existente. Product Design foi utilizado na revisão final, substituindo UI UX Designer conforme solicitado.
 
@@ -47,7 +49,7 @@ Os caminhos abaixo são relativos à raiz do repositório. O workspace já conti
 | Criado | `frontend/app/admin/retirement.test.ts` | Confirma ausência da antiga página no App Router. |
 | Removido | `frontend/app/admin/statistics/page.test.tsx` | Teste exclusivo da interface retirada. |
 | Criado | `frontend/scripts/payments-visual-qa.cjs` | QA em Edge headless com APIs interceptadas e dados sintéticos; não envia ações reais. |
-| Criados | `openspec/changes/modernize-sales-payments-and-retire-statistics/*` | Proposal, design, delta spec, tasks e evidências. |
+| Criados | `openspec/changes/archive/2026-10-18-modernize-sales-payments-and-retire-statistics/*` | Proposal, design, delta spec, tasks e evidências. |
 | Criados | Este relatório e `design-qa.md` | Entrega técnica e limites da avaliação visual. |
 
 Não foram alterados `payment-actions.tsx`, `order-delivery.tsx`, `removed-history.tsx`, UI Kit, pipeline de geração de mídia ou handlers de decisão financeira/entrega. Eles continuam integrados à página.
@@ -235,5 +237,5 @@ A integração foi repetida em worktree isolado sobre a `main` atual e preserva 
 - Backend: 13 testes novos de pagamentos/status e 8 regressões existentes de dashboard, PIX, pedidos e reabertura passaram.
 - Frontend: 26 testes passaram em 5 arquivos; lint dirigido, typecheck e build de produção passaram.
 - Playwright/Edge com APIs sintéticas: 6 combinações (390/768/1440 px × claro/escuro), 18 capturas; filtros, CSV, histórico vazio, Estatísticas 404, miniaturas sob demanda, lightbox, teclado e foco passaram.
-- Os resultados detalhados e limites estão em `openspec/changes/modernize-sales-payments-and-retire-statistics/validation.md` e `design-qa.md`. As capturas deste checkpoint foram geradas em `%TEMP%/sales-visual-qa-current` e não são rastreadas pelo Git.
+- Os resultados detalhados e limites estão em `openspec/changes/archive/2026-10-18-modernize-sales-payments-and-retire-statistics/validation.md` e `design-qa.md`. As capturas deste checkpoint foram geradas em `%TEMP%/sales-visual-qa-current` e não são rastreadas pelo Git.
 - O PR de coordenação API/web #222 foi integrado em `main` após todos os checks obrigatórios passarem. Isso remove o bloqueio histórico de não haver fluxo coordenado para API e web; a publicação da feature ainda exige o PR desta change, inventário read-only atual no host e confirmação do impacto/rollback conforme as instruções do repositório. Nenhuma publicação de produção foi executada nesta atualização.

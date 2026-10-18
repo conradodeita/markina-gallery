@@ -108,7 +108,7 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "b4f15abd6a71585082758062feba7fcfcc225587":
+    if app_manifest.get("production_baseline_sha") != "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f":
         raise AssertionError("baseline de produção diverge do inventário registrado")
     if app_manifest.get("expected_database_revision") != "20261017_0084":
         raise AssertionError("revisão de banco app diverge do inventário registrado")
@@ -173,7 +173,7 @@ def main() -> None:
             "release app não recria dependências", app_script)
     for fragment, label in (
         ("20261017_0084", "schema app documentado"),
-        ("b4f15abd6a71585082758062feba7fcfcc225587", "baseline app documentado"),
+        ("fe1f3bc6e1a483bd1ac5f4e71149f903e724873f", "baseline app documentado"),
         ("127.0.0.1:8080", "porta Markina documentada"),
         ("https://markina.pickyourpic.com.br", "domínio documentado"),
         ("worker OTP", "exclusão do worker OTP documentada"),

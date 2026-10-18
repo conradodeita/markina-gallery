@@ -1,5 +1,9 @@
 # Validação e continuidade
 
+## Publicação concluída — 18/10/2026
+
+O run `39135274157`, tentativa 2, terminou verde após a atualização verificada do wrapper root-owned e a aprovação protegida do proprietário. O SHA `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f` foi publicado somente em API/web, sem migrations; schema `20261017_0084`, serviços saudáveis e smoke HTTPS aprovado. A inspeção SSH confirmou o SHA ativo e os uptimes preservados dos demais serviços. Evidências e limites em `docs/RELEASE-SALES-PAYMENTS-20261018.md`. Os bloqueios anteriores abaixo são históricos e foram resolvidos.
+
 ## Continuação da integração na `main` atual — 18/10/2026
 
 Esta seção registra a retomada isolada do trabalho sobre `origin/main` (`ffea8c4`), que já continha mudanças posteriores na área financeira. Ela complementa as evidências abaixo, produzidas no checkout anterior, e prevalece para os resultados do estado atual desta branch.
@@ -55,7 +59,7 @@ Compartilhados a preservar: `.photo-list` (galeria da cliente e pedidos de galer
 - Consulta completa em memória herdada, sem benchmark de carga; não afirmar limite ilimitado ou consumo constante. Isolamento preserva arquitetura atual de fotógrafo único; multitenant separado não implementado.
 - Nenhum deploy, migration, alteração de secrets/infra ou banco operacional. Testes usaram somente bancos sintéticos isolados. Não houve commit/push; specs principais não sincronizadas e change não arquivada, aguardando revisão humana.
 
-## Publicação em produção — bloqueada
+## Histórico dos bloqueios de publicação — resolvidos em 18/10/2026
 
 - O proprietário autorizou publicar quando pronto. A validação do alvo mostrou que esta change precisa enviar código ao frontend e à API: `backend/app/main.py` recebe o novo filtro `priority`, endpoint CSV e endpoint de prévias; a remoção das rotas antigas de Estatísticas também é backend. O procedimento local presente em `scripts/deploy-prod-web.sh` (não rastreado no Git) muta somente o serviço `web`, então um release apenas frontend deixaria a UI incompatível com a API e Estatísticas acessível diretamente.
 - Não foi improvisado um deploy de `api`, nem usado o workflow CI amplo que recria `api`, `web` e `worker`. Mudar estratégia de deploy precisa de plano explícito e validação de impacto zero; não se inferiu compatibilidade de uma atualização somente `web`.

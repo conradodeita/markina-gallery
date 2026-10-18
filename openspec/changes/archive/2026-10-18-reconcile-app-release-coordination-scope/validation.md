@@ -16,6 +16,8 @@
 - `git diff --check`: aprovado.
 - O manifesto de blobs de runtime, baseline saudável, revisão do banco, portas, serviços e gates de aprovação não foram modificados. Nenhuma conexão SSH, inventário remoto, alteração de host ou publicação foi executada nesta correção.
 
-## Próxima evidência exigida
+## Integração e publicação concluídas
 
-A correção precisa ser integrada por PR e passar no CI de `main`. Só então a pipeline poderá repetir o preflight remoto somente-leitura. Nenhum resultado de release ou deploy é declarado por esta validação local.
+A PR #224 passou nos checks e foi integrada como `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f`. O CI de `main` aprovou backend, frontend, OpenSpec e políticas; a tentativa 1 parou no wrapper desatualizado. Após a atualização verificada, o run `39135274157`, tentativa 2, passou no inventário e publicou API/web com aprovação protegida. O run terminou verde, o checkout ativo corresponde ao alvo, o schema permaneceu `20261017_0084` e os serviços ficaram saudáveis. Evidências em `docs/RELEASE-SALES-PAYMENTS-20261018.md`.
+
+Após a publicação confirmada, o baseline foi avançado para o SHA saudável; os blobs de runtime e gates faciais permaneceram iguais. A spec principal foi sincronizada para arquivamento após a revisão humana recebida.

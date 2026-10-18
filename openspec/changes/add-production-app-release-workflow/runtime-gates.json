@@ -1,6 +1,6 @@
 {
   "scope": "api_web_only",
-  "production_baseline_sha": "b4f15abd6a71585082758062feba7fcfcc225587",
+  "production_baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
     "backend/app/main.py": "f5bd9e3a232ba1e13c45b64a5a940cbd67dd7a85",

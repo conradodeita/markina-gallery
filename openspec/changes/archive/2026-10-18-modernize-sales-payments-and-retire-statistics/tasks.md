@@ -18,4 +18,4 @@
 
 ## Workflow follow-up
 
-- Revisão e autorização humana recebidas em 18/10/2026. Specs principais de `payment-operations-dashboard` e `sales-statistics` sincronizadas; arquivar a change depois de integrar o PR da implementação. A publicação permanece sujeita a inventário do SHA final e aos gates de API/web.
+- Revisão e autorização humana recebidas em 18/10/2026. PR #223 integrada e correção de escopo #224 integrada; specs principais sincronizadas. O run `39135274157`, tentativa 2, passou no preflight e publicou `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f` com aprovação protegida, saúde de API/web, schema inalterado e smoke HTTPS. Evidências em `docs/RELEASE-SALES-PAYMENTS-20261018.md`; change pronta para arquivamento após a revisão humana recebida.

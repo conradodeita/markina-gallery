@@ -36,7 +36,7 @@ Nenhuma imagem antes da expansão; miniaturas lazy; modal na top layer; uma imag
 
 **Aceite comparativo de design:** a equivalência pixel a pixel não pode ser medida sem fonte visual independente/anterior em condições equivalentes. O proprietário informou “revisado e autorizado” e autorizou a publicação. A aprovação cobre o redesenho revisado; não representa comparação pixel a pixel nem auditoria WCAG completa.
 
-final result: accepted
+final result: passed
 
 ## Continuação após integração na `main` atual
 
