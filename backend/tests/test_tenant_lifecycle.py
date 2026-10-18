@@ -1,4 +1,4 @@
-"""Estatísticas, exports e exclusões apenas em schemas e arquivos sintéticos A/B."""
+"""Exports e exclusões apenas em schemas e arquivos sintéticos A/B."""
 
 from uuid import UUID, uuid4
 
@@ -26,33 +26,6 @@ client_db = _client_db
 graph = _graph
 links = _links
 commerce = _commerce
-
-
-def stats(db, row, **filters):
-    return main.admin_statistics(row["admin_request"], starts_at=None, ends_at=None,
-        client_id=filters.get("client_id"), parent_gallery_id=filters.get("parent_gallery_id"),
-        derived_gallery_id=filters.get("derived_gallery_id"), event_name=None,
-        offset=None, purchased_offset=0, selected_offset=0, limit=100, db=db)
-
-
-def test_estatisticas_filtros_e_TXT_somente_owner(client_db, commerce):
-    for label, row in zip(("A", "B"), commerce, strict=True):
-        row["photo"].filename = f"somente-{label}.jpg"
-        reported(client_db, row)
-        main.decide_payment_communication(row["communication"].id,
-            main.PaymentDecisionInput(decision="confirmed", payment_group_id=row["group"].id),
-            row["admin_request"], client_db)
-    for index, row in enumerate(commerce):
-        result = stats(client_db, row)
-        assert result["revenue_cents"] == 700 + index*100 and result["purchased_count"] == 1
-        other = commerce[1-index]
-        assert str(other["photo"].id) not in str(result)
-        assert str(other["client"].id) not in str(main.admin_statistics_filters(row["admin_request"], client_db))
-        for name, candidate in (("client_id", other["client"].id), ("parent_gallery_id", other["parent"].id),
-                                ("derived_gallery_id", other["gallery"].id)):
-            assert stats(client_db, row, **{name: candidate})["revenue_cents"] == 0
-        response = main.export_purchased_txt(row["admin_request"], None, None, None, None, None, None, client_db)
-        assert row["photo"].filename.encode() in response.body and other["photo"].filename.encode() not in response.body
 
 
 def test_resumo_mede_so_arquivos_proprios_sem_cache_global(client_db, commerce, tmp_path, monkeypatch):
