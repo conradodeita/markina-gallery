@@ -13,6 +13,8 @@ WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
 )
 INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes()
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
+APP_RUNBOOK = (ROOT / "docs/DEPLOY-PROD-APP.md").read_text(encoding="utf-8")
+CLASSIFIER = (ROOT / "scripts/classify_prod_release.py").read_text(encoding="utf-8")
 
 
 def require(fragment: str, label: str, content: str) -> None:
@@ -21,6 +23,15 @@ def require(fragment: str, label: str, content: str) -> None:
 
 
 def main() -> None:
+    require("base_sha={baseline}", "classificador exporta a base de produção", CLASSIFIER)
+    require("base_sha: ${{ steps.classify.outputs.base_sha }}", "workflow encaminha a base de produção", WORKFLOW)
+    if 'echo "base_sha=$base_sha"' in WORKFLOW:
+        raise AssertionError("workflow não pode sobrescrever a base de produção com o pai do evento")
+    require(
+        "Classificar delta desde o SHA saudável registrado",
+        "classificador documenta a base real do runtime",
+        WORKFLOW,
+    )
     preflight = WORKFLOW.split("  production-preflight:", 1)[1].split(
         "  production-release:", 1
     )[0]
@@ -98,9 +109,14 @@ def main() -> None:
         raise AssertionError("wrapper não executa stdin nem altera refs locais do checkout")
 
     script = INVENTORY_SCRIPT.decode("utf-8")
+    app_script = APP_INVENTORY_SCRIPT.decode("utf-8")
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
+    if app_manifest.get("production_baseline_sha") != "b4f15abd6a71585082758062feba7fcfcc225587":
+        raise AssertionError("baseline de produção diverge do inventário registrado")
+    if app_manifest.get("expected_database_revision") != "20261017_0084":
+        raise AssertionError("revisão de banco app diverge do inventário registrado")
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
     require('baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"', "baseline facial usa o marcador operacional", script)
     require("verify_maintenance_baseline", "checkout ativo confere marcador de release", script)
@@ -144,6 +160,19 @@ def main() -> None:
     require('migrated_revision" == "$TARGET_DATABASE_REVISION"', "revisão nova confirmada", release_script)
     if not (release_script.index('alembic upgrade') < release_script.index("compose up")):
         raise AssertionError("migration deve concluir antes da recriação de serviços")
+
+    require('EXPECTED_DATABASE_REVISION="20261017_0084"', "schema atual da aplicação fixado", app_script)
+    require('readonly SERVICES=(api web)', "release app inclui somente API e web", app_script)
+    require('compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
+            "release app não recria dependências", app_script)
+    for fragment, label in (
+        ("20261017_0084", "schema app documentado"),
+        ("b4f15abd6a71585082758062feba7fcfcc225587", "baseline app documentado"),
+        ("127.0.0.1:8080", "porta Markina documentada"),
+        ("https://markina.pickyourpic.com.br", "domínio documentado"),
+        ("worker OTP", "exclusão do worker OTP documentada"),
+    ):
+        require(fragment, label, APP_RUNBOOK)
     require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)
     require("compose exec -T nginx nginx -s reload", "renovação dos upstreams Markina", release_script)
     if not (release_script.index("compose up") < release_script.index("runtime_snapshot")

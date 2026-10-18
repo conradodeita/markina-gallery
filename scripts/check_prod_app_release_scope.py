@@ -18,7 +18,12 @@ RUNTIME_FILES = {
     "frontend/app/globals.css",
     "frontend/app/admin/statistics/page.tsx",
 }
-ALLOWED_PREFIXES = ("backend/tests/", "frontend/app/admin/statistics/", "openspec/", "docs/")
+ALLOWED_PREFIXES = (
+    "backend/tests/",
+    "frontend/app/admin/statistics/",
+    "openspec/",
+    "docs/",
+)
 ALLOWED_OPERATIONS = {
     ".github/workflows/ci.yml",
     "scripts/check_prod_app_release_scope.py",
@@ -33,6 +38,8 @@ ALLOWED_OPERATIONS = {
     "scripts/deploy-prod-facial-services.sh",
     "scripts/test_prod_facial_release_gates.py",
     "scripts/test_deploy_prod_facial_services.sh",
+    "frontend/app/admin/galleries/gallery-editor.test.tsx",
+    "frontend/app/admin/galleries/private-folder-client-overview.test.tsx",
     "openspec/changes/improve-client-face-reference-capture/production-gates.json",
     "openspec/changes/improve-client-face-reference-capture/tasks.md",
     "openspec/changes/improve-client-face-reference-capture/specs/deployment-operations/spec.md",
