@@ -2,20 +2,15 @@
 
 ## Why
 
-A atualização de Vendas e pagamentos precisa entregar em produção o código correspondente da interface e da API; atualizar somente `web` deixa chamadas novas sem suporte. O procedimento atual, ainda local, restringe-se a `web`, portanto precisamos de um fluxo aprovado que publique os dois serviços como uma versão coordenada sem tocar dados e dependências do host.
+O repositório já possui um fluxo de produção aprovado via GitHub Actions para publicar `api` e `web`, além de um fluxo operacional web-only. Como os dois podem executar fora do mesmo controlador, precisam compartilhar uma exclusão mútua no host para impedir que alterem serviços ou estado de release ao mesmo tempo.
 
 ## What Changes
 
-- Acrescentar um modo de release da aplicação composto por `api` e `web`, ambos oriundos do mesmo commit aprovado de `main`.
-- Permitir inventário e registro aprovado do baseline inicial de API e das imagens reais API/web, sem recriar serviços.
-- Verificar a identidade e a saúde de ambos os contêineres, configurações Compose, portas e domínio antes da execução.
-- Construir e preservar imagens de API e web, atualizar somente esses dois serviços, e validar as duas healthchecks e as rotas HTTPS.
-- Registrar a versão anterior e a tentativa/versão saudável da aplicação em conjunto, com rollback coordenado das duas imagens.
-- Impedir concorrência com o procedimento web-only, preservando seu modo existente para alterações exclusivas de `web`.
-- Documentar explicitamente que Compose não torna a troca dos dois serviços atômica e que a operação pode causar interrupção breve.
-- Manter inventário somente-leitura, checkout limpo, SHA alcançável por `origin/main`, gate por configuração/código de aprovação, revisão e aprovação humana por execução.
-- Recusar a primeira publicação coordenada até reconciliar e aprovar o SHA-base da API e um snapshot dos IDs reais das imagens de API e web.
-- Não executar migrations neste fluxo; a presença de migrations ou alteração de configuração Compose invalida sua elegibilidade e exige procedimento separado.
+- Fazer releases e rollbacks mutáveis de API+web adquirirem o mesmo lock de host já usado pelo fluxo web-only.
+- Recusar operação API+web quando o lock estiver ocupado, `flock` estiver indisponível, o estado do lock não existir ou houver tentativa web-only sem conclusão.
+- Preservar os gates, a aprovação protegida, os snapshots e o rollback do fluxo GitHub Actions existente.
+- Preservar o fluxo web-only e sua recusa quando houver operação API+web em andamento ou pendente.
+- Documentar a exclusão mútua nos runbooks e testar ambos os sentidos da concorrência.
 
 ## Capabilities
 
@@ -23,12 +18,8 @@ A atualização de Vendas e pagamentos precisa entregar em produção o código 
 
 ### Modified Capabilities
 
-- `deployment-operations`: acrescenta release coordenado de produção para a aplicação `api` + `web`, com rollback do par, além do fluxo web-only existente.
+- `deployment-operations`: requer serialização entre releases mutáveis API+web e web-only usando um lock de host comum.
 
 ## Impact
 
-- Nova automação/runbook para produção e revisão do procedimento web-only apenas para exclusão mútua do release coordenado.
-- Serviços afetados: `api` (FastAPI) e `web` (Next.js) do projeto Compose `markina-gallery`, no host e domínio de produção já documentados.
-- PostgreSQL, Redis, workers, Nginx, volumes, redes, proxy, DNS, firewall, certificados, secrets e arquivos de ambiente não são mutados. Nenhuma migration será executada.
-- Impacto permitido limita-se à atualização dos dois serviços: pode ocorrer indisponibilidade breve durante a troca; zero downtime não é garantido.
-- Esta change prepara automação verificável e runbook, mas não autoriza acessar ou publicar em produção. A execução seguirá sujeita a inventário remoto atual e aprovação específica do SHA, inventário, impacto e código.
+A alteração limita-se ao script de release API+web já existente, ao helper e testes do fluxo web-only, aos runbooks e à change OpenSpec. Não cria um segundo mecanismo de release, não altera os gates existentes de produção e não modifica serviços, dados, schema, workers ou infraestrutura.

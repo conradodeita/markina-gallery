@@ -31,8 +31,18 @@ CHECKOUT_SHA=""
 ACTIVE_SHA=""
 COMPOSE_APP_VERSION=""
 DATABASE_REVISION=""
+production_deploy_lock_fd=9
 
 fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
+
+acquire_app_deploy_lock() {
+  [[ -d "$STATE_DIR" ]] || fail "diretório de estado ausente; nenhuma operação foi executada"
+  command -v flock >/dev/null 2>&1 || fail "flock indisponível; nenhuma operação foi executada"
+  exec {production_deploy_lock_fd}>"$STATE_DIR/production-release.lock"
+  flock -n "$production_deploy_lock_fd" || fail "outro inventário ou release de produção está em andamento"
+  [[ ! -e "$STATE_DIR/web-in-flight.sha" ]] \
+    || fail "tentativa web-only sem conclusão; reconciliação pelo fluxo correspondente é necessária"
+}
 
 verify_database_revision() {
   [[ "$1" == "$EXPECTED_DATABASE_REVISION" ]] || fail "revisão de banco diverge do inventário aprovado"
@@ -307,6 +317,7 @@ rollback() {
 main() {
   parse_arguments "$@"
   [[ "$EXPECTED_URL" == "$PUBLIC_URL" ]] || fail "domínio diverge do alvo"
+  if [[ "$MODE" == release || "$MODE" == rollback ]]; then acquire_app_deploy_lock; fi
   case "$MODE" in
     inventory) inventory ;;
     release) release ;;
