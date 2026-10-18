@@ -41,3 +41,9 @@ PR #177 permanece aberto para develop, head e9ce8405c1d53b8015e72b7f1f55a098329b
 CI do PR, merge e CI posterior ainda precisam de resultado definitivo antes de marcar a engenharia concluída. Publicação continua não autorizada; nenhum comando SSH foi executado nesta fase de engenharia.
 
 A conferência final desabilitou também a criação de bytecode Python nos entrypoints de inventário, além de optional locks/lazy fetch. O pin app foi recalculado. O CI inicial do PR #227 será substituído por esse head; execução anterior cancelada não conta como aprovação do head final.
+
+## Falha de CI investigada e correção de isolamento
+
+O run [#39174117724](https://github.com/conradodeita/markina-gallery/actions/runs/39174117724), head 6de4220, falhou em homolog-inventory-policy: `TemporaryDirectory.cleanup` encontrou `.git` novamente não vazio. Os quatro testes app e as políticas anteriores tinham passado. Log: [job 117813131835](https://github.com/conradodeita/markina-gallery/actions/runs/39174117724/job/117813131835).
+
+Trace2 de uma fixture local confirmou filho `git maintenance run --auto --quiet --detach`. A correção desativa maintenance.auto/gc.auto somente nos repositórios sintéticos de escopo/classificação; não modifica configuração Git de projeto, usuário ou servidor. Nova regressão confirma que commit de fixture não inicia maintenance. São 11 testes de escopo e 12 de classificação após essa correção. O CI deve ser repetido no novo head; não se declara sucesso com o run falho ou cancelado.
