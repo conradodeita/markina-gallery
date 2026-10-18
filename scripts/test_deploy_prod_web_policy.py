@@ -18,6 +18,10 @@ def forbid(pattern: str, description: str) -> None:
 
 
 def main() -> None:
+    require('source "$SCRIPT_DIR/deploy-prod-lock.sh"', "lock compartilhado com release coordenado")
+    require('acquire_production_deploy_lock "$STATE_DIR" web', "lock antes do fluxo web-only")
+    require('git diff --quiet "$ACTIVE_SHA" "$TARGET_SHA" -- backend/',
+            "recusa intervalo com mudanças de API no fluxo web-only")
     require('readonly PROJECT_ROOT="/opt/markina-gallery"', "raiz fixa do projeto")
     require('readonly PROJECT_NAME="markina-gallery"', "projeto Compose fixo")
     require('readonly COMPOSE_FILE="docker/docker-compose.yml"', "Compose fixo")

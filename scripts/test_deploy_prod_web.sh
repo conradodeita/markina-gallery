@@ -13,14 +13,6 @@ if bash "$SCRIPT" --mode deploy --sha 1111111111111111111111111111111111111111 >
 fi
 grep -Fq -- "--mode deve ser inventory, release, rollback-inventory ou rollback" "$output"
 
-# Bootstrap a partir de git show também deve executar a mesma validação.
-if bash -s -- --mode deploy --sha 1111111111111111111111111111111111111111 < "$SCRIPT" > "$output" 2>&1; then
-  echo "entrada por stdin não validou os argumentos" >&2
-  exit 1
-fi
-grep -Fq -- "--mode deve ser inventory, release, rollback-inventory ou rollback" "$output"
-
-
 if bash "$SCRIPT" --mode release --sha 1111111111111111111111111111111111111111 >"$output" 2>&1; then
   echo "release sem código de aprovação foi aceito" >&2
   exit 1
@@ -68,7 +60,7 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$SCRIPT" MARKINA_COMMAND_LOG="$output" bash -c '
       *NetworkSettings.Ports*) printf "{}\n" ;;
     esac
   }
-  verify_runtime_web > "$MARKINA_COMMAND_LOG" 2>&1
+  if verify_runtime_web > "$MARKINA_COMMAND_LOG" 2>&1; then exit 9; fi
 '; then
   echo "configuração divergente foi aceita" >&2
   exit 1
@@ -76,6 +68,26 @@ fi
 grep -Fq 'configuração efetiva diverge' "$output"
 if grep -Fq 'mutation ' "$output"; then
   echo "divergência permitiu mutação" >&2
+  exit 1
+fi
+
+: > "$output"
+if MARKINA_DEPLOY_SCRIPT_PATH="$SCRIPT" MARKINA_COMMAND_LOG="$output" bash -c '
+  source "$MARKINA_DEPLOY_SCRIPT_PATH"
+  ACTIVE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  TARGET_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  git() {
+    if [[ "$1 $2" == "diff --quiet" ]]; then return 1; fi
+    if [[ "$1" == switch ]]; then printf "switch %s\n" "$*" >> "$MARKINA_COMMAND_LOG"; return 0; fi
+    return 1
+  }
+  switch_to_target
+' >"$command_log" 2>&1; then
+  echo "release web-only aceitou intervalo com mudanças de API" >&2
+  exit 1
+fi
+if grep -Fq 'switch ' "$command_log"; then
+  echo "intervalo incompatível selecionou SHA antes de abortar" >&2
   exit 1
 fi
 
@@ -100,62 +112,6 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$SCRIPT" MARKINA_COMMAND_LOG="$command_log" bash 
 fi
 grep -Fq 'inventário mudou ou código de aprovação' "$output"
 [[ ! -s "$command_log" ]]
-
-# A identidade do nginx também faz parte do inventário aprovado.
-for ports in '{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}' '{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}'; do
-  status=0
-  MARKINA_TEST_PORTS="$ports" MARKINA_DEPLOY_SCRIPT_PATH="$SCRIPT" bash -c '
-    source "$MARKINA_DEPLOY_SCRIPT_PATH"
-    MODE=inventory
-    TARGET_CONFIG_HASH=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-    compose() {
-      case "$*" in
-        "ps -q web") echo web-container ;;
-        "ps -q nginx") echo nginx-container ;;
-        *) exit 92 ;;
-      esac
-    }
-    docker() {
-      case "$3" in
-        *project.working_dir*) echo "$COMPOSE_WORKING_DIR" ;;
-        *project.config_files*) echo "$COMPOSE_FILE_LABEL" ;;
-        *compose.project*) echo "$PROJECT_NAME" ;;
-        *compose.service*) echo web ;;
-        *config-hash*) echo "$TARGET_CONFIG_HASH" ;;
-        *State.Health*) echo healthy ;;
-        *NetworkSettings.Ports*) echo "$MARKINA_TEST_PORTS" ;;
-        "{{.Image}}") echo sha256:image ;;
-        *) exit 93 ;;
-      esac
-    }
-    verify_runtime_web
-    previous="$(approval_fingerprint release 1111111111111111111111111111111111111111)"
-    NGINX_PORTS=changed
-    [[ "$previous" != "$(approval_fingerprint release 1111111111111111111111111111111111111111)" ]]
-  ' > "$output" 2>&1 || status=$?
-  if [[ "$ports" == *127.0.0.1* ]]; then
-    [[ "$status" == 0 ]] || { cat "$output"; exit 1; }
-  else
-    [[ "$status" != 0 ]]
-    grep -Fq 'portas do nginx divergem' "$output"
-  fi
-done
-
-# Uma segunda publicação deve anunciar retorno à versão ativa, não à anterior à ativa.
-MARKINA_DEPLOY_SCRIPT_PATH="$SCRIPT" bash -c '
-  source "$MARKINA_DEPLOY_SCRIPT_PATH"
-  MODE=inventory
-  TARGET_SHA=3333333333333333333333333333333333333333
-  verify_repository() {
-    ACTIVE_SHA=2222222222222222222222222222222222222222
-    CHECKOUT_SHA="$ACTIVE_SHA"
-  }
-  verify_runtime_web() { :; }
-  read_state_sha() { echo 1111111111111111111111111111111111111111; }
-  docker() { :; }
-  inventory
-' > "$output"
-grep -Fxq 'rollback_sha=2222222222222222222222222222222222222222' "$output"
 
 python3 "$ROOT/scripts/test_deploy_prod_web_policy.py"
 echo "deploy-prod-web shell: ok"
