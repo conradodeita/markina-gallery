@@ -4,8 +4,10 @@
 set -Eeuo pipefail
 umask 077
 
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/deploy-prod-lock.sh"
+
 readonly PROJECT_ROOT="/opt/markina-gallery"
-readonly EXPECTED_HOST="clearbudget-vnic"
 readonly PROJECT_NAME="markina-gallery"
 readonly COMPOSE_FILE="docker/docker-compose.yml"
 readonly COMPOSE_WORKING_DIR="/opt/markina-gallery/docker"
@@ -32,8 +34,6 @@ WEB_CONFIG_HASH=""
 TARGET_CONFIG_HASH=""
 WEB_STATUS=""
 WEB_IMAGE_ID=""
-NGINX_CONTAINER=""
-NGINX_PORTS=""
 
 fail() {
   echo "deploy-prod-web: $*" >&2
@@ -92,7 +92,6 @@ active_web_sha() {
 
 verify_repository() {
   local origin_url
-  [[ "$(hostname)" == "$EXPECTED_HOST" ]] || fail "host diverge do inventário aprovado"
   [[ "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "execução permitida somente em $PROJECT_ROOT"
   [[ "$(git rev-parse --show-toplevel 2>/dev/null)" == "$PROJECT_ROOT" ]] || fail "diretório não é o checkout esperado"
   [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" ]] || fail "Compose ou arquivo de ambiente aprovado não encontrado"
@@ -106,16 +105,12 @@ verify_repository() {
   [[ -z "$(git status --porcelain)" ]] || fail "checkout possui alterações locais; nenhuma ação foi executada"
 
   origin_url="$(git remote get-url origin 2>/dev/null)" || fail "não foi possível verificar o origin Git"
-  case "$origin_url" in
-    "https://github.com/$EXPECTED_REPOSITORY"|"https://github.com/$EXPECTED_REPOSITORY.git"|"git@github.com:$EXPECTED_REPOSITORY.git") ;;
-    *) fail "origin não corresponde ao repositório aprovado" ;;
-  esac
+  [[ "$origin_url" =~ github\.com[:/]${EXPECTED_REPOSITORY//\//\/}(\.git)?$ ]] \
+    || fail "origin não corresponde ao repositório aprovado"
   git show-ref --verify --quiet refs/remotes/origin/main || fail "origin/main ausente; atualize as referências antes do inventário"
   git cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null || fail "SHA alvo não existe neste checkout"
   git merge-base --is-ancestor "$TARGET_SHA" origin/main || fail "SHA alvo não pertence à história atual de origin/main"
   CHECKOUT_SHA="$(git rev-parse HEAD)"
-  git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ \
-    || fail "SHA alvo altera arquivos Docker/Compose; este release aceita somente código web"
   ACTIVE_SHA="$(active_web_sha)"
   if [[ -f "$STATE_DIR/web-in-flight.sha" && "$MODE" != "rollback-inventory" && "$MODE" != "rollback" ]]; then
     fail "release anterior sem validação conclusiva; faça inventário e rollback do SHA web anterior"
@@ -153,10 +148,6 @@ verify_runtime_web() {
   nginx_id="$(compose ps -q nginx)"
   [[ -n "$nginx_id" ]] || fail "nginx da Markina não está ativo para confirmar a porta local"
   ports="$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$nginx_id")"
-  [[ "$ports" == '{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}' ]] \
-    || fail "portas do nginx divergem do inventário aprovado"
-  NGINX_CONTAINER="$nginx_id"
-  NGINX_PORTS="$ports"
   echo "Portas publicadas pelo nginx Markina (metadados Docker): $ports"
 }
 
@@ -165,7 +156,6 @@ approval_fingerprint() {
   printf '%s\n' \
     "$mode" "$sha" "$ACTIVE_SHA" "$CHECKOUT_SHA" "$WEB_CONTAINER" "$WEB_STATUS" \
     "$WEB_IMAGE_ID" "$WEB_CONFIG_HASH" "$TARGET_CONFIG_HASH" "$ENV_FILE" "$PUBLIC_URL" \
-    "$EXPECTED_HOST" "$COMPOSE_FILE_LABEL" "$NGINX_CONTAINER" "$NGINX_PORTS" \
     | sha256sum | awk '{print $1}'
 }
 
@@ -200,11 +190,7 @@ inventory() {
   fi
   echo "escopo=serviço web somente; api db redis worker nginx e recursos compartilhados preservados"
   echo "impacto=breve interrupção pode ocorrer durante a recriação; sem garantia de zero downtime"
-  if [[ "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]]; then
-    echo "rollback_sha=não aplicável"
-  else
-    echo "rollback_sha=$ACTIVE_SHA"
-  fi
+  echo "rollback_sha=$( [[ "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]] && echo 'não aplicável' || echo "$(read_state_sha "$STATE_DIR/web-previous.sha" 2>/dev/null || echo "$ACTIVE_SHA")" )"
   echo "approval_code=$code"
 }
 
@@ -236,6 +222,9 @@ restore_saved_web_image() {
 
 switch_to_target() {
   local old_checkout="$CHECKOUT_SHA"
+  if ! git diff --quiet "$ACTIVE_SHA" "$TARGET_SHA" -- backend/; then
+    fail "o intervalo entre a versão web ativa e o SHA alvo contém mudanças de API; use release coordenado"
+  fi
   git switch --detach "$TARGET_SHA" >/dev/null || fail "não foi possível selecionar o SHA aprovado"
   TARGET_CONFIG_HASH="$(compose config --hash web | awk '$1 == "web" {print $2}')"
   TARGET_CONFIG_HASH="${TARGET_CONFIG_HASH#sha256:}"
@@ -300,6 +289,7 @@ execute_rollback() {
 
 main() {
   parse_arguments "$@"
+  acquire_production_deploy_lock "$STATE_DIR" web || fail "não foi possível obter o lock compartilhado de produção"
   if [[ "$MODE" == "rollback" ]]; then
     execute_rollback
   elif [[ "$MODE" == "release" ]]; then

@@ -31,3 +31,6 @@ O run `39025690297` registrou que a cópia instalada recusou `MARKINA_APP_TARGET
 O inventário SSH posterior confirmou que o wrapper instalado já reconhece os comandos app, mas ainda fixa o blob anterior `6542f2c` do script. Para esta publicação ele precisa receber o pin revisado, mantendo owner `root:root`, modo `0755` e os comandos restritos. A alteração do pin não reinicia containers.
 
 As variáveis e chaves existentes do GitHub Environment `production-preflight` e `production` são reutilizadas. Nenhum segredo deve ser copiado para o repositório, logs, manifestos ou arquivos `.env`.
+## Exclusão mútua com o release web-only
+
+As operações mutáveis `release` e `rollback` adquirem o lock exclusivo `/var/lib/markina-gallery/deploy-state/production-release.lock`. O procedimento `deploy-prod-web.sh` usa o mesmo arquivo de lock e recusa iniciar enquanto houver release API/web em andamento ou tentativa API/web sem conclusão. Se o lock estiver ocupado, ausente ou houver uma tentativa web-only pendente, a operação falha antes de alterar serviços. Os modos de inventário permanecem somente-leitura e não disputam o lock de mutação.

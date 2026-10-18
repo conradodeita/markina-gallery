@@ -5,6 +5,10 @@ script="$(cat scripts/deploy-prod-app-services.sh)"
 require() { [[ "$script" == *"$1"* ]] || { echo "trecho de release ausente: $1" >&2; exit 1; }; }
 require 'readonly SERVICES=(api web)'
 require 'readonly EXPECTED_DATABASE_REVISION="20261017_0084"'
+require 'production-release.lock'
+require 'flock -n "$production_deploy_lock_fd"'
+require 'web-in-flight.sha'
+require 'if [[ "$MODE" == release || "$MODE" == rollback ]]; then acquire_app_deploy_lock; fi'
 require 'GIT_WORK_TREE="$PROJECT_ROOT"'
 require 'verify_readonly_target_ancestry'
 require '--filter=blob:none'
@@ -36,6 +40,24 @@ mkdir -p "$tmpdir/state"
 sed "s|^readonly STATE_DIR=.*|readonly STATE_DIR=\"$tmpdir/state\"|" \
   scripts/deploy-prod-app-services.sh > "$tmpdir/deploy.sh"
 source "$tmpdir/deploy.sh"
+
+# Exercise the API/web lock and its fail-closed gates without touching a host.
+mock_flock_status=0
+flock() { return "$mock_flock_status"; }
+acquire_app_deploy_lock
+[[ -f "$STATE_DIR/production-release.lock" ]]
+mock_flock_status=1
+if ( acquire_app_deploy_lock ) >"$tmpdir/lock-busy.out" 2>&1; then
+  echo 'release API/web aceitou lock ocupado' >&2; exit 1
+fi
+grep -q 'outro inventário ou release' "$tmpdir/lock-busy.out"
+mock_flock_status=0
+touch "$STATE_DIR/web-in-flight.sha"
+if ( acquire_app_deploy_lock ) >"$tmpdir/web-in-flight.out" 2>&1; then
+  echo 'release API/web aceitou tentativa web-only pendente' >&2; exit 1
+fi
+grep -q 'tentativa web-only sem conclusão' "$tmpdir/web-in-flight.out"
+rm -f "$STATE_DIR/web-in-flight.sha"
 
 # Verify target ancestry in a temporary bare partial clone without changing
 # the active checkout's refs, FETCH_HEAD, worktree, or HEAD.
