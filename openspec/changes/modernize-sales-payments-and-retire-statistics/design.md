@@ -18,6 +18,7 @@ Veja proposal.md. O painel usa CSS e UI Kit locais, consulta todos os pedidos co
 - Usar dialog nativo modal na top layer com portal, foco restaurado, Escape/setas, backdrop e bloqueio de scroll. Alternativa de seção inline rejeitada pelo mandato.
 - Manter os controles existentes de PaymentActions/OrderDeliveryForm. Layout de detalhe em áreas Fotos, Pagamento, Entrega; resumo inclui quantidade real de itens. Usar CSS local e tokens em todos os temas.
 - Estatísticas retorna 404 pela ausência de page.tsx e dos handlers exclusivos. Remover helpers e CSS após busca de referências; preservar tabelas, tipos e helpers compartilhados. Arquivos históricos OpenSpec permanecem como registro, com esta change supersedendo a funcionalidade.
+- Sincronizar o escopo operacional API/web com esta change: incluir por caminhos exatos os runtimes de `/admin/payments`, exportação e navegação; permitir somente a remoção dos dois arquivos antigos da página/teste de Estatísticas; registrar blobs exatos dos runtimes presentes. Baseline, revisão de banco e aprovações de produção permanecem inalterados. Essa preparação mantém CI e preflight em falha fechada e não autoriza publicação.
 
 ## Risks / Trade-offs
 

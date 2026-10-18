@@ -15,7 +15,7 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.run_git("init", "-q")
-        for name in policy.RUNTIME_FILES:
+        for name in policy.RUNTIME_FILES | policy.RETIRED_STATISTICS_FILES:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("approved runtime\n", encoding="utf-8")
@@ -66,6 +66,26 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "runtime_diverge_do_blob_aprovado"))
+
+    def test_retired_statistics_pages_are_exactly_allowlisted_and_removed_from_runtime_manifest(self):
+        self.assertNotIn("frontend/app/admin/statistics/page.tsx", policy.RUNTIME_FILES)
+        self.assertEqual(policy.RETIRED_STATISTICS_FILES, {
+            "frontend/app/admin/statistics/page.tsx",
+            "frontend/app/admin/statistics/page.test.tsx",
+        })
+        for name in policy.RETIRED_STATISTICS_FILES:
+            (self.root / name).unlink()
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
+    def test_unlisted_statistics_path_remains_out_of_scope(self):
+        path = self.root / "frontend/app/admin/statistics/unreviewed.tsx"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("unreviewed\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
 
     def test_exact_gallery_feature_tests_are_allowed(self):
         for name in ("frontend/app/admin/galleries/gallery-editor.test.tsx",
