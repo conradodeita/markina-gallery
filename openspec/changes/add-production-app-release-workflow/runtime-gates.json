@@ -3,7 +3,7 @@
   "production_baseline_sha": "b4f15abd6a71585082758062feba7fcfcc225587",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
-    "backend/app/main.py": "040fdf0174571c9dc9b23ed5be6918de2e4a99e6",
+    "backend/app/main.py": "6744219c3c6d2bd98215f2fb503776ed4c938d01",
     "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
     "frontend/app/globals.css": "8aa1c117cd9d032fc5847766fe3b238ca15da0d8",
