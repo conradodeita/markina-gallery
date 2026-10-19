@@ -1,4 +1,4 @@
 # Dependências exclusivas da imagem face-worker.
-numpy==2.2.6
-opencv-python-headless==4.12.0.88
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
 redis==6.4.0
