@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from datetime import datetime, timezone
 
@@ -137,7 +138,24 @@ class ThirdPartyReportTests(unittest.TestCase):
         self.assertIn("package-ecosystem: pip", config)
         self.assertIn("package-ecosystem: npm", config)
         self.assertIn("package-ecosystem: docker", config)
+        self.assertIn("package-ecosystem: docker-compose\n    directory: /docker", config)
         self.assertIn("package-ecosystem: github-actions", config)
+        self.assertNotIn("package-ecosystem: docker\n    directory: /docker", config)
+        compose_manifest_pattern = re.compile(r"^(docker-)?compose(-[\w]+)?(\.[\w-]+)?\.ya?ml$", re.IGNORECASE)
+        compose_manifests = sorted(
+            path.name for path in (monitor.ROOT / "docker").iterdir()
+            if path.is_file() and compose_manifest_pattern.fullmatch(path.name)
+        )
+        self.assertEqual(
+            compose_manifests,
+            [
+                "docker-compose.local.yml",
+                "docker-compose.preview-adjustment.yml",
+                "docker-compose.raw-development.yml",
+                "docker-compose.system-monitor.yml",
+                "docker-compose.yml",
+            ],
+        )
         for group in (
             "next-react-compatible:",
             "frontend-testing-compatible:",

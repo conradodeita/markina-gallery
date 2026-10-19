@@ -93,7 +93,7 @@ updates:
       timezone: America/Sao_Paulo
     open-pull-requests-limit: 1
 
-  - package-ecosystem: docker
+  - package-ecosystem: docker-compose
     directory: /docker
     schedule:
       interval: weekly
