@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-19
+goal: Atualizações previsíveis, agrupadas por compatibilidade e sem reduzir a
+  cobertura de segurança
