@@ -21,6 +21,9 @@ context: |
   # Continuidade entre executores
   Todo executor (humano ou qualquer IA) SHALL documentar o trabalho no OpenSpec. Antes de agir, deve ler o mandato, o roadmap, as diretrizes relevantes, as specs principais e as mudanças ativas. Toda nova funcionalidade ou alteração de comportamento SHALL ter change-id próprio com proposal, delta spec, design quando houver decisão técnica e tasks verificáveis antes do código. Durante a implementação, o executor SHALL manter tasks, testes e documentação sincronizados, registrar desvios e decisões, e nunca deixar comportamento implementado sem spec correspondente. Ao concluir, deve validar, sincronizar a spec principal e arquivar a mudança somente após revisão humana. Se não puder executar uma etapa, deve registrar o bloqueio no artefato e não inventar que ela foi concluída. O próximo executor deve conseguir continuar apenas lendo o repositório, sem depender do contexto de uma conversa anterior.
 
+  # Refatoração contínua
+  Em toda implementação, aplique a política em docs/CONTINUOUS-REFACTORING.md: avaliar e manter apenas o código diretamente afetado, com evidência e validação proporcional. Nenhuma remoção é obrigatória quando não houver oportunidade segura; não iniciar auditoria geral.
+
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
 # Example:
@@ -31,6 +34,13 @@ context: |
 #     tasks:
 #       - Break tasks into chunks of max 2 hours
 
+rules:
+  proposal:
+    - Considere o impacto sobre o código existente e possíveis substituições/duplicações no escopo, conforme docs/CONTINUOUS-REFACTORING.md; não invente oportunidades de limpeza.
+  tasks:
+    - Inclua uma verificação proporcional de código substituído/obsoleto na área afetada, com evidência; ausência de oportunidade segura é resultado válido e não exige remoção.
+    - Planeje validação e revisão final contra código morto evidente, duplicações desnecessárias e regressões; manutenção com aumento significativo de risco/escopo vira tarefa separada, conforme docs/CONTINUOUS-REFACTORING.md.
+
 # Per-operation guidance (optional)
 operations:
   apply:
@@ -38,6 +48,8 @@ operations:
       - Continue por todas as tasks acionáveis; um bloqueio individual não bloqueia a change.
       - Investigue e tente corrigir falhas técnicas antes de escalar.
       - Relatório de progresso não é condição de parada; pare somente quando não houver trabalho acionável seguro.
+      - Aplique docs/CONTINUOUS-REFACTORING.md somente à área diretamente afetada; comprove consumidores/compatibilidade antes de remover ou reorganizar e preserve contratos, tenants e autorizações existentes. Sem oportunidade segura, registre o resultado sem impor limpeza.
+      - Antes de concluir, revise o diff por código morto evidente/duplicações/regressões e execute validação pertinente; registre evidências e separe manutenção que amplie significativamente risco/escopo sem atrasar trabalho prioritário independente e seguro.
 # Add advisory guidance for how apply and archive work should be conducted.
 # This is separate from artifact rules above.
 # Example:
