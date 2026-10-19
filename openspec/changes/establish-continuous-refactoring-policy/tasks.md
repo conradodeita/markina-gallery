@@ -13,7 +13,7 @@
 ## 3. Validação e segurança de integração
 
 - [x] 3.1 Validar a change e o conjunto OpenSpec estritamente, além de git diff --check; registrar resultados reproduzíveis em validation.md.
-- [ ] 3.2 Revisar o diff final e gatilhos diretos/indiretos de CI; classificar o commit como release_scope=none e preparar PR exclusivamente de instruções/documentação, sem bypass, alteração de workflows ou operação real.
+- [x] 3.2 Revisar o diff final e gatilhos diretos/indiretos de CI; classificar o commit como release_scope=none e preparar PR exclusivamente de instruções/documentação, sem bypass, alteração de workflows ou operação real.
 
 ## Workflow follow-up
 

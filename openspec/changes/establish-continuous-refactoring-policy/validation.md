@@ -25,3 +25,5 @@ Main exige os seis checks estritos e aplica as proteções a administradores; ne
 ## Revisão documental
 
 Code Review local em modo read-only identificou que a política nova ainda estava untracked e, portanto, ausente do diff Git. O arquivo será incluído explicitamente no commit junto com suas referências; não se trata de arquivo ausente no workspace. A revisão final incidirá sobre o diff completo já versionado.
+
+A política e todos os artefatos foram incluídos no commit 80fd4e7. A revisão final local read-only sobre o diff completo terminou com código 0, sem defeitos acionáveis. Classificador desse commit: release_scope=none, baseline fe1f3bc6e1a483bd1ac5f4e71149f903e724873f. A main permaneceu f839d87e066f004954492bd552ad016f6fbddd9b durante a preparação; a classificação e os gates serão repetidos no head final antes da integração.
