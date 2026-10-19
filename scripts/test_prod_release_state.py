@@ -1,4 +1,4 @@
-"""Contratos de release em filesystem isolado; nenhum Docker/SSH real é invocado."""
+"""Contratos isolados; Docker CLI real só acessa API sintética em loopback, nunca daemon/SSH."""
 from __future__ import annotations
 
 import json
@@ -7,8 +7,11 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA_OLD = "a" * 40
@@ -591,6 +594,125 @@ source {quote(path.as_posix())}
         self.model["services"]["web"]["health"] = "unhealthy"
         self.save()
         self.mode("inventory", flow="app-services", ok=False)
+
+
+class DockerSnapshotContracts(unittest.TestCase):
+    """Exercita o template Go real, sem criar/inspecionar containers reais."""
+
+    def setUp(self):
+        docker = shutil.which("docker")
+        if not docker:
+            if os.environ.get("CI"):
+                self.fail("CI precisa do Docker CLI para testar o template real")
+            self.skipTest("Docker CLI ausente; executar esta classe no host/CI")
+        temp = tempfile.TemporaryDirectory(prefix="snapshot-docker-api-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        self.helper = self.base / "state.sh"
+        self.helper.write_text((ROOT / "scripts/deploy-prod-state.sh").read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
+        self.containers = {}
+        cases = [
+            ("migrate", "exited", {}),
+            ("worker", "running", {}),
+            ("empty-health", "exited", {"Health": {}}),
+            ("null-health", "running", {"Health": None}),
+            ("missing-health-status", "running", {"Health": {"FailingStreak": 0}}),
+            ("null-health-status", "running", {"Health": {"Status": None}}),
+            ("empty-health-status", "running", {"Health": {"Status": ""}}),
+            ("api", "running", {"Health": {"Status": "healthy"}}),
+            ("unhealthy-worker", "running", {"Health": {"Status": "unhealthy"}}),
+            ("starting-worker", "running", {"Health": {"Status": "starting"}}),
+            ("web", "running", {"Health": {"Status": "healthy"}}),
+        ]
+        for number, (service, status, optional) in enumerate(cases, 1):
+            cid = f"{number:x}" * 64
+            self.containers[cid] = {
+                "Id": cid, "Image": IMAGE_OLD,
+                "State": {"StartedAt": "2026-09-29T19:12:34.023453014Z", "Status": status, **optional},
+                "Config": {"Labels": {"com.docker.compose.project": "snapshot-fixture",
+                                      "com.docker.compose.service": service,
+                                      "com.docker.compose.config-hash": HASH_API}},
+            }
+        self.failed_id = None
+        self.requests = []
+        fixture = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def do_GET(self):
+                fixture.requests.append((self.command, self.path))
+                path = urlparse(self.path).path
+                if path.endswith("/containers/json"):
+                    data = [{"Id": cid, "Names": ["/" + c["Config"]["Labels"]["com.docker.compose.service"]],
+                             "Image": "fixture-image", "ImageID": c["Image"], "Command": "fixture", "Created": 1,
+                             "State": c["State"]["Status"], "Status": c["State"]["Status"],
+                             "Labels": c["Config"]["Labels"], "Ports": []} for cid, c in fixture.containers.items()]
+                elif "/containers/" in path and path.endswith("/json"):
+                    prefix = path.split("/")[-2]
+                    matches = [c for cid, c in fixture.containers.items() if cid.startswith(prefix)]
+                    if not matches or matches[0]["Id"] == fixture.failed_id:
+                        self.send_error(500, "synthetic inspect failure")
+                        return
+                    data = matches[0]
+                else:
+                    self.send_error(404, "unexpected synthetic API request")
+                    return
+                body = json.dumps(data).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def close_server():
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        self.addCleanup(close_server)
+        self.env = os.environ.copy()
+        for name in ("DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
+            self.env.pop(name, None)
+        self.env.update(DOCKER_HOST=f"tcp://127.0.0.1:{server.server_port}", DOCKER_API_VERSION="1.45",
+                        DOCKER_CONFIG=str(self.base), DOCKER_CLI_HINTS="false")
+        # Apenas um cliente real: nenhuma chamada pode alcançar o daemon do host.
+        self.env["PATH"] = str(Path(docker).parent) + os.pathsep + self.env["PATH"]
+
+    def snapshot(self):
+        return subprocess.run([BASH, "-c", 'source "$1"; PROJECT_NAME=snapshot-fixture; release_non_web_snapshot',
+                               "--", self.helper.as_posix()], env=self.env, capture_output=True, text=True,
+                              timeout=30, check=False)
+
+    def test_real_formatter_preserves_exited_and_optional_health(self):
+        result = self.snapshot()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = []
+        for cid, c in self.containers.items():
+            if c["Config"]["Labels"]["com.docker.compose.service"] == "web":
+                continue
+            health = (c["State"].get("Health") or {}).get("Status") or ""
+            expected.append(f'{cid}|{IMAGE_OLD}|2026-09-29T19:12:34.023453014Z|{c["State"]["Status"]}|{health}|{HASH_API}')
+        self.assertCountEqual(result.stdout.splitlines(), expected)
+        self.assertTrue(any("all=1" in path for _, path in self.requests))
+        self.assertTrue(all(method == "GET" for method, _ in self.requests))
+
+    def test_real_formatter_propagates_inspect_failure(self):
+        self.failed_id = "1" * 64  # O migrate continua enumerado; não pode ser omitido em erro.
+        result = self.snapshot()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("synthetic inspect failure", result.stderr)
+
+    def test_real_formatter_still_rejects_missing_required_field(self):
+        del self.containers["1" * 64]["State"]["StartedAt"]
+        result = self.snapshot()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("StartedAt", result.stderr)
 
 
 if __name__ == "__main__":

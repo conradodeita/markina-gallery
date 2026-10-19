@@ -20,7 +20,7 @@ O workflow de `develop` publica vários serviços e pode migrar dados. Não usar
 
 `web-previous.identity` identifica a recuperação após release saudável. `web-pending.identity`, `web-pending.services`, `web-pending.compose` e `web-pending.target` e `web-pending.image` preservam imagem, checkout, serviços, arquivos Compose e SHA do procedimento antes do build. O registro pending impede outro release até conclusão/recuperação. O ID atual é preservado sob `markina-gallery-web:rollback-<64 hex do ID>`; a tag precisa resolver ao ID registrado. Tag conflitante nunca é sobrescrita. Tags são referências mutáveis; somente o ID identifica o conteúdo.
 
-Os fluxos app/web usam o mesmo lock existente, aberto somente para leitura e adquirido com flock exclusivo em operações mutáveis. Lock ausente/symlink/ocupado ou tentativa do outro fluxo bloqueia. Inventários não adquirem lock, não escrevem, não fazem fetch e não criam temporários. São snapshots revalidados sob lock antes de qualquer mutação.
+Os fluxos app/web usam o mesmo lock existente, aberto somente para leitura e adquirido com flock exclusivo em operações mutáveis. Lock ausente/symlink/ocupado ou tentativa do outro fluxo bloqueia. Inventários não adquirem lock, não escrevem, não fazem fetch e não criam temporários. São snapshots revalidados sob lock antes de qualquer mutação. O snapshot não-web inclui também containers históricos parados, inclusive migrate: ausência de Health/Status é representada por saúde vazia, preservando identidade e estado exited. Isso não executa migration nem permite remover o container como contorno. Erros de inspeção continuam bloqueando.
 
 ## Preparação posterior à autorização operacional
 

@@ -9,8 +9,8 @@
 ## 2. Validação e integração
 - [x] 2.1 Cobrir cenários críticos com stubs/mocks e executar políticas, regressões, sintaxe e OpenSpec estrito.
 - [x] 2.2 Executar Code Review, investigar/corrigir achados e revisar diff/segredos/escopo.
-- [ ] 2.3 Publicar branch/PR, acompanhar CI e integrar somente com proteções satisfeitas e ausência comprovada de efeitos remotos; acompanhar CI final.
-- [ ] 2.4 Preparar runbook e solicitação operacional única com SHA final, imagem atual, gates, interrupção e recuperação autorizável; registrar evidências.
+- [x] 2.3 Publicar branch/PR, acompanhar CI e integrar somente com proteções satisfeitas e ausência comprovada de efeitos remotos; acompanhar CI final.
+- [x] 2.4 Preparar runbook e solicitação operacional única com SHA final, imagem atual, gates, interrupção e recuperação autorizável; registrar evidências.
 
 ## Evidências deste checkpoint
 
@@ -19,3 +19,11 @@
 ## Fora desta autorização
 
 Produção da dependência permanece na task 3.2 da change de segurança. Nenhum fetch, recibo, marcador, tag, lock, container ou banco na Oracle será modificado nesta fase. Não sincronizar/arquivar specs sem revisão humana.
+
+## 3. Retomada pontual autorizada — Health opcional
+- [x] 3.1 Reproduzir erro real com Docker CLI e fixtures fiéis, aplicar correção mínima e provar falha antes/sucesso depois.
+- [x] 3.2 Validar running/exited, ausência/null de Health/Status, preservação dos parados e falhas de inspeção; repetir contratos/políticas/pins/OpenSpec e Code Review.
+- [ ] 3.3 Publicar PR main, acompanhar checks, integrar sem bypass somente com automações seguras e acompanhar CI pós-merge.
+- [ ] 3.4 Registrar SHA final e preparar solicitação operacional única; revalidar por leitura o estado mutável, sem escrita Oracle.
+
+O PR #227 anterior foi integrado em 34d2afd5b8f407adb70b0dee165fa8d55a83b478; CI 39177622419 passou. A tentativa posterior ficou bloqueada antes de recibos/tags/build por Health ausente em migrate histórico. Somente fetch preparatório ocorreu. A autorização anterior não vale para o novo SHA. Os registros locais anteriores permanecem preservados em outra branch; esta branch começa na main atual e contém apenas a correção pontual e evidências pertinentes.

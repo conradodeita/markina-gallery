@@ -30,3 +30,9 @@ Engenharia e CI isolados; PR e merge com release_scope=none. Preparar runbook no
 ## Open Questions
 
 Nenhuma decisão de produto. A execução Oracle continua proibida até autorização operacional específica.
+
+## Correção do campo opcional Health
+
+O snapshot continuará consultando todos os containers (-aq) e exigindo ID, imagem, início e estado. A leitura de Health e de seu Status usará acesso de mapa condicional, produzindo campo vazio quando ausentes/null e preservando o estado Docker running/exited. Health presente continuará representado, inclusive unhealthy/starting; nenhuma aprovação/identidade/concorrência será alterada.
+
+Regressão executará a função real em Bash e o formatador real Docker CLI contra API HTTP sintética em loopback, sem daemon/Oracle. Fixtures representarão o migrate exited sem Health, running sem healthcheck, Health vazio/null/sem Status e estados healthy/unhealthy/starting. Erro de inspect continuará bloqueando o snapshot. O teste deve falhar com o helper anterior e passar após correção; CI deve executá-lo sem skip. A ausência de CLI local Linux pode ser registrada, sem substituir a evidência real no Windows/CI.

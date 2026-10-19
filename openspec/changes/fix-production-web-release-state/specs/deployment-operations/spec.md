@@ -57,3 +57,18 @@ O verificador app SHALL admitir somente `scripts/deploy-prod-state.sh` e `script
 #### Scenario: Release saudável degrada depois da conclusão
 - **WHEN** o web fica unhealthy após um release concluído, mas sua identidade coincide com o recibo atual
 - **THEN** rollback aprovado SHALL poder restaurar o ID anterior, mantendo todos os gates de configuração e serviços não-web
+
+### Requirement: Snapshot preserva containers sem healthcheck
+O snapshot não-web SHALL incluir containers running e exited do projeto, inclusive migrations históricos, preservando ID, imagem, início e estado. Health e Status opcionais ausentes/null SHALL produzir campo de saúde vazio sem falhar. Status de saúde presente SHALL permanecer no snapshot. Erro de inspeção ou perda de campos obrigatórios SHALL continuar bloqueando a operação; nenhum container SHALL ser removido ou omitido como contorno.
+
+#### Scenario: Migration histórico sem Health
+- **WHEN** o projeto contém migrate exited sem a chave Health
+- **THEN** o snapshot inclui sua identidade e estado exited com saúde vazia, sem escrever ou executar migration
+
+#### Scenario: Campos de saúde opcionais e estados ativos
+- **WHEN** Health é ausente, null, vazio ou não contém Status, ou o container running informa healthy/unhealthy/starting
+- **THEN** a saúde é vazia nos casos ausentes e igual ao status informado nos demais, preservando todos os containers não-web
+
+#### Scenario: Inspeção falha
+- **WHEN** Docker não consegue inspecionar um container enumerado
+- **THEN** o snapshot falha e nenhuma publicação é autorizada
