@@ -1,0 +1,153 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "12:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 4
+    groups:
+      compatible:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      breaking:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "12:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 4
+    groups:
+      specialized-runtime:
+        applies-to: version-updates
+        patterns:
+          - torch
+          - torchvision
+          - sentence-transformers
+          - transformers
+          - huggingface-hub
+          - numpy
+          - opencv-python-headless
+        update-types:
+          - major
+          - minor
+          - patch
+      compatible:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      breaking:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "12:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 4
+    groups:
+      compatible:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      breaking:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "12:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 4
+    groups:
+      compatible:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      breaking:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: "12:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 4
+    groups:
+      compatible:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      breaking:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "12:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 4
+    groups:
+      compatible:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      breaking:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
