@@ -38,6 +38,7 @@
 
 ## Qualidade e continuidade
 
+- Em toda implementação, inclusive fora de comandos OpenSpec, leia e aplique a [política permanente de refatoração contínua](docs/CONTINUOUS-REFACTORING.md). A avaliação é proporcional ao escopo e pode concluir que não há oportunidade segura de limpeza; as autorizações e prioridades existentes permanecem obrigatórias.
 - Faça mudanças pequenas, focadas e cobertas por testes relevantes; execute testes, lint, typecheck e build aplicáveis antes de declarar conclusão.
 - Documente o suficiente no OpenSpec para que outro executor consiga continuar apenas pelo repositório, sem depender de contexto de conversa.
 - Não adicione ao Git bancos locais, journals, caches, artefatos de teste ou referências locais, salvo requisito explícito da task/change.
