@@ -1,8 +1,8 @@
 # Validação e continuidade
 
-## Escopo desta execução
+## Escopo histórico da engenharia do PR #227
 
-Autorização do proprietário: engenharia local/GitHub, branch, testes, revisão, PR e merge condicionado a checks/revisões obrigatórios e ausência de efeitos em ambientes. Nenhuma escrita Oracle autorizada. A fase operacional terá solicitação conjunta própria. A change de dependências permanece com task 3.2 pendente até publicação autorizada.
+Autorização do proprietário: engenharia local/GitHub, branch, testes, revisão, PR e merge condicionado a checks/revisões obrigatórios e ausência de efeitos em ambientes. Nenhuma escrita Oracle autorizada. A autorização operacional foi posteriormente concedida e executada no SHA final de #228; a task 3.2 está concluída. Fechamento: [registro operacional](../remediate-frontend-dependency-vulnerabilities/production-publication-2026-10-19.md). Os resultados abaixo descrevem checkpoints históricos dessa engenharia.
 
 Base de engenharia: main `81eb0741ab824a74a1f2b4f3df4dfb86da81b5c5`, PR #226 já integrado e [CI #39167932644](https://github.com/conradodeita/markina-gallery/actions/runs/39167932644) aprovado. Branch isolada `codex/fix-web-release-state-2026-10-18`; a branch documental anterior e as pastas locais antigas foram preservadas.
 
@@ -32,24 +32,24 @@ Foram corrigidos defeitos encontrados durante a construção da suíte: pipeline
 
 Main exige backend, frontend, gemma-runtime, openspec, homolog-inventory-policy e gitleaks, com checks estritos e aplicação a administradores. Contagem obrigatória de aprovações formais = 0; sem ruleset adicional e sem hooks de repositório retornados. Nenhuma proteção foi alterada.
 
-Workflows e gatilhos permanecem iguais à main: pull_request padrão, push main/develop e manuais; sem closed, workflow_run/call ou pull_request_target. Deploy homolog exige push develop; preflights/releases main dependem de escopo app/facial; rollbacks são manuais. O registro antigo remote-test-smoke não tem arquivo nesta linha. Classificação do commit final será executada antes de push/merge; jobs remotos devem ficar skipped.
+Workflows e gatilhos permanecem iguais à main: pull_request padrão, push main/develop e manuais; sem closed, workflow_run/call ou pull_request_target. Deploy homolog exige push develop; preflights/releases main dependem de escopo app/facial; rollbacks são manuais. O registro antigo remote-test-smoke não tem arquivo nesta linha. Classificação do commit final conferida antes de push/merge e no CI pós-merge: release_scope=none, sete jobs remotos skipped.
 
 PR #177 permanece aberto para develop, head e9ce8405c1d53b8015e72b7f1f55a098329b3926; develop b4f15abd6a71585082758062feba7fcfcc225587. Sem integração nessa linha.
 
-## Gates ainda não concluídos neste checkpoint
+## Gates concluídos após os checkpoints locais
 
-CI do PR, merge e CI posterior ainda precisam de resultado definitivo antes de marcar a engenharia concluída. Publicação continua não autorizada; nenhum comando SSH foi executado nesta fase de engenharia.
+PR #227 integrado em 34d2afd5b8f407adb70b0dee165fa8d55a83b478, com CI do PR e pós-merge aprovados. Publicação posterior autorizada e concluída no SHA de #228. Nenhum comando SSH foi executado na fase histórica de engenharia descrita aqui; a operação autorizada está no registro operacional vinculado acima.
 
-A conferência final desabilitou também a criação de bytecode Python nos entrypoints de inventário, além de optional locks/lazy fetch. O pin app foi recalculado. O CI inicial do PR #227 será substituído por esse head; execução anterior cancelada não conta como aprovação do head final.
+A conferência final desabilitou também a criação de bytecode Python nos entrypoints de inventário, além de optional locks/lazy fetch. O pin app foi recalculado. O CI inicial do PR #227 foi substituído pelo head final; execução anterior cancelada não conta como aprovação.
 
 ## Falha de CI investigada e correção de isolamento
 
 O run [#39174117724](https://github.com/conradodeita/markina-gallery/actions/runs/39174117724), head 6de4220, falhou em homolog-inventory-policy: `TemporaryDirectory.cleanup` encontrou `.git` novamente não vazio. Os quatro testes app e as políticas anteriores tinham passado. Log: [job 117813131835](https://github.com/conradodeita/markina-gallery/actions/runs/39174117724/job/117813131835).
 
-Trace2 de uma fixture local confirmou filho `git maintenance run --auto --quiet --detach`. A correção desativa maintenance.auto/gc.auto somente nos repositórios sintéticos de escopo/classificação; não modifica configuração Git de projeto, usuário ou servidor. Nova regressão confirma que commit de fixture não inicia maintenance. São 11 testes de escopo e 12 de classificação após essa correção. O CI deve ser repetido no novo head; não se declara sucesso com o run falho ou cancelado.
+Trace2 de uma fixture local confirmou filho `git maintenance run --auto --quiet --detach`. A correção desativa maintenance.auto/gc.auto somente nos repositórios sintéticos de escopo/classificação; não modifica configuração Git de projeto, usuário ou servidor. Nova regressão confirma que commit de fixture não inicia maintenance. São 11 testes de escopo e 12 de classificação após essa correção. O CI foi repetido com sucesso no head final: [CI #39174812713](https://github.com/conradodeita/markina-gallery/actions/runs/39174812713); [pós-merge #39177622419](https://github.com/conradodeita/markina-gallery/actions/runs/39177622419). O run falho não foi usado como aprovação.
 
 ## Regressões finais de identidade na contingência
 
-Dois novos casos reproduziram antes da correção: recover aceitava uma terceira imagem fora da tentativa, e rollback de release já concluído recusava web unhealthy apesar de identidade comprovada. O pending agora registra ID construído antes da troca e a recuperação aceita somente esse ID ou o anterior preservado; rollback unhealthy mantém gates de identidade/configuração. Os dois testes devem passar antes da próxima publicação do head. Não houve execução remota.
+Dois novos casos reproduziram antes da correção: recover aceitava uma terceira imagem fora da tentativa, e rollback de release já concluído recusava web unhealthy apesar de identidade comprovada. O pending agora registra ID construído antes da troca e a recuperação aceita somente esse ID ou o anterior preservado; rollback unhealthy mantém gates de identidade/configuração. Os dois testes passaram no head final, conforme validação abaixo. Não houve execução remota.
 
-Validação das duas regressões: falharam no código anterior e passaram após a correção; suíte completa atual: 32 testes Linux aprovados em 156,953 s. Os cenários app→web e web→app/rollback foram depois exercitados com SHAs distintos e IDs novos: os dois passaram em 23,498 s (subconjunto repetido, não somar). Terceiro Code Review, somente nas correções de contingência, sem defeitos acionáveis. Políticas, Ruff e diff-check passaram novamente. O próximo head do PR substitui o anterior; não integrar o head anterior enquanto estas correções estiverem apenas locais.
+Validação das duas regressões: falharam no código anterior e passaram após a correção; suíte completa atual: 32 testes Linux aprovados em 156,953 s. Os cenários app→web e web→app/rollback foram depois exercitados com SHAs distintos e IDs novos: os dois passaram em 23,498 s (subconjunto repetido, não somar). Terceiro Code Review, somente nas correções de contingência, sem defeitos acionáveis. Políticas, Ruff e diff-check passaram novamente. Essas correções foram integradas no head c14a9849289bedc864731d601dcd44fd5e2abaa4 e no merge 34d2afd5b8f407adb70b0dee165fa8d55a83b478; não permanecem apenas locais.
