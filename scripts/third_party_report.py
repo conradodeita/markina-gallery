@@ -23,6 +23,7 @@ WATCHLIST = (
     {
         "name": "LightCraft",
         "source": "github-release",
+        "pin_source": "backend/Dockerfile.raw-development",
         "url": "https://api.github.com/repos/storytold/lightcraft/releases/latest",
         "source_url": "https://github.com/storytold/lightcraft/releases",
         "risk": "Pode alterar decodificação, cor, formatos e suporte por câmera; exige corpus autorizado e comparação visual.",
@@ -30,6 +31,7 @@ WATCHLIST = (
     {
         "name": "RawTherapee",
         "source": "github-release",
+        "pin_source": "backend/Dockerfile.raw-development",
         "url": "https://api.github.com/repos/RawTherapee/RawTherapee/releases/latest",
         "source_url": "https://github.com/RawTherapee/RawTherapee/releases",
         "risk": "Pode alterar renderização RAW, codecs e comportamento do perfil; validar imagem e formatos/câmeras.",
@@ -37,6 +39,7 @@ WATCHLIST = (
     {
         "name": "EmbeddingGemma 2",
         "source": "huggingface-model",
+        "pin_source": "backend/app/facial/gemma_provider.py",
         "url": "https://huggingface.co/api/models/google/embeddinggemma-2",
         "source_url": "https://huggingface.co/google/embeddinggemma-2",
         "risk": "Mudança de pesos exige benchmark facial autorizado, avaliação de licença, qualidade, recursos e reindexação; nunca propor automaticamente.",
@@ -319,13 +322,13 @@ def build_report(repo: str, token: str, fetch: Callable = fetch_json, now: datet
                 recommendation = "acompanhar"
                 priority = "P3"
             sections.append(
-                f"- **{priority} · {item['name']}** — declarado `{current}` em `{item['source_url']}`; {status}. "
+                f"- **{priority} · {item['name']}** — declarado `{current}` em `{item['pin_source']}`; fonte upstream: {item['source_url']}; {status}. "
                 f"Benefício: acompanhar manutenção upstream. Risco: {item['risk']} Recomendação: {recommendation}."
             )
         except SourceError as exc:
             errors.append(f"{item['name']}: {exc}")
             sections.append(
-                f"- **{item['name']}** — declarado `{current}`; versão disponível **NÃO CONFIRMADA**. "
+                f"- **{item['name']}** — declarado `{current}` em `{item['pin_source']}`; versão disponível **NÃO CONFIRMADA**. "
                 f"Falha da fonte `{item['source_url']}`: {exc}. Risco: {item['risk']} Recomendação: retentar a consulta."
             )
 

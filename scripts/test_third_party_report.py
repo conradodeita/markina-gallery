@@ -82,6 +82,11 @@ class ThirdPartyReportTests(unittest.TestCase):
         self.assertIn("2026-10-19T00:00:00+00:00", report)
         self.assertIn("P1 · HIGH · cryptography (pip)", report)
         self.assertIn("`16.4.0` → `17.0.0`", report)
+        self.assertIn("declarado `0.6.0` em `backend/Dockerfile.raw-development`", report)
+        self.assertIn(
+            f"declarado `{monitor.pinned_versions()['EmbeddingGemma 2']}` em `backend/app/facial/gemma_provider.py`",
+            report,
+        )
         self.assertIn("testar api, build", report.lower())
         self.assertIn("nenhuma versão/revisão diferente", report)
         self.assertNotIn("merge --auto", report)
