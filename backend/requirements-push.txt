@@ -9,7 +9,7 @@ aiosignal==1.4.0
 attrs==26.1.0
 charset-normalizer==3.5.1
 frozenlist==1.8.0
-multidict==6.8.0
+multidict==7.1.0
 propcache==0.5.2
 urllib3==2.7.0
 yarl==1.24.5
