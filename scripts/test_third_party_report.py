@@ -25,11 +25,21 @@ class ThirdPartyReportTests(unittest.TestCase):
         with self.assertRaises(monitor.SourceError):
             monitor.parse_specialized_candidate(monitor.WATCHLIST[1], "stable", {"tag_name": "latest"})
 
-    def test_digest_image_and_range_versions_are_not_used_as_runtime_evidence(self):
+    def test_nginx_image_is_version_independent_and_remains_monitored(self):
         compose = (monitor.ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
+        nginx_image = monitor.nginx_image_reference(compose)
+        self.assertRegex(nginx_image, r"^nginx:\d+\.\d+(?:\.\d+)?-alpine$")
+        inventory = (monitor.ROOT / "docs/THIRD-PARTY-INVENTORY.md").read_text(encoding="utf-8")
+        self.assertRegex(inventory, r"(?m)^\| 05 \| Nginx \| `nginx:[^`]+`, Compose \|")
+        dependabot = (monitor.ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+        compose_ecosystem = re.search(
+            r"(?ms)^  - package-ecosystem: docker-compose\s+directory: /docker\s+schedule:",
+            dependabot,
+        )
+        self.assertIsNotNone(compose_ecosystem)
+
         image_lines = [line.strip().split("image:", 1)[1].strip() for line in compose.splitlines() if "image:" in line]
         self.assertTrue(any("@sha256:" in line for line in image_lines))
-        self.assertTrue(any("nginx:1.27-alpine" in line for line in image_lines))
         self.assertIn("fastapi>=", (monitor.ROOT / "backend/requirements.txt").read_text(encoding="utf-8"))
         image, tag, digest = monitor.parse_image_reference(
             "evoapicloud/evolution-api:v2.3.7@sha256:" + "a" * 64
@@ -40,6 +50,32 @@ class ThirdPartyReportTests(unittest.TestCase):
         with self.assertRaises(monitor.SourceError):
             monitor.parse_image_reference("nginx:tag@sha256:invalid")
         # The report labels local pins and upstream candidates; it never queries production runtime.
+
+    def test_nginx_image_reference_accepts_future_numeric_alpine_versions(self):
+        for tag in ("1.27-alpine", "1.31-alpine", "1.31.2-alpine"):
+            with self.subTest(tag=tag):
+                compose = f"services:\n  nginx:\n    image: nginx:{tag}\n"
+                self.assertEqual(monitor.nginx_image_reference(compose), f"nginx:{tag}")
+
+    def test_nginx_image_reference_rejects_missing_or_policy_violating_declarations(self):
+        missing_service = "services:\n  web:\n    image: nginx:1.31-alpine\n"
+        missing_image = "services:\n  nginx:\n    ports:\n      - 8080:80\n"
+        for compose in (missing_service, missing_image):
+            with self.subTest(compose=compose), self.assertRaises(monitor.SourceError):
+                monitor.nginx_image_reference(compose)
+
+        invalid_references = (
+            "nginx",
+            "nginx:latest",
+            "nginx:1.31",
+            "nginx:one-alpine",
+            "nginx:1.31-alpine3.22",
+            "example/nginx:1.31-alpine",
+            "nginx:1.31-alpine@sha256:invalid",
+        )
+        for reference in invalid_references:
+            with self.subTest(reference=reference), self.assertRaises(monitor.SourceError):
+                monitor.nginx_image_reference(f"services:\n  nginx:\n    image: {reference}\n")
 
     def test_pagination_follows_all_pages_and_rejects_incomplete_result(self):
         calls = []
