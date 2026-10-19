@@ -23,3 +23,7 @@ Runbook completo: `docs/DEPLOY-PROD-WEB.md`. Os scripts do SHA aprovado e seus h
 Uma única autorização: preparação Oracle + publicação web-only + validação + recuperação contingencial, no SHA exato integrado. Inclui fetch do alvo, tags verificadas apenas do web, recibos/histórico, checkout, cache/build e substituição exclusiva do web. Inclui restauração contingencial dessa mesma imagem/checkout se necessário. Não inclui wrapper remoto, nginx reload, banco/migrations, limpeza, configuração, fotos, outros serviços ou operações destrutivas.
 
 Possível breve interrupção web durante recriação/recuperação; DNS dinâmico nginx já versionado deve ser confirmado sem alterar seu processo. Saúde/HTTPS, capacidade de build e preservação das imagens são gates imediatos. Se alguma divergência impedir a segurança, parar a operação afetada; não contornar.
+
+## Retomada pontual do inventário
+
+O inventário anterior foi bloqueado por Health ausente no migrate histórico, antes de adoção/build. A correção atual preserva o container parado e trata somente Health/Status opcionais; validação e revisão em optional-health-validation.md. O novo SHA será determinado após integração/CI e exigirá autorização operacional específica, sem reutilizar a autorização de 34d2afd5. Durante esta engenharia não executar escrita Oracle. Antes da retomada autorizada, repetir todos os gates mutáveis do runbook, preservar exatamente a imagem ativa revalidada e manter os demais serviços intocados.

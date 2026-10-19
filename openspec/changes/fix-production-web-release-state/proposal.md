@@ -24,3 +24,7 @@ A auditoria do PR #226 comprovou que o fluxo app substitui o web sem atualizar s
 ## Impact
 
 Somente scripts, testes, runbooks e OpenSpec; sem mudança funcional, Dockerfile, Compose, dependências ou dados. Baseline de produção e gates protegidos ficam inalterados. A autorização desta fase abrange desenvolvimento/GitHub; toda escrita Oracle aguarda aprovação específica posterior. O pin do wrapper app deve acompanhar seu conteúdo no repositório, mas sua instalação remota não está autorizada nem é pré-requisito para o fluxo web manual.
+
+## Correção pontual após execução bloqueada
+
+A execução autorizada do SHA 34d2afd5 terminou antes da adoção: o snapshot inclui corretamente o migrate histórico parado, mas seu acesso direto a .State.Health falha quando a chave opcional falta. A retomada de engenharia autorizada limita-se a esse acesso, regressões com Docker CLI real e atualização dos pins derivados. Nenhum container será omitido/removido para contornar o erro; nenhuma escrita Oracle está autorizada para o novo SHA.

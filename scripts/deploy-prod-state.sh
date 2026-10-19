@@ -73,7 +73,7 @@ release_non_web_snapshot() {
     [[ -n "$id" ]] || continue
     service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$id")" || return 1
     [[ "$service" == web ]] && continue
-    docker inspect --format '{{.Id}}|{{.Image}}|{{.State.StartedAt}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{index .Config.Labels "com.docker.compose.config-hash"}}' "$id" || return 1
+    docker inspect --format '{{.Id}}|{{.Image}}|{{.State.StartedAt}}|{{.State.Status}}|{{with index .State "Health"}}{{with index . "Status"}}{{.}}{{end}}{{end}}|{{index .Config.Labels "com.docker.compose.config-hash"}}' "$id" || return 1
   done <<< "$ids"
 }
 
