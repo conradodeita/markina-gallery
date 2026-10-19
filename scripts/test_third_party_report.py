@@ -144,10 +144,10 @@ class ThirdPartyReportTests(unittest.TestCase):
             "web-push-compatible:",
             "face-runtime-compatible:",
             "gemma-runtime-compatible:",
-            "actions-compatible:",
         ):
             self.assertIn(group, config)
         self.assertEqual(config.count("open-pull-requests-limit: 1"), 6)
+        self.assertNotIn("actions-compatible:", config)
         self.assertNotIn("security-updates", config)
         self.assertNotRegex(config, r"(?m)^\s+- major$")
         self.assertIn("update-types:", config)
