@@ -8,13 +8,11 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
 
 ROOT = Path(__file__).resolve().parents[1]
 API_ROOT = "https://api.github.com"
@@ -133,6 +131,45 @@ def parse_release(value: object) -> str:
     if not isinstance(value, dict) or not isinstance(value.get("tag_name"), str):
         raise SourceError("release upstream não contém tag_name")
     return value["tag_name"].removeprefix("v")
+
+
+def nginx_image_reference(compose: str) -> str:
+    """Return the versioned official Alpine image declared by Compose's nginx service."""
+    if not isinstance(compose, str):
+        raise SourceError("manifesto Compose inválido")
+
+    service_sections = [index for index, line in enumerate(compose.splitlines()) if line == "services:"]
+    if len(service_sections) != 1:
+        raise SourceError("bloco services do Compose ausente ou duplicado")
+
+    lines = compose.splitlines()
+    service_starts = [
+        index for index, line in enumerate(lines)
+        if index > service_sections[0] and re.fullmatch(r"  nginx:\s*(?:#.*)?", line)
+    ]
+    if len(service_starts) != 1:
+        raise SourceError("serviço nginx do Compose ausente ou duplicado")
+
+    image_values: list[str] = []
+    for line in lines[service_starts[0] + 1:]:
+        if re.match(r"^  [A-Za-z0-9_.-]+:\s*(?:#.*)?$", line):
+            break
+        if line and not line[0].isspace() and not line.startswith("#"):
+            break
+        if re.match(r"^    image\s*:", line):
+            match = re.fullmatch(r"    image\s*:\s*([^\s#]+)\s*(?:#.*)?", line)
+            if not match:
+                raise SourceError("declaração de imagem do serviço nginx inválida")
+            image_values.append(match.group(1).strip("'\""))
+
+    if len(image_values) != 1:
+        raise SourceError("serviço nginx deve declarar exatamente uma imagem")
+
+    reference = image_values[0]
+    image, tag, _digest = parse_image_reference(reference)
+    if image != "nginx" or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?-alpine", tag):
+        raise SourceError("imagem nginx deve usar tag numérica Alpine explícita")
+    return reference
 
 
 def parse_image_reference(reference: str) -> tuple[str, str, str | None]:

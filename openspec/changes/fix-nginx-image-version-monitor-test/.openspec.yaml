@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-19
+goal: Validar a imagem Nginx declarada em Compose sem fixar versão, preservando
+  detecção de ausência e referências inválidas.

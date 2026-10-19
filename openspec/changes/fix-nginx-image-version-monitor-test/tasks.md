@@ -1,0 +1,7 @@
+# Tasks
+
+- [x] Criar teste de regressão que aceite as tags Nginx `1.27-alpine` e `1.31-alpine` e rejeite serviço/imagem ausentes, referências inválidas e violações da política de imagem versionada Alpine. Evidência: `python -m unittest scripts.test_third_party_report -v` passou com 11 testes.
+- [x] Implementar extração e validação sem versão fixa da imagem Nginx, e confirmar no teste integrado a cobertura no inventário e em Dependabot `/docker`. Evidência: teste integrado validou imagem, linha de inventário e ecossistema/diretório configurados.
+- [x] Validar a configuração Compose candidata, executar `nginx -t` e smoke tests sintéticos de proxy/roteamento. Evidência: `docker compose ... config --quiet` passou para a única alteração de #248; `nginx:1.31-alpine nginx -t` passou; smoke tests retornaram `200 ok`, `200 api:/healthz`, `200 web:/admin/test` e `404` para `/api/internal/private`, em rede e containers descartáveis isolados.
+- [x] Executar validações locais de teste/OpenSpec e revisar o escopo do diff. Evidência: unittest (11/11), Ruff nos arquivos alterados e `openspec validate ... --strict` aprovados; mudança limitada ao monitor/testes/OpenSpec, sem manifestos operacionais ou workflows.
+- [ ] Abrir PR separado, aguardar CI/revisões requeridas, integrar somente após os gates aprovarem, atualizar #248 quando necessário e verificar novamente todos os checks sem fazer merge de #248.
