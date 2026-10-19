@@ -4,150 +4,109 @@ updates:
     directory: /frontend
     schedule:
       interval: weekly
-      day: monday
-      time: "12:00"
+      day: tuesday
+      time: "10:00"
       timezone: America/Sao_Paulo
-    open-pull-requests-limit: 4
+    open-pull-requests-limit: 1
     groups:
-      compatible:
+      next-react-compatible:
         applies-to: version-updates
         patterns:
-          - "*"
+          - next
+          - react
+          - react-dom
+          - eslint-config-next
         update-types:
           - minor
           - patch
-      breaking:
+      frontend-testing-compatible:
         applies-to: version-updates
         patterns:
-          - "*"
+          - "@testing-library/*"
+          - jsdom
         update-types:
-          - major
+          - minor
+          - patch
 
   - package-ecosystem: pip
     directory: /backend
     schedule:
       interval: weekly
-      day: monday
-      time: "12:00"
+      day: wednesday
+      time: "10:00"
       timezone: America/Sao_Paulo
-    open-pull-requests-limit: 4
+    open-pull-requests-limit: 1
     groups:
-      specialized-runtime:
+      web-push-compatible:
         applies-to: version-updates
         patterns:
-          - torch
-          - torchvision
-          - sentence-transformers
-          - transformers
-          - huggingface-hub
+          - aiohttp
+          - aiohappyeyeballs
+          - aiosignal
+          - attrs
+          - charset-normalizer
+          - frozenlist
+          - http-ece
+          - py-vapid
+          - pywebpush
+          - requests
+          - urllib3
+          - yarl
+        update-types:
+          - minor
+          - patch
+      face-runtime-compatible:
+        applies-to: version-updates
+        patterns:
           - numpy
           - opencv-python-headless
         update-types:
-          - major
           - minor
           - patch
-      compatible:
+      gemma-runtime-compatible:
         applies-to: version-updates
         patterns:
-          - "*"
+          - huggingface-hub
+          - sentence-transformers
+          - torch
+          - torchvision
+          - transformers
         update-types:
           - minor
           - patch
-      breaking:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - major
 
   - package-ecosystem: docker
     directory: /backend
     schedule:
       interval: weekly
-      day: monday
-      time: "12:00"
+      day: thursday
+      time: "10:00"
       timezone: America/Sao_Paulo
-    open-pull-requests-limit: 4
-    groups:
-      compatible:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-      breaking:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - major
+    open-pull-requests-limit: 1
 
   - package-ecosystem: docker
     directory: /frontend
     schedule:
       interval: weekly
-      day: monday
-      time: "12:00"
+      day: friday
+      time: "10:00"
       timezone: America/Sao_Paulo
-    open-pull-requests-limit: 4
-    groups:
-      compatible:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-      breaking:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - major
+    open-pull-requests-limit: 1
 
   - package-ecosystem: docker
     directory: /docker
     schedule:
       interval: weekly
-      day: monday
-      time: "12:00"
+      day: saturday
+      time: "10:00"
       timezone: America/Sao_Paulo
-    open-pull-requests-limit: 4
-    groups:
-      compatible:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-      breaking:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - major
+    open-pull-requests-limit: 1
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
-      time: "12:00"
+      time: "10:00"
       timezone: America/Sao_Paulo
-    open-pull-requests-limit: 4
-    groups:
-      compatible:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-      breaking:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - major
+    open-pull-requests-limit: 1

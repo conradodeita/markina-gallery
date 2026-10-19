@@ -17,7 +17,38 @@ on:
           - app-rollback
 
 jobs:
+  ci-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      gemma: ${{ steps.classify.outputs.gemma }}
+      backend_image: ${{ steps.classify.outputs.backend_image }}
+      frontend_image: ${{ steps.classify.outputs.frontend_image }}
+      preview: ${{ steps.classify.outputs.preview }}
+      raw: ${{ steps.classify.outputs.raw }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classificar validações necessárias
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --name-only "$BASE_SHA...$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths.txt"
+            python scripts/classify_ci_scope.py --output "$GITHUB_OUTPUT" < "$RUNNER_TEMP/changed-paths.txt"
+          else
+            python scripts/classify_ci_scope.py --full --output "$GITHUB_OUTPUT"
+          fi
+
   backend:
+    needs: [ci-scope]
+    if: ${{ needs.ci-scope.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     services:
       tenant-postgres:
@@ -111,6 +142,8 @@ jobs:
           pytest backend/tests/test_admin_client_directory.py::test_deletion_removes_combined_homolog_operational_inventory_and_keeps_tombstone -q
 
   gemma-runtime:
+    needs: [ci-scope]
+    if: ${{ needs.ci-scope.outputs.gemma == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -132,6 +165,8 @@ jobs:
             gemma-runtime:validation python /tmp/check_gemma_runtime.py
 
   frontend:
+    needs: [ci-scope]
+    if: ${{ needs.ci-scope.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -153,6 +188,26 @@ jobs:
         run: npm run build
         working-directory: frontend
 
+  runtime-images:
+    needs: [ci-scope]
+    if: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' || needs.ci-scope.outputs.preview == 'true' || needs.ci-scope.outputs.raw == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build local da API (sem publicar ou iniciar serviços)
+        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        run: docker build --tag backend:validation --file backend/Dockerfile backend
+      - name: Build local da imagem frontend (sem publicar ou iniciar serviços)
+        if: ${{ needs.ci-scope.outputs.frontend_image == 'true' }}
+        run: docker build --tag frontend:validation --file frontend/Dockerfile frontend
+      - name: Build local de prévias (sem publicar ou iniciar serviços)
+        if: ${{ needs.ci-scope.outputs.preview == 'true' }}
+        run: docker build --tag preview-adjustment:validation --file backend/Dockerfile.preview-adjustment backend
+      - name: Build local do conversor RAW opt-in (sem publicar ou iniciar serviços)
+        if: ${{ needs.ci-scope.outputs.raw == 'true' }}
+        run: docker build --tag raw-development:validation --file backend/Dockerfile.raw-development backend
+
   openspec:
     runs-on: ubuntu-latest
     steps:
@@ -173,11 +228,28 @@ jobs:
           fi
 
   homolog-inventory-policy:
+    needs: [ci-scope, backend, frontend, gemma-runtime, runtime-images, openspec, gitleaks]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Exigir sucesso de cada validação necessária
+        shell: bash
+        env:
+          CI_SCOPE_RESULT: ${{ needs.ci-scope.result }}
+          BACKEND_REQUIRED: ${{ needs.ci-scope.outputs.backend }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_REQUIRED: ${{ needs.ci-scope.outputs.frontend }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          GEMMA_REQUIRED: ${{ needs.ci-scope.outputs.gemma }}
+          GEMMA_RESULT: ${{ needs.gemma-runtime.result }}
+          RUNTIME_IMAGES_REQUIRED: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' || needs.ci-scope.outputs.preview == 'true' || needs.ci-scope.outputs.raw == 'true' }}
+          RUNTIME_IMAGES_RESULT: ${{ needs.runtime-images.result }}
+          OPENSPEC_RESULT: ${{ needs.openspec.result }}
+          GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
+        run: python scripts/check_ci_results.py
       - name: Validar sintaxe Bash do inventário
         run: bash -n scripts/inventory-homolog-readonly.sh
       - name: Testar política de escopo e SHA
@@ -214,7 +286,7 @@ jobs:
 
   deploy-homolog:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, gitleaks]
+    needs: [backend, frontend, gemma-runtime, runtime-images, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     environment: homolog
     permissions:

@@ -138,7 +138,18 @@ class ThirdPartyReportTests(unittest.TestCase):
         self.assertIn("package-ecosystem: npm", config)
         self.assertIn("package-ecosystem: docker", config)
         self.assertIn("package-ecosystem: github-actions", config)
-        self.assertIn("specialized-runtime:", config)
+        for group in (
+            "next-react-compatible:",
+            "frontend-testing-compatible:",
+            "web-push-compatible:",
+            "face-runtime-compatible:",
+            "gemma-runtime-compatible:",
+        ):
+            self.assertIn(group, config)
+        self.assertEqual(config.count("open-pull-requests-limit: 1"), 6)
+        self.assertNotIn("actions-compatible:", config)
+        self.assertNotIn("security-updates", config)
+        self.assertNotRegex(config, r"(?m)^\s+- major$")
         self.assertIn("update-types:", config)
 
     def test_inventory_distinguishes_gemma_service_assets_and_actual_inference(self):
