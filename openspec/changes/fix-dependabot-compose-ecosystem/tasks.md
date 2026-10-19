@@ -8,6 +8,6 @@
 
 ## 2. Validar e integrar
 
-- [ ] 2.1 Abrir PR para `main`, validar a configuração Dependabot no GitHub e acompanhar todos os checks obrigatórios.
-- [ ] 2.2 Verificar a execução Dependabot disparada pela nova configuração quando disponível; não integrar PRs Dependabot que ela criar.
-- [ ] 2.3 Integrar somente após checks verdes e confirmar que jobs de deploy/Oracle não foram acionados.
+- [x] 2.1 Abrir PR #247 para `main`; a checagem GitHub `.github/dependabot.yml` passou, todos os checks obrigatórios passaram no run `39328116406` e a proteção exigia os seis contextos existentes, sem aprovação extra.
+- [x] 2.2 Execução real `docker_compose in /docker` passou no run Dependabot `39332850554` (job 118335027393, 43s) e gerou PR #248 apenas para `docker/docker-compose.yml`; PR de dependência permaneceu aberta e sem merge.
+- [x] 2.3 PR #247 integrada após checks verdes; o classificador retornou `release_scope=none`, e jobs de deploy/preflight/release permaneceram skipped. Nenhum deploy, serviço ou recurso Oracle foi acessado.
