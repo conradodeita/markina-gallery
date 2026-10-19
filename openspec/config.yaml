@@ -24,6 +24,9 @@ context: |
   # Refatoração contínua
   Em toda implementação, aplique a política em docs/CONTINUOUS-REFACTORING.md: avaliar e manter apenas o código diretamente afetado, com evidência e validação proporcional. Nenhuma remoção é obrigatória quando não houver oportunidade segura; não iniciar auditoria geral.
 
+  # Gestão contínua de componentes externos
+  O inventário de terceiros SHALL registrar origem, versão/constraint, funcionalidade consumidora, criticidade, licença/ativação, risco e evidência datada. Tags e nomes de containers não provam digest, runtime ou uso de modelos. Dependabot SHALL tratar versões npm, pip, Docker/Compose e GitHub Actions em ciclos agrupados sem automerge; avisos de segurança seguem a cadência nativa separada. Faixas sem pin, tags móveis, dependências transitivas importantes e apt SHALL permanecer visíveis. Relatórios SHALL distinguir ausência de itens retornados, fonte desabilitada/sem permissão e falha. Modelos/pesos IA, facial e conversão fotográfica exigem avaliação especializada humana e nunca recebem PR/ativação automática. Testes, compatibilidade, licença, custo/arquitetura e rollback SHALL ser avaliados conforme criticidade. Monitoramento usa somente permissões mínimas GitHub, sem Oracle, segredos operacionais, dados de clientes, deploy, migrations, Docker, escrita ou merge; nenhuma atualização chega à produção sem fluxo e autorização existentes.
+
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
 # Example:

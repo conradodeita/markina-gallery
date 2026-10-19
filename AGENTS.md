@@ -38,6 +38,18 @@
 
 ## Qualidade e continuidade
 
+### Gestão contínua de componentes externos
+
+- Manter o inventário de dependências, serviços, imagens, runtimes, modelos e integrações com versão/constraint declarada, origem, funcionalidades consumidoras, criticidade, licença/ativação, risco de compatibilidade e evidência datada do runtime quando disponível. Tag ou nome de container não prova digest, processo carregado, inferência ou uso funcional.
+- Usar Dependabot nativo para versões npm, pip, Docker/Compose e GitHub Actions em grupos e cadência revisável. Não combinar com outro bot de PRs sem decisão registrada. Atualizações normais SHALL permanecer em PR e SHALL NOT ter automerge; revisar changelog, avisos, licença, necessidade de ativação, compatibilidade, custo/arquitetura e critérios de rollback antes de merge.
+- Consultar avisos de segurança na cadência nativa mais rápida disponível, separada do ciclo semanal de versões. Configuração ou permissão indisponível SHALL ser registrada como bloqueio/não confirmada, nunca como “sem vulnerabilidades”.
+- Identificar faixas Python abertas, transitivos relevantes, imagens/tags/digests móveis, versões de apt, ações com tag móvel e registries/fontes externos. Relatórios SHALL incluir timestamp, fontes consultadas e distinguir lista vazia, fonte não habilitada/sem permissão e falha de consulta.
+- Tratar serviços de autenticação, banco, fila, proxy, OTP, pagamento e entrega como críticos: testar contratos ponta a ponta e segurança, migração/compatibilidade e rollback antes de uma alteração que possa chegar a clientes.
+- Tratar modelos/pesos de IA, busca facial, OpenCV/NumPy, LightCraft, RawTherapee e processamento de mídia como motores especializados. Atualização exige avaliação humana de licença, pesos/revisão, formatos, qualidade, precisão/calibração, recurso e reindexação; monitoramento SHALL NOT baixar pesos, ativar engines ou criar PR automático de versões especializadas.
+- Separar dependências e ferramentas de desenvolvimento das imagens/runtime de produção. Priorizar updates por severidade de segurança, uso ativo, impacto de cliente, benefício, compatibilidade e manutenção upstream; a versão mais nova não é automaticamente a mais adequada.
+- Workflows de monitoramento SHALL usar permissões mínimas de leitura, não acessar Oracle, segredos operacionais ou dados de cliente, e não invocar deploy, migrations, Docker ou merge. Relatório sem novidade SHALL não criar issue/PR/comentário nem enviar notificação. PRs SHALL exigir os gates/validações por categoria e revisão exigida pelo repositório.
+- Uma atualização aprovada só pode ser publicada por fluxo de release autorizado. Antes de deploy, inventariar imagem/SHA/serviços/schema/porta e plano de impacto zero; manter referência da versão saudável anterior, fazer smoke/testes de contrato e rollback somente para artefatos/schemas compatíveis. Esta política não concede autorização de deploy, migration ou alteração de dados.
+
 - Em toda implementação, inclusive fora de comandos OpenSpec, leia e aplique a [política permanente de refatoração contínua](docs/CONTINUOUS-REFACTORING.md). A avaliação é proporcional ao escopo e pode concluir que não há oportunidade segura de limpeza; as autorizações e prioridades existentes permanecem obrigatórias.
 - Faça mudanças pequenas, focadas e cobertas por testes relevantes; execute testes, lint, typecheck e build aplicáveis antes de declarar conclusão.
 - Documente o suficiente no OpenSpec para que outro executor consiga continuar apenas pelo repositório, sem depender de contexto de conversa.
