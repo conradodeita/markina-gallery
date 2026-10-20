@@ -35,7 +35,7 @@ O grupo Python permanece bloqueado: o executor pinado atual cobre somente api/we
 ## Validação local e integração
 
 - `python scripts/test_dependency_release.py -v`: 19 testes aprovados; os cinco cenários obrigatórios, includes/constraints, referências ausentes/não copiadas, contextos extras, symlinks, inventário inválido e helper shell real.
-- `python scripts/test_classify_prod_release.py`: 13 testes aprovados; `test_check_prod_app_release_scope.py`: 11 aprovados.
+- `python scripts/test_classify_prod_release.py`: 13 testes aprovados; `test_prod_app_release_scope.py`: 11 aprovados.
 - Políticas `test_production_release_workflow_policy.py` e `test_deploy_prod_web_policy.py`: aprovadas. OpenSpec strict e `git diff --check`: aprovados.
 - Regressões locais de estado: a primeira execução delimitou dois problemas de fixture Windows (payload HTTP CRLF e caminho POSIX do overlay usado pelo Python nativo). Ambos foram corrigidos e os testes focados passaram. Nenhum gate de produção foi removido. A suíte completa Linux continua obrigatória no CI.
 - Nova coleta real às 16:49:10 UTC confirma checkout, versões e 15 serviços saudáveis. Plano web passa sem autorização de release; plano Python retorna código 1 com oito bloqueios nominais e exclui migrate/seed-admin.
