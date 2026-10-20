@@ -44,7 +44,11 @@ class CheckoutResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     outcome: Literal["accepted", "refused", "unknown"]
     url: str | None = Field(default=None, max_length=8192)
-    error_category: Literal["not_created", "transport_unknown", "invalid_response"] | None = None
+    error_category: str | None = Field(
+        default=None,
+        max_length=48,
+        pattern=r"^(not_created|transport_unknown|invalid_response|http_[1-5][0-9]{2}|response_(invalid_json|too_large|missing_url|invalid_url))$",
+    )
 
     @model_validator(mode="after")
     def coherent_result(self):
@@ -177,13 +181,21 @@ class InfinitePayHttpProvider:
             response = self._post_json(f"{self.API_BASE}/links", payload)
         except (httpx.HTTPError, ProviderTransportError):
             raise ProviderTransportError("InfinitePay checkout transport is uncertain") from None
-        if response is None or not 200 <= response[0] < 300:
+        if response is None:
+            return CheckoutResult(outcome="unknown", error_category="response_too_large")
+        status, data = response
+        if not 200 <= status < 300:
             # A resposta HTTP não documenta que a cobrança não foi criada.
+            return CheckoutResult(outcome="unknown", error_category=f"http_{status}")
+        if data is None:
+            return CheckoutResult(outcome="unknown", error_category="response_invalid_json")
+        if not isinstance(data, dict):
             return CheckoutResult(outcome="unknown", error_category="invalid_response")
-        data = response[1]
-        url = data.get("url") if isinstance(data, dict) else None
-        if not isinstance(url, str) or not _valid_infinitepay_checkout_url(url):
-            return CheckoutResult(outcome="unknown", error_category="invalid_response")
+        url = data.get("url")
+        if not isinstance(url, str) or not url.strip():
+            return CheckoutResult(outcome="unknown", error_category="response_missing_url")
+        if not _valid_infinitepay_checkout_url(url):
+            return CheckoutResult(outcome="unknown", error_category="response_invalid_url")
         return CheckoutResult(outcome="accepted", url=url)
 
     def check_payment(self, request: PaymentCheckRequest) -> PaymentCheckResult:

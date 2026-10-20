@@ -90,17 +90,26 @@ def test_fluxo_inicial_nao_envia_webhook_ou_chave():
     assert "authorization" not in request.headers
 
 
-@pytest.mark.parametrize("status,body", [
-    (502, {"url": "https://checkout.infinitepay.io/photo-owner/abc"}),
-    (200, {"url": "http://checkout.infinitepay.io/photo-owner/abc"}),
-    (200, {"url": "https://evil.example/checkout"}),
-    (200, {"unexpected": True}),
+@pytest.mark.parametrize("status,body,category", [
+    (502, {"url": "https://checkout.infinitepay.io/photo-owner/abc"}, "http_502"),
+    (200, {"url": "http://checkout.infinitepay.io/photo-owner/abc"}, "response_invalid_url"),
+    (200, {"url": "https://evil.example/checkout"}, "response_invalid_url"),
+    (200, {"unexpected": True}, "response_missing_url"),
 ])
-def test_create_checkout_never_treats_error_or_invalid_url_as_accepted(status, body):
+def test_create_checkout_never_treats_error_or_invalid_url_as_accepted(status, body, category):
     provider = _provider(lambda _request: httpx.Response(status, json=body))
     result = provider.create_checkout(_checkout_request())
     assert result.outcome == "unknown"
     assert result.url is None
+    assert result.error_category == category
+
+
+def test_create_checkout_records_invalid_json_without_response_body():
+    provider = _provider(lambda _request: httpx.Response(200, content=b"not-json"))
+    result = provider.create_checkout(_checkout_request())
+    assert result.outcome == "unknown"
+    assert result.url is None
+    assert result.error_category == "response_invalid_json"
 
 
 def test_create_checkout_timeout_is_unknown_transport_and_never_retried():
@@ -163,7 +172,9 @@ def test_payment_check_rejects_incomplete_or_malformed_provider_results(body, ex
 
 def test_oversized_response_is_unknown():
     provider = _provider(lambda _request: httpx.Response(200, content=b"{" + b" " * 32768 + b"}"))
-    assert provider.create_checkout(_checkout_request()).outcome == "unknown"
+    result = provider.create_checkout(_checkout_request())
+    assert result.outcome == "unknown"
+    assert result.error_category == "response_too_large"
 
 
 @pytest.mark.parametrize("url,allowed", [

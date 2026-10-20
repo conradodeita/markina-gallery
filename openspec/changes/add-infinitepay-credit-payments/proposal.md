@@ -11,6 +11,7 @@ O fotógrafo precisa oferecer cartão de crédito pela própria conta InfinitePa
 - Criar cobrança de cartão no servidor com recebedor, itens e valor congelados por compra; conservar a configuração PIX, sua confirmação manual e seus snapshots existentes.
 - Confirmar cartão somente após consulta autoritativa à InfinitePay, vinculada a conta, compra e transação, com valor correto e método `credit_card`; redirecionamento e notificação isolados não confirmam pagamento.
 - Acrescentar idempotência, proteção contra cobrança duplicada, retomada de compra pendente, auditoria e integração com os eventos existentes de confirmação e entrega.
+- Persistir categorias técnicas minimizadas para diagnosticar respostas sem checkout utilizável, sem armazenar corpos externos ou segredos e sem converter incerteza em liberação automática.
 - Desabilitar cartão somente para novos checkouts; links já emitidos continuam visíveis e retomáveis enquanto permanecerem pendentes, pois a plataforma não cancela links remotos.
 - Condicionar implementação/ativação aos gates registrados em `provider-contract.md` e `readiness.md`. A exigência vigente de webhook assinado não é substituída automaticamente pela consulta de status.
 

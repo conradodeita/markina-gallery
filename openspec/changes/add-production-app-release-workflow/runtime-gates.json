@@ -4,6 +4,8 @@
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
     "backend/app/main.py": "f5bd9e3a232ba1e13c45b64a5a940cbd67dd7a85",
+    "backend/app/payment_provider.py": "56d6fb02544b29c0ec9be8c13564e506b7dba7d8",
+    "backend/app/provider_checkout.py": "414d0100c2888b61de5e17ba5a071a716658c7ad",
     "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
     "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da",

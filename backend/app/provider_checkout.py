@@ -240,6 +240,7 @@ def issue_provider_payment(db: Session, payment_id: UUID, provider) -> ProviderP
         _restore_local_selection(db, payment)
         db.commit()
     else:
+        attempt.error_category = result.error_category or "invalid_response"
         db.commit()
     return payment
 

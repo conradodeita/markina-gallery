@@ -298,6 +298,23 @@ def test_link_emitido_nao_confirma_pagamento():
         assert payment.total_cents == 2100
 
 
+def test_categoria_http_da_emissao_e_persistida_sem_liberar_reserva(monkeypatch):
+    owner_id, _, _, revision = setup()
+    provider = SyntheticPaymentProvider("unknown")
+    monkeypatch.setattr(provider, "create_checkout", lambda _request: CheckoutResult(
+        outcome="unknown", error_category="http_422"))
+    with SessionLocal() as db:
+        payment = prepare(db, owner_id, revision)
+        db.commit()
+        updated = issue_provider_payment(db, payment.id, provider)
+        attempt = db.scalar(select(ProviderPaymentAttempt).where(
+            ProviderPaymentAttempt.payment_id == payment.id))
+        assert updated.state == "verification_required"
+        assert attempt.state == "unknown"
+        assert attempt.error_category == "http_422"
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 0
+
+
 def test_perfil_de_retorno_e_payment_check_nao_exige_webhook_assinado_ou_recovery():
     owner_id, _, _, revision = setup()
 
