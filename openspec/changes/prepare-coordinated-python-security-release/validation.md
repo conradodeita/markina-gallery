@@ -44,10 +44,11 @@ CI inicial #39487877212 delimitou falha no teste real de adulteração do wrappe
 | api | sha256:983a033145cc0e43a2c54855ce77a8c35770286fcb5610b21ec8b7fb59853936 | quatro pins e manifesto embutido corretos, pip check zero, 60 distribuições comparadas sem drift adicional |
 | worker | sha256:f97071b7369f7e990cbb9fd2643ccde365b872a6c312214ca56e91301a55b4f2 | mesmas verificações independentes contra seu próprio ID anterior; não presumir identidade com API |
 | face-index-worker | sha256:5e616cb2afa194dde81821a562f9af250d0a2e570708dfc6a47b41241e753034 | quatro pins corretos, pip check zero, 62 distribuições comparadas sem drift adicional; modelos verificados e provider inicializado |
+| face-search-worker | sha256:e581a31f499dc66c7e1ef0cb22e231144d5a450cd62ceef272d09d387f9dc40d | quatro pins e manifesto embutido corretos, pip check zero, 62 distribuições comparadas sem drift adicional; config original verificado separadamente |
 
 Todos preservam Python 3.13.16 e a lista completa de camadas anteriores; acrescentam somente instalação dos quatro wheels sem dependências e cópia do requirements-push aprovado. Versões observadas: aiohttp 3.14.4, multidict 6.9.1, urllib3 2.8.0, yarl 1.25.1. São imagens **locais**, não publicadas em registry e não carregadas/implantadas na Oracle. IDs de Docker clássico/config e de manifest/index são explicitamente distintos. O inventário completo e os IDs estão em candidates-final.json e installed-baselines.json no diretório de evidências.
 
-Cinco consumidores permanecem sem candidato próprio por capacidade local, sem tentativa de contornar a reserva de 2 GiB ou limpar Docker:
+Na primeira passagem, cinco consumidores ficaram sem candidato próprio pelo orçamento conservador de importação abaixo, sem contornar a reserva de 2 GiB ou limpar Docker:
 
 | Consumidor | Livre / mínimo conservador para importação |
 |---|---|
@@ -57,7 +58,7 @@ Cinco consumidores permanecem sem candidato próprio por capacidade local, sem t
 | raw-development-worker | 2,94 / 3,51 GiB |
 | face-gemma-index-worker | 2,94 / 7,93 GiB |
 
-A igualdade das camadas SFace não foi usada como prova de equivalência integral de configuração entre IDs nem como licença para substituir os outros dois candidatos. A homologação ARM64 desses cinco consumidores **não foi executada/concluída**. O CI Gemma sintético em AMD64 não substitui esse requisito.
+A recuperação posterior comprovou que todas as camadas RootFS SFace já estavam presentes no daemon local. Isso permitiu importar a imagem original de search reservando 2 GiB mais um arquivo de imagem completo e 256 MiB de margem, sem nova extração integral de camadas. O config original de search foi verificado por seu próprio hash; igualdade de camadas não foi aceita como equivalência de IDs/configuração nem como licença para reutilizar o candidato index. Resultado: quatro candidatos próprios verificados. Após esse build restaram aproximadamente 2,27 GiB locais, insuficientes para importar maintenance com a mesma reserva; a execução interrompeu essa próxima importação antes de iniciá-la. Maintenance, prévias, RAW e Gemma permanecem sem candidato/homologação ARM64. O CI Gemma sintético em AMD64 não substitui esse requisito.
 
 ### Testes executados
 
@@ -66,8 +67,11 @@ A igualdade das camadas SFace não foi usada como prova de equivalência integra
 - Regressões existentes de dependências: 19 passaram; classificação: 13; escopo app: 11. Ruff e OpenSpec strict passaram.
 - API ARM64: 40 contratos sintéticos (Web Push/SSRF, jobs/leases faciais, runtime facial e interface RAW) passaram. A primeira tentativa teve 11 falhas 403 por montagem incompleta do harness, que omitia backend/conftest.py e seu seed sintético de tenant. Montagem corrigida com a fixture oficial e pyproject, sem alterar testes ou gates; repetição completa: 40 passed.
 - SFace ARM64: integridade dos assets existentes verificada, provider OpenCV carregado, entrada preta sintética sem faces e dimensão contratual 128 preservada. Mais 34 testes de provider, modelos/schema, entrypoint, runtime e jobs passaram; nenhuma fotografia real, embedding de cliente ou reindexação.
+- Search SFace ARM64: no candidato próprio, integridade dos modelos, inicialização OpenCV, entrada preta sintética sem faces, dimensão 128 e import de app.facial.face_worker passaram em container read-only/network none, sem iniciar loop. A primeira tentativa de harness usou o caminho inexistente app.face_worker; corrigido somente para o módulo real, sem alteração da aplicação. Não repetir os 34 testes comuns não significa homologar aquisição/processamento operacional de jobs.
 - Startup API ARM64: TestClient/ASGI health 200 e admin sem sessão 403 passaram com SQLite exclusivamente tmpfs e chave de capacidades **sintética dedicada**. Entrypoints dos workers importaram sem iniciar loops. O harness inicialmente sombreava o objeto ASGI com o pacote app; depois faltou a chave sintética exigida pelo gate. Ambos os erros do harness foram corrigidos, sem alterar código da aplicação nem retirar validação de configuração. O programa anterior também exercitou aiohttp/yarl/multidict e urllib3 apenas contra HTTP sintético em loopback, sem conexão externa.
 - Não foram exercitados providers reais de mensagens/pagamento, fluxos autenticados com clientes, inferência com fotografias reais, Gemma ARM64 ou binários RAW/prévias nesses candidatos ausentes. Import de worker não é startup operacional completo nem drain.
+
+CI #39488533156 do código 4809fc0 passou integralmente, incluindo 1709 testes backend (23 skips), 35 testes Linux de estado e os builds obrigatórios. Na execução #39493684670 do commit documental e980682, backend, frontend, Gemma, OpenSpec e Gitleaks passaram, mas runtime-images excedeu o limite existente de 30 minutos durante o build ARM64 do frontend. A anotação do GitHub confirma timeout; o agregador recusou aprovação. Esse build não sofreu alteração nesta change e passou na execução anterior. A revisão final das evidências exige nova execução com os mesmos gates, sem aumentar timeout, dispensar validações ou interpretar o agregador como aprovação.
 
 ### Revisão e integração
 
@@ -79,6 +83,6 @@ Wrapper instalado foi consultado apenas por metadados e pin: root-owned 0755, AP
 
 ## Decisão funcional
 
-**NO-GO — BLOQUEADO.** Cinco candidatos/homologações ARM64 faltam por capacidade, os processos antigos não oferecem barreira/drain cooperativo, e o executor operacional/recuperação Python ainda não estão implementados. A simulação não preenche essa lacuna. O wrapper restrito instalado também conserva pin antigo. Não há fingerprint operacional Python ou prompt seguro de publicação coordenada nesta missão. A integração da preparação no GitHub não corrige as bibliotecas efetivamente executadas na Oracle.
+**NO-GO — BLOQUEADO.** Quatro candidatos/homologações ARM64 faltam por capacidade, os processos antigos não oferecem barreira/drain cooperativo, e o executor operacional/recuperação Python ainda não estão implementados. A simulação não preenche essa lacuna. O wrapper restrito instalado também conserva pin antigo. Não há fingerprint operacional Python ou prompt seguro de publicação coordenada nesta missão. A integração da preparação no GitHub não corrige as bibliotecas efetivamente executadas na Oracle.
 
 Refatoração proporcional: preservar executores e contratos legados; apenas adicionar dispatch Python antes do parser antigo e módulo isolado. Não alterar helpers pinados, wrapper remoto, allowlist app/facial, Dockerfiles, Compose, pacotes ou modelos. Não há remoção segura de código legado nesta tarefa.

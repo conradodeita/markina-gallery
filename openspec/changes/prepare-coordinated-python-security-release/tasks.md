@@ -6,7 +6,7 @@
 
 ## 2. Candidatos isolados
 - [x] 2.1 Implementar preparação restrita de quatro wheels por ID anterior, comparação completa de distribuições/base e reserva de espaço; testar rejeição de drift. Evidência: 29 testes novos e três candidatos reais com pip check zero.
-- [ ] 2.2 Construir/verificar candidatos ARM64 viáveis e executar pip check, imports/contratos sintéticos; registrar bloqueios individuais de capacidade/homologação sem declarar resultados ausentes. PARCIAL/BLOQUEADO: API, worker e index SFace validados; cinco candidatos/homologações faltantes por capacidade, conforme tabela em validation.md.
+- [ ] 2.2 Construir/verificar candidatos ARM64 viáveis e executar pip check, imports/contratos sintéticos; registrar bloqueios individuais de capacidade/homologação sem declarar resultados ausentes. PARCIAL/BLOQUEADO: API, worker, index e search SFace com candidatos verificados; quatro candidatos/homologações faltantes por capacidade, conforme tabela e recuperação documentadas em validation.md. Startup/import não comprova drenagem operacional.
 
 ## 3. Extensão oficial e simulação
 - [x] 3.1 Estender entrada app para escopo Python sem fallback API/web; testar recusa operacional e nenhuma escrita diante de drenagem não implementada. Dispatch shell real e modos operacionais negativos passaram; pin exato e teste de adulteração preservados.
