@@ -46,3 +46,19 @@ Antes de autorizar esse grupo: executor restrito aos consumidores ativos, invent
 Preservar imagem anterior de cada serviço, configuração, source SHA e evidência dos backups existentes de banco/mídia conforme o runbook. Este grupo não tem migration: mudança de schema/Docker/Compose é bloqueio para plano separado. Os quatro pins não tornam o restante do requirements sem lock reproduzível: guardar a resolução efetiva do candidato e impedir atualizações não relacionadas antes da aprovação.
 
 Rollback Python ainda não coberto pelo executor atual é bloqueio, não comando operacional disponível. Não publicar API deixando workers vulneráveis como se o grupo estivesse concluído.
+
+### Preparação Python com recusa operacional
+
+O mesmo `deploy-prod-app-services.sh` possui entrada explícita `--scope python-security` antes dos argumentos legados. Ela nunca entra no fluxo que constrói/recria API/web. O módulo de política é lido do objeto da main aprovada, sem fetch ou alteração do checkout. `--mode plan`/`inventory` requer JSON real recente do coletor, `--sha` e opcionalmente `--candidates`; produz **planning_fingerprint**, sem approval_code operacional. Execução local equivalente:
+
+```text
+python scripts/python_security_release.py --mode plan --sha <main-aprovada> --inventory <inventario-real.json> --candidates <candidatos.json>
+```
+
+`--mode simulate --simulation <fixture-sintetica.json>` testa o contrato sequencial e rollback inverso por serviço. Não opera Docker/filas/banco e não concede autorização. Modos reais release/rollback/recover, inclusive seus inventários de recuperação, são recusados antes de qualquer escrita: o executor operacional dos workers ainda não existe. Não substituir essa recusa pelo modo app legado nem executar homolog-deploy.
+
+`scripts/build_python_security_candidates.py` constrói **somente no contexto Docker local desktop-linux**, exigindo socket local e reserva mínima de disco. Parte de imagens anteriores importadas por ID com exportação Docker somente leitura, sem volumes/configurações de containers. Docker clássico e containerd podem expor IDs diferentes: o hash do config original e a lista completa de camadas devem coincidir. O preparo acrescenta quatro wheels fixados com `--no-deps --only-binary=:all:` e o manifesto aprovado, sem reinstalar os demais requisitos ou atualizar base/apt/modelos. Compara toda a distribuição instalada, Python, ARM64, camadas anteriores, pins embutidos e `pip check`. Um candidato local nunca é apresentado como imagem publicada ou disponível na Oracle.
+
+Fila vazia e Redis saudável **não** substituem a barreira cooperativa: um novo claim pode ocorrer entre a consulta e o stop. Antes da futura implementação operacional é necessário impedir novos claims/entradas, confirmar fim de ciclo/efeitos externos, preservar jobs aguardando e obter encerramento reconhecido sem SIGKILL. O worker geral exige cobrir providers, outboxes e lifecycle; facial usa SQL durável com lease/token e Redis como wakeup; ajuste/RAW têm recuperação por tempo que pode consumir tentativas. Não alterar estados de jobs, suspender tenants, pausar containers ou restaurar banco para simular drenagem.
+
+Ordem conceitual, depois desses gates: API isolada, worker geral, manutenção facial, busca, indexação, ajuste, RAW e Gemma. Cada opcional só é incluído se já ativo e necessário. Atualização sequencial exige recibo anterior, saúde/versões e snapshot externo por troca; contingência restaura IDs em ordem inversa sem reverter dados legítimos. Essa ordem é planejamento; homologação especializada e executor/drenagem comprovados continuam obrigatórios. O frontend publicado não é reconstruído nem substituído.

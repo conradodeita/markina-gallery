@@ -416,6 +416,23 @@ rollback() {
   echo "rollback saudável: $ROLLBACK_SHA; serviços=api,web; migrations=nenhuma"
 }
 
+python_security_preparation() {
+  # Separate scope in the existing executor. Never fall through to api/web.
+  local arg previous="" target="" policy origin
+  for arg in "$@"; do
+    [[ "$previous" != --sha ]] || target="$arg"
+    previous="$arg"
+  done
+  [[ "$target" =~ ^[0-9a-f]{40}$ && -n "$EXPECTED_REPOSITORY" ]] || fail 'SHA/repositório obrigatório'
+  [[ "$(pwd -P)" == "$PROJECT_ROOT" && "$(git rev-parse --show-toplevel)" == "$PROJECT_ROOT" ]] || fail 'checkout incorreto'
+  origin="$(git remote get-url origin)"
+  case "$origin" in "https://github.com/$EXPECTED_REPOSITORY"|"https://github.com/$EXPECTED_REPOSITORY.git"|"git@github.com:$EXPECTED_REPOSITORY.git") ;; *) fail 'origin diverge';; esac
+  [[ "$target" == "$(git rev-parse origin/main)" && "$target" == "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" ]] || fail 'SHA não é main aprovada'
+  policy="$(git show "$target:scripts/python_security_release.py")" || fail 'política Python ausente'
+  python3 -c 'import sys; p=sys.argv.pop(1); code=sys.argv.pop(1); exec(compile(code,p,"exec"),{"__file__":p,"__name__":"__main__"})' \
+    "$PROJECT_ROOT/scripts/python_security_release.py" "$policy" "$@"
+}
+
 release_load_support() {
   # O operador fornece o SHA da main aprovada, inclusive em recuperação.
   # Usa objetos já locais; nenhum fetch, arquivo temporário ou source do checkout antigo.
@@ -440,6 +457,11 @@ release_load_support() {
 }
 
 main() {
+  if [[ "${1:-}" == --scope && "${2:-}" == python-security ]]; then
+    shift 2
+    python_security_preparation "$@"
+    return
+  fi
   parse_arguments "$@"
   [[ "$EXPECTED_URL" == "$PUBLIC_URL" ]] || fail "domínio diverge do alvo"
   release_load_support || fail "suporte não verificável; preparação autorizada necessária"
