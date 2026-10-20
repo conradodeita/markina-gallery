@@ -31,8 +31,17 @@ RECOVERY_IMAGE="" RECOVERY_SHA="" RECOVERY_CONFIG="" RECOVERY_CHECKOUT=""
 API_VERSION="" RUNTIME_REF="" NON_WEB_BEFORE=""
 COMPOSE_DIGEST=""
 PENDING_IMAGE=""
+WEB_INPUT_PROOF="" API_SOURCE_PROOF="" BUILD_CONTEXT_PROOF=""
 
 fail() { echo "deploy-prod-web: $*" >&2; exit 1; }
+
+# Read policy from the exact approved target; the live checkout may be older.
+dependency_policy() {
+  local policy
+  policy="$(git show "$TARGET_SHA:scripts/dependency_release.py")" || fail 'política do alvo ausente'
+  python3 -c 'import sys; p=sys.argv.pop(1); code=sys.argv.pop(1); exec(compile(code,p,"exec"),{"__file__":p,"__name__":"__main__"})' \
+    "$PROJECT_ROOT/scripts/dependency_release.py" "$policy" "$@"
+}
 
 compose() {
   local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
@@ -86,10 +95,15 @@ verify_repository() {
   git merge-base --is-ancestor "$CHECKOUT_SHA" "$TARGET_SHA" || fail 'checkout não ancestral do alvo'
   api_id="$(compose ps -q api)"
   [[ -n "$api_id" && "$api_id" != *$'\n'* ]] || fail 'API ausente ou duplicada'
-  API_VERSION="$(docker inspect --format '{{json .Config.Env}}' "$api_id" | python3 -c 'import json,sys; print(next((v.split("=",1)[1] for v in json.load(sys.stdin) if v.startswith("APP_VERSION=")), ""))')"
+  API_VERSION="$(docker inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "APP_VERSION"}}{{index (split . "=") 1}}{{end}}{{end}}' "$api_id")"
   [[ "$API_VERSION" =~ ^[0-9a-f]{40}$ ]] || fail 'API sem versão verificável'
-  git diff --quiet "$API_VERSION" "$CHECKOUT_SHA" -- backend/ || fail 'backend ativo diverge do checkout'
+  dependency_policy api-provenance --base "$API_VERSION" --target "$CHECKOUT_SHA" >/dev/null \
+    || fail 'código da API diverge do checkout'
+  API_SOURCE_PROOF="$(dependency_policy api-provenance --base "$API_VERSION" --target "$TARGET_SHA")" \
+    || fail 'alvo altera código da API fora do escopo web'
   compose config --quiet || fail 'Compose inválido'
+  BUILD_CONTEXT_PROOF="$(compose config --format json web | dependency_policy web-build)" \
+    || fail 'contexto web resolvido não é isolado/aprovado'
   TARGET_CONFIG_HASH="$(compose config --hash web | awk '$1 == "web" {print $2}')"
   TARGET_CONFIG_HASH="${TARGET_CONFIG_HASH#sha256:}"
   [[ "$TARGET_CONFIG_HASH" =~ ^[0-9a-f]{64}$ ]] || fail 'hash Compose inválido'
@@ -124,7 +138,8 @@ verify_runtime_web() {
 
 verify_scope() {
   local from="$1" to="$2"
-  git diff --quiet "$from" "$to" -- backend/ docker/ frontend/Dockerfile frontend/.dockerignore || fail 'intervalo altera API/Compose/build fora do escopo web'
+  WEB_INPUT_PROOF="$(dependency_policy web-scope --base "$from" --target "$to")" \
+    || fail 'intervalo altera API/Compose/build fora do escopo web'
 }
 
 prepare_inventory() {
@@ -193,7 +208,8 @@ approval_fingerprint() {
   local mode="${MODE%-inventory}"
   [[ "$mode" == inventory ]] && mode=release
   printf '%s\n' "$mode" "$TARGET_SHA" "$CHECKOUT_SHA" "$API_VERSION" "$CURRENT_RECORD" "$RESTORE_RECORD" \
-    "$WEB_CONTAINER" "$WEB_IMAGE_ID" "$WEB_STATUS" "$WEB_CONFIG_HASH" "$COMPOSE_DIGEST" "$PENDING_IMAGE" "$NON_WEB" "$PUBLIC_URL" | sha256sum | awk '{print $1}'
+    "$WEB_CONTAINER" "$WEB_IMAGE_ID" "$WEB_STATUS" "$WEB_CONFIG_HASH" "$COMPOSE_DIGEST" "$PENDING_IMAGE" "$NON_WEB" "$PUBLIC_URL" \
+    "$WEB_INPUT_PROOF" "$API_SOURCE_PROOF" "$BUILD_CONTEXT_PROOF" | sha256sum | awk '{print $1}'
 }
 
 inventory() {
@@ -203,6 +219,8 @@ inventory() {
   printf 'restore_identity=%s\nnon_web_snapshot_sha256=%s\n' "$RESTORE_RECORD" "$(printf '%s' "$NON_WEB" | sha256sum | awk '{print $1}')"
   printf 'compose_files_sha256:\n%s\n' "$COMPOSE_DIGEST"
   printf 'pending_target_image=%s\n' "$PENDING_IMAGE"
+  printf 'web_input_provenance=%s\napi_source_provenance=%s\nweb_build_context=%s\n' \
+    "$WEB_INPUT_PROOF" "$API_SOURCE_PROOF" "$BUILD_CONTEXT_PROOF"
   printf 'approval_code=%s\n' "$(approval_fingerprint)"
   echo 'escopo=web; possível breve interrupção; inventário é snapshot sem escrita'
 }

@@ -9,6 +9,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from dependency_release import impact, is_dependency_manifest
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
 
@@ -79,6 +81,12 @@ def production_baseline_from_manifest(manifest: dict) -> str:
 def classify(changed: set[str]) -> str:
     app = bool(changed & APP_RUNTIME)
     facial = bool(changed & FACIAL_RUNTIME)
+    if any("/Dockerfile" in p or p.endswith(".dockerignore") or p.startswith("docker/") or p.startswith("backend/facial-assets/")
+           or p.startswith("backend/migrations/")
+           or (p.startswith("backend/app/") and "worker" in p and p not in FACIAL_RUNTIME) for p in changed):
+        return "protected"
+    if any(is_dependency_manifest(p) for p in changed):
+        return "mixed" if app or facial else "dependencies"
     if app and facial:
         return "mixed"
     if app:
@@ -101,12 +109,14 @@ def main() -> int:
     scope = classify_from_baseline(changed, baseline_is_ancestor=baseline_is_ancestor)
     print(f"release_baseline_sha={baseline}")
     print(f"release_scope={scope}")
+    if scope == "dependencies":
+        print("dependency_impact=" + json.dumps(impact(ROOT, baseline, args.target), sort_keys=True))
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as handle:
             handle.write(f"release_scope={scope}\n")
             handle.write(f"base_sha={baseline}\n")
-    return 1 if scope == "mixed" else 0
+    return 1 if scope in {"mixed", "protected"} else 0
 
 
 if __name__ == "__main__":
