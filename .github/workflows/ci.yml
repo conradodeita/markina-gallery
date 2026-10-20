@@ -94,6 +94,7 @@ jobs:
         run: |
           python scripts/test_preserve_branding.py -v
           python -m unittest scripts.test_third_party_report -v
+          python -m unittest scripts.test_python_security_release -v
           bash scripts/test_deploy_homolog.sh
           bash scripts/test_deploy_prod_web.sh
           bash -n scripts/deploy-prod-facial-services.sh
