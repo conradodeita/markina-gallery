@@ -7,10 +7,10 @@
 
 ## 2. Validar runtimes consumidores
 
-- [ ] 2.1 Executar testes backend e validar builds/checks da API, Gemma, face e workers que instalam `requirements.txt`.
-- [ ] 2.2 Registrar falhas externas de runner separadas de incompatibilidade e confirmar que nenhum job de deploy/publicação foi executado.
+- [x] 2.1 Executar testes backend e validar builds/checks da API, Gemma, face e workers que instalam `requirements.txt`. Evidência: CI #39422192774 passou nos testes integrais do backend, build+inferência sintética offline do Gemma e builds isolados de API, ajuste de prévias e RAW. A instalação do backend incluiu `face-requirements.txt`; o Dockerfile.gemma também instalou os requisitos faciais e preparou os mesmos ativos SFace. O Dockerfile.face separado não é um job próprio no workflow.
+- [x] 2.2 Registrar falhas externas de runner separadas de incompatibilidade e confirmar que nenhum job de deploy/publicação foi executado. Evidência: o candidato antigo #253 falhou por conflito real `aiohttp 3.14.4` × `yarl 1.24.5`; #251 teve OOM no build de modelos em runner; o candidato #254 resolveu as dependências e passou. No CI #39422192774, `deploy-homolog`, `release-scope`, preflights e releases de produção foram `skipped`; nenhuma execução acessou Oracle.
 
 ## 3. Preparar PR sem integrar
 
-- [ ] 3.1 Revisar diff e validar OpenSpec; criar commit e PR direcionados à `main`.
-- [ ] 3.2 Confirmar checks do PR, os 14 alertas associados e os limites de produção/Oracle antes do relatório final.
+- [x] 3.1 Revisar diff e validar OpenSpec; criar commit e PR direcionados à `main`. Evidência: commit inicial `8b380fb3bf1e6a9c3b846840e21ba967642f2151`, PR #254 para `main`; validação OpenSpec estrita passou.
+- [x] 3.2 Confirmar checks do PR, os 14 alertas associados e os limites de produção/Oracle antes do relatório final. Evidência: CI #39422192774 passou em todos os checks obrigatórios no SHA `8b380fb3bf1e6a9c3b846840e21ba967642f2151`; os 14 alertas permanecem abertos até merge em `main`. PR sem automerge, sem deploy e sem acesso/modificação à Oracle.
