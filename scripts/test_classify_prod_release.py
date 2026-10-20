@@ -74,7 +74,7 @@ class ReleaseClassifierTests(unittest.TestCase):
             self.assertFalse(git_is_ancestor(target, baseline, root=root))
 
     def test_facial_only(self):
-        self.assertEqual(classify(set(FACIAL_RUNTIME)), "facial")
+        self.assertEqual(classify({p for p in FACIAL_RUNTIME if not p.startswith(("docker/", "backend/migrations/"))}), "facial")
 
     def test_cli_uses_deployed_baseline_and_exports_it_to_app_preflight(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -105,6 +105,7 @@ class ReleaseClassifierTests(unittest.TestCase):
                                            "expected_database_revision": "20261017_0084"}), encoding="utf-8")
             (root / "scripts").mkdir()
             shutil.copyfile(Path(__file__).with_name("classify_prod_release.py"), root / "scripts/classify_prod_release.py")
+            shutil.copyfile(Path(__file__).with_name("dependency_release.py"), root / "scripts/dependency_release.py")
             commit()
             output = root / ".git/github-output"
             cli_env = dict(env, GITHUB_OUTPUT=str(output))
@@ -144,7 +145,15 @@ class ReleaseClassifierTests(unittest.TestCase):
             "docker/docker-compose.yml",
         ):
             with self.subTest(path=path):
-                self.assertEqual(classify({path}), "facial")
+                self.assertEqual(classify({path}), "protected" if path.startswith("docker/") else "facial")
+
+    def test_dependencies_never_satisfy_an_automatic_release_scope(self):
+        for changed in ({"frontend/package-lock.json"}, {"backend/requirements-push.txt"},
+                        {"frontend/package-lock.json", "backend/requirements-push.txt"}):
+            self.assertEqual(classify(changed), "dependencies")
+        self.assertEqual(classify({"backend/Dockerfile.face"}), "protected")
+        self.assertEqual(classify({"backend/app/raw_development/worker.py"}), "protected")
+        self.assertEqual(classify({"backend/requirements-push.txt", "backend/app/auth.py"}), "mixed")
 
 
 if __name__ == "__main__":

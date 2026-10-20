@@ -68,6 +68,11 @@ if kind=="git":
         elif path.endswith("runtime-gates.json"): print("{}")
         else: print((Path(os.environ["SOURCE_ROOT"])/path).read_text())
     else: die("unexpected git "+repr(a))
+elif kind=="dependency-policy":
+    # Pure policy boundary: real Git/build-context behavior is covered by
+    # test_dependency_release.py, including its actual shell invocation.
+    if s.get("scope_fail"): die("dependency scope refused")
+    print('{"fixture_policy_contract":true}')
 elif kind=="docker":
     if a[0]=="ps": print("\n".join(s["services"]))
     elif a[:2]==["image","inspect"]: print(image(a[-1]))
@@ -80,7 +85,8 @@ elif kind=="docker":
         c=s["services"][service]
         if fmt=="{{.Image}}": print(c["image"])
         elif fmt=="{{.Config.Image}}": print("markina-gallery-"+service)
-        elif "Config.Env" in fmt: print(json.dumps(["APP_VERSION="+s["api_version"]]))
+        elif "Config.Env" in fmt:
+            print(s["api_version"] if "{{range" in fmt else json.dumps(["APP_VERSION="+s["api_version"]]))
         elif "NetworkSettings.Ports" in fmt: print('{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}')
         elif "|" in fmt: print("|".join([c["id"],c["image"],c["started"],"running",c["health"],c["hash"]]))
         elif "State.Health" in fmt: print(c["health"])
@@ -247,6 +253,10 @@ stub_call() {{
 }}
 python3() {{ {python} "$@"; }}
 git() {{ stub_call git "$@"; }}
+dependency_policy() {{
+  if [[ "$1" == web-build ]]; then cat >/dev/null; fi
+  stub_call dependency-policy "$@"
+}}
 docker() {{
   if [[ "$*" == "compose "* && " $* " == *" -f - "* ]]; then cat >/dev/null; fi
   stub_call docker "__APP_VERSION=${{APP_VERSION:-}}" "$@"
@@ -541,7 +551,9 @@ flock() {{ return 0; }}
         source = source.replace('/opt/markina-gallery', self.model['root'])
         path = self.base / 'wrapper.sh'
         path.write_text(source, encoding='utf-8', newline='\n')
-        payload = ROOT / 'scripts/deploy-prod-app-services.sh'
+        # GitHub raw serves Git LF bytes; a Windows checkout may use CRLF.
+        payload = self.base / 'app-payload.sh'
+        payload.write_text((ROOT / 'scripts/deploy-prod-app-services.sh').read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
         quote = lambda p: "'" + str(p).replace("'", "'\\''") + "'"
         python = quote(Path(os.sys.executable).as_posix())
         for tamper in (False, True):

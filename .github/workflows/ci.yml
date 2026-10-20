@@ -196,7 +196,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Habilitar emulação ARM64 para builds isolados
-        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        if: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
@@ -212,6 +212,17 @@ jobs:
       - name: Build local da imagem frontend (sem publicar ou iniciar serviços)
         if: ${{ needs.ci-scope.outputs.frontend_image == 'true' }}
         run: docker build --tag frontend:validation --file frontend/Dockerfile frontend
+      - name: Frontend ARM64 isolado e versões do lockfile
+        if: ${{ needs.ci-scope.outputs.frontend_image == 'true' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker buildx build --platform linux/arm64 --load --tag frontend:validation-arm64 --file frontend/Dockerfile frontend
+          expected="$(python -c 'import json; p=json.load(open("frontend/package-lock.json"))["packages"]; print(json.dumps({n:p["node_modules/"+n]["version"] for n in ("next","react","react-dom")}))')"
+          docker run --rm --network none --platform linux/arm64 -e EXPECTED_PACKAGES="$expected" --entrypoint node frontend:validation-arm64 -e '
+            const fs=require("fs"), assert=require("assert");
+            const actual=Object.fromEntries(["next","react","react-dom"].map(n=>[n,JSON.parse(fs.readFileSync("/app/node_modules/"+n+"/package.json","utf8")).version]));
+            assert.deepStrictEqual(actual, JSON.parse(process.env.EXPECTED_PACKAGES)); console.log(actual);'
       - name: Build local de prévias (sem publicar ou iniciar serviços)
         if: ${{ needs.ci-scope.outputs.preview == 'true' }}
         run: docker build --tag preview-adjustment:validation --file backend/Dockerfile.preview-adjustment backend
@@ -265,6 +276,8 @@ jobs:
         run: bash -n scripts/inventory-homolog-readonly.sh
       - name: Testar política de escopo e SHA
         run: python scripts/test_readonly_homolog_inventory_policy.py
+      - name: Contratos de dependências por imagem e isolamento web
+        run: python scripts/test_dependency_release.py
       - name: Regressões do gate restrito facial em homologação
         if: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
         run: |
