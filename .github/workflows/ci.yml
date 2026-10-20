@@ -195,6 +195,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Habilitar emulação ARM64 para builds isolados
+        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Build isolado do runtime facial AMD64
+        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        run: docker buildx build --platform linux/amd64 --load --tag face-worker:validation-amd64 --file backend/Dockerfile.face backend
+      - name: Build isolado do runtime facial ARM64
+        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        run: docker buildx build --platform linux/arm64 --load --tag face-worker:validation-arm64 --file backend/Dockerfile.face backend
       - name: Build local da API (sem publicar ou iniciar serviços)
         if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
         run: docker build --tag backend:validation --file backend/Dockerfile backend
