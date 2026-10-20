@@ -111,7 +111,7 @@ elif kind=="docker":
             for service in cmd[1:]: s["images"]["markina-gallery-"+service]=s["built"][service]
             if s.get("drift_build"): s["services"]["worker"]["started"]="changed"
             if s.get("health_drift_build"): s["services"]["web"]["health"]="unhealthy"
-            if s.get("config_drift_build"): Path(s["files"].split(",")[1]).write_text("changed overlay")
+            if s.get("config_drift_build"): Path(s["overlay_native"]).write_text("changed overlay")
             save()
         elif cmd[0]=="up":
             if s.get("up_fail"): die("synthetic recreate failure")
@@ -198,6 +198,7 @@ class ReleaseContracts(unittest.TestCase):
         self.model = {
             "root": project_shell, "main": SHA_MAIN, "remote": SHA_MAIN,
             "checkout": SHA_OLD, "api_version": SHA_OLD, "files": files, "web_hash": HASH_WEB,
+            "overlay_native": str(self.state / "branding.compose.yml"),
             "images": {"markina-gallery-web": IMAGE_OLD, "markina-gallery-api": API_OLD},
             "built": {"web": IMAGE_NEW, "api": API_NEW},
             "services": {k: {"id": k, "image": i, "hash": h, "started": "unchanged", "health": "healthy"}
