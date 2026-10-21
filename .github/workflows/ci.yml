@@ -296,6 +296,8 @@ jobs:
         run: bash -n scripts/inventory-homolog-readonly.sh
       - name: Testar política de escopo e SHA
         run: python scripts/test_readonly_homolog_inventory_policy.py
+      - name: Contrato técnico de candidato e recusa de publicação protegida
+        run: python -m unittest discover -s scripts -p test_release_candidate_policy.py
       - name: Contratos de dependências por imagem e isolamento web
         run: python scripts/test_dependency_release.py
       - name: Regressões do gate restrito facial em homologação

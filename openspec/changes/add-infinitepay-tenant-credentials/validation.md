@@ -76,3 +76,21 @@ O proprietário priorizou também mínimo local de R$1 e redirecionamento no pri
 ## Orientação do card atualizada
 
 Regressão da orientação por link falhou antes da correção (1failed/12skipped), por ausência do texto esperado. Depois da mudança textual: `npm test -- app/admin/settings/infinitepay-panel.test.tsx --maxWorkers=1` — **13 passed**,3,62s. As opções por link conservam crédito somente; PIX manual continua independente. Sem alteração da coleta transitória, senha/OTP, ownership, opções do adaptador ou ação financeira. Build/lint/suíte completos serão conferidos após integrar também a correção do mínimo/redirecionamento.
+
+## Candidato unificado com mínimo e primeiro clique
+
+Merge local `be3f36e` incorpora o PR#266/heada93dfae por histórico, sem reescrever commits ou substituir snapshots do cofre. Nova guarda mínima precede os efeitos; as duas implementações coexistem. Não inclui código do PR261 nem alteração de dependências em relação à main21.
+
+- PostgreSQL sintético: `test_provider_checkout.py test_infinitepay_credential_checkout.py` — **37 passed,6warnings,291,29s**. Inclui os novos casos abaixo deR$1, fronteira/itens baratos, replay histórico, checkout/retorno com chave original, binding legado, troca concorrente e reabertura com troca de credencial.
+- Suíte frontend inteira `npm test -- --maxWorkers=2`: **67arquivos/610testes aprovados**,159,09s. Inclui13casos do card e navegação/PIX/recuperação do carrinho. Não aumentados timeouts ou alterados testes administrativos alheios.
+- Lint: **0erros/34avisos preexistentes**. Build e TypeScript **exit0** após a integração; logs locais vault-unified-minimum-redirect-{lint,build}.log.
+- Ruff no mesmo escopo do CI, `backend/app backend/tests`, aprovado. Uma execução inadvertidamente mais ampla sobre `backend` alcançou migrations históricas e reportou17 problemas preexistentes; não houve reformat/alteração desses arquivos, e essa execução não é reportada como aprovação.
+- OpenSpec na versão do CI1.14.0: **134passed/0failed** após novo delta operacional.
+
+## Correção do teste de política, preservando recusa operacional
+
+O teste original falhava ao comparar o runtime do cofre com pins0084. O verificador/classificador/manifestos/wrappers de produção NÃO foram flexibilizados nesta correção. O teste agora comprova com `evaluate` real o snapshot ancestral que introduziu o manifesto exato, conserva todas as comparações de blobs sobre esse snapshot e testa HEAD separadamente. A recusa é obrigatória para HEAD classificado protegido; histórico inválido ou tentativa de aprovar migration no snapshot positivo falha.
+
+`python -m unittest discover -s scripts -p test_release_candidate_policy.py`: **7testes aprovados,45,351s**, com Git e verificador reais, sem mocks/skip. Cobrem aprovação exata/documental, recusa de migration, blob adulterado, manifesto que tente admitir migration, pin falso e manifesto divergente. `python scripts/test_production_release_workflow_policy.py`: **publication_candidate_ready=false/api_fora_do_escopo; policy:ok**. Ruff dos dois arquivos aprovado. CI passa a executar também esses sete testes explicitamente; todos os checks anteriores permanecem. O head técnico final e o CI remoto ainda devem ser conferidos antes de declarar a integração aprovada.
+
+A matriz77 anterior pode ser reutilizada para criptografia/gestão/migration não alteradas; a nova matriz37 repete todos os caminhos de checkout afetados pelo merge. Nenhum checkout real, segredo real, Oracle, migration remota, merge de PR ou deploy realizado. Fonte de release futura continua sendo o plano coordenado, não o botão do workflow0084.
