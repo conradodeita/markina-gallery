@@ -49,7 +49,8 @@ Esses resultados não autorizam merge/deploy nem comprovam inventário, aprovaç
 - `python -m ruff check backend/app/provider_checkout.py backend/tests/test_provider_checkout.py`: aprovado.
 - `npx -y @fission-ai/openspec@1.14.0 validate --strict --all`: **133 passed / 0 failed**, versão exata do CI. A CLI global local 1.14.1 teve 30 recusas por novas verificações em changes anteriores; nenhuma spec não relacionada foi alterada para contorná-las.
 - `git diff --check`: aprovado. Revisão proporcional: reaproveitados mutex, idempotência, projeção e reservas; link de retomada continua necessário como fallback e para compras já emitidas. Nenhuma remoção extra ou refatoração ampla é elegível.
-- Matriz ampliada PostgreSQL de 91 casos iniciada, resultado final ainda pendente neste checkpoint; não é aprovação de toda a suíte backend ou de CI.
+- Matriz ampliada PostgreSQL concluída: `python -u -m pytest backend/tests/test_provider_checkout.py backend/tests/test_provider_cart_recovery.py backend/tests/test_provider_cart_recovery_api.py backend/tests/test_payment_provider.py -v --tb=short` com ambiente sintético local: **91 passed, 6 warnings,804,53s**. Inclui concorrência, confirmação antes da URL, respostas tardias accepted/refused/unknown/transport, PIX e recusa de reabertura de pagamento confirmado. Log local `C:/codex-data/tmp/infinitepay-minimum-redirect-postgres.log`. Não é aprovação da suíte backend integral de CI.
+- No commit de preparação42a0326, classificador real confirmou `release_baseline_sha=21b89c3 / release_scope=app` e gate real `app_release_ready=true / somente_api_web`. PR draft [#266](https://github.com/conradodeita/markina-gallery/pull/266) criado, sem merge/deploy. Resultado final do CI remoto ainda não confirmado; falha de consulta GraphQL por timeout local não é falha comprovada do CI.
 
 ## Publicação futura
 
