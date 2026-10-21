@@ -15,7 +15,9 @@ type Payment = { id: string; revision: string; total_cents: number; pix_copy_pas
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
 type CardPayment = { id: string; status: "awaiting_payment" | "verification_required" | "failed_before_issue"; checkout_url: string | null; total_cents: number };
 type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
-  pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null; total_cents: number | null; payment?: Payment };
+  recovery_revision?: string | null;
+  pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null;
+  pending_card_payments?: CardPayment[]; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function CartPage() {
@@ -33,6 +35,8 @@ export default function CartPage() {
   const locked = useRef(false);
   const requestKey = useRef<string | null>(null);
   const cardRequestKey = useRef<string | null>(null);
+  const cardAttemptRevision = useRef<string | null>(null);
+  const recoveryRevision = useRef<string | null | undefined>(undefined);
   const finalizationKeys = useRef<Record<string, string>>({});
   const refresh = useCallback(async () => {
     const current = ++sequence.current;
@@ -46,6 +50,16 @@ export default function CartPage() {
       if (!response.ok) throw new Error("Não foi possível consultar o carrinho.");
       const data: Cart = await response.json();
       if (sequence.current !== current) return;
+      if (data.recovery_revision && data.recovery_revision !== recoveryRevision.current
+          && data.can_prepare && !data.card_payment) {
+        const alreadyLoaded = recoveryRevision.current !== undefined;
+        recoveryRevision.current = data.recovery_revision;
+        cardRequestKey.current = null; cardAttemptRevision.current = null; requestKey.current = null;
+        setReported(null);
+        if (alreadyLoaded) setNotice("O fotógrafo reabriu seu carrinho. Suas fotos já estão selecionadas; confira o total e escolha como pagar.");
+      } else if (recoveryRevision.current === undefined && !data.recovery_revision) {
+        recoveryRevision.current = null;
+      }
       setCart(data);
       setMethod((currentMethod) => currentMethod === "card" && data.card_available
         ? "card" : data.pix_available !== false ? "pix" : data.card_available ? "card" : "pix");
@@ -132,6 +146,10 @@ export default function CartPage() {
   async function prepareCard() {
     if (!cart?.cart_revision || !cart.can_prepare || !cart.card_available || locked.current) return;
     locked.current = true; setBusy(true); setError("");
+    if (cardAttemptRevision.current !== cart.cart_revision) {
+      cardRequestKey.current = null;
+      cardAttemptRevision.current = cart.cart_revision;
+    }
     cardRequestKey.current ??= crypto.randomUUID();
     try {
       const response = await fetch("/api/library/cart/prepare-card", {
@@ -148,6 +166,11 @@ export default function CartPage() {
         cardRequestKey.current = null;
         setCart((previous) => previous ? { ...previous, card_payment: null } : previous);
         setNotice("A InfinitePay confirmou que não criou o checkout. Suas fotos continuam selecionadas; você pode tentar o cartão novamente ou escolher PIX.");
+        notifyCartChanged();
+        return;
+      }
+      if (["exception", "hold", "confirmed"].includes(result.status)) {
+        await refresh();
         notifyCartChanged();
         return;
       }
@@ -176,6 +199,17 @@ export default function CartPage() {
         ? <><p>Continue o pagamento no checkout seguro da InfinitePay.</p><a className="primary" href={cart.card_payment.checkout_url} target="_blank" rel="noopener noreferrer">Continuar para pagamento com cartão</a></>
         : <p role="status">Pagamento em verificação; esta compra permanece reservada. Acompanhe em Compras e não inicie outra cobrança para essas fotos.</p>}
       <Link href={`/library/purchases#payment-${cart.card_payment.id}`}>Acompanhar compra</Link>
+    </section> : null}
+    {cart?.pending_card_payments?.length ? <section className="unified-payment" aria-label="Compras anteriores pendentes">
+      <h2>Compras anteriores pendentes</h2>
+      <p>Esses valores pertencem a compras anteriores e não compõem o total das fotos selecionadas agora. As fotos reservadas nessas compras continuam protegidas contra outro pagamento.</p>
+      {cart.pending_card_payments.map((payment) => <div key={payment.id}>
+        <h3>Compra anterior · {money(payment.total_cents)}</h3>
+        <p>{payment.status === "verification_required"
+          ? "Essa compra aguarda conferência do fotógrafo. Não pague novamente pelas fotos reservadas nela."
+          : "Essa compra tem um checkout de cartão pendente. Acompanhe o pagamento em Compras."}</p>
+        <Link href={`/library/purchases#payment-${payment.id}`}>Acompanhar compra anterior</Link>
+      </div>)}
     </section> : null}
     {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
       <div className="section-heading"><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>

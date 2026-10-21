@@ -1,23 +1,42 @@
 {
   "scope": "api_web_only",
-  "production_baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
+  "production_baseline_sha": "5446cf4d7328ef6283ebfab50b5d1976d561fc8d",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
+    "backend/app/client_lifecycle.py": "5757fc8f7ddefeaa93d0624cce93d1111131e761",
     "backend/app/infinitepay_binding.py": "7a6dfc1b550545cfdc5d903bad5ce8d94bb8cc04",
-    "backend/app/main.py": "42528180071cd5c9e980ccf1575ffc9a635fb569",
+    "backend/app/infinitepay_settings.py": "b96f5abfa6434305c751fbece1dcc65e10b4478d",
+    "backend/app/main.py": "ace1385504eef93fbcf06473c3f5cc85652d9074",
+    "backend/app/order_visibility.py": "d1eaefbf6516f428b2d1657d482d021f15a57adb",
+    "backend/app/payment_availability.py": "78ba7b53f4f3d32e5974e3f3bc91ad3d2f065aba",
     "backend/app/payment_export.py": "e7742d5fdd271c93a4af42870284f17b11adc3a2",
     "backend/app/payment_provider.py": "e72329ccf2e55529d32dc494ff6f7b75196e1c92",
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
-    "backend/app/provider_checkout.py": "4802d03af70df2776146f02589decb0674dd7fa5",
+    "backend/app/provider_cart_recovery.py": "301828940c416b5d27beca5a06e2d8f8c3e8d9f4",
+    "backend/app/provider_checkout.py": "1f09a221497bdc18d6d20b01f322528caf2f4a66",
     "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
-    "docker/docker-compose.yml": "c8dd2ef7834789a11827755773b79ced91d8892a",
+    "backend/app/unified_checkout.py": "f4174431abd6a058248dcfb20c756ea1fe90585b",
+    "docker/docker-compose.yml": "71dc4fe64061405be17a3b3050f2cc2ef7baf2b4",
     "frontend/app/admin/admin-navigation.tsx": "d055eaa6ae784d16c39761fb1023fc3b5621bbe6",
+    "frontend/app/admin/galleries/[galleryId]/orders/page.tsx": "e2034b63887489b52e137a399503bdbcb2718825",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx": "47eb3ba7bdc21faffc583f3ec455f0bc2f178266",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx": "d3ec9f39db7d79bf2c7372afcbe9ce616f1f1159",
+    "frontend/app/admin/payments/cart-recovery.module.css": "bab66a31d57a7f78a48c70b9f0a9719d49ff5ae4",
+    "frontend/app/admin/payments/cart-recovery.tsx": "14b2334b2c6cb1a4eaa8a7aaf52b43315fad2894",
     "frontend/app/admin/payments/order-photos.tsx": "40f2163974f1f075c0e1fd139ac1319a51592831",
-    "frontend/app/admin/payments/page.tsx": "e4fd706e91db83aaa12a6be14d9046b50b975d15",
+    "frontend/app/admin/payments/page.tsx": "a4437f36142c0c2aa7752162d83a0302a7f51b33",
     "frontend/app/admin/payments/payments.module.css": "7a24498537c5767823d9497b34c98f72ddc5e548",
     "frontend/app/admin/settings/infinitepay-panel.tsx": "acadf2e5b210871bb5c0ba3bddbc5d02d5ba2914",
-    "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da"
+    "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da",
+    "frontend/app/library/cart/page.tsx": "36844020fc4d5b0ee9fd5829c990854ee83b2f27",
+    "frontend/app/library/purchase-card.tsx": "08f1e3643310f1e95f0ebbefd6f7e2e5505aee0a",
+    "frontend/app/library/purchases/page.tsx": "82f61cd78f0eeea93cff15df51eaf8b7fd292cdf"
+  },
+  "emergency_api": {
+    "baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
+    "baseline_image": "sha256:afc54e0ff0b008ac7bcc2ab28095f279da6213aaa5bec1ac98fae8269fc0715c",
+    "input_blobs": {
+      "backend/requirements-push.txt": "2e23bf84e3eae38396218bada0ee37d3da722843"
+    }
   }
 }

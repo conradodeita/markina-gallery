@@ -334,6 +334,7 @@ from app.order_delivery import (
     set_delivery,
     validate_album_url,
 )
+from app.order_visibility import visible_sale_order_condition
 from app.parent_registration import link_client_to_parent
 from app.payment_availability import (
     PAYMENT_REQUIRED_MESSAGE,
@@ -385,6 +386,13 @@ from app.private_upload_batches import (
     folder_batch_for,
 )
 from app.product_brand import PRODUCT_NAME
+from app.provider_cart_recovery import (
+    CartRecoveryError,
+    cart_recovery_statuses,
+    client_cart_recovery_revision,
+    preview_cart_recovery,
+    reopen_payment_cart,
+)
 from app.provider_checkout import issue_provider_payment, prepare_provider_payment
 from app.provider_confirmation import apply_payment_check
 from app.public_gallery_access import (
@@ -7522,12 +7530,17 @@ def admin_gallery_orders(
     orders = list(
         db.scalars(
             select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
-            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id)
+            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                   visible_sale_order_condition(tenant_id=tenant_id))
             .order_by(SaleOrder.created_at.desc())
         )
     )
     if not gallery and not orders:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    card_payments = {payment.id: payment for payment in db.scalars(select(ProviderPayment).where(
+        ProviderPayment.tenant_id == tenant_id,
+        ProviderPayment.id.in_({order.provider_payment_id for order in orders if order.provider_payment_id})))}
+    recoveries = cart_recovery_statuses(db, tenant_id=tenant_id, payments=card_payments.values())
     payment_groups = {group.id: group for group in db.scalars(select(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id).where(
         PaymentGroup.id.in_({order.payment_group_id for order in orders if order.payment_group_id})))}
     return {
@@ -7545,6 +7558,10 @@ def admin_gallery_orders(
             {
                 "id": str(order.id),
                 "payment_status": order.payment_status,
+                **({"cart_reopened_at": recoveries[order.provider_payment_id]["reopened_at"]}
+                   if order.payment_status == "cancelled" and order.provider_payment_id in card_payments
+                   and card_payments[order.provider_payment_id].state == "exception"
+                   and recoveries[order.provider_payment_id]["reopened_at"] else {}),
                 "payment_group": ({"id": str(order.payment_group_id),
                                    "total_cents": payment_groups[order.payment_group_id].total_cents}
                                   if order.payment_group_id else None),
@@ -9313,7 +9330,9 @@ def _commerce_client(request: Request, db: Session) -> Client:
 
 @app.get("/library/cart")
 def unified_cart(request: Request, db: Session = Depends(db_session)) -> dict:
-    return cart_payload(db, _commerce_client(request, db))
+    client = _commerce_client(request, db)
+    return {**cart_payload(db, client), "recovery_revision": client_cart_recovery_revision(
+        db, tenant_id=client.tenant_id, client_id=client.id)}
 
 
 @app.post("/library/cart/prepare")
@@ -9424,6 +9443,53 @@ def infinitepay_return(request: Request,
                     if close:
                         close()
     return RedirectResponse(destination, status_code=303)
+
+
+class CartRecoveryPreviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0, strict=True)
+
+
+class CartRecoveryInput(CartRecoveryPreviewInput):
+    expected_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    idempotency_key: UUID
+    reason: str = Field(min_length=3, max_length=100)
+    acknowledge_remote_checkout: bool = Field(strict=True)
+
+
+@app.post("/admin/provider-payments/{payment_id}/cart-recovery/preview")
+def preview_provider_cart_recovery(payment_id: UUID, payload: CartRecoveryPreviewInput,
+                                    request: Request, db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    actor_id = require_admin(request).subject_id
+    require_same_origin(request)
+    try:
+        return preview_cart_recovery(db, actor_id, payment_id, expected_revision=payload.expected_revision,
+                                     expected_tenant_id=tenant_id)
+    except (CartRecoveryError, LookupError, TenantContextError) as exc:
+        db.rollback()
+        status = 403 if isinstance(exc, TenantContextError) else 404 if isinstance(exc, LookupError) else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.post("/admin/provider-payments/{payment_id}/cart-recovery")
+def recover_provider_cart(payment_id: UUID, payload: CartRecoveryInput,
+                          request: Request, db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    actor_id = require_admin(request).subject_id
+    require_same_origin(request)
+    try:
+        result = reopen_payment_cart(db, actor_id, payment_id, expected_revision=payload.expected_revision,
+            expected_fingerprint=payload.expected_fingerprint, decision_id=payload.idempotency_key,
+            reason=payload.reason, acknowledge_remote_checkout=payload.acknowledge_remote_checkout,
+            expected_tenant_id=tenant_id)
+        db.commit()
+        return result
+    except (CartRecoveryError, LookupError, TenantContextError) as exc:
+        db.rollback()
+        status = 403 if isinstance(exc, TenantContextError) else 404 if isinstance(exc, LookupError) else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 
 class GroupPaymentInput(BaseModel):
@@ -9554,6 +9620,7 @@ def client_purchase_history(
             ProviderPayment.id.in_(provider_payment_ids),
         ))
     } if provider_payment_ids else {}
+    recoveries = cart_recovery_statuses(db, tenant_id=tenant_id, payments=provider_payments.values())
     item_rows = (
         list(
             db.scalars(
@@ -9603,6 +9670,9 @@ def client_purchase_history(
     for order in orders:
         gallery = operational_galleries.get(order.derived_gallery_id)
         canonical_parent = canonical_parents.get(order.parent_gallery_id)
+        recovered_at = recoveries.get(order.provider_payment_id, {}).get("reopened_at") if (
+            order.payment_status == "cancelled" and order.provider_payment_id in provider_payments
+            and provider_payments[order.provider_payment_id].state == "exception") else None
         item_payloads = []
         for item in items_by_order[order.id]:
             historical_media = history_by_item.get(item.id)
@@ -9646,6 +9716,7 @@ def client_purchase_history(
                     "provider_payment_state": provider_payments[order.provider_payment_id].state,
                     "provider_checkout_url": provider_payments[order.provider_payment_id].checkout_url
                     if provider_payments[order.provider_payment_id].state == "awaiting_payment" else None,
+                    **({"provider_cart_reopened_at": recovered_at} if recovered_at else {}),
                 } if order.provider_payment_id in provider_payments else {}),
                 "commercial_state": (
                     "selection_finalized"
@@ -9694,6 +9765,8 @@ def client_purchase_history(
             "id": str(payment_id),
             "state": order_payload["provider_payment_state"],
             "checkout_url": order_payload["provider_checkout_url"],
+            **({"cart_reopened_at": order_payload["provider_cart_reopened_at"]}
+               if order_payload.get("provider_cart_reopened_at") else {}),
             "total_cents": 0,
             "orders": [],
         })
@@ -11999,6 +12072,7 @@ def _payment_dashboard_data(
 
     order_query = (
         select(SaleOrder, Client, DerivedGallery, ParentGallery).where(or_(Client.id.is_(None), Client.tenant_id == tenant_id), or_(DerivedGallery.id.is_(None), DerivedGallery.tenant_id == tenant_id), or_(ParentGallery.id.is_(None), ParentGallery.tenant_id == tenant_id), SaleOrder.tenant_id == tenant_id)
+        .where(visible_sale_order_condition(tenant_id=tenant_id))
         .outerjoin(Client, Client.id == SaleOrder.client_id)
         .outerjoin(DerivedGallery, DerivedGallery.id == SaleOrder.derived_gallery_id)
         .outerjoin(ParentGallery, ParentGallery.id == SaleOrder.parent_gallery_id_snapshot)
@@ -12041,6 +12115,7 @@ def _payment_dashboard_data(
             ProviderPayment.id.in_(card_payment_ids),
         ))
     } if card_payment_ids else {}
+    recovery_statuses = cart_recovery_statuses(db, tenant_id=tenant_id, payments=card_payments.values())
     canonical_parent_ids = {
         order.parent_gallery_id_snapshot for order in order_entities
         if order.parent_gallery_id and order.parent_gallery_id_snapshot
@@ -12300,7 +12375,8 @@ def _payment_dashboard_data(
                 **({"payment_method": "credit_card" if provider_payment else "pix"}
                    if provider_payment or order.payment_group_id or latest_communication else {}),
                 **({"provider_payment_state": provider_payment.state,
-                    "provider_payment_id": str(provider_payment.id)} if provider_payment else {}),
+                    "provider_payment_id": str(provider_payment.id),
+                    "provider_cart_recovery": recovery_statuses.get(provider_payment.id)} if provider_payment else {}),
                 "confirmed_at": (order.confirmed_at.isoformat()
                                  if order.payment_status == "confirmed" and order.confirmed_at
                                  else None),

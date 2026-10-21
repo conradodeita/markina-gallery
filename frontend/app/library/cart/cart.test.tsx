@@ -90,6 +90,26 @@ describe("revisão global da cliente", () => {
     expect(screen.getByLabelText("Cartão de crédito")).toHaveProperty("checked", false);
   });
 
+  it("separa os 5 centavos da compra anterior e permite alternar meios para fotos novas", async () => {
+    const ready = { ...cart, cart_revision: "d".repeat(64), pix_available: true, card_available: true,
+      card_payment: null, pending_card_payments: [{ id: "previous-unknown", status: "verification_required",
+        checkout_url: null, total_cents: 5 }] };
+    const fetcher = vi.fn((path: string) => response(path.endsWith("/prepare") ? { ...ready, payment } : ready));
+    vi.stubGlobal("fetch", fetcher);
+    render(<CartPage />);
+    await screen.findByRole("button", { name: "Informar pagamento" });
+    const previous = screen.getByRole("region", { name: "Compras anteriores pendentes" });
+    expect(within(previous).getByText(/0,05/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /Total R\$\s*14,00/ })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Cartão de crédito"));
+    expect(screen.getByRole("button", { name: "Continuar com cartão de crédito" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("PIX"));
+    expect(screen.getByRole("button", { name: "Informar pagamento" })).toBeTruthy();
+    expect(fetcher.mock.calls.some(([path]) => path.endsWith("/prepare-card"))).toBe(false);
+    expect(within(previous).getByRole("link", { name: "Acompanhar compra anterior" }).getAttribute("href"))
+      .toBe("/library/purchases#payment-previous-unknown");
+  });
+
   it("preserva seleção e explica indisponibilidade quando nenhum meio é utilizável", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ ...cart, can_prepare: false, pix_available: false,
       card_available: false, payment_error: "Pagamento indisponível. Sua seleção foi mantida." })));
@@ -162,6 +182,104 @@ describe("revisão global da cliente", () => {
     expect(screen.queryByRole("button", { name: "Continuar com cartão de crédito" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Informar pagamento" })).toBeNull();
     expect(fetcher.mock.calls.filter(([path]) => path.endsWith("/prepare-card"))).toHaveLength(1);
+  });
+
+  it("retoma as mesmas fotos na mesma aba após reabertura autorizada, com PIX e chave nova para cartão", async () => {
+    const ready = { ...cart, cart_revision: "f".repeat(64), card_available: true, pix_available: true };
+    const uncertain = { id: "card-old", status: "verification_required", checkout_url: null, total_cents: 1400 };
+    let issued = false, reopened = false;
+    const keys: string[] = [];
+    const fetcher = vi.fn((path: string, options?: RequestInit) => {
+      if (path.endsWith("/prepare-card")) {
+        keys.push(JSON.parse(String(options?.body)).idempotency_key); issued = true;
+        return response(reopened ? { id: "card-new", status: "awaiting_payment", total_cents: 1400,
+          checkout_url: "https://checkout.infinitepay.io/owner/new" } : uncertain);
+      }
+      if (issued && !reopened) return response({ ...ready, can_prepare: false, card_payment: uncertain });
+      return response({ ...ready, recovery_revision: reopened ? "authorized-recovery" : null,
+        ...(path.endsWith("/prepare") ? { payment } : {}) });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<CartPage />);
+    fireEvent.click(await screen.findByLabelText("Cartão de crédito"));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar com cartão de crédito" }));
+    await screen.findByText(/A InfinitePay não devolveu um link utilizável/);
+    fireEvent.focus(window);
+    await screen.findByRole("region", { name: "Pagamento por cartão em andamento" });
+    expect(screen.queryByLabelText("PIX")).toBeNull();
+    expect(keys).toHaveLength(1);
+    reopened = true;
+    fireEvent.focus(window);
+    await screen.findByText(/O fotógrafo reabriu seu carrinho/);
+    expect(screen.getByText("Foto 1")).toBeTruthy();
+    expect(screen.getByText("Foto 2")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("PIX"));
+    expect(await screen.findByRole("button", { name: "Informar pagamento" })).toBeTruthy();
+    expect(keys).toHaveLength(1);
+    fireEvent.click(screen.getByLabelText("Cartão de crédito"));
+    fireEvent.click(screen.getByRole("button", { name: "Continuar com cartão de crédito" }));
+    await screen.findByRole("link", { name: "Continuar para pagamento com cartão" });
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(fetcher.mock.calls.some(([path, options]) => options?.method === "DELETE" || path.includes("/selection"))).toBe(false);
+  });
+
+  it("preserva a chave da mesma tentativa após falha de rede sem recuperação administrativa", async () => {
+    const ready = { ...cart, cart_revision: "e".repeat(64), card_available: true, pix_available: false };
+    const keys: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((path: string, options?: RequestInit) => {
+      if (!path.endsWith("/prepare-card")) return response(ready);
+      keys.push(JSON.parse(String(options?.body)).idempotency_key);
+      return keys.length === 1 ? Promise.reject(new Error("Sem resposta"))
+        : response({ id: "same-attempt", status: "verification_required", checkout_url: null, total_cents: 1400 });
+    }));
+    render(<CartPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Continuar com cartão de crédito" }));
+    await screen.findByText("Sem resposta");
+    fireEvent.click(screen.getByRole("button", { name: "Continuar com cartão de crédito" }));
+    await screen.findByText(/A InfinitePay não devolveu um link utilizável/);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("usa chave diferente para novas fotos com revisão diferente, preservando a compra anterior", async () => {
+    let revision = "a".repeat(64);
+    const keys: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((path: string, options?: RequestInit) => {
+      if (!path.endsWith("/prepare-card")) return response({ ...cart, cart_revision: revision,
+        card_available: true, pix_available: false, pending_card_payments: keys.length ? [{
+          id: "old", status: "verification_required", checkout_url: null, total_cents: 5 }] : [] });
+      keys.push(JSON.parse(String(options?.body)).idempotency_key);
+      return Promise.reject(new Error("Sem resposta"));
+    }));
+    render(<CartPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Continuar com cartão de crédito" }));
+    await screen.findByText("Sem resposta");
+    revision = "b".repeat(64);
+    fireEvent.focus(window);
+    await screen.findByRole("region", { name: "Compras anteriores pendentes" });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar com cartão de crédito" }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(screen.getByRole("region", { name: "Compras anteriores pendentes" })).toBeTruthy();
+  });
+
+  it.each(["exception", "confirmed", "hold"])("relê o carrinho após resposta tardia %s sem projetar incerteza antiga", async (status) => {
+    let changed = false;
+    const ready = { ...cart, cart_revision: "c".repeat(64), card_available: true, pix_available: false };
+    const fetcher = vi.fn((path: string) => {
+      if (path.endsWith("/prepare-card")) { changed = true; return response({ id: "old", status, checkout_url: null }); }
+      return response(changed && status !== "exception" ? { groups: [], quantity: 0, can_prepare: false }
+        : { ...ready, recovery_revision: changed ? "reopened" : null });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<CartPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Continuar com cartão de crédito" }));
+    await waitFor(() => expect(fetcher.mock.calls.filter(([path]) => path === "/api/library/cart")).toHaveLength(2));
+    expect(screen.queryByRole("region", { name: "Pagamento por cartão em andamento" })).toBeNull();
+    expect(screen.queryByText(/A InfinitePay não devolveu um link utilizável/)).toBeNull();
+    if (status === "exception") expect(await screen.findByText(/O fotógrafo reabriu seu carrinho/)).toBeTruthy();
+    else expect(await screen.findByText("Seu carrinho está vazio.")).toBeTruthy();
   });
 
   it("mantém o checkout já emitido acessível mesmo quando cartão foi desabilitado para novas compras", async () => {

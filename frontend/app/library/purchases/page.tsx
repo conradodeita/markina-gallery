@@ -8,7 +8,9 @@ import { SystemState } from "../../ui-kit";
 import { RemovedMovements, type RemovedMovement } from "../../removed-movements";
 
 type PurchaseGroup = { id: string; total_cents: number; orders: Order[] };
-type ProviderPaymentGroup = { id: string; state: string; checkout_url: string | null; total_cents: number; orders: Order[] };
+type ProviderPaymentGroup = { id: string; state: string; checkout_url: string | null; total_cents: number; orders: Order[];
+  cart_reopened_at?: string | null };
+const isReopened = (group: ProviderPaymentGroup) => group.state === "exception" && Boolean(group.cart_reopened_at);
 const cardStateLabel: Record<string, string> = {
   creating: "Preparando checkout",
   awaiting_payment: "Aguardando pagamento",
@@ -49,10 +51,12 @@ export default function PurchasesPage() {
       </section>)}
       {result.provider_payment_groups.map((group) => <section className="unified-purchase" key={group.id} id={`payment-${group.id}`} aria-label={`Compra de cartão ${group.id.slice(0, 8)}`}>
         <h2>Compra {group.id.slice(0, 8)}</h2>
-        <p>Cartão de crédito · {cardStateLabel[group.state] ?? "Pagamento em análise"} · {group.total_cents ? (group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : ""}</p>
+        <p>Cartão de crédito · {isReopened(group) ? "Carrinho reaberto" : cardStateLabel[group.state] ?? "Pagamento em análise"} · {group.total_cents ? (group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : ""}</p>
         {group.state === "awaiting_payment" && group.checkout_url ? <a className="order-album-button order-album-button--available" href={group.checkout_url} target="_blank" rel="noopener noreferrer">Continuar pagamento</a> : null}
         {group.state === "verification_required" ? <p>A InfinitePay não devolveu um link utilizável. O checkout não foi aberto e nenhum pagamento foi iniciado por esta tela. A compra permanece reservada enquanto verificamos se o link chegou a ser criado. Não tente iniciar outro pagamento enquanto estiver em conferência.</p> : null}
-        {group.state === "hold" || group.state === "exception" ? <p>Esta compra está em conferência; o acesso às fotos permanece suspenso.</p> : null}
+        {isReopened(group) ? <><p>O fotógrafo devolveu as fotos desta compra ao carrinho. Elas já estão selecionadas; confira o total atual e escolha como pagar.</p>
+          <Link className="order-album-button order-album-button--available" href="/library/cart">Abrir carrinho</Link></>
+          : group.state === "hold" || group.state === "exception" ? <p>Esta compra está em conferência; o acesso às fotos permanece suspenso.</p> : null}
         {group.orders.map((order) => <LibraryOrderCard key={order.id} order={order} />)}
       </section>)}
       <RemovedMovements items={result.removed_movements} />

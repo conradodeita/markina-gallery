@@ -21,6 +21,7 @@ from app.auth import (
     ParentGallery,
     PaymentCommunication,
     PaymentGroup,
+    PhotoAsset,
     PhotoSelection,
     ProviderPayment,
     ProviderPaymentAttempt,
@@ -334,6 +335,82 @@ def test_categoria_http_da_emissao_e_persistida_sem_liberar_reserva(monkeypatch)
         assert attempt.state == "unknown"
         assert attempt.error_category == "http_422"
         assert db.scalar(select(func.count(PhotoSelection.id))) == 0
+
+
+@pytest.mark.parametrize("outcome", ["unknown", "accepted"])
+def test_compra_anterior_nao_bloqueia_total_e_meios_de_fotos_novas(outcome):
+    owner_id, other_id, gallery_ids, revision = setup()
+    with SessionLocal() as db:
+        payment = prepare(db, owner_id, revision)
+        db.commit()
+        issue_provider_payment(db, payment.id, SyntheticPaymentProvider(outcome))
+        previous = (payment.state, payment.total_cents, payment.revision_number, payment.checkout_url)
+        previous_items = set(db.execute(select(SaleOrderItem.sale_order_id, SaleOrderItem.photo_asset_id_snapshot)))
+        client = db.get(Client, owner_id)
+        assert cart_payload(db, client)["card_payment"]["id"] == str(payment.id)
+
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        example = db.scalar(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == gallery.id))
+        new_photo = PhotoAsset(tenant_id=client.tenant_id, parent_gallery_id=gallery.parent_gallery_id,
+            derived_gallery_id=gallery.id, folder_id=example.folder_id,
+            filename="new-selection.jpg", storage_key=f"synthetic/{uuid4()}.jpg")
+        db.add(new_photo)
+        db.flush()
+        db.add(PhotoSelection(tenant_id=client.tenant_id, client_id=owner_id,
+                             derived_gallery_id=gallery.id, photo_asset_id=new_photo.id))
+        db.commit()
+        cart = cart_payload(db, client)
+        assert cart["total_cents"] == 700 and cart["quantity"] == 1
+        assert cart["card_available"] and cart["pix_available"] and cart["can_prepare"]
+        assert cart["card_payment"] is None
+        assert [row["id"] for row in cart["pending_card_payments"]] == [str(payment.id)]
+        other = cart_payload(db, db.get(Client, other_id))
+        assert other["card_payment"] is None and other["pending_card_payments"] == []
+
+        pix = prepare_group(db, client)
+        db.commit()
+        assert pix.total_cents == 700
+        pix_photos = set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).join(
+            SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id).where(SaleOrder.payment_group_id == pix.id)))
+        assert pix_photos == {new_photo.id}
+        next_card = prepare(db, owner_id, cart["cart_revision"])
+        db.commit()
+        assert next_card.total_cents == 700
+        db.refresh(payment)
+        assert (payment.state, payment.total_cents, payment.revision_number, payment.checkout_url) == previous
+        old_order_ids = select(SaleOrder.id).where(SaleOrder.provider_payment_id == payment.id)
+        assert set(db.execute(select(SaleOrderItem.sale_order_id, SaleOrderItem.photo_asset_id_snapshot)
+            .where(SaleOrderItem.sale_order_id.in_(old_order_ids)))) == previous_items
+        issue_provider_payment(db, next_card.id, SyntheticPaymentProvider("unknown"))
+        empty_cart = cart_payload(db, client)
+        assert empty_cart["quantity"] == 0
+        assert empty_cart["card_payment"]["id"] == str(next_card.id)
+        assert [row["id"] for row in empty_cart["pending_card_payments"]] == [str(payment.id)]
+
+
+def test_foto_reservada_continua_bloqueada_nos_dois_meios():
+    owner_id, _, gallery_ids, revision = setup()
+    with SessionLocal() as db:
+        payment = prepare(db, owner_id, revision)
+        db.commit()
+        issue_provider_payment(db, payment.id, SyntheticPaymentProvider("unknown"))
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        reserved = db.scalar(select(SaleOrderItem.photo_asset_id_snapshot).join(
+            SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id).where(
+                SaleOrder.provider_payment_id == payment.id, SaleOrder.derived_gallery_id == gallery.id))
+        # Mesmo um cliente que burle a seleção na UI não pode recobrar a foto.
+        db.add(PhotoSelection(tenant_id=payment.tenant_id, client_id=owner_id,
+                             derived_gallery_id=gallery.id, photo_asset_id=reserved))
+        db.commit()
+        client = db.get(Client, owner_id)
+        cart = cart_payload(db, client)
+        assert not cart["can_prepare"]
+        assert cart["card_payment"]["id"] == str(payment.id)
+        with pytest.raises(CheckoutError, match="congelado"):
+            prepare_group(db, client)
+        with pytest.raises(CheckoutError, match="congelado"):
+            prepare(db, owner_id, revision)
+        assert payment.state == "verification_required"
 
 
 def test_perfil_de_retorno_e_payment_check_nao_exige_webhook_assinado_ou_recovery():

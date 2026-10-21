@@ -4,6 +4,7 @@ import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, use
 
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
 import { PaymentActions } from "./payment-actions";
+import { CartRecoveryActions, type CartRecoveryStatus } from "./cart-recovery";
 
 import RemovedHistory from "./removed-history";
 import { OrderDeliveryForm, type OrderDelivery } from "./order-delivery";
@@ -47,6 +48,7 @@ type Order = {
   payment_method?: "credit_card" | "pix";
   provider_payment_state?: string;
   provider_payment_id?: string;
+  provider_cart_recovery?: CartRecoveryStatus;
   created_at: string;
   selection_expires_at: string | null;
   communications: Communication[];
@@ -126,6 +128,12 @@ const financialColor: Record<FinancialStatus, string> = {
   exception: "var(--payment-status-exception)",
   hold: "var(--payment-status-hold)",
 };
+function groupPresentation(group: ClientGroup) {
+  return group.orders.length > 0 && group.orders.every((order) => order.provider_payment_state === "exception"
+    && Boolean(order.provider_cart_recovery?.reopened_at))
+    ? { label: "Carrinho reaberto", tone: "neutral" as const, className: undefined }
+    : { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
+}
 const decisionLabel = {
   pending_review: "Aguardando revisão",
   confirmed: "Pagamento confirmado",
@@ -187,6 +195,7 @@ function PaymentsDashboard() {
   const [exportMessage, setExportMessage] = useState("");
   const loadRequest = useRef<AbortController | null>(null);
   const exportRequest = useRef<AbortController | null>(null);
+  const loadedPages = useRef(1);
 
   useEffect(() => {
     const header = document.querySelector<HTMLElement>(".admin-topbar");
@@ -203,7 +212,7 @@ function PaymentsDashboard() {
     };
   }, []);
 
-  const load = useCallback(async (nextFilters: Filters, cursor?: string | null, append = false) => {
+  const load = useCallback(async (nextFilters: Filters, cursor?: string | null, append = false, pages = 1) => {
     loadRequest.current?.abort();
     const controller = new AbortController();
     loadRequest.current = controller;
@@ -213,8 +222,17 @@ function PaymentsDashboard() {
     try {
       const response = await fetch(requestPath(nextFilters, cursor), { credentials: "same-origin", signal: controller.signal });
       if (!response.ok) throw new Error();
-      const payload = await response.json() as Dashboard;
+      let payload = await response.json() as Dashboard;
+      let fetchedPages = 1;
+      while (fetchedPages < pages && payload.page.next_cursor && !controller.signal.aborted) {
+        const next = await fetch(requestPath(nextFilters, payload.page.next_cursor), { credentials: "same-origin", signal: controller.signal });
+        if (!next.ok) throw new Error();
+        const page = await next.json() as Dashboard;
+        payload = { ...payload, groups: [...payload.groups, ...page.groups], page: page.page };
+        fetchedPages++;
+      }
       if (controller.signal.aborted) return;
+      loadedPages.current = append ? loadedPages.current + fetchedPages : fetchedPages;
       setDashboard((current) => append && current ? {
         ...payload,
         groups: [...current.groups, ...payload.groups],
@@ -361,9 +379,13 @@ function PaymentsDashboard() {
 
     <div className="payment-client-groups">
       {dashboard.groups.map((group) => <section className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
-        <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p><StatusBadge tone={financialPresentation[group.financial_status].tone} className={`payment-status-badge--${group.financial_status}`}>{financialPresentation[group.financial_status].label}</StatusBadge><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
+        <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p>
+          <StatusBadge tone={groupPresentation(group).tone} className={groupPresentation(group).className}>{groupPresentation(group).label}</StatusBadge>
+          <h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
-          {group.orders.map((order) => <OrderCard key={order.id} order={order} clientId={group.client.id} onRefresh={() => load(filters)} />)}
+          {group.orders.map((order, index) => <OrderCard key={order.id} order={order} clientId={group.client.id} clientName={group.client.name}
+            showCartRecovery={!group.orders.slice(0, index).some((previous) => previous.provider_payment_id === order.provider_payment_id)}
+            onCartRecoveryRefresh={() => load(filters, undefined, false, loadedPages.current)} onRefresh={() => load(filters)} />)}
         </div>
       </section>)}
     </div>
@@ -497,9 +519,13 @@ function ClientAutocomplete({
   </div>;
 }
 
-function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void> }) {
+function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecoveryRefresh, onRefresh }: {
+  order: Order; clientId: string; clientName: string; showCartRecovery: boolean;
+  onCartRecoveryRefresh: () => Promise<void>; onRefresh: () => Promise<void>;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const presentation = financialPresentation[order.financial_status];
+  const presentation = order.provider_cart_recovery?.reopened_at
+    ? { label: "Carrinho reaberto", tone: "neutral" as const } : financialPresentation[order.financial_status];
   const communication = order.communication;
   const paymentGroup = communication?.payment_group;
   const quantity = order.folders.reduce((total, folder) => total + folder.items.length, 0);
@@ -509,7 +535,7 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={order.provider_cart_recovery?.reopened_at ? undefined : `payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>
@@ -520,6 +546,9 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
       <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
       {order.payment_method === "credit_card" ? <>
         <p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
+        {showCartRecovery && order.provider_payment_id && order.provider_cart_recovery && !isConfirmedFinancialStatus(order.financial_status)
+          ? <CartRecoveryActions paymentId={order.provider_payment_id} state={order.provider_payment_state}
+            status={order.provider_cart_recovery} clientName={clientName} onRefresh={onCartRecoveryRefresh} /> : null}
         {downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}
       </> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>

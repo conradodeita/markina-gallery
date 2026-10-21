@@ -123,6 +123,88 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "runtime_diverge_do_blob_aprovado"))
 
+    def test_infinitepay_configuration_and_availability_require_reviewed_blobs(self):
+        for name in ("backend/app/infinitepay_settings.py", "backend/app/payment_availability.py"):
+            with self.subTest(path=name):
+                self.assertIn(name, policy.RUNTIME_FILES)
+                path = self.root / name
+                path.write_text("reviewed tenant payment availability\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "runtime_diverge_do_blob_aprovado"))
+                self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (True, "somente_api_web"))
+
+    def test_each_dependency_vault_and_migration_path_remains_rejected(self):
+        for name in ("backend/requirements-push.txt", "backend/requirements.txt",
+                     "backend/Dockerfile", "frontend/package.json", "frontend/package-lock.json",
+                     "backend/app/infinitepay_credentials.py",
+                     "backend/migrations/versions/20261020_0085_infinitepay_credentials.py"):
+            with self.subTest(path=name):
+                path = self.root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("outside emergency payment scope\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "arquivo_fora_do_escopo"))
+                path.unlink()
+                self.commit()
+
+    def test_cart_recovery_runtime_requires_exact_reviewed_blobs(self):
+        for name in (
+            "backend/app/client_lifecycle.py", "backend/app/order_visibility.py",
+            "backend/app/provider_cart_recovery.py", "backend/app/unified_checkout.py",
+            "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
+            "frontend/app/admin/payments/cart-recovery.tsx",
+            "frontend/app/admin/payments/cart-recovery.module.css",
+            "frontend/app/library/cart/page.tsx", "frontend/app/library/purchase-card.tsx",
+            "frontend/app/library/purchases/page.tsx",
+        ):
+            with self.subTest(path=name):
+                self.assertIn(name, policy.RUNTIME_FILES)
+                (self.root / name).write_text("reviewed cart recovery runtime\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "runtime_diverge_do_blob_aprovado"))
+                self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (True, "somente_api_web"))
+
+    def test_cart_recovery_frontend_tests_are_exact_non_runtime_operations(self):
+        for name in (
+            "frontend/app/admin/galleries/[galleryId]/orders/orders.test.tsx",
+            "frontend/app/admin/payments/cart-recovery-page.test.tsx",
+            "frontend/app/admin/payments/cart-recovery.test.tsx",
+            "frontend/app/library/cart/cart.test.tsx",
+            "frontend/app/library/library.test.tsx",
+        ):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("cart recovery regression\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
+    def test_service_baseline_cannot_hide_api_input_change(self):
+        path = self.root / "backend/requirements-push.txt"
+        path.write_text("four approved pins\n", encoding="utf-8")
+        self.commit()
+        self.manifest["emergency_api"] = {
+            "baseline_sha": self.base,
+            "input_blobs": {"backend/requirements-push.txt": self.run_git("rev-parse", "HEAD:backend/requirements-push.txt")},
+        }
+        web_base = self.run_git("rev-parse", "HEAD")
+        self.assertEqual(policy.evaluate(self.root, web_base, "HEAD", self.manifest), (True, "somente_api_web"))
+        path.write_text("unapproved dependency change\n", encoding="utf-8")
+        self.commit()
+        advanced_web = self.run_git("rev-parse", "HEAD")
+        self.assertEqual(policy.evaluate(self.root, advanced_web, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        (self.root / "backend/app/auth.py").write_text("unapproved runtime\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, "HEAD", "HEAD", self.manifest), (False, "api_fora_do_escopo"))
+
     def test_retired_statistics_pages_are_exactly_allowlisted_and_removed_from_runtime_manifest(self):
         self.assertNotIn("frontend/app/admin/statistics/page.tsx", policy.RUNTIME_FILES)
         self.assertEqual(policy.RETIRED_STATISTICS_FILES, {

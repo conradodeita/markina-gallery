@@ -135,10 +135,11 @@ jobs:
             backend/tests/test_tenant_notification_transport.py::test_suspensao_durante_consulta_canal_preserva_A_e_envia_B \
             backend/tests/test_tenant_notification_transport.py::test_revogacao_membership_apos_consulta_canal_impede_envio \
             -q
-      - name: Regressão concorrente do checkout em PostgreSQL
+      - name: Regressões de checkout e reabertura do carrinho em PostgreSQL
         run: >-
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
-          pytest backend/tests/test_provider_checkout.py::test_clique_concorrente_com_mesma_chave_produz_uma_reserva -q
+          pytest backend/tests/test_provider_checkout.py::test_clique_concorrente_com_mesma_chave_produz_uma_reserva
+          backend/tests/test_provider_cart_recovery.py backend/tests/test_provider_cart_recovery_api.py -q
       - name: Cofre InfinitePay e snapshots de checkout em PostgreSQL
         run: >-
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
@@ -313,6 +314,8 @@ jobs:
           bash scripts/test_deploy_prod_app_services.sh
           python scripts/test_prod_facial_release_gates.py
           python scripts/test_prod_app_release_scope.py
+          python scripts/test_prepare_emergency_api_image.py
+          python scripts/test_provision_infinitepay_binding.py
           python scripts/test_classify_prod_release.py
           python scripts/test_production_release_workflow_policy.py
 

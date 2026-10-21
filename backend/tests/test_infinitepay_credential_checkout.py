@@ -2,7 +2,7 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import uuid4
 
 import httpx
@@ -12,12 +12,14 @@ from pydantic import SecretStr
 from sqlalchemy import func, select
 
 from app import auth, main
-from app.auth import InfinitePaySettings, PhotoSelection, ProviderPayment, SaleOrder
+from app.auth import Client, InfinitePaySettings, PhotoSelection, ProviderPayment, SaleOrder
 from app.checkout import CheckoutError
 from app.infinitepay_settings import ReceiverInput, apply_proposal, canonical_proposal
 from app.payment_availability import lock_payment_account, payment_methods
 from app.payment_provider import SyntheticPaymentProvider, operational_provider
+from app.provider_cart_recovery import preview_cart_recovery, reopen_payment_cart
 from app.provider_checkout import issue_provider_payment
+from app.unified_checkout import cart_payload
 from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.test_integration_secrets import secret_keyring  # noqa: F401
 from tests.test_provider_checkout import (  # noqa: F401
@@ -113,6 +115,92 @@ def test_legacy_purchase_does_not_switch_to_current_managed_key(monkeypatch):
         db.refresh(payment)
         assert payment.state == "awaiting_payment" and payment.credential_id is None
     assert seen == ["synthetic-legacy-key"]
+
+
+def test_reopened_cart_preserves_old_credential_and_uses_replacement_for_new_checkout(monkeypatch):
+    if auth.engine.dialect.name != "postgresql":
+        pytest.skip("Reabertura durante resposta externa exige PostgreSQL descartável")
+    owner, _, _, revision = setup()
+    entered, release = Event(), Event()
+    seen = []
+
+    def remote(request):
+        payload = json.loads(request.content)
+        seen.append((request.headers["x-api-key"], payload["handle"]))
+        if request.headers["x-api-key"] == "synthetic-old-managed":
+            entered.set()
+            assert release.wait(20), "O ensaio deve liberar a resposta antiga."
+        return httpx.Response(200, json={
+            "url": "https://checkout.infinitepay.io/synthetic/" + payload["order_nsu"]})
+
+    mock_remote(monkeypatch, remote)
+    with SessionLocal() as db:
+        original = install(db, "synthetic-old-managed")
+        wanted = set(db.execute(select(PhotoSelection.derived_gallery_id, PhotoSelection.photo_asset_id)
+                                .where(PhotoSelection.client_id == owner)))
+        payment = prepare(db, owner, revision)
+        payment_id, tenant_id = payment.id, payment.tenant_id
+        actor = db.scalar(select(InfinitePaySettings.admin_user_id))
+        db.commit()
+
+    def issue():
+        with SessionLocal() as db:
+            payment = db.get(ProviderPayment, payment_id)
+            provider = operational_provider(tenant_id=tenant_id, db=db, credential_id=payment.credential_id,
+                                           redirect_url="https://pick.example.test/api/infinitepay/return")
+            assert provider is not None
+            try:
+                return issue_provider_payment(db, payment_id, provider).state
+            finally:
+                provider.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(issue)
+        try:
+            assert entered.wait(15), "O ensaio deve alcançar o transporte sintético."
+            with SessionLocal() as db:
+                replacement = install(db, "synthetic-new-managed", "new_handle")
+            with SessionLocal() as db:
+                current = db.get(ProviderPayment, payment_id)
+                assert current.state == "verification_required"
+                plan = preview_cart_recovery(db, actor, payment_id, expected_revision=current.revision_number)
+            with SessionLocal() as db:
+                reopen_payment_cart(db, actor, payment_id, expected_revision=plan["revision"],
+                    expected_fingerprint=plan["fingerprint"], decision_id=uuid4(),
+                    reason="Resposta inconclusiva; recuperar seleção", acknowledge_remote_checkout=True)
+                db.commit()
+        finally:
+            release.set()
+        assert pending.result(timeout=30) == "exception"
+
+    with SessionLocal() as db:
+        old = db.get(ProviderPayment, payment_id)
+        assert (old.credential_id, old.configuration_version, old.handle_snapshot) == original
+        assert old.state == "exception" and old.confirmed_at is None
+        assert all(order.payment_status == "cancelled" for order in db.scalars(
+            select(SaleOrder).where(SaleOrder.provider_payment_id == payment_id)))
+        selected = set(db.execute(select(PhotoSelection.derived_gallery_id, PhotoSelection.photo_asset_id)
+                                 .where(PhotoSelection.client_id == owner)))
+        assert selected == wanted and len(selected) == 3
+        cart = cart_payload(db, db.get(Client, owner))
+        assert cart["quantity"] == 3 and cart["can_prepare"] and cart["card_payment"] is None
+        key = str(uuid4())
+        new = prepare(db, owner, cart["cart_revision"], key)
+        assert (new.credential_id, new.configuration_version, new.handle_snapshot) == replacement
+        assert new.id != payment_id and new.total_cents == 2100
+        db.commit()
+        provider = operational_provider(tenant_id=tenant_id, db=db, credential_id=new.credential_id,
+                                       redirect_url="https://pick.example.test/api/infinitepay/return")
+        assert provider is not None
+        try:
+            assert issue_provider_payment(db, new.id, provider).state == "awaiting_payment"
+        finally:
+            provider.close()
+        assert prepare(db, owner, cart["cart_revision"], key).id == new.id
+        assert db.scalar(select(func.count()).select_from(ProviderPayment)) == 2
+        db.refresh(old)
+        assert old.state == "exception" and old.credential_id == original[0]
+    assert seen == [("synthetic-old-managed", "synthetic_handle"), ("synthetic-new-managed", "new_handle")]
 
 
 def test_missing_master_blocks_new_checkout_before_reservation_and_preserves_pix(monkeypatch):

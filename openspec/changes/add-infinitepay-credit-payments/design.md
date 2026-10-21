@@ -104,6 +104,20 @@ Integração inicia inativa. Mocks/fixtures sintéticos podem comprovar o compor
 
 ## Risks / Trade-offs
 
+### Autorização operacional definitiva — 21/10/2026
+
+O proprietário autorizou merge/release supervisionado, indisponibilidade, interrupção graciosa de workers e rollback por identidade, além dos quatro pins Python nos consumidores com imagens homologadas. Essa autorização substitui os bloqueios de escopo operacional anteriores, mas não dispensa CI, candidaturas, preservação de Python 3.13.16/distribuições restantes e callbacks financeiros. PR #262 permanece fora do candidato porque não há provisão/migration/keyring/homologação operacional; #261 não é necessário ao bootstrap autorizado.
+
+Corrigir o executor existente, sem criar outro fluxo: manifesto identifica baseline API e web separadas e hashes exatos de dependências/Compose; classificador só admite app quando o gate completo aceitar esses inputs. O build API deriva da imagem ativa preservada, instala somente os quatro wheels sem resolver dependências e copia código Git aprovado; compara todas as distribuições e Python e ensaia startup isolado/network none/tmpfs antes de recriação. Assim não depende de rebuild com requirements abertos que possa atualizar Python ou outras distribuições. O caminho legado permanece para manifestos sem o contrato emergencial; Python-security operacional genérico permanece recusado até ter executor/candidatos dos demais consumidores.
+
+Primeiro concluir gates, backup, binding pelo titular e integração; depois janela curta de manutenção API/web, conservando estado financeiro ambíguo. Capturar agregados e identidades persistidas antes/depois. Retorno InfinitePay é browser→consulta autoritativa, sem webhook financeiro consumido; manter as tentativas pendentes e seus IDs para retorno repetível/reconciliação. Não criar link ou pagamento pelo executor. Workers sem imagem homologada permanecem nas identidades existentes e não atrasam o cartão.
+
+### Correção restrita dos gates — 21/10/2026
+
+Autorização atual permite somente inventário Oracle de leitura, correção local dos gates, testes e CI do PR #260. Merge, deploy, restart, migration, provisionamento e alterações financeiras estão proibidos nesta missão. Os PRs #261/#262 permanecem fora do escopo.
+
+O inventário identifica API `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f` e web/checkout `27e1b8ffa0917b4dc2120bd4a26e09c6cae47e0f`. A API instalada conserva quatro versões Python anteriores ao commit #254, já presente na main. Portanto a baseline histórica continua correta para a API e não pode ser substituída pelo checkout ou pela main. A correção independente admite somente os dois módulos omitidos no manifesto, com hashes exatos. Dependências não publicadas e gates de Compose/preflight permanecem bloqueios; não ampliar allowlists para forçar um GO. Evidência por serviço e menor próxima intervenção ficam em `release-gates-20261021.md`.
+
 ### Preservação de workers fora do escopo
 
 O deploy desta change SHALL preservar os estados de processamento facial e RAW já operacionais. O workflow não passa flags para ligar/desligar facial: o script preserva o valor de `FACIAL_PROCESSING_ENABLED` do `.env.homolog`. Para RAW, o script usa o modo `auto`, detecta se o worker do projeto está ativo antes de preparar o Compose e somente inclui/reinicia o overlay RAW se já estiver ativo. Assim o rollout de cartão não inicia consumidores de dados de outra finalidade nem desativa um módulo existente.
