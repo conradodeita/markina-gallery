@@ -265,7 +265,7 @@ def test_reabertura_aparece_no_historico_e_rascunho_pix_nao_parece_compra_duplic
     assert prepared.status_code == 200, prepared.text
     group_id = prepared.json()["payment"]["id"]
     with SessionLocal() as db:
-        drafts = set(db.scalars(select(SaleOrder.id).where(SaleOrder.payment_group_id == group_id)))
+        drafts = set(db.scalars(select(SaleOrder.id).where(SaleOrder.payment_group_id == UUID(group_id))))
         assert len(drafts) == 2
     dashboard = admin.get("/admin/payment-communications").json()
     visible = [order for group in dashboard["groups"] for order in group["orders"]]

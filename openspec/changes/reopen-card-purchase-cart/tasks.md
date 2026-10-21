@@ -15,9 +15,11 @@
 ## 3. Integração e entrega
 
 - [x] 3.1 Executar gates locais pertinentes (backend focado/amplo, PostgreSQL, Ruff, frontend testes/lint/TypeScript/build, OpenSpec), revisar diff por regressões/duplicação e preparar PR draft empilhado sobre #263 com evidências, plano mínimo de publicação/rollback e bloqueios reais. Não modificar #261/#262/#264, publicar, mesclar ou alterar compras reais.
+- [x] 3.2 Corrigir a conversão do UUID recebido por HTTP na consulta de teste apontada pelo CI 39660195152, reproduzir a falha e repetir os testes da API em SQLite, preservando todas as expectativas de produto. Executar Ruff/OpenSpec e revisar o diff antes de enviar a correção ao mesmo PR draft; o novo CI completo permanece gate externo.
 
 ## Workflow follow-up
 
 - Publicação de API/web exige autorização operacional própria; a autorização de implementar a ação manual não autoriza deploy ou novos pagamentos reais.
 - CI completo do head final do PR #265 é gate externo obrigatório antes de declarar aptidão para publicação; acompanhar o resultado no próprio PR/run. O resultado parcial/antigo não vale como CI final, mesmo com tasks locais concluídas.
+- Após o push da correção de 39660195152, o proprietário acompanhará o novo CI e trará o resultado; o executor deve parar o acompanhamento conforme instrução expressa de 21/10/2026.
 - Sincronizar/arquivar somente após revisão humana. Gates de webhook/reconciliação universal continuam como seguimento independente.
