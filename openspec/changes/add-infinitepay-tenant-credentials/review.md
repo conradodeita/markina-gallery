@@ -28,3 +28,13 @@ Revisão local em 21/10/2026 do contrato herdado de #260 (`0959c64`) e do delta 
 ## Refatoração proporcional
 
 Nenhuma oportunidade adicional de remoção ou reorganização foi necessária para corrigir o delta. Reutilizados identidade, desafios, locks, adaptador e políticas existentes. Não alterar gerador RAW, manutenção Python, contratos históricos de migration ou outros cards para obter aprovação aparente.
+
+## Revisão da integração atual com pagamentos publicados e PR266
+
+Candidato local2d4b4aa: main21 integrada, recibo de release preservado, texto de opções por link corrigido, mínimo e primeiroclique do PR266 integrados. Evidências atuais:37 testes PostgreSQL dos caminhos afetados e610 frontend;13testes do card;lint/build/TypeScript/Ruff/OpenSpec134/0. Matriz anterior77 continua evidência dos componentes não alterados. CI remoto novo ainda deve ser confirmado; CI histórico não substitui o head integrado.
+
+Revisão proporcional do delta: guarda mínima antes de ProviderPayment/Attempt e antes de invalidar PIX; replay existente retorna antes do novo mínimo. Cofre continua resolvendo referência imutável antiga em retorno/reabertura e nova credencial apenas na compra nova. Mutex/chave por revisão e URLHTTPS permitida preservam uma única emissão no primeiroclique, com retomada se não houver navegação. Nenhuma oportunidade segura adicional de remoção/refatoração foi identificada.
+
+Revisão da política técnica: mudança somente no teste de workflow e inclusão explícita dos sete testes Git em CI. Verificador/classificador/manifests/wrappers operacionais não foram alterados para admitir o cofre. Todas as comparações de blobs permanecem, sobre o snapshot ancestral do manifesto; verificador real exige esse positivo e recusa separadamente o HEAD protegido. Snapshot com migration, pin falso ou manifesto divergente falha. Em2d4b4aa:classificador=protected;app_release_ready=false/api_fora_do_escopo. Sucesso técnico não concede GO de publicação.
+
+Escopo real: a recuperação anterior das três compras pertence à operação já concluída264; esta retomada não repetiu ou modificou esses registros. Produção observada anteriormente21 continua referência histórica, não cofre publicado. Nenhuma operação Oracle/credencial/pagamento real executada; PR261 e seus arquivos de dependências/runtime permanecem fora do delta. Próximo gate:envio e CI final do mesmo262 contra main, seguido de revisão e autorização específicas antes de integração/publicação0085.
