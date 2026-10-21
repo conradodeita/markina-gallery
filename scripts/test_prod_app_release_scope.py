@@ -91,7 +91,10 @@ class AppReleaseScopeTests(unittest.TestCase):
                          (False, "arquivo_fora_do_escopo"))
 
     def test_docker_monitor_worker_migration_and_unlisted_runtime_are_rejected(self):
-        for name in ("docker/docker-compose.yml", "backend/app/system_monitor.py",
+        path = self.root / "docker/docker-compose.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("reviewed API secret env_file wiring\n", encoding="utf-8")
+        for name in ("backend/app/system_monitor.py",
                      "backend/app/face_worker.py", "backend/migrations/versions/change.py",
                      "backend/app/facial/reference.py", "backend/app/unlisted.py"):
             path = self.root / name
@@ -100,6 +103,18 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "arquivo_fora_do_escopo"))
+
+    def test_api_compose_secret_file_requires_exact_approved_runtime_blob(self):
+        path = self.root / "docker/docker-compose.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("API-only secret env_file\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        self.manifest["runtime_blobs"]["docker/docker-compose.yml"] = self.run_git(
+            "rev-parse", "HEAD:docker/docker-compose.yml")
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
 
     def test_runtime_change_requires_exact_manifest_blob(self):
         path = self.root / "backend/app/main.py"

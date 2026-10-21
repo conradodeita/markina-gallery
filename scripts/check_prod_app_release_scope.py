@@ -14,16 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
 RUNTIME_FILES = {
     "backend/app/main.py",
+    "backend/app/infinitepay_binding.py",
     "backend/app/payment_provider.py",
     "backend/app/provider_checkout.py",
     "backend/app/payment_export.py",
     "backend/app/statistics_report.py",
     "backend/app/private_folder_overview.py",
+    "docker/docker-compose.yml",
     "frontend/app/globals.css",
     "frontend/app/admin/admin-navigation.tsx",
     "frontend/app/admin/payments/page.tsx",
     "frontend/app/admin/payments/order-photos.tsx",
     "frontend/app/admin/payments/payments.module.css",
+    "frontend/app/admin/settings/infinitepay-panel.tsx",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
 }
@@ -62,6 +65,7 @@ ALLOWED_OPERATIONS = {
     "frontend/app/admin/payments/page.test.tsx",
     "frontend/app/admin/payments/order-photos.test.tsx",
     "frontend/app/admin/payments/redesign.test.tsx",
+    "frontend/app/admin/settings/infinitepay-panel.test.tsx",
     "frontend/app/admin/retirement.test.ts",
     "frontend/scripts/payments-visual-qa.cjs",
     "RELATORIO_IMPLEMENTACAO_VENDAS_PAGAMENTOS.md",

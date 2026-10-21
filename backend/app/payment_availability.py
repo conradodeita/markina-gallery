@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.acervo_context import require_active_owner
 from app.auth import InfinitePaySettings, ParentGallery, PhotoFolder, Tenant
 from app.global_pix import checkout_pix
+from app.infinitepay_binding import api_key_configured
 from app.infinitepay_settings import configuration_payload
 from app.pix import PixCodeError
 
@@ -34,7 +35,9 @@ def payment_methods(db: Session, *, tenant_id: UUID) -> dict:
     settings = db.scalar(select(InfinitePaySettings).where(
         InfinitePaySettings.tenant_id == tenant_id,
     ).execution_options(populate_existing=True))
-    card_available = configuration_payload(settings)["checkout_available"]
+    card_available = configuration_payload(
+        settings, api_key_configured=api_key_configured(tenant_id),
+    )["checkout_available"]
     return {
         "pix_available": pix_available,
         "card_available": card_available,

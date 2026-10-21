@@ -19,6 +19,20 @@ O sistema SHALL resolver a configuração InfinitePay pela conta ativa da sessã
 - **WHEN** a cliente de B abre uma compra e somente A possui InfinitePay configurada
 - **THEN** o cartão permanece indisponível para B, sem usar a InfiniteTag de A
 
+### Requirement: Credencial InfinitePay em cofre por fotógrafo
+
+A integração SHALL resolver a API Key por UUID de tenant através de binding de segredo server-side, com aliases únicos e ambiente de credencial compatível. A chave MUST NOT ser persistida em tabela de negócio, mostrada a clientes/fotógrafos, registrada em logs ou incluída em payloads. Somente o serviço API que chama a InfinitePay SHALL receber o segredo. Checkout SHALL permanecer indisponível quando o binding estiver ausente ou inválido.
+
+#### Scenario: Checkout autenticado
+- **WHEN** uma conta ativa possui binding próprio e chave configurada no ambiente do servidor
+- **THEN** `/links` e `/payment_check` enviam `X-Api-Key` apenas à origem oficial da InfinitePay
+- **AND** nenhuma chamada usa a chave ou InfiniteTag de outro tenant
+
+#### Scenario: Binding ausente ou inválido
+- **WHEN** o fotógrafo não possui chave ou o binding não corresponde ao ambiente atual
+- **THEN** novas emissões de cartão são recusadas antes da reserva e nenhuma chamada externa é feita
+- **AND** PIX manual continua disponível conforme sua própria configuração
+
 ### Requirement: Alteração do recebedor protegida
 
 Criar, substituir, ativar ou remover configuração SHALL exigir reautenticação e confirmação sensível vinculadas à sessão, conta e proposta, com expiração, limite de tentativas e auditoria minimizada. O sistema MUST NOT solicitar senha, OTP de acesso à InfinitePay ou dados de cartão. InfiniteTag informada SHALL ser identificada como dado declarado, sem afirmar titularidade comprovada só por seu formato.
@@ -46,12 +60,16 @@ O cartão SHALL exigir autodeclaração sensível do fotógrafo sobre a conta e 
 
 ### Requirement: InfinitePay exclusivamente para cartão de crédito
 
-O fluxo InfinitePay SHALL oferecer somente crédito, com dados preenchidos no checkout hospedado pelo provedor. O sistema SHALL validar `credit_card` na confirmação. Um retorno de PIX SHALL ficar em exceção para conciliação, sem confirmar compra ou acionar automaticamente nova cobrança. Recusar um PIX depois de recebido MUST NOT ser apresentado como prova de checkout exclusivo de crédito.
+O fluxo InfinitePay SHALL oferecer somente crédito em checkout hospedado e validar `credit_card` na confirmação. Um retorno PIX SHALL ficar em exceção, sem confirmar a compra nem iniciar cobrança automática. PIX SHALL continuar no fluxo manual. A change MUST NOT habilitar PIX no link InfinitePay enquanto o domínio aceitar somente cartão.
 
 #### Scenario: Opção externa validada
 - **WHEN** a cliente escolhe cartão em uma conta habilitada
 - **THEN** o checkout externo permite crédito e não oferece PIX
 - **AND** PAN, CVV e validade não passam pelo Pick-your-Pic
+
+#### Scenario: Link de pagamento único
+- **WHEN** o backend cria um checkout InfinitePay
+- **THEN** define `payment_methods_enabled=["credit_card"]` e `single_payment=true` com a autenticação documentada
 
 #### Scenario: Método divergente
 - **WHEN** a consulta autoritativa informa `pix` para uma tentativa de cartão

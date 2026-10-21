@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import InfinitePayPanel from "./infinitepay-panel";
 
-const empty = { status: "unconfigured", handle: null, version: 0, card_enabled: false, checkout_available: false };
-const pending = { status: "pending", handle: "synthetic_a", version: 1, card_enabled: false, checkout_available: false };
-const active = { status: "active", handle: "synthetic_a", version: 1, card_enabled: true, checkout_available: true };
+const empty = { status: "unconfigured", handle: null, version: 0, card_enabled: false, api_key_configured: false, checkout_available: false };
+const pending = { status: "pending", handle: "synthetic_a", version: 1, card_enabled: false, api_key_configured: false, checkout_available: false };
+const active = { status: "active", handle: "synthetic_a", version: 1, card_enabled: true, api_key_configured: true, checkout_available: true };
 const challenge = { challenge_id: "synthetic", expires_at: new Date(Date.now() + 600000).toISOString(), proposal: { handle: "synthetic_a", version: 0, checkout_ready: true, card_enabled: true } };
 const response = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -27,7 +27,7 @@ describe("Preparação InfinitePay individual", () => {
       }
       if (path.endsWith("/confirm")) {
         expect(JSON.parse(String(init?.body))).toEqual({ challenge_id: "synthetic", code: "123456" });
-        return response({ ...pending, status: "active", card_enabled: true, checkout_available: true });
+        return response({ ...pending, status: "active", card_enabled: true, api_key_configured: true, checkout_available: true });
       }
       return response(empty);
     });
@@ -58,6 +58,14 @@ describe("Preparação InfinitePay individual", () => {
     expect(await screen.findByText(/Cartão habilitado para novas compras/)).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Alterar InfiniteTag ou disponibilidade do cartão" })));
     expect(fetchMock.mock.calls.every(([path]) => path.startsWith("/api/admin/settings/infinitepay"))).toBe(true);
+  });
+
+  it("explica que o binding seguro do servidor está pendente", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ ...active, api_key_configured: false, checkout_available: false })));
+    render(<InfinitePayPanel />);
+    expect(await screen.findByText(/falta vincular a API Key desta conta ao cofre seguro do servidor/)).toBeTruthy();
+    expect(screen.getByText("Aguardando vínculo seguro da API Key")).toBeTruthy();
+    expect(screen.queryByLabelText(/API Key/i)).toBeNull();
   });
 
   it("mantém o cartão indisponível se o fotógrafo não atestou link somente-cartão", async () => {

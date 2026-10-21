@@ -3,7 +3,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { MarkinaButton, StatusBadge, SystemState } from "../../ui-kit";
 
-type Configuration = { status: string; version: number; handle: string | null; card_enabled: boolean; checkout_available: boolean; ownership_verified?: boolean; message?: string };
+type Configuration = { status: string; version: number; handle: string | null; card_enabled: boolean; api_key_configured: boolean; checkout_available: boolean; ownership_verified?: boolean; message?: string };
 type Challenge = { challenge_id: string; expires_at: string; proposal: { handle: string | null; version: number; checkout_ready?: boolean; card_enabled?: boolean } };
 
 class ConfigurationError extends Error {
@@ -120,11 +120,11 @@ export default function InfinitePayPanel() {
   return <section id="infinitepay" className="admin-card global-pix-settings" aria-labelledby="infinitepay-title">
     <p className="eyebrow">Pagamentos · Sua conta</p>
     <h2 id="infinitepay-title">Cartão de crédito · InfinitePay</h2>
-    <p>{configuration?.checkout_available ? "Cartão de crédito está habilitado para novas compras dos clientes desta conta." : configuration?.status === "active" ? "InfinitePay está configurada, mas cartão está desabilitado para novas compras." : "Prepare sua conta para receber diretamente pela InfinitePay. O cartão ainda não está disponível aos clientes."}</p>
+    <p>{configuration?.checkout_available ? "Cartão de crédito está habilitado para novas compras dos clientes desta conta." : configuration?.status === "active" && configuration.card_enabled && !configuration.api_key_configured ? "A configuração InfinitePay está pronta, mas falta vincular a API Key desta conta ao cofre seguro do servidor." : configuration?.status === "active" ? "InfinitePay está configurada, mas cartão está desabilitado para novas compras." : "Prepare sua conta para receber diretamente pela InfinitePay. O cartão ainda não está disponível aos clientes."}</p>
     <p>Na sua conta InfinitePay, habilite o Checkout Integrado, deixe cartão de crédito ligado e PIX desligado, pois o Pick-your-Pic já oferece PIX separadamente. Essa preferência também se aplica aos links de checkout criados pela API. Informe a InfiniteTag da mesma conta. Antes de habilitar, crie um link de teste sem concluir a compra e confira o recebedor e que somente cartão é oferecido. A confirmação registra sua declaração; não comprova a titularidade remotamente.</p>
     <a href="https://app.infinitepay.io/external-checkout#documentacao" target="_blank" rel="noopener noreferrer">Abrir Checkout Integrado na InfinitePay</a>
     {!configuration ? <SystemState tone={error ? "error" : "loading"} title={error ? "Configuração indisponível" : "Carregando InfinitePay"} detail={error || "Consultando sua configuração."} /> : <>
-      <StatusBadge tone={configuration.checkout_available ? "success" : "warning"}>{configuration.checkout_available ? "Cartão habilitado para novos pedidos" : configuration.status === "active" ? "Cartão desabilitado para novos pedidos" : configuration.status === "pending" ? "Pendente de configuração" : "Cartão indisponível"}</StatusBadge>
+      <StatusBadge tone={configuration.checkout_available ? "success" : "warning"}>{configuration.checkout_available ? "Cartão habilitado para novos pedidos" : configuration.status === "active" && configuration.card_enabled && !configuration.api_key_configured ? "Aguardando vínculo seguro da API Key" : configuration.status === "active" ? "Cartão desabilitado para novos pedidos" : configuration.status === "pending" ? "Pendente de configuração" : "Cartão indisponível"}</StatusBadge>
       {configuration.handle ? <p>InfiniteTag declarada: <strong style={{ overflowWrap: "anywhere" }}>{configuration.handle}</strong></p> : null}
       {!editing ? <div className="action-grid">
         <button ref={editButton} className="mk-button mk-button--primary" type="button" onClick={() => begin()}>{configuration.handle ? "Alterar InfiniteTag ou disponibilidade do cartão" : "Preparar InfinitePay"}</button>

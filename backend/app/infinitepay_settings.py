@@ -58,21 +58,25 @@ def load_configuration(db: Session, *, tenant_id: UUID) -> InfinitePaySettings |
                      .execution_options(populate_existing=True))
 
 
-def configuration_payload(settings: InfinitePaySettings | None) -> dict:
+def configuration_payload(settings: InfinitePaySettings | None, *,
+                          api_key_configured: bool = False) -> dict:
     ready = bool(settings and settings.status == "active"
                  and settings.verification_profile == "infinitepay-public-v1"
                  and settings.verified_at is not None and settings.handle)
     card_enabled = bool(settings and settings.card_enabled)
-    available = ready and card_enabled
+    available = ready and card_enabled and api_key_configured
     return {
         "status": settings.status if settings else "unconfigured",
         "version": settings.version if settings else 0,
         "handle": settings.handle if settings else None,
         "card_enabled": card_enabled,
+        "api_key_configured": api_key_configured,
         "checkout_available": available,
         "ownership_verified": False,
         "message": ("Cartão habilitado para novos pedidos por autodeclaração do fotógrafo."
-                    if available else "InfinitePay está pronta, mas cartão está desabilitado para novos pedidos."
+                    if available else "Credencial segura do servidor indisponível para esta conta."
+                    if ready and card_enabled and not api_key_configured else
+                    "InfinitePay está pronta, mas cartão está desabilitado para novos pedidos."
                     if ready else "Cartão indisponível até o fotógrafo habilitar uma configuração pronta."),
     }
 

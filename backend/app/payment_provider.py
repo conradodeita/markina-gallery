@@ -9,6 +9,8 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.infinitepay_binding import InfinitePayBindingError, api_key_for_tenant
+
 
 class CheckoutItem(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -140,7 +142,7 @@ class SyntheticPaymentProvider:
 
 
 class InfinitePayHttpProvider:
-    """Cliente do fluxo público sem API Key: criar link e verificar no retorno.
+    """Cliente server-side autenticado: criar link e verificar no retorno.
 
     Parâmetros do redirect são candidatos. A confirmação sempre depende do
     `payment_check` servidor-a-servidor e da aplicação financeira local.
@@ -151,14 +153,19 @@ class InfinitePayHttpProvider:
     MAX_RESPONSE_BYTES = 32 * 1024
 
     # Este perfil usa payment_check depois do retorno e não depende de webhook.
+    # A chave identifica a conta e habilita options.credit_card/single_payment.
     # Timeouts permanecem em verificação e nunca geram nova emissão automática.
     capabilities = ProviderCapabilities(
         profile=PROFILE, operational=True, credit_only=True,
         payment_binding_verified=True, signed_webhook=False, recovery_verified=False,
     )
 
-    def __init__(self, *, redirect_url: str, webhook_url: str | None = None,
+    def __init__(self, *, redirect_url: str, api_key: str, webhook_url: str | None = None,
                  client: httpx.Client | None = None, timeout_seconds: float = 10.0):
+        api_key = api_key.strip() if isinstance(api_key, str) else ""
+        if not api_key or len(api_key) > 512:
+            raise ValueError("Binding autenticado InfinitePay indisponível.")
+        self._api_key = api_key
         self.redirect_url = _trusted_callback_url(redirect_url)
         if urlsplit(self.redirect_url).query:
             raise ValueError("A URL base de retorno não pode conter parâmetros.")
@@ -175,6 +182,10 @@ class InfinitePayHttpProvider:
     def create_checkout(self, request: CheckoutRequest) -> CheckoutResult:
         payload = request.neutral_payload()
         payload["redirect_url"] = self.redirect_url
+        payload["options"] = {
+            "payment_methods_enabled": ["credit_card"],
+            "single_payment": True,
+        }
         if self.webhook_url:
             payload["webhook_url"] = self.webhook_url
         try:
@@ -244,7 +255,10 @@ class InfinitePayHttpProvider:
                                   capture_method=method, **base)
 
     def _post_json(self, url: str, payload: dict) -> tuple[int, dict | list | None] | None:
-        with self._client.stream("POST", url, json=payload) as response:
+        with self._client.stream(
+            "POST", url, json=payload,
+            headers={"X-Api-Key": self._api_key},
+        ) as response:
             body = bytearray()
             for chunk in response.iter_bytes():
                 if len(body) + len(chunk) > self.MAX_RESPONSE_BYTES:
@@ -294,8 +308,15 @@ def _valid_infinitepay_checkout_url(value: str) -> bool:
         return False
 
 
-def operational_provider(*, redirect_url: str | None = None) -> PaymentProvider | None:
-    """Crie o perfil HTTP somente para o retorno HTTPS construído pelo servidor."""
-    if not redirect_url:
+def operational_provider(*, tenant_id: UUID | None = None,
+                         redirect_url: str | None = None) -> PaymentProvider | None:
+    """Crie cliente autenticado com binding do tenant e retorno HTTPS do servidor."""
+    if not redirect_url or tenant_id is None:
         return None
-    return InfinitePayHttpProvider(redirect_url=redirect_url)
+    try:
+        api_key = api_key_for_tenant(tenant_id)
+    except InfinitePayBindingError:
+        return None
+    if api_key is None:
+        return None
+    return InfinitePayHttpProvider(redirect_url=redirect_url, api_key=api_key)
