@@ -6,6 +6,7 @@ import { PurchasePreview } from "../../purchase-preview";
 import { notifyCartChanged } from "../../client-navigation";
 import { SelectionDeadline } from "../../selection-deadline";
 import { SystemState } from "../../ui-kit";
+import { navigateToCardCheckout } from "./checkout-navigation";
 
 type CartGroup = { payment_required?: boolean; message?: string; revision?: string; gallery_id: string; parent_gallery_id: string; name: string; quantity: number;
   legacy_review_url?: string | null;
@@ -19,6 +20,14 @@ type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_
   pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null;
   pending_card_payments?: CardPayment[]; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function cardCheckoutUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !value || value.length > 8192) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.port
+      && ["checkout.infinitepay.io", "checkout.infinitepay.com.br"].includes(url.hostname) ? url.href : null;
+  } catch { return null; }
+}
 
 export default function CartPage() {
   const [cart, setCart] = useState<Cart | null>(null);
@@ -27,10 +36,12 @@ export default function CartPage() {
   const [busy, setBusy] = useState(false);
   const [reported, setReported] = useState<string | null>(null);
   const [method, setMethod] = useState<"pix" | "card">("pix");
-  const cardCheckoutIssued = cart?.card_payment?.status === "awaiting_payment"
-    && Boolean(cart.card_payment.checkout_url);
+  const cardCheckoutIssued = cart?.card_payment?.status === "awaiting_payment";
   const cardCheckoutUncertain = cart?.card_payment?.status === "verification_required";
   const cardCheckoutPending = cardCheckoutIssued || cardCheckoutUncertain;
+  const existingCheckoutUrl = cardCheckoutUrl(cart?.card_payment?.checkout_url);
+  const cardBelowMinimum = cart?.total_cents !== null && cart?.total_cents !== undefined
+    && cart.total_cents < 100;
   const sequence = useRef(0);
   const locked = useRef(false);
   const requestKey = useRef<string | null>(null);
@@ -144,7 +155,7 @@ export default function CartPage() {
   }
 
   async function prepareCard() {
-    if (!cart?.cart_revision || !cart.can_prepare || !cart.card_available || locked.current) return;
+    if (!cart?.cart_revision || !cart.can_prepare || !cart.card_available || cardBelowMinimum || locked.current) return;
     locked.current = true; setBusy(true); setError("");
     if (cardAttemptRevision.current !== cart.cart_revision) {
       cardRequestKey.current = null;
@@ -175,8 +186,10 @@ export default function CartPage() {
         return;
       }
       setCart((previous) => previous ? { ...previous, card_payment: result } : previous);
-      if (result.status === "awaiting_payment" && result.checkout_url) {
+      const checkoutUrl = cardCheckoutUrl(result.checkout_url);
+      if (result.status === "awaiting_payment" && checkoutUrl) {
         setNotice("Link seguro pronto. Confira o recebedor e pague no checkout da InfinitePay.");
+        navigateToCardCheckout(checkoutUrl);
       } else {
         setNotice("A InfinitePay não devolveu um link utilizável. O checkout não foi aberto e nenhum pagamento foi iniciado por esta tela. A compra segue reservada enquanto verificamos a resposta; não tente iniciar outro pagamento. Acompanhe em Compras.");
       }
@@ -195,8 +208,8 @@ export default function CartPage() {
     {cart?.quantity === 0 ? <><p>Seu carrinho está vazio.</p><Link className="primary" href="/library">Escolher fotos</Link></> : null}
     {cart?.card_payment ? <section className="unified-payment" aria-label="Pagamento por cartão em andamento">
       <h2>Compra por cartão · {money(cart.card_payment.total_cents)}</h2>
-      {cart.card_payment.status === "awaiting_payment" && cart.card_payment.checkout_url
-        ? <><p>Continue o pagamento no checkout seguro da InfinitePay.</p><a className="primary" href={cart.card_payment.checkout_url} target="_blank" rel="noopener noreferrer">Continuar para pagamento com cartão</a></>
+      {cart.card_payment.status === "awaiting_payment" && existingCheckoutUrl
+        ? <><p>Continue o pagamento no checkout seguro da InfinitePay.</p><a className="primary" href={existingCheckoutUrl}>Continuar para pagamento com cartão</a></>
         : <p role="status">Pagamento em verificação; esta compra permanece reservada. Acompanhe em Compras e não inicie outra cobrança para essas fotos.</p>}
       <Link href={`/library/purchases#payment-${cart.card_payment.id}`}>Acompanhar compra</Link>
     </section> : null}
@@ -236,7 +249,8 @@ export default function CartPage() {
       </fieldset> : null}
       {!cardCheckoutPending && cart.can_prepare && method === "card" && cart.card_available ? <>
         <p>O pagamento será feito no ambiente seguro da InfinitePay. O Pick-your-Pic não recebe dados do cartão.</p>
-        <button type="button" className="primary" disabled={busy || !cart.cart_revision} onClick={() => void prepareCard()}>{busy ? "Preparando checkout…" : "Continuar com cartão de crédito"}</button>
+        {cardBelowMinimum ? <p role="status">O pagamento com cartão exige um total mínimo de R$ 1,00. Adicione mais fotos{cart.pix_available !== false ? " ou escolha PIX" : " para continuar"}.</p> : null}
+        <button type="button" className="primary" disabled={busy || !cart.cart_revision || cardBelowMinimum} onClick={() => void prepareCard()}>{busy ? "Preparando checkout…" : "Continuar com cartão de crédito"}</button>
       </> : null}
       {!cardCheckoutPending && cart.pix_available !== false && (method === "pix" || !cart.card_available) ? <>
       {cart.payment ? <>

@@ -33,6 +33,7 @@ from app.unified_checkout import (
 )
 
 MAX_PROVIDER_CENTS = 2_147_483_647
+MIN_PROVIDER_CENTS = 100
 
 
 def prepare_provider_payment(
@@ -102,6 +103,9 @@ def prepare_provider_payment(
     if (not 1 <= count <= 100_000 or len(amounts) != count
             or not 0 < total <= MAX_PROVIDER_CENTS or any(not 0 < price <= MAX_PROVIDER_CENTS for price in amounts)):
         raise CheckoutError("Valores ou quantidade indisponíveis para checkout.")
+    if total < MIN_PROVIDER_CENTS:
+        raise CheckoutError("O pagamento com cartão exige um total mínimo de R$ 1,00. "
+                            "Adicione mais fotos ou escolha PIX, se disponível.")
     key = str(UUID(checkout_key)) if _is_uuid(checkout_key) else checkout_key
     new_payment = ProviderPayment(
         tenant_id=tenant_id, client_id=client.id, checkout_key=key,

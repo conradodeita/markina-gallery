@@ -39,6 +39,7 @@ RUNTIME_FILES = {
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
     "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
     "frontend/app/library/cart/page.tsx",
+    "frontend/app/library/cart/checkout-navigation.ts",
     "frontend/app/library/purchase-card.tsx",
     "frontend/app/library/purchases/page.tsx",
 }
@@ -88,6 +89,7 @@ ALLOWED_OPERATIONS = {
     "frontend/app/admin/payments/cart-recovery.test.tsx",
     "frontend/app/admin/galleries/[galleryId]/orders/orders.test.tsx",
     "frontend/app/library/cart/cart.test.tsx",
+    "frontend/app/library/cart/checkout-navigation.test.ts",
     "frontend/app/library/library.test.tsx",
     "frontend/app/admin/settings/infinitepay-panel.test.tsx",
     "frontend/app/admin/retirement.test.ts",

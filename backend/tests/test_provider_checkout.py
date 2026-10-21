@@ -7,7 +7,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from fastapi import Response
+from fastapi import HTTPException, Response
 from sqlalchemy import func, select
 from starlette.requests import Request
 
@@ -23,6 +23,7 @@ from app.auth import (
     PaymentGroup,
     PhotoAsset,
     PhotoSelection,
+    PriceRule,
     ProviderPayment,
     ProviderPaymentAttempt,
     SaleOrder,
@@ -92,6 +93,86 @@ def setup():
 def prepare(db, owner_id, revision, key=None):
     return prepare_provider_payment(db, db.get(Client, owner_id), cart_revision=revision,
                                     checkout_key=key or str(uuid4()))
+
+
+def set_small_cart_total(db, owner_id, gallery_ids, total):
+    """As duas fotos da primeira galeria valem 1 centavo cada."""
+    for gallery_id, price in zip(gallery_ids, (1, total - 2), strict=True):
+        parent = db.get(ParentGallery, db.get(DerivedGallery, gallery_id).parent_gallery_id)
+        parent.fixed_unit_price_cents = price
+        for rule in db.scalars(select(PriceRule).where(PriceRule.parent_gallery_id == parent.id)):
+            rule.unit_price_cents = price
+    db.commit()
+    return cart_payload(db, db.get(Client, owner_id))["cart_revision"]
+
+
+@pytest.mark.parametrize("total", [5, 99])
+def test_rota_recusa_cartao_abaixo_de_um_real_sem_reserva_ou_efeito_no_pix(monkeypatch, total):
+    owner_id, _, gallery_ids, _ = setup()
+    provider_factory = []
+    def provider_for(**kwargs):
+        provider_factory.append(kwargs)
+        return SyntheticPaymentProvider("accepted")
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://pick.example.test")
+    monkeypatch.setattr(main, "operational_provider", provider_for)
+    with SessionLocal() as db:
+        revision = set_small_cart_total(db, owner_id, gallery_ids, total)
+        owner = db.get(Client, owner_id)
+        pix = prepare_group(db, owner)
+        db.commit()
+        pix_before = (pix.id, pix.state, pix.total_cents)
+        selections = set(db.execute(select(PhotoSelection.derived_gallery_id, PhotoSelection.photo_asset_id)))
+        orders_before = db.scalar(select(func.count(SaleOrder.id)))
+        response = Response()
+        auth.create_session(db, response, auth.Role.CLIENT, owner.id, tenant_id=owner.tenant_id)
+        cookie = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+        request = Request({"type": "http", "method": "POST", "path": "/library/cart/prepare-card",
+                           "headers": [(b"cookie", f"markina_session={cookie}".encode())],
+                           "client": ("127.0.0.1", 12345)})
+        payload = main.ProviderCheckoutInput(cart_revision=revision, idempotency_key=uuid4())
+        with pytest.raises(HTTPException) as error:
+            main.prepare_unified_card(request, payload, db)
+        assert error.value.status_code == 409
+        assert "R$ 1,00" in error.value.detail
+        assert provider_factory == []
+        assert db.scalar(select(func.count(ProviderPayment.id))) == 0
+        assert db.scalar(select(func.count(ProviderPaymentAttempt.id))) == 0
+        assert db.scalar(select(func.count(SaleOrder.id))) == orders_before
+        assert set(db.execute(select(PhotoSelection.derived_gallery_id, PhotoSelection.photo_asset_id))) == selections
+        db.refresh(pix)
+        assert (pix.id, pix.state, pix.total_cents) == pix_before
+        assert prepare_group(db, owner).id == pix.id
+        assert cart_payload(db, owner)["total_cents"] == total
+
+
+@pytest.mark.parametrize("total", [100, 101])
+def test_total_minimo_aceita_fotos_de_um_centavo(total):
+    owner_id, _, gallery_ids, _ = setup()
+    with SessionLocal() as db:
+        revision = set_small_cart_total(db, owner_id, gallery_ids, total)
+        payment = prepare(db, owner_id, revision)
+        db.commit()
+        request = checkout_request_for(db, payment)
+        assert request.total_cents == total
+        assert sum(item.price * item.quantity for item in request.items) == total
+        assert min(item.price for item in request.items) == 1
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 0
+
+
+def test_repeticao_de_tentativa_historica_abaixo_do_minimo_nao_reemite():
+    owner_id, _, _, revision = setup()
+    key = str(uuid4())
+    with SessionLocal() as db:
+        payment = prepare(db, owner_id, revision, key)
+        # Caracteriza registro histórico pré-existente, sem emitir no provedor.
+        payment.total_cents = 5
+        payment.state = "verification_required"
+        db.commit()
+        before = (payment.id, payment.state, payment.total_cents)
+        assert (prepare(db, owner_id, revision, key).id, payment.state, payment.total_cents) == before
+        assert db.scalar(select(func.count(ProviderPayment.id))) == 1
+        assert db.scalar(select(func.count(ProviderPaymentAttempt.id))) == 1
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 0
 
 
 def test_snapshot_neutro_uuid_multi_galeria_e_idempotente():

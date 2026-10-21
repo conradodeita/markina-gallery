@@ -171,6 +171,24 @@ class AppReleaseScopeTests(unittest.TestCase):
                 self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                                  (True, "somente_api_web"))
 
+    def test_checkout_navigation_requires_its_exact_blob_and_test_allowlist(self):
+        name = "frontend/app/library/cart/checkout-navigation.ts"
+        self.assertIn(name, policy.RUNTIME_FILES)
+        (self.root / name).write_text("same-tab checkout navigation\n", encoding="utf-8")
+        test = self.root / "frontend/app/library/cart/checkout-navigation.test.ts"
+        test.write_text("same-tab navigation contract\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+        (self.root / "frontend/app/library/cart/checkout-navigation-unreviewed.ts").write_text(
+            "unreviewed navigation\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
     def test_cart_recovery_frontend_tests_are_exact_non_runtime_operations(self):
         for name in (
             "frontend/app/admin/galleries/[galleryId]/orders/orders.test.tsx",

@@ -21,6 +21,12 @@ class ReleaseClassifierTests(unittest.TestCase):
     def test_application_only(self):
         self.assertEqual(classify(set(APP_RUNTIME)), "app")
 
+    def test_checkout_minimum_and_redirect_are_application_runtime(self):
+        for path in ("backend/app/provider_checkout.py", "frontend/app/library/cart/page.tsx",
+                     "frontend/app/library/cart/checkout-navigation.ts"):
+            with self.subTest(path=path):
+                self.assertEqual(classify({path}), "app")
+
     def test_private_folder_owner_runtime_uses_app_gate(self):
         self.assertEqual(
             classify({

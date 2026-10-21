@@ -1,6 +1,6 @@
 {
   "scope": "api_web_only",
-  "production_baseline_sha": "5446cf4d7328ef6283ebfab50b5d1976d561fc8d",
+  "production_baseline_sha": "21b89c332c6937b7079679888d52bd6a8aefe25d",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
     "backend/app/client_lifecycle.py": "5757fc8f7ddefeaa93d0624cce93d1111131e761",
@@ -13,7 +13,7 @@
     "backend/app/payment_provider.py": "e72329ccf2e55529d32dc494ff6f7b75196e1c92",
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
     "backend/app/provider_cart_recovery.py": "301828940c416b5d27beca5a06e2d8f8c3e8d9f4",
-    "backend/app/provider_checkout.py": "1f09a221497bdc18d6d20b01f322528caf2f4a66",
+    "backend/app/provider_checkout.py": "69f2e06a6b11b90f756b46516f585a3ab4ca1cd2",
     "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
     "backend/app/unified_checkout.py": "f4174431abd6a058248dcfb20c756ea1fe90585b",
     "docker/docker-compose.yml": "71dc4fe64061405be17a3b3050f2cc2ef7baf2b4",
@@ -28,7 +28,8 @@
     "frontend/app/admin/payments/payments.module.css": "7a24498537c5767823d9497b34c98f72ddc5e548",
     "frontend/app/admin/settings/infinitepay-panel.tsx": "acadf2e5b210871bb5c0ba3bddbc5d02d5ba2914",
     "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da",
-    "frontend/app/library/cart/page.tsx": "36844020fc4d5b0ee9fd5829c990854ee83b2f27",
+    "frontend/app/library/cart/checkout-navigation.ts": "91d6b7de1ba9a395a1666365d97a7581ace576e8",
+    "frontend/app/library/cart/page.tsx": "ed9630916dbe7ada26487fe70b0b5aac7c1b5b98",
     "frontend/app/library/purchase-card.tsx": "08f1e3643310f1e95f0ebbefd6f7e2e5505aee0a",
     "frontend/app/library/purchases/page.tsx": "82f61cd78f0eeea93cff15df51eaf8b7fd292cdf"
   },
