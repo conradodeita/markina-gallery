@@ -36,7 +36,7 @@ TABLE_GROUPS = {
         "ProviderPaymentAttempt ProviderPaymentReceipt ProviderPaymentCorrection"
     ),
     ("R", "K"): (
-        "BrandingSettings GlobalPixSettings InfinitePaySettings PaymentMessageTemplate ProgressivePricingPreset "
+        "BrandingSettings GlobalPixSettings InfinitePaySettings InfinitePayCredential PaymentMessageTemplate ProgressivePricingPreset "
         "WhatsAppChannelSettings PreviewAdjustmentSettings NotificationSetting"
     ),
     ("D", "K"): (

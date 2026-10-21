@@ -83,7 +83,7 @@ def prepare_provider_payment(
         InfinitePaySettings.tenant_id == tenant_id,
     ).with_for_update())
     if not configuration_payload(
-        settings, api_key_configured=api_key_configured(tenant_id),
+        settings, api_key_configured=api_key_configured(tenant_id, db=db),
     )["checkout_available"]:
         raise CheckoutError("Cartão indisponível para esta conta.")
 
@@ -104,6 +104,7 @@ def prepare_provider_payment(
     new_payment = ProviderPayment(
         tenant_id=tenant_id, client_id=client.id, checkout_key=key,
         cart_revision=revision, total_cents=total, handle_snapshot=settings.handle,
+        credential_id=settings.credential_id,
         configuration_version=settings.version, verification_profile=settings.verification_profile,
         state="creating", revision_number=0,
     )

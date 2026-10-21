@@ -67,6 +67,8 @@ def test_configurar_alterar_remover_preserva_PIX_e_conta_B(client_db, configured
     result = confirm(client_db, first, challenge)
     assert result == {"handle": "synthetic_a", "status": "pending", "version": 1,
         "card_enabled": False, "api_key_configured": True,
+        "credential_status": "stored", "credential_validation": "unavailable",
+        "credential_storage_available": False,
         "ownership_verified": False, "checkout_available": False,
         "message": "Cartão indisponível até o fotógrafo habilitar uma configuração pronta."}
     assert challenge.encrypted_target is None and challenge.used_at is not None

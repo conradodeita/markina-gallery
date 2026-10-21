@@ -3,7 +3,7 @@
 import json
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,17 @@ class ConfigurationChallengeInput(BaseModel):
     configuration: ReceiverInput | None
     checkout_ready: bool = False
     card_enabled: bool = False
+    api_key: SecretStr | None = Field(default=None, repr=False, max_length=512, min_length=1)
+
+    @field_validator("api_key")
+    @classmethod
+    def safe_api_key(cls, value):
+        if value is not None:
+            raw = value.get_secret_value().strip()
+            if not raw or any(not 32 <= ord(c) <= 126 for c in raw):
+                raise ValueError("Informe uma API Key válida.")
+            return SecretStr(raw)
+        return value
 
 
 class ConfigurationConfirmInput(BaseModel):
@@ -82,11 +93,32 @@ def configuration_payload(settings: InfinitePaySettings | None, *,
 
 
 def canonical_proposal(configuration: ReceiverInput | None, version: int, checkout_ready: bool = False,
-                       card_enabled: bool = False) -> str:
-    return json.dumps({"checkout_ready": bool(checkout_ready and configuration),
+                       card_enabled: bool = False, *, db: Session | None = None,
+                       tenant_id: UUID | None = None, api_key: SecretStr | None = None) -> str:
+    proposal = {"checkout_ready": bool(checkout_ready and configuration),
                        "card_enabled": bool(card_enabled and configuration),
-                       "handle": configuration.handle if configuration else None, "version": version},
-                      sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                       "handle": configuration.handle if configuration else None, "version": version}
+    if db is not None and tenant_id is not None:
+        from app.infinitepay_binding import api_key_configured
+        from app.infinitepay_credentials import has_unresolved_payments, prepare_secret
+
+        settings = load_configuration(db, tenant_id=tenant_id)
+        if configuration is None:
+            if api_key is not None:
+                raise ConfigurationConflict("Não envie API Key ao desconectar.")
+            if has_unresolved_payments(db, tenant_id):
+                raise ConfigurationConflict("Existem compras de cartão pendentes. Concilie-as antes de desconectar; você pode desabilitar novos cartões.")
+        elif api_key is not None:
+            proposal["credential"] = prepare_secret(api_key.get_secret_value(), tenant_id=tenant_id)
+        elif (not api_key_configured(tenant_id, db=db)
+              or settings and settings.credential_source == "managed" and settings.handle != configuration.handle):
+            raise ConfigurationConflict("Informe a API Key da mesma conta ao cadastrar ou alterar a InfiniteTag.")
+    return json.dumps(proposal, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def proposal_preview(target: str) -> dict:
+    value = json.loads(target)
+    return {key: value[key] for key in ("handle", "version", "checkout_ready", "card_enabled")}
 
 
 def check_version(settings: InfinitePaySettings | None, version: int) -> None:
@@ -128,5 +160,15 @@ def apply_proposal(db: Session, *, tenant_id: UUID, admin_id: UUID, target: str)
     settings.verification_profile = "infinitepay-public-v1" if checkout_ready else None
     settings.verified_at = now() if checkout_ready else None
     settings.updated_at = now()
+    from app.infinitepay_credentials import erase_secrets, has_unresolved_payments, install_secret
+
+    if handle is None:
+        if has_unresolved_payments(db, tenant_id):
+            raise ConfigurationConflict("Existem compras de cartão pendentes. Concilie-as antes de desconectar.")
+        erase_secrets(db, tenant_id=tenant_id)
+        settings.credential_source, settings.credential_id = "managed", None
+    elif proposed.get("credential"):
+        settings.credential_id = install_secret(db, tenant_id=tenant_id, proposal=proposed["credential"])
+        settings.credential_source = "managed"
     db.flush()
     return settings

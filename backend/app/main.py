@@ -25,6 +25,8 @@ from zoneinfo import ZoneInfo
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import String, and_, cast, delete, func, or_, select, update
@@ -290,7 +292,8 @@ from app.global_pix import (
     proposal_preview,
 )
 from app.historical_media import historical_media_path
-from app.infinitepay_binding import api_key_configured
+from app.infinitepay_credentials import credential_status
+from app.integration_secrets import IntegrationSecretError
 from app.media import (
     derivatives_root,
     enqueue_derivatives,
@@ -445,6 +448,14 @@ app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
 logger = logging.getLogger(__name__)
 
 
+@app.exception_handler(RequestValidationError)
+async def protect_credential_validation_input(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/admin/settings/infinitepay"):
+        return JSONResponse(status_code=422, content={"detail": "Dados da configuração InfinitePay inválidos."},
+                            headers={"Cache-Control": "no-store"})
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.middleware("http")
 async def require_operational_tenant(request: Request, call_next):
     try:
@@ -456,7 +467,8 @@ async def require_operational_tenant(request: Request, call_next):
 @app.middleware("http")
 async def prevent_capacity_snapshot_caching(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path == "/admin/capacity-observability":
+    if (request.url.path == "/admin/capacity-observability"
+            or request.url.path.startswith("/admin/settings/infinitepay")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -2349,9 +2361,14 @@ def admin_global_pix_confirm(
 def admin_infinitepay(request: Request, db: Session = Depends(db_session)) -> dict:
     session = current_session(request, Role.ADMIN)
     active_admin_for_session(db, session)
+    return _infinitepay_configuration_payload(db, session.tenant_id)
+
+
+def _infinitepay_configuration_payload(db: Session, tenant_id: UUID) -> dict:
+    state = credential_status(db, tenant_id=tenant_id)
     return infinitepay_settings.configuration_payload(
-        infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id),
-        api_key_configured=api_key_configured(session.tenant_id))
+        infinitepay_settings.load_configuration(db, tenant_id=tenant_id),
+        api_key_configured=state["api_key_configured"]) | state
 
 
 @app.post("/admin/settings/infinitepay/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -2377,9 +2394,17 @@ def admin_infinitepay_challenge(
         infinitepay_settings.check_version(settings, payload.expected_version)
     except infinitepay_settings.ConfigurationConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
-    target = infinitepay_settings.canonical_proposal(
-        payload.configuration, payload.expected_version, payload.checkout_ready, payload.card_enabled,
-    )
+    try:
+        target = infinitepay_settings.canonical_proposal(
+            payload.configuration, payload.expected_version, payload.checkout_ready, payload.card_enabled,
+            db=db, tenant_id=session.tenant_id, api_key=payload.api_key,
+        )
+    except IntegrationSecretError:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Armazenamento seguro de credenciais indisponível.") from None
+    except infinitepay_settings.ConfigurationConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     try:
         challenge, _code, queued = create_security_challenge(
             db, purpose="change_infinitepay_otp", subject_fingerprint=pii_fingerprint(str(admin.id)),
@@ -2394,7 +2419,7 @@ def admin_infinitepay_challenge(
         db.commit()
         raise HTTPException(status_code=409, detail="Canal WhatsApp indisponível para confirmação.")
     return {"challenge_id": str(challenge.id), "expires_at": challenge.expires_at.isoformat(),
-            "proposal": json.loads(target),
+            "proposal": infinitepay_settings.proposal_preview(target),
             "message": "Código de confirmação enviado ao WhatsApp administrativo do Pick-your-Pic."}
 
 
@@ -2436,11 +2461,13 @@ def admin_infinitepay_confirm(
     except infinitepay_settings.ConfigurationConflict as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from None
+    except IntegrationSecretError:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Armazenamento seguro de credenciais indisponível.") from None
     challenge.encrypted_target = None
     audit(db, "infinitepay.configuration_updated", f"{settings.id}:{settings.version}", tenant_id=session.tenant_id)
     db.commit()
-    return infinitepay_settings.configuration_payload(
-        settings, api_key_configured=api_key_configured(session.tenant_id))
+    return _infinitepay_configuration_payload(db, session.tenant_id)
 
 
 @app.post("/admin/settings/infinitepay/resend", status_code=status.HTTP_202_ACCEPTED)
@@ -9320,7 +9347,8 @@ def prepare_unified_card(request: Request, payload: ProviderCheckoutInput,
         )
         if payment.state == "creating":
             callback = f"{public_app_origin()}/api/infinitepay/return"
-            provider = operational_provider(tenant_id=client.tenant_id,
+            provider = operational_provider(tenant_id=payment.tenant_id, db=db,
+                                            credential_id=payment.credential_id,
                                             redirect_url=callback)
             if provider is None:
                 raise CheckoutError("Checkout de cartão indisponível.")
@@ -9373,7 +9401,8 @@ def infinitepay_return(request: Request,
         if payment and payment.state in {"awaiting_payment", "verification_required"}:
             try:
                 callback = f"{public_app_origin()}/api/infinitepay/return"
-                provider = operational_provider(tenant_id=payment.tenant_id,
+                provider = operational_provider(tenant_id=payment.tenant_id, db=db,
+                                                credential_id=payment.credential_id,
                                                 redirect_url=callback)
             except EmailConfigurationError:
                 logger.exception("InfinitePay return unavailable: public app origin is invalid")

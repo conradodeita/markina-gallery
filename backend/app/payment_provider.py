@@ -309,12 +309,25 @@ def _valid_infinitepay_checkout_url(value: str) -> bool:
 
 
 def operational_provider(*, tenant_id: UUID | None = None,
-                         redirect_url: str | None = None) -> PaymentProvider | None:
+                         redirect_url: str | None = None, db=None,
+                         credential_id: UUID | None = None) -> PaymentProvider | None:
     """Crie cliente autenticado com binding do tenant e retorno HTTPS do servidor."""
     if not redirect_url or tenant_id is None:
         return None
     try:
-        api_key = api_key_for_tenant(tenant_id)
+        if credential_id is not None:
+            from app.infinitepay_credentials import credential_key
+            from app.integration_secrets import IntegrationSecretError
+
+            if db is None:
+                return None
+            try:
+                api_key = credential_key(db, tenant_id=tenant_id, credential_id=credential_id)
+            except IntegrationSecretError:
+                return None
+        else:
+            # Referência nula identifica compras anteriores ao cofre gerido.
+            api_key = api_key_for_tenant(tenant_id)
     except InfinitePayBindingError:
         return None
     if api_key is None:
