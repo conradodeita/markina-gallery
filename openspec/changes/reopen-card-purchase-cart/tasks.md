@@ -7,8 +7,8 @@
 
 ## 2. API e card da cliente
 
-- [ ] 2.1 Expor prévia/confirmação administrativas e capacidade/revisão/indicador na projeção; testar autenticação, isolamento A/B, inputs, conflito e preservação de decisões PIX/receitas/entregas.
-- [ ] 2.2 Implementar Reabrir carrinho no card da cliente por compra, com prévia/confirmar/cancelar, motivo, meios disponíveis e estado após sucesso; executar testes de componente para confirmação, falha, duplo clique e compras confirmadas sem ação, mantendo filtros/fotos/paginação.
+- [x] 2.1 Expor prévia/confirmação administrativas, capacidade/revisão/indicador na projeção e revisão de recuperação da própria cliente no carrinho; testar autenticação, isolamento A/B, inputs, conflito, fotos canônicas e preservação de decisões PIX/receitas/entregas.
+- [ ] 2.2 Implementar Reabrir carrinho no card da cliente por compra e retomada no carrinho com chave nova após reabertura validada, sem selecionar novamente; executar testes de componente para prévia/confirmar/cancelar, falha, duplo clique, estados confirmados sem ação e idempotência da emissão incerta, mantendo filtros/fotos/paginação.
 
 ## 3. Integração e entrega
 

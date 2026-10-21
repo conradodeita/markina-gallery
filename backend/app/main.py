@@ -382,6 +382,13 @@ from app.private_upload_batches import (
     folder_batch_for,
 )
 from app.product_brand import PRODUCT_NAME
+from app.provider_cart_recovery import (
+    CartRecoveryError,
+    cart_recovery_statuses,
+    client_cart_recovery_revision,
+    preview_cart_recovery,
+    reopen_payment_cart,
+)
 from app.provider_checkout import issue_provider_payment, prepare_provider_payment
 from app.provider_confirmation import apply_payment_check
 from app.public_gallery_access import (
@@ -9286,7 +9293,9 @@ def _commerce_client(request: Request, db: Session) -> Client:
 
 @app.get("/library/cart")
 def unified_cart(request: Request, db: Session = Depends(db_session)) -> dict:
-    return cart_payload(db, _commerce_client(request, db))
+    client = _commerce_client(request, db)
+    return {**cart_payload(db, client), "recovery_revision": client_cart_recovery_revision(
+        db, tenant_id=client.tenant_id, client_id=client.id)}
 
 
 @app.post("/library/cart/prepare")
@@ -9395,6 +9404,53 @@ def infinitepay_return(request: Request,
                     if close:
                         close()
     return RedirectResponse(destination, status_code=303)
+
+
+class CartRecoveryPreviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0, strict=True)
+
+
+class CartRecoveryInput(CartRecoveryPreviewInput):
+    expected_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    idempotency_key: UUID
+    reason: str = Field(min_length=3, max_length=100)
+    acknowledge_remote_checkout: bool = Field(strict=True)
+
+
+@app.post("/admin/provider-payments/{payment_id}/cart-recovery/preview")
+def preview_provider_cart_recovery(payment_id: UUID, payload: CartRecoveryPreviewInput,
+                                    request: Request, db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    actor_id = require_admin(request).subject_id
+    require_same_origin(request)
+    try:
+        return preview_cart_recovery(db, actor_id, payment_id, expected_revision=payload.expected_revision,
+                                     expected_tenant_id=tenant_id)
+    except (CartRecoveryError, LookupError, TenantContextError) as exc:
+        db.rollback()
+        status = 403 if isinstance(exc, TenantContextError) else 404 if isinstance(exc, LookupError) else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.post("/admin/provider-payments/{payment_id}/cart-recovery")
+def recover_provider_cart(payment_id: UUID, payload: CartRecoveryInput,
+                          request: Request, db: Session = Depends(db_session)) -> dict:
+    tenant_id = directory_tenant_id(db, request)
+    actor_id = require_admin(request).subject_id
+    require_same_origin(request)
+    try:
+        result = reopen_payment_cart(db, actor_id, payment_id, expected_revision=payload.expected_revision,
+            expected_fingerprint=payload.expected_fingerprint, decision_id=payload.idempotency_key,
+            reason=payload.reason, acknowledge_remote_checkout=payload.acknowledge_remote_checkout,
+            expected_tenant_id=tenant_id)
+        db.commit()
+        return result
+    except (CartRecoveryError, LookupError, TenantContextError) as exc:
+        db.rollback()
+        status = 403 if isinstance(exc, TenantContextError) else 404 if isinstance(exc, LookupError) else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 
 class GroupPaymentInput(BaseModel):
@@ -12012,6 +12068,7 @@ def _payment_dashboard_data(
             ProviderPayment.id.in_(card_payment_ids),
         ))
     } if card_payment_ids else {}
+    recovery_statuses = cart_recovery_statuses(db, tenant_id=tenant_id, payments=card_payments.values())
     canonical_parent_ids = {
         order.parent_gallery_id_snapshot for order in order_entities
         if order.parent_gallery_id and order.parent_gallery_id_snapshot
@@ -12271,7 +12328,8 @@ def _payment_dashboard_data(
                 **({"payment_method": "credit_card" if provider_payment else "pix"}
                    if provider_payment or order.payment_group_id or latest_communication else {}),
                 **({"provider_payment_state": provider_payment.state,
-                    "provider_payment_id": str(provider_payment.id)} if provider_payment else {}),
+                    "provider_payment_id": str(provider_payment.id),
+                    "provider_cart_recovery": recovery_statuses.get(provider_payment.id)} if provider_payment else {}),
                 "confirmed_at": (order.confirmed_at.isoformat()
                                  if order.payment_status == "confirmed" and order.confirmed_at
                                  else None),

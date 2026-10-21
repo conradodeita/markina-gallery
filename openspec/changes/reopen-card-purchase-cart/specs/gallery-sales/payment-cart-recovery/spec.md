@@ -71,6 +71,11 @@ A reabertura SHALL ser transacional, auditada e idempotente. Prévia e falhas MU
 - **WHEN** a mesma decisão é repetida após a cliente iniciar outro pagamento
 - **THEN** retorna a recuperação anterior sem repor fotos ou alterar o novo pagamento
 
+#### Scenario: Cliente volta à aba depois da reabertura
+- **WHEN** a cliente atualiza o carrinho após a reabertura administrativa
+- **THEN** vê as mesmas fotos sem selecionar novamente e pode iniciar uma nova tentativa por escolha explícita
+- **AND** a nova tentativa não reutiliza a chave da emissão antiga; sem recuperação, a mesma tentativa incerta conserva sua idempotência
+
 #### Scenario: Resposta de criação chega depois da reabertura
 - **WHEN** a emissão antiga retorna uma URL após a compra ter sido reaberta
 - **THEN** a compra não volta a aguardando pagamento nem reserva novamente as fotos

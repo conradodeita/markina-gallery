@@ -4,7 +4,7 @@ import hashlib
 import json
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.acervo_context import require_active_owner
@@ -30,7 +30,7 @@ from app.auth import (
     now,
 )
 from app.checkout import CheckoutError
-from app.tenancy import require_admin_tenant
+from app.tenancy import TenantContextError, require_admin_tenant
 from app.unified_checkout import cart_payload
 
 RECOVERY_EVENT = "provider_payment.cart_reopened"
@@ -50,14 +50,63 @@ def _records(rows):
     return [{column.name: getattr(row, column.name) for column in row.__table__.columns} for row in rows]
 
 
+def _recovery_events(tenant_id, ids):
+    legacy_prefix = "IP_RECOVERY_20261021_V1:"
+    return select(AuditEvent).where(
+        AuditEvent.tenant_id == tenant_id,
+        or_(and_(AuditEvent.event == RECOVERY_EVENT, func.substr(AuditEvent.subject, 1, 36).in_(ids)),
+            and_(AuditEvent.event == "provider_payment.owner_recovery",
+                 AuditEvent.subject.startswith(legacy_prefix),
+                 func.substr(AuditEvent.subject, len(legacy_prefix) + 1, 36).in_(ids))),
+    )
+
+
+def client_cart_recovery_revision(db: Session, *, tenant_id: UUID, client_id: UUID):
+    """Revisão opaca somente das recuperações da própria cliente/conta."""
+    ids = [str(identifier) for identifier in db.scalars(select(ProviderPayment.id).where(
+        ProviderPayment.tenant_id == tenant_id, ProviderPayment.client_id == client_id))]
+    if not ids:
+        return None
+    event = db.scalar(_recovery_events(tenant_id, ids)
+                      .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(1))
+    return str(event.id) if event else None
+
+
+def cart_recovery_statuses(db: Session, *, tenant_id: UUID, payments):
+    """Capacidade indicativa; a operação sempre revalida o contexto completo."""
+    owned = {payment.id: payment for payment in payments if payment.tenant_id == tenant_id}
+    if not owned:
+        return {}
+    recovered = {}
+    for event in db.scalars(_recovery_events(tenant_id, [str(identifier) for identifier in owned])
+                            .order_by(AuditEvent.created_at, AuditEvent.id)):
+        identifier = event.subject.split(":", 2)[1 if event.event != RECOVERY_EVENT else 0]
+        recovered[identifier] = event.created_at.isoformat()
+    blocked = set(db.scalars(select(ProviderPaymentReceipt.payment_id).where(
+        ProviderPaymentReceipt.tenant_id == tenant_id, ProviderPaymentReceipt.payment_id.in_(owned),
+        ProviderPaymentReceipt.state.in_(("queued", "processing", "verified")))))
+    return {identifier: {
+        "can_reopen": (payment.state in RECOVERABLE_STATES and not payment.confirmed_at
+                       and not payment.provider_transaction_nsu and identifier not in blocked
+                       and str(identifier) not in recovered),
+        "revision": payment.revision_number,
+        "reopened_at": recovered.get(str(identifier)),
+    } for identifier, payment in owned.items()}
+
+
 def _perform(db, actor_id, payment_id, *, expected_revision, expected_fingerprint=None,
-             decision_id=None, reason=None, acknowledge_remote_checkout=False, preview=False):
+             decision_id=None, reason=None, acknowledge_remote_checkout=False, preview=False,
+             expected_tenant_id=None):
     tenant = require_admin_tenant(db, actor_id)
     tenant_id = tenant.id
+    if expected_tenant_id is not None and tenant_id != expected_tenant_id:
+        raise TenantContextError("Acesso negado.")
     require_active_owner(db, tenant_id)
     # Compatível com KEY SHARE da FK de um confirmador que já detém Client.
     db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update(key_share=True)
               .execution_options(populate_existing=True))
+    if require_admin_tenant(db, actor_id).id != tenant_id:
+        raise TenantContextError("Acesso negado.")
     owner = db.scalar(select(ProviderPayment.client_id).where(
         ProviderPayment.tenant_id == tenant_id, ProviderPayment.id == payment_id,
         ProviderPayment.provider == "infinitepay"))
@@ -128,6 +177,8 @@ def _perform(db, actor_id, payment_id, *, expected_revision, expected_fingerprin
                    GalleryClientState.client_id == owner)
     photo_ids = {row.photo_asset_id_snapshot for row in items} | {row.photo_asset_id for row in selections}
     assets = _rows(db, PhotoAsset, PhotoAsset.tenant_id == tenant_id, PhotoAsset.id.in_(photo_ids))
+    if not {row.photo_asset_id_snapshot for row in items}.issubset({asset.id for asset in assets}):
+        raise CartRecoveryError("Há fotos indisponíveis no acervo. Confira antes de reabrir o carrinho.")
     configs = [*_rows(db, GlobalPixSettings, GlobalPixSettings.tenant_id == tenant_id),
                *_rows(db, InfinitePaySettings, InfinitePaySettings.tenant_id == tenant_id),
                *_rows(db, PriceRule, PriceRule.tenant_id == tenant_id)]
@@ -172,10 +223,12 @@ def _perform(db, actor_id, payment_id, *, expected_revision, expected_fingerprin
             "pix_available": cart["pix_available"], "resume_path": "/library/cart"}
 
 
-def preview_cart_recovery(db: Session, actor_id: UUID, payment_id: UUID, *, expected_revision: int):
+def preview_cart_recovery(db: Session, actor_id: UUID, payment_id: UUID, *, expected_revision: int,
+                          expected_tenant_id: UUID | None = None):
     """A prévia nunca persiste restauração nem auditoria; o chamador detém a sessão."""
     with db.begin_nested() as transaction:
-        result = _perform(db, actor_id, payment_id, expected_revision=expected_revision, preview=True)
+        result = _perform(db, actor_id, payment_id, expected_revision=expected_revision, preview=True,
+                          expected_tenant_id=expected_tenant_id)
         transaction.rollback()
     db.expire_all()
     return result
@@ -183,12 +236,13 @@ def preview_cart_recovery(db: Session, actor_id: UUID, payment_id: UUID, *, expe
 
 def reopen_payment_cart(db: Session, actor_id: UUID, payment_id: UUID, *, expected_revision: int,
                         expected_fingerprint: str, decision_id: UUID, reason: str,
-                        acknowledge_remote_checkout: bool):
+                        acknowledge_remote_checkout: bool, expected_tenant_id: UUID | None = None):
     """Um único commit pertence à rota; erros revertem inclusive efeitos tentativos."""
     try:
         return _perform(db, actor_id, payment_id, expected_revision=expected_revision,
                         expected_fingerprint=expected_fingerprint, decision_id=decision_id,
-                        reason=reason, acknowledge_remote_checkout=acknowledge_remote_checkout)
+                        reason=reason, acknowledge_remote_checkout=acknowledge_remote_checkout,
+                        expected_tenant_id=expected_tenant_id)
     except Exception:
         db.rollback()
         raise

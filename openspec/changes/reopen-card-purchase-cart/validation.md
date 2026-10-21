@@ -20,7 +20,7 @@ Revisão proporcional: usa cart_payload/cotação/autorizações existentes. _re
 
 ## Pendências acionáveis
 
-API/projeção e UI ainda não implementadas (2.1/2.2). Gates amplos/PR ainda pendentes (3.1). A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da futura UI.
+API/projeção implementadas e validadas em 2.1; UI ainda pendente (2.2). Gates amplos/PR ainda pendentes (3.1). A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da UI.
 
 Nada desta change foi publicado. Validação visual autenticada de cliente e homologação de novos retornos reais não foram executadas; não declarar essas etapas como testes locais aprovados.
 
@@ -33,3 +33,11 @@ O primeiro ensaio após essa guarda passou accepted/refused/unknown, mas detecto
 Matriz final dirigida de concorrência: **10 aprovados, 20 desmarcados, 6 avisos, 77,37 s** em PostgreSQL. Abrange quatro respostas tardias (accepted/refused/unknown/transport), duas sessões reabrindo uma vez, três corridas com confirmação, confirmação concluída antes da URL e evidência tardia sem alterar o PIX novo. Ruff aprovado. Nenhuma alteração de endpoint, payload/autenticação, prazo, segredo ou contrato de reemissão do provedor.
 
 O CI do PR operacional #264 terminou success também no head documental final f4717c3, run 39643689877. Seu corpo foi atualizado com o resultado, sem novo commit, merge ou deploy. Esse CI não valida esta nova change; os gates próprios de 3.1 permanecem pendentes.
+
+## Task 2.1
+
+POSTs administrativos de prévia/confirmação exigem sessão administrativa, tenant derivado do servidor e mesma origem; inputs extras são recusados. A projeção inclui capacidade/revisão/indicador sem expor motivo ou dados secretos. Reconhece a auditoria operacional anterior do #264. GET do próprio carrinho inclui UUID opaco da última recuperação da própria cliente/conta, sem permitir reabertura pela cliente.
+
+PostgreSQL: **12 aprovados, 6 avisos, 89,57 s** em tests/test_provider_cart_recovery_api.py. Cobertura: autenticação real, cliente/visitante recusados, tenant B sem acesso a A, motivo/aceite/fingerprint/revisão/origem/tenant no body, repetição HTTP, projeção e revisão privada, cartão confirmado e PIX confirmado preservados; mistura de fotos canônicas e legadas restaura os quatro pares originais sem criar galeria adicional. Ruff aprovado; OpenSpec estrito aprovado. Primeira execução anterior detectou somente a fixture administrativa sem e-mail verificado; a fixture foi corrigida, sem relaxar autenticação. O resultado final da execução intermediária não foi recuperado após expirar a sessão; somente a execução completa acima é usada como evidência.
+
+A leitura do cliente revelou chave de cartão mantida na aba após recuperação com a mesma seleção/revisão. O delta/design/tasks foram atualizados antes da correção da UI: usar a revisão opaca da recuperação e vincular a chave à revisão da seleção, conservando idempotência em resultado incerto da mesma tentativa.

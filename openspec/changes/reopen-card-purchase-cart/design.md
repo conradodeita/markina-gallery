@@ -34,7 +34,9 @@ issue_provider_payment grava incerteza antes da rede, mas atualmente pode sobres
 
 ### UI e compatibilidade
 
-Acrescentar capacidade/revisão e indicador de reabertura à projeção administrativa. No card da cliente, ação por compra identificada, sem confirmação PIX e sem alterar um status global. Prévia informa quantidade, total atual, meios disponíveis e reconhecimento simples de que o link anterior não é encerrado automaticamente. Só o envio final confirma; duplo clique, rede incerta e conflito de sessão preservam a decisão e atualizam o painel. Após sucesso: Carrinho reaberto; a cliente pode escolher novamente como pagar. Manter filtros, fotos, paginação e entregas.
+Acrescentar capacidade/revisão e indicador de reabertura à projeção administrativa, reconhecendo também a auditoria da recuperação operacional anterior sem repetir seus efeitos. No card da cliente, ação por compra identificada, sem confirmação PIX e sem alterar um status global. Prévia informa quantidade, total atual, meios disponíveis e reconhecimento simples de que o link anterior não é encerrado automaticamente. Só o envio final confirma; duplo clique, rede incerta e conflito de sessão preservam a decisão e atualizam o painel. Após sucesso: Carrinho reaberto; a cliente pode escolher novamente como pagar. Manter filtros, fotos, paginação e entregas.
+
+A leitura do carrinho inclui uma revisão opaca da última recuperação autorizada daquele cliente/tenant. O refresh por foco já existe; ao receber nova recuperação com carrinho elegível e sem emissão bloqueante, a UI descarta a chave antiga e conserva as fotos devolvidas pelo servidor. Chaves de cartão também pertencem à revisão da seleção: falha incerta na mesma revisão mantém a chave, enquanto seleção diferente usa chave nova. Nunca emitir automaticamente ou usar simples ausência de URL/tempo como sinal de reabertura. Resposta terminal atrasada força nova leitura, sem manter bloqueio local obsoleto. O backend continua recusando nova cobrança de fotos reservadas, independentemente da chave enviada.
 
 ## Risks / Trade-offs
 
