@@ -2,6 +2,16 @@
 
 ## Dependências e escopo
 
+### Atualização de continuidade — 21/10/2026 após CI776
+
+Este bloco substitui as condições históricas dos parágrafos seguintes: #260 e a recuperação #263/#265 já compõem a main/produção `21b89c332c6937b7079679888d52bd6a8aefe25d`, CI776 concluído success. API/web desse release foram verificados saudáveis às19:15:31 de São Paulo em21/10; schema0084 preservado. Recibo em `reopen-card-purchase-cart/validation.md`. As três compras da operação anterior foram recuperadas pelo procedimento autorizado de #264; essa evidência histórica não autoriza repetir mutação financeira nesta change.
+
+A branch deste PR já integra main21 por merge local `a65e962` e incorpora o recibo por cherry-pick `b7f2090e`; teste combinado e matriz PostgreSQL77 aprovados, sem publicar o cofre. Correção adicional de mínimo local de R$1/primeiro clique está em branch separada `codex/fix-infinitepay-minimum-redirect`; incorporar sua versão revisada à validação final antes de declarar o candidato único aprovado. Não inferir que CI dos checkpoints cobre essa integração posterior.
+
+Imagens históricas observadas no release21: API `sha256:92bcf8652e1932fbd3b2d6c7bcbd0c7006f0012cfe686d4eb6aa95e6eec139a5`; web `sha256:c1be0a0128c87ef756abde0a4343a8a9331defa84ca00645704d17e71d71bbb2`. São referência datada, não inventário atual para uma publicação futura. Não foi acessada Oracle para a retomada do cofre.
+
+O PR #262 continua draft. CI final integrado, revisão, ensaio de restore e operação separada até0085 permanecem pendentes. O gate do releaseAPI/web0084 recusa os blobs/tabela/Compose do cofre; isso é impedimento real à publicação, sem autorização para ampliar allowlist, alterar o workflow de migrations ou usar o deploy emergencial para esse fim. Preparar uma única publicação coordenada exige resolver essa etapa própria, preservando as duas funções e todas as credenciais antigas.
+
 - PR pai #260: `feature/fix-infinitepay-checkout`, SHA `0959c64f00c60e6674675a9d90b43f0d7f9428b7`, aberto/draft e não mesclado na verificação de 21/10/2026. Esta branch `codex/infinitepay-tenant-credentials` parte desse SHA e terá PR draft contra a branch pai, para revisão somente do delta. Integrar #260 primeiro, retargetar este PR para `main` e repetir CI no SHA candidato após revisão humana; não mesclar automaticamente.
 - PR próprio draft [#262](https://github.com/conradodeita/markina-gallery/pull/262), branch `codex/infinitepay-tenant-credentials`. O SHA exato a publicar será o head aprovado desse PR, registrado junto com o head pai e as imagens/digests no pedido operacional; qualquer alteração posterior exige rever os resultados afetados. Primeiro commit de implementação `ccf59ea101f0cdcca2bac8d00f426b457d6bdff0`; correções de testes/evidências posteriores não autorizam outro candidato automaticamente.
 - Serviços afetados: `api` e `web`; schema PostgreSQL via `migrate` em etapa autorizada. Keyring somente na API. Sem alteração de dependências/runtime Python, workers, Redis, Nginx, serviços faciais, RAW ou recursos de outros projetos.

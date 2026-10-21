@@ -27,7 +27,7 @@
 
 ## 6. Integração após a publicação de pagamentos em 21/10/2026
 
-- [ ] 6.1 Integrar main 21b89c3 na branch existente por merge, preservar guards tardios/recuperação e snapshots imutáveis; incorporar o recibo documental de #265 e comprovar interação recuperação/troca de chave/compra nova e legado, reutilizando regressões e transporte sintético. Corrigir somente conflitos ou regressões relacionados.
+- [x] 6.1 Integrar main 21b89c3 na branch existente por merge, preservar guards tardios/recuperação e snapshots imutáveis; incorporar o recibo documental de #265 e comprovar interação recuperação/troca de chave/compra nova e legado, reutilizando regressões e transporte sintético. Evidência: merge local a65e962, matriz PostgreSQL77/0 e recibo documental de #265 incorporado por cherry-pick, sem publicação do cofre.
 - [ ] 6.2 Corrigir a orientação antiga do card sobre desligar PIX global, conservando opções por link, conferência do recebedor, senha/OTP, segredo transitório e PIX manual. Executar testes do card e gates frontend afetados.
 - [ ] 6.3 Atualizar revisão e plano com a base publicada e os limites de migration/keyring/rollback, retargetar o mesmo PR #262 para main, revisar diff/segredos e executar gates afetados e CI final do novo head. Não realizar merge do PR, publicação, migration ou provisão real.
 

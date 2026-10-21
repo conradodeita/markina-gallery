@@ -23,6 +23,15 @@ async function fillInitial() {
 }
 
 describe("Credenciais InfinitePay no card existente", () => {
+  it("orienta opções por link sem exigir desligamento global do PIX na InfinitePay", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response(empty)));
+    render(<InfinitePayPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar InfinitePay" }));
+    expect(screen.getByText(/Cada link criado pelo Pick-your-Pic oferece somente cartão/)).toBeTruthy();
+    expect(screen.getByText(/O PIX manual do Pick-your-Pic continua independente/)).toBeTruthy();
+    expect(screen.queryByText(/deixe cartão de crédito ligado e PIX desligado/)).toBeNull();
+    expect(screen.getByLabelText(/Conferi que esta InfiniteTag/).closest("label")?.textContent).not.toContain("desliguei o PIX");
+  });
   it("não coleta segredo quando uma API anterior não declara capacidade de cofre", async () => {
     const legacy = { ...empty, credential_storage_available: undefined };
     vi.stubGlobal("fetch", vi.fn(() => response(legacy)));

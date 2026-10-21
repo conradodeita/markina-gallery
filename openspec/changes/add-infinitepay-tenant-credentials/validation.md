@@ -61,6 +61,8 @@ O release anterior de #263/#265 já foi concluído e validado; suas evidências 
 
 ## Integração local com main 21b89c3 — evidência executada
 
+Recibo documental da recuperação publicada incorporado por cherry-pick `b7f2090e`, depois do merge `a65e962`. A integração6.1 está concluída nesse checkpoint; a correção posterior de mínimo/primeiro clique exige integração e validação adicionais antes da aprovação final.
+
 Merge por histórico, preservando guardas de resposta tardia/recuperação e snapshot de credencial. Único conflito em `.github/workflows/ci.yml` resolvido mantendo tanto PostgreSQL de checkout/reabertura quanto cofre/migration, além de imagens nativas AMD64/ARM64.
 
 Novo teste combinado `test_reopened_cart_preserves_old_credential_and_uses_replacement_for_new_checkout`: resposta HTTP antiga retida, substituição protegida de chave, recuperação das mesmas três fotos, resposta tardia sem regressão e nova compra usando somente a nova credencial. Transporte HTTP sintético, sem pagamento real. Resultado dirigido: **1 passed, 6 warnings, 6,95 s**. Primeira execução encontrou erro de fixture `revision` versus campo público `cart_revision`; corrigido apenas no teste.
@@ -70,3 +72,7 @@ Matriz PostgreSQL local `test_provider_cart_recovery.py test_provider_cart_recov
 Ruff backend aprovado, políticas unitárias `check_ci_results`/`classify_ci_scope`16 testes aprovados e OpenSpec1.14.0 global133/0 na árvore integrada deste checkpoint. Gate `test_production_release_workflow_policy.py` ainda recusa os blobs do cofre incompatíveis com o manifesto do release0084 publicado; não foram alterados manifests, allowlists, wrappers ou scripts de release para aprovar cofre. Essa pendência impede declarar CI/release final aprovado e é da task6.3.
 
 O proprietário priorizou também mínimo local de R$1 e redirecionamento no primeiro clique em branch separada `codex/fix-infinitepay-minimum-redirect`. Esta validação77 não inclui essa alteração posterior. Nenhuma operação Oracle, migração, segredo real, compra real ou publicação realizada nesta retomada.
+
+## Orientação do card atualizada
+
+Regressão da orientação por link falhou antes da correção (1failed/12skipped), por ausência do texto esperado. Depois da mudança textual: `npm test -- app/admin/settings/infinitepay-panel.test.tsx --maxWorkers=1` — **13 passed**,3,62s. As opções por link conservam crédito somente; PIX manual continua independente. Sem alteração da coleta transitória, senha/OTP, ownership, opções do adaptador ou ação financeira. Build/lint/suíte completos serão conferidos após integrar também a correção do mínimo/redirecionamento.
