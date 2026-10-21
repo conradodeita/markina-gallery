@@ -125,7 +125,7 @@ Cada fotógrafo SHALL poder habilitar cartão sob confirmação sensível e vers
 
 ### Requirement: Compra de cartão imutável e restrita ao proprietário
 
-Antes de emitir cobrança, o sistema SHALL validar autorização, prazo, elegibilidade e revisão no servidor e congelar conta, cliente, recebedor/versionamento, composição, valores em centavos e condições comerciais. Uma compra MUST NOT combinar fotógrafos. Fotos com cobrança externa ainda pagável SHALL ficar protegidas contra outra cobrança, sem perda do restante do carrinho.
+Antes de emitir cobrança, o sistema SHALL validar autorização, prazo, elegibilidade e revisão no servidor e congelar conta, cliente, recebedor/versionamento, composição, valores em centavos e condições comerciais. Uma compra MUST NOT combinar fotógrafos. Fotos com cobrança ainda pagável SHALL permanecer protegidas, salvo reabertura administrativa explícita conforme payment-cart-recovery.
 
 #### Scenario: Carrinho de outra conta
 - **WHEN** a preparação contém pedido, configuração ou item pertencente a outro fotógrafo
@@ -141,7 +141,7 @@ Antes de emitir cobrança, o sistema SHALL validar autorização, prazo, elegibi
 
 ### Requirement: Emissão idempotente e recuperação conservadora
 
-Repetição ou concorrência SHALL reutilizar a mesma tentativa para a mesma compra. Timeout após possível aceitação externa SHALL produzir estado de verificação, sem criar outro link cegamente. O sistema SHALL permitir retomar compras pendentes. Cancelar localmente ou mudar para PIX MUST NOT liberar fotos enquanto o link antigo ainda puder receber pagamento.
+Repetição ou concorrência SHALL reutilizar a mesma tentativa para a mesma compra. Timeout após possível aceitação externa SHALL produzir verificação, sem novo link automático. O sistema SHALL permitir retomar compras pendentes. Liberação local de fotos ainda pagáveis MUST NOT ocorrer pela cliente ou por automação; somente reabertura administrativa explícita conforme payment-cart-recovery pode fazê-la, sem declarar cancelamento remoto.
 
 #### Scenario: Clique repetido
 - **WHEN** a cliente repete a solicitação de cartão para a mesma revisão
@@ -160,11 +160,16 @@ Repetição ou concorrência SHALL reutilizar a mesma tentativa para a mesma com
 - **WHEN** a InfinitePay confirma que o checkout não foi criado e a tentativa assume `failed_before_issue`
 - **THEN** o sistema restaura no carrinho os mesmos itens comerciais elegíveis e permite à cliente iniciar uma nova tentativa de cartão
 - **AND** não mantém a interface presa à tentativa encerrada nem duplica pedido ou seleção
-- **AND** essa retomada MUST NOT ser oferecida para `verification_required`, timeout, resposta inválida ou outro resultado incerto
+- **AND** essa retomada automática MUST NOT ser oferecida para `verification_required`, timeout, resposta inválida ou outro resultado incerto
 
 #### Scenario: Troca de meio após emissão
 - **WHEN** a cliente tenta pagar por PIX fotos de uma cobrança de cartão ainda pagável
 - **THEN** o sistema explica o impedimento e oferece retomada ou conciliação da compra existente
+
+#### Scenario: Recuperação administrativa expressamente autorizada
+- **WHEN** o fotógrafo confirma reabertura de compra sem retorno ou falha inconclusiva nos termos de payment-cart-recovery
+- **THEN** a recuperação é auditada e transacional, preserva o histórico e não declara recebimento ou cancelamento remoto
+- **AND** compras confirmadas e negativas claras continuam seguindo seus contratos próprios
 
 ### Requirement: Diagnóstico mínimo de respostas de emissão
 
