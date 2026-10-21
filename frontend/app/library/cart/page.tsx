@@ -15,7 +15,8 @@ type Payment = { id: string; revision: string; total_cents: number; pix_copy_pas
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
 type CardPayment = { id: string; status: "awaiting_payment" | "verification_required" | "failed_before_issue"; checkout_url: string | null; total_cents: number };
 type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
-  pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null; total_cents: number | null; payment?: Payment };
+  pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null;
+  pending_card_payments?: CardPayment[]; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function CartPage() {
@@ -176,6 +177,17 @@ export default function CartPage() {
         ? <><p>Continue o pagamento no checkout seguro da InfinitePay.</p><a className="primary" href={cart.card_payment.checkout_url} target="_blank" rel="noopener noreferrer">Continuar para pagamento com cartão</a></>
         : <p role="status">Pagamento em verificação; esta compra permanece reservada. Acompanhe em Compras e não inicie outra cobrança para essas fotos.</p>}
       <Link href={`/library/purchases#payment-${cart.card_payment.id}`}>Acompanhar compra</Link>
+    </section> : null}
+    {cart?.pending_card_payments?.length ? <section className="unified-payment" aria-label="Compras anteriores pendentes">
+      <h2>Compras anteriores pendentes</h2>
+      <p>Esses valores pertencem a compras anteriores e não compõem o total das fotos selecionadas agora. As fotos reservadas nessas compras continuam protegidas contra outro pagamento.</p>
+      {cart.pending_card_payments.map((payment) => <div key={payment.id}>
+        <h3>Compra anterior · {money(payment.total_cents)}</h3>
+        <p>{payment.status === "verification_required"
+          ? "Essa compra aguarda conferência do fotógrafo. Não pague novamente pelas fotos reservadas nela."
+          : "Essa compra tem um checkout de cartão pendente. Acompanhe o pagamento em Compras."}</p>
+        <Link href={`/library/purchases#payment-${payment.id}`}>Acompanhar compra anterior</Link>
+      </div>)}
     </section> : null}
     {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
       <div className="section-heading"><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>

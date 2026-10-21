@@ -90,6 +90,26 @@ describe("revisão global da cliente", () => {
     expect(screen.getByLabelText("Cartão de crédito")).toHaveProperty("checked", false);
   });
 
+  it("separa os 5 centavos da compra anterior e permite alternar meios para fotos novas", async () => {
+    const ready = { ...cart, cart_revision: "d".repeat(64), pix_available: true, card_available: true,
+      card_payment: null, pending_card_payments: [{ id: "previous-unknown", status: "verification_required",
+        checkout_url: null, total_cents: 5 }] };
+    const fetcher = vi.fn((path: string) => response(path.endsWith("/prepare") ? { ...ready, payment } : ready));
+    vi.stubGlobal("fetch", fetcher);
+    render(<CartPage />);
+    await screen.findByRole("button", { name: "Informar pagamento" });
+    const previous = screen.getByRole("region", { name: "Compras anteriores pendentes" });
+    expect(within(previous).getByText(/0,05/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /Total R\$\s*14,00/ })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Cartão de crédito"));
+    expect(screen.getByRole("button", { name: "Continuar com cartão de crédito" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("PIX"));
+    expect(screen.getByRole("button", { name: "Informar pagamento" })).toBeTruthy();
+    expect(fetcher.mock.calls.some(([path]) => path.endsWith("/prepare-card"))).toBe(false);
+    expect(within(previous).getByRole("link", { name: "Acompanhar compra anterior" }).getAttribute("href"))
+      .toBe("/library/purchases#payment-previous-unknown");
+  });
+
   it("preserva seleção e explica indisponibilidade quando nenhum meio é utilizável", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ ...cart, can_prepare: false, pix_available: false,
       card_available: false, payment_error: "Pagamento indisponível. Sua seleção foi mantida." })));

@@ -224,11 +224,32 @@ def cart_payload(db: Session, client: Client):
     paid = [group for group in groups if group["payment_required"]]
     valid = bool(paid) and all(not group["error"] for group in paid)
     methods = payment_methods(db, tenant_id=tenant_id)
-    active_card = db.scalar(select(ProviderPayment).where(
+    pending_cards = list(db.scalars(select(ProviderPayment).where(
         ProviderPayment.tenant_id == tenant_id,
         ProviderPayment.client_id == client.id,
         ProviderPayment.state.in_(("awaiting_payment", "verification_required")),
-    ).order_by(ProviderPayment.created_at.desc()).limit(1))
+    ).order_by(ProviderPayment.created_at.desc(), ProviderPayment.id)))
+    selected_photo_ids = {UUID(item["id"]) for group in groups for item in group["items"]}
+    matching_card_ids = set()
+    if selected_photo_ids and pending_cards:
+        matching_card_ids = set(db.scalars(select(SaleOrder.provider_payment_id).join(
+            SaleOrderItem, SaleOrderItem.sale_order_id == SaleOrder.id,
+        ).where(
+            SaleOrder.tenant_id == tenant_id,
+            SaleOrder.client_id == client.id,
+            SaleOrder.provider_payment_id.in_([payment.id for payment in pending_cards]),
+            SaleOrderItem.tenant_id == tenant_id,
+            SaleOrderItem.photo_asset_id_snapshot.in_(selected_photo_ids),
+        )))
+    active_card = next((payment for payment in pending_cards
+                        if payment.id in matching_card_ids or not selected_photo_ids), None)
+
+    def pending_payload(payment):
+        return {
+            "id": str(payment.id), "status": payment.state,
+            "checkout_url": payment.checkout_url if payment.state == "awaiting_payment" else None,
+            "total_cents": payment.total_cents,
+        }
     return {
         "groups": groups,
         "quantity": sum(group["quantity"] for group in groups),
@@ -242,11 +263,9 @@ def cart_payload(db: Session, client: Client):
         "card_available": methods["card_available"],
         "pix_available": methods["pix_available"],
         "default_method": methods["default_method"],
-        "card_payment": ({
-            "id": str(active_card.id), "status": active_card.state,
-            "checkout_url": active_card.checkout_url if active_card.state == "awaiting_payment" else None,
-            "total_cents": active_card.total_cents,
-        } if active_card else None),
+        "card_payment": pending_payload(active_card) if active_card else None,
+        "pending_card_payments": [pending_payload(payment) for payment in pending_cards
+                                  if payment is not active_card],
     }
 
 
