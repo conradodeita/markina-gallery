@@ -39,6 +39,7 @@ export default function InfinitePayPanel() {
   const handleInput = useRef<HTMLInputElement>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
   const apiKeyInput = useRef<HTMLInputElement>(null);
+  const storageAvailable = configuration?.credential_storage_available === true;
 
   useEffect(() => {
     let active = true;
@@ -103,6 +104,14 @@ export default function InfinitePayPanel() {
     password.value = "";
     if (apiKeyInput.current) apiKeyInput.current.value = "";
     setShowKey(false);
+    if (!removing && !storageAvailable && (apiKey || replacingKey || !configuration.api_key_configured)) {
+      setError("Cadastro seguro temporariamente indisponível. Tente novamente mais tarde.");
+      return;
+    }
+    if (replacingKey && !apiKey) {
+      setError("Informe a nova API Key para substituí-la.");
+      return;
+    }
     setBusy(true); setError(""); setMessage("");
     try {
       setChallenge(await requestConfiguration("/challenge", { current_password: currentPassword,
@@ -155,10 +164,10 @@ export default function InfinitePayPanel() {
       {configuration.handle ? <p>InfiniteTag declarada: <strong style={{ overflowWrap: "anywhere" }}>{configuration.handle}</strong></p> : null}
       <p>{configuration.credential_status === "unavailable" ? "API Key exige atenção: a credencial está temporariamente indisponível." : configuration.api_key_configured ? "API Key cadastrada. Seu valor não é exibido." : "API Key não cadastrada."}</p>
       {configuration.credential_validation === "validated" ? <p>Credencial validada pela InfinitePay.</p> : configuration.credential_validation === "rejected" ? <p role="alert">Credencial rejeitada pela InfinitePay. Substitua a API Key antes de novos cartões.</p> : <p>Validação remota indisponível neste fluxo. O cadastro não comprova a aceitação da chave pela InfinitePay.</p>}
-      {configuration.credential_storage_available === false ? <p role="status">Cadastro seguro temporariamente indisponível. Tente novamente mais tarde.</p> : null}
+      {!storageAvailable ? <p role="status">Cadastro seguro temporariamente indisponível. Tente novamente mais tarde.</p> : null}
       {!editing ? <div className="action-grid">
         <button ref={editButton} className="mk-button mk-button--primary" type="button" onClick={() => begin()}>{configuration.handle ? "Alterar InfiniteTag ou disponibilidade do cartão" : "Preparar InfinitePay"}</button>
-        {configuration.api_key_configured ? <MarkinaButton variant="secondary" type="button" onClick={() => begin(false, true)}>Substituir API Key</MarkinaButton> : null}
+        {configuration.api_key_configured ? <MarkinaButton variant="secondary" type="button" disabled={!storageAvailable} onClick={() => begin(false, true)}>Substituir API Key</MarkinaButton> : null}
         {configuration.handle ? <MarkinaButton variant="secondary" type="button" onClick={() => begin(true)}>Desconectar InfinitePay</MarkinaButton> : null}
       </div> : challenge ? <form className="gallery-settings-form" onSubmit={confirm}>
         <h3>{challenge.proposal.handle ? "Confira a InfiniteTag proposta" : "Confirme a remoção da InfinitePay"}</h3>
@@ -184,9 +193,9 @@ export default function InfinitePayPanel() {
             ref={apiKeyInput} name="infinitepay_api_key" type={showKey ? "text" : "password"}
             autoComplete="new-password" autoCapitalize="none" spellCheck={false} maxLength={512}
             data-private="true" data-sentry-mask data-dd-privacy="mask"
-            disabled={busy || configuration.credential_storage_available === false}
+            disabled={busy || !storageAvailable}
             required={replacingKey || !configuration.api_key_configured || handle.trim().replace(/^\$/, "") !== configuration.handle} /></label>
-          <MarkinaButton type="button" variant="quiet" disabled={busy || configuration.credential_storage_available === false}
+          <MarkinaButton type="button" variant="quiet" disabled={busy || !storageAvailable}
             aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? "Ocultar API Key" : "Mostrar API Key"}</MarkinaButton>
           <p>Obtenha a API Key no Checkout Integrado da sua conta InfinitePay. Use a credencial da mesma conta da InfiniteTag. A chave é enviada somente para cadastro seguro e não volta a ser exibida.</p>
           {configuration.api_key_configured ? <p>Deixe o campo vazio para manter a chave atual. Ao alterar a InfiniteTag, informe a chave correspondente. Antes de revogar uma chave antiga na InfinitePay, concilie as compras pendentes.</p> : null}
@@ -199,7 +208,7 @@ export default function InfinitePayPanel() {
         </> : null}
         <label>Senha atual do Pick-your-Pic<input ref={passwordInput} name="infinitepay_current_password" type="password" autoComplete="current-password" maxLength={128} required /></label>
         <div className="action-grid">
-          <MarkinaButton disabled={busy || (!removing && !configuration.api_key_configured && configuration.credential_storage_available === false)}>{busy ? "Enviando…" : "Enviar código InfinitePay"}</MarkinaButton>
+          <MarkinaButton disabled={busy || (!removing && (replacingKey || !configuration.api_key_configured) && !storageAvailable)}>{busy ? "Enviando…" : "Enviar código InfinitePay"}</MarkinaButton>
           <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={cancel}>Cancelar alteração InfinitePay</MarkinaButton>
         </div>
       </form>}

@@ -23,6 +23,15 @@ async function fillInitial() {
 }
 
 describe("Credenciais InfinitePay no card existente", () => {
+  it("não coleta segredo quando uma API anterior não declara capacidade de cofre", async () => {
+    const legacy = { ...empty, credential_storage_available: undefined };
+    vi.stubGlobal("fetch", vi.fn(() => response(legacy)));
+    render(<InfinitePayPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "Preparar InfinitePay" }));
+    expect(screen.getByLabelText("API Key InfinitePay")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Enviar código InfinitePay" })).toHaveProperty("disabled", true);
+  });
+
   it("envia o segredo apenas no cadastro e mantém somente status após confirmação", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {

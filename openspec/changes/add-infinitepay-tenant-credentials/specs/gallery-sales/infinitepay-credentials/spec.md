@@ -17,6 +17,13 @@ O card InfinitePay de Configurações SHALL permitir cadastrar InfiniteTag e API
 - **WHEN** o fotógrafo tenta abandonar uma edição ainda não concluída
 - **THEN** a UI alerta sobre alterações não salvas e permite continuar a edição
 
+### Requirement: Compatibilidade com a capacidade da API
+O formulário SHALL aceitar entrada/envio de API Key somente quando a API autenticada declarar explicitamente capacidade de armazenamento seguro disponível; capacidade ausente em versão anterior SHALL impedir coleta de segredo.
+
+#### Scenario: API anterior durante atualização
+- **WHEN** a API não fornece capacidade explícita de cofre disponível
+- **THEN** a UI impede entrada/envio e substituição de API Key, sem afetar operações legadas sem segredo
+
 ### Requirement: Autoridade exclusiva da sessão
 O backend SHALL revalidar sessão, vínculo ativo e permissão existente em toda operação. Tenant, e-mail, referência de credencial ou desafio fornecidos pelo cliente MUST NOT substituir essa autoridade. Falha de autorização SHALL recusar sem expor ou consumir recursos estrangeiros.
 

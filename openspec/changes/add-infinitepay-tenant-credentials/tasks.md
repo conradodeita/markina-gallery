@@ -17,6 +17,7 @@
 ## 4. Card existente
 
 - [x] 4.1 Completar somente o card InfinitePay com campo oculto transitório, status fiel, alteração/desconexão e prevenção de abandono; testar envio único, segredo ausente da resposta/armazenamento/navegação, carregamento/erro/sucesso, TypeScript, lint e build. Evidência: 11 testes do card, suíte frontend 63 arquivos/566 testes, TypeScript e build aprovados; lint sem erro (34 avisos preexistentes fora do card).
+- Reforço de compatibilidade 4.1: coleta de segredo exige capacidade explícita da API; teste falhou antes e passou após correção. Validação final: 12 testes do card, suíte 63 arquivos/567 testes, TypeScript/lint/build aprovados. Falha temporal fora do diff na execução com build concorrente delimitada e não reproduzida isoladamente nem na repetição integral, conforme `validation.md`.
 
 ## 5. Integração e entrega
 
