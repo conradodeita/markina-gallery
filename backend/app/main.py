@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import json
@@ -290,6 +291,7 @@ from app.global_pix import (
     proposal_preview,
 )
 from app.historical_media import historical_media_path
+from app.maintenance_control import MaintenanceUnavailable, try_enter, try_enter_critical
 from app.media import (
     derivatives_root,
     enqueue_derivatives,
@@ -442,6 +444,62 @@ from app.whatsapp_webhook import process_whatsapp_webhook
 
 app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
 logger = logging.getLogger(__name__)
+
+
+CRITICAL_CALLBACKS = frozenset(
+    {
+        ("POST", "/internal/whatsapp/webhook"),
+        ("GET", "/infinitepay/return"),
+    }
+)
+
+
+class ControlledMaintenanceMiddleware:
+    """Cobre a requisição completa antes de qualquer handler ou efeito."""
+
+    def __init__(self, app, *, engine):
+        self.application = app
+        self.engine = engine
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") in {"/health", "/healthz"}:
+            await self.application(scope, receive, send)
+            return
+        method = scope.get("method", "").upper()
+        path = scope.get("path", "")
+        critical = (method, path) in CRITICAL_CALLBACKS
+        try:
+            enter = try_enter_critical if critical else try_enter
+            service = "api-critical-callback" if critical else "api"
+            lock = await asyncio.to_thread(enter, self.engine, service=service)
+        except MaintenanceUnavailable:
+            lock = None
+        if lock is None:
+            response = JSONResponse(
+                status_code=503,
+                content={"detail": "Serviço temporariamente indisponível durante manutenção."},
+                headers={"Retry-After": "5", "Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send)
+            return
+        response_status: int | None = None
+
+        async def capture_status(message):
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message["status"]
+            await send(message)
+
+        try:
+            await self.application(scope, receive, capture_status)
+        except BaseException:
+            await asyncio.to_thread(lock.abandon)
+            raise
+        else:
+            if response_status is not None and response_status >= 500:
+                await asyncio.to_thread(lock.abandon)
+            else:
+                await asyncio.to_thread(lock.release)
 
 
 @app.middleware("http")
@@ -12918,6 +12976,7 @@ from app.system_monitor.telemetry import MonitorMiddleware
 
 app.include_router(system_monitor_router)
 app.add_middleware(MonitorMiddleware)
+app.add_middleware(ControlledMaintenanceMiddleware, engine=SessionLocal.kw["bind"])
 
 
 @app.on_event("startup")

@@ -23,6 +23,7 @@ from app.auth import (
     now,
 )
 from app.facial.lifecycle import admit_source, finalize_source, write_source
+from app.maintenance_control import MaintenanceBusy, shared_operation
 from app.media import enqueue_derivatives, safe_source_path
 from app.raw_development.engines import RawEngineError, engine_for, normalize_rendered_jpeg
 from app.raw_development.state import (
@@ -82,6 +83,14 @@ def _cleanup_expired(db) -> None:
 
 
 def process_next_raw_job(session_factory=SessionLocal) -> bool:
+    try:
+        with shared_operation(SessionLocal.kw["bind"], service="raw-development-worker"):
+            return _process_next_raw_job(session_factory)
+    except MaintenanceBusy:
+        return False
+
+
+def _process_next_raw_job(session_factory=SessionLocal) -> bool:
     with session_factory() as db:
         _cleanup_expired(db)
         stale = list(db.scalars(select(RawDevelopmentJob).where(

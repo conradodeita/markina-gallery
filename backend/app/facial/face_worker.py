@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from redis import Redis
 
 from app.auth import FacialEmbeddingExperimentSetting, FacialJob, SessionLocal, now
+from app.auth import engine as database_engine
 from app.facial.config import FacialConfigurationError, facial_settings_from_environment
 from app.facial.crypto import FacialCipher
 from app.facial.gemma_assets import verify_gemma_model
@@ -28,6 +29,7 @@ from app.facial.retention import process_claimed_cleanup_job
 from app.facial.runtime import BlockingFacialWorker
 from app.facial.search_worker import process_claimed_search_job
 from app.facial.worker import process_claimed_index_job, process_claimed_purge_job
+from app.maintenance_control import MaintenanceBusy, MaintenanceUnavailable, shared_operation
 from app.tenancy import TenantContextError, domain_session
 
 
@@ -76,14 +78,7 @@ def main(worker_class: str | None = None) -> None:
     derivatives_root = Path(
         os.getenv("MEDIA_DERIVATIVES_ROOT", "/var/lib/markina/derivatives")
     ).resolve()
-    if active_class == "index":
-        with domain_session(SessionLocal) as db:
-            reconcile_automatic_gallery_policies(
-                db,
-                derivatives_root=derivatives_root,
-                settings=settings,
-            )
-            db.commit()
+    reconcile_pending = active_class == "index"
 
     def provider_loader():
         detector = OpenCvSFaceProvider(model_paths["yunet"], model_paths["sface"])
@@ -199,20 +194,36 @@ def main(worker_class: str | None = None) -> None:
         or worker.processed_jobs < settings.max_jobs_per_process
     ):
         try:
-            worker.run_cycle()
-            if active_class == "gemma":
-                with SessionLocal() as db:
-                    state = db.get(FacialEmbeddingExperimentSetting, 1)
-                    if state is None:
-                        state = FacialEmbeddingExperimentSetting(singleton=1, enabled=False)
-                        db.add(state)
-                    state.worker_last_seen_at = now()
-                    db.commit()
-            if active_class == "search":
-                with SessionLocal() as db:
-                    process_next_search_notification(db, cipher=cipher, settings=settings)
+            service = {
+                "index": "face-index-worker",
+                "search": "face-search-worker",
+                "gemma": "face-gemma-index-worker",
+                "maintenance": "face-maintenance-worker",
+            }[active_class]
+            with shared_operation(database_engine, service=service):
+                if reconcile_pending:
+                    with domain_session(SessionLocal) as db:
+                        reconcile_automatic_gallery_policies(
+                            db,
+                            derivatives_root=derivatives_root,
+                            settings=settings,
+                        )
+                        db.commit()
+                    reconcile_pending = False
+                worker.run_cycle()
+                if active_class == "gemma":
+                    with SessionLocal() as db:
+                        state = db.get(FacialEmbeddingExperimentSetting, 1)
+                        if state is None:
+                            state = FacialEmbeddingExperimentSetting(singleton=1, enabled=False)
+                            db.add(state)
+                        state.worker_last_seen_at = now()
+                        db.commit()
+                if active_class == "search":
+                    with SessionLocal() as db:
+                        process_next_search_notification(db, cipher=cipher, settings=settings)
 
-        except TenantContextError:
+        except (TenantContextError, MaintenanceBusy, MaintenanceUnavailable):
             time.sleep(settings.queue_block_seconds)
             continue
 
