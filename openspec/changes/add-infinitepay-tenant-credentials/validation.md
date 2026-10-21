@@ -52,3 +52,9 @@ Commit de implementação/correções `8465c57d265ed8add463ebf9841b20285fcff4fc`
 Os jobs de release/deploy foram **skipped**, como esperado em PR, e não contam como publicação. Nenhuma operação Oracle ou dado financeiro real foi alterado. PR #260 continua no SHA base e não foi modificado. As tarefas de implementação foram encerradas com essa evidência; sincronização de specs principais e arquivo continuam sujeitos à revisão humana.
 
 O commit subsequente registra somente encerramento documental, sem alterar código/testes/workflows/dependências. O CI do head documental será conferido antes da resposta final; seu link/SHA/resultados serão adicionados ao corpo do PR #262, evitando afirmar aprovação de head não verificado ou gerar commits recursivos apenas para citar o próprio SHA.
+
+## Retomada após o release de pagamentos — planejamento de integração
+
+Verificação atual do head c0746a7: todos os checks obrigatórios concluídos success, inclusive runtimes AMD64/ARM64 nativos; PR #262 aberto/draft contra feature/fix-infinitepay-checkout. A worktree está limpa nesse head e o fetch autorizado obteve main 21b89c3. AGENTS.md, INSTRUCOES_EXECUTOR_CLAUDE_CODE.md, ROADMAP_ARQUITETURA.md e openspec/config.yaml não têm diff entre as bases; as leituras obrigatórias anteriores continuam aplicáveis. Proposal/design/deltas/tasks e os runbooks desta change foram relidos antes de alteração de código.
+
+O release anterior de #263/#265 já foi concluído e validado; suas evidências são próprias e não comprovam o cofre novo. Tasks 6.1–6.3 delimitam a integração, interação entre recuperação e credencial, correção textual do card e CI do novo candidato. Nenhuma dessas validações futuras é declarada executada neste checkpoint. Nenhuma operação Oracle, compra, credencial real ou publicação do cofre está autorizada nesta retomada.

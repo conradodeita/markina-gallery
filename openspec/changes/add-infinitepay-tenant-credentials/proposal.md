@@ -30,3 +30,7 @@ Depende do PR #260, SHA base `0959c64f00c60e6674675a9d90b43f0d7f9428b7`, aberto 
 ## Authorization
 
 Pedido explícito do proprietário em 20/10/2026 autoriza implementação local, testes isolados e PR próprio, incluindo ciphertext autenticado no banco dedicado. Isso especializa a regra anterior de segredos somente em configuração de servidor; a chave mestra continua exclusivamente nessa configuração. Não autoriza merge, deploy, migration remota ou provisão de segredo real.
+
+## Continuidade após a publicação de pagamentos
+
+Em 21/10/2026, após o release bem sucedido de #263/#265 em main `21b89c332c6937b7079679888d52bd6a8aefe25d`, o proprietário solicitou retomar este fluxo. O candidato `c0746a7` possui todos os checks obrigatórios aprovados contra a base antiga. Integrar main por merge preservando commits, retargetar o mesmo PR #262 e validar o candidato resultante, sem reimplementar o cofre. Conservar a reabertura auditada de carrinho, respostas tardias e fotos escolhidas junto com os snapshots de credencial. Corrigir somente a orientação do card sobre PIX global para refletir opções por link do contrato autenticado já existente. A autorização desta etapa continua restrita a código/testes/documentação/PR; migration, mestre e publicação deste cofre permanecem operações separadas.

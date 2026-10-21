@@ -25,8 +25,15 @@
 - Evidência adicional 5.1: comparações históricas 0075/0070 também reproduzidas e ajustadas ao seu contrato; 23 testes PostgreSQL desses arquivos passaram. Cleanup com credencial gerida preserva ciphertext e permite descriptografia (1 caso reforçado passou). Alterações restritas a fixtures/expectativas e classificações da nova tabela, sem reescrever histórico de migrations.
 - [x] 5.2 Preparar runbook de migration/master key/rotação, release API/web coordenado e rollback compatível com ciphertext e compras; criar PR draft próprio dependente do #260, acompanhar CI final e registrar SHA/resultados e GO/NO-GO. PR #262 revisável com CI integral verde em `8465c57`; plano em `release-plan.md`, operação do cofre em `operations.md`, revisão em `review.md`. GO somente para solicitar revisão/autorização de integração; publicação operacional NO-GO até os gates humanos e migration separada do plano. Registro documental de encerramento não altera código, runtime ou credenciais; resultado exato do head documental será conferido e anexado ao PR antes da entrega.
 
+## 6. Integração após a publicação de pagamentos em 21/10/2026
+
+- [ ] 6.1 Integrar main 21b89c3 na branch existente por merge, preservar guards tardios/recuperação e snapshots imutáveis; incorporar o recibo documental de #265 e comprovar interação recuperação/troca de chave/compra nova e legado, reutilizando regressões e transporte sintético. Corrigir somente conflitos ou regressões relacionados.
+- [ ] 6.2 Corrigir a orientação antiga do card sobre desligar PIX global, conservando opções por link, conferência do recebedor, senha/OTP, segredo transitório e PIX manual. Executar testes do card e gates frontend afetados.
+- [ ] 6.3 Atualizar revisão e plano com a base publicada e os limites de migration/keyring/rollback, retargetar o mesmo PR #262 para main, revisar diff/segredos e executar gates afetados e CI final do novo head. Não realizar merge do PR, publicação, migration ou provisão real.
+
 ## Workflow follow-up
 
 - Revisão humana, integração dos dois PRs, inventário remoto e autorização separada antecedem qualquer publicação/migration/provisão real.
 - Cadastro de API Key real será feito pelo proprietário somente na interface publicada e validada.
 - Sincronizar specs principais e arquivar somente após revisão humana.
+- As tarefas 1–5 e seus resultados são checkpoints anteriores; a aprovação do candidato integrado desta retomada depende de 6.1–6.3. Código de #261 e o fluxo de release API/web que proíbe migrations permanecem fora do escopo.

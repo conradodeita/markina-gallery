@@ -17,6 +17,11 @@ O card InfinitePay de Configurações SHALL permitir cadastrar InfiniteTag e API
 - **WHEN** o fotógrafo tenta abandonar uma edição ainda não concluída
 - **THEN** a UI alerta sobre alterações não salvas e permite continuar a edição
 
+#### Scenario: Cartão e PIX configurados independentemente
+- **WHEN** o fotógrafo prepara cartão no card com o contrato autenticado de opções por link
+- **THEN** a UI informa que os links emitidos pelo sistema oferecem somente cartão e conserva o PIX manual separado
+- **AND** não exige desligar globalmente o PIX na InfinitePay nem declara que uma preferência global controla os links da API
+
 ### Requirement: Compatibilidade com a capacidade da API
 O formulário SHALL aceitar entrada/envio de API Key somente quando a API autenticada declarar explicitamente capacidade de armazenamento seguro disponível; capacidade ausente em versão anterior SHALL impedir coleta de segredo.
 
@@ -57,6 +62,12 @@ Cada compra nova SHALL congelar a referência de credencial e InfiniteTag da pr�
 - **WHEN** cadastro de uma nova chave concorre com criação de checkout
 - **THEN** a compra usa integralmente a configuração anterior ou a nova, nunca uma combinação de ambas
 - **AND** pagamentos antigos continuam verificáveis com sua versão anterior
+
+#### Scenario: Reabertura manual após substituição
+- **WHEN** o fotógrafo substitui a chave e reabre um carrinho pelo fluxo auditado existente
+- **THEN** a compra antiga conserva sua referência original e o estado de exceção mesmo diante de resposta tardia
+- **AND** as fotos continuam recuperadas e uma compra nova expressamente iniciada usa a versão ativa da credencial
+- **AND** a recuperação não emite pagamento automaticamente nem afirma cancelamento remoto
 
 ### Requirement: Desconexão e legado conservadores
 Desconexão SHALL exigir confirmação e ausência de compra financeira não resolvida. Quando permitida, SHALL apagar material secreto gerido e impedir retorno ao binding legado. Compras anteriores à UI SHALL conservar o binding legado exclusivo do tenant. PIX e estados incertos do PR #260 MUST permanecer preservados.
