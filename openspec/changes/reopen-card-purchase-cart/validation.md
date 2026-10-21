@@ -20,6 +20,16 @@ Revisão proporcional: usa cart_payload/cotação/autorizações existentes. _re
 
 ## Pendências acionáveis
 
-Task 1.2: reproduzir/proteger resposta de emissão que chega após reabertura e executar corridas PostgreSQL. API/projeção e UI ainda não implementadas (2.1/2.2). Gates amplos/PR ainda pendentes (3.1). A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da futura UI.
+API/projeção e UI ainda não implementadas (2.1/2.2). Gates amplos/PR ainda pendentes (3.1). A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da futura UI.
 
 Nada desta change foi publicado. Validação visual autenticada de cliente e homologação de novos retornos reais não foram executadas; não declarar essas etapas como testes locais aprovados.
+
+## Task 1.2
+
+Regressão reproduzida antes da correção, em PostgreSQL: a resposta accepted após uma reabertura fazia a compra voltar de exception para awaiting_payment (**1 falha, 27 desmarcados, 10,95 s**). A resposta antiga poderia prender novamente as fotos que já haviam voltado ao carrinho. issue_provider_payment agora relê sob locks da conta NO KEY UPDATE, cliente, compra/tentativa; atualiza o diagnóstico, mas preserva estados concluídos/reabertos, URLs históricas e associações. Recusa clara tardia não desfaz o histórico de uma recuperação já concluída.
+
+O primeiro ensaio após essa guarda passou accepted/refused/unknown, mas detectou retorno ORM desatualizado na falha de transporte (**3 aprovados, 1 falha**): o banco continuava em exception, porém o chamador recebia verification_required. O catch agora atualiza a leitura antes de retornar, sem nova emissão.
+
+Matriz final dirigida de concorrência: **10 aprovados, 20 desmarcados, 6 avisos, 77,37 s** em PostgreSQL. Abrange quatro respostas tardias (accepted/refused/unknown/transport), duas sessões reabrindo uma vez, três corridas com confirmação, confirmação concluída antes da URL e evidência tardia sem alterar o PIX novo. Ruff aprovado. Nenhuma alteração de endpoint, payload/autenticação, prazo, segredo ou contrato de reemissão do provedor.
+
+O CI do PR operacional #264 terminou success também no head documental final f4717c3, run 39643689877. Seu corpo foi atualizado com o resultado, sem novo commit, merge ou deploy. Esse CI não valida esta nova change; os gates próprios de 3.1 permanecem pendentes.

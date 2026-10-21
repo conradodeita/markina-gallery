@@ -3,7 +3,7 @@
 ## 1. Serviço de recuperação e transação
 
 - [x] 1.1 Implementar prévia/reabertura por compra com ownership, confirmação explícita, fingerprint, seleção integral, histórico e idempotência; executar regressões sintéticas de PIX/cartão disponíveis, fotos novas, simulação/rollback, estado confirmado/falha clara, snapshot e repetição após nova compra. Registrar evidências e revisão proporcional de reutilização.
-- [ ] 1.2 Proteger a emissão contra resposta tardia e testar reabertura/confirmador/emissão concorrentes em PostgreSQL isolado, comprovando ausência de regressão de estado e de restauração duplicada.
+- [x] 1.2 Proteger a emissão contra resposta tardia e testar reabertura/confirmador/emissão concorrentes em PostgreSQL isolado, comprovando ausência de regressão de estado e de restauração duplicada.
 
 ## 2. API e card da cliente
 

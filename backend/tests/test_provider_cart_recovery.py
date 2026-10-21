@@ -1,6 +1,8 @@
 """Contrato: as mesmas fotos voltam ao carrinho, sem recebimento fictício."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
@@ -14,6 +16,7 @@ from app.auth import (
     GlobalPixSettings,
     InfinitePaySettings,
     ParentGallery,
+    PaymentGroup,
     PhotoAsset,
     PhotoSelection,
     PriceRule,
@@ -24,6 +27,7 @@ from app.auth import (
     SaleOrderItem,
     Tenant,
     TenantAdmin,
+    engine,
     now,
 )
 from app.payment_provider import SyntheticPaymentProvider
@@ -36,7 +40,7 @@ from app.provider_cart_recovery import (
 from app.provider_checkout import issue_provider_payment
 from app.provider_confirmation import apply_payment_check
 from app.tenancy import TenantContextError
-from app.unified_checkout import cart_payload
+from app.unified_checkout import cart_payload, prepare_group
 from tests.test_provider_checkout import SessionLocal as _SessionLocal
 from tests.test_provider_checkout import isolated_cart_database as _isolated
 from tests.test_provider_checkout import prepare, setup
@@ -46,6 +50,28 @@ from tests.test_provider_confirmation import verified_result
 SessionLocal = _SessionLocal
 isolated_cart_database = _isolated
 synthetic_infinitepay_binding = _binding
+
+
+class DelayedCheckout(SyntheticPaymentProvider):
+    def __init__(self, outcome="accepted"):
+        super().__init__("unknown" if outcome == "transport" else outcome,
+                         transport_error=outcome == "transport")
+        self.entered, self.release = Event(), Event()
+
+    def create_checkout(self, request):
+        self.entered.set()
+        assert self.release.wait(20), "O ensaio deve liberar a resposta simulada."
+        return super().create_checkout(request)
+
+
+def creating_purchase():
+    owner, _, _, revision = setup()
+    with SessionLocal() as db:
+        payment = prepare(db, owner, revision)
+        payment_id = payment.id
+        actor = db.scalar(select(InfinitePaySettings.admin_user_id))
+        db.commit()
+    return owner, payment_id, actor
 
 
 @pytest.fixture
@@ -268,3 +294,129 @@ def test_preco_atual_recalculado_conserva_snapshot_da_compra(case):
     with SessionLocal() as db:
         assert db.get(ProviderPayment, case["payment"]).total_cents == 2100
         assert all(item.unit_price_cents == 700 for item in db.scalars(select(SaleOrderItem)))
+
+
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="locks exigem PostgreSQL")
+@pytest.mark.parametrize("outcome", ["accepted", "refused", "unknown", "transport"])
+def test_resposta_de_emissao_depois_da_reabertura_nao_prende_carrinho(outcome):
+    owner, payment_id, actor = creating_purchase()
+    provider = DelayedCheckout(outcome)
+    entered, release = provider.entered, provider.release
+
+    def issue():
+        with SessionLocal() as db:
+            return issue_provider_payment(db, payment_id, provider).state
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(issue)
+        try:
+            assert entered.wait(15)
+            with SessionLocal() as db:
+                current_revision = db.get(ProviderPayment, payment_id).revision_number
+                plan = preview_cart_recovery(db, actor, payment_id, expected_revision=current_revision)
+                reopened = reopen_payment_cart(db, actor, payment_id, expected_revision=plan["revision"],
+                    expected_fingerprint=plan["fingerprint"], decision_id=uuid4(),
+                    reason="Sem retorno da emissão; fotógrafo reabre", acknowledge_remote_checkout=True)
+                db.commit()
+                assert reopened["restored_quantity"] == 3
+        finally:
+            release.set()
+        assert future.result(timeout=20) == "exception"
+    with SessionLocal() as db:
+        payment = db.get(ProviderPayment, payment_id)
+        assert payment.state == "exception"
+        assert all(order.payment_status == "cancelled" and order.frozen_at is not None
+                   and order.provider_payment_id == payment_id for order in db.scalars(select(SaleOrder)))
+        cart = cart_payload(db, db.get(Client, owner))
+        assert cart["quantity"] == 3 and cart["can_prepare"] and cart["card_payment"] is None
+        assert len(provider.create_calls) == 1
+
+
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="locks exigem PostgreSQL")
+def test_duas_sessoes_reabrem_uma_vez_sem_duplicar_fotos(case):
+    plan, key, barrier = preview(case), uuid4(), Barrier(2)
+
+    def recover():
+        barrier.wait(timeout=10)
+        return decision(case, plan, key=key)["already_reopened"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: recover(), range(2)))
+    assert sorted(results) == [False, True]
+    final = state(case)
+    assert final[0] == "exception" and len(final[2]) == 3 and final[4] == 1
+
+
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="locks exigem PostgreSQL")
+@pytest.mark.parametrize("repeat", range(3))
+def test_corrida_com_confirmacao_preserva_um_unico_resultado_financeiro(case, repeat):
+    plan, barrier = preview(case), Barrier(2)
+    with SessionLocal() as db:
+        evidence = verified_result(db, db.get(ProviderPayment, case["payment"]))
+
+    def confirm():
+        barrier.wait(timeout=10)
+        with SessionLocal() as db:
+            result = apply_payment_check(db, case["payment"], requested_slug=evidence.slug, result=evidence)
+            db.commit()
+            return result.confirmed
+
+    def recover():
+        barrier.wait(timeout=10)
+        try:
+            decision(case, plan)
+            return True
+        except CartRecoveryError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        confirmed, recovered = executor.submit(confirm), executor.submit(recover)
+        results = confirmed.result(timeout=20), recovered.result(timeout=20)
+    assert results in {(True, False), (False, True)}
+    final = state(case)
+    assert (final[0], len(final[2]), final[4]) in {("confirmed", 0, 0), ("exception", 3, 1)}
+
+
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="locks exigem PostgreSQL")
+def test_confirmacao_concluida_antes_da_url_nao_regride():
+    _, payment_id, _ = creating_purchase()
+    provider = DelayedCheckout()
+
+    def issue():
+        with SessionLocal() as db:
+            return issue_provider_payment(db, payment_id, provider).state
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(issue)
+        try:
+            assert provider.entered.wait(15)
+            with SessionLocal() as db:
+                payment = db.get(ProviderPayment, payment_id)
+                evidence = verified_result(db, payment)
+                assert apply_payment_check(db, payment_id, requested_slug=evidence.slug, result=evidence).confirmed
+                db.commit()
+        finally:
+            provider.release.set()
+        assert future.result(timeout=20) == "confirmed"
+    with SessionLocal() as db:
+        assert db.get(ProviderPayment, payment_id).state == "confirmed"
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 0
+        assert all(order.payment_status == "confirmed" for order in db.scalars(select(SaleOrder)))
+
+
+def test_evidencia_tardia_nao_confirma_pedido_cancelado_ou_altera_pix_novo(case):
+    decision(case, preview(case))
+    with SessionLocal() as db:
+        group = prepare_group(db, db.get(Client, case["owner"]))
+        group_id = group.id
+        db.commit()
+        original = group.state, group.total_cents, group.revision
+        evidence = verified_result(db, db.get(ProviderPayment, case["payment"]))
+        result = apply_payment_check(db, case["payment"], requested_slug=evidence.slug, result=evidence)
+        db.commit()
+        assert not result.confirmed and result.state == "exception"
+        db.refresh(group)
+        assert (group.state, group.total_cents, group.revision) == original
+        assert db.get(PaymentGroup, group_id).state == "draft"
+        assert db.scalar(select(ProviderPaymentReceipt.state).where(
+            ProviderPaymentReceipt.payment_id == case["payment"])) == "ignored"
