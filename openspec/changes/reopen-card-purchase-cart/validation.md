@@ -20,7 +20,7 @@ Revisão proporcional: usa cart_payload/cotação/autorizações existentes. _re
 
 ## Pendências acionáveis
 
-API/projeção implementadas e validadas em 2.1; UI ainda pendente (2.2). Gates amplos/PR ainda pendentes (3.1). A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da UI.
+API/projeção e UI implementadas e validadas em 2.1/2.2. Gates amplos/PR ainda pendentes (3.1). A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da UI.
 
 Nada desta change foi publicado. Validação visual autenticada de cliente e homologação de novos retornos reais não foram executadas; não declarar essas etapas como testes locais aprovados.
 
@@ -41,3 +41,13 @@ POSTs administrativos de prévia/confirmação exigem sessão administrativa, te
 PostgreSQL: **12 aprovados, 6 avisos, 89,57 s** em tests/test_provider_cart_recovery_api.py. Cobertura: autenticação real, cliente/visitante recusados, tenant B sem acesso a A, motivo/aceite/fingerprint/revisão/origem/tenant no body, repetição HTTP, projeção e revisão privada, cartão confirmado e PIX confirmado preservados; mistura de fotos canônicas e legadas restaura os quatro pares originais sem criar galeria adicional. Ruff aprovado; OpenSpec estrito aprovado. Primeira execução anterior detectou somente a fixture administrativa sem e-mail verificado; a fixture foi corrigida, sem relaxar autenticação. O resultado final da execução intermediária não foi recuperado após expirar a sessão; somente a execução completa acima é usada como evidência.
 
 A leitura do cliente revelou chave de cartão mantida na aba após recuperação com a mesma seleção/revisão. O delta/design/tasks foram atualizados antes da correção da UI: usar a revisão opaca da recuperação e vincular a chave à revisão da seleção, conservando idempotência em resultado incerto da mesma tentativa.
+
+## Task 2.2
+
+Ação Reabrir carrinho adicionada ao pagamento de cartão em Ver pedido e entrega no card da cliente de Vendas e pagamentos, uma vez por compra agrupada. Modal nativo com prévia de quantidade/total/meios disponíveis, motivo, reconhecimento explícito, foco/scroll restaurados ao cancelar e confirmação idempotente bloqueada durante envio. Repetição de rede conserva a decisão; conflito invalida a prévia e atualiza a lista. Confirmados não oferecem ação; reaberturas antigas exibem histórico. O refresh da ação recupera as páginas previamente carregadas usando os filtros atuais e preserva fotos expandidas.
+
+O carrinho recarrega por foco; recuperação autorizada com seleção elegível descarta a chave antiga, mantém fotos selecionadas e permite PIX/cartão habilitados. Revisão nova usa chave nova; resultado incerto na mesma seleção conserva a chave. Respostas terminais atrasadas consultam de novo o carrinho, sem projetar bloqueio local obsoleto nem emitir outro pagamento automaticamente.
+
+- Vitest dirigido: **38 aprovados em 3 arquivos, 9,71 s** (cart-recovery, cart-recovery-page, cart). A primeira coleta teve **37 aprovados/1 falha**, limitada ao seletor ambíguo da fixture com duas clientes; a consulta foi restrita ao card da cliente alvo. Não foi relaxada expectativa de produto.
+- TypeScript --noEmit aprovado após os arquivos/testes da UI.
+- Lint amplo, testes amplos, build e matriz PostgreSQL de integração estão em andamento em 3.1; não são declarados aprovados aqui.

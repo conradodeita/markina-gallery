@@ -15,6 +15,7 @@ type Payment = { id: string; revision: string; total_cents: number; pix_copy_pas
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
 type CardPayment = { id: string; status: "awaiting_payment" | "verification_required" | "failed_before_issue"; checkout_url: string | null; total_cents: number };
 type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
+  recovery_revision?: string | null;
   pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null;
   pending_card_payments?: CardPayment[]; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -34,6 +35,8 @@ export default function CartPage() {
   const locked = useRef(false);
   const requestKey = useRef<string | null>(null);
   const cardRequestKey = useRef<string | null>(null);
+  const cardAttemptRevision = useRef<string | null>(null);
+  const recoveryRevision = useRef<string | null | undefined>(undefined);
   const finalizationKeys = useRef<Record<string, string>>({});
   const refresh = useCallback(async () => {
     const current = ++sequence.current;
@@ -47,6 +50,16 @@ export default function CartPage() {
       if (!response.ok) throw new Error("Não foi possível consultar o carrinho.");
       const data: Cart = await response.json();
       if (sequence.current !== current) return;
+      if (data.recovery_revision && data.recovery_revision !== recoveryRevision.current
+          && data.can_prepare && !data.card_payment) {
+        const alreadyLoaded = recoveryRevision.current !== undefined;
+        recoveryRevision.current = data.recovery_revision;
+        cardRequestKey.current = null; cardAttemptRevision.current = null; requestKey.current = null;
+        setReported(null);
+        if (alreadyLoaded) setNotice("O fotógrafo reabriu seu carrinho. Suas fotos já estão selecionadas; confira o total e escolha como pagar.");
+      } else if (recoveryRevision.current === undefined && !data.recovery_revision) {
+        recoveryRevision.current = null;
+      }
       setCart(data);
       setMethod((currentMethod) => currentMethod === "card" && data.card_available
         ? "card" : data.pix_available !== false ? "pix" : data.card_available ? "card" : "pix");
@@ -133,6 +146,10 @@ export default function CartPage() {
   async function prepareCard() {
     if (!cart?.cart_revision || !cart.can_prepare || !cart.card_available || locked.current) return;
     locked.current = true; setBusy(true); setError("");
+    if (cardAttemptRevision.current !== cart.cart_revision) {
+      cardRequestKey.current = null;
+      cardAttemptRevision.current = cart.cart_revision;
+    }
     cardRequestKey.current ??= crypto.randomUUID();
     try {
       const response = await fetch("/api/library/cart/prepare-card", {
@@ -149,6 +166,11 @@ export default function CartPage() {
         cardRequestKey.current = null;
         setCart((previous) => previous ? { ...previous, card_payment: null } : previous);
         setNotice("A InfinitePay confirmou que não criou o checkout. Suas fotos continuam selecionadas; você pode tentar o cartão novamente ou escolher PIX.");
+        notifyCartChanged();
+        return;
+      }
+      if (["exception", "hold", "confirmed"].includes(result.status)) {
+        await refresh();
         notifyCartChanged();
         return;
       }
