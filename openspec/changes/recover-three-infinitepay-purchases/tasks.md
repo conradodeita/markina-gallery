@@ -8,7 +8,9 @@
 ## 2. Revisão e operação autorizada
 
 - [ ] 2.1 Preparar PR draft independente, revisar diff e concluir CI pertinente no head; registrar SHA/run sem modificar PRs #261/#262/#263 nem ampliar gates de publicação.
-- [ ] 2.2 Apresentar inventário próprio, versão API/portas/subdomínio e impacto transacional; executar simulação remota com rollback e salvar pré-imagem 0600; verificar fotos/totais/meios e registrar divergências antes de aplicar.
+- [x] 2.2 Apresentar inventário próprio, versão API/portas/subdomínio e impacto transacional; executar simulação remota com rollback e salvar pré-imagem 0600; verificar fotos/totais/meios e registrar divergências antes de aplicar.
+
+Evidência: validation.md e pré-imagem protegida no servidor. Task 2.2 executada como validação independente enquanto o CI do PR #264 aguardava; não houve commit financeiro. Aplicação 2.3 permanece condicionada aos gates técnicos, sem exigir confirmação externa dispensada pelo titular.
 - [ ] 2.3 Aplicar somente o lote autorizado com fingerprint validado e conferir por leitura PIX/seleção/snapshots antigos, idempotência e preservação de 04381887; registrar resultado e risco de links externos não invalidados, sem deploy.
 
 ## Workflow follow-up
