@@ -63,6 +63,7 @@ from app.gallery_lifecycle import (
     claim_next_operation,
     process_claimed_operation,
 )
+from app.maintenance_control import MaintenanceBusy, MaintenanceUnavailable, shared_operation
 from app.media import generate_derivatives
 from app.membership_notifications import (
     process_next_membership_notification as process_membership_outbox,
@@ -853,6 +854,14 @@ def reconcile_next_unknown_delivery() -> bool:
 
 @observe_work("general")
 def run_cycle() -> bool:
+    try:
+        with shared_operation(SessionLocal.kw["bind"], service="worker"):
+            return _run_cycle_guarded()
+    except MaintenanceBusy:
+        return False
+
+
+def _run_cycle_guarded() -> bool:
     # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
     with domain_session(SessionLocal) as batch_db:
         process_ready_batches(batch_db)
@@ -881,7 +890,7 @@ def main() -> None:
     while True:
         try:
             worked = run_cycle()
-        except TenantContextError:
+        except (TenantContextError, MaintenanceUnavailable):
             worked = False
         if not worked:
             time.sleep(2)

@@ -9,12 +9,14 @@ from typing import Protocol
 
 from sqlalchemy.orm import Session
 
+from app.auth import engine as database_engine
 from app.facial.config import FacialSettings
 from app.facial.jobs import (
     ClaimedFacialJob,
     FacialJobRepository,
     facial_queue_name,
 )
+from app.maintenance_control import MaintenanceBusy, shared_operation
 from app.system_monitor.telemetry import heartbeat, record
 
 
@@ -63,6 +65,19 @@ class BlockingFacialWorker:
         return self._provider is not None
 
     def run_cycle(self) -> bool:
+        try:
+            service = {
+                "index": "face-index-worker",
+                "search": "face-search-worker",
+                "gemma": "face-gemma-index-worker",
+                "maintenance": "face-maintenance-worker",
+            }[self._job_class]
+            with shared_operation(database_engine, service=service):
+                return self._run_cycle_guarded()
+        except MaintenanceBusy:
+            return False
+
+    def _run_cycle_guarded(self) -> bool:
         claim = self._claim()
         if claim is None:
             self._unload_if_idle()

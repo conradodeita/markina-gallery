@@ -12,6 +12,7 @@
 name: markina-gallery
 
 x-facial-environment: &facial-environment
+  CONTROLLED_MAINTENANCE_ENABLED: ${CONTROLLED_MAINTENANCE_ENABLED:-false}
   FACIAL_PROCESSING_ENABLED: ${FACIAL_PROCESSING_ENABLED:-false}
   FACIAL_CREDENTIAL_ENV: ${FACIAL_CREDENTIAL_ENV:-development}
   FACIAL_MODEL_MANIFEST_PATH: ${FACIAL_MODEL_MANIFEST_PATH:-/app/facial-assets/model-manifest.json}
