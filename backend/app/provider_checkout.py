@@ -16,6 +16,8 @@ from app.auth import (
     ProviderPayment,
     ProviderPaymentAttempt,
     SaleOrder,
+    Tenant,
+    audit,
     now,
 )
 from app.checkout import CheckoutError, _synchronize_order
@@ -211,6 +213,7 @@ def issue_provider_payment(db: Session, payment_id: UUID, provider) -> ProviderP
                          capabilities.payment_binding_verified))):
         raise CheckoutError("Perfil do provedor não atende ao fluxo documentado de cartão.")
     request = checkout_request_for(db, payment)
+    client_id = payment.client_id
     if request.total_cents != payment.total_cents:
         raise CheckoutError("Valor do snapshot diverge do total congelado.")
     attempt.state = "unknown"
@@ -225,26 +228,47 @@ def issue_provider_payment(db: Session, payment_id: UUID, provider) -> ProviderP
     try:
         result = provider.create_checkout(request)
     except ProviderTransportError:
+        db.refresh(payment)
         return payment
-    db.refresh(payment)
-    if result.outcome == "accepted" and _allowed_checkout_url(result.url, synthetic=capabilities.profile == "synthetic-only"):
+    # Uma recuperação ou confirmação pode concluir enquanto a rede responde.
+    # Serializar como a recuperação, permitindo KEY SHARE das FKs do confirmador.
+    db.scalar(select(Tenant).where(Tenant.id == request.tenant_id).with_for_update(key_share=True))
+    db.scalar(select(Client.id).where(Client.id == client_id, Client.tenant_id == request.tenant_id)
+              .with_for_update())
+    payment = db.scalar(select(ProviderPayment).where(
+        ProviderPayment.id == payment_id, ProviderPayment.tenant_id == request.tenant_id,
+        ProviderPayment.client_id == client_id).with_for_update().execution_options(populate_existing=True))
+    attempt = db.scalar(select(ProviderPaymentAttempt).where(
+        ProviderPaymentAttempt.tenant_id == request.tenant_id,
+        ProviderPaymentAttempt.payment_id == payment_id,
+        ProviderPaymentAttempt.client_id == client_id).with_for_update().execution_options(populate_existing=True))
+    if payment is None or attempt is None:
+        raise CheckoutError("O contexto da emissão mudou; conciliação necessária.")
+    accepted = result.outcome == "accepted" and _allowed_checkout_url(
+        result.url, synthetic=capabilities.profile == "synthetic-only")
+    refused = result.outcome == "refused" and result.error_category == "not_created"
+    if accepted:
+        attempt.state, attempt.error_category = "accepted", None
+    elif refused:
+        attempt.state, attempt.error_category = "refused", "not_created"
+    else:
+        attempt.error_category = result.error_category or "invalid_response"
+    if payment.state != "verification_required":
+        if accepted and payment.checkout_url is None:
+            payment.checkout_url = result.url
+        audit(db, "provider_payment.late_checkout_response", str(payment.id), tenant_id=payment.tenant_id)
+        db.commit()
+        return payment
+    if accepted:
         payment.checkout_url = result.url
         payment.state = "awaiting_payment"
         payment.revision_number += 1
-        attempt.state = "accepted"
-        attempt.error_category = None
-        db.commit()
-    elif result.outcome == "refused" and result.error_category == "not_created":
+    elif refused:
         payment.state = "failed_before_issue"
         payment.revision_number += 1
-        attempt.state = "refused"
-        attempt.error_category = "not_created"
         payment.checkout_url = None
         _restore_local_selection(db, payment)
-        db.commit()
-    else:
-        attempt.error_category = result.error_category or "invalid_response"
-        db.commit()
+    db.commit()
     return payment
 
 

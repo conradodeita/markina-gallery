@@ -71,6 +71,25 @@ describe("biblioteca e compras da cliente", () => {
     expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
   });
 
+  it("identifica a compra reaberta e leva ao carrinho sem sugerir nova seleção nem checkout antigo", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ orders: [], payment_groups: [], removed_movements: [],
+      provider_payment_groups: [{ id: "eae11005", state: "exception", checkout_url: null, total_cents: 15400,
+        cart_reopened_at: "2026-10-21T14:00:00Z", orders: [{ id: "c648edb4", gallery_name: "Fotos escolhidas",
+          parent_gallery_name: "Evento", gallery_removed: false, confirmed_at: null, commercial_state: "cancelled",
+          payment_method: "credit_card", provider_payment_state: "exception", provider_cart_reopened_at: "2026-10-21T14:00:00Z",
+          total_cents: 15400, items: [{ photo_id: "original-photo", name: "Foto já escolhida", preview_url: null }] }] }],
+    })));
+    render(<PurchasesPage />);
+    expect(await screen.findByText(/Cartão de crédito · Carrinho reaberto/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Abrir carrinho" }).getAttribute("href")).toBe("/library/cart");
+    expect(screen.getByText(/devolveu as fotos desta compra ao carrinho/)).toBeTruthy();
+    expect(screen.queryByText("Pagamento em análise")).toBeNull();
+    expect(screen.queryByText(/acesso às fotos permanece suspenso/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ver fotos (1)" }));
+    expect(screen.getByText("Foto já escolhida")).toBeTruthy();
+  });
+
   it("abre a mesma galeria pela capa e pelo botão e mantém navegação após falha", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ journeys: [{
       id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active",

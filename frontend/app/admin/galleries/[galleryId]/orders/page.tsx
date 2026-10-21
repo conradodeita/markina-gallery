@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 type Order = {
   id: string;
   payment_status: "pending" | "confirmed" | "cancelled";
+  cart_reopened_at?: string | null;
   total_cents: number;
   payment_group?: { id: string; total_cents: number } | null;
   client_name: string | null;
@@ -40,7 +41,7 @@ export default function GalleryOrdersPage() {
     <p className="intro">Esta é uma conferência de snapshots. A confirmação manual de pagamento pertence ao fluxo operacional próprio.</p>
     {!orders.length && <section className="admin-card"><h2>Nenhum pedido ainda</h2><p>Pedidos pendentes e confirmados aparecerão aqui quando forem criados.</p></section>}
     {orders.map((order) => <section className="admin-card" key={order.id}>
-      <p className="eyebrow">{order.payment_status === "pending" ? "Pendente de confirmação" : order.payment_status === "confirmed" ? "Confirmado" : "Cancelado"}</p>
+      <p className="eyebrow">{order.cart_reopened_at && order.payment_status === "cancelled" ? "Carrinho reaberto" : order.payment_status === "pending" ? "Pendente de confirmação" : order.payment_status === "confirmed" ? "Confirmado" : "Cancelado"}</p>
       <h2>{order.client_name ?? "Cliente"} · R$ {(order.total_cents / 100).toFixed(2).replace(".", ",")}</h2>
       {order.payment_group ? <p>Subtotal desta galeria. Integra o PIX único {order.payment_group.id.slice(0, 8)} de R$ {(order.payment_group.total_cents / 100).toFixed(2).replace(".", ",")}.</p> : null}
       <p>Criado em {new Date(order.created_at).toLocaleString("pt-BR")}</p>
