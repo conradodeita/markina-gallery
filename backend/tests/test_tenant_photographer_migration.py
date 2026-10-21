@@ -22,16 +22,17 @@ from app import auth
 from app.ownership_schema import SHARED_TABLES
 from tests.tenant_fixtures import FIXTURE_TENANT_ID
 from tests.tenant_fixtures import insert_legacy_model as insert_model
+from tests.test_integration_secrets import secret_keyring  # noqa: F401
 
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261014_0081"
+CURRENT_SCHEMA = "20261020_0085"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
-    "facial_embedding_experiment_setting", "infinitepay_settings",
+    "facial_embedding_experiment_setting", "infinitepay_settings", "infinitepay_credential",
     "provider_payment", "provider_payment_attempt", "provider_payment_receipt",
     "provider_payment_correction", "raw_development_settings", "raw_development_job",
 })
@@ -599,8 +600,10 @@ def test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos(
         assert db.scalar(sa.select(sa.func.count()).select_from(auth.Tenant)) == 2
 
 
-def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatch, tmp_path):
+def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatch, tmp_path, secret_keyring):  # noqa: F811
     from app import homolog_cleanup
+    from app.infinitepay_credentials import credential_key
+    from app.integration_secrets import IntegrationCipher
     from app.provision_installation_operator import provision_operator
     from app.system_monitor.models import (
         MonitorActivity,
@@ -615,6 +618,7 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
     # A rotina atual exige o catálogo completo, incluindo o monitor 0072.
     migrate(url, CURRENT_SCHEMA)
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("INTEGRATION_SECRET_ENV", "homolog")
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
     for root in roots.values():
         root.mkdir()
@@ -624,14 +628,23 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
     with Session(engine) as db:
         provision_operator(db, admin_id=records["admin"], action="grant",
                            authorization_reference="synthetic-cleanup-proof", apply=True)
+        credential_id = uuid4()
+        envelope = IntegrationCipher().encrypt("synthetic-cleanup-credential",
+            tenant_id=records["owner"], credential_id=credential_id)
+        db.add(auth.InfinitePayCredential(id=credential_id, tenant_id=records["owner"],
+            environment=envelope.environment, key_id=envelope.key_id,
+            nonce=envelope.nonce, ciphertext=envelope.ciphertext))
+        db.flush()
         infinitepay_settings = auth.InfinitePaySettings(
             tenant_id=records["owner"], admin_user_id=records["admin"],
             handle="synthetic_handle", version=2, status="pending",
+            credential_source="managed", credential_id=credential_id,
         )
         provider_payment = auth.ProviderPayment(
             tenant_id=records["owner"], client_id=records["client"],
             checkout_key="synthetic-cleanup-payment", cart_revision="c" * 64,
             total_cents=12345, handle_snapshot="synthetic_handle",
+            credential_id=credential_id,
             configuration_version=2, verification_profile="synthetic-only",
             state="awaiting_payment", checkout_url="https://checkout.example.invalid/synthetic",
         )
@@ -671,6 +684,7 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
         assert db.get(auth.InstallationOperator, records["admin"]).active
         assert db.get(PlatformOwner, 1).admin_user_id == records["admin"]
         assert db.get(auth.InfinitePaySettings, infinitepay_settings_id).handle == "synthetic_handle"
+        assert credential_key(db, tenant_id=records["owner"], credential_id=credential_id) == "synthetic-cleanup-credential"
         assert db.get(auth.ProviderPayment, provider_payment_id) is None
         assert db.get(MonitorGrant, (records["admin"], "metrics")).active
         assert db.get(MonitorBucket, (minute, "http.read", 100)).count == 1

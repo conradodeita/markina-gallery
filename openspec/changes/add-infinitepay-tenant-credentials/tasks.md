@@ -21,6 +21,7 @@
 ## 5. Integração e entrega
 
 - [x] 5.1 Executar regressões financeiras e tenant pertinentes, gates de ownership, Ruff, OpenSpec strict e diff/segredos; revisar área alterada por duplicação/código obsoleto e registrar evidências proporcionais. Evidência: 184 regressões passaram/2 skips; dois casos históricos inicialmente falharam por comparação ao ORM futuro, corrigidos conforme contrato 0076 e 3 testes da migration passaram; 15 testes criptográficos finais. Código financeiro restante não mudou após o ensaio. Cleanup, Ruff, Compose, OpenSpec e gitleaks do primeiro head aprovados; limitação preexistente do gerador estático delimitada em `validation.md`. CI completo do head final continua gate de entrega.
+- Evidência adicional 5.1: comparações históricas 0075/0070 também reproduzidas e ajustadas ao seu contrato; 23 testes PostgreSQL desses arquivos passaram. Cleanup com credencial gerida preserva ciphertext e permite descriptografia (1 caso reforçado passou). Alterações restritas a fixtures/expectativas e classificações da nova tabela, sem reescrever histórico de migrations.
 - [ ] 5.2 Preparar runbook de migration/master key/rotação, release API/web coordenado e rollback compatível com ciphertext e compras; criar PR draft próprio dependente do #260, acompanhar CI final e registrar SHA/resultados e GO/NO-GO.
 
 ## Workflow follow-up

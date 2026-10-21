@@ -78,8 +78,9 @@ def test_upgrade_e_downgrade_vazios_preservam_pix_e_snapshots(migration_database
         checks = {item["name"] for item in sa.inspect(connection).get_check_constraints("admin_security_challenge")}
         assert {"ck_admin_challenge_pix_context", "ck_admin_challenge_infinitepay_context"} <= checks
         actual = {item["name"] for item in sa.inspect(connection).get_foreign_keys("infinitepay_settings")}
-        expected = {c.name for c in auth.InfinitePaySettings.__table__.foreign_key_constraints if c.name}
-        assert expected <= actual
+        # 0075 só cria o vínculo do administrador; a FK do cofre surge em 0085.
+        assert "fk_owner_infinitepay_settings_admin_user_id_tenant_id__49447614" in actual
+        assert "fk_infinitepay_settings_credential_owner" not in actual
     alembic(url, "downgrade", SOURCE)
     assert snapshots(engine) == before
     with engine.connect() as connection:
