@@ -20,7 +20,7 @@ Revisão proporcional: usa cart_payload/cotação/autorizações existentes. _re
 
 ## Pendências acionáveis
 
-API/projeção e UI implementadas e validadas em 2.1/2.2. Gates amplos/PR ainda pendentes (3.1). A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da UI.
+API/projeção e UI implementadas e validadas em 2.1/2.2/2.3/2.4. Gates locais e preparação do PR concluídos em 3.1. CI completo do head final e revisão humana permanecem gates externos antes da publicação. A instalação npm ci --ignore-scripts concluiu com lockfile existente; não houve atualização de dependências. O guia Next instalado use-client foi lido antes da UI.
 
 Nada desta change foi publicado. Validação visual autenticada de cliente e homologação de novos retornos reais não foram executadas; não declarar essas etapas como testes locais aprovados.
 
@@ -67,7 +67,23 @@ Vitest afetado final: **97 aprovados em 10 arquivos, 41,65 s**, incluindo histó
 - Suíte frontend ampla anterior ao acréscimo do histórico: **582 aprovados em 65 arquivos, 166,34 s**. Reutilizada junto aos 97 afetados finais; o CI repetirá a suíte completa no candidato.
 - Ruff amplo backend/app e backend/tests aprovado. OpenSpec 1.14.0 (mesma versão fixada no CI): **132 aprovados, 0 falhas**; change atual aprovada novamente após 2.3. O CLI global 1.14.1 promove avisos existentes de textos longos e retornou 102/30; não foi usado como evidência de aprovação nem motivou alterações fora do escopo.
 - Um comando misto em PostgreSQL passou os 13 casos atuais da API e o primeiro caso legado (14 aprovados), mas falhou no setup legado seguinte em Base.metadata.drop_all: FK use_alter sem nome não permite DROP CONSTRAINT no PostgreSQL. Esse comando não é declarado aprovado. As fixtures novas usam schemas isolados; as regressões legadas estão sendo repetidas em SQLite temporário, como no CI, e a API isolada está sendo repetida separadamente.
-- A matriz PostgreSQL ampla iniciada antes de 2.3 e as repetições acima ainda não terminaram; resultado final/CI do novo PR pendentes. O passo de checkout PostgreSQL do CI foi estendido para rodar todos os novos casos, sem alterar dependências ou gates Python.
+- Matriz PostgreSQL ampla anterior a 2.3: **142 aprovados, 2 ignorados, 6 avisos, 1 erro de setup legado, 1210,90 s**. O erro em test_payment_shortcut_projection é o mesmo DROP de FK sem nome descrito acima, fora do caminho de produto. Essa execução não é tratada como suíte inteiramente verde. Seus casos de domínio/concorrência/checkout/confirmador/carrinho passaram; as projeções afetadas por 2.3 foram repetidas abaixo.
+- API PostgreSQL atual, isolada e sem fixtures legadas: **13 aprovados, 6 avisos, 157,37 s**.
+- Projeções/operações financeiras/disponibilidade em SQLite próprio temporário, conforme fixture do CI: **47 aprovados, 2 ignorados, 20 avisos, 233,60 s**. Inclui testes existentes de exportação, paginação, limites de consultas, pedidos pendentes legados e grupos financeiros, sem alterar testes legados para mascarar incompatibilidade PostgreSQL.
+- Build final após 2.3 aprovado; lint final amplo **0 erros/34 avisos**, TypeScript e 97 testes afetados aprovados. Ruff amplo e validação estrita da change aprovados. Revisão do diff confirmou somente recuperação, guarda tardia, projeção/UI, testes/OpenSpec e inclusão dos casos PostgreSQL no passo de checkout do CI; dependências, migrations e PRs paralelos preservados.
+- PostgreSQL sintético exclusivo foi parado após conferir ID/nome/label; nenhum recurso preexistente foi removido. Arquivo SQLite sintético temporário ficou fora do Git.
+- PR draft **#265**, base codex/fix-cart-pending-payment-scope/c41e274 do #263, criado e anexado: https://github.com/conradodeita/markina-gallery/pull/265. Primeiro candidato funcional ef9f17338078b003aed89411b760b0775325fcab; CI inicial 39658351207. O head seguinte inclui a ampliação 2.4 solicitada pelo proprietário; acompanhar seu CI no PR, sem declarar aprovação com jobs pendentes. Resultados finais do CI serão registrados no corpo do PR, evitando uma sequência de commits documentais que reinicie todos os jobs.
+
+## Task 2.4 — outras telas do fotógrafo
+
+Ao esclarecer que o fotógrafo também não deve ver pedidos iguais, o proprietário motivou verificação focada dos consumidores do rascunho. Regressão antes da correção: **1 falha/12 desmarcados, 11,97 s**; o diretório contava 4 pedidos (2 originais + 2 rascunhos). A condição de visibilidade foi centralizada em app/order_visibility.py e aplicada somente ao painel financeiro, lista de pedidos da galeria e contador comercial do diretório. Contagem bruta, inventário, deletion_eligible, exclusão e reconciliação permanecem protegidos; o helper não participa de comandos de escrita. A lista da galeria também identifica o original como Carrinho reaberto.
+
+- PostgreSQL focado após correção: **2 aprovados, 12 desmarcados, 6 avisos, 19,19 s**. Verifica ausência de rascunho em listas/contador, snapshots originais identificados, inventário bruto completo, seleção intacta e visibilidade após comunicação.
+- API PostgreSQL completa final: **14 aprovados, 6 avisos, 118,46 s**.
+- Regressões existentes do diretório/exclusão em SQLite próprio: **21 aprovados, 26 avisos, 115,96 s**, sem modificar suas expectativas. Preserva autorização, paginação, buscas, custo de consulta e exclusão protegida.
+- Frontend afetado (galeria, clientes, pagamentos e histórico): **76 aprovados em 10 arquivos, 21,62 s**. Inclui três cenários novos da consulta da galeria; outros 97 afetados de carrinho/pagamento/entrega permanecem válidos para os trechos não alterados.
+- Ruff amplo aprovado; eslint dirigido e TypeScript --noEmit aprovados; build Next final após 2.4 aprovado. OpenSpec estrito da change aprovado e validação global 1.14.0 repetida antes do commit final.
+- Segundo PostgreSQL sintético exclusivo, ID 560d10a251e20a2abb464cd2f10c7d83d9fa23c9efb0eaa6abd1d0aafa5e0f91, foi parado após conferir ID/nome/label. Nenhuma escrita adicional foi feita no Oracle. A recuperação real e o rascunho e1d93b85 permanecem preservados até eventual publicação; esta change altera a projeção, não remove os dados reais.
 
 ### Publicação e rollback propostos (não executados)
 

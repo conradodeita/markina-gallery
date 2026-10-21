@@ -10,12 +10,14 @@
 - [x] 2.1 Expor prévia/confirmação administrativas, capacidade/revisão/indicador na projeção e revisão de recuperação da própria cliente no carrinho; testar autenticação, isolamento A/B, inputs, conflito, fotos canônicas e preservação de decisões PIX/receitas/entregas.
 - [x] 2.2 Implementar Reabrir carrinho no card da cliente por compra e retomada no carrinho com chave nova após reabertura validada, sem selecionar novamente; executar testes de componente para prévia/confirmar/cancelar, falha, duplo clique, estados confirmados sem ação e idempotência da emissão incerta, mantendo filtros/fotos/paginação.
 - [x] 2.3 Identificar reabertura auditada no histórico da cliente com acesso ao carrinho e omitir rascunho PIX não comunicado do painel financeiro, preservando seleção, comunicação/confirmados e registros. Reproduzir o cenário e executar regressões API/UI.
+- [x] 2.4 Aplicar a mesma visibilidade comercial às listas de pedidos da galeria e ao contador de pedidos no diretório do fotógrafo, sem alterar inventário/proteção de exclusão. Comprovar que o rascunho não reaparece como pedido duplicado nas demais telas e que pagamentos comunicados continuam visíveis.
 
 ## 3. Integração e entrega
 
-- [ ] 3.1 Executar gates pertinentes (backend focado/amplo, PostgreSQL, Ruff, frontend testes/lint/TypeScript/build, OpenSpec), revisar diff por regressões/duplicação e preparar PR draft empilhado sobre #263 com evidências, plano mínimo de publicação/rollback e bloqueios reais. Não modificar #261/#262/#264, publicar, mesclar ou alterar compras reais.
+- [x] 3.1 Executar gates locais pertinentes (backend focado/amplo, PostgreSQL, Ruff, frontend testes/lint/TypeScript/build, OpenSpec), revisar diff por regressões/duplicação e preparar PR draft empilhado sobre #263 com evidências, plano mínimo de publicação/rollback e bloqueios reais. Não modificar #261/#262/#264, publicar, mesclar ou alterar compras reais.
 
 ## Workflow follow-up
 
 - Publicação de API/web exige autorização operacional própria; a autorização de implementar a ação manual não autoriza deploy ou novos pagamentos reais.
+- CI completo do head final do PR #265 é gate externo obrigatório antes de declarar aptidão para publicação; acompanhar o resultado no próprio PR/run. O resultado parcial/antigo não vale como CI final, mesmo com tasks locais concluídas.
 - Sincronizar/arquivar somente após revisão humana. Gates de webhook/reconciliação universal continuam como seguimento independente.

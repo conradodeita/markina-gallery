@@ -331,6 +331,7 @@ from app.order_delivery import (
     set_delivery,
     validate_album_url,
 )
+from app.order_visibility import visible_sale_order_condition
 from app.parent_registration import link_client_to_parent
 from app.payment_availability import (
     PAYMENT_REQUIRED_MESSAGE,
@@ -7502,12 +7503,17 @@ def admin_gallery_orders(
     orders = list(
         db.scalars(
             select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
-            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id)
+            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                   visible_sale_order_condition(tenant_id=tenant_id))
             .order_by(SaleOrder.created_at.desc())
         )
     )
     if not gallery and not orders:
         raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    card_payments = {payment.id: payment for payment in db.scalars(select(ProviderPayment).where(
+        ProviderPayment.tenant_id == tenant_id,
+        ProviderPayment.id.in_({order.provider_payment_id for order in orders if order.provider_payment_id})))}
+    recoveries = cart_recovery_statuses(db, tenant_id=tenant_id, payments=card_payments.values())
     payment_groups = {group.id: group for group in db.scalars(select(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id).where(
         PaymentGroup.id.in_({order.payment_group_id for order in orders if order.payment_group_id})))}
     return {
@@ -7525,6 +7531,10 @@ def admin_gallery_orders(
             {
                 "id": str(order.id),
                 "payment_status": order.payment_status,
+                **({"cart_reopened_at": recoveries[order.provider_payment_id]["reopened_at"]}
+                   if order.payment_status == "cancelled" and order.provider_payment_id in card_payments
+                   and card_payments[order.provider_payment_id].state == "exception"
+                   and recoveries[order.provider_payment_id]["reopened_at"] else {}),
                 "payment_group": ({"id": str(order.payment_group_id),
                                    "total_cents": payment_groups[order.payment_group_id].total_cents}
                                   if order.payment_group_id else None),
@@ -12033,18 +12043,7 @@ def _payment_dashboard_data(
 
     order_query = (
         select(SaleOrder, Client, DerivedGallery, ParentGallery).where(or_(Client.id.is_(None), Client.tenant_id == tenant_id), or_(DerivedGallery.id.is_(None), DerivedGallery.tenant_id == tenant_id), or_(ParentGallery.id.is_(None), ParentGallery.tenant_id == tenant_id), SaleOrder.tenant_id == tenant_id)
-        .where(~and_(
-            SaleOrder.payment_status == "pending", SaleOrder.frozen_at.is_(None),
-            SaleOrder.confirmed_at.is_(None), SaleOrder.assets_removed_at.is_(None),
-            SaleOrder.provider_payment_id.is_(None),
-            SaleOrder.payment_group_id.is_not(None),
-            SaleOrder.payment_group_id.in_(select(PaymentGroup.id).where(
-                PaymentGroup.tenant_id == tenant_id, PaymentGroup.state == "draft")),
-            ~select(PaymentCommunication.id).where(PaymentCommunication.tenant_id == tenant_id, or_(
-                PaymentCommunication.sale_order_id == SaleOrder.id,
-                PaymentCommunication.payment_group_id == SaleOrder.payment_group_id,
-            )).correlate(SaleOrder).exists(),
-        ))
+        .where(visible_sale_order_condition(tenant_id=tenant_id))
         .outerjoin(Client, Client.id == SaleOrder.client_id)
         .outerjoin(DerivedGallery, DerivedGallery.id == SaleOrder.derived_gallery_id)
         .outerjoin(ParentGallery, ParentGallery.id == SaleOrder.parent_gallery_id_snapshot)

@@ -44,6 +44,8 @@ O proprietário apontou aparência de duplicação em c648edb4/e1d93b85 durante 
 
 Reutilizar a auditoria de recuperação na projeção da própria cliente: histórico antigo indica Carrinho reaberto e permite Abrir carrinho, sem URL antiga nem mensagem genérica de reserva/conferência. Na projeção financeira administrativa, omitir somente pedido pending, não congelado/confirmado/removido, vinculado a grupo PIX draft e sem comunicação por grupo/pedido nem provedor. As fotos permanecem em Seleções em aberto; report_group continua promovendo a compra pelo contrato existente. Não excluir registros/banco, esconder confirmação real nem modificar preços/snapshots. Esse tratamento aplica o requisito já existente de unified-client-cart-and-pix: preparar QR Code mantém carrinho, sem nova compra no histórico.
 
+O proprietário esclareceu depois que o fotógrafo também não deve visualizar pedidos iguais em outras telas. Centralizar a condição somente de projeção em order_visibility e reutilizar no painel, pedidos da galeria legada e contador comercial do diretório. Manter contagem bruta separada para deletion_eligible e inventários; nenhuma regra de exclusão ou proteção comercial é flexibilizada. A projeção comercial por cliente/galeria e o histórico de compras já excluem rascunhos; verificar esses consumidores por regressão, sem refatoração geral. A lista de pedidos da galeria identifica recuperação auditada com o mesmo rótulo, preservando os snapshots originais.
+
 ## Risks / Trade-offs
 
 - [Link antigo pode continuar pagável] → decisão manual explícita e auditada, sem garantia de cancelamento remoto; preservação de exceção/evidência e bloqueio de confirmação automática do pedido cancelado.

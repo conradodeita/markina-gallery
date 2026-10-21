@@ -62,6 +62,11 @@ O sistema SHALL conservar compras, URLs, tentativas, pedidos e preços anteriore
 - **THEN** as fotos continuam como seleção em aberto e o rascunho não aparece como outra compra no painel financeiro
 - **AND** uma comunicação ou confirmação real continua visível com o histórico preservado
 
+#### Scenario: Fotógrafo consulta outras listas de pedidos
+- **WHEN** o fotógrafo consulta os pedidos da galeria ou o diretório de clientes após preparar o PIX
+- **THEN** o rascunho não aparece como outro pedido nem aumenta o contador comercial de pedidos
+- **AND** inventário e bloqueio de exclusão continuam considerando todos os registros internos protegidos
+
 ### Requirement: Recusa de confirmação ou processamento conhecido
 Reabertura MUST NOT aceitar pagamento confirmado, NSU persistido, recibo verificado ou verificação financeira em processamento, nem pedido entregue ou snapshot inconsistente. A prévia SHALL ser validada novamente na confirmação, com recusa integral se o contexto financeiro ou a seleção mudou.
 

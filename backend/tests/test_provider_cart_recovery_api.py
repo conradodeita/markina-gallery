@@ -276,6 +276,18 @@ def test_reabertura_aparece_no_historico_e_rascunho_pix_nao_parece_compra_duplic
     assert sum(selection["selected_count"] for selection in dashboard["selections_without_order"]) == 3
     assert not buyer.get("/library/purchases").json()["payment_groups"]
     assert state(case)[:3] == before[:3] and state(case)[4] == before[4]
+    directory = admin.get("/admin/clients").json()["clients"]
+    own = next(client for client in directory if client["id"] == str(case["owner"]))
+    assert own["aggregates"]["orders"] == 2 and not own["deletion_eligible"]
+    inventory = admin.get(f"/admin/clients/{case['owner']}/deletion-inventory")
+    assert inventory.status_code == 200, inventory.text
+    assert inventory.json()["commercial_protected"]["orders"] == 4
+    for gallery in case["galleries"]:
+        listing = admin.get(f"/admin/derived-galleries/{gallery}/orders")
+        assert listing.status_code == 200, listing.text
+        assert listing.json()["totals"]["orders"] == 1
+        assert listing.json()["orders"][0]["cart_reopened_at"]
+        assert not drafts.intersection({UUID(order["id"]) for order in listing.json()["orders"]})
     reported = buyer.post(f"/library/payments/{group_id}/report", json={
         "revision": prepared.json()["payment"]["revision"], "idempotency_key": str(uuid4())})
     assert reported.status_code == 200, reported.text
@@ -283,3 +295,22 @@ def test_reabertura_aparece_no_historico_e_rascunho_pix_nao_parece_compra_duplic
     assert len(history["payment_groups"]) == 1 and history["payment_groups"][0]["id"] == group_id
     dashboard = admin.get("/admin/payment-communications").json()
     assert dashboard["summary"]["orders"] == 4 and dashboard["summary"]["reported_orders"] == 2
+
+
+def test_rascunho_nao_inflaciona_diretorio_nem_remove_protecao_de_exclusao():
+    owner, _, galleries, _ = setup()
+    with SessionLocal() as db:
+        prepare_group(db, db.get(Client, owner))
+        actor = db.scalar(select(InfinitePaySettings.admin_user_id))
+        db.commit()
+    admin = browser_for(actor)
+    own = next(client for client in admin.get("/admin/clients").json()["clients"] if client["id"] == str(owner))
+    assert own["aggregates"]["orders"] == 0 and not own["deletion_eligible"]
+    inventory = admin.get(f"/admin/clients/{owner}/deletion-inventory")
+    assert inventory.status_code == 200
+    assert inventory.json()["commercial_protected"]["orders"] == 2
+    for gallery in galleries:
+        listing = admin.get(f"/admin/derived-galleries/{gallery}/orders")
+        assert listing.status_code == 200 and listing.json()["orders"] == []
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count(PhotoSelection.id)).where(PhotoSelection.client_id == owner)) == 3

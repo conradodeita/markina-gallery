@@ -13,6 +13,7 @@ O fotógrafo precisa devolver ao carrinho as fotos de uma compra de cartão que 
 - Recusar compra confirmada/NSU/recibo verificado, ownership incorreto, snapshot divergente ou seleção inelegível. Garantir transação, fingerprint, revisão e idempotência.
 - Impedir que uma resposta atrasada da emissão coloque novamente em aguardando pagamento uma compra manualmente recuperada.
 - Identificar a recuperação no histórico da cliente com acesso ao carrinho; a preparação local do PIX continua seleção em aberto e não deve aparecer como outra compra no painel financeiro.
+- Preservar essa distinção nas listas de pedidos da galeria e no contador comercial do diretório do fotógrafo, sem alterar inventários nem a proteção de exclusão.
 
 ## Capabilities
 
