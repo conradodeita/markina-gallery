@@ -13,8 +13,10 @@ O deploy de uma change de pagamento SHALL preservar o estado operacional pré-ex
 
 ### Requirement: Escopo do release da correção InfinitePay
 
-O release da correção de diagnóstico InfinitePay SHALL permanecer no escopo API/web existente, com blobs runtime limitados aos módulos de emissão de pagamento alterados. O manifesto SHALL fixar os hashes exatos desses módulos. A change MUST NOT alterar schema/migrations, Docker/Compose, workers, Nginx ou serviços de terceiros.
+O release SHALL permanecer no escopo API/web existente, e o manifesto SHALL fixar os hashes exatos dos runtimes revisados. Compose pode injetar binding secreto somente na API. A change MUST NOT alterar schema/migrations, workers, Nginx ou serviços de terceiros.
 
 #### Scenario: Gate admite somente os módulos de pagamento revisados
 - **WHEN** o classificador de release avalia a correção e seus artefatos de teste/OpenSpec
-- **THEN** admite os dois módulos backend incluídos no manifesto e não autoriza mudanças de schema ou infraestrutura
+- **THEN** admite somente blobs runtime com hash explícito no manifesto
+- **AND** mantém a configuração do arquivo de segredo restrita ao serviço API
+- **AND** não autoriza mudanças de schema, workers ou serviços de terceiros

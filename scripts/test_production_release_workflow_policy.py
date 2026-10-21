@@ -133,8 +133,8 @@ def main() -> None:
         actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
                                 capture_output=True, text=True).stdout.strip()
         face_blob = base64.b64decode("".join(expected), validate=True).hex()
-        if path in {"backend/app/main.py", "frontend/app/globals.css"}:
-            if actual != app_manifest["runtime_blobs"].get(path):
+        if path in app_manifest["runtime_blobs"]:
+            if actual != app_manifest["runtime_blobs"][path]:
                 raise AssertionError("runtime compartilhado diverge do manifesto app exato")
         elif actual != face_blob:
             baseline_blob = subprocess.run(
