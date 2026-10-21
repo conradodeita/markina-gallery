@@ -101,3 +101,14 @@ A reabertura SHALL preservar PIX manual, receitas, entregas e compras de outras 
 #### Scenario: Evidência tardia da compra antiga
 - **WHEN** a rotina financeira recebe evidência autoritativa para uma compra reaberta
 - **THEN** conserva a exceção sem confirmar os pedidos cancelados ou alterar a nova compra
+
+### Requirement: Publicação coordenada e escopada da recuperação
+A publicação autorizada SHALL usar o fluxo oficial de API/web, com lista exata de arquivos e blobs revisados, CI aprovado do candidato integrado e inventário/fingerprint atual. MUST NOT incluir workers, cofre, dependências novas, migrations ou alteração financeira de compras reais.
+
+#### Scenario: Manifesto ainda descreve runtime anterior
+- **WHEN** o candidato autorizado contém os arquivos da recuperação ausentes do manifesto
+- **THEN** a publicação é recusada até preparar e validar os arquivos/blobs exatos, sem wildcard ou desativação do gate
+
+#### Scenario: Candidato e inventário aprovados
+- **WHEN** os gates e a autorização operacional estão válidos para o SHA e runtime inventariados
+- **THEN** somente API/web são recriados, preservando imagens anteriores e dados para rollback supervisionado

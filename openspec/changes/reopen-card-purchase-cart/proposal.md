@@ -14,6 +14,7 @@ O fotógrafo precisa devolver ao carrinho as fotos de uma compra de cartão que 
 - Impedir que uma resposta atrasada da emissão coloque novamente em aguardando pagamento uma compra manualmente recuperada.
 - Identificar a recuperação no histórico da cliente com acesso ao carrinho; a preparação local do PIX continua seleção em aberto e não deve aparecer como outra compra no painel financeiro.
 - Preservar essa distinção nas listas de pedidos da galeria e no contador comercial do diretório do fotógrafo, sem alterar inventários nem a proteção de exclusão.
+- Após autorização operacional do proprietário em 21/10/2026, preparar o manifesto de publicação com os arquivos/blobs exatos desta correção e de sua dependência #263, mantendo o release restrito a API/web e os gates oficiais.
 
 ## Capabilities
 
@@ -27,4 +28,4 @@ Nenhuma spec consolidada é substituída. O delta ativo de add-infinitepay-credi
 
 ## Impact
 
-Backend de recuperação/rotas/projeção administrativa, guarda da emissão e UI do card de cliente em Vendas e pagamentos. Reutilizar seleção/cotação/pagamentos existentes, sem migration ou nova tabela. Basear no PR #263, preservando seu filtro de pendências por fotos; não modificar a branch desse PR. PR #264 continua como recuperação operacional já executada; PRs #261/#262 permanecem independentes. Sem nova emissão, segredo, merge ou deploy remoto nesta missão. Avaliar somente duplicação/código obsoleto na área tocada.
+Backend de recuperação/rotas/projeção administrativa, guarda da emissão e UI do card de cliente em Vendas e pagamentos. Reutilizar seleção/cotação/pagamentos existentes, sem migration ou nova tabela. Basear no PR #263, preservando seu filtro de pendências por fotos; não modificar sua implementação. PR #264 continua como recuperação operacional já executada; PRs #261/#262 permanecem independentes. A implementação inicial não incluiu merge/deploy; a autorização de 21/10/2026 permite a etapa operacional de API/web após integração, CI e inventário do SHA exato, sem nova emissão, segredo ou alteração financeira. Avaliar somente duplicação/código obsoleto na área tocada.

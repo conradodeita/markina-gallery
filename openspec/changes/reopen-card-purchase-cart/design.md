@@ -12,7 +12,7 @@ O delta ativo de add-infinitepay-credit-payments proibia qualquer liberação lo
 
 **Goals:** ação manual reutilizável e explícita no painel; recuperar seleção integral para escolha dos meios existentes; preservar propriedade, histórico, concorrência e idempotência.
 
-**Non-Goals:** reabrir automaticamente por prazo ou HTTP, confirmar dinheiro manualmente como cartão, cancelar no provedor, implementar webhook/monitor universal, habilitar cartão/PIX, publicar ou alterar dados reais nesta change.
+**Non-Goals:** reabrir automaticamente por prazo ou HTTP, confirmar dinheiro manualmente como cartão, cancelar no provedor, implementar webhook/monitor universal, habilitar cartão/PIX ou alterar dados reais nesta change. A publicação exige a etapa operacional explicitamente autorizada abaixo.
 
 ## Decisions
 
@@ -56,3 +56,11 @@ O proprietário esclareceu depois que o fotógrafo também não deve visualizar 
 ## Migration Plan
 
 Sem migration. Testar localmente com dados sintéticos e PostgreSQL isolado; estender somente o passo de checkout PostgreSQL do CI para incluir os testes de recuperação, pois SQLite não comprova locks/concorrência. Preparar PR draft empilhado sobre #263, sem alterar sua branch nem #261/#262/#264. Publicação futura de API e web coordenada, mediante autorização, inventário e gates existentes; preservar worker/infraestrutura. Rollback de código deve continuar compreendendo exception/cancelled, que já existem na versão publicada; não desfazer recuperações ou restaurar banco automaticamente após nova atividade da cliente. Sincronização/arquivo somente após revisão humana.
+
+### Autorização e preparação operacional de 21/10/2026
+
+Após CI completo aprovado no head 6f4a903, o proprietário autorizou o deploy. O preflight read-only confirmou o checkout 5446cf4d, schema 20261017_0084, API/web saudáveis e HTTPS válido. O verificador local recusou a publicação com api_fora_do_escopo: sua allowlist e o manifesto ainda descrevem runtimes anteriores. Corrigir somente a preparação do gate, sem mudar a implementação já testada.
+
+Acrescentar à allowlist e fixar no manifesto os dez runtimes necessários: backend/app/client_lifecycle.py, backend/app/order_visibility.py, backend/app/provider_cart_recovery.py, backend/app/unified_checkout.py; frontend/app/admin/galleries/[galleryId]/orders/page.tsx; frontend/app/admin/payments/cart-recovery.tsx e cart-recovery.module.css; frontend/app/library/cart/page.tsx, purchase-card.tsx e purchases/page.tsx. Atualizar os hashes dos runtimes já permitidos alterados pelo mesmo candidato. Permitir somente os cinco testes frontend correspondentes como operações sem runtime; não adotar prefixos genéricos. Avançar a baseline para o SHA saudável observado 5446cf4d7328ef6283ebfab50b5d1976d561fc8d, preservando schema, pins de dependências existentes e contratos de manutenção/rollback.
+
+Testar recusa de blob divergente e aprovação só depois da atualização exata, preservando as regressões de worker, Monitor, cofre, migration e dependência fora do escopo. O helper emergencial existente deriva a API da imagem ativa e compara todas as distribuições; os quatro pins já aprovados não autorizam versões novas nem atualização de outros consumidores. Nenhum script de release, wrapper SSH, Docker/Compose ou configuração secreta será alterado por essa preparação. O novo head precisa de CI próprio antes da integração/publicação.

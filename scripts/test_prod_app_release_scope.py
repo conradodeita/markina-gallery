@@ -151,6 +151,41 @@ class AppReleaseScopeTests(unittest.TestCase):
                 path.unlink()
                 self.commit()
 
+    def test_cart_recovery_runtime_requires_exact_reviewed_blobs(self):
+        for name in (
+            "backend/app/client_lifecycle.py", "backend/app/order_visibility.py",
+            "backend/app/provider_cart_recovery.py", "backend/app/unified_checkout.py",
+            "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
+            "frontend/app/admin/payments/cart-recovery.tsx",
+            "frontend/app/admin/payments/cart-recovery.module.css",
+            "frontend/app/library/cart/page.tsx", "frontend/app/library/purchase-card.tsx",
+            "frontend/app/library/purchases/page.tsx",
+        ):
+            with self.subTest(path=name):
+                self.assertIn(name, policy.RUNTIME_FILES)
+                (self.root / name).write_text("reviewed cart recovery runtime\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "runtime_diverge_do_blob_aprovado"))
+                self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (True, "somente_api_web"))
+
+    def test_cart_recovery_frontend_tests_are_exact_non_runtime_operations(self):
+        for name in (
+            "frontend/app/admin/galleries/[galleryId]/orders/orders.test.tsx",
+            "frontend/app/admin/payments/cart-recovery-page.test.tsx",
+            "frontend/app/admin/payments/cart-recovery.test.tsx",
+            "frontend/app/library/cart/cart.test.tsx",
+            "frontend/app/library/library.test.tsx",
+        ):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("cart recovery regression\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
     def test_service_baseline_cannot_hide_api_input_change(self):
         path = self.root / "backend/requirements-push.txt"
         path.write_text("four approved pins\n", encoding="utf-8")
