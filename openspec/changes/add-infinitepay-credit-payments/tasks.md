@@ -64,7 +64,7 @@ Pesquisa complementar: ver `research-review.md`, com fontes primárias, endpoint
 
 ## 8. Operação supervisionada autorizada — 21/10/2026
 
-- [ ] 8.1 Conferir inventário, espaço, backup/recuperação, estados persistidos, candidatos e binding sem expor segredo.
+- [x] 8.1 Conferir inventário, espaço, backup/recuperação, estados persistidos, candidatos e binding sem expor segredo. Evidência: operation-20261021.md; backup com restore descartável aprovado, binding pelo titular verificado por estrutura/permissão, quatro candidatos históricos identificados e quatro faltantes explicitados.
 - [ ] 8.2 Corrigir gates de baseline por serviço/Compose e preparar API preservando Python e distribuições; testar positivos, negativos e startup ARM64 antes de troca.
 - [ ] 8.3 Concluir CI, integrar somente PRs necessários e verificar CI pós-merge e preflight oficial; preparar wrapper pinado e imagens/recibos de rollback.
 - [ ] 8.4 Publicar somente candidatos aprovados em manutenção autorizada, preservar filas/pagamentos e verificar identidades/saúde/versões; rollback por identidade se necessário.
