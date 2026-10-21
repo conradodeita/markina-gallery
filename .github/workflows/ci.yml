@@ -295,6 +295,8 @@ jobs:
           bash scripts/test_deploy_prod_app_services.sh
           python scripts/test_prod_facial_release_gates.py
           python scripts/test_prod_app_release_scope.py
+          python scripts/test_prepare_emergency_api_image.py
+          python scripts/test_provision_infinitepay_binding.py
           python scripts/test_classify_prod_release.py
           python scripts/test_production_release_workflow_policy.py
 

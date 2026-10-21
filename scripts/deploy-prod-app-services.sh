@@ -126,8 +126,8 @@ verify_repository() {
     release_assert_no_pending || fail "tentativa interrompida; investigar/recuperar"
   fi
   if [[ "$MODE" == "release" ]]; then
-    git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ backend/migrations/ \
-      || fail "Docker/Compose ou migrations fora do escopo"
+    git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/ \
+      || fail "migrations fora do escopo"
     # Verificador/manifesto do alvo por memória/pipe: sem arquivos temporários.
     GIT_DIR="$PROJECT_ROOT/.git" GIT_WORK_TREE="$PROJECT_ROOT" \
       python3 -c 'import sys; p=sys.argv.pop(1); code=sys.argv.pop(1); exec(compile(code,p,"exec"),{"__file__":p,"__name__":"__main__"})' \
@@ -175,7 +175,20 @@ verify_repository() {
       [[ "$actual_api" == "$(cat "$STATE_DIR/app-api-target-id")" && "$api_version" == "$TARGET_SHA" ]] || fail "API não pertence à tentativa aprovada"
     fi
   else
-    git diff --quiet "$api_version" "$CHECKOUT_SHA" -- backend/ || fail "API diverge do checkout"
+    local approved_api_base
+    approved_api_base="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("emergency_api",{}).get("baseline_sha",""))')"
+    if [[ "$approved_api_base" == "$api_version" ]]; then
+      git diff --quiet "$api_version" "$CHECKOUT_SHA" -- backend/app/ backend/migrations/ backend/Dockerfile \
+        backend/requirements.txt backend/face-requirements.txt backend/gemma-requirements.txt \
+        || fail "API diverge dos inputs ativos aprovados"
+      local approved_api_image
+      approved_api_image="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["emergency_api"]["baseline_image"])')"
+      [[ "$(docker inspect --format '{{.Image}}' "$api_id")" == "$approved_api_image" ]] || fail "imagem API diverge da baseline"
+    else
+      git diff --quiet "$api_version" "$CHECKOUT_SHA" -- backend/ || fail "API diverge do checkout"
+    fi
   fi
   # Web-only pode ter avançado o checkout mantendo o backend idêntico.
   local web_id web_image web_hash
@@ -285,7 +298,7 @@ rollback_inventory() {
 }
 
 release() {
-  local current_fp service id image tag ref api_before expected_api expected_web
+  local current_fp service id image tag ref api_before expected_api expected_web emergency target_hashes
   verify_repository
   current_fp="$(fingerprint)"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "fingerprint mudou; nada foi alterado"
@@ -311,11 +324,25 @@ release() {
   api_before="$COMPOSE_APP_VERSION"
   COMPOSE_APP_VERSION="$TARGET_SHA"
   compose config --quiet || fail "Compose alvo inválido"
-  compose build "${SERVICES[@]}"
+  target_hashes="$(resolved_hashes)" || fail "hashes Compose alvo indisponíveis"
+  emergency="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+    | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("emergency_api") else "no")')"
+  if [[ "$emergency" == yes ]]; then
+    python3 scripts/prepare_emergency_api_image.py --previous "$(cat "$STATE_DIR/app-api-rollback-id")" \
+      --sha "$TARGET_SHA" --receipt "$STATE_DIR/app-api-homologation.json" || fail "candidato API não homologado"
+    compose build web
+  else
+    compose build "${SERVICES[@]}"
+  fi
+  # Compare the original live configuration against its own checkout. The
+  # reviewed API-only env_file changes the target's resolved Compose hash.
+  git switch --detach "$CHECKOUT_SHA" >/dev/null
   current_fp="$(COMPOSE_APP_VERSION="$api_before" fingerprint)"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "runtime mudou durante build; containers preservados"
   [[ "$(COMPOSE_APP_VERSION="$api_before" database_revision)" == "$EXPECTED_DATABASE_REVISION" ]] \
     || fail "revisão do banco mudou; release abortado"
+  git switch --detach "$TARGET_SHA" >/dev/null
+  [[ "$(resolved_hashes)" == "$target_hashes" ]] || fail "configuração alvo mudou durante build"
   for service in "${SERVICES[@]}"; do
     [[ "$(release_image_id "$(cat "$STATE_DIR/app-$service-rollback-image")")" == "$(cat "$STATE_DIR/app-$service-rollback-id")" ]] || fail "backup mudou durante build"
   done

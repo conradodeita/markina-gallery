@@ -109,8 +109,14 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f":
-        raise AssertionError("baseline de produção diverge do inventário registrado")
+    if app_manifest.get("production_baseline_sha") != "27e1b8ffa0917b4dc2120bd4a26e09c6cae47e0f":
+        raise AssertionError("baseline web diverge do inventário registrado")
+    emergency = app_manifest.get("emergency_api", {})
+    if emergency.get("baseline_sha") != "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f":
+        raise AssertionError("baseline API diverge do inventário registrado")
+    if emergency.get("input_blobs") != {"backend/requirements-push.txt": "2e23bf84e3eae38396218bada0ee37d3da722843"}:
+        raise AssertionError("somente os quatro pins autorizados podem mudar")
+    require("scripts/prepare_emergency_api_image.py", "homologação de imagem API antes da troca", app_script)
     if app_manifest.get("expected_database_revision") != "20261017_0084":
         raise AssertionError("revisão de banco app diverge do inventário registrado")
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)

@@ -1,6 +1,6 @@
 {
   "scope": "api_web_only",
-  "production_baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
+  "production_baseline_sha": "27e1b8ffa0917b4dc2120bd4a26e09c6cae47e0f",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
     "backend/app/infinitepay_binding.py": "7a6dfc1b550545cfdc5d903bad5ce8d94bb8cc04",
@@ -21,5 +21,12 @@
     "frontend/app/admin/payments/payments.module.css": "7a24498537c5767823d9497b34c98f72ddc5e548",
     "frontend/app/admin/settings/infinitepay-panel.tsx": "acadf2e5b210871bb5c0ba3bddbc5d02d5ba2914",
     "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da"
+  },
+  "emergency_api": {
+    "baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
+    "baseline_image": "sha256:afc54e0ff0b008ac7bcc2ab28095f279da6213aaa5bec1ac98fae8269fc0715c",
+    "input_blobs": {
+      "backend/requirements-push.txt": "2e23bf84e3eae38396218bada0ee37d3da722843"
+    }
   }
 }

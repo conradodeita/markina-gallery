@@ -151,6 +151,25 @@ class AppReleaseScopeTests(unittest.TestCase):
                 path.unlink()
                 self.commit()
 
+    def test_service_baseline_cannot_hide_api_input_change(self):
+        path = self.root / "backend/requirements-push.txt"
+        path.write_text("four approved pins\n", encoding="utf-8")
+        self.commit()
+        self.manifest["emergency_api"] = {
+            "baseline_sha": self.base,
+            "input_blobs": {"backend/requirements-push.txt": self.run_git("rev-parse", "HEAD:backend/requirements-push.txt")},
+        }
+        web_base = self.run_git("rev-parse", "HEAD")
+        self.assertEqual(policy.evaluate(self.root, web_base, "HEAD", self.manifest), (True, "somente_api_web"))
+        path.write_text("unapproved dependency change\n", encoding="utf-8")
+        self.commit()
+        advanced_web = self.run_git("rev-parse", "HEAD")
+        self.assertEqual(policy.evaluate(self.root, advanced_web, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        (self.root / "backend/app/auth.py").write_text("unapproved runtime\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, "HEAD", "HEAD", self.manifest), (False, "api_fora_do_escopo"))
+
     def test_retired_statistics_pages_are_exactly_allowlisted_and_removed_from_runtime_manifest(self):
         self.assertNotIn("frontend/app/admin/statistics/page.tsx", policy.RUNTIME_FILES)
         self.assertEqual(policy.RETIRED_STATISTICS_FILES, {

@@ -51,6 +51,13 @@ ALLOWED_OPERATIONS = {
     "scripts/test_classify_prod_release.py",
     "scripts/test_deploy_prod_app_services.sh",
     "scripts/test_production_release_workflow_policy.py",
+    "scripts/build_python_security_candidates.py",
+    "scripts/python_security_release.py",
+    "scripts/test_python_security_release.py",
+    "scripts/prepare_emergency_api_image.py",
+    "scripts/test_prepare_emergency_api_image.py",
+    "scripts/provision_infinitepay_binding.py",
+    "scripts/test_provision_infinitepay_binding.py",
     "scripts/check_prod_facial_release_gates.py",
     "scripts/deploy-prod-facial-services.sh",
     "scripts/test_prod_facial_release_gates.py",
@@ -93,11 +100,24 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
     try:
         git(root, "merge-base", "--is-ancestor", base, target)
         changed = set(git(root, "diff", "--name-only", base, target).splitlines())
+        emergency = manifest.get("emergency_api")
+        extra_blobs = {}
+        if emergency is not None:
+            api_base = emergency["baseline_sha"]
+            git(root, "merge-base", "--is-ancestor", api_base, target)
+            extra_blobs = emergency["input_blobs"]
+            if set(extra_blobs) != {"backend/requirements-push.txt"}:
+                return False, "inputs_emergenciais_invalidos"
+            api_changes = set(git(root, "diff", "--name-only", api_base, target, "--", "backend/").splitlines())
+            for path in api_changes:
+                if path not in RUNTIME_FILES and path not in extra_blobs and not path.startswith("backend/tests/"):
+                    return False, "api_fora_do_escopo"
+            changed |= api_changes
         for path in changed:
-            if path in RUNTIME_FILES or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES):
+            if path in RUNTIME_FILES or path in extra_blobs or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES):
                 continue
             return False, "arquivo_fora_do_escopo"
-        for path, expected in manifest["runtime_blobs"].items():
+        for path, expected in {**manifest["runtime_blobs"], **extra_blobs}.items():
             actual = git(root, "rev-parse", f"{target}:{path}")
             if actual != expected:
                 return False, "runtime_diverge_do_blob_aprovado"

@@ -104,6 +104,14 @@ Integração inicia inativa. Mocks/fixtures sintéticos podem comprovar o compor
 
 ## Risks / Trade-offs
 
+### Autorização operacional definitiva — 21/10/2026
+
+O proprietário autorizou merge/release supervisionado, indisponibilidade, interrupção graciosa de workers e rollback por identidade, além dos quatro pins Python nos consumidores com imagens homologadas. Essa autorização substitui os bloqueios de escopo operacional anteriores, mas não dispensa CI, candidaturas, preservação de Python 3.13.16/distribuições restantes e callbacks financeiros. PR #262 permanece fora do candidato porque não há provisão/migration/keyring/homologação operacional; #261 não é necessário ao bootstrap autorizado.
+
+Corrigir o executor existente, sem criar outro fluxo: manifesto identifica baseline API e web separadas e hashes exatos de dependências/Compose; classificador só admite app quando o gate completo aceitar esses inputs. O build API deriva da imagem ativa preservada, instala somente os quatro wheels sem resolver dependências e copia código Git aprovado; compara todas as distribuições e Python e ensaia startup isolado/network none/tmpfs antes de recriação. Assim não depende de rebuild com requirements abertos que possa atualizar Python ou outras distribuições. O caminho legado permanece para manifestos sem o contrato emergencial; Python-security operacional genérico permanece recusado até ter executor/candidatos dos demais consumidores.
+
+Primeiro concluir gates, backup, binding pelo titular e integração; depois janela curta de manutenção API/web, conservando estado financeiro ambíguo. Capturar agregados e identidades persistidas antes/depois. Retorno InfinitePay é browser→consulta autoritativa, sem webhook financeiro consumido; manter as tentativas pendentes e seus IDs para retorno repetível/reconciliação. Não criar link ou pagamento pelo executor. Workers sem imagem homologada permanecem nas identidades existentes e não atrasam o cartão.
+
 ### Correção restrita dos gates — 21/10/2026
 
 Autorização atual permite somente inventário Oracle de leitura, correção local dos gates, testes e CI do PR #260. Merge, deploy, restart, migration, provisionamento e alterações financeiras estão proibidos nesta missão. Os PRs #261/#262 permanecem fora do escopo.

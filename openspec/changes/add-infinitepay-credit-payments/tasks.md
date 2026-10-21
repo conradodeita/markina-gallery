@@ -62,6 +62,14 @@ Pesquisa complementar: ver `research-review.md`, com fontes primárias, endpoint
 
 ## Execution Notes
 
+## 8. Operação supervisionada autorizada — 21/10/2026
+
+- [ ] 8.1 Conferir inventário, espaço, backup/recuperação, estados persistidos, candidatos e binding sem expor segredo.
+- [ ] 8.2 Corrigir gates de baseline por serviço/Compose e preparar API preservando Python e distribuições; testar positivos, negativos e startup ARM64 antes de troca.
+- [ ] 8.3 Concluir CI, integrar somente PRs necessários e verificar CI pós-merge e preflight oficial; preparar wrapper pinado e imagens/recibos de rollback.
+- [ ] 8.4 Publicar somente candidatos aprovados em manutenção autorizada, preservar filas/pagamentos e verificar identidades/saúde/versões; rollback por identidade se necessário.
+- [ ] 8.5 Reabrir plataforma e registrar checkout, PIX, autenticação, tarefas e pendências sem alegar pagamento real antes do ensaio do proprietário.
+
 Após 3.1, executar 4.1 antes de 3.2/3.3: a porta tipada e o adaptador sintético fornecem a fronteira injetável para testar preparação/reserva sem chamadas reais. Isso altera a ordem de dependência local, não o escopo ou os gates de emissão/consulta/webhook.
 
 Implementação local autorizada em 12/10/2026; base `c17b9e0`, ancestral confirmado da revision `20261011_0074`. D1 permite trabalho local; suas pendências remotas/revisão continuam no fluxo original. Webhook assinado e recuperação sem retorno permanecem bloqueados. Nunca reduzir garantias para marcar conclusão.
