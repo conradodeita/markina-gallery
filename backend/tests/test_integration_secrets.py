@@ -69,3 +69,15 @@ def test_no_master_key_has_no_default(monkeypatch):
     monkeypatch.delenv("INTEGRATION_SECRET_KEYS", raising=False)
     with pytest.raises(IntegrationSecretError):
         IntegrationCipher()
+
+
+def test_wrong_master_material_fails_and_restored_keyring_recovers(secret_keyring, monkeypatch):
+    tenant, credential = uuid4(), uuid4()
+    envelope = IntegrationCipher().encrypt("synthetic-restore-value", tenant_id=tenant, credential_id=credential)
+    wrong = {**secret_keyring, "old": base64.b64encode(secrets.token_bytes(32)).decode()}
+    monkeypatch.setenv("INTEGRATION_SECRET_KEYS", json.dumps(wrong))
+    with pytest.raises(IntegrationSecretError) as failure:
+        IntegrationCipher().decrypt(envelope, tenant_id=tenant, credential_id=credential)
+    assert "synthetic-restore-value" not in str(failure.value)
+    monkeypatch.setenv("INTEGRATION_SECRET_KEYS", json.dumps(secret_keyring))
+    assert IntegrationCipher().decrypt(envelope, tenant_id=tenant, credential_id=credential) == "synthetic-restore-value"

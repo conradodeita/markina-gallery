@@ -3,7 +3,7 @@
 ## Dependências e escopo
 
 - PR pai #260: `feature/fix-infinitepay-checkout`, SHA `0959c64f00c60e6674675a9d90b43f0d7f9428b7`, aberto/draft e não mesclado na verificação de 21/10/2026. Esta branch `codex/infinitepay-tenant-credentials` parte desse SHA e terá PR draft contra a branch pai, para revisão somente do delta. Integrar #260 primeiro, retargetar este PR para `main` e repetir CI no SHA candidato após revisão humana; não mesclar automaticamente.
-- O SHA exato desta implementação será o head do PR associado. Registrar ambos os heads e as imagens/digests aprovadas no pedido operacional; qualquer alteração posterior exige rever os resultados afetados.
+- PR próprio draft [#262](https://github.com/conradodeita/markina-gallery/pull/262), branch `codex/infinitepay-tenant-credentials`. O SHA exato a publicar será o head aprovado desse PR, registrado junto com o head pai e as imagens/digests no pedido operacional; qualquer alteração posterior exige rever os resultados afetados. Primeiro commit de implementação `ccf59ea101f0cdcca2bac8d00f426b457d6bdff0`; correções de testes/evidências posteriores não autorizam outro candidato automaticamente.
 - Serviços afetados: `api` e `web`; schema PostgreSQL via `migrate` em etapa autorizada. Keyring somente na API. Sem alteração de dependências/runtime Python, workers, Redis, Nginx, serviços faciais, RAW ou recursos de outros projetos.
 - Nenhuma ação deste plano foi executada em Oracle. Compra real `e2194ce5` permanece intocada; esta funcionalidade não a reconcilia nem migra seu binding.
 
