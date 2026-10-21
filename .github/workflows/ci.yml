@@ -31,6 +31,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Testar classificação de escopo e gate agregado
+        run: python -m unittest scripts.test_classify_ci_scope scripts.test_check_ci_results -q
       - name: Classificar validações necessárias
         id: classify
         shell: bash
@@ -198,29 +200,39 @@ jobs:
   runtime-images:
     needs: [ci-scope]
     if: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' || needs.ci-scope.outputs.preview == 'true' || needs.ci-scope.outputs.raw == 'true' }}
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Habilitar emulação ARM64 para builds isolados
-        if: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' }}
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      - name: Conferir arquitetura nativa do runner
+        shell: bash
+        run: |
+          case "${{ matrix.arch }}:$(uname -m)" in
+            amd64:x86_64|arm64:aarch64) ;;
+            *) echo "Arquitetura nativa divergente da matriz de validação"; exit 1 ;;
+          esac
       - name: Build isolado do runtime facial AMD64
-        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.backend_image == 'true' }}
         run: docker buildx build --platform linux/amd64 --load --tag face-worker:validation-amd64 --file backend/Dockerfile.face backend
       - name: Build isolado do runtime facial ARM64
-        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        if: ${{ matrix.arch == 'arm64' && needs.ci-scope.outputs.backend_image == 'true' }}
         run: docker buildx build --platform linux/arm64 --load --tag face-worker:validation-arm64 --file backend/Dockerfile.face backend
       - name: Build local da API (sem publicar ou iniciar serviços)
-        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.backend_image == 'true' }}
         run: docker build --tag backend:validation --file backend/Dockerfile backend
       - name: Build local da imagem frontend (sem publicar ou iniciar serviços)
-        if: ${{ needs.ci-scope.outputs.frontend_image == 'true' }}
+        if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.frontend_image == 'true' }}
         run: docker build --tag frontend:validation --file frontend/Dockerfile frontend
       - name: Frontend ARM64 isolado e versões do lockfile
-        if: ${{ needs.ci-scope.outputs.frontend_image == 'true' }}
+        if: ${{ matrix.arch == 'arm64' && needs.ci-scope.outputs.frontend_image == 'true' }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -231,10 +243,10 @@ jobs:
             const actual=Object.fromEntries(["next","react","react-dom"].map(n=>[n,JSON.parse(fs.readFileSync("/app/node_modules/"+n+"/package.json","utf8")).version]));
             assert.deepStrictEqual(actual, JSON.parse(process.env.EXPECTED_PACKAGES)); console.log(actual);'
       - name: Build local de prévias (sem publicar ou iniciar serviços)
-        if: ${{ needs.ci-scope.outputs.preview == 'true' }}
+        if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.preview == 'true' }}
         run: docker build --tag preview-adjustment:validation --file backend/Dockerfile.preview-adjustment backend
       - name: Build local do conversor RAW opt-in (sem publicar ou iniciar serviços)
-        if: ${{ needs.ci-scope.outputs.raw == 'true' }}
+        if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.raw == 'true' }}
         run: docker build --tag raw-development:validation --file backend/Dockerfile.raw-development backend
 
   openspec:

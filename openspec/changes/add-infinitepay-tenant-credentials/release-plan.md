@@ -23,6 +23,27 @@
 5. Em tenants sintéticos, confirmar isolamento A/B por HTTP, cadastro sem cobrança, bloqueio quando cofre ausente, preservação de PIX e chave congelada em compra de teste. Conferir que web/workers não receberam material mestre. Somente depois, liberar novas escritas.
 6. Proprietário cadastra a própria chave exclusivamente na interface HTTPS autenticada. UI deve mostrar cadastrada/validação remota indisponível. Conferência de recebedor/cartão no provedor e qualquer pagamento real exigem execução/autorização próprias; salvar configuração não dispara cobrança.
 
+## Etapa separada de autorização da migration — preparada, não executada
+
+O mecanismo existente é autorização humana explícita por operação e inventário, seguida de Alembic na imagem aprovada do serviço `migrate`, no projeto e Compose nomeados. O release API/web atual não executa nem autoriza essa etapa. Não alterar seus manifests, allowlists, revisão esperada ou hashes para liberar 0085.
+
+Antes de solicitar execução, o operador deverá preencher um registro auditável com: referência da autorização do proprietário; ambiente e janela; SHA integrado/revisão humana/URL do CI verde; revisão Alembic observada; imagem/digest exato da API e de `migrate`; imagens/digests anteriores de API/web; subdomínio, portas e recursos exclusivos; responsáveis; referência/hash do dump e resultado de restore isolado; referência do backup seguro do keyring (nunca seu conteúdo); barreira de escritas e procedimento de callbacks/conciliação; critérios de interrupção e identidade da imagem compatível de recuperação. Inventário/imagens atuais da Oracle permanecem **não coletados nesta missão**, por proibição explícita; nenhuma identidade histórica é assumida como atual.
+
+Com todos os campos revisados, solicitar separadamente autorização para: (A) inventário/backup/provisão mestre; (B) aplicação da cadeia inspecionada até `20261020_0085` com serviço/imagem fixados, sem iniciar API/web por dependência automática; (C) troca API e web e verificação controlada. Registrar início/fim, revisão antes/depois, identidade da imagem e status sem parâmetros/segredos. Qualquer revisão inesperada, backup não restaurável, chave mestra indisponível ou falha de saúde interrompe a sequência antes de abrir novas escritas. Esta documentação não é uma autorização e não fornece comando de execução remota automática.
+
+## Matriz de compatibilidade e recuperação por identidade
+
+| Schema/binário | Uso permitido no plano autorizado |
+|---|---|
+| 0084 + API antiga | Estado anterior; não servir web que coleta credenciais |
+| 0084 + API nova | Incompatível: não iniciar atendimento antes de 0085 |
+| 0085 + API antiga #260, sem adoção gerida | Retorno possível por imagens/digests inventariados; manter schema aditivo e retirar web nova antes da API |
+| 0085 + API antiga #260, após adoção gerida | Não usar como restauração completa: binário não lê cofre e pode interpretar configuração gerida incorretamente |
+| 0085 + API/web novas + keyring correto | Candidato operacional; entrada gerida exige capacidade explícita e segregação por tenant |
+| 0085 + API compatível sem keyring | Novos cartões geridos indisponíveis; conservar pendências e restaurar material mestre autorizado; não substituir por chave de outro tenant |
+
+Após adoção gerida, a identidade de recuperação deverá ser um digest aprovado compatível com 0085 e com o cofre, preservado antes de abrir o cadastro. Se o defeito impedir manter essa API, a barreira operacional aprovada deverá bloquear preparação de novos cartões e escrita de configuração, enquanto callbacks/conciliação ficam em instância compatível segregada. Não apontar essas rotas ao #260 isolado, nem desligar master key para tentar bloquear emissão: isso também impede verificar pendências. Se a separação de rotas/identidades não estiver ensaiada e documentada no pedido operacional, interromper novas operações afetadas e optar por correção progressiva; não alegar rollback completo. PIX manual só permanece liberado se a aplicação financeira e o acesso ao schema estiverem saudáveis e as proteções contra duplicidade continuarem ativas.
+
 ## Rollback e transações legítimas
 
 - Antes de adoção gerida: pode restaurar imagens anteriores compatíveis com #260, conservando schema aditivo. Não executar downgrade de banco como rollback padrão.
