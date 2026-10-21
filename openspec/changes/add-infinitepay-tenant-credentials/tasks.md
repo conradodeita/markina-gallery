@@ -28,7 +28,8 @@
 ## 6. Integração após a publicação de pagamentos em 21/10/2026
 
 - [x] 6.1 Integrar main 21b89c3 na branch existente por merge, preservar guards tardios/recuperação e snapshots imutáveis; incorporar o recibo documental de #265 e comprovar interação recuperação/troca de chave/compra nova e legado, reutilizando regressões e transporte sintético. Evidência: merge local a65e962, matriz PostgreSQL77/0 e recibo documental de #265 incorporado por cherry-pick, sem publicação do cofre.
-- [ ] 6.2 Corrigir a orientação antiga do card sobre desligar PIX global, conservando opções por link, conferência do recebedor, senha/OTP, segredo transitório e PIX manual. Executar testes do card e gates frontend afetados.
+- [x] 6.2 Corrigir a orientação antiga do card sobre desligar PIX global, conservando opções por link, conferência do recebedor, senha/OTP, segredo transitório e PIX manual. Evidência:13 testes do card aprovados, lint0erros/34avisos e build/TypeScript aprovados após merge main21; nova validação será necessária após integrar o delta de #266.
+- [ ] 6.4 Integrar localmente o candidato de #266 (mínimo/primeiro clique) mantendo ambos os contratos e repetir as regressões afetadas/backend e suíte/gates frontend do candidato único; preservar o manifesto de release0084 como candidato SEM cofre e comprovar recusa de publicação desta branch com0085, sem ampliar allowlist ou mascarar o gate.
 - [ ] 6.3 Atualizar revisão e plano com a base publicada e os limites de migration/keyring/rollback, retargetar o mesmo PR #262 para main, revisar diff/segredos e executar gates afetados e CI final do novo head. Não realizar merge do PR, publicação, migration ou provisão real.
 
 ## Workflow follow-up
