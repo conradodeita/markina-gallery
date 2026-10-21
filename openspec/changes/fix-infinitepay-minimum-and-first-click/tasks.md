@@ -11,5 +11,6 @@
 - [x] 3.1 Reproduzir ausência de navegação no primeiro clique e corrigir; cobrir URL válida, inválida, incerteza, erro, retomada e duplo clique sem enfraquecer idempotência.
 
 ## 4. Integração e entrega
+- [x] 4.0 Preparar manifesto estrito dos três arquivos API/web e classificação a partir do baseline publicado21b89c3, com regressões de aceitação exata e recusa de adulteração/arquivos não listados; não incluir cofre/migration nem executar publicação. Evidência: política operacional aprovada,18 testes de escopo e14 de classificação aprovados; gate real sobre a4b950a retorna somente_api_web.
 - [ ] 4.1 Executar regressões pertinentes, lint, typecheck, build e OpenSpec; revisar diff e manutenção proporcional e registrar evidências e limites.
 - [ ] 4.2 Criar PR focado em draft com plano mínimo de publicação/rollback e verificar CI final do candidato; sem merge ou deploy nesta autorização.

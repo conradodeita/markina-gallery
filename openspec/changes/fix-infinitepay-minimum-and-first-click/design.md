@@ -25,7 +25,11 @@ Ao receber `awaiting_payment` com URL HTTPS da origem de checkout permitida, a a
 
 ### Compatibilidade e manutenção proporcional
 
-Reutilizar o mutex de UI e a chave por revisão. Validar duplo clique, erro de rede e retomada sem emissão nova. A área afetada possui consumidores ativos; não remover módulos, CSS ou projeções históricas. Não ampliar manifesto, allowlist ou gates operacionais para contornar a recusa de candidato ainda não autorizado.
+Reutilizar o mutex de UI e a chave por revisão. Validar duplo clique, erro de rede e retomada sem emissão nova. A área afetada possui consumidores ativos; não remover módulos, CSS ou projeções históricas. Não flexibilizar gates operacionais nem incluir cofre/migration no release API/web.
+
+### Preparação exata para revisão, sem operação remota
+
+Após o proprietário pedir para concluir o roadmap, preparar no próprio PR o manifesto da correção: baseline observado `21b89c3`, novos blobs exatos de `provider_checkout.py`, `cart/page.tsx` e `cart/checkout-navigation.ts`. Incluir somente o novo arquivo de navegação na lista de runtime e seu teste na lista exata de operações; classificar os três caminhos como API/web. Manter revisão0084, pins de dependências, imagem base, gates de autenticação/aprovação/fingerprint e recusa de qualquer cofre, migration, worker ou arquivo não listado. Essa preparação local é revisável e não autoriza merge/deploy. Provar aceitação de blobs exatos e recusa de adulteração/arquivo semelhante não listado. A autorização operacional do release anterior não se estende ao novo candidato.
 
 ## Validation
 

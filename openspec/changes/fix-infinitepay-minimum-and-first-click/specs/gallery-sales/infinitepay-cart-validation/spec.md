@@ -37,3 +37,15 @@ A ação de continuar com cartão SHALL redirecionar a cliente na mesma aba apó
 #### Scenario: Retomar compra existente
 - **WHEN** uma compra aguardando pagamento já está presente ao carregar o carrinho
 - **THEN** a UI oferece seu link de retomada sem emitir novo checkout nem navegar sem ação explícita
+
+### Requirement: Preparação restrita do candidato API e web
+
+O candidato SHALL identificar o baseline publicado e os blobs exatos dos três arquivos de runtime afetados, mantendo a revisão0084 e os controles operacionais existentes. Arquivos semelhantes não listados, alterações sem blob revisado, cofre, migrations, workers e dependências novas MUST NOT ser admitidos por essa preparação. Aprovação de CI SHALL NOT equivaler a autorização de merge ou publicação.
+
+#### Scenario: Candidato exato para revisão
+- **WHEN** o candidato inclui somente o delta de mínimo e redirecionamento com os blobs do manifesto e seus testes/documentação
+- **THEN** os gates locais reconhecem somente API/web e conservam a necessidade de aprovação operacional e inventário antes da publicação
+
+#### Scenario: Runtime adulterado ou ampliação indevida
+- **WHEN** um arquivo admitido diverge do blob ou um arquivo adicional não listado é acrescentado
+- **THEN** o gate recusa o candidato em vez de aceitar wildcard ou ignorar a divergência

@@ -109,7 +109,7 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "5446cf4d7328ef6283ebfab50b5d1976d561fc8d":
+    if app_manifest.get("production_baseline_sha") != "21b89c332c6937b7079679888d52bd6a8aefe25d":
         raise AssertionError("baseline web diverge do inventário registrado")
     emergency = app_manifest.get("emergency_api", {})
     if emergency.get("baseline_sha") != "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f":

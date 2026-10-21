@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
 
 APP_RUNTIME = {
+    "backend/app/provider_checkout.py",
+    "frontend/app/library/cart/page.tsx",
+    "frontend/app/library/cart/checkout-navigation.ts",
     "backend/app/main.py",
     "backend/app/statistics_report.py",
     "backend/app/private_folder_overview.py",

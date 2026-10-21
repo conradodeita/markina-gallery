@@ -24,9 +24,21 @@ PostgreSQL local isolado já existente da missão #262, sem dados reais; sua exe
 
 A regressão no teste existente `prepara uma única tentativa` falhou antes da navegação: **0 chamadas** ao adaptador de navegação (1 failed/28 skipped, 2,18 s). Após a correção, o arquivo do carrinho passou com **43 testes**, 4,72 s, incluindo duplo clique com resposta retida, oito URLs inválidas, cinco estados não navegáveis, ausência de navegação no GET/foco e erro de rede com idempotência preservada. Posteriormente acrescentados testes do adaptador de mesma aba e de falha de navegação; sua validação ampliada será registrada abaixo.
 
-### Gate operacional ainda bloqueado
+### Gate operacional — recusa inicial antes da preparação
 
 `python scripts/test_production_release_workflow_policy.py` recusa a árvore modificada na linha 156: **arquivo de runtime app diverge do blob revisado**. Os manifests continuam descrevendo o runtime publicado e não autorizam estes novos blobs/arquivo de navegação. Não foram alterados allowlists, pins, wrappers ou scripts operacionais para forçar aprovação. Preparação de um novo candidato publicável requer revisão e atualização explícita do manifesto exato, com autorização própria; isso não impede validar funcionalmente a correção ou apresentar o PR em draft, mas impede declarar CI/release aprovados.
+
+### Preparação exata para revisão após pedido de conclusão do roadmap
+
+O checkpoint anterior foi superado por preparação local revisável, prevista no design/task4.0 antes do código: baseline21b89c3 já publicado e três blobs exatos da correção, com novo adaptador/teste de navegação nominados, sem wildcard. Não houve alteração dos mecanismos de autorização, fingerprint, migration, pins de dependências ou imagem base. A asserção do baseline no teste de política continua exata, atualizada para21b89c3; não foi removida. Cofre/migration0085 continuam recusados e excluídos.
+
+- `python scripts/test_production_release_workflow_policy.py`: **production release workflow policy: ok**.
+- `python -m unittest discover -s scripts -p test_prod_app_release_scope.py`: **18 testes aprovados**,128,929s, incluindo blob adulterado e arquivo semelhante não listado recusados.
+- `python -m unittest discover -s scripts -p test_classify_prod_release.py`: **14 testes aprovados**,4,344s.
+- `python scripts/check_prod_app_release_scope.py --base 21b89c332c6937b7079679888d52bd6a8aefe25d --target a4b950a`: **app_release_ready=true / somente_api_web**, usando o manifesto preparado localmente. O commit completo e o classificador real serão verificados antes de enviar o PR.
+- Ruff dos arquivos backend e scripts alterados e `git diff --check`: aprovados.
+
+Esses resultados não autorizam merge/deploy nem comprovam inventário, aprovação do novo candidato ou imagens em produção. A revisão do PR inclui o manifesto; autorização operacional continua etapa separada.
 
 ### Gates ampliados executados
 
