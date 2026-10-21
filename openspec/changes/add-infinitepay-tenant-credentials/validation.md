@@ -30,3 +30,25 @@
 - Repetição direcionada nesta retomada: `test_tenant_owner_reset.py` + `test_tenant_migration.py` — **18 passed, 2 skipped em 148,69 s**. Skips: symlink sem privilégio no Windows (exercitado pelo CI Linux) e variante SQLite do cleanup exclusivo PostgreSQL. Nenhuma operação de reset/limpeza foi executada fora dos schemas/bancos sintéticos descartáveis.
 - Ruff global backend e arquivos de scripts alterados aprovado; `compileall` dos scripts aprovado. Políticas `scripts.test_check_ci_results`, `scripts.test_classify_ci_scope`, `scripts.test_python_security_release` — **45 testes passaram**. OpenSpec strict e `git diff --check` aprovados. Validações financeiras/cripto/UI anteriores permanecem aplicáveis; implementações não alteradas nesta retomada.
 - Revisão de segurança final limitada às fronteiras #260/#262 registrada em `review.md`. Plano detalhado em `release-plan.md` exige inventário atual, backup/restauração, autorização separada para migration e recuperação por imagem compatível/digest; nada executado na Oracle. Compra `e2194ce5` e PR #261 permanecem intocados. CI integral do próximo head continua pendente; não declarar prontidão até sua conclusão.
+
+## Resultado integral aprovado
+
+Commit de implementação/correções `8465c57d265ed8add463ebf9841b20285fcff4fc`; [CI 39545805272](https://github.com/conradodeita/markina-gallery/actions/runs/39545805272) concluído com **success**, sem job obrigatório pendente ou cancelado:
+
+| Gate | Resultado observado nos logs |
+|---|---|
+| Backend completo | **1751 passed, 24 skipped**, 1917,15 s; quatro falhas anteriores corrigidas |
+| Concorrência multi-tenant PostgreSQL | **4 passed** |
+| Checkout concorrente PostgreSQL | **1 passed** |
+| Cofre, snapshots e migration PostgreSQL | **16 passed**, 52,27 s |
+| Inventário de exclusão PostgreSQL | **1 passed** |
+| Frontend | **63 arquivos/567 testes passaram**, lint/build aprovados |
+| Imagens nativas | Jobs AMD64 e ARM64 **success**, incluída conferência de versões frontend no lockfile |
+| Gemma | **success**, inferência sintética offline |
+| OpenSpec | **131 passed, 0 failed** |
+| Gitleaks | **success**, histórico completo |
+| Política agregadora | **success**, mensagem `All required and applicable CI validations succeeded.` |
+
+Os jobs de release/deploy foram **skipped**, como esperado em PR, e não contam como publicação. Nenhuma operação Oracle ou dado financeiro real foi alterado. PR #260 continua no SHA base e não foi modificado. As tarefas de implementação foram encerradas com essa evidência; sincronização de specs principais e arquivo continuam sujeitos à revisão humana.
+
+O commit subsequente registra somente encerramento documental, sem alterar código/testes/workflows/dependências. O CI do head documental será conferido antes da resposta final; seu link/SHA/resultados serão adicionados ao corpo do PR #262, evitando afirmar aprovação de head não verificado ou gerar commits recursivos apenas para citar o próprio SHA.

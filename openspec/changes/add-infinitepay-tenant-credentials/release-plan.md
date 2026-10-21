@@ -55,3 +55,5 @@ Após adoção gerida, a identidade de recuperação deverá ser um digest aprov
 ## Decisão
 
 Implementação local/PR revisável e CI aprovado permitem solicitar revisão e autorização de integração. Publicação continua NO-GO até revisão humana, ensaio autorizado, inventário/backup, material mestre e plano autorizado de migration coordenada. Recuperação de `e2194ce5` continua NO-GO sem evidência financeira InfinitePay e autorização específica. CI verde não autoriza nenhuma dessas operações.
+
+Evidência técnica: commit `8465c57d265ed8add463ebf9841b20285fcff4fc`, CI integral [39545805272](https://github.com/conradodeita/markina-gallery/actions/runs/39545805272) aprovado em 21/10/2026. GO para solicitar revisão/autorização de integração, mantendo #260 → main primeiro, depois retarget #262 e CI do candidato integrado. Não é autorização de merge nem declaração de CI contra uma main futura. O encerramento documental subsequente mantém a mesma implementação; o SHA/CI exatos do head final ficam no corpo do PR #262 após conferência, sem presumir aprovação. Nenhuma imagem/digest atual da Oracle foi inferida desses resultados.

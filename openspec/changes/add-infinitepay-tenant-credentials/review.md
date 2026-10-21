@@ -2,7 +2,7 @@
 
 ## Escopo e resultado
 
-Revisão local em 21/10/2026 do contrato herdado de #260 (`0959c64`) e do delta #262, incluindo correções de catálogo/reset e CI nativo. Sem auditoria geral, alteração do PR pai ou do #261, consulta operacional Oracle, segredo real ou chamada financeira externa. Não foi identificado relaxamento de autorização, fallback entre contas ou reemissão automática na área revisada. Aprovação do candidato continua condicionada ao CI integral e à revisão humana.
+Revisão local em 21/10/2026 do contrato herdado de #260 (`0959c64`) e do delta #262, incluindo correções de catálogo/reset e CI nativo. Sem auditoria geral, alteração do PR pai ou do #261, consulta operacional Oracle, segredo real ou chamada financeira externa. Não foi identificado relaxamento de autorização, fallback entre contas ou reemissão automática na área revisada. CI integral `39545805272` aprovado no commit `8465c57d265ed8add463ebf9841b20285fcff4fc`, conforme `validation.md`. Revisão humana e gates operacionais continuam necessários; esta é revisão técnica local, não aceite humano nem pagamento real comprovado.
 
 | Fronteira | Evidência de código e validação pertinente |
 |---|---|
