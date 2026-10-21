@@ -9581,6 +9581,7 @@ def client_purchase_history(
             ProviderPayment.id.in_(provider_payment_ids),
         ))
     } if provider_payment_ids else {}
+    recoveries = cart_recovery_statuses(db, tenant_id=tenant_id, payments=provider_payments.values())
     item_rows = (
         list(
             db.scalars(
@@ -9630,6 +9631,9 @@ def client_purchase_history(
     for order in orders:
         gallery = operational_galleries.get(order.derived_gallery_id)
         canonical_parent = canonical_parents.get(order.parent_gallery_id)
+        recovered_at = recoveries.get(order.provider_payment_id, {}).get("reopened_at") if (
+            order.payment_status == "cancelled" and order.provider_payment_id in provider_payments
+            and provider_payments[order.provider_payment_id].state == "exception") else None
         item_payloads = []
         for item in items_by_order[order.id]:
             historical_media = history_by_item.get(item.id)
@@ -9673,6 +9677,7 @@ def client_purchase_history(
                     "provider_payment_state": provider_payments[order.provider_payment_id].state,
                     "provider_checkout_url": provider_payments[order.provider_payment_id].checkout_url
                     if provider_payments[order.provider_payment_id].state == "awaiting_payment" else None,
+                    **({"provider_cart_reopened_at": recovered_at} if recovered_at else {}),
                 } if order.provider_payment_id in provider_payments else {}),
                 "commercial_state": (
                     "selection_finalized"
@@ -9721,6 +9726,8 @@ def client_purchase_history(
             "id": str(payment_id),
             "state": order_payload["provider_payment_state"],
             "checkout_url": order_payload["provider_checkout_url"],
+            **({"cart_reopened_at": order_payload["provider_cart_reopened_at"]}
+               if order_payload.get("provider_cart_reopened_at") else {}),
             "total_cents": 0,
             "orders": [],
         })
@@ -12026,6 +12033,18 @@ def _payment_dashboard_data(
 
     order_query = (
         select(SaleOrder, Client, DerivedGallery, ParentGallery).where(or_(Client.id.is_(None), Client.tenant_id == tenant_id), or_(DerivedGallery.id.is_(None), DerivedGallery.tenant_id == tenant_id), or_(ParentGallery.id.is_(None), ParentGallery.tenant_id == tenant_id), SaleOrder.tenant_id == tenant_id)
+        .where(~and_(
+            SaleOrder.payment_status == "pending", SaleOrder.frozen_at.is_(None),
+            SaleOrder.confirmed_at.is_(None), SaleOrder.assets_removed_at.is_(None),
+            SaleOrder.provider_payment_id.is_(None),
+            SaleOrder.payment_group_id.is_not(None),
+            SaleOrder.payment_group_id.in_(select(PaymentGroup.id).where(
+                PaymentGroup.tenant_id == tenant_id, PaymentGroup.state == "draft")),
+            ~select(PaymentCommunication.id).where(PaymentCommunication.tenant_id == tenant_id, or_(
+                PaymentCommunication.sale_order_id == SaleOrder.id,
+                PaymentCommunication.payment_group_id == SaleOrder.payment_group_id,
+            )).correlate(SaleOrder).exists(),
+        ))
         .outerjoin(Client, Client.id == SaleOrder.client_id)
         .outerjoin(DerivedGallery, DerivedGallery.id == SaleOrder.derived_gallery_id)
         .outerjoin(ParentGallery, ParentGallery.id == SaleOrder.parent_gallery_id_snapshot)

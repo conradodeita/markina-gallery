@@ -51,3 +51,30 @@ O carrinho recarrega por foco; recuperação autorizada com seleção elegível 
 - Vitest dirigido: **38 aprovados em 3 arquivos, 9,71 s** (cart-recovery, cart-recovery-page, cart). A primeira coleta teve **37 aprovados/1 falha**, limitada ao seletor ambíguo da fixture com duas clientes; a consulta foi restrita ao card da cliente alvo. Não foi relaxada expectativa de produto.
 - TypeScript --noEmit aprovado após os arquivos/testes da UI.
 - Lint amplo, testes amplos, build e matriz PostgreSQL de integração estão em andamento em 3.1; não são declarados aprovados aqui.
+
+## Task 2.3 — aparência de duplicação
+
+O proprietário apontou os pedidos c648edb4/e1d93b85 e reafirmou que a cliente não deve perder a seleção. Oracle foi acessada somente com SELECT em transação READ ONLY, sem sessão de cliente: c648edb4 está cancelled, vinculado à eae11005 em exception com recuperação auditada; e1d93b85 é pending, sem frozen_at/confirmed_at/ProviderPayment, associado a PaymentGroup draft. Ambos têm 22 fotos/R$154; as 22 fotos continuam selecionadas. Os 15 serviços próprios permaneciam healthy na consulta de inventário. Nenhum registro, segredo, serviço ou checkout real foi alterado.
+
+Regressão sintética antes da correção: **1 falha, 12 desmarcados, 15,45 s**, pois a preparação do PIX tornava 4 pedidos visíveis onde só havia 2 originais; os outros 2 eram rascunhos da mesma seleção. Após a correção: **1 aprovado, 12 desmarcados, 19,43 s**, comprovando omissão do rascunho, seleção preservada, histórico de reabertura da própria cliente e promoção da nova compra somente após informar PIX. A consulta mantém pedidos legados sem grupo, comunicações, confirmados e registros removidos.
+
+Projeção da cliente e UI de Compras agora indicam Carrinho reaberto, Abrir carrinho e seleção devolvida; não exibem o aviso genérico de conferência nem a URL antiga para o caso auditado. O card administrativo também identifica a reabertura. Rascunho interno não é excluído nem publicado como outra compra no painel financeiro; fotos continuam em Seleções em aberto. Remover fotos pelo acesso da cliente apagaria a seleção, portanto não é procedimento de recuperação.
+
+Vitest afetado final: **97 aprovados em 10 arquivos, 41,65 s**, incluindo histórico/entrega e painel completo. TypeScript --noEmit, build Next 16.4.2 e lint amplo aprovados (**0 erros, 34 avisos preexistentes**). Uma primeira coleta teve 52 aprovados/1 falha por seletor textual que passou a encontrar também o novo badge; o teste foi limitado à mensagem de confirmação esperada. O lint inicial detectou leitura de ref durante render do novo modal; a decisão idempotente passou a state, preservando a chave e o motivo no reenvio, sem supressão da regra.
+
+## Checkpoint 3.1
+
+- Suíte frontend ampla anterior ao acréscimo do histórico: **582 aprovados em 65 arquivos, 166,34 s**. Reutilizada junto aos 97 afetados finais; o CI repetirá a suíte completa no candidato.
+- Ruff amplo backend/app e backend/tests aprovado. OpenSpec 1.14.0 (mesma versão fixada no CI): **132 aprovados, 0 falhas**; change atual aprovada novamente após 2.3. O CLI global 1.14.1 promove avisos existentes de textos longos e retornou 102/30; não foi usado como evidência de aprovação nem motivou alterações fora do escopo.
+- Um comando misto em PostgreSQL passou os 13 casos atuais da API e o primeiro caso legado (14 aprovados), mas falhou no setup legado seguinte em Base.metadata.drop_all: FK use_alter sem nome não permite DROP CONSTRAINT no PostgreSQL. Esse comando não é declarado aprovado. As fixtures novas usam schemas isolados; as regressões legadas estão sendo repetidas em SQLite temporário, como no CI, e a API isolada está sendo repetida separadamente.
+- A matriz PostgreSQL ampla iniciada antes de 2.3 e as repetições acima ainda não terminaram; resultado final/CI do novo PR pendentes. O passo de checkout PostgreSQL do CI foi estendido para rodar todos os novos casos, sem alterar dependências ou gates Python.
+
+### Publicação e rollback propostos (não executados)
+
+1. Revisar/integrar #263 e este PR em main, com autorização de merge própria e checks finais concluídos; identificar o SHA integrado exato. #261/#262/#264 não são modificados por esta change.
+2. Repetir inventário do alvo markina.pickyourpic.com.br, entrada 127.0.0.1:8080, API 8000/web 3000 internos, projeto markina-gallery em /opt/markina-gallery. Comparar configurações, imagens API/web e saúde; obter autorização operacional para esse SHA e rollback. Inventário read-only desta sessão observou API 57a6dd53b5f5, web a380cac2b174 e nginx ee8973e6551e; reconferir antes de qualquer ação.
+3. Publicar API/web coordenadas pelo procedimento existente de release aprovado, sem migration, mudança de chave/configuração, workers ou infraestrutura compartilhada; recarregar somente o nginx próprio se exigido pelo procedimento.
+4. Conferir saúde, negação sem sessão e UI com sessão legítima do proprietário: recuperação antiga identificada, rascunho sem duplicação e mesmas fotos no carrinho. Não criar checkout, pagar ou repetir recuperação real como teste sem autorização específica.
+5. Se necessário e autorizado, voltar às imagens/API_VERSION anteriores, preservando banco e auditoria. Não restaurar backup ou desfazer uma recuperação depois de nova atividade da cliente; exception/cancelled/draft já são compreendidos pelo código publicado.
+
+Sem merge, deploy, restart, migration ou escrita no Oracle nesta implementação. Esta funcionalidade exige API e web; não exige publicação de worker/cofre ou mudança na API InfinitePay. Links antigos não são cancelados remotamente. CI e revisão humana permanecem gates de publicação; aprovação técnica não equivale a autorização operacional.

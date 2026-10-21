@@ -38,6 +38,12 @@ Acrescentar capacidade/revisão e indicador de reabertura à projeção administ
 
 A leitura do carrinho inclui uma revisão opaca da última recuperação autorizada daquele cliente/tenant. O refresh por foco já existe; ao receber nova recuperação com carrinho elegível e sem emissão bloqueante, a UI descarta a chave antiga e conserva as fotos devolvidas pelo servidor. Chaves de cartão também pertencem à revisão da seleção: falha incerta na mesma revisão mantém a chave, enquanto seleção diferente usa chave nova. Nunca emitir automaticamente ou usar simples ausência de URL/tempo como sinal de reabertura. Resposta terminal atrasada força nova leitura, sem manter bloqueio local obsoleto. O backend continua recusando nova cobrança de fotos reservadas, independentemente da chave enviada.
 
+### Histórico e rascunho PIX após recuperação
+
+O proprietário apontou aparência de duplicação em c648edb4/e1d93b85 durante a implementação. Consulta Oracle estritamente read-only confirmou: o primeiro pedido está cancelled, vinculado à compra eae11005 em exception e à auditoria operacional; o segundo contém as mesmas 22 fotos/R$154, mas é pending/unfrozen/unconfirmed, sem ProviderPayment e ligado a PaymentGroup draft. Nenhuma mutação foi executada. A preparação normal do PIX pelo carrinho cria esse rascunho interno; sua existência técnica não equivale a compra informada.
+
+Reutilizar a auditoria de recuperação na projeção da própria cliente: histórico antigo indica Carrinho reaberto e permite Abrir carrinho, sem URL antiga nem mensagem genérica de reserva/conferência. Na projeção financeira administrativa, omitir somente pedido pending, não congelado/confirmado/removido, vinculado a grupo PIX draft e sem comunicação por grupo/pedido nem provedor. As fotos permanecem em Seleções em aberto; report_group continua promovendo a compra pelo contrato existente. Não excluir registros/banco, esconder confirmação real nem modificar preços/snapshots. Esse tratamento aplica o requisito já existente de unified-client-cart-and-pix: preparar QR Code mantém carrinho, sem nova compra no histórico.
+
 ## Risks / Trade-offs
 
 - [Link antigo pode continuar pagável] → decisão manual explícita e auditada, sem garantia de cancelamento remoto; preservação de exceção/evidência e bloqueio de confirmação automática do pedido cancelado.
@@ -47,4 +53,4 @@ A leitura do carrinho inclui uma revisão opaca da última recuperação autoriz
 
 ## Migration Plan
 
-Sem migration. Testar localmente com dados sintéticos e PostgreSQL isolado. Preparar PR draft empilhado sobre #263, sem alterar sua branch nem #261/#262/#264. Publicação futura de API e web coordenada, mediante autorização, inventário e gates existentes; preservar worker/infraestrutura. Rollback de código deve continuar compreendendo exception/cancelled, que já existem na versão publicada; não desfazer recuperações ou restaurar banco automaticamente após nova atividade da cliente. Sincronização/arquivo somente após revisão humana.
+Sem migration. Testar localmente com dados sintéticos e PostgreSQL isolado; estender somente o passo de checkout PostgreSQL do CI para incluir os testes de recuperação, pois SQLite não comprova locks/concorrência. Preparar PR draft empilhado sobre #263, sem alterar sua branch nem #261/#262/#264. Publicação futura de API e web coordenada, mediante autorização, inventário e gates existentes; preservar worker/infraestrutura. Rollback de código deve continuar compreendendo exception/cancelled, que já existem na versão publicada; não desfazer recuperações ou restaurar banco automaticamente após nova atividade da cliente. Sincronização/arquivo somente após revisão humana.

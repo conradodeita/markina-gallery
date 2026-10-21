@@ -1,6 +1,6 @@
 """Rotas administrativas: reabertura não é confirmação PIX nem ação da cliente."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import Response
@@ -252,3 +252,34 @@ def test_fotos_canonicas_e_legadas_voltam_sem_reselecao_nem_galeria_extra():
         assert set(db.execute(select(PhotoSelection.parent_gallery_id, PhotoSelection.derived_gallery_id,
             PhotoSelection.photo_asset_id).where(PhotoSelection.client_id == owner))) == selected
         assert db.scalar(select(func.count(DerivedGallery.id))) == gallery_count
+
+
+def test_reabertura_aparece_no_historico_e_rascunho_pix_nao_parece_compra_duplicada(case):
+    decision(case, preview(case))
+    buyer, admin = browser_for(case["owner"], role=Role.CLIENT), browser_for(case["actor"])
+    history = buyer.get("/library/purchases").json()
+    original = history["provider_payment_groups"][0]
+    assert browser_for(case["other"], role=Role.CLIENT).get("/library/purchases").json().get("provider_payment_groups", []) == []
+    before = state(case)
+    prepared = buyer.post("/library/cart/prepare")
+    assert prepared.status_code == 200, prepared.text
+    group_id = prepared.json()["payment"]["id"]
+    with SessionLocal() as db:
+        drafts = set(db.scalars(select(SaleOrder.id).where(SaleOrder.payment_group_id == group_id)))
+        assert len(drafts) == 2
+    dashboard = admin.get("/admin/payment-communications").json()
+    visible = [order for group in dashboard["groups"] for order in group["orders"]]
+    assert len(visible) == 2 and not drafts.intersection({UUID(order["id"]) for order in visible})
+    assert original["cart_reopened_at"] and original["state"] == "exception"
+    assert original["checkout_url"] is None
+    assert all(order["provider_cart_reopened_at"] for order in original["orders"])
+    assert sum(selection["selected_count"] for selection in dashboard["selections_without_order"]) == 3
+    assert not buyer.get("/library/purchases").json()["payment_groups"]
+    assert state(case)[:3] == before[:3] and state(case)[4] == before[4]
+    reported = buyer.post(f"/library/payments/{group_id}/report", json={
+        "revision": prepared.json()["payment"]["revision"], "idempotency_key": str(uuid4())})
+    assert reported.status_code == 200, reported.text
+    history = buyer.get("/library/purchases").json()
+    assert len(history["payment_groups"]) == 1 and history["payment_groups"][0]["id"] == group_id
+    dashboard = admin.get("/admin/payment-communications").json()
+    assert dashboard["summary"]["orders"] == 4 and dashboard["summary"]["reported_orders"] == 2

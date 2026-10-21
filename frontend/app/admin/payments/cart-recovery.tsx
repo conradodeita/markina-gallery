@@ -18,7 +18,7 @@ function RecoveryDialog({ clientName, paymentId, status, onClose, onSuccess, onC
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const locked = useRef(false);
-  const decision = useRef<Decision | null>(null);
+  const [decision, setDecision] = useState<Decision | null>(null);
   const [plan, setPlan] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -62,8 +62,8 @@ function RecoveryDialog({ clientName, paymentId, status, onClose, onSuccess, onC
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (locked.current || !plan || !acknowledged || reason.trim().length < 3) return;
-    decision.current ??= { plan, key: crypto.randomUUID(), reason: reason.trim() };
-    const submitted = decision.current;
+    const submitted = decision ?? { plan, key: crypto.randomUUID(), reason: reason.trim() };
+    setDecision(submitted);
     locked.current = true; setBusy(true); setError("");
     try {
       const response = await fetch(endpoint, { method: "POST", credentials: "same-origin",
@@ -95,7 +95,7 @@ function RecoveryDialog({ clientName, paymentId, status, onClose, onSuccess, onC
         <p>Meios disponíveis: {[plan.card_available ? "Cartão de crédito" : null, plan.pix_available ? "PIX" : null].filter(Boolean).join(" e ")}.</p>
         <label htmlFor={reasonId}>Motivo da reabertura</label>
         <input id={reasonId} required minLength={3} maxLength={100} value={reason}
-          disabled={busy || Boolean(decision.current)} onChange={(event) => setReason(event.target.value)} />
+          disabled={busy || Boolean(decision)} onChange={(event) => setReason(event.target.value)} />
         <label className={styles.acknowledgement}><input type="checkbox" checked={acknowledged} disabled={busy}
           onChange={(event) => setAcknowledged(event.target.checked)} />
           Autorizo devolver as fotos ao carrinho. Entendo que isso não encerra o checkout anterior na InfinitePay nem confirma pagamento.

@@ -12,6 +12,7 @@ O fotógrafo precisa devolver ao carrinho as fotos de uma compra de cartão que 
 - Registrar a decisão manual como exceção local auditada, sem afirmar recebimento, não criação ou cancelamento remoto. O fotógrafo reconhece que a reabertura local não encerra um eventual link antigo.
 - Recusar compra confirmada/NSU/recibo verificado, ownership incorreto, snapshot divergente ou seleção inelegível. Garantir transação, fingerprint, revisão e idempotência.
 - Impedir que uma resposta atrasada da emissão coloque novamente em aguardando pagamento uma compra manualmente recuperada.
+- Identificar a recuperação no histórico da cliente com acesso ao carrinho; a preparação local do PIX continua seleção em aberto e não deve aparecer como outra compra no painel financeiro.
 
 ## Capabilities
 

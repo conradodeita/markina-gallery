@@ -9,6 +9,7 @@
 
 - [x] 2.1 Expor prévia/confirmação administrativas, capacidade/revisão/indicador na projeção e revisão de recuperação da própria cliente no carrinho; testar autenticação, isolamento A/B, inputs, conflito, fotos canônicas e preservação de decisões PIX/receitas/entregas.
 - [x] 2.2 Implementar Reabrir carrinho no card da cliente por compra e retomada no carrinho com chave nova após reabertura validada, sem selecionar novamente; executar testes de componente para prévia/confirmar/cancelar, falha, duplo clique, estados confirmados sem ação e idempotência da emissão incerta, mantendo filtros/fotos/paginação.
+- [x] 2.3 Identificar reabertura auditada no histórico da cliente com acesso ao carrinho e omitir rascunho PIX não comunicado do painel financeiro, preservando seleção, comunicação/confirmados e registros. Reproduzir o cenário e executar regressões API/UI.
 
 ## 3. Integração e entrega
 

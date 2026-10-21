@@ -128,6 +128,12 @@ const financialColor: Record<FinancialStatus, string> = {
   exception: "var(--payment-status-exception)",
   hold: "var(--payment-status-hold)",
 };
+function groupPresentation(group: ClientGroup) {
+  return group.orders.length > 0 && group.orders.every((order) => order.provider_payment_state === "exception"
+    && Boolean(order.provider_cart_recovery?.reopened_at))
+    ? { label: "Carrinho reaberto", tone: "neutral" as const, className: undefined }
+    : { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
+}
 const decisionLabel = {
   pending_review: "Aguardando revisão",
   confirmed: "Pagamento confirmado",
@@ -373,7 +379,9 @@ function PaymentsDashboard() {
 
     <div className="payment-client-groups">
       {dashboard.groups.map((group) => <section className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
-        <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p><StatusBadge tone={financialPresentation[group.financial_status].tone} className={`payment-status-badge--${group.financial_status}`}>{financialPresentation[group.financial_status].label}</StatusBadge><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
+        <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p>
+          <StatusBadge tone={groupPresentation(group).tone} className={groupPresentation(group).className}>{groupPresentation(group).label}</StatusBadge>
+          <h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
           {group.orders.map((order, index) => <OrderCard key={order.id} order={order} clientId={group.client.id} clientName={group.client.name}
             showCartRecovery={!group.orders.slice(0, index).some((previous) => previous.provider_payment_id === order.provider_payment_id)}
@@ -516,7 +524,8 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
   onCartRecoveryRefresh: () => Promise<void>; onRefresh: () => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const presentation = financialPresentation[order.financial_status];
+  const presentation = order.provider_cart_recovery?.reopened_at
+    ? { label: "Carrinho reaberto", tone: "neutral" as const } : financialPresentation[order.financial_status];
   const communication = order.communication;
   const paymentGroup = communication?.payment_group;
   const quantity = order.folders.reduce((total, folder) => total + folder.items.length, 0);
@@ -526,7 +535,7 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={order.provider_cart_recovery?.reopened_at ? undefined : `payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>

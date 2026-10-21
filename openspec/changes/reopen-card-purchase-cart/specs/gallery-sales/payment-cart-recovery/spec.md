@@ -53,6 +53,15 @@ O sistema SHALL conservar compras, URLs, tentativas, pedidos e preços anteriore
 - **THEN** o fotógrafo vê que o carrinho foi reaberto e conserva o histórico antigo
 - **AND** uma nova escolha de pagamento usa o fluxo normal do carrinho
 
+#### Scenario: Cliente consulta a compra recuperada
+- **WHEN** a cliente acessa a compra com recuperação auditada, inclusive a recuperação operacional anterior
+- **THEN** vê Carrinho reaberto e acesso ao carrinho, sem bloqueio genérico da emissão antiga nem botão para seu checkout antigo
+
+#### Scenario: Preparação PIX após reabertura
+- **WHEN** o carrinho prepara um rascunho PIX ainda não comunicado
+- **THEN** as fotos continuam como seleção em aberto e o rascunho não aparece como outra compra no painel financeiro
+- **AND** uma comunicação ou confirmação real continua visível com o histórico preservado
+
 ### Requirement: Recusa de confirmação ou processamento conhecido
 Reabertura MUST NOT aceitar pagamento confirmado, NSU persistido, recibo verificado ou verificação financeira em processamento, nem pedido entregue ou snapshot inconsistente. A prévia SHALL ser validada novamente na confirmação, com recusa integral se o contexto financeiro ou a seleção mudou.
 

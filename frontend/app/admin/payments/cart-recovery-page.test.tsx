@@ -75,7 +75,7 @@ it("reabre pelo card e preserva filtros, páginas carregadas e fotos expandidas"
   await screen.findByText(/1 foto\(s\) da compra voltarão selecionadas/);
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: "Confirmar e reabrir carrinho" }));
-  await screen.findByText(/Carrinho reaberto/);
+  await screen.findByText(/As fotos foram devolvidas à seleção da cliente/);
   await waitFor(() => expect(requests).toHaveLength(5));
   expect(screen.getByRole("heading", { name: "Cliente b" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Ampliar order-a.jpg" })).toBeTruthy();

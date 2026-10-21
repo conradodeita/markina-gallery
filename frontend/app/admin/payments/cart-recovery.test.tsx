@@ -21,7 +21,7 @@ async function open() {
 }
 
 it("mostra a prévia integral e cancelar não confirma nem muda a compra", async () => {
-  const fetcher = vi.fn((_path: string, _options?: RequestInit) => response(plan));
+  const fetcher = vi.fn<(path: string, options?: RequestInit) => Promise<Response>>(() => response(plan));
   const refresh = vi.fn();
   vi.stubGlobal("fetch", fetcher);
   render(<CartRecoveryActions {...props} onRefresh={refresh} />);
@@ -41,7 +41,7 @@ it("mostra a prévia integral e cancelar não confirma nem muda a compra", async
 
 it("confirma a compra uma vez, preserva o motivo e bloqueia duplo clique e Escape durante envio", async () => {
   let finish: (value: Response) => void = () => {};
-  const fetcher = vi.fn((path: string, _options?: RequestInit) => path.endsWith("/preview") ? response(plan)
+  const fetcher = vi.fn<(path: string, options?: RequestInit) => Promise<Response>>((path) => path.endsWith("/preview") ? response(plan)
     : new Promise<Response>((resolve) => { finish = resolve; }));
   const refresh = vi.fn(async () => {});
   vi.stubGlobal("fetch", fetcher);
