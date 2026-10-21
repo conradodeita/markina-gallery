@@ -104,6 +104,12 @@ Integração inicia inativa. Mocks/fixtures sintéticos podem comprovar o compor
 
 ## Risks / Trade-offs
 
+### Correção restrita dos gates — 21/10/2026
+
+Autorização atual permite somente inventário Oracle de leitura, correção local dos gates, testes e CI do PR #260. Merge, deploy, restart, migration, provisionamento e alterações financeiras estão proibidos nesta missão. Os PRs #261/#262 permanecem fora do escopo.
+
+O inventário identifica API `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f` e web/checkout `27e1b8ffa0917b4dc2120bd4a26e09c6cae47e0f`. A API instalada conserva quatro versões Python anteriores ao commit #254, já presente na main. Portanto a baseline histórica continua correta para a API e não pode ser substituída pelo checkout ou pela main. A correção independente admite somente os dois módulos omitidos no manifesto, com hashes exatos. Dependências não publicadas e gates de Compose/preflight permanecem bloqueios; não ampliar allowlists para forçar um GO. Evidência por serviço e menor próxima intervenção ficam em `release-gates-20261021.md`.
+
 ### Preservação de workers fora do escopo
 
 O deploy desta change SHALL preservar os estados de processamento facial e RAW já operacionais. O workflow não passa flags para ligar/desligar facial: o script preserva o valor de `FACIAL_PROCESSING_ENABLED` do `.env.homolog`. Para RAW, o script usa o modo `auto`, detecta se o worker do projeto está ativo antes de preparar o Compose e somente inclui/reinicia o overlay RAW se já estiver ativo. Assim o rollout de cartão não inicia consumidores de dados de outra finalidade nem desativa um módulo existente.

@@ -15,6 +15,8 @@ MANIFEST = ROOT / "openspec/changes/add-production-app-release-workflow/runtime-
 RUNTIME_FILES = {
     "backend/app/main.py",
     "backend/app/infinitepay_binding.py",
+    "backend/app/infinitepay_settings.py",
+    "backend/app/payment_availability.py",
     "backend/app/payment_provider.py",
     "backend/app/provider_checkout.py",
     "backend/app/payment_export.py",

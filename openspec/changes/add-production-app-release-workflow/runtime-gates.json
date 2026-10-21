@@ -4,6 +4,8 @@
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
     "backend/app/infinitepay_binding.py": "7a6dfc1b550545cfdc5d903bad5ce8d94bb8cc04",
+    "backend/app/infinitepay_settings.py": "b96f5abfa6434305c751fbece1dcc65e10b4478d",
+    "backend/app/payment_availability.py": "78ba7b53f4f3d32e5974e3f3bc91ad3d2f065aba",
     "backend/app/main.py": "42528180071cd5c9e980ccf1575ffc9a635fb569",
     "backend/app/payment_export.py": "e7742d5fdd271c93a4af42870284f17b11adc3a2",
     "backend/app/payment_provider.py": "e72329ccf2e55529d32dc494ff6f7b75196e1c92",
