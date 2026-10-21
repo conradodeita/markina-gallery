@@ -7,11 +7,13 @@
 
 ## 2. Revisão e operação autorizada
 
-- [ ] 2.1 Preparar PR draft independente, revisar diff e concluir CI pertinente no head; registrar SHA/run sem modificar PRs #261/#262/#263 nem ampliar gates de publicação.
+- [x] 2.1 Preparar PR draft independente, revisar diff e concluir CI pertinente no head; registrar SHA/run sem modificar PRs #261/#262/#263 nem ampliar gates de publicação.
 - [x] 2.2 Apresentar inventário próprio, versão API/portas/subdomínio e impacto transacional; executar simulação remota com rollback e salvar pré-imagem 0600; verificar fotos/totais/meios e registrar divergências antes de aplicar.
 
-Evidência: validation.md e pré-imagem protegida no servidor. Task 2.2 executada como validação independente enquanto o CI do PR #264 aguardava; não houve commit financeiro. Aplicação 2.3 permanece condicionada aos gates técnicos, sem exigir confirmação externa dispensada pelo titular.
-- [ ] 2.3 Aplicar somente o lote autorizado com fingerprint validado e conferir por leitura PIX/seleção/snapshots antigos, idempotência e preservação de 04381887; registrar resultado e risco de links externos não invalidados, sem deploy.
+Histórico: task 2.2 executada com rollback enquanto o CI do PR #264 aguardava; naquela etapa não houve commit financeiro. A aplicação 2.3 aguardou os gates técnicos, sem exigir confirmação externa dispensada pelo titular. Evidência completa em validation.md e arquivos protegidos no servidor.
+- [x] 2.3 Aplicar somente o lote autorizado com fingerprint validado e conferir por leitura PIX/seleção/snapshots antigos, idempotência e preservação de 04381887; registrar resultado e risco de links externos não invalidados, sem deploy.
+
+Evidência final: CI 39636729977 aprovado no candidato 240841298191b6328db6fa0cd106f5bda4c997fb; ferramenta SHA256 515d12b556e0946fd6c63aaed0f8ebad72909ca2f82ed55ca76f57ac438778b3. Simulação v2 preservou o fingerprint; aplicação e leitura posterior confirmaram PIX nos três carrinhos, 50 seleções, três auditorias e snapshots preservados. Repetição retornou already_applied/mutated=false e leitura idêntica. Detalhes verificáveis em validation.md. O seguimento documental não altera a ferramenta já validada e aplicada.
 
 ## Workflow follow-up
 
