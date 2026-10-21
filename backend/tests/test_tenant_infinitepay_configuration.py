@@ -1,5 +1,6 @@
 """Preparação por conta/sessão, com OTP sintético e sem transporte externo."""
 
+import json
 from datetime import timedelta
 from uuid import UUID
 
@@ -32,8 +33,15 @@ links = _links
 
 
 @pytest.fixture(autouse=True)
-def synthetic_recipient(monkeypatch):
+def synthetic_recipient(monkeypatch, graph):
     monkeypatch.setattr(admin_account, "_admin_whatsapp_phone", lambda _db, *, tenant_id: "+5511999990010")
+    monkeypatch.setenv("APP_ENV", "development")
+    bindings = {str(row["tenant"].id): f"CONFIG_TEST_{index}" for index, row in enumerate(graph)}
+    monkeypatch.setenv("INFINITEPAY_TENANT_BINDINGS", json.dumps(bindings))
+    for index in range(len(graph)):
+        alias = f"CONFIG_TEST_{index}"
+        monkeypatch.setenv(f"INFINITEPAY_BINDING_{alias}_CREDENTIAL_ENV", "development")
+        monkeypatch.setenv(f"INFINITEPAY_BINDING_{alias}_API_KEY", f"synthetic-config-key-{index}")
 
 
 def issue(db, row, handle="synthetic_a", version=0, checkout_ready=False, card_enabled=False):
@@ -58,7 +66,8 @@ def test_configurar_alterar_remover_preserva_PIX_e_conta_B(client_db, configured
     assert challenge.secret_hash != "123456"
     result = confirm(client_db, first, challenge)
     assert result == {"handle": "synthetic_a", "status": "pending", "version": 1,
-        "card_enabled": False, "ownership_verified": False, "checkout_available": False,
+        "card_enabled": False, "api_key_configured": True,
+        "ownership_verified": False, "checkout_available": False,
         "message": "Cartão indisponível até o fotógrafo habilitar uma configuração pronta."}
     assert challenge.encrypted_target is None and challenge.used_at is not None
     assert confirm(client_db, first, issue(client_db, first, "synthetic_new", 1))["version"] == 2

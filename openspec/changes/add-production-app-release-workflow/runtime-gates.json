@@ -1,18 +1,32 @@
 {
   "scope": "api_web_only",
-  "production_baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
+  "production_baseline_sha": "27e1b8ffa0917b4dc2120bd4a26e09c6cae47e0f",
   "expected_database_revision": "20261017_0084",
   "runtime_blobs": {
-    "backend/app/main.py": "f5bd9e3a232ba1e13c45b64a5a940cbd67dd7a85",
-    "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
+    "backend/app/infinitepay_binding.py": "7a6dfc1b550545cfdc5d903bad5ce8d94bb8cc04",
+    "backend/app/infinitepay_settings.py": "b96f5abfa6434305c751fbece1dcc65e10b4478d",
+    "backend/app/payment_availability.py": "78ba7b53f4f3d32e5974e3f3bc91ad3d2f065aba",
+    "backend/app/main.py": "42528180071cd5c9e980ccf1575ffc9a635fb569",
+    "backend/app/payment_export.py": "e7742d5fdd271c93a4af42870284f17b11adc3a2",
+    "backend/app/payment_provider.py": "e72329ccf2e55529d32dc494ff6f7b75196e1c92",
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
-    "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da",
+    "backend/app/provider_checkout.py": "4802d03af70df2776146f02589decb0674dd7fa5",
+    "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
+    "docker/docker-compose.yml": "71dc4fe64061405be17a3b3050f2cc2ef7baf2b4",
+    "frontend/app/admin/admin-navigation.tsx": "d055eaa6ae784d16c39761fb1023fc3b5621bbe6",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx": "47eb3ba7bdc21faffc583f3ec455f0bc2f178266",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx": "d3ec9f39db7d79bf2c7372afcbe9ce616f1f1159",
-    "backend/app/payment_export.py": "e7742d5fdd271c93a4af42870284f17b11adc3a2",
-    "frontend/app/admin/admin-navigation.tsx": "d055eaa6ae784d16c39761fb1023fc3b5621bbe6",
-    "frontend/app/admin/payments/page.tsx": "e4fd706e91db83aaa12a6be14d9046b50b975d15",
     "frontend/app/admin/payments/order-photos.tsx": "40f2163974f1f075c0e1fd139ac1319a51592831",
-    "frontend/app/admin/payments/payments.module.css": "7a24498537c5767823d9497b34c98f72ddc5e548"
+    "frontend/app/admin/payments/page.tsx": "e4fd706e91db83aaa12a6be14d9046b50b975d15",
+    "frontend/app/admin/payments/payments.module.css": "7a24498537c5767823d9497b34c98f72ddc5e548",
+    "frontend/app/admin/settings/infinitepay-panel.tsx": "acadf2e5b210871bb5c0ba3bddbc5d02d5ba2914",
+    "frontend/app/globals.css": "0c93bbfb0218bcdea9bc9839c40c9f3ad9ce57da"
+  },
+  "emergency_api": {
+    "baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
+    "baseline_image": "sha256:afc54e0ff0b008ac7bcc2ab28095f279da6213aaa5bec1ac98fae8269fc0715c",
+    "input_blobs": {
+      "backend/requirements-push.txt": "2e23bf84e3eae38396218bada0ee37d3da722843"
+    }
   }
 }

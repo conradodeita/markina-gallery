@@ -1,5 +1,6 @@
 """Reserva de carrinho por conta, usando apenas PostgreSQL e provedor sintético."""
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
@@ -50,6 +51,14 @@ from tests.test_unified_checkout import setup_cart
 
 SessionLocal = _SessionLocal
 isolated_cart_database = _isolated_cart_database
+
+
+@pytest.fixture(autouse=True)
+def synthetic_infinitepay_binding(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INFINITEPAY_TENANT_BINDINGS", json.dumps({str(FIXTURE_TENANT_ID): "CHECKOUT_TEST"}))
+    monkeypatch.setenv("INFINITEPAY_BINDING_CHECKOUT_TEST_CREDENTIAL_ENV", "development")
+    monkeypatch.setenv("INFINITEPAY_BINDING_CHECKOUT_TEST_API_KEY", "synthetic-checkout-key")
 
 
 def configure(db, tenant_id):
@@ -121,6 +130,18 @@ def test_config_pendente_ou_revisao_stale_nao_muda_selecao():
         db.commit()
         with pytest.raises(CheckoutError, match="carrinho mudou"):
             prepare(db, owner_id, "f"*64)
+        db.rollback()
+        assert db.scalar(select(func.count(PhotoSelection.id))) == before == 3
+        assert db.scalar(select(func.count(ProviderPayment.id))) == 0
+
+
+def test_binding_ausente_recusa_cartao_antes_de_reservar_selecao(monkeypatch):
+    owner_id, _, _, revision = setup()
+    monkeypatch.delenv("INFINITEPAY_BINDING_CHECKOUT_TEST_API_KEY")
+    with SessionLocal() as db:
+        before = db.scalar(select(func.count(PhotoSelection.id)))
+        with pytest.raises(CheckoutError, match="Cartão indisponível"):
+            prepare(db, owner_id, revision)
         db.rollback()
         assert db.scalar(select(func.count(PhotoSelection.id))) == before == 3
         assert db.scalar(select(func.count(ProviderPayment.id))) == 0
@@ -296,6 +317,23 @@ def test_link_emitido_nao_confirma_pagamento():
         assert payment.state == "awaiting_payment"
         assert payment.provider_transaction_nsu is None and payment.confirmed_at is None
         assert payment.total_cents == 2100
+
+
+def test_categoria_http_da_emissao_e_persistida_sem_liberar_reserva(monkeypatch):
+    owner_id, _, _, revision = setup()
+    provider = SyntheticPaymentProvider("unknown")
+    monkeypatch.setattr(provider, "create_checkout", lambda _request: CheckoutResult(
+        outcome="unknown", error_category="http_422"))
+    with SessionLocal() as db:
+        payment = prepare(db, owner_id, revision)
+        db.commit()
+        updated = issue_provider_payment(db, payment.id, provider)
+        attempt = db.scalar(select(ProviderPaymentAttempt).where(
+            ProviderPaymentAttempt.payment_id == payment.id))
+        assert updated.state == "verification_required"
+        assert attempt.state == "unknown"
+        assert attempt.error_category == "http_422"
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 0
 
 
 def test_perfil_de_retorno_e_payment_check_nao_exige_webhook_assinado_ou_recovery():

@@ -290,6 +290,7 @@ from app.global_pix import (
     proposal_preview,
 )
 from app.historical_media import historical_media_path
+from app.infinitepay_binding import api_key_configured
 from app.media import (
     derivatives_root,
     enqueue_derivatives,
@@ -2349,7 +2350,8 @@ def admin_infinitepay(request: Request, db: Session = Depends(db_session)) -> di
     session = current_session(request, Role.ADMIN)
     active_admin_for_session(db, session)
     return infinitepay_settings.configuration_payload(
-        infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id))
+        infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id),
+        api_key_configured=api_key_configured(session.tenant_id))
 
 
 @app.post("/admin/settings/infinitepay/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -2437,7 +2439,8 @@ def admin_infinitepay_confirm(
     challenge.encrypted_target = None
     audit(db, "infinitepay.configuration_updated", f"{settings.id}:{settings.version}", tenant_id=session.tenant_id)
     db.commit()
-    return infinitepay_settings.configuration_payload(settings)
+    return infinitepay_settings.configuration_payload(
+        settings, api_key_configured=api_key_configured(session.tenant_id))
 
 
 @app.post("/admin/settings/infinitepay/resend", status_code=status.HTTP_202_ACCEPTED)
@@ -9317,7 +9320,8 @@ def prepare_unified_card(request: Request, payload: ProviderCheckoutInput,
         )
         if payment.state == "creating":
             callback = f"{public_app_origin()}/api/infinitepay/return"
-            provider = operational_provider(redirect_url=callback)
+            provider = operational_provider(tenant_id=client.tenant_id,
+                                            redirect_url=callback)
             if provider is None:
                 raise CheckoutError("Checkout de cartão indisponível.")
             try:
@@ -9369,7 +9373,8 @@ def infinitepay_return(request: Request,
         if payment and payment.state in {"awaiting_payment", "verification_required"}:
             try:
                 callback = f"{public_app_origin()}/api/infinitepay/return"
-                provider = operational_provider(redirect_url=callback)
+                provider = operational_provider(tenant_id=payment.tenant_id,
+                                                redirect_url=callback)
             except EmailConfigurationError:
                 logger.exception("InfinitePay return unavailable: public app origin is invalid")
                 return RedirectResponse(destination, status_code=303)

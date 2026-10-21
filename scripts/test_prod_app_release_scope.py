@@ -91,7 +91,10 @@ class AppReleaseScopeTests(unittest.TestCase):
                          (False, "arquivo_fora_do_escopo"))
 
     def test_docker_monitor_worker_migration_and_unlisted_runtime_are_rejected(self):
-        for name in ("docker/docker-compose.yml", "backend/app/system_monitor.py",
+        path = self.root / "docker/docker-compose.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("reviewed API secret env_file wiring\n", encoding="utf-8")
+        for name in ("backend/app/system_monitor.py",
                      "backend/app/face_worker.py", "backend/migrations/versions/change.py",
                      "backend/app/facial/reference.py", "backend/app/unlisted.py"):
             path = self.root / name
@@ -101,12 +104,71 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "arquivo_fora_do_escopo"))
 
+    def test_api_compose_secret_file_requires_exact_approved_runtime_blob(self):
+        path = self.root / "docker/docker-compose.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("API-only secret env_file\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        self.manifest["runtime_blobs"]["docker/docker-compose.yml"] = self.run_git(
+            "rev-parse", "HEAD:docker/docker-compose.yml")
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
     def test_runtime_change_requires_exact_manifest_blob(self):
         path = self.root / "backend/app/main.py"
         path.write_text("unreviewed runtime\n", encoding="utf-8")
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "runtime_diverge_do_blob_aprovado"))
+
+    def test_infinitepay_configuration_and_availability_require_reviewed_blobs(self):
+        for name in ("backend/app/infinitepay_settings.py", "backend/app/payment_availability.py"):
+            with self.subTest(path=name):
+                self.assertIn(name, policy.RUNTIME_FILES)
+                path = self.root / name
+                path.write_text("reviewed tenant payment availability\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "runtime_diverge_do_blob_aprovado"))
+                self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (True, "somente_api_web"))
+
+    def test_each_dependency_vault_and_migration_path_remains_rejected(self):
+        for name in ("backend/requirements-push.txt", "backend/requirements.txt",
+                     "backend/Dockerfile", "frontend/package.json", "frontend/package-lock.json",
+                     "backend/app/infinitepay_credentials.py",
+                     "backend/migrations/versions/20261020_0085_infinitepay_credentials.py"):
+            with self.subTest(path=name):
+                path = self.root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("outside emergency payment scope\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "arquivo_fora_do_escopo"))
+                path.unlink()
+                self.commit()
+
+    def test_service_baseline_cannot_hide_api_input_change(self):
+        path = self.root / "backend/requirements-push.txt"
+        path.write_text("four approved pins\n", encoding="utf-8")
+        self.commit()
+        self.manifest["emergency_api"] = {
+            "baseline_sha": self.base,
+            "input_blobs": {"backend/requirements-push.txt": self.run_git("rev-parse", "HEAD:backend/requirements-push.txt")},
+        }
+        web_base = self.run_git("rev-parse", "HEAD")
+        self.assertEqual(policy.evaluate(self.root, web_base, "HEAD", self.manifest), (True, "somente_api_web"))
+        path.write_text("unapproved dependency change\n", encoding="utf-8")
+        self.commit()
+        advanced_web = self.run_git("rev-parse", "HEAD")
+        self.assertEqual(policy.evaluate(self.root, advanced_web, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        (self.root / "backend/app/auth.py").write_text("unapproved runtime\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, "HEAD", "HEAD", self.manifest), (False, "api_fora_do_escopo"))
 
     def test_retired_statistics_pages_are_exactly_allowlisted_and_removed_from_runtime_manifest(self):
         self.assertNotIn("frontend/app/admin/statistics/page.tsx", policy.RUNTIME_FILES)

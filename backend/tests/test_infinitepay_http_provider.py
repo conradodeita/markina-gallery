@@ -21,6 +21,7 @@ def _provider(handler):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     return InfinitePayHttpProvider(
         redirect_url="https://pick.example.test/checkout/return",
+        api_key="synthetic-infinitepay-key",
         webhook_url="https://pick.example.test/api/provider/infinitepay/webhook",
         client=client,
     )
@@ -47,7 +48,7 @@ def _check_request():
 
 
 @pytest.mark.parametrize("checkout_host", ["checkout.infinitepay.io", "checkout.infinitepay.com.br"])
-def test_create_checkout_uses_documented_endpoint_payload_and_no_guessed_auth(checkout_host):
+def test_create_checkout_uses_documented_authenticated_credit_only_contract(checkout_host, monkeypatch):
     seen = {}
 
     def respond(request):
@@ -60,20 +61,26 @@ def test_create_checkout_uses_documented_endpoint_payload_and_no_guessed_auth(ch
     assert result.outcome == "accepted"
     assert request.url == "https://api.checkout.infinitepay.io/links"
     assert request.headers["content-type"] == "application/json"
+    assert request.headers["x-api-key"] == "synthetic-infinitepay-key"
     assert "authorization" not in request.headers
     assert provider.capabilities.operational
     assert operational_provider() is None
-    assert operational_provider(redirect_url="https://pick.example.test/api/infinitepay/return") is not None
+    monkeypatch.setenv("INFINITEPAY_TENANT_BINDINGS", json.dumps({str(TENANT_ID): "OWNER_A"}))
+    monkeypatch.setenv("INFINITEPAY_BINDING_OWNER_A_CREDENTIAL_ENV", "development")
+    monkeypatch.setenv("INFINITEPAY_BINDING_OWNER_A_API_KEY", "synthetic-infinitepay-key")
+    assert operational_provider(tenant_id=TENANT_ID,
+        redirect_url="https://pick.example.test/api/infinitepay/return") is not None
     assert json.loads(request.content) == {
         "handle": "photo-owner",
         "order_nsu": str(PAYMENT_ID),
         "items": [{"quantity": 2, "price": 500, "description": "Fotografias digitais"}],
         "redirect_url": "https://pick.example.test/checkout/return",
         "webhook_url": "https://pick.example.test/api/provider/infinitepay/webhook",
+        "options": {"payment_methods_enabled": ["credit_card"], "single_payment": True},
     }
 
 
-def test_fluxo_inicial_nao_envia_webhook_ou_chave():
+def test_fluxo_inicial_envia_chave_sem_webhook():
     seen = {}
 
     def respond(request):
@@ -81,26 +88,37 @@ def test_fluxo_inicial_nao_envia_webhook_ou_chave():
         return httpx.Response(200, json={"url": "https://checkout.infinitepay.io/photo-owner/abc"})
 
     client = httpx.Client(transport=httpx.MockTransport(respond))
-    provider = InfinitePayHttpProvider(redirect_url="https://pick.example.test/api/infinitepay/return", client=client)
+    provider = InfinitePayHttpProvider(redirect_url="https://pick.example.test/api/infinitepay/return",
+                                       api_key="synthetic-infinitepay-key", client=client)
     assert provider.create_checkout(_checkout_request()).outcome == "accepted"
     request = seen["request"]
     payload = json.loads(request.content)
     assert payload["redirect_url"] == "https://pick.example.test/api/infinitepay/return"
     assert "webhook_url" not in payload
+    assert request.headers["x-api-key"] == "synthetic-infinitepay-key"
     assert "authorization" not in request.headers
 
 
-@pytest.mark.parametrize("status,body", [
-    (502, {"url": "https://checkout.infinitepay.io/photo-owner/abc"}),
-    (200, {"url": "http://checkout.infinitepay.io/photo-owner/abc"}),
-    (200, {"url": "https://evil.example/checkout"}),
-    (200, {"unexpected": True}),
+@pytest.mark.parametrize("status,body,category", [
+    (502, {"url": "https://checkout.infinitepay.io/photo-owner/abc"}, "http_502"),
+    (200, {"url": "http://checkout.infinitepay.io/photo-owner/abc"}, "response_invalid_url"),
+    (200, {"url": "https://evil.example/checkout"}, "response_invalid_url"),
+    (200, {"unexpected": True}, "response_missing_url"),
 ])
-def test_create_checkout_never_treats_error_or_invalid_url_as_accepted(status, body):
+def test_create_checkout_never_treats_error_or_invalid_url_as_accepted(status, body, category):
     provider = _provider(lambda _request: httpx.Response(status, json=body))
     result = provider.create_checkout(_checkout_request())
     assert result.outcome == "unknown"
     assert result.url is None
+    assert result.error_category == category
+
+
+def test_create_checkout_records_invalid_json_without_response_body():
+    provider = _provider(lambda _request: httpx.Response(200, content=b"not-json"))
+    result = provider.create_checkout(_checkout_request())
+    assert result.outcome == "unknown"
+    assert result.url is None
+    assert result.error_category == "response_invalid_json"
 
 
 def test_create_checkout_timeout_is_unknown_transport_and_never_retried():
@@ -129,6 +147,7 @@ def test_payment_check_uses_snapshotted_identity_and_maps_documented_result():
     result = _provider(respond).check_payment(_check_request())
     request = seen["request"]
     assert request.url == "https://api.checkout.infinitepay.io/payment_check"
+    assert request.headers["x-api-key"] == "synthetic-infinitepay-key"
     assert "authorization" not in request.headers
     assert json.loads(request.content) == {
         "handle": "photo-owner", "order_nsu": str(PAYMENT_ID),
@@ -163,7 +182,9 @@ def test_payment_check_rejects_incomplete_or_malformed_provider_results(body, ex
 
 def test_oversized_response_is_unknown():
     provider = _provider(lambda _request: httpx.Response(200, content=b"{" + b" " * 32768 + b"}"))
-    assert provider.create_checkout(_checkout_request()).outcome == "unknown"
+    result = provider.create_checkout(_checkout_request())
+    assert result.outcome == "unknown"
+    assert result.error_category == "response_too_large"
 
 
 @pytest.mark.parametrize("url,allowed", [
@@ -185,4 +206,4 @@ def test_redirect_allowlist_matches_only_documented_or_observed_provider_hosts(u
 ])
 def test_callbacks_must_be_trusted_https_urls(value):
     with pytest.raises(ValueError):
-        InfinitePayHttpProvider(redirect_url=value, webhook_url="https://pick.example.test/hook")
+        InfinitePayHttpProvider(redirect_url=value, api_key="synthetic", webhook_url="https://pick.example.test/hook")

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -26,6 +27,14 @@ from tests.test_provider_checkout import prepare, setup
 
 SessionLocal = _SessionLocal
 isolated_cart_database = _isolated_cart_database
+
+
+@pytest.fixture(autouse=True)
+def synthetic_infinitepay_binding(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INFINITEPAY_TENANT_BINDINGS", json.dumps({str(FIXTURE_TENANT_ID): "CONFIRMATION_TEST"}))
+    monkeypatch.setenv("INFINITEPAY_BINDING_CONFIRMATION_TEST_CREDENTIAL_ENV", "development")
+    monkeypatch.setenv("INFINITEPAY_BINDING_CONFIRMATION_TEST_API_KEY", "synthetic-confirmation-key")
 
 
 def prepare_awaiting_payment():

@@ -19,6 +19,7 @@ from app.auth import (
     now,
 )
 from app.checkout import CheckoutError, _synchronize_order
+from app.infinitepay_binding import api_key_configured
 from app.infinitepay_settings import configuration_payload
 from app.payment_availability import lock_payment_account
 from app.payment_provider import CheckoutItem, CheckoutRequest, ProviderTransportError
@@ -81,7 +82,9 @@ def prepare_provider_payment(
     settings = db.scalar(select(InfinitePaySettings).where(
         InfinitePaySettings.tenant_id == tenant_id,
     ).with_for_update())
-    if not configuration_payload(settings)["checkout_available"]:
+    if not configuration_payload(
+        settings, api_key_configured=api_key_configured(tenant_id),
+    )["checkout_available"]:
         raise CheckoutError("Cartão indisponível para esta conta.")
 
     eligible = [(gallery, parent, material, error) for gallery, parent, material, error in materials
@@ -240,6 +243,7 @@ def issue_provider_payment(db: Session, payment_id: UUID, provider) -> ProviderP
         _restore_local_selection(db, payment)
         db.commit()
     else:
+        attempt.error_category = result.error_category or "invalid_response"
         db.commit()
     return payment
 

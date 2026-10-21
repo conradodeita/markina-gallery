@@ -11,6 +11,7 @@ O fotógrafo precisa oferecer cartão de crédito pela própria conta InfinitePa
 - Criar cobrança de cartão no servidor com recebedor, itens e valor congelados por compra; conservar a configuração PIX, sua confirmação manual e seus snapshots existentes.
 - Confirmar cartão somente após consulta autoritativa à InfinitePay, vinculada a conta, compra e transação, com valor correto e método `credit_card`; redirecionamento e notificação isolados não confirmam pagamento.
 - Acrescentar idempotência, proteção contra cobrança duplicada, retomada de compra pendente, auditoria e integração com os eventos existentes de confirmação e entrega.
+- Persistir categorias técnicas minimizadas para diagnosticar respostas sem checkout utilizável, sem armazenar corpos externos ou segredos e sem converter incerteza em liberação automática.
 - Desabilitar cartão somente para novos checkouts; links já emitidos continuam visíveis e retomáveis enquanto permanecerem pendentes, pois a plataforma não cancela links remotos.
 - Condicionar implementação/ativação aos gates registrados em `provider-contract.md` e `readiness.md`. A exigência vigente de webhook assinado não é substituída automaticamente pela consulta de status.
 
@@ -39,3 +40,5 @@ PIX da InfinitePay, substituição do PIX manual, divisão de recebíveis, comis
 Escopo confirmado pelo proprietário em 12/10/2026: PIX existente isolado por fotógrafo e InfinitePay exclusivamente para cartão de crédito. Após a apresentação dos artefatos e esclarecimento da confirmação automática do cartão, o proprietário autorizou a implementação com “ótimo! Então vamos prosseguir”. O requisito de assinatura de webhook permanece vigente; o aceite não autoriza substituí-lo nem habilitar cobranças/deploy reais.
 
 Complemento aprovado pelo proprietário em 13/10/2026: adicionar em Configurações um controle explícito para habilitar/desabilitar pagamentos com cartão para clientes da conta do fotógrafo.
+
+Revisão de contrato aprovada pelo proprietário em 20/10/2026: usar cofre de segredos isolado por fotógrafo para a API Key InfinitePay. O valor da chave não será solicitado nesta conversa nem armazenado no Git, frontend ou tabela comercial. A decisão substitui a aprovação anterior de `/payment_check` sem API Key. Cartão e PIX no mesmo link foram avaliados e permanecem fora do escopo porque o domínio financeiro desta change confirma somente cartão em `ProviderPayment`; o PIX permanece no fluxo manual próprio.

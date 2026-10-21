@@ -126,8 +126,8 @@ verify_repository() {
     release_assert_no_pending || fail "tentativa interrompida; investigar/recuperar"
   fi
   if [[ "$MODE" == "release" ]]; then
-    git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ backend/migrations/ \
-      || fail "Docker/Compose ou migrations fora do escopo"
+    git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/ \
+      || fail "migrations fora do escopo"
     # Verificador/manifesto do alvo por memória/pipe: sem arquivos temporários.
     GIT_DIR="$PROJECT_ROOT/.git" GIT_WORK_TREE="$PROJECT_ROOT" \
       python3 -c 'import sys; p=sys.argv.pop(1); code=sys.argv.pop(1); exec(compile(code,p,"exec"),{"__file__":p,"__name__":"__main__"})' \
@@ -175,7 +175,20 @@ verify_repository() {
       [[ "$actual_api" == "$(cat "$STATE_DIR/app-api-target-id")" && "$api_version" == "$TARGET_SHA" ]] || fail "API não pertence à tentativa aprovada"
     fi
   else
-    git diff --quiet "$api_version" "$CHECKOUT_SHA" -- backend/ || fail "API diverge do checkout"
+    local approved_api_base
+    approved_api_base="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("emergency_api",{}).get("baseline_sha",""))')"
+    if [[ "$approved_api_base" == "$api_version" ]]; then
+      git diff --quiet "$api_version" "$CHECKOUT_SHA" -- backend/app/ backend/migrations/ backend/Dockerfile \
+        backend/requirements.txt backend/face-requirements.txt backend/gemma-requirements.txt \
+        || fail "API diverge dos inputs ativos aprovados"
+      local approved_api_image
+      approved_api_image="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["emergency_api"]["baseline_image"])')"
+      [[ "$(docker inspect --format '{{.Image}}' "$api_id")" == "$approved_api_image" ]] || fail "imagem API diverge da baseline"
+    else
+      git diff --quiet "$api_version" "$CHECKOUT_SHA" -- backend/ || fail "API diverge do checkout"
+    fi
   fi
   # Web-only pode ter avançado o checkout mantendo o backend idêntico.
   local web_id web_image web_hash
@@ -222,7 +235,21 @@ runtime_snapshot() {
       || fail "identidade do container $service diverge"
     expected="$(awk -v service="$service" '$1 == service {print $2}' <<<"$hashes")"
     expected="${expected#sha256:}"
-    [[ "$expected" =~ ^[0-9a-f]{64}$ && "$hash" == "$expected" ]] || fail "hash Compose de $service diverge"
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || fail "hash Compose esperado inválido"
+    [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || fail "hash Compose ativo inválido"
+    if [[ "$hash" != "$expected" ]]; then
+      if [[ "$APP_INTERRUPTED" == true && "$MODE" == rollback* ]]; then
+        local saved_hash saved_target_hash saved_previous saved_target
+        saved_hash="$(cat "$STATE_DIR/app-$service-rollback-hash" 2>/dev/null || true)"
+        saved_target_hash="$(cat "$STATE_DIR/app-$service-target-hash" 2>/dev/null || true)"
+        saved_previous="$(cat "$STATE_DIR/app-$service-rollback-id" 2>/dev/null || true)"
+        saved_target="$(cat "$STATE_DIR/app-$service-target-id" 2>/dev/null || true)"
+        [[ ( "$image" == "$saved_previous" && "$hash" == "$saved_hash" ) \
+          || ( "$image" == "$saved_target" && "$hash" == "$saved_target_hash" ) ]] || fail "hash fora da tentativa aprovada"
+      else
+        fail "hash Compose de $service diverge"
+      fi
+    fi
     if [[ "$APP_INTERRUPTED" == true && "$MODE" == rollback* ]]; then
       local previous_id target_id
       previous_id="$(cat "$STATE_DIR/app-$service-rollback-id")"
@@ -275,7 +302,12 @@ inventory() {
 rollback_inventory() {
   verify_repository
   runtime_snapshot
-  for path in /healthz /api/health /; do curl -fsS --max-time 10 "$EXPECTED_URL$path" -o /dev/null || fail "healthcheck HTTPS falhou em $path"; done
+  if [[ -f "$STATE_DIR/app-nginx-maintenance.active" ]]; then
+    curl -fsS --max-time 10 "$EXPECTED_URL/healthz" -o /dev/null || fail "nginx de manutenção indisponível"
+    echo "maintenance=active; saúde API/web não presumida; recuperação vinculada aos IDs da tentativa"
+  else
+    for path in /healthz /api/health /; do curl -fsS --max-time 10 "$EXPECTED_URL$path" -o /dev/null || fail "healthcheck HTTPS falhou em $path"; done
+  fi
   printf 'Inventário de rollback API/web host=%s domínio=%s\n' "$(hostname)" "$EXPECTED_URL"
   printf 'checkout_sha=%s rollback_sha=%s schema=%s serviços=api,web\n' "$CHECKOUT_SHA" "$ROLLBACK_SHA" "$DATABASE_REVISION"
   printf 'approval_fingerprint=%s\n' "$(fingerprint)"
@@ -285,7 +317,7 @@ rollback_inventory() {
 }
 
 release() {
-  local current_fp service id image tag ref api_before expected_api expected_web
+  local current_fp service id image tag ref api_before expected_api expected_web emergency target_hashes
   verify_repository
   current_fp="$(fingerprint)"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "fingerprint mudou; nada foi alterado"
@@ -304,6 +336,7 @@ release() {
     printf '%s\n' "$image" > "$STATE_DIR/app-$service-rollback-id"
     printf '%s\n' "$tag" > "$STATE_DIR/app-$service-rollback-image"
     printf '%s\n' "$ref" > "$STATE_DIR/app-$service-image-ref"
+    docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$id" > "$STATE_DIR/app-$service-rollback-hash"
   done
   printf '%s\n' "$ACTIVE_SHA" > "$STATE_DIR/app-previous.sha"
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/app-in-flight.sha"
@@ -311,11 +344,28 @@ release() {
   api_before="$COMPOSE_APP_VERSION"
   COMPOSE_APP_VERSION="$TARGET_SHA"
   compose config --quiet || fail "Compose alvo inválido"
-  compose build "${SERVICES[@]}"
+  target_hashes="$(resolved_hashes)" || fail "hashes Compose alvo indisponíveis"
+  for service in "${SERVICES[@]}"; do
+    awk -v service="$service" '$1 == service {sub(/^sha256:/,"",$2); print $2}' <<<"$target_hashes" > "$STATE_DIR/app-$service-target-hash"
+  done
+  emergency="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+    | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("emergency_api") else "no")')"
+  if [[ "$emergency" == yes ]]; then
+    python3 scripts/prepare_emergency_api_image.py --previous "$(cat "$STATE_DIR/app-api-rollback-id")" \
+      --sha "$TARGET_SHA" --receipt "$STATE_DIR/app-api-homologation.json" || fail "candidato API não homologado"
+    compose build web
+  else
+    compose build "${SERVICES[@]}"
+  fi
+  # Compare the original live configuration against its own checkout. The
+  # reviewed API-only env_file changes the target's resolved Compose hash.
+  git switch --detach "$CHECKOUT_SHA" >/dev/null
   current_fp="$(COMPOSE_APP_VERSION="$api_before" fingerprint)"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "runtime mudou durante build; containers preservados"
   [[ "$(COMPOSE_APP_VERSION="$api_before" database_revision)" == "$EXPECTED_DATABASE_REVISION" ]] \
     || fail "revisão do banco mudou; release abortado"
+  git switch --detach "$TARGET_SHA" >/dev/null
+  [[ "$(resolved_hashes)" == "$target_hashes" ]] || fail "configuração alvo mudou durante build"
   for service in "${SERVICES[@]}"; do
     [[ "$(release_image_id "$(cat "$STATE_DIR/app-$service-rollback-image")")" == "$(cat "$STATE_DIR/app-$service-rollback-id")" ]] || fail "backup mudou durante build"
   done
@@ -323,12 +373,16 @@ release() {
   expected_web="$(release_image_id "$PROJECT_NAME-web")" || fail "build web sem ID"
   release_write_file app-api-target-id "$expected_api" || fail "não registrou ID construído da API"
   release_write_file app-web-target-id "$expected_web" || fail "não registrou ID construído do web"
+  if [[ "$emergency" == yes ]]; then
+    emergency_maintenance start || fail "manutenção não iniciada; containers preservados"
+  fi
   compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
   runtime_snapshot
   [[ "$(docker inspect --format '{{.Image}}' "$(compose ps -q api)")" == "$expected_api" \
     && "$(docker inspect --format '{{.Image}}' "$(compose ps -q web)")" == "$expected_web" ]] || fail "runtime não usa IDs construídos"
   compose exec -T nginx nginx -t || fail "configuração nginx Markina inválida"
   compose exec -T nginx nginx -s reload || fail "reload nginx Markina falhou"
+  if [[ "$emergency" == yes ]]; then emergency_maintenance finish || fail "reabertura não validada"; fi
   for path in /healthz /api/health /; do
     curl -fsS --retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5 "$EXPECTED_URL$path" -o /dev/null \
       || fail "smoke HTTPS falhou em $path"
@@ -397,6 +451,7 @@ rollback() {
   done
   compose exec -T nginx nginx -t || fail "configuração nginx Markina inválida"
   compose exec -T nginx nginx -s reload || fail "reload nginx Markina falhou"
+  if [[ -f "$STATE_DIR/app-nginx-maintenance.active" ]]; then emergency_maintenance finish || fail "reabertura rollback falhou"; fi
   for path in /healthz /api/health /; do
     curl -fsS --retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5 "$EXPECTED_URL$path" -o /dev/null || fail "smoke HTTPS de rollback falhou em $path"
   done
@@ -414,6 +469,14 @@ rollback() {
   printf '%s %s rollback-app-services %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CHECKOUT_SHA" "$ROLLBACK_SHA" >> "$STATE_DIR/app-history.log"
   rm -f "$STATE_DIR/app-in-flight.sha" "$STATE_DIR/app-rollback-in-flight.sha"
   echo "rollback saudável: $ROLLBACK_SHA; serviços=api,web; migrations=nenhuma"
+}
+
+emergency_maintenance() {
+  local code
+  code="$(git show "$TARGET_SHA:scripts/prepare_emergency_api_image.py")" || return 1
+  python3 -c 'import sys; p=sys.argv.pop(1); code=sys.argv.pop(1); exec(compile(code,p,"exec"),{"__file__":p,"__name__":"__main__"})' \
+    "$PROJECT_ROOT/scripts/prepare_emergency_api_image.py" "$code" --sha "$TARGET_SHA" \
+    --maintenance "$1" --receipt "$STATE_DIR/app-nginx-maintenance.conf"
 }
 
 python_security_preparation() {

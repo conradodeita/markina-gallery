@@ -1,5 +1,6 @@
 """Contratos da jornada paga e meios da própria conta; somente dados sintéticos."""
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -26,7 +27,15 @@ links = _links
 
 
 @pytest.fixture
-def configured(client_db, graph, links):
+def configured(client_db, graph, links, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INFINITEPAY_TENANT_BINDINGS", json.dumps({
+        str(row["tenant"].id): f"PAYMENT_TEST_{index}" for index, row in enumerate(graph)
+    }))
+    for index in range(len(graph)):
+        alias = f"PAYMENT_TEST_{index}"
+        monkeypatch.setenv(f"INFINITEPAY_BINDING_{alias}_CREDENTIAL_ENV", "development")
+        monkeypatch.setenv(f"INFINITEPAY_BINDING_{alias}_API_KEY", f"synthetic-payment-key-{index}")
     for row in graph:
         row["admin"].email_verified = True
         row["admin"].password_hash = auth.password_hasher.hash("Isolated-Configuration-2026!")
