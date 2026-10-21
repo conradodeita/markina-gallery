@@ -12,7 +12,7 @@
     "backend/app/private_folder_overview.py": "ee1c73729a24cee387121a2ce4994feede06e847",
     "backend/app/provider_checkout.py": "4802d03af70df2776146f02589decb0674dd7fa5",
     "backend/app/statistics_report.py": "b72c2182ed102ebb5654212fd2886e419978adeb",
-    "docker/docker-compose.yml": "c8dd2ef7834789a11827755773b79ced91d8892a",
+    "docker/docker-compose.yml": "71dc4fe64061405be17a3b3050f2cc2ef7baf2b4",
     "frontend/app/admin/admin-navigation.tsx": "d055eaa6ae784d16c39761fb1023fc3b5621bbe6",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx": "47eb3ba7bdc21faffc583f3ec455f0bc2f178266",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx": "d3ec9f39db7d79bf2c7372afcbe9ce616f1f1159",
