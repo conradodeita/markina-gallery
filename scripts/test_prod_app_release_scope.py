@@ -90,6 +90,16 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "arquivo_fora_do_escopo"))
 
+    def test_exact_scanner_metadata_is_allowed_but_similar_unlisted_file_is_rejected(self):
+        (self.root / ".gitleaksignore").write_text("immutable non-secret fingerprint\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+        (self.root / ".gitleaks-unreviewed").write_text("unreviewed exception\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
     def test_docker_monitor_worker_migration_and_unlisted_runtime_are_rejected(self):
         path = self.root / "docker/docker-compose.yml"
         path.parent.mkdir(parents=True, exist_ok=True)

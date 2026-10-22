@@ -49,3 +49,11 @@ O candidato SHALL identificar o baseline publicado e os blobs exatos dos três a
 #### Scenario: Runtime adulterado ou ampliação indevida
 - **WHEN** um arquivo admitido diverge do blob ou um arquivo adicional não listado é acrescentado
 - **THEN** o gate recusa o candidato em vez de aceitar wildcard ou ignorar a divergência
+
+### Requirement: Exceção de scanner limitada a ocorrência histórica não secreta
+
+O candidato SHALL conservar a varredura completa e as regras do scanner. Falso positivo comprovado de indicador público do recibo SHALL ser registrado somente por fingerprint imutável de commit/arquivo/regra/linha em `.gitleaksignore`. Esse arquivo SHALL ser tratado como metadado exato não runtime no gate, sem permitir arquivos semelhantes ou arquivos do cofre.
+
+#### Scenario: Indicador público confundido com chave
+- **WHEN** o scanner aponta a ocorrência histórica comprovadamente não secreta
+- **THEN** somente sua fingerprint é excepcionada e um canário sintético independente continua detectável
