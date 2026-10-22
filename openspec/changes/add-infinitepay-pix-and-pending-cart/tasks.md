@@ -23,6 +23,8 @@ O CI final SHALL ser conferido no head atual, com todos os jobs concluídos, ant
 - [x] 5.2 Versionar preparador manual do keyring/backup, validar restauração correta/recusas e proteções de pré-condição sem segredo real; registrar checksum do utilitário disponibilizado. Oito testes ARM64/zero skips,63,672s;Ruff/OpenSpec estrito aprovados;fonte/checksum/inventário/limites em release-preparation-20261022.md. Código preparado não declara cofre provisionado.
 - [ ] 5.3 Concluir gates operacionais do release-plan.md: homologação completa API/web/PostgreSQL, imagens fixas/recuperação, provisionamento com proprietário, custódia externa, backup real restaurável, barreira preservando webhook e inventário/plano aprovados. Não executar publicação enquanto faltarem evidências.
 
+Checkpoint22/10,09:49SãoPaulo: provisionamento humano e cópia cifrada/mesmo hash no PC confirmados; imagens finais nativas166a4c/68a326;60distribuiçõesPython e runtimeNode idênticos; homologação HTTP A/B/v6 com troca real da API sintética/barreira aprovada; dump real read-only restaurado em clone networknone e96tabelas/digests idênticos. Três testes do renderizador aprovados. Migração/publicação ativas ainda não executadas. Pendente somente a revisão/autorização operacional do inventário/planoconcreto documentado em release-preparation-20261022.md; não marcar5.3concluída antecipadamente.
+
 ## Workflow follow-up
 
 Não habilitar PIX na InfinitePay até a implementação publicada; proprietário confirmou essa decisão. Revisão, autorização operacional, inventário, backups/keyring/restore e release0086 permanecem gates humanos próprios. Não alterar PR261 ou ampliar escopo do PR266 aprovado.

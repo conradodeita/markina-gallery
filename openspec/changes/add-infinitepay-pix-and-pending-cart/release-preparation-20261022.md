@@ -59,6 +59,55 @@ O proprietário deverá copiar somente o backup cifrado para o PC, comparar seu 
 
 Preservar schema aditivo, snapshots, ciphertext, keyring e pagamentos legítimos. Não fazer downgrade/restore antigo automático nem reemitir links. Antes de uso gerido/misto, retorno às imagens antigas só após verificar ausência de estado novo relevante. Depois de qualquer adoção nova, API antiga #260 não é recuperação completa: manter imagem compatível0086 e callbacks/conciliação ou correção progressiva com escritas restritas. Falha sem recuperação compatível/segregação ensaiada mantém NO-GO.
 
-## Estado fiel
+## Estado após preparação inicial — anterior ao provisionamento humano
 
 GO para continuar a preparação. Sem migration, restart, troca de containers, habilitação de PIX ou mutação financeira na Oracle. Chave mestra/backup reais ainda ausentes; somente preparador sem segredo instalado. Homologação completa, backup real restaurável, guarda externa, barreira preservando webhook e imagens alvo/recuperação são gates ainda pendentes. Não declarar publicação pronta enquanto faltar qualquer um.
+
+## Continuidade após participação do proprietário — 22/10/2026, 09:49 São Paulo
+
+O proprietário executou o preparador e confirmou que guardou a senha. Verificação somente de metadados: material ativo e backup cifrado existem, ambos0600/ownerubuntu, link ignorado pelo Git correto. Não foi lido/imprimido o material mestre. Backup cifrado copiado para `%USERPROFILE%/Documents/Pick-your-Pic Backups/integration-secrets-backup-20261022.json`; SHA256 servidor/PC idêntico: `3a95f51f4f675b4b80fdd9b8f38c7b2df537caf0aa7686f3af682295f83d4247`. O preparador verificou o backup com a senha antes de persistir o material ativo. A API ativa não foi recriada e ainda não carregou esse keyring.
+
+### Imagens finais nativas, sem atualização de dependências
+
+As duas imagens foram construídas em ARM64 na Oracle, a partir do Git imutável d794 e das imagens efetivamente publicadas. Build limitado a1CPU/3GiB, sem trocar tags/containers ativos. API contém app/migrations/tests do candidato, conservando todas as60distribuições e Python3.13.16. Web foi reconstruída com o mesmo runtime Node24.22.1/Next16.4.2/React19.3.1/ReactDOM19.3.1 da base publicada. Comparação nativa aprovada; não incorporou PR261. Imagens não foram publicadas nem selecionadas pelos serviços ativos.
+
+| Papel | Identidade Oracle pronta para o plano |
+|---|---|
+| API e migrate0086 | sha256:166a4cbab9df9eccbb4ed877e342a8f30157fbdb5406517b7051568c52a7a04e |
+| Web | sha256:68a3267b1d7cd1fdc72fca58b5a02faeb981d50ef0fb5c038ba40dd598e4d4f2 |
+
+Arquivo-fonte de runtime transferido por Git archive:7045120bytes, SHA256 `f70656689de0b216b596e39b29cbcb945e1df8e5b4183a33b25148abdf629818`. Contexto exclusivo `/var/lib/markina-gallery/deploy-state/payments0086-candidate-d7944bae`. Sem `.env`, material mestre ou dados reais no contexto/imagens.
+
+### Homologação completa nativa — aprovada
+
+Ensaio finalv6: rede interna própria, nenhuma porta publicada, PostgreSQL17 em tmpfs, API/web/nginx de identidades fixas, dois tenants inteiramente sintéticos. Nenhum segredo/canal/cliente de produção foi reutilizado. Chaves sintéticas somente nas instâncias da API; web/migrate/DB/nginx sem material mestre. Produção permaneceu com os mesmos IDs/StartedAt dos15serviços. Todos os containers criados pelo ensaio foram parados; tmpfs descartou bancos sintéticos. Não houve modificação de recursos de terceiros.
+
+Passaram: cadeia Alembic0084→0085→0086; HTTP por nginx e páginas compiladas da web; guards de cliente; cadastro A/B com senha real de fixture e OTP sandbox cifrado/decriptado pelo harness, sem bypass dos handlers de confirmação/ownership; rejeição401 de desafio de A usado por B; isolamento de status/InfiniteTag; PIX manual disponível; checkout misto com foto e link preservados no Carrinho; tentativa pendente ausente de Compras; acesso cruzado404; troca da chave A conservando referência histórica da compra; desconexão B preservando A e PIX manual; desistência visual; PIX tardio e webhook duplicado com uma confirmação/receipt e uso da chave original.
+
+Somente a fronteira HTTP externa InfinitePay foi simulada com MockTransport. O estado do provedor sintético é compartilhado entre réplicas, sem consultar o estado interno para inventar aprovação. Nenhum request real à InfinitePay ou pagamento real. Limite de requisições da fixture final é30 para acomodar probes repetidos da troca; não se trata de validação de rate limit nem de mudança na produção. A regressão do limite continua comprovada nos testes específicos/CI anteriores.
+
+Barreira final testada pelo renderizador `scripts/render_payments0086_ingress.py`: três testes unitários aprovados e ensaio nativo com principal realmente parada e substituída. Saúde200, escrita503, webhook inicial400 para retry; depois retorno303/webhook200 por uma API0086 temporária enquanto a principal estava parada; principal nova com outro ID; retorno ao upstream principal; parada da temporária; remoção da barreira e web200. Nenhuma alteração no helper de manutenção legado, workflow0084, allowlist ou manifesto.
+
+Falhas intermediárias foram do harness, sem alteração de runtime da aplicação: arquivo auxiliar http.py sombreava biblioteca padrão; expectativa de403/404 corrigida para401 neutro definido pelo handler; rótulo Compose herdado da imagem confundia o inventário e foi sobrescrito somente nos containers sintéticos; stub externo inicialmente tinha estado por processo e foi corrigido para representar estado externo compartilhado entre réplicas. v4 aprovou fluxo financeiro; v6 aprovou fluxo e troca com barreira. Não apresentar tentativas anteriores como homologação concluída.
+
+### Backup real de banco e restauração — aprovados
+
+Dump consistente via pg_export_snapshot/pg_dump, schema0084,110493443bytes. Fonte consultada em transação read-only; restore em PostgreSQL17 próprio com networknone/tmpfs, sem conectar aplicação ou enviar mensagens. Contagens e digest de todas as96tabelas idênticos ao snapshot. Clone parado ao final; nenhum restore, restart ou migration no banco ativo.
+
+Referência privada no servidor: `/var/lib/markina-gallery/deploy-state/payments0086-pre-migration-backup-20261022/pre-0086.dump`, SHA256 `0aded4b5f46e94db85553773410dc50eff76407adecd7764403041588788047a`. Arquivo0600 em diretório0700. **Este dump não está cifrado**: é uma cópia restrita no próprio servidor para esta operação; não foi transferida externamente. Não confundir com o backup cifrado da chave mestra no PC. Nenhum keyring incluído no dump; tabela do cofre ainda não existe no banco ativo. Restore automático de dump antigo permanece proibido por risco a transações posteriores.
+
+### Inventário e sequência concreta para revisão operacional
+
+Alvo de aplicação continua d7944baef5191ade6ac26fa86cd631bd5ad464d1, igual ao candidato aprovado CI788; main conferida novamente. Produção ainda21b89c3/schema0084, API/web saudáveis, sem reinício. Não publicar por meio do workflow0084. Nenhuma ativação de PIX no provedor, compra real ou troca da APIKey do fotógrafo foi executada.
+
+1. Sob lock comum `/var/lib/markina-gallery/deploy-state/production-release.lock`, renovar SHA/schema/IDs/configuração e recusar divergência/tentativa pendente. Preservar imagens21 e recipientes de rollback; salvar configuração nginx Markina e estado de release. Registrar esta autorização específica de execução antes da primeira mutation. Projeto markina-gallery/Compose docker/docker-compose.yml; domínio e porta127.0.0.1:8080 existentes. Sem nova porta/subdomínio.
+2. Manter API antiga atendendo retornos durante barreira e migration aditiva. Barreira inicial permite saúde/retorno e responde400 a webhook para retry, bloqueando novas operações503. Não afirmar continuidade se nginx-t/health/probes falharem. O nginx afetado é exclusivamente o container Markina, nunca o proxy compartilhado externo.
+3. Usar overlay externo com imagens exatas desta tabela para api/web/migrate e APP_VERSION=d794, conservando os cinco overlays existentes: branding.compose.yml externo, docker-compose.raw-development.yml, docker-compose.preview-adjustment.yml, docker-compose.system-monitor.yml e system-monitor.compose.yml externo. Checkout limpo em Git imutável; nenhum .env alterado. Executar migrate explicitamente com run--rm--no-deps--pullnever, Alembic upgrade20261021_0086, lock_timeout5s/statement_timeout120s. Migrate não recebe keyring. Recusar revisão diferente da cadeia inspecionada.
+4. Depois de schema0086, iniciar somente uma API temporária interna, nome `payments0086-api-canary`, da imagem166a4c, pelo mesmo serviço/configuração segura API e sem dependências. Conferir saúde/versão/capacidade do cofre sem revelar chave. Apontar a barreira à temporária e verificar retorno/webhook; só então recriar a API principal com imagem166a4c e depois web68a326, sem build/pull/dependências. Manter callbacks na temporária durante essa troca; conferir principal antes de retornar o upstream a api. A instância temporária não é worker e não tem porta pública.
+5. Validar schema, IDs, saúde HTTPS, rotas autenticadas recusando acesso anônimo e material mestre somente na API. Restaurar ingresso normal, confirmar saúde e só então parar/remover exclusivamente a temporária identificada por ID/rótulo, sem volumes compartilhados. Registrar recibos/overlays ativos/imagens/versão e retirar marcador próprio ao final. Sem downgrade ou restauração automática de banco. Após qualquer estado0086/cofre em uso, falha exige API compatível/continuidade de callbacks e correção progressiva; binário #260 não é rollback completo. Somente após sucesso o proprietário habilita PIX na InfinitePay e configura/rotaciona credenciais pela UI se desejar.
+
+Imagens de recuperação da fase anterior são as antigas92bcf865/c1be0a01 já inventariadas; candidata compatível0086 é a imagem166a4c preservada. O plano não promete rollback de defeito de código pela mesma imagem: após adoção nova, eventual defeito exige correção progressiva com emissões bloqueadas e callbacks compatíveis.
+
+Recibos verificáveis no deploy-state: payments0086-native-images.json, payments0086-native-distributions.json, payments0086-native-homolog-v6-result.json, payments0086-real-backup-restore-result.json. Cópia sanitizada agregada em C:/codex-data/tmp/payments0086-prepublication-receipts.json. Matriz de referência/limitações preservada acima.
+
+**Decisão:** preparação técnica e guarda externa concluídas; GO para revisão/solicitação de autorização da operação concreta0084→0086/API/web com temporária interna. Execução permanece pendente dessa autorização operacional específica, conforme release-plan.md. Não declarar deploy ou cofre ativo na aplicação publicada.

@@ -27,3 +27,12 @@ Inventário, smoke e restore sintéticos SHALL distinguir o que foi executado lo
 - **WHEN** migrações/restauração/criptografia sintéticas passam e o preparador é disponibilizado sem executá-lo
 - **THEN** o relatório informa preparação aprovada e gates operacionais pendentes
 - **AND** não declara cofre provisionado, schema migrado ou aplicação publicada
+
+### Requirement: Barreira mantém callbacks durante a troca da API
+
+A barreira temporária SHALL limitar ingresso a saúde, retorno e webhook. Antes da API0086 saudável, webhook SHALL responder400 sem confirmar pagamento. Uma API0086 temporária interna SHALL atender callbacks durante a substituição da principal. Renderização MUST aceitar somente upstreams api e payments0086-api-canary e preservar proxy/portas de terceiros.
+
+#### Scenario: Principal é substituída no ensaio
+- **WHEN** a principal sintética para e é substituída com a barreira apontada à API temporária
+- **THEN** retorno/webhook continuam disponíveis e novas escritas recebem503
+- **AND** a barreira só é retirada depois da saúde da principal nova
