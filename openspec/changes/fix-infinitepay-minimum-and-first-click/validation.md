@@ -55,3 +55,13 @@ Esses resultados não autorizam merge/deploy nem comprovam inventário, aprovaç
 ## Publicação futura
 
 Serviços esperados: API e web, sem migration/worker/segredo/configuração financeira. CI, revisão, inventário e gates próprios antes de solicitar autorização. Rollback: imagens anteriores de API/web e SHA previamente saudável, preservando dados; não reinterpretar reservas antigas. Nenhum merge ou deploy autorizado para esta correção.
+
+## CI confirmado e correção restrita do scanner — 22/10/2026 UTC
+
+O [CI #779](https://github.com/conradodeita/markina-gallery/actions/runs/39693210865), head a93dfae1cfde2579ceebe8e05a6a6715d11fe80a, terminou **success**, com backend, frontend, OpenSpec, gitleaks, Gemma, imagens e política concluídos; duração total31m. Isso valida o checkpoint funcional, não o próximo head de metadados.
+
+O CI780 do PR262 encontrou um falso positivo no recibo histórico de build b7f2090: indicador público de comparação de distribuições, sem credencial. A exceção contém apenas o fingerprint exato commit/arquivo/regra/linha. Regras, regexes, histórico completo e configuração do scanner permanecem preservados. O scanner pode alcançar esse commit quando buscar outras refs publicadas; por isso a mesma exceção revisável acompanha este PR.
+
+- Gitleaks8.24.3 oficial, SHA256 verificado: clone temporário com ancestralidade completa deste candidato e ref publicada2a3e7f do cofre, sem refs locais não publicadas. Antes da exceção:1 achado histórico esperado/exit1. Depois:0 achados/exit0. Canário sintético independente:1 achado/exit1, confirmando detecção ativa. Relatórios integralmente redigidos; nenhum segredo operacional utilizado ou exibido.
+- Regressão de escopo falhou antes da admissão exata de `.gitleaksignore`; após: **19 testes aprovados**,101,341s. Arquivo semelhante não listado continua recusado. Nenhum wildcard, endpoint, runtime, migration ou permissão de publicação do cofre acrescentado.
+- Ruff dos scripts e política operacional aprovados após o ajuste. Blobs dos três arquivos de runtime permanecem iguais aos validados pelo CI779; os resultados funcionais anteriores conservam suas premissas. O novo head ainda requer CI remoto.

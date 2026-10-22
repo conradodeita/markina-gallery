@@ -31,6 +31,10 @@ Reutilizar o mutex de UI e a chave por revisão. Validar duplo clique, erro de r
 
 Após o proprietário pedir para concluir o roadmap, preparar no próprio PR o manifesto da correção: baseline observado `21b89c3`, novos blobs exatos de `provider_checkout.py`, `cart/page.tsx` e `cart/checkout-navigation.ts`. Incluir somente o novo arquivo de navegação na lista de runtime e seu teste na lista exata de operações; classificar os três caminhos como API/web. Manter revisão0084, pins de dependências, imagem base, gates de autenticação/aprovação/fingerprint e recusa de qualquer cofre, migration, worker ou arquivo não listado. Essa preparação local é revisável e não autoriza merge/deploy. Provar aceitação de blobs exatos e recusa de adulteração/arquivo semelhante não listado. A autorização operacional do release anterior não se estende ao novo candidato.
 
+### Metadado de falso positivo do scanner
+
+O CI780 de #262 detectou o indicador público de comparação de distribuições do recibo do release anterior como chave genérica. A ocorrência pertence ao cherry-pick histórico b7f2090e, não a uma API Key. O scanner padrão atravessa refs do repositório; uma nova execução de #266 também pode encontrá-la depois do envio de #262. Reutilizar somente a fingerprint imutável já reproduzida e validada com gitleaks8.24.3 e canário independente em #262. Não alterar regras, regexes, workflow de varredura ou histórico para ocultá-la. Admitir `.gitleaksignore` como arquivo exato de metadados não runtime no gate API/web, com regressão que recusa arquivo semelhante não listado. Essa admissão não inclui qualquer arquivo de cofre/migration; o restante da política e os blobs permanecem fixados.
+
 ## Validation
 
 Regressões primeiro: recusa por API/domínio antes de qualquer efeito, fronteira de 100 centavos e itens baratos com total válido; UI de mínimo com PIX e seleção preservados; navegação após um clique e uma emissão; não navegação em incerteza/erro/GET; idempotência e concorrência existentes. Executar testes direcionados e gates pertinentes, registrando resultados efetivos em `validation.md`.

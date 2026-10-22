@@ -53,6 +53,7 @@ ALLOWED_PREFIXES = (
     "docs/",
 )
 ALLOWED_OPERATIONS = {
+    ".gitleaksignore",
     ".github/workflows/ci.yml",
     "scripts/check_prod_app_release_scope.py",
     "scripts/classify_prod_release.py",
