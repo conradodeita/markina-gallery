@@ -38,3 +38,7 @@ O CI780 de #262 detectou o indicador público de comparação de distribuições
 ## Validation
 
 Regressões primeiro: recusa por API/domínio antes de qualquer efeito, fronteira de 100 centavos e itens baratos com total válido; UI de mínimo com PIX e seleção preservados; navegação após um clique e uma emissão; não navegação em incerteza/erro/GET; idempotência e concorrência existentes. Executar testes direcionados e gates pertinentes, registrando resultados efetivos em `validation.md`.
+
+### CI ARM64 nativo após timeout comprovado
+
+CI781/39699038564, job119563500858, atingiu30min no build frontendARM64 sob QEMU. Reutilizar somente a matriz nativa já existente na branch262:ubuntu-latest/amd64 e ubuntu-24.04-arm/arm64, com conferência de uname, fail-fast false, mesmos builds/versões/lockfile e limite30min. Não aumentar timeout, omitir arquitetura, trocar dependências ou publicar imagens. O agregador continua exigindo runtime-images integral. A validação remota é necessária; política local e inspeção YAML não provam build remoto.

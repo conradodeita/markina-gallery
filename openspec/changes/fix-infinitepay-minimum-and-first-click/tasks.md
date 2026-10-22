@@ -17,3 +17,5 @@
 - [x] 4.3 Reutilizar a exceção de fingerprint histórica não secreta identificada no CI780 e admitir somente o arquivo exato de metadados do scanner, com regressão de escopo positiva/negativa e preservação da varredura completa e da detecção de canário.
 
 - [ ] 4.4 Confirmar o CI final do head com metadados do scanner e integrar essa evidência ao PR; sem merge/deploy.
+
+- [ ] 4.5 Corrigir timeout ARM64 comprovado do CI781 reutilizando matriz nativa de262, preservar todos os builds/gates, validar política/YAML e CI remoto final.

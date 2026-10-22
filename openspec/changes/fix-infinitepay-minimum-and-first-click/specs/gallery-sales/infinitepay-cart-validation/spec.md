@@ -57,3 +57,11 @@ O candidato SHALL conservar a varredura completa e as regras do scanner. Falso p
 #### Scenario: Indicador público confundido com chave
 - **WHEN** o scanner aponta a ocorrência histórica comprovadamente não secreta
 - **THEN** somente sua fingerprint é excepcionada e um canário sintético independente continua detectável
+
+### Requirement: Validação das imagens nas duas arquiteturas
+
+O CI SHALL construir e verificar imagens AMD64 e ARM64 em runners nativos com arquitetura conferida, mantendo os mesmos comandos e asserções de versões, limite30min e gate agregador. MUST NOT aprovar parcialmente a matriz ou contornar falha por emulação com skip ou aumento de timeout.
+
+#### Scenario: Build emulado excede o limite
+- **WHEN** o CI registra timeout do build ARM64 emulado
+- **THEN** a matriz nativa valida ambas as arquiteturas e o candidato aguarda todos os jobs antes de aprovação

@@ -65,3 +65,9 @@ O CI780 do PR262 encontrou um falso positivo no recibo histórico de build b7f20
 - Gitleaks8.24.3 oficial, SHA256 verificado: clone temporário com ancestralidade completa deste candidato e ref publicada2a3e7f do cofre, sem refs locais não publicadas. Antes da exceção:1 achado histórico esperado/exit1. Depois:0 achados/exit0. Canário sintético independente:1 achado/exit1, confirmando detecção ativa. Relatórios integralmente redigidos; nenhum segredo operacional utilizado ou exibido.
 - Regressão de escopo falhou antes da admissão exata de `.gitleaksignore`; após: **19 testes aprovados**,101,341s. Arquivo semelhante não listado continua recusado. Nenhum wildcard, endpoint, runtime, migration ou permissão de publicação do cofre acrescentado.
 - Ruff dos scripts e política operacional aprovados após o ajuste. Blobs dos três arquivos de runtime permanecem iguais aos validados pelo CI779; os resultados funcionais anteriores conservam suas premissas. O novo head ainda requer CI remoto.
+
+## Timeout de imagens do CI781 e matriz nativa
+
+CI781/39699038564 no head320588ca:runtime-images/job119563500858 foi cancelado pelo limite30min durante Frontend ARM64 isolado e versões do lockfile, conforme anotação GitHub; não é aprovação final nem falha demonstrada de checkout. Gitleaks/OpenSpec/frontend/Gemma aprovaram; backend ainda concluía a matriz PostgreSQL na consulta.
+
+Substituída somente a execução emulada por bloco runtime-images nativo idêntico ao já revisável em262, preservando builds API/frontend/facial/prévias/RAW e comparação de Next/React/ReactDOM quando aplicáveis, limite30min, fail-fastfalse e agregador obrigatório. Verificação local YAML:pares de runners/arquiteturas exatos, ausência de QEMU, timeout e dependência agregadora aprovados; teste de política completo e OpenSpec da change aprovados. Nenhuma mudança funcional/API/web, manifestos, pins ou permissões de release. O novo head exige CI final próprio.
