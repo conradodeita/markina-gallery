@@ -9,7 +9,7 @@ import { RemovedMovements, type RemovedMovement } from "../../removed-movements"
 
 type PurchaseGroup = { id: string; total_cents: number; orders: Order[] };
 type ProviderPaymentGroup = { id: string; state: string; checkout_url: string | null; total_cents: number; orders: Order[];
-  cart_reopened_at?: string | null };
+  cart_reopened_at?: string | null; requires_reconciliation?: boolean };
 const isReopened = (group: ProviderPaymentGroup) => group.state === "exception" && Boolean(group.cart_reopened_at);
 const cardStateLabel: Record<string, string> = {
   creating: "Preparando checkout",
@@ -35,7 +35,7 @@ export default function PurchasesPage() {
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const data = await response.json();
-        if (!controller.signal.aborted) { setResult({ orders: data.orders ?? [], payment_groups: data.payment_groups ?? [], provider_payment_groups: data.provider_payment_groups ?? [], removed_movements: data.removed_movements ?? [] }); setFailed(false); }
+        if (!controller.signal.aborted) { setResult({ orders: data.orders ?? [], payment_groups: data.payment_groups ?? [], provider_payment_groups: (data.provider_payment_groups ?? []).filter((group: ProviderPaymentGroup) => !isReopened(group) || group.requires_reconciliation !== false), removed_movements: data.removed_movements ?? [] }); setFailed(false); }
       }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     const refresh = () => setRequest((previous) => previous + 1);
     window.addEventListener("focus", refresh);
@@ -51,11 +51,10 @@ export default function PurchasesPage() {
       </section>)}
       {result.provider_payment_groups.map((group) => <section className="unified-purchase" key={group.id} id={`payment-${group.id}`} aria-label={`Compra de cartão ${group.id.slice(0, 8)}`}>
         <h2>Compra {group.id.slice(0, 8)}</h2>
-        <p>Cartão de crédito · {isReopened(group) ? "Carrinho reaberto" : cardStateLabel[group.state] ?? "Pagamento em análise"} · {group.total_cents ? (group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : ""}</p>
-        {group.state === "awaiting_payment" && group.checkout_url ? <a className="order-album-button order-album-button--available" href={group.checkout_url} target="_blank" rel="noopener noreferrer">Continuar pagamento</a> : null}
-        {group.state === "verification_required" ? <p>A InfinitePay não devolveu um link utilizável. O checkout não foi aberto e nenhum pagamento foi iniciado por esta tela. A compra permanece reservada enquanto verificamos se o link chegou a ser criado. Não tente iniciar outro pagamento enquanto estiver em conferência.</p> : null}
-        {isReopened(group) ? <><p>O fotógrafo devolveu as fotos desta compra ao carrinho. Elas já estão selecionadas; confira o total atual e escolha como pagar.</p>
-          <Link className="order-album-button order-album-button--available" href="/library/cart">Abrir carrinho</Link></>
+        <p>Cartão de crédito · {group.cart_reopened_at && group.requires_reconciliation && group.state !== "confirmed" ? "Conferência após reabertura" : cardStateLabel[group.state] ?? "Pagamento em análise"} · {group.total_cents ? (group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : ""}</p>
+        {!group.cart_reopened_at && group.state === "awaiting_payment" && group.checkout_url ? <a className="order-album-button order-album-button--available" href={group.checkout_url} target="_blank" rel="noopener noreferrer">Continuar pagamento</a> : null}
+        {!group.cart_reopened_at && group.state === "verification_required" ? <p>A InfinitePay não devolveu um link utilizável. O checkout não foi aberto e nenhum pagamento foi iniciado por esta tela. A compra permanece reservada enquanto verificamos se o link chegou a ser criado. Não tente iniciar outro pagamento enquanto estiver em conferência.</p> : null}
+        {group.cart_reopened_at && group.requires_reconciliation && group.state !== "confirmed" ? <p>Há um retorno da tentativa anterior para conferência pelo fotógrafo. Esta ocorrência não confirma pagamento e não altera seu carrinho ou uma nova compra.</p>
           : group.state === "hold" || group.state === "exception" ? <p>Esta compra está em conferência; o acesso às fotos permanece suspenso.</p> : null}
         {group.orders.map((order) => <LibraryOrderCard key={order.id} order={order} />)}
       </section>)}

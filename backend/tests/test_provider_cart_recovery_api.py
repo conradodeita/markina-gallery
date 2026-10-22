@@ -93,7 +93,7 @@ def test_previa_e_confirmacao_http_restauram_as_mesmas_fotos_e_projetam_reabertu
     assert len(after[2]) == 3 and after[4] == 1
     assert browser.post(path(case), json=body).json()["already_reopened"]
     assert state(case) == after
-    orders = card_orders(browser.get("/admin/payment-communications"), case)
+    orders = card_orders(browser.get("/admin/payment-communications?financial_status=reopened"), case)
     assert all(order["provider_cart_recovery"]["reopened_at"]
                and not order["provider_cart_recovery"]["can_reopen"] for order in orders)
     cart = buyer.get("/library/cart").json()
@@ -201,7 +201,7 @@ def test_projecao_reconhece_recuperacao_operacional_antiga_sem_reabrir_novamente
         event.subject = f"IP_RECOVERY_20261021_V1:{case['payment']}:{case['actor']}:awaiting_payment:2:{uuid4()}"
         db.commit()
     browser = browser_for(case["actor"])
-    orders = card_orders(browser.get("/admin/payment-communications"), case)
+    orders = card_orders(browser.get("/admin/payment-communications?financial_status=reopened"), case)
     assert orders and all(order["provider_cart_recovery"]["reopened_at"]
                          and not order["provider_cart_recovery"]["can_reopen"] for order in orders)
     cart = browser_for(case["owner"], role=Role.CLIENT).get("/library/cart").json()
@@ -254,11 +254,11 @@ def test_fotos_canonicas_e_legadas_voltam_sem_reselecao_nem_galeria_extra():
         assert db.scalar(select(func.count(DerivedGallery.id))) == gallery_count
 
 
-def test_reabertura_aparece_no_historico_e_rascunho_pix_nao_parece_compra_duplicada(case):
+def test_reabertura_fica_no_historico_administrativo_e_rascunho_pix_nao_duplica_compra(case):
     decision(case, preview(case))
     buyer, admin = browser_for(case["owner"], role=Role.CLIENT), browser_for(case["actor"])
     history = buyer.get("/library/purchases").json()
-    original = history["provider_payment_groups"][0]
+    assert not history.get("provider_payment_groups")
     assert browser_for(case["other"], role=Role.CLIENT).get("/library/purchases").json().get("provider_payment_groups", []) == []
     before = state(case)
     prepared = buyer.post("/library/cart/prepare")
@@ -269,10 +269,10 @@ def test_reabertura_aparece_no_historico_e_rascunho_pix_nao_parece_compra_duplic
         assert len(drafts) == 2
     dashboard = admin.get("/admin/payment-communications").json()
     visible = [order for group in dashboard["groups"] for order in group["orders"]]
-    assert len(visible) == 2 and not drafts.intersection({UUID(order["id"]) for order in visible})
-    assert original["cart_reopened_at"] and original["state"] == "exception"
-    assert original["checkout_url"] is None
-    assert all(order["provider_cart_reopened_at"] for order in original["orders"])
+    assert not visible
+    historical = card_orders(admin.get("/admin/payment-communications?financial_status=reopened"), case)
+    assert len(historical) == 2 and all(order["provider_cart_recovery"]["reopened_at"] for order in historical)
+    assert not drafts.intersection({UUID(order["id"]) for order in historical})
     assert sum(selection["selected_count"] for selection in dashboard["selections_without_order"]) == 3
     assert not buyer.get("/library/purchases").json()["payment_groups"]
     assert state(case)[:3] == before[:3] and state(case)[4] == before[4]
@@ -294,7 +294,7 @@ def test_reabertura_aparece_no_historico_e_rascunho_pix_nao_parece_compra_duplic
     history = buyer.get("/library/purchases").json()
     assert len(history["payment_groups"]) == 1 and history["payment_groups"][0]["id"] == group_id
     dashboard = admin.get("/admin/payment-communications").json()
-    assert dashboard["summary"]["orders"] == 4 and dashboard["summary"]["reported_orders"] == 2
+    assert dashboard["summary"]["orders"] == 2 and dashboard["summary"]["reported_orders"] == 2
 
 
 def test_rascunho_nao_inflaciona_diretorio_nem_remove_protecao_de_exclusao():

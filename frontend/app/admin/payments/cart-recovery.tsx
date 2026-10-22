@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { MarkinaButton } from "../../ui-kit";
 import styles from "./cart-recovery.module.css";
 
-export type CartRecoveryStatus = { can_reopen: boolean; revision: number; reopened_at: string | null };
+export type CartRecoveryStatus = { can_reopen: boolean; revision: number; reopened_at: string | null; requires_reconciliation?: boolean };
 type Preview = { payment_id: string; revision: number; fingerprint: string; restored_quantity: number;
   quantity: number; total_cents: number; previous_total_cents: number; card_available: boolean; pix_available: boolean };
 type Decision = { plan: Preview; key: string; reason: string };
@@ -118,7 +118,8 @@ export function CartRecoveryActions({ paymentId, state, status, clientName, onRe
   const [open, setOpen] = useState(false);
   const [reopened, setReopened] = useState(false);
   const [message, setMessage] = useState("");
-  if (status.reopened_at || reopened) return <p role="status">{message || "Carrinho reaberto. As fotos foram devolvidas à seleção da cliente; o histórico da compra foi preservado."}</p>;
+  if (status.reopened_at && status.requires_reconciliation) return <p role="status">Há um retorno da tentativa anterior para conferência. A reabertura não encerrou o checkout na InfinitePay; os pedidos cancelados e a nova compra permanecem preservados.</p>;
+  if (status.reopened_at || reopened) return <p role="status">{message || "Carrinho reaberto. As fotos foram devolvidas à seleção da cliente. A tentativa anterior fica no filtro de tentativas reabertas."}</p>;
   if (!status.can_reopen || !["awaiting_payment", "verification_required"].includes(state ?? "")) return null;
   return <div>
     <MarkinaButton type="button" variant="secondary" onClick={() => setOpen(true)}>Reabrir carrinho</MarkinaButton>

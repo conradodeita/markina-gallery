@@ -139,7 +139,8 @@ jobs:
         run: >-
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
           pytest backend/tests/test_provider_checkout.py::test_clique_concorrente_com_mesma_chave_produz_uma_reserva
-          backend/tests/test_provider_cart_recovery.py backend/tests/test_provider_cart_recovery_api.py -q
+          backend/tests/test_provider_cart_recovery.py backend/tests/test_provider_cart_recovery_api.py
+          backend/tests/test_reopened_purchase_visibility.py -q
       - name: Cofre InfinitePay e snapshots de checkout em PostgreSQL
         run: >-
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"

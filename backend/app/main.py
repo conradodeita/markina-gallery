@@ -9621,6 +9621,9 @@ def client_purchase_history(
         ))
     } if provider_payment_ids else {}
     recoveries = cart_recovery_statuses(db, tenant_id=tenant_id, payments=provider_payments.values())
+    orders = [order for order in orders
+              if not recoveries.get(order.provider_payment_id, {}).get("historical_only")]
+    order_ids = [order.id for order in orders]
     item_rows = (
         list(
             db.scalars(
@@ -9670,9 +9673,7 @@ def client_purchase_history(
     for order in orders:
         gallery = operational_galleries.get(order.derived_gallery_id)
         canonical_parent = canonical_parents.get(order.parent_gallery_id)
-        recovered_at = recoveries.get(order.provider_payment_id, {}).get("reopened_at") if (
-            order.payment_status == "cancelled" and order.provider_payment_id in provider_payments
-            and provider_payments[order.provider_payment_id].state == "exception") else None
+        recovered_at = recoveries.get(order.provider_payment_id, {}).get("reopened_at")
         item_payloads = []
         for item in items_by_order[order.id]:
             historical_media = history_by_item.get(item.id)
@@ -9715,8 +9716,10 @@ def client_purchase_history(
                     "provider_payment_id": str(provider_payments[order.provider_payment_id].id),
                     "provider_payment_state": provider_payments[order.provider_payment_id].state,
                     "provider_checkout_url": provider_payments[order.provider_payment_id].checkout_url
-                    if provider_payments[order.provider_payment_id].state == "awaiting_payment" else None,
-                    **({"provider_cart_reopened_at": recovered_at} if recovered_at else {}),
+                    if provider_payments[order.provider_payment_id].state == "awaiting_payment" and not recovered_at else None,
+                    **({"provider_cart_reopened_at": recovered_at,
+                        "provider_requires_reconciliation": recoveries[order.provider_payment_id]["requires_reconciliation"]}
+                       if recovered_at else {}),
                 } if order.provider_payment_id in provider_payments else {}),
                 "commercial_state": (
                     "selection_finalized"
@@ -9765,7 +9768,8 @@ def client_purchase_history(
             "id": str(payment_id),
             "state": order_payload["provider_payment_state"],
             "checkout_url": order_payload["provider_checkout_url"],
-            **({"cart_reopened_at": order_payload["provider_cart_reopened_at"]}
+            **({"cart_reopened_at": order_payload["provider_cart_reopened_at"],
+                "requires_reconciliation": order_payload["provider_requires_reconciliation"]}
                if order_payload.get("provider_cart_reopened_at") else {}),
             "total_cents": 0,
             "orders": [],
@@ -11958,7 +11962,7 @@ def admin_removed_photo_movements(
 
 PaymentFinancialFilter = Literal[
     "priority", "reported", "confirmed", "confirmed_undelivered",
-    "awaiting_payment", "not_found", "overdue", "verifying", "exception", "hold",
+    "awaiting_payment", "not_found", "overdue", "verifying", "exception", "hold", "reopened",
 ]
 
 
@@ -12038,10 +12042,7 @@ def list_payment_communications(
     query: str | None = Query(default=None, max_length=200),
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
-    financial_status: Literal[
-        "priority", "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
-        "not_found", "overdue", "verifying", "exception", "hold",
-    ] | None = Query(default=None),
+    financial_status: PaymentFinancialFilter | None = Query(default=None),
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
     | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
@@ -12307,14 +12308,18 @@ def _payment_dashboard_data(
         ]
         provider_payment = card_payments.get(order.provider_payment_id)
         financial_state = _payment_financial_status(order, latest_communication, gallery, provider_payment)
+        recovery = recovery_statuses.get(order.provider_payment_id, {})
+        historical_only = recovery.get("historical_only", False)
+        if (financial_status == "reopened") != historical_only:
+            continue
         if financial_state == "awaiting_payment" and canonical_state and canonical_state.selection_expires_at and expired(canonical_state.selection_expires_at):
             financial_state = "overdue"
         delivery_states = {notification.status for notification in order_notifications} or {"none"}
-        if financial_status == "priority" and financial_state not in {
+        if financial_status == "priority" and not recovery.get("requires_reconciliation") and financial_state not in {
             "reported", "confirmed_undelivered",
         }:
             continue
-        if financial_status and financial_status != "priority" and financial_state != financial_status:
+        if financial_status and financial_status not in {"priority", "reopened"} and financial_state != financial_status:
             continue
         if delivery_status and delivery_status not in delivery_states:
             continue

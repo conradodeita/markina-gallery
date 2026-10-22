@@ -71,23 +71,46 @@ describe("biblioteca e compras da cliente", () => {
     expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
   });
 
-  it("identifica a compra reaberta e leva ao carrinho sem sugerir nova seleção nem checkout antigo", async () => {
+  it("retira a tentativa reaberta de Compras quando a projeção dispensa conferência", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ orders: [], payment_groups: [], removed_movements: [],
-      provider_payment_groups: [{ id: "eae11005", state: "exception", checkout_url: null, total_cents: 15400,
+      provider_payment_groups: [{ id: "eae11005", state: "exception", checkout_url: null, total_cents: 15400, requires_reconciliation: false,
         cart_reopened_at: "2026-10-21T14:00:00Z", orders: [{ id: "c648edb4", gallery_name: "Fotos escolhidas",
           parent_gallery_name: "Evento", gallery_removed: false, confirmed_at: null, commercial_state: "cancelled",
           payment_method: "credit_card", provider_payment_state: "exception", provider_cart_reopened_at: "2026-10-21T14:00:00Z",
           total_cents: 15400, items: [{ photo_id: "original-photo", name: "Foto já escolhida", preview_url: null }] }] }],
     })));
     render(<PurchasesPage />);
-    expect(await screen.findByText(/Cartão de crédito · Carrinho reaberto/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Abrir carrinho" }).getAttribute("href")).toBe("/library/cart");
-    expect(screen.getByText(/devolveu as fotos desta compra ao carrinho/)).toBeTruthy();
+    expect(await screen.findByText("Nenhuma compra.")).toBeTruthy();
+    expect(screen.queryByText("Compra eae11005")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Abrir carrinho" })).toBeNull();
     expect(screen.queryByText("Pagamento em análise")).toBeNull();
     expect(screen.queryByText(/acesso às fotos permanece suspenso/)).toBeNull();
     expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Ver fotos (1)" }));
-    expect(screen.getByText("Foto já escolhida")).toBeTruthy();
+    expect(screen.queryByText("Foto já escolhida")).toBeNull();
+  });
+
+  it.each(["exception", "awaiting_payment", "verification_required", "hold"])("mostra retorno após reabertura (%s) sem checkout antigo", async (state) => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ orders: [], payment_groups: [], removed_movements: [],
+      provider_payment_groups: [{ id: "late-card", state, checkout_url: "https://checkout.infinitepay.io/old",
+        total_cents: 15400, cart_reopened_at: "2026-10-21T14:00:00Z", requires_reconciliation: true, orders: [] }],
+    })));
+    render(<PurchasesPage />);
+    expect(await screen.findByText(/Cartão de crédito · Conferência após reabertura/)).toBeTruthy();
+    expect(screen.getByText(/retorno da tentativa anterior/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Abrir carrinho" })).toBeNull();
+    expect(screen.queryByText(/A compra permanece reservada/)).toBeNull();
+  });
+
+  it("conserva ocorrência visível se a API antiga não informa se há conferência", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ orders: [], payment_groups: [],
+      provider_payment_groups: [{ id: "legacy-card", state: "exception", checkout_url: null,
+        total_cents: 15400, cart_reopened_at: "2026-10-21T14:00:00Z", orders: [] }],
+    })));
+    render(<PurchasesPage />);
+    expect(await screen.findByText(/Cartão de crédito · Pagamento em análise/)).toBeTruthy();
+    expect(screen.queryByText("Nenhuma compra.")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
   });
 
   it("abre a mesma galeria pela capa e pelo botão e mantém navegação após falha", async () => {

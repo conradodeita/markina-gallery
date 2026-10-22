@@ -115,3 +115,7 @@ Relatório local sanitizado: C:/codex-data/tmp/vault-gitleaks-fingerprint-valida
 Merge local afb6ee15 incorpora o ajuste de metadados de #266/320588ca. A fingerprint é idêntica à validada na task6.6; não há nova exceção. A admissão de `.gitleaksignore` é exata e não amplia runtime/migration. Nenhum arquivo de aplicação mudou após as matrizes37 PostgreSQL/610 frontend, cujas premissas permanecem válidas. A política técnica confirma novamente a recusa operacional deste candidato: publication_candidate_ready=false/api_fora_do_escopo; política0084 não autoriza publicação do cofre. O CI780 do head anterior falhou no scanner; não deve ser apresentado como aprovado. O novo head deve concluir todos os checks antes da integração.
 
 Após esse merge:7 testes reais de política aprovados em32,097s; Ruff dos scripts aprovado; gitleaks8.24.3 novamente1 achado antes/0depois e canário1detectado; OpenSpec1.14.0 global134aprovados/0falhas. CI remoto do novo head permanece pendente.
+
+## CI integrado confirmado antes da nova melhoria de apresentação
+
+[CI782/39699171014](https://github.com/conradodeita/markina-gallery/actions/runs/39699171014), head27910b38adb90e31dd78db95698270de9f60d684:completed/success, todos os gates requeridos incluindo backend,frontend,scanner,OpenSpec,Gemma,imagens nativasAMD64/ARM64 e homolog-inventory-policy. PR262 confirmado open/draft com base main. Esse checkpoint conclui6.3; não aprova automaticamente o runtime posterior de hide-reopened-purchase-from-active-lists, cujo novo head terá CI próprio.

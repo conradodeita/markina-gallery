@@ -78,20 +78,39 @@ def cart_recovery_statuses(db: Session, *, tenant_id: UUID, payments):
     if not owned:
         return {}
     recovered = {}
+    recovery_times = {}
     for event in db.scalars(_recovery_events(tenant_id, [str(identifier) for identifier in owned])
                             .order_by(AuditEvent.created_at, AuditEvent.id)):
         identifier = event.subject.split(":", 2)[1 if event.event != RECOVERY_EVENT else 0]
         recovered[identifier] = event.created_at.isoformat()
+        recovery_times[identifier] = event.created_at
     blocked = set(db.scalars(select(ProviderPaymentReceipt.payment_id).where(
         ProviderPaymentReceipt.tenant_id == tenant_id, ProviderPaymentReceipt.payment_id.in_(owned),
         ProviderPaymentReceipt.state.in_(("queued", "processing", "verified")))))
-    return {identifier: {
-        "can_reopen": (payment.state in RECOVERABLE_STATES and not payment.confirmed_at
-                       and not payment.provider_transaction_nsu and identifier not in blocked
-                       and str(identifier) not in recovered),
-        "revision": payment.revision_number,
-        "reopened_at": recovered.get(str(identifier)),
-    } for identifier, payment in owned.items()}
+    late_receipts = set()
+    for receipt in db.scalars(select(ProviderPaymentReceipt).where(
+        ProviderPaymentReceipt.tenant_id == tenant_id, ProviderPaymentReceipt.payment_id.in_(owned))):
+        recovered_at = recovery_times.get(str(receipt.payment_id))
+        # Timestamps persistidos em UTC; SQLite sintético pode retornar sem tzinfo.
+        observed_at = receipt.processed_at or receipt.created_at
+        if recovered_at and observed_at.replace(tzinfo=None) >= recovered_at.replace(tzinfo=None):
+            late_receipts.add(receipt.payment_id)
+    statuses = {}
+    for identifier, payment in owned.items():
+        reopened_at = recovered.get(str(identifier))
+        requires_reconciliation = bool(reopened_at and (
+            identifier in blocked or identifier in late_receipts or payment.confirmed_at
+            or payment.provider_transaction_nsu or payment.state != "exception"))
+        statuses[identifier] = {
+            "can_reopen": (payment.state in RECOVERABLE_STATES and not payment.confirmed_at
+                           and not payment.provider_transaction_nsu and identifier not in blocked
+                           and not reopened_at),
+            "revision": payment.revision_number,
+            "reopened_at": reopened_at,
+            "requires_reconciliation": requires_reconciliation,
+            "historical_only": bool(reopened_at and payment.state == "exception" and not requires_reconciliation),
+        }
+    return statuses
 
 
 def _perform(db, actor_id, payment_id, *, expected_revision, expected_fingerprint=None,

@@ -129,9 +129,13 @@ const financialColor: Record<FinancialStatus, string> = {
   hold: "var(--payment-status-hold)",
 };
 function groupPresentation(group: ClientGroup) {
+  if (group.orders.some((order) => order.provider_cart_recovery?.requires_reconciliation
+      && !isConfirmedFinancialStatus(order.financial_status))) {
+    return { label: "Conferência após reabertura", tone: "warning" as const, className: undefined };
+  }
   return group.orders.length > 0 && group.orders.every((order) => order.provider_payment_state === "exception"
     && Boolean(order.provider_cart_recovery?.reopened_at))
-    ? { label: "Carrinho reaberto", tone: "neutral" as const, className: undefined }
+    ? { label: "Tentativa encerrada por reabertura", tone: "neutral" as const, className: undefined }
     : { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
 }
 const decisionLabel = {
@@ -352,7 +356,7 @@ function PaymentsDashboard() {
         <div>
         <div className="filter-grid">
           <label>Galeria pública<select name="parent_gallery_id" value={draftFilters.parent_gallery_id ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, parent_gallery_id: event.target.value })}><option value="">Todas</option>{dashboard.facets.parent_galleries.map((gallery) => <option key={gallery.id} value={gallery.id}>{gallery.name} ({gallery.count})</option>)}</select></label>
-          <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}</select></label>
+          <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}<option value="reopened">Histórico de tentativas reabertas</option></select></label>
           <label>De<input type="date" name="created_from" value={draftFilters.created_from?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_from: event.target.value })} /></label>
           <label>Até<input type="date" name="created_to" value={draftFilters.created_to?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_to: event.target.value })} /></label>
           <div className="payment-filter-actions"><MarkinaButton type="submit">Aplicar filtros</MarkinaButton>{hasFilters ? <MarkinaButton type="button" variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}</div>
@@ -525,7 +529,11 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
 }) {
   const [expanded, setExpanded] = useState(false);
   const presentation = order.provider_cart_recovery?.reopened_at
-    ? { label: "Carrinho reaberto", tone: "neutral" as const } : financialPresentation[order.financial_status];
+    && !isConfirmedFinancialStatus(order.financial_status)
+    ? order.provider_cart_recovery.requires_reconciliation
+      ? { label: "Conferência após reabertura", tone: "warning" as const }
+      : { label: "Tentativa encerrada por reabertura", tone: "neutral" as const }
+    : financialPresentation[order.financial_status];
   const communication = order.communication;
   const paymentGroup = communication?.payment_group;
   const quantity = order.folders.reduce((total, folder) => total + folder.items.length, 0);
@@ -559,7 +567,8 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
       </>}
       </section>
       <section className={styles.deliverySection} aria-label="Entrega do pedido"><h4>Entrega</h4><p>{order.delivery?.album_url && isConfirmedFinancialStatus(order.financial_status) ? "Fotos disponíveis" : "Fotos indisponíveis"}</p>
-      <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
+      {!order.provider_cart_recovery?.reopened_at || isConfirmedFinancialStatus(order.financial_status)
+        ? <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} /> : null}
       </section></div>
     </details>
   </article>;
