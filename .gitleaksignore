@@ -6,3 +6,5 @@ a36691e75cc66d6bb6d2da703ec129aa4ee51053:openspec/changes/improve-client-face-re
 6658494505421f5cc6a95786ecb86b96b2569c51:openspec/changes/improve-client-face-reference-capture/production-gates.json:generic-api-key:36
 # Falso positivo: hash de blob Git registrado antes de codificar o manifesto de runtime.
 8b79e8df39bf0ae174a0e45a09ef38f444d3cd3a:openspec/changes/improve-client-face-reference-capture/production-gates.json:generic-api-key:36
+# Falso positivo: indicador público de comparação de distribuições no recibo de build.
+b7f2090e559e58815906a2311aa170b81efb86ca:openspec/changes/reopen-card-purchase-cart/validation.md:generic-api-key:142

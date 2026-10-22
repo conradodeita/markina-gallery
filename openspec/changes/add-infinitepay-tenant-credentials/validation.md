@@ -94,3 +94,18 @@ O teste original falhava ao comparar o runtime do cofre com pins0084. O verifica
 `python -m unittest discover -s scripts -p test_release_candidate_policy.py`: **7testes aprovados,45,351s**, com Git e verificador reais, sem mocks/skip. Cobrem aprovação exata/documental, recusa de migration, blob adulterado, manifesto que tente admitir migration, pin falso e manifesto divergente. `python scripts/test_production_release_workflow_policy.py`: **publication_candidate_ready=false/api_fora_do_escopo; policy:ok**. Ruff dos dois arquivos aprovado. CI passa a executar também esses sete testes explicitamente; todos os checks anteriores permanecem. O head técnico final e o CI remoto ainda devem ser conferidos antes de declarar a integração aprovada.
 
 A matriz77 anterior pode ser reutilizada para criptografia/gestão/migration não alteradas; a nova matriz37 repete todos os caminhos de checkout afetados pelo merge. Nenhum checkout real, segredo real, Oracle, migration remota, merge de PR ou deploy realizado. Fonte de release futura continua sendo o plano coordenado, não o botão do workflow0084.
+
+## CI780 — falso positivo do gitleaks reproduzido e delimitado
+
+Head2a3e7f7, CI780/run39696132166: etapa de varredura completa detectou somente uma ocorrência genérica na linha142 do recibo de homologação incorporado por cherry-pick b7f2090e. Inspeção autorizada do log exclusivamente em memória selecionou apenas metadados e mascarou o campo identificado. O conteúdo é o indicador público de comparação de distribuições com resultado passed, não chave ou segredo. Uma hipótese inicial de IDdecontainer foi descartada pela evidência; nenhuma exceção foi criada para essa hipótese.
+
+Aplicada somente a fingerprint imutável do commit/arquivo/regra/linha em `.gitleaksignore`, seguindo o padrão existente. Nenhuma alteração de `.gitleaks.toml`, regra, caminho ignorado globalmente, workflow, scan de histórico ou histórico Git/forcepush.
+
+Validação com **gitleaks8.24.3**, mesma versão do CI, pacote oficial Windows com SHA256 conferido; validaçãoHTTPS mantida. Ambiente Windows curl recusou download por verificação de revogação offline; download foi realizado pelo cliente HTTPS Python padrão, sem desabilitar certificado/hostname ou alterar configuração de máquina.
+
+- Antes da exceção:1 ocorrência e exit1, fingerprintb7f2090e/validation.md/142, igual ao CI.
+- Depois:0 ocorrências e exit0.
+- Canário sintético independente em repositório temporário:1 ocorrência generic-api-key e exit1, comprovando que a regra continua ativa. Valor derivado de constante pública, sem uso em provedor, sem segredo real ou Git do produto.
+- Clone temporário isolou as refs do candidato, preservando TODA sua ancestralidade e o scanner padrão. A primeira execução sobre o repositório local compartilhado encontrou a mesma ocorrência no recibo local não publicado2abb7d2 de uma branch irmã; essa ref não é ancestral do candidato nem estava no CI. Não foi criada exceção para ela. CI permanece varrendo seu histórico completo, sem redução de escopo.
+
+Relatório local sanitizado: C:/codex-data/tmp/vault-gitleaks-fingerprint-validation.json; relatórios do scanner redigidos em100%. Resultado final de CI do novo head permanece pendente; backend e demais resultados do CI780 não são presumidos aprovados.
