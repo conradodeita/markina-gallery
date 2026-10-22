@@ -3,9 +3,18 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
+import pytest
 from sqlalchemy import select
 
-from app.auth import AuditEvent, PhotoSelection, ProviderPayment, Role, SaleOrder, SaleOrderItem
+from app.auth import (
+    AuditEvent,
+    PhotoSelection,
+    ProviderPayment,
+    Role,
+    SaleOrder,
+    SaleOrderItem,
+    engine,
+)
 from app.provider_confirmation import apply_payment_check
 from tests.test_provider_cart_recovery_api import browser_for
 from tests.test_provider_cart_recovery_api import case as _case
@@ -98,6 +107,7 @@ def test_confirmacao_tardia_apos_desistencia_aparece_em_compras_sem_repor_seleca
     assert browser.delete(path(case),params={"expected_revision":checkout["revision"]}).status_code == 409
 
 
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="Concorrência exige locks de linha PostgreSQL")
 def test_desistencias_concorrentes_sao_idempotentes(case):
     browser = browser_for(case["owner"],role=Role.CLIENT)
     revision = pending(browser)["card_payment"]["revision"]
@@ -109,6 +119,7 @@ def test_desistencias_concorrentes_sao_idempotentes(case):
         assert len(list(db.scalars(select(AuditEvent).where(AuditEvent.event=="provider_payment.cart_dismissed"))))==1
 
 
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="Concorrência exige locks de linha PostgreSQL")
 def test_confirmacao_e_desistencia_concorrentes_nao_perdem_pagamento(case):
     browser = browser_for(case["owner"],role=Role.CLIENT)
     revision = pending(browser)["card_payment"]["revision"]

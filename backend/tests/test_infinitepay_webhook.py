@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app import main
-from app.auth import NotificationEvent, ProviderPayment, SaleOrder
+from app.auth import NotificationEvent, ProviderPayment, SaleOrder, engine
 from app.payment_provider import ProviderTransportError, SyntheticPaymentProvider
 from tests.test_provider_cart_recovery import decision, preview
 from tests.test_provider_cart_recovery_api import case as _case
@@ -135,6 +135,7 @@ def test_retorno_tardio_em_reaberta_nao_confirma_cancelados(case, monkeypatch):
             SaleOrder.provider_payment_id == payment.id)))
 
 
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="Concorrência exige locks de linha PostgreSQL")
 def test_webhooks_concorrentes_confirmam_uma_vez(case, monkeypatch):
     inject(monkeypatch, PixProvider())
     def send(_):
