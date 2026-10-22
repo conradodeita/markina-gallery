@@ -71,3 +71,9 @@ O CI780 do PR262 encontrou um falso positivo no recibo histórico de build b7f20
 CI781/39699038564 no head320588ca:runtime-images/job119563500858 foi cancelado pelo limite30min durante Frontend ARM64 isolado e versões do lockfile, conforme anotação GitHub; não é aprovação final nem falha demonstrada de checkout. Gitleaks/OpenSpec/frontend/Gemma aprovaram; backend ainda concluía a matriz PostgreSQL na consulta.
 
 Substituída somente a execução emulada por bloco runtime-images nativo idêntico ao já revisável em262, preservando builds API/frontend/facial/prévias/RAW e comparação de Next/React/ReactDOM quando aplicáveis, limite30min, fail-fastfalse e agregador obrigatório. Verificação local YAML:pares de runners/arquiteturas exatos, ausência de QEMU, timeout e dependência agregadora aprovados; teste de política completo e OpenSpec da change aprovados. Nenhuma mudança funcional/API/web, manifestos, pins ou permissões de release. O novo head exige CI final próprio.
+
+## Fechamento do candidato funcional
+
+[CI #783](https://github.com/conradodeita/markina-gallery/actions/runs/39702759942), head `b0af9944d19c454d68d8bf550731c97ff02eabf2`: **completed/success**, sem falha ou job pendente. Backend, frontend, imagens nativas AMD64 e ARM64, Gemma, scanner, OpenSpec e política agregadora concluídos com sucesso. O timeout emulado do CI781 foi superado sem ampliar limites ou remover verificações.
+
+GO para revisão e solicitação de autorização de integração. Não houve merge/deploy. Publicação depende de revisão/autorização e inventário atual do candidato. O cofre integrado em262 continua sujeito ao plano próprio0085; esta aprovação não admite esse conjunto no workflow0084. Este fechamento altera apenas artefatos de evidência; conferir os checks do head documental no PR sem iniciar commits recursivos para citar o próprio SHA.

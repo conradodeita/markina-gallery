@@ -16,6 +16,8 @@
 - [x] 4.2 Criar PR focado em draft com plano mínimo de publicação/rollback e verificar CI final do candidato; sem merge ou deploy nesta autorização. Evidência: PR draft #266, CI #779/run39693210865 concluído com sucesso no head a93dfae; ajuste posterior de metadados exige novo CI antes de integração.
 - [x] 4.3 Reutilizar a exceção de fingerprint histórica não secreta identificada no CI780 e admitir somente o arquivo exato de metadados do scanner, com regressão de escopo positiva/negativa e preservação da varredura completa e da detecção de canário.
 
-- [ ] 4.4 Confirmar o CI final do head com metadados do scanner e integrar essa evidência ao PR; sem merge/deploy.
+- [x] 4.4 Confirmar o CI final do head com metadados do scanner e integrar essa evidência ao PR; sem merge/deploy.
 
-- [ ] 4.5 Corrigir timeout ARM64 comprovado do CI781 reutilizando matriz nativa de262, preservar todos os builds/gates, validar política/YAML e CI remoto final.
+- [x] 4.5 Corrigir timeout ARM64 comprovado do CI781 reutilizando matriz nativa de262, preservar todos os builds/gates, validar política/YAML e CI remoto final.
+
+Evidência final de4.4/4.5:CI783/39702759942 completo success no candidato b0af9944d19c454d68d8bf550731c97ff02eabf2, incluindo imagens nativasAMD64/ARM64, backend e política agregadora. Fechamento documental posterior não modifica runtime e deve ter seus checks conferidos no PR. Sem merge/deploy.
