@@ -36,3 +36,11 @@ Reforço de estados incompatíveis:matriz HTTP25casos terminou24passes/1falha de
 - A suíte de135 itens OpenSpec e Ruff são repetidas no fechamento. Build/lint finais registrados após conclusão, antes do commit/push. CI remoto do novo head é requisito separado.
 
 Fechamento: lint final sem erros (34 avisos preexistentes); build final e TypeScript aprovados. Ruff de backend/app e backend/tests aprovado; OpenSpec1.14.0 global135/0 e diff--check aprovados. PostgreSQL sintético exclusivo parado após o último teste, com ID/label novamente conferidos; sem remoção/prune. Revisão do diff confirma somente projeções, UI, testes, passo PostgreSQL do CI e artefatos relacionados; sem modelos, migrations, endpoints de escrita financeira, segredos ou PR261. A política operacional real continua recusando o cofre, sem ampliar o manifesto0084.
+
+## CI final do candidato funcional
+
+[CI #784](https://github.com/conradodeita/markina-gallery/actions/runs/39703967030), head `7b8f3039d931d88224304736d8a794beb2961f14`: **completed/success**, todos os jobs necessários concluídos, sem falhas ou pendências. Inclui backend integral e passo PostgreSQL com os novos testes, frontend, imagens nativas AMD64/ARM64, Gemma, scanner, OpenSpec e política agregadora. [CI #783](https://github.com/conradodeita/markina-gallery/actions/runs/39702759942) de266 também completo/success.
+
+GO técnico para revisão e solicitação de autorização de integração; PRs continuam draft e não foram mesclados. Publicação operacional continua NO-GO até os requisitos de0085 do release-plan, inventário/backup/keyring/restore e autorização específica. Nenhuma compra real (incluindo673ba102), segredo ou recurso Oracle foi alterado nesta missão. A cliente pode remover todas as fotos sem eliminar rastreabilidade; somente ocorrência de conferência tardia reaparece, sem checkout antigo retomável.
+
+O fechamento posterior somente documental conserva o runtime validado. Resultado exato dos checks desse head será registrado nos corpos dos PRs; não criar commits recursivos apenas para citar o próprio SHA. Specs principais não sincronizadas e changes não arquivadas, conforme gate de revisão humana.
