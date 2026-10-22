@@ -25,11 +25,14 @@ from zoneinfo import ZoneInfo
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import String, and_, cast, delete, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import (
     FileResponse,
     HTMLResponse,
@@ -126,6 +129,7 @@ from app.auth import (
     ProgressivePricingPreset,
     ProgressivePricingTier,
     ProviderPayment,
+    ProviderPaymentReceipt,
     PushSubscription,
     RawDevelopmentJob,
     Role,
@@ -290,7 +294,8 @@ from app.global_pix import (
     proposal_preview,
 )
 from app.historical_media import historical_media_path
-from app.infinitepay_binding import api_key_configured
+from app.infinitepay_credentials import credential_status
+from app.integration_secrets import IntegrationSecretError
 from app.media import (
     derivatives_root,
     enqueue_derivatives,
@@ -340,7 +345,7 @@ from app.payment_availability import (
     payment_methods,
     require_payment_method,
 )
-from app.payment_provider import PaymentCheckRequest, operational_provider
+from app.payment_provider import operational_provider
 from app.payment_templates import (
     DEFAULT_PAYMENT_TEMPLATES,
     preview_payment_template_migration,
@@ -383,6 +388,7 @@ from app.private_upload_batches import (
     folder_batch_for,
 )
 from app.product_brand import PRODUCT_NAME
+from app.provider_callback import verify_candidate
 from app.provider_cart_recovery import (
     CartRecoveryError,
     cart_recovery_statuses,
@@ -391,7 +397,7 @@ from app.provider_cart_recovery import (
     reopen_payment_cart,
 )
 from app.provider_checkout import issue_provider_payment, prepare_provider_payment
-from app.provider_confirmation import apply_payment_check
+from app.provider_pending_cart import PENDING_STATES, dismiss_checkout, pending_checkout_payload
 from app.public_gallery_access import (
     CanonicalPhotoAccessDenied,
     PublicGalleryAccessDenied,
@@ -453,6 +459,14 @@ app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
 logger = logging.getLogger(__name__)
 
 
+@app.exception_handler(RequestValidationError)
+async def protect_credential_validation_input(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/admin/settings/infinitepay"):
+        return JSONResponse(status_code=422, content={"detail": "Dados da configuração InfinitePay inválidos."},
+                            headers={"Cache-Control": "no-store"})
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.middleware("http")
 async def require_operational_tenant(request: Request, call_next):
     try:
@@ -464,7 +478,8 @@ async def require_operational_tenant(request: Request, call_next):
 @app.middleware("http")
 async def prevent_capacity_snapshot_caching(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path == "/admin/capacity-observability":
+    if (request.url.path == "/admin/capacity-observability"
+            or request.url.path.startswith("/admin/settings/infinitepay")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -2357,9 +2372,14 @@ def admin_global_pix_confirm(
 def admin_infinitepay(request: Request, db: Session = Depends(db_session)) -> dict:
     session = current_session(request, Role.ADMIN)
     active_admin_for_session(db, session)
+    return _infinitepay_configuration_payload(db, session.tenant_id)
+
+
+def _infinitepay_configuration_payload(db: Session, tenant_id: UUID) -> dict:
+    state = credential_status(db, tenant_id=tenant_id)
     return infinitepay_settings.configuration_payload(
-        infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id),
-        api_key_configured=api_key_configured(session.tenant_id))
+        infinitepay_settings.load_configuration(db, tenant_id=tenant_id),
+        api_key_configured=state["api_key_configured"]) | state
 
 
 @app.post("/admin/settings/infinitepay/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -2385,9 +2405,17 @@ def admin_infinitepay_challenge(
         infinitepay_settings.check_version(settings, payload.expected_version)
     except infinitepay_settings.ConfigurationConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
-    target = infinitepay_settings.canonical_proposal(
-        payload.configuration, payload.expected_version, payload.checkout_ready, payload.card_enabled,
-    )
+    try:
+        target = infinitepay_settings.canonical_proposal(
+            payload.configuration, payload.expected_version, payload.checkout_ready, payload.card_enabled,
+            db=db, tenant_id=session.tenant_id, api_key=payload.api_key,
+        )
+    except IntegrationSecretError:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Armazenamento seguro de credenciais indisponível.") from None
+    except infinitepay_settings.ConfigurationConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     try:
         challenge, _code, queued = create_security_challenge(
             db, purpose="change_infinitepay_otp", subject_fingerprint=pii_fingerprint(str(admin.id)),
@@ -2402,7 +2430,7 @@ def admin_infinitepay_challenge(
         db.commit()
         raise HTTPException(status_code=409, detail="Canal WhatsApp indisponível para confirmação.")
     return {"challenge_id": str(challenge.id), "expires_at": challenge.expires_at.isoformat(),
-            "proposal": json.loads(target),
+            "proposal": infinitepay_settings.proposal_preview(target),
             "message": "Código de confirmação enviado ao WhatsApp administrativo do Pick-your-Pic."}
 
 
@@ -2444,11 +2472,13 @@ def admin_infinitepay_confirm(
     except infinitepay_settings.ConfigurationConflict as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from None
+    except IntegrationSecretError:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Armazenamento seguro de credenciais indisponível.") from None
     challenge.encrypted_target = None
     audit(db, "infinitepay.configuration_updated", f"{settings.id}:{settings.version}", tenant_id=session.tenant_id)
     db.commit()
-    return infinitepay_settings.configuration_payload(
-        settings, api_key_configured=api_key_configured(session.tenant_id))
+    return _infinitepay_configuration_payload(db, session.tenant_id)
 
 
 @app.post("/admin/settings/infinitepay/resend", status_code=status.HTTP_202_ACCEPTED)
@@ -9339,7 +9369,8 @@ def prepare_unified_card(request: Request, payload: ProviderCheckoutInput,
         )
         if payment.state == "creating":
             callback = f"{public_app_origin()}/api/infinitepay/return"
-            provider = operational_provider(tenant_id=client.tenant_id,
+            provider = operational_provider(tenant_id=payment.tenant_id, db=db,
+                                            credential_id=payment.credential_id,
                                             redirect_url=callback)
             if provider is None:
                 raise CheckoutError("Checkout de cartão indisponível.")
@@ -9351,11 +9382,8 @@ def prepare_unified_card(request: Request, payload: ProviderCheckoutInput,
                     close()
         else:
             db.commit()
-        return {
-            "id": str(payment.id), "status": payment.state,
-            "checkout_url": payment.checkout_url if payment.state == "awaiting_payment" else None,
-            "total_cents": payment.total_cents,
-        }
+        return pending_checkout_payload(db, payment)
+
     except (CheckoutError, EmailConfigurationError) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -9385,35 +9413,69 @@ def infinitepay_return(request: Request,
         and slug is not None and bool(slug.strip()) and slug == slug.strip()
     )
     if candidates_ok:
-        payment = db.scalar(select(ProviderPayment).where(
-            ProviderPayment.id == payment_id,
-            ProviderPayment.provider == "infinitepay",
-        ))
-        if payment and payment.state in {"awaiting_payment", "verification_required"}:
-            try:
-                callback = f"{public_app_origin()}/api/infinitepay/return"
-                provider = operational_provider(tenant_id=payment.tenant_id,
-                                                redirect_url=callback)
-            except EmailConfigurationError:
-                logger.exception("InfinitePay return unavailable: public app origin is invalid")
-                return RedirectResponse(destination, status_code=303)
-            if provider is not None:
-                try:
-                    result = provider.check_payment(PaymentCheckRequest(
-                        payment_id=payment.id, tenant_id=payment.tenant_id,
-                        handle=payment.handle_snapshot, transaction_nsu=transaction_nsu,
-                        slug=slug, expected_total_cents=payment.total_cents,
-                    ))
-                    apply_payment_check(db, payment.id, requested_slug=slug, result=result)
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    logger.exception("InfinitePay return verification failed for payment %s", payment.id)
-                finally:
-                    close = getattr(provider, "close", None)
-                    if close:
-                        close()
+        try:
+            verify_candidate(db, payment_id=payment_id, transaction_nsu=transaction_nsu, slug=slug,
+                redirect_url=f"{public_app_origin()}/api/infinitepay/return", provider_factory=operational_provider,
+                skip_confirmed=True)
+            state = db.scalar(select(ProviderPayment.state).where(
+                ProviderPayment.id == payment_id, ProviderPayment.provider == "infinitepay"))
+            if state not in {"confirmed", "exception", "hold"}:
+                destination = "/library/cart"
+        except (RuntimeError, ValueError, SQLAlchemyError, HTTPException, EmailConfigurationError):
+            db.rollback()
+            # Não registrar payload, chave, NSU ou texto arbitrário do provedor.
+            logger.warning("InfinitePay return verification unavailable for payment %s", payment_id)
+            destination = "/library/cart"
     return RedirectResponse(destination, status_code=303)
+
+
+class InfinitePayWebhookCandidate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    order_nsu: UUID
+    transaction_nsu: str = Field(min_length=1, max_length=200)
+    invoice_slug: str = Field(min_length=1, max_length=512)
+    event: str | None = Field(default=None, max_length=40)
+
+    @field_validator("transaction_nsu", "invoice_slug")
+    @classmethod
+    def no_padding(cls, value):
+        if value != value.strip() or not value.strip():
+            raise ValueError("Identificador inválido.")
+        return value
+
+
+@app.post("/infinitepay/webhook")
+async def infinitepay_webhook(request: Request, db: Session = Depends(db_session)):
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 16 * 1024:
+            return JSONResponse({"status": "invalid"}, status_code=400)
+        body.extend(chunk)
+    try:
+        payload = InfinitePayWebhookCandidate.model_validate_json(body)
+    except ValueError:
+        return JSONResponse({"status": "invalid"}, status_code=400)
+    if payload.event not in (None, "paid"):
+        return {"status": "ignored"}
+    address = request.client.host if request.client else "unknown"
+    return await run_in_threadpool(_apply_infinitepay_webhook_candidate, db=db, payload=payload, address=address)
+
+
+def _apply_infinitepay_webhook_candidate(*, db, payload, address):
+    enforce_rate_limit(db, "infinitepay_webhook", str(payload.order_nsu), address)
+    # Uma falha na consulta não pode apagar a tentativa e contornar o limite.
+    db.commit()
+    try:
+        outcome = verify_candidate(db, payment_id=payload.order_nsu,
+            transaction_nsu=payload.transaction_nsu, slug=payload.invoice_slug,
+            redirect_url=f"{public_app_origin()}/api/infinitepay/return", provider_factory=operational_provider)
+        if outcome in {"unknown", "unavailable", "unpaid"}:
+            return JSONResponse({"status": "retry"}, status_code=400)
+    except (RuntimeError, ValueError, SQLAlchemyError, HTTPException, EmailConfigurationError):
+        db.rollback()
+        logger.warning("InfinitePay webhook verification unavailable for payment %s", payload.order_nsu)
+        return JSONResponse({"status": "retry"}, status_code=400)
+    return {"status": "received"}
 
 
 class CartRecoveryPreviewInput(BaseModel):
@@ -9493,6 +9555,22 @@ def report_unified_payment(group_id: UUID, payload: GroupPaymentInput, request: 
     except CheckoutError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/library/cart/checkouts/{payment_id}")
+def remove_pending_checkout(payment_id: UUID, request: Request,
+                            expected_revision: int = Query(ge=0), db: Session = Depends(db_session)):
+    client = _commerce_client(request, db)
+    try:
+        dismiss_checkout(db, client=client, payment_id=payment_id, expected_revision=expected_revision)
+        db.commit()
+    except LookupError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Checkout indisponível.") from exc
+    except CheckoutError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return cart_payload(db, client)
 
 
 @app.delete("/library/cart/{gallery_id}")
@@ -9592,6 +9670,18 @@ def client_purchase_history(
         ))
     } if provider_payment_ids else {}
     recoveries = cart_recovery_statuses(db, tenant_id=tenant_id, payments=provider_payments.values())
+    evidence_ids = set(db.scalars(select(ProviderPaymentReceipt.payment_id).where(
+        ProviderPaymentReceipt.tenant_id == tenant_id,
+        ProviderPaymentReceipt.payment_id.in_(provider_payment_ids),
+        ProviderPaymentReceipt.state.in_(("queued", "processing", "verified")),
+    ))) if provider_payment_ids else set()
+    orders = [order for order in orders
+              if not recoveries.get(order.provider_payment_id, {}).get("historical_only")
+              and not (order.provider_payment_id in provider_payments
+                       and provider_payments[order.provider_payment_id].state in PENDING_STATES
+                       and order.provider_payment_id not in evidence_ids
+                       and not recoveries.get(order.provider_payment_id, {}).get("requires_reconciliation"))]
+    order_ids = [order.id for order in orders]
     item_rows = (
         list(
             db.scalars(
@@ -9641,9 +9731,7 @@ def client_purchase_history(
     for order in orders:
         gallery = operational_galleries.get(order.derived_gallery_id)
         canonical_parent = canonical_parents.get(order.parent_gallery_id)
-        recovered_at = recoveries.get(order.provider_payment_id, {}).get("reopened_at") if (
-            order.payment_status == "cancelled" and order.provider_payment_id in provider_payments
-            and provider_payments[order.provider_payment_id].state == "exception") else None
+        recovered_at = recoveries.get(order.provider_payment_id, {}).get("reopened_at")
         item_payloads = []
         for item in items_by_order[order.id]:
             historical_media = history_by_item.get(item.id)
@@ -9682,12 +9770,14 @@ def client_purchase_history(
                 "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 **({
-                    "payment_method": "credit_card",
+                    "payment_method": provider_payments[order.provider_payment_id].capture_method or "credit_card",
                     "provider_payment_id": str(provider_payments[order.provider_payment_id].id),
                     "provider_payment_state": provider_payments[order.provider_payment_id].state,
                     "provider_checkout_url": provider_payments[order.provider_payment_id].checkout_url
-                    if provider_payments[order.provider_payment_id].state == "awaiting_payment" else None,
-                    **({"provider_cart_reopened_at": recovered_at} if recovered_at else {}),
+                    if provider_payments[order.provider_payment_id].state == "awaiting_payment" and not recovered_at else None,
+                    **({"provider_cart_reopened_at": recovered_at,
+                        "provider_requires_reconciliation": recoveries[order.provider_payment_id]["requires_reconciliation"]}
+                       if recovered_at else {}),
                 } if order.provider_payment_id in provider_payments else {}),
                 "commercial_state": (
                     "selection_finalized"
@@ -9735,8 +9825,12 @@ def client_purchase_history(
         group = card_groups.setdefault(str(payment_id), {
             "id": str(payment_id),
             "state": order_payload["provider_payment_state"],
+            "capture_method": provider_payments[UUID(str(payment_id))].capture_method,
+            "requires_reconciliation": (UUID(str(payment_id)) in evidence_ids
+                or recoveries.get(UUID(str(payment_id)), {}).get("requires_reconciliation", False)),
             "checkout_url": order_payload["provider_checkout_url"],
-            **({"cart_reopened_at": order_payload["provider_cart_reopened_at"]}
+            **({"cart_reopened_at": order_payload["provider_cart_reopened_at"],
+                "requires_reconciliation": order_payload["provider_requires_reconciliation"]}
                if order_payload.get("provider_cart_reopened_at") else {}),
             "total_cents": 0,
             "orders": [],
@@ -11929,7 +12023,7 @@ def admin_removed_photo_movements(
 
 PaymentFinancialFilter = Literal[
     "priority", "reported", "confirmed", "confirmed_undelivered",
-    "awaiting_payment", "not_found", "overdue", "verifying", "exception", "hold",
+    "awaiting_payment", "not_found", "overdue", "verifying", "exception", "hold", "reopened",
 ]
 
 
@@ -12009,10 +12103,7 @@ def list_payment_communications(
     query: str | None = Query(default=None, max_length=200),
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
-    financial_status: Literal[
-        "priority", "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
-        "not_found", "overdue", "verifying", "exception", "hold",
-    ] | None = Query(default=None),
+    financial_status: PaymentFinancialFilter | None = Query(default=None),
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
     | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
@@ -12278,14 +12369,18 @@ def _payment_dashboard_data(
         ]
         provider_payment = card_payments.get(order.provider_payment_id)
         financial_state = _payment_financial_status(order, latest_communication, gallery, provider_payment)
+        recovery = recovery_statuses.get(order.provider_payment_id, {})
+        historical_only = recovery.get("historical_only", False)
+        if (financial_status == "reopened") != historical_only:
+            continue
         if financial_state == "awaiting_payment" and canonical_state and canonical_state.selection_expires_at and expired(canonical_state.selection_expires_at):
             financial_state = "overdue"
         delivery_states = {notification.status for notification in order_notifications} or {"none"}
-        if financial_status == "priority" and financial_state not in {
+        if financial_status == "priority" and not recovery.get("requires_reconciliation") and financial_state not in {
             "reported", "confirmed_undelivered",
         }:
             continue
-        if financial_status and financial_status != "priority" and financial_state != financial_status:
+        if financial_status and financial_status not in {"priority", "reopened"} and financial_state != financial_status:
             continue
         if delivery_status and delivery_status not in delivery_states:
             continue
@@ -12343,7 +12438,7 @@ def _payment_dashboard_data(
                 },
                 "total_cents": order.total_cents,
                 "financial_status": financial_state,
-                **({"payment_method": "credit_card" if provider_payment else "pix"}
+                **({"payment_method": (provider_payment.capture_method or "credit_card") if provider_payment else "pix"}
                    if provider_payment or order.payment_group_id or latest_communication else {}),
                 **({"provider_payment_state": provider_payment.state,
                     "provider_payment_id": str(provider_payment.id),

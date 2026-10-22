@@ -27,11 +27,11 @@ def _provider(handler):
     )
 
 
-def _checkout_request():
+def _checkout_request(methods=("credit_card",)):
     return CheckoutRequest(
         payment_id=PAYMENT_ID,
         tenant_id=TENANT_ID,
-        handle="photo-owner",
+        handle="photo-owner", payment_methods=methods,
         items=({"quantity": 2, "price": 500},),
     )
 
@@ -47,8 +47,16 @@ def _check_request():
     )
 
 
+@pytest.mark.parametrize("methods", [(), ("pix",), ("pix", "credit_card"), ("credit_card", "credit_card")])
+def test_recusa_meios_fora_do_contrato_sem_criar_checkout(methods):
+    with pytest.raises(ValueError, match="Meios de pagamento fora do contrato"):
+        _checkout_request(methods)
+
+
+@pytest.mark.parametrize("methods", [("credit_card",), ("credit_card", "pix")])
 @pytest.mark.parametrize("checkout_host", ["checkout.infinitepay.io", "checkout.infinitepay.com.br"])
-def test_create_checkout_uses_documented_authenticated_credit_only_contract(checkout_host, monkeypatch):
+def test_create_checkout_uses_documented_authenticated_methods_snapshot(checkout_host, methods, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
     seen = {}
 
     def respond(request):
@@ -56,7 +64,7 @@ def test_create_checkout_uses_documented_authenticated_credit_only_contract(chec
         return httpx.Response(200, json={"url": f"https://{checkout_host}/photo-owner/abc"})
 
     provider = _provider(respond)
-    result = provider.create_checkout(_checkout_request())
+    result = provider.create_checkout(_checkout_request(methods))
     request = seen["request"]
     assert result.outcome == "accepted"
     assert request.url == "https://api.checkout.infinitepay.io/links"
@@ -68,15 +76,18 @@ def test_create_checkout_uses_documented_authenticated_credit_only_contract(chec
     monkeypatch.setenv("INFINITEPAY_TENANT_BINDINGS", json.dumps({str(TENANT_ID): "OWNER_A"}))
     monkeypatch.setenv("INFINITEPAY_BINDING_OWNER_A_CREDENTIAL_ENV", "development")
     monkeypatch.setenv("INFINITEPAY_BINDING_OWNER_A_API_KEY", "synthetic-infinitepay-key")
-    assert operational_provider(tenant_id=TENANT_ID,
-        redirect_url="https://pick.example.test/api/infinitepay/return") is not None
+    configured = operational_provider(tenant_id=TENANT_ID,
+        redirect_url="https://pick.example.test/api/infinitepay/return")
+    assert configured is not None
+    assert configured.webhook_url == "https://pick.example.test/api/infinitepay/webhook"
+    configured.close()
     assert json.loads(request.content) == {
         "handle": "photo-owner",
         "order_nsu": str(PAYMENT_ID),
         "items": [{"quantity": 2, "price": 500, "description": "Fotografias digitais"}],
         "redirect_url": "https://pick.example.test/checkout/return",
-        "webhook_url": "https://pick.example.test/api/provider/infinitepay/webhook",
-        "options": {"payment_methods_enabled": ["credit_card"], "single_payment": True},
+        "webhook": {"url": "https://pick.example.test/api/provider/infinitepay/webhook", "events": ["paid"]},
+        "options": {"payment_methods_enabled": list(methods), "single_payment": True},
     }
 
 

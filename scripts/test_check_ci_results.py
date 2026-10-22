@@ -1,4 +1,6 @@
+import re
 import unittest
+from pathlib import Path
 
 from scripts.check_ci_results import validate_results
 
@@ -49,6 +51,21 @@ class CheckCIResultsTests(unittest.TestCase):
                 values = passing_values()
                 values[check] = "skipped"
                 self.assertTrue(any(check.lower().replace("_result", "") in error for error in validate_results(values)))
+
+    def test_native_image_matrix_remains_a_required_aggregate(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        images = workflow.split("  runtime-images:\n", 1)[1].split("\n  openspec:", 1)[0]
+        pairs = set(re.findall(r"runner: ([\w.-]+)\s+arch: (amd64|arm64)", images))
+        self.assertEqual(pairs, {("ubuntu-latest", "amd64"), ("ubuntu-24.04-arm", "arm64")})
+        self.assertIn("runs-on: ${{ matrix.runner }}", images)
+        self.assertIn("fail-fast: false", images)
+        self.assertIn("amd64:x86_64|arm64:aarch64", images)
+        self.assertNotIn("setup-qemu-action", images)
+        self.assertIn("RUNTIME_IMAGES_RESULT: ${{ needs.runtime-images.result }}", workflow)
+        for result in ("failure", "cancelled", "skipped", ""):
+            with self.subTest(result=result):
+                values = passing_values() | {"RUNTIME_IMAGES_REQUIRED": "true", "RUNTIME_IMAGES_RESULT": result}
+                self.assertTrue(any("runtime-images" in error for error in validate_results(values)))
 
 
 if __name__ == "__main__":

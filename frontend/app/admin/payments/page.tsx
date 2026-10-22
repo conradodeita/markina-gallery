@@ -129,9 +129,13 @@ const financialColor: Record<FinancialStatus, string> = {
   hold: "var(--payment-status-hold)",
 };
 function groupPresentation(group: ClientGroup) {
+  if (group.orders.some((order) => order.provider_cart_recovery?.requires_reconciliation
+      && !isConfirmedFinancialStatus(order.financial_status))) {
+    return { label: "Conferência após reabertura", tone: "warning" as const, className: undefined };
+  }
   return group.orders.length > 0 && group.orders.every((order) => order.provider_payment_state === "exception"
     && Boolean(order.provider_cart_recovery?.reopened_at))
-    ? { label: "Carrinho reaberto", tone: "neutral" as const, className: undefined }
+    ? { label: "Tentativa encerrada por reabertura", tone: "neutral" as const, className: undefined }
     : { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
 }
 const decisionLabel = {
@@ -352,7 +356,7 @@ function PaymentsDashboard() {
         <div>
         <div className="filter-grid">
           <label>Galeria pública<select name="parent_gallery_id" value={draftFilters.parent_gallery_id ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, parent_gallery_id: event.target.value })}><option value="">Todas</option>{dashboard.facets.parent_galleries.map((gallery) => <option key={gallery.id} value={gallery.id}>{gallery.name} ({gallery.count})</option>)}</select></label>
-          <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}</select></label>
+          <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}<option value="reopened">Histórico de tentativas reabertas</option></select></label>
           <label>De<input type="date" name="created_from" value={draftFilters.created_from?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_from: event.target.value })} /></label>
           <label>Até<input type="date" name="created_to" value={draftFilters.created_to?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_to: event.target.value })} /></label>
           <div className="payment-filter-actions"><MarkinaButton type="submit">Aplicar filtros</MarkinaButton>{hasFilters ? <MarkinaButton type="button" variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}</div>
@@ -525,7 +529,11 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
 }) {
   const [expanded, setExpanded] = useState(false);
   const presentation = order.provider_cart_recovery?.reopened_at
-    ? { label: "Carrinho reaberto", tone: "neutral" as const } : financialPresentation[order.financial_status];
+    && !isConfirmedFinancialStatus(order.financial_status)
+    ? order.provider_cart_recovery.requires_reconciliation
+      ? { label: "Conferência após reabertura", tone: "warning" as const }
+      : { label: "Tentativa encerrada por reabertura", tone: "neutral" as const }
+    : financialPresentation[order.financial_status];
   const communication = order.communication;
   const paymentGroup = communication?.payment_group;
   const quantity = order.folders.reduce((total, folder) => total + folder.items.length, 0);
@@ -535,7 +543,7 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={order.provider_cart_recovery?.reopened_at ? undefined : `payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={order.provider_cart_recovery?.reopened_at ? undefined : `payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.provider_payment_id ? order.payment_method === "pix" ? " · PIX InfinitePay" : " · InfinitePay" : order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>
@@ -544,8 +552,8 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
       {expanded && order.folders?.length ? <OrderPhotos folders={order.folders} /> : !order.folders?.length ? <p>Nenhuma fotografia disponível.</p> : null}
       <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p></section>
       <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
-      {order.payment_method === "credit_card" ? <>
-        <p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
+      {order.provider_payment_id || order.payment_method === "credit_card" ? <>
+        <p>Estado do checkout InfinitePay: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
         {showCartRecovery && order.provider_payment_id && order.provider_cart_recovery && !isConfirmedFinancialStatus(order.financial_status)
           ? <CartRecoveryActions paymentId={order.provider_payment_id} state={order.provider_payment_state}
             status={order.provider_cart_recovery} clientName={clientName} onRefresh={onCartRecoveryRefresh} /> : null}
@@ -559,7 +567,8 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
       </>}
       </section>
       <section className={styles.deliverySection} aria-label="Entrega do pedido"><h4>Entrega</h4><p>{order.delivery?.album_url && isConfirmedFinancialStatus(order.financial_status) ? "Fotos disponíveis" : "Fotos indisponíveis"}</p>
-      <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
+      {!order.provider_cart_recovery?.reopened_at || isConfirmedFinancialStatus(order.financial_status)
+        ? <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} /> : null}
       </section></div>
     </details>
   </article>;

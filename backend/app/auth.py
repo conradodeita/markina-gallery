@@ -1046,9 +1046,14 @@ class ProviderPayment(Base):
 
     __tablename__ = "provider_payment"
     __table_args__ = (
+        ForeignKeyConstraint(["credential_id", "tenant_id"],
+                             ["infinitepay_credential.id", "infinitepay_credential.tenant_id"],
+                             name="fk_provider_payment_credential_owner"),
         UniqueConstraint("id", "tenant_id", "client_id", name="uq_provider_payment_owner"),
         UniqueConstraint("tenant_id", "client_id", "checkout_key", name="uq_provider_payment_checkout"),
         UniqueConstraint("provider", "provider_transaction_nsu", name="uq_provider_payment_transaction"),
+        CheckConstraint("capture_method IS NULL OR capture_method IN ('credit_card', 'pix')",
+                        name="ck_provider_payment_capture_method"),
         CheckConstraint("provider = 'infinitepay'", name="ck_provider_payment_provider"),
         CheckConstraint("total_cents > 0 AND configuration_version > 0 AND revision_number >= 0",
                         name="ck_provider_payment_amount_version"),
@@ -1065,6 +1070,11 @@ class ProviderPayment(Base):
     cart_revision: Mapped[str] = mapped_column(String(64))
     total_cents: Mapped[int] = mapped_column(Integer)
     handle_snapshot: Mapped[str] = mapped_column(String(100))
+    credential_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    checkout_methods_snapshot: Mapped[list] = mapped_column(JSON, default=lambda: ["credit_card"],
+                                                          server_default='["credit_card"]')
+    capture_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    cart_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     configuration_version: Mapped[int] = mapped_column(Integer)
     verification_profile: Mapped[str] = mapped_column(String(100))
     state: Mapped[str] = mapped_column(String(32), default="creating", index=True)
@@ -1626,6 +1636,26 @@ class PixCheckoutSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
+class InfinitePayCredential(Base):
+    """Cofre dedicado: somente envelope autenticado, nunca plaintext."""
+
+    __tablename__ = "infinitepay_credential"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_infinitepay_credential_owner"),
+        CheckConstraint("(ciphertext IS NOT NULL AND nonce IS NOT NULL AND revoked_at IS NULL) OR "
+                        "(ciphertext IS NULL AND nonce IS NULL AND revoked_at IS NOT NULL)",
+                        name="ck_infinitepay_credential_envelope"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    environment: Mapped[str] = mapped_column(String(40))
+    key_id: Mapped[str] = mapped_column(String(48))
+    ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class InfinitePaySettings(Base):
     """InfiniteTag por conta e autodeclaração de Checkout Integrado.
 
@@ -1636,6 +1666,12 @@ class InfinitePaySettings(Base):
     __tablename__ = "infinitepay_settings"
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     __table_args__ = (
+        ForeignKeyConstraint(["credential_id", "tenant_id"],
+                             ["infinitepay_credential.id", "infinitepay_credential.tenant_id"],
+                             name="fk_infinitepay_settings_credential_owner"),
+        CheckConstraint("credential_source IN ('server_binding', 'managed') AND "
+                        "(credential_source != 'server_binding' OR credential_id IS NULL)",
+                        name="ck_infinitepay_settings_credential_source"),
         UniqueConstraint("tenant_id", name="uq_infinitepay_settings_tenant"),
         CheckConstraint("version >= 0", name="ck_infinitepay_settings_version"),
         CheckConstraint("status IN ('pending', 'inactive', 'active')",
@@ -1651,6 +1687,8 @@ class InfinitePaySettings(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending")
     handle: Mapped[str | None] = mapped_column(String(100), nullable=True)
     card_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    credential_source: Mapped[str] = mapped_column(String(16), default="server_binding")
+    credential_id: Mapped[UUID | None] = mapped_column(nullable=True)
     verification_profile: Mapped[str | None] = mapped_column(String(100), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

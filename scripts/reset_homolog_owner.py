@@ -50,7 +50,7 @@ OPERATIONAL = frozenset({
 })
 TENANT_CONFIG = frozenset({
     "branding_settings", "facial_calibration_approval", "facial_rollout_operation", "global_pix_settings",
-    "infinitepay_settings", "notification_setting", "payment_message_template", "preview_adjustment_settings",
+    "infinitepay_settings", "infinitepay_credential", "notification_setting", "payment_message_template", "preview_adjustment_settings",
     "progressive_pricing_preset", "progressive_pricing_tier", "raw_development_settings", "whatsapp_channel_settings",
 })
 GLOBAL_PRESERVED = frozenset({

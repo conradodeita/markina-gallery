@@ -6,6 +6,9 @@ import json
 import subprocess
 from pathlib import Path
 
+from check_prod_app_release_scope import evaluate, git
+from classify_prod_release import classify
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
@@ -20,6 +23,25 @@ CLASSIFIER = (ROOT / "scripts/classify_prod_release.py").read_text(encoding="utf
 def require(fragment: str, label: str, content: str) -> None:
     if fragment not in content:
         raise AssertionError(f"ausente: {label}")
+
+
+def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEAD") -> tuple[str, bool, str]:
+    """Prove the admitted snapshot and independently test publication of HEAD."""
+    path = "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
+    source = git(root, "log", "-1", "--format=%H", target, "--", path)
+    if not source or json.loads(git(root, "show", f"{source}:{path}")) != manifest:
+        raise AssertionError("manifesto diverge do snapshot ancestral comprovado")
+    baseline = manifest["production_baseline_sha"]
+    if evaluate(root, baseline, source, manifest) != (True, "somente_api_web"):
+        raise AssertionError("snapshot do manifesto não é um candidato API/web admitido")
+    ready, reason = evaluate(root, baseline, target, manifest)
+    if not ready:
+        changed = set(git(root, "diff", "--name-only", baseline, target).splitlines())
+        if classify(changed) != "protected" or reason not in {
+            "api_fora_do_escopo", "arquivo_fora_do_escopo", "runtime_diverge_do_blob_aprovado",
+        }:
+            raise AssertionError(f"candidato não comprova a recusa protegida esperada: {reason}")
+    return source, ready, reason
 
 
 def main() -> None:
@@ -109,7 +131,7 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "5446cf4d7328ef6283ebfab50b5d1976d561fc8d":
+    if app_manifest.get("production_baseline_sha") != "21b89c332c6937b7079679888d52bd6a8aefe25d":
         raise AssertionError("baseline web diverge do inventário registrado")
     emergency = app_manifest.get("emergency_api", {})
     if emergency.get("baseline_sha") != "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f":
@@ -135,9 +157,10 @@ def main() -> None:
     require('[[ "$target_sha" == "$TARGET_SHA" ]]', "alvo buscado permanece igual ao HEAD verificado", script)
     require('git -C "$git_dir" merge-base --is-ancestor "$CHECKOUT_SHA" "$target_sha"', "candidato descende do baseline ativo", script)
     require("require_existing_facial_runtime", "manutenção não ativa runtime desligado", script)
+    runtime_source, candidate_ready, candidate_reason = release_candidate_snapshot(ROOT, app_manifest)
+    print(f"publication_candidate_ready={str(candidate_ready).lower()} / {candidate_reason}")
     for path, expected in maintenance["runtime_blobs"].items():
-        actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
-                                capture_output=True, text=True).stdout.strip()
+        actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
         face_blob = base64.b64decode("".join(expected), validate=True).hex()
         if path in app_manifest["runtime_blobs"]:
             if actual != app_manifest["runtime_blobs"][path]:
@@ -150,8 +173,7 @@ def main() -> None:
             if actual != baseline_blob:
                 raise AssertionError("runtime facial diverge do blob revisado e da versão já implantada")
     for path, expected in app_manifest["runtime_blobs"].items():
-        actual = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT, check=True,
-                                capture_output=True, text=True).stdout.strip()
+        actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
         if actual != expected:
             raise AssertionError("arquivo de runtime app diverge do blob revisado")
     require("config --no-interpolate --hash", "hash usa JSON resolvido sem nova interpolação", script)

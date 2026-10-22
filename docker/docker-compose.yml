@@ -102,6 +102,9 @@ services:
       - path: ${INFINITEPAY_BINDINGS_ENV_FILE:-.env.infinitepay-bindings}
         required: false
         format: raw
+      - path: ${INTEGRATION_SECRETS_ENV_FILE:-.env.integration-secrets}
+        required: false
+        format: raw
     environment:
       <<: *facial-environment
       PUBLIC_APP_ORIGINS: ${PUBLIC_APP_ORIGINS:-}

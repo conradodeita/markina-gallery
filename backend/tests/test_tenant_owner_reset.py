@@ -15,13 +15,16 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
 from app import auth, homolog_cleanup
+from app.infinitepay_credentials import credential_key
+from app.integration_secrets import IntegrationCipher
 from app.system_monitor import models as monitor
+from tests.test_integration_secrets import secret_keyring  # noqa: F401
 
 OWNER_EMAIL = "owner@example.test"
 
 
 @pytest.fixture
-def graph(monkeypatch, tmp_path):
+def graph(monkeypatch, tmp_path, secret_keyring):  # noqa: F811
     url = os.getenv("PHOTOGRAPHER_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requer PostgreSQL descartável explicitamente configurado")
@@ -32,6 +35,8 @@ def graph(monkeypatch, tmp_path):
     scoped = engine.execution_options(schema_translate_map={None: schema})
     auth.Base.metadata.create_all(scoped)
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("INTEGRATION_SECRET_ENV", "homolog")
+    cipher = IntegrationCipher()
     media = {name: tmp_path / name for name in reset.MEDIA_ROOTS}
     for name, root in media.items():
         root.mkdir()
@@ -53,12 +58,18 @@ def graph(monkeypatch, tmp_path):
             db.flush()
             db.add(auth.TenantAdmin(tenant_id=tenant.id, admin_user_id=admin.id, active=True))
             db.flush()
+            credential = synthetic_credential(cipher, tenant.id, f"synthetic-integration-{i}")
+            db.add(credential)
+            if i == 0:
+                db.add(synthetic_credential(cipher, tenant.id, "synthetic-owner-history"))
+            db.flush()
             db.add_all([
                 auth.AuthSession(tenant_id=tenant.id, role="admin", subject_id=admin.id,
                                  admin_subject_id=admin.id, token_hash=f"synthetic-session-{i}",
                                  expires_at=auth.now() + timedelta(days=7)),
                 auth.InfinitePaySettings(tenant_id=tenant.id, admin_user_id=admin.id,
-                                         status="inactive", handle=f"synthetic-tag-{i}"),
+                                         status="inactive", handle=f"synthetic-tag-{i}",
+                                         credential_source="managed", credential_id=credential.id),
                 auth.NotificationSetting(tenant_id=tenant.id, event_type="first_access",
                                          whatsapp_body=f"synthetic-preference-{i}",
                                          push_title="Synthetic title", push_body="Synthetic body"),
@@ -88,7 +99,8 @@ def graph(monkeypatch, tmp_path):
                                      photo_asset_id_snapshot=photo.id, filename_snapshot="synthetic.jpg", unit_price_cents=1000)
             payment = auth.ProviderPayment(tenant_id=tenant.id, client_id=client.id, checkout_key=f"synthetic-card-{i}",
                                            cart_revision="a" * 64, total_cents=1000, handle_snapshot=f"synthetic-tag-{i}",
-                                           configuration_version=1, verification_profile="synthetic")
+                                           configuration_version=1, verification_profile="synthetic",
+                                           credential_id=credential.id)
             db.add_all([item, payment])
             db.flush()
             db.add_all([
@@ -129,13 +141,33 @@ def graph(monkeypatch, tmp_path):
     engine.dispose()
 
 
+def synthetic_credential(cipher, tenant_id, value):
+    identity = uuid4()
+    envelope = cipher.encrypt(value, tenant_id=tenant_id, credential_id=identity)
+    return auth.InfinitePayCredential(id=identity, tenant_id=tenant_id,
+        environment=envelope.environment, key_id=envelope.key_id,
+        nonce=envelope.nonce, ciphertext=envelope.ciphertext)
+
+
+def credential_snapshots(db, tenant_id):
+    return {row.id: (row.environment, row.key_id, row.nonce, row.ciphertext, row.revoked_at)
+            for row in db.scalars(select(auth.InfinitePayCredential)
+                .where(auth.InfinitePayCredential.tenant_id == tenant_id))}
+
+
 def count(db, model):
     return db.scalar(select(func.count()).select_from(model))
 
 
 def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(graph):
-    db, admins, _tenants, media, brand, key = graph
+    db, admins, tenants, media, brand, key = graph
+    original_credentials = credential_snapshots(db, tenants[0].id)
+    current_credential = db.scalar(select(auth.InfinitePaySettings.credential_id)
+        .where(auth.InfinitePaySettings.tenant_id == tenants[0].id))
     report = reset.inventory(db, OWNER_EMAIL)
+    assert report["preserved"]["infinitepay_credential"] == 2
+    assert report["delete"]["infinitepay_credential"] == 4
+    assert "ciphertext" not in str(report) and "synthetic-integration" not in str(report)
     assert report["delete"]["tenant"] == 4
     assert report["delete"]["admin_user"] == 4
     assert report["delete"]["client"] == 5
@@ -156,6 +188,10 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     assert owner.password_hash == "synthetic-password-0"
     assert owner.totp_secret == "synthetic-totp-0"
     assert db.scalar(select(auth.InfinitePaySettings.handle)) == "synthetic-tag-0"
+    assert db.scalar(select(auth.InfinitePaySettings.credential_id)) == current_credential
+    assert credential_snapshots(db, tenants[0].id) == original_credentials
+    assert count(db, auth.InfinitePayCredential) == 2
+    assert credential_key(db, tenant_id=tenants[0].id, credential_id=current_credential) == "synthetic-integration-0"
     assert db.scalar(select(auth.NotificationSetting.whatsapp_body)) == "synthetic-preference-0"
     assert db.scalar(select(auth.AuthSession.token_hash)) == "synthetic-session-0"
     assert count(db, monitor.MonitorSample) == 1
@@ -207,6 +243,7 @@ def test_reset_refuses_divergences_before_first_mutation(graph, monkeypatch, bad
         reset.execute(db, email, confirmation)
     db.rollback()
     assert count(db, auth.Client) == count(db, auth.AdminUser) == 5
+    assert count(db, auth.InfinitePayCredential) == 6
     assert all((root / "test-acervo.jpg").exists() for root in media.values())
     assert (brand / key).read_bytes() == b"official-owner-logo-synthetic"
 

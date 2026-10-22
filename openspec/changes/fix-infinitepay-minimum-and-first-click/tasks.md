@@ -1,0 +1,23 @@
+# Tasks
+
+## 1. Delimitação e contratos
+- [x] 1.1 Confirmar os pontos afetados e distinguir o mínimo documentado do InfiniteTap da proteção local solicitada para o Checkout Integrado; registrar escopo e compatibilidade antes do código.
+
+## 2. Mínimo antes da reserva
+- [x] 2.1 Registrar regressões de total menor que 100, fronteira de 100, total válido com itens baratos e repetição histórica; implementar guarda backend antes dos efeitos e validar API/domínio e PIX preservado.
+- [x] 2.2 Cobrir a orientação e o bloqueio de cartão no carrinho, preservando seleção, PIX e escolha de fotos; implementar e validar a UI.
+
+## 3. Redirecionamento no primeiro clique
+- [x] 3.1 Reproduzir ausência de navegação no primeiro clique e corrigir; cobrir URL válida, inválida, incerteza, erro, retomada e duplo clique sem enfraquecer idempotência.
+
+## 4. Integração e entrega
+- [x] 4.0 Preparar manifesto estrito dos três arquivos API/web e classificação a partir do baseline publicado21b89c3, com regressões de aceitação exata e recusa de adulteração/arquivos não listados; não incluir cofre/migration nem executar publicação. Evidência: política operacional aprovada,18 testes de escopo e14 de classificação aprovados; gate real sobre a4b950a retorna somente_api_web.
+- [x] 4.1 Executar regressões pertinentes, lint, typecheck, build e OpenSpec; revisar diff e manutenção proporcional e registrar evidências e limites. Evidência:91 testes PostgreSQL e605 frontend aprovados; lint/build/TypeScript/Ruff/OpenSpec1.14.0 e gates locais aprovados; ver validation.md. CI remoto continua requisito separado.
+- [x] 4.2 Criar PR focado em draft com plano mínimo de publicação/rollback e verificar CI final do candidato; sem merge ou deploy nesta autorização. Evidência: PR draft #266, CI #779/run39693210865 concluído com sucesso no head a93dfae; ajuste posterior de metadados exige novo CI antes de integração.
+- [x] 4.3 Reutilizar a exceção de fingerprint histórica não secreta identificada no CI780 e admitir somente o arquivo exato de metadados do scanner, com regressão de escopo positiva/negativa e preservação da varredura completa e da detecção de canário.
+
+- [x] 4.4 Confirmar o CI final do head com metadados do scanner e integrar essa evidência ao PR; sem merge/deploy.
+
+- [x] 4.5 Corrigir timeout ARM64 comprovado do CI781 reutilizando matriz nativa de262, preservar todos os builds/gates, validar política/YAML e CI remoto final.
+
+Evidência final de4.4/4.5:CI783/39702759942 completo success no candidato b0af9944d19c454d68d8bf550731c97ff02eabf2, incluindo imagens nativasAMD64/ARM64, backend e política agregadora. Fechamento documental posterior não modifica runtime e deve ter seus checks conferidos no PR. Sem merge/deploy.

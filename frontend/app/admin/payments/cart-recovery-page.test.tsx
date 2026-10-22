@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AdminPaymentsPage from "./page";
+import type { CartRecoveryStatus } from "./cart-recovery";
 
 beforeEach(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
@@ -12,7 +13,7 @@ const card = (id: string) => ({ id, gallery: { id: "gallery", name: "Galeria", r
   parent_gallery: { id: "parent", name: "Galeria pública", removed: false }, total_cents: 700,
   financial_status: "verifying", created_at: "2026-10-21T10:00:00Z", communication: null,
   payment_method: "credit_card", provider_payment_state: "verification_required", provider_payment_id: "purchase-123",
-  provider_cart_recovery: { can_reopen: true, revision: 2, reopened_at: null },
+  provider_cart_recovery: { can_reopen: true, revision: 2, reopened_at: null } as CartRecoveryStatus,
   folders: [{ id: "folder", name: "Pasta", items: [{ id: `item-${id}`, photo_id: `photo-${id}`, name: `${id}.jpg`,
     unit_price_cents: 700, thumbnail_url: `/admin/orders/${id}/items/item/preview?size=thumbnail`,
     preview_url: `/admin/orders/${id}/items/item/preview?size=preview` }] }],
@@ -28,6 +29,19 @@ const dashboard = (groups: ReturnType<typeof client>[], cursor: string | null = 
   page: { next_cursor: cursor, limit: 12 },
 });
 
+it("PIX InfinitePay confirmado usa confirmação do provedor sem decisão de PIX manual", async () => {
+  const order = { ...card("pix-external"), payment_method: "pix", financial_status: "confirmed",
+    provider_payment_state: "confirmed", provider_cart_recovery: { can_reopen: false, revision: 3, reopened_at: null } };
+  vi.stubGlobal("fetch", vi.fn((path: string) => response(path.endsWith("gallery-reopening-requests")
+    ? { requests: [] } : dashboard([client("a", [order])]))));
+  render(<AdminPaymentsPage />);
+  fireEvent.click(await screen.findByText("Ver pedido e entrega"));
+  expect(screen.getByText(/Estado do checkout InfinitePay: confirmed/)).toBeTruthy();
+  expect(screen.getByText(/PIX InfinitePay/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Confirmar pagamento" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Pagamento não localizado" })).toBeNull();
+});
+
 it("oferece uma reabertura por compra agrupada e não permite reabrir cartão ou PIX confirmado", async () => {
   const orders = [card("order-a"), card("order-b"),
     { ...card("confirmed-card"), financial_status: "confirmed", provider_payment_state: "confirmed", provider_payment_id: "confirmed-card" },
@@ -41,7 +55,7 @@ it("oferece uma reabertura por compra agrupada e não permite reabrir cartão ou
   expect(screen.queryByRole("button", { name: "Confirmar pagamento" })).toBeNull();
 });
 
-it("reabre pelo card e preserva filtros, páginas carregadas e fotos expandidas", async () => {
+it("reabre, retira a tentativa da lista ativa e permite consultar seu histórico", async () => {
   let reopened = false;
   const requests: string[] = [];
   const fetcher = vi.fn((path: string) => {
@@ -56,7 +70,8 @@ it("reabre pelo card e preserva filtros, páginas carregadas e fotos expandidas"
       provider_payment_state: "exception", provider_cart_recovery: {
         can_reopen: false, revision: 3, reopened_at: "2026-10-21T14:00:00Z" },
     });
-    return response(dashboard([group], params.has("cursor") ? null : "page-two"));
+    const historical = params.get("financial_status") === "reopened";
+    return response(dashboard(group.client.id === "a" && reopened && !historical ? [] : [group], params.has("cursor") ? null : "page-two"));
   });
   vi.stubGlobal("fetch", fetcher);
   render(<AdminPaymentsPage />);
@@ -69,18 +84,37 @@ it("reabre pelo card e preserva filtros, páginas carregadas e fotos expandidas"
   await screen.findByRole("heading", { name: "Cliente b" });
   fireEvent.click(screen.getAllByText("Ver pedido e entrega")[0]);
   await screen.findByRole("button", { name: "Ampliar order-a.jpg" });
-  const thumbnail = document.querySelector("img");
   const firstClient = screen.getByRole("heading", { name: "Cliente a" }).closest("section")!;
   fireEvent.click(within(firstClient).getByRole("button", { name: "Reabrir carrinho" }));
   await screen.findByText(/1 foto\(s\) da compra voltarão selecionadas/);
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: "Confirmar e reabrir carrinho" }));
-  await screen.findByText(/As fotos foram devolvidas à seleção da cliente/);
   await waitFor(() => expect(requests).toHaveLength(5));
   expect(screen.getByRole("heading", { name: "Cliente b" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Ampliar order-a.jpg" })).toBeTruthy();
-  expect(document.querySelector("img")).toBe(thumbnail);
+  expect(screen.queryByRole("heading", { name: "Cliente a" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ampliar order-a.jpg" })).toBeNull();
   expect(screen.getByLabelText("Situação financeira")).toHaveProperty("value", "verifying");
   expect(requests.slice(-2).every((path) => new URL(path, "http://localhost").searchParams.get("financial_status") === "verifying")).toBe(true);
   expect(new URL(requests.at(-1)!, "http://localhost").searchParams.get("cursor")).toBe("page-two");
+  fireEvent.change(screen.getByLabelText("Situação financeira"), { target: { value: "reopened" } });
+  fireEvent.click(screen.getByRole("button", { name: "Aplicar filtros" }));
+  await screen.findByRole("heading", { name: "Cliente a" });
+  expect(screen.getAllByText("Tentativa encerrada por reabertura").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByText("Ver pedido e entrega"));
+  expect(await screen.findByRole("button", { name: "Ampliar order-a.jpg" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Reabrir carrinho" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Salvar|Enviar álbum|Confirmar pagamento/ })).toBeNull();
+});
+
+it("destaca evidência tardia sem substituir por aviso de carrinho reaberto", async () => {
+  const order = { ...card("late"), provider_payment_state: "exception", financial_status: "exception",
+    provider_cart_recovery: { can_reopen: false, revision: 3, reopened_at: "2026-10-21T14:00:00Z", requires_reconciliation: true } };
+  vi.stubGlobal("fetch", vi.fn((path: string) => response(path.endsWith("gallery-reopening-requests")
+    ? { requests: [] } : dashboard([client("a", [order])]))));
+  render(<AdminPaymentsPage />);
+  await screen.findByRole("heading", { name: "Cliente a" });
+  expect(screen.getAllByText("Conferência após reabertura").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByText("Ver pedido e entrega"));
+  expect(screen.getByText(/retorno da tentativa anterior/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Reabrir carrinho" })).toBeNull();
 });

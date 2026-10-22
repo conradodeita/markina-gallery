@@ -36,7 +36,7 @@ def payment_methods(db: Session, *, tenant_id: UUID) -> dict:
         InfinitePaySettings.tenant_id == tenant_id,
     ).execution_options(populate_existing=True))
     card_available = configuration_payload(
-        settings, api_key_configured=api_key_configured(tenant_id),
+        settings, api_key_configured=api_key_configured(tenant_id, db=db),
     )["checkout_available"]
     return {
         "pix_available": pix_available,

@@ -40,8 +40,16 @@ def _aliases(environ: dict[str, str]) -> dict[UUID, str]:
         raise InfinitePayBindingError("Binding InfinitePay indisponível.") from None
 
 
-def api_key_for_tenant(tenant_id: UUID, *, environ: dict[str, str] | None = None) -> str | None:
+def api_key_for_tenant(tenant_id: UUID, *, environ: dict[str, str] | None = None, db=None) -> str | None:
     """Resolve apenas a chave do tenant pedido; nunca usa fallback de outra conta."""
+    if db is not None:
+        from app.infinitepay_credentials import current_key
+        from app.integration_secrets import IntegrationSecretError
+
+        try:
+            return current_key(db, tenant_id=tenant_id)
+        except IntegrationSecretError:
+            raise InfinitePayBindingError("Binding InfinitePay indisponível.") from None
     values = os.environ if environ is None else environ
     alias = _aliases(values).get(tenant_id)
     if alias is None:
@@ -57,8 +65,8 @@ def api_key_for_tenant(tenant_id: UUID, *, environ: dict[str, str] | None = None
     return api_key
 
 
-def api_key_configured(tenant_id: UUID) -> bool:
+def api_key_configured(tenant_id: UUID, *, db=None) -> bool:
     try:
-        return api_key_for_tenant(tenant_id) is not None
+        return api_key_for_tenant(tenant_id, db=db) is not None
     except InfinitePayBindingError:
         return False

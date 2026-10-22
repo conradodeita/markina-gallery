@@ -90,6 +90,16 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "arquivo_fora_do_escopo"))
 
+    def test_exact_scanner_metadata_is_allowed_but_similar_unlisted_file_is_rejected(self):
+        (self.root / ".gitleaksignore").write_text("immutable non-secret fingerprint\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+        (self.root / ".gitleaks-unreviewed").write_text("unreviewed exception\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
     def test_docker_monitor_worker_migration_and_unlisted_runtime_are_rejected(self):
         path = self.root / "docker/docker-compose.yml"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,7 +150,8 @@ class AppReleaseScopeTests(unittest.TestCase):
         for name in ("backend/requirements-push.txt", "backend/requirements.txt",
                      "backend/Dockerfile", "frontend/package.json", "frontend/package-lock.json",
                      "backend/app/infinitepay_credentials.py",
-                     "backend/migrations/versions/20261020_0085_infinitepay_credentials.py"):
+                     "backend/migrations/versions/20261020_0085_infinitepay_credentials.py",
+                     "backend/migrations/versions/20261021_0086_infinitepay_mixed_checkout.py"):
             with self.subTest(path=name):
                 path = self.root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -170,6 +181,24 @@ class AppReleaseScopeTests(unittest.TestCase):
                 self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
                 self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                                  (True, "somente_api_web"))
+
+    def test_checkout_navigation_requires_its_exact_blob_and_test_allowlist(self):
+        name = "frontend/app/library/cart/checkout-navigation.ts"
+        self.assertIn(name, policy.RUNTIME_FILES)
+        (self.root / name).write_text("same-tab checkout navigation\n", encoding="utf-8")
+        test = self.root / "frontend/app/library/cart/checkout-navigation.test.ts"
+        test.write_text("same-tab navigation contract\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+        (self.root / "frontend/app/library/cart/checkout-navigation-unreviewed.ts").write_text(
+            "unreviewed navigation\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
 
     def test_cart_recovery_frontend_tests_are_exact_non_runtime_operations(self):
         for name in (

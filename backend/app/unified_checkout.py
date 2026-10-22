@@ -37,6 +37,7 @@ from app.notification_events import record_payment_event
 from app.payment_availability import lock_payment_account, payment_methods
 from app.pix import PixCodeError, normalize_pix_copy_paste, pix_qr_data_url
 from app.private_membership import operational_galleries_for_client
+from app.provider_pending_cart import PENDING_STATES, pending_checkout_payload
 
 
 def communication_join():
@@ -227,7 +228,8 @@ def cart_payload(db: Session, client: Client):
     pending_cards = list(db.scalars(select(ProviderPayment).where(
         ProviderPayment.tenant_id == tenant_id,
         ProviderPayment.client_id == client.id,
-        ProviderPayment.state.in_(("awaiting_payment", "verification_required")),
+        ProviderPayment.state.in_(PENDING_STATES),
+        ProviderPayment.cart_dismissed_at.is_(None),
     ).order_by(ProviderPayment.created_at.desc(), ProviderPayment.id)))
     selected_photo_ids = {UUID(item["id"]) for group in groups for item in group["items"]}
     matching_card_ids = set()
@@ -244,12 +246,6 @@ def cart_payload(db: Session, client: Client):
     active_card = next((payment for payment in pending_cards
                         if payment.id in matching_card_ids or not selected_photo_ids), None)
 
-    def pending_payload(payment):
-        return {
-            "id": str(payment.id), "status": payment.state,
-            "checkout_url": payment.checkout_url if payment.state == "awaiting_payment" else None,
-            "total_cents": payment.total_cents,
-        }
     return {
         "groups": groups,
         "quantity": sum(group["quantity"] for group in groups),
@@ -263,8 +259,8 @@ def cart_payload(db: Session, client: Client):
         "card_available": methods["card_available"],
         "pix_available": methods["pix_available"],
         "default_method": methods["default_method"],
-        "card_payment": pending_payload(active_card) if active_card else None,
-        "pending_card_payments": [pending_payload(payment) for payment in pending_cards
+        "card_payment": pending_checkout_payload(db, active_card) if active_card else None,
+        "pending_card_payments": [pending_checkout_payload(db, payment) for payment in pending_cards
                                   if payment is not active_card],
     }
 

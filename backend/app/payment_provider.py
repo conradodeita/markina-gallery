@@ -1,4 +1,4 @@
-"""Porta de pagamentos e cliente HTTP documentado da InfinitePay, ainda inativo."""
+"""Porta de pagamentos e cliente HTTP documentado da InfinitePay."""
 
 import json
 from dataclasses import dataclass
@@ -25,9 +25,12 @@ class CheckoutRequest(BaseModel):
     tenant_id: UUID
     handle: str = Field(min_length=1, max_length=100)
     items: tuple[CheckoutItem, ...] = Field(min_length=1, max_length=1000)
+    payment_methods: tuple[Literal["credit_card", "pix"], ...] = ("credit_card",)
 
     @model_validator(mode="after")
     def bounded_total(self):
+        if self.payment_methods not in (("credit_card",), ("credit_card", "pix")):
+            raise ValueError("Meios de pagamento fora do contrato revisado.")
         if self.total_cents > 2_147_483_647:
             raise ValueError("Valor excede o limite local em centavos.")
         return self
@@ -97,6 +100,7 @@ class ProviderCapabilities:
     profile: str
     operational: bool = False
     credit_only: bool = False
+    payment_methods: tuple[str, ...] = ("credit_card",)
     payment_binding_verified: bool = False
     signed_webhook: bool = False
     recovery_verified: bool = False
@@ -152,11 +156,11 @@ class InfinitePayHttpProvider:
     PROFILE = "infinitepay-public-v1"
     MAX_RESPONSE_BYTES = 32 * 1024
 
-    # Este perfil usa payment_check depois do retorno e não depende de webhook.
-    # A chave identifica a conta e habilita options.credit_card/single_payment.
+    # Retorno e webhook são candidatos; payment_check verifica o método real.
+    # A chave identifica a conta e habilita meios por link e single_payment.
     # Timeouts permanecem em verificação e nunca geram nova emissão automática.
     capabilities = ProviderCapabilities(
-        profile=PROFILE, operational=True, credit_only=True,
+        profile=PROFILE, operational=True, credit_only=False, payment_methods=("credit_card", "pix"),
         payment_binding_verified=True, signed_webhook=False, recovery_verified=False,
     )
 
@@ -183,11 +187,11 @@ class InfinitePayHttpProvider:
         payload = request.neutral_payload()
         payload["redirect_url"] = self.redirect_url
         payload["options"] = {
-            "payment_methods_enabled": ["credit_card"],
+            "payment_methods_enabled": list(request.payment_methods),
             "single_payment": True,
         }
         if self.webhook_url:
-            payload["webhook_url"] = self.webhook_url
+            payload["webhook"] = {"url": self.webhook_url, "events": ["paid"]}
         try:
             response = self._post_json(f"{self.API_BASE}/links", payload)
         except (httpx.HTTPError, ProviderTransportError):
@@ -250,7 +254,7 @@ class InfinitePayHttpProvider:
             return PaymentCheckResult(outcome="unknown", amount_cents=0,
                                       capture_method="unknown", **base)
         # `paid_amount` pode incluir encargos. O domínio compara `amount` ao
-        # snapshot e exige `credit_card` antes de qualquer confirmação.
+        # snapshot e exige método permitido pela emissão antes da confirmação.
         return PaymentCheckResult(outcome="verified", amount_cents=amount,
                                   capture_method=method, **base)
 
@@ -309,14 +313,29 @@ def _valid_infinitepay_checkout_url(value: str) -> bool:
 
 
 def operational_provider(*, tenant_id: UUID | None = None,
-                         redirect_url: str | None = None) -> PaymentProvider | None:
+                         redirect_url: str | None = None, db=None,
+                         credential_id: UUID | None = None) -> PaymentProvider | None:
     """Crie cliente autenticado com binding do tenant e retorno HTTPS do servidor."""
     if not redirect_url or tenant_id is None:
         return None
     try:
-        api_key = api_key_for_tenant(tenant_id)
+        if credential_id is not None:
+            from app.infinitepay_credentials import credential_key
+            from app.integration_secrets import IntegrationSecretError
+
+            if db is None:
+                return None
+            try:
+                api_key = credential_key(db, tenant_id=tenant_id, credential_id=credential_id)
+            except IntegrationSecretError:
+                return None
+        else:
+            # Referência nula identifica compras anteriores ao cofre gerido.
+            api_key = api_key_for_tenant(tenant_id)
     except InfinitePayBindingError:
         return None
     if api_key is None:
         return None
-    return InfinitePayHttpProvider(redirect_url=redirect_url, api_key=api_key)
+    origin = urlsplit(redirect_url)
+    webhook_url = f"{origin.scheme}://{origin.netloc}/api/infinitepay/webhook"
+    return InfinitePayHttpProvider(redirect_url=redirect_url, api_key=api_key, webhook_url=webhook_url)
