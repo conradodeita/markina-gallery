@@ -499,7 +499,7 @@ def test_perfil_de_retorno_e_payment_check_nao_exige_webhook_assinado_ou_recover
 
     class ReturnOnlyProvider:
         capabilities = ProviderCapabilities(
-            profile="infinitepay-public-v1", operational=True, credit_only=True,
+            profile="infinitepay-public-v1", operational=True, payment_methods=("credit_card", "pix"),
             payment_binding_verified=True, signed_webhook=False, recovery_verified=False,
         )
 

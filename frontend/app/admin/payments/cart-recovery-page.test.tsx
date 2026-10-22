@@ -29,6 +29,19 @@ const dashboard = (groups: ReturnType<typeof client>[], cursor: string | null = 
   page: { next_cursor: cursor, limit: 12 },
 });
 
+it("PIX InfinitePay confirmado usa confirmação do provedor sem decisão de PIX manual", async () => {
+  const order = { ...card("pix-external"), payment_method: "pix", financial_status: "confirmed",
+    provider_payment_state: "confirmed", provider_cart_recovery: { can_reopen: false, revision: 3, reopened_at: null } };
+  vi.stubGlobal("fetch", vi.fn((path: string) => response(path.endsWith("gallery-reopening-requests")
+    ? { requests: [] } : dashboard([client("a", [order])]))));
+  render(<AdminPaymentsPage />);
+  fireEvent.click(await screen.findByText("Ver pedido e entrega"));
+  expect(screen.getByText(/Estado do checkout InfinitePay: confirmed/)).toBeTruthy();
+  expect(screen.getByText(/PIX InfinitePay/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Confirmar pagamento" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Pagamento não localizado" })).toBeNull();
+});
+
 it("oferece uma reabertura por compra agrupada e não permite reabrir cartão ou PIX confirmado", async () => {
   const orders = [card("order-a"), card("order-b"),
     { ...card("confirmed-card"), financial_status: "confirmed", provider_payment_state: "confirmed", provider_payment_id: "confirmed-card" },

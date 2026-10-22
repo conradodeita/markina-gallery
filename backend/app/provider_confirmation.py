@@ -101,7 +101,8 @@ def apply_payment_check(
             receipt.processed_at = now()
         return ApplyResult(state="hold", confirmed=False)
     if payment.state == "confirmed":
-        if payment.provider_transaction_nsu == result.transaction_nsu:
+        if (payment.provider_transaction_nsu == result.transaction_nsu
+                and payment.capture_method in (None, result.capture_method)):
             receipt.state = "verified"
             receipt.processed_at = now()
             return ApplyResult(state="confirmed", confirmed=True, duplicate=True)
@@ -121,7 +122,7 @@ def apply_payment_check(
         and result.transaction_nsu.strip() == result.transaction_nsu
         and result.verification_profile == payment.verification_profile
         and result.amount_cents == payment.total_cents
-        and result.capture_method == "credit_card"
+        and result.capture_method in payment.checkout_methods_snapshot
     )
     if not matches:
         receipt.state = "ignored"
@@ -131,7 +132,7 @@ def apply_payment_check(
             or result.handle != payment.handle_snapshot or result.slug != requested_slug
             or result.verification_profile != payment.verification_profile
             or result.amount_cents != payment.total_cents
-            or result.capture_method != "credit_card"
+            or result.capture_method not in payment.checkout_methods_snapshot
         )):
             return _exception(db, payment, receipt, "provider_payment.evidence_mismatch")
         return ApplyResult(state=payment.state, confirmed=False)
@@ -166,6 +167,7 @@ def apply_payment_check(
     confirmed_at = now()
     payment.state = "confirmed"
     payment.provider_transaction_nsu = result.transaction_nsu
+    payment.capture_method = result.capture_method
     payment.confirmed_at = confirmed_at
     payment.revision_number += 1
     payment.updated_at = confirmed_at

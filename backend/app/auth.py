@@ -1052,6 +1052,8 @@ class ProviderPayment(Base):
         UniqueConstraint("id", "tenant_id", "client_id", name="uq_provider_payment_owner"),
         UniqueConstraint("tenant_id", "client_id", "checkout_key", name="uq_provider_payment_checkout"),
         UniqueConstraint("provider", "provider_transaction_nsu", name="uq_provider_payment_transaction"),
+        CheckConstraint("capture_method IS NULL OR capture_method IN ('credit_card', 'pix')",
+                        name="ck_provider_payment_capture_method"),
         CheckConstraint("provider = 'infinitepay'", name="ck_provider_payment_provider"),
         CheckConstraint("total_cents > 0 AND configuration_version > 0 AND revision_number >= 0",
                         name="ck_provider_payment_amount_version"),
@@ -1069,6 +1071,10 @@ class ProviderPayment(Base):
     total_cents: Mapped[int] = mapped_column(Integer)
     handle_snapshot: Mapped[str] = mapped_column(String(100))
     credential_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    checkout_methods_snapshot: Mapped[list] = mapped_column(JSON, default=lambda: ["credit_card"],
+                                                          server_default='["credit_card"]')
+    capture_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    cart_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     configuration_version: Mapped[int] = mapped_column(Integer)
     verification_profile: Mapped[str] = mapped_column(String(100))
     state: Mapped[str] = mapped_column(String(32), default="creating", index=True)

@@ -89,7 +89,7 @@ def test_evidencia_sintetica_confirma_o_aggregate_em_uma_transacao():
     {"handle": "other_photographer"},
     {"slug": "other-slug"},
     {"amount_cents": 2099},
-    {"capture_method": "pix"},
+    {"capture_method": "unknown"},
     {"verification_profile": "other-profile"},
 ])
 def test_evidencia_incompatível_abre_exceção_sem_confirmar_pedidos(override):
@@ -166,35 +166,25 @@ def test_falha_ao_persistir_aviso_rollbacka_toda_confirmacao(monkeypatch):
             ProviderPaymentReceipt.payment_id == payment_id)) == 0
 
 
-def test_historico_cliente_agrupa_checkout_de_cartao_e_so_exibe_url_pendente():
+def test_pendencia_fica_no_carrinho_e_confirmacao_aparece_em_compras():
     payment_id = prepare_awaiting_payment()
     with SessionLocal() as db:
         payment = db.get(ProviderPayment, payment_id)
-        client = db.get(Client, payment.client_id)
-        phone = client.phone_e164
+        phone = db.get(Client, payment.client_id).phone_e164
         other_phone = db.scalar(select(Client.phone_e164).where(
-            Client.tenant_id == payment.tenant_id, Client.id != payment.client_id))
-        assert payment.tenant_id == FIXTURE_TENANT_ID
+            Client.tenant_id == FIXTURE_TENANT_ID, Client.id != payment.client_id))
     with TestClient(main.app) as browser:
         fixture_client_cookie(browser, phone)
-        response = browser.get("/library/purchases")
-    assert response.status_code == 200
-    assert len(response.json()["provider_payment_groups"]) == 1
-    with TestClient(main.app) as browser:
+        assert not browser.get("/library/purchases").json().get("provider_payment_groups")
+        body = browser.get("/library/cart").json()
+        group = body["card_payment"]
+        assert group["id"] == str(payment_id) and group["status"] == "awaiting_payment"
+        assert group["total_cents"] == 2100 and len(group["orders"]) == 2
+        assert group["checkout_url"].startswith("https://checkout.example.invalid/")
+        assert "transaction_nsu" not in str(body)
         fixture_client_cookie(browser, other_phone)
-        other_response = browser.get("/library/purchases")
-    assert other_response.status_code == 200
-    assert other_response.json().get("provider_payment_groups", []) == []
-
-    assert response.status_code == 200
-    body = response.json()
-    groups = body["provider_payment_groups"]
-    assert [group["id"] for group in groups] == [str(payment_id)]
-    assert groups[0]["state"] == "awaiting_payment"
-    assert groups[0]["total_cents"] == 2100 and len(groups[0]["orders"]) == 2
-    assert groups[0]["checkout_url"].startswith("https://checkout.example.invalid/")
-    assert len(body["orders"]) == 0
-    assert "transaction_nsu" not in str(body)
+        assert not browser.get("/library/purchases").json().get("provider_payment_groups")
+        assert browser.get("/library/cart").json()["card_payment"] is None
     with SessionLocal() as db:
         payment = db.get(ProviderPayment, payment_id)
         result = verified_result(db, payment)
@@ -206,7 +196,8 @@ def test_historico_cliente_agrupa_checkout_de_cartao_e_so_exibe_url_pendente():
     assert confirmed["state"] == "confirmed" and confirmed["checkout_url"] is None
 
 
-def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch):
+@pytest.mark.parametrize("method", ["credit_card", "pix"])
+def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch, method):
     from app.auth import Client
 
     payment_id = prepare_awaiting_payment()
@@ -221,7 +212,7 @@ def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch)
     with SessionLocal() as db:
         payment = db.get(ProviderPayment, payment_id)
         assert db.get(Client, payment.client_id).tenant_id == FIXTURE_TENANT_ID
-        result = verified_result(db, payment)
+        result = verified_result(db, payment, capture_method=method)
         apply_payment_check(db, payment.id, requested_slug=result.slug, result=result)
         db.commit()
         orders = list(db.scalars(select(SaleOrder).where(SaleOrder.provider_payment_id == payment_id)))
@@ -235,13 +226,13 @@ def test_admin_payment_queue_identifica_metodo_sem_duplicar_receita(monkeypatch)
         )
         order_payload = next(item for group in result["groups"] for item in group["orders"]
                              if item.get("provider_payment_id") == str(payment_id))
-    assert order_payload["payment_method"] == "credit_card"
+    assert order_payload["payment_method"] == method
     assert order_payload["provider_payment_state"] == "confirmed"
     assert all(order.delivery_album_url is None for order in orders)
     assert order_payload["financial_status"] == "confirmed_undelivered"
     assert result["summary"]["confirmed_cents"] == expected_revenue
     assert commercial["confirmed_order_count"] == len(orders)
-    assert {order["payment_method"] for order in commercial["orders"]} == {"credit_card"}
+    assert {order["payment_method"] for order in commercial["orders"]} == {method}
     assert {order["destination"] for order in commercial["orders"]} == {"InfinityPay"}
 
 
@@ -308,3 +299,37 @@ def test_admin_de_outra_conta_nao_pode_corrigir_pagamento():
                                idempotency_key="foreign-admin", reason="Teste estrangeiro")
         db.rollback()
         assert db.get(ProviderPayment, payment_id).state == "confirmed"
+
+
+@pytest.mark.parametrize("method", ["credit_card", "pix"])
+def test_confirma_meio_misto_uma_vez_e_preserva_metodo_verificado(method):
+    payment_id = prepare_awaiting_payment()
+    with SessionLocal() as db:
+        payment = db.get(ProviderPayment, payment_id)
+        assert payment.checkout_methods_snapshot == ["credit_card", "pix"]
+        result = verified_result(db, payment, capture_method=method)
+        applied = apply_payment_check(db, payment_id, requested_slug=result.slug, result=result)
+        assert applied.confirmed
+        db.commit()
+        assert payment.capture_method == method
+        second = apply_payment_check(db, payment_id, requested_slug=result.slug, result=result)
+        assert second.confirmed and second.duplicate
+        db.commit()
+        assert payment.capture_method == method
+        assert db.scalar(select(func.count(NotificationEvent.id)).where(
+            NotificationEvent.event_key == f"provider-payment-confirmed:{payment_id}:{payment.revision_number}")) == 1
+
+
+def test_link_legado_exclusivo_cartao_nao_confirma_pix():
+    payment_id = prepare_awaiting_payment()
+    with SessionLocal() as db:
+        payment = db.get(ProviderPayment, payment_id)
+        payment.checkout_methods_snapshot = ["credit_card"]
+        db.flush()
+        result = verified_result(db, payment, capture_method="pix")
+        applied = apply_payment_check(db, payment_id, requested_slug=result.slug, result=result)
+        assert not applied.confirmed and applied.state == "exception"
+        db.commit()
+        assert payment.capture_method is None
+        assert all(order.payment_status == "pending" for order in db.scalars(select(SaleOrder).where(
+            SaleOrder.provider_payment_id == payment_id)))

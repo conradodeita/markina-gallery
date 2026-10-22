@@ -140,13 +140,17 @@ jobs:
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
           pytest backend/tests/test_provider_checkout.py::test_clique_concorrente_com_mesma_chave_produz_uma_reserva
           backend/tests/test_provider_cart_recovery.py backend/tests/test_provider_cart_recovery_api.py
-          backend/tests/test_reopened_purchase_visibility.py -q
+          backend/tests/test_reopened_purchase_visibility.py
+          backend/tests/test_provider_confirmation.py
+          backend/tests/test_infinitepay_pending_cart.py
+          backend/tests/test_infinitepay_webhook.py -q
       - name: Cofre InfinitePay e snapshots de checkout em PostgreSQL
         run: >-
           DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
           pytest backend/tests/test_infinitepay_credential_checkout.py
           backend/tests/test_infinitepay_credential_management.py
-          backend/tests/test_infinitepay_credentials_migration.py -q
+          backend/tests/test_infinitepay_credentials_migration.py
+          backend/tests/test_infinitepay_mixed_migration.py -q
       - name: Regressão do inventário de exclusão em PostgreSQL
         run: >-
           DATABASE_URL="$TENANT_TEST_DATABASE_URL"

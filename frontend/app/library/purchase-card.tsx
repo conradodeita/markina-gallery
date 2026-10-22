@@ -34,7 +34,7 @@ function orderState(order: Order) {
 }
 
 function orderLabel(order: Order) {
-  if (order.payment_method === "credit_card") {
+  if (order.provider_payment_state || order.payment_method === "credit_card") {
     if (order.provider_cart_reopened_at && order.commercial_state === "cancelled"
         && order.provider_payment_state !== "confirmed") return order.provider_requires_reconciliation
           ? "Conferência após reabertura" : "Tentativa encerrada por reabertura";
@@ -42,7 +42,7 @@ function orderLabel(order: Order) {
       creating: "Preparando checkout",
       awaiting_payment: "Aguardando pagamento no cartão",
       verification_required: "Verificando pagamento",
-      confirmed: "Pagamento por cartão confirmado",
+      confirmed: order.payment_method === "pix" ? "PIX InfinitePay confirmado" : "Pagamento por cartão confirmado",
       failed_before_issue: "Checkout não iniciado",
       exception: "Pagamento em análise",
       hold: "Pagamento em revisão",
@@ -64,7 +64,7 @@ export function LibraryOrderCard({ order }: { order: Order }) {
   const activityLabel = order.payment_required === false ? "Finalizada" : order.confirmed_at ? "Confirmada" : "Informada";
   const gridId = `library-order-${order.id}-photos`;
   const albumUrl = ["purchased", "selection_finalized"].includes(orderState(order)) ? safeExternalAlbumUrl(order.delivery_album_url) : null;
-  const recovered = order.payment_method === "credit_card" && order.provider_payment_state !== "confirmed"
+  const recovered = Boolean(order.provider_payment_state) && order.provider_payment_state !== "confirmed"
     && order.commercial_state === "cancelled" && Boolean(order.provider_cart_reopened_at);
 
   useEffect(() => {

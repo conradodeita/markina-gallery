@@ -150,7 +150,8 @@ class AppReleaseScopeTests(unittest.TestCase):
         for name in ("backend/requirements-push.txt", "backend/requirements.txt",
                      "backend/Dockerfile", "frontend/package.json", "frontend/package-lock.json",
                      "backend/app/infinitepay_credentials.py",
-                     "backend/migrations/versions/20261020_0085_infinitepay_credentials.py"):
+                     "backend/migrations/versions/20261020_0085_infinitepay_credentials.py",
+                     "backend/migrations/versions/20261021_0086_infinitepay_mixed_checkout.py"):
             with self.subTest(path=name):
                 path = self.root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

@@ -134,10 +134,10 @@ export default function InfinitePayPanel() {
       setConfiguration(await requestConfiguration("/confirm", { challenge_id: challenge.challenge_id, code }));
       setEditing(false); setChallenge(null); setCode("");
       setMessage(removing ? "Integração InfinitePay desconectada. Novos cartões estão indisponíveis; o PIX manual mantém sua configuração." : challenge.proposal.card_enabled
-        ? "Cartão habilitado para novas compras. Compras já emitidas mantêm seus links até confirmação ou conciliação."
+        ? "Checkout InfinitePay habilitado para novas compras. Compras já emitidas mantêm seus links até confirmação ou conciliação."
         : challenge.proposal.checkout_ready
-          ? "InfinitePay continua configurada, mas cartão está desabilitado para novas compras. Links já emitidos permanecem disponíveis."
-          : "Configuração salva como pendente. Cartão permanece indisponível até confirmar as opções da sua conta.");
+          ? "InfinitePay continua configurada, mas checkout InfinitePay está desabilitado para novas compras. Links já emitidos permanecem disponíveis."
+          : "Configuração salva como pendente. Checkout InfinitePay permanece indisponível até confirmar as opções da sua conta.");
     } catch (failure) { await showFailure(failure); }
     finally { setBusy(false); }
   }
@@ -155,24 +155,24 @@ export default function InfinitePayPanel() {
 
   return <section id="infinitepay" className="admin-card global-pix-settings" aria-labelledby="infinitepay-title">
     <p className="eyebrow">Pagamentos · Sua conta</p>
-    <h2 id="infinitepay-title">Cartão de crédito · InfinitePay</h2>
-    <p>{configuration?.checkout_available ? "Cartão de crédito está habilitado para novas compras dos clientes desta conta." : configuration?.status === "active" && configuration.card_enabled && !configuration.api_key_configured ? "Cadastre a API Key da sua conta para disponibilizar cartão aos clientes." : configuration?.status === "active" ? "InfinitePay está configurada, mas cartão está desabilitado para novas compras." : "Prepare sua conta para receber diretamente pela InfinitePay. O cartão ainda não está disponível aos clientes."}</p>
-    <p>Na sua conta InfinitePay, habilite o Checkout Integrado e cartão de crédito. Informe a InfiniteTag e a API Key da mesma conta. Cada link criado pelo Pick-your-Pic oferece somente cartão, com opções próprias da integração. O PIX manual do Pick-your-Pic continua independente; não é necessário desligar o PIX nas configurações gerais da InfinitePay. Antes de habilitar, confira o recebedor e que o checkout da integração oferece somente cartão, sem concluir pagamento. A confirmação registra sua declaração; não comprova a titularidade remotamente.</p>
+    <h2 id="infinitepay-title">Cartão e PIX · InfinitePay</h2>
+    <p>{configuration?.checkout_available ? "Checkout InfinitePay com cartão e PIX está habilitado para novas compras desta conta." : configuration?.status === "active" && configuration.card_enabled && !configuration.api_key_configured ? "Cadastre a API Key da sua conta para disponibilizar o checkout aos clientes." : configuration?.status === "active" ? "InfinitePay está configurada, mas checkout InfinitePay está desabilitado para novas compras." : "Prepare sua conta para receber diretamente pela InfinitePay. O checkout ainda não está disponível aos clientes."}</p>
+    <p>Na sua conta InfinitePay, habilite o Checkout Integrado, cartão de crédito e PIX. Informe a InfiniteTag e a API Key da mesma conta. Novos links criados pelo Pick-your-Pic oferecem cartão e PIX no mesmo checkout, com opções próprias da integração. O PIX manual do Pick-your-Pic continua independente, com confirmação pelo fotógrafo. Antes de habilitar, confira o recebedor e os meios disponíveis no checkout, sem concluir pagamento. Links antigos podem continuar exclusivos de cartão. A confirmação registra sua declaração; não comprova a titularidade remotamente.</p>
     <a href="https://app.infinitepay.io/external-checkout#documentacao" target="_blank" rel="noopener noreferrer">Abrir Checkout Integrado na InfinitePay</a>
     {!configuration ? <SystemState tone={error ? "error" : "loading"} title={error ? "Configuração indisponível" : "Carregando InfinitePay"} detail={error || "Consultando sua configuração."} /> : <>
-      <StatusBadge tone={configuration.checkout_available ? "success" : "warning"}>{configuration.checkout_available ? "Cartão habilitado para novos pedidos" : configuration.status === "active" && configuration.card_enabled && !configuration.api_key_configured ? "Aguardando cadastro da API Key" : configuration.status === "active" ? "Cartão desabilitado para novos pedidos" : configuration.status === "pending" ? "Pendente de configuração" : "Cartão indisponível"}</StatusBadge>
+      <StatusBadge tone={configuration.checkout_available ? "success" : "warning"}>{configuration.checkout_available ? "Checkout habilitado para novos pedidos" : configuration.status === "active" && configuration.card_enabled && !configuration.api_key_configured ? "Aguardando cadastro da API Key" : configuration.status === "active" ? "Checkout desabilitado para novos pedidos" : configuration.status === "pending" ? "Pendente de configuração" : "Checkout indisponível"}</StatusBadge>
       {configuration.handle ? <p>InfiniteTag declarada: <strong style={{ overflowWrap: "anywhere" }}>{configuration.handle}</strong></p> : null}
       <p>{configuration.credential_status === "unavailable" ? "API Key exige atenção: a credencial está temporariamente indisponível." : configuration.api_key_configured ? "API Key cadastrada. Seu valor não é exibido." : "API Key não cadastrada."}</p>
       {configuration.credential_validation === "validated" ? <p>Credencial validada pela InfinitePay.</p> : configuration.credential_validation === "rejected" ? <p role="alert">Credencial rejeitada pela InfinitePay. Substitua a API Key antes de novos cartões.</p> : <p>Validação remota indisponível neste fluxo. O cadastro não comprova a aceitação da chave pela InfinitePay.</p>}
       {!storageAvailable ? <p role="status">Cadastro seguro temporariamente indisponível. Tente novamente mais tarde.</p> : null}
       {!editing ? <div className="action-grid">
-        <button ref={editButton} className="mk-button mk-button--primary" type="button" onClick={() => begin()}>{configuration.handle ? "Alterar InfiniteTag ou disponibilidade do cartão" : "Preparar InfinitePay"}</button>
+        <button ref={editButton} className="mk-button mk-button--primary" type="button" onClick={() => begin()}>{configuration.handle ? "Alterar InfiniteTag ou disponibilidade do checkout" : "Preparar InfinitePay"}</button>
         {configuration.api_key_configured ? <MarkinaButton variant="secondary" type="button" disabled={!storageAvailable} onClick={() => begin(false, true)}>Substituir API Key</MarkinaButton> : null}
         {configuration.handle ? <MarkinaButton variant="secondary" type="button" onClick={() => begin(true)}>Desconectar InfinitePay</MarkinaButton> : null}
       </div> : challenge ? <form className="gallery-settings-form" onSubmit={confirm}>
         <h3>{challenge.proposal.handle ? "Confira a InfiniteTag proposta" : "Confirme a remoção da InfinitePay"}</h3>
         {challenge.proposal.handle ? <p style={{ overflowWrap: "anywhere" }}>{challenge.proposal.handle}</p> : null}
-        {challenge.proposal.checkout_ready ? <p>A configuração da conta está confirmada. {challenge.proposal.card_enabled ? "Esta alteração habilitará cartão para novos pedidos." : "Esta alteração manterá cartão desabilitado para novos pedidos."} Links de compras já emitidas continuam disponíveis até confirmação ou conciliação.</p> : null}
+        {challenge.proposal.checkout_ready ? <p>A configuração da conta está confirmada. {challenge.proposal.card_enabled ? "Esta alteração habilitará o checkout InfinitePay com cartão e PIX para novos pedidos." : "Esta alteração manterá checkout InfinitePay desabilitado para novos pedidos."} Links de compras já emitidas continuam disponíveis até confirmação ou conciliação.</p> : null}
         <p>Use o código enviado ao WhatsApp administrativo do Pick-your-Pic. Ele confirma somente esta alteração e é válido por 10 minutos.</p>
         <label>Código de confirmação InfinitePay<input ref={otpInput} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required /></label>
         <div className="action-grid">
@@ -182,7 +182,7 @@ export default function InfinitePayPanel() {
           <MarkinaButton type="button" variant="quiet" disabled={busy} onClick={() => { setChallenge(null); setCode(""); setError(""); }}>Recomeçar confirmação</MarkinaButton>
         </div>
       </form> : <form className="gallery-settings-form" onSubmit={start}>
-        {removing ? <p>A desconexão exige confirmação de segurança e nenhuma compra de cartão pendente. O PIX manual permanece disponível conforme sua configuração.</p> : <label>InfiniteTag<input ref={handleInput} value={handle} onChange={(event) => {
+        {removing ? <p>A desconexão exige confirmação de segurança e nenhuma compra InfinitePay pendente. O PIX manual permanece disponível conforme sua configuração.</p> : <label>InfiniteTag<input ref={handleInput} value={handle} onChange={(event) => {
           setHandle(event.target.value);
           if (event.target.value.trim().replace(/^\$/, "") !== configuration.handle) {
             setCheckoutReady(false); setCardEnabled(false);
@@ -202,9 +202,9 @@ export default function InfinitePayPanel() {
           <label className="checkbox-label"><input type="checkbox" checked={checkoutReady} onChange={(event) => {
             setCheckoutReady(event.target.checked);
             if (!event.target.checked) setCardEnabled(false);
-          }} />Conferi que esta InfiniteTag e a API Key são da minha conta, habilitei o Checkout Integrado e cartão e conferi, sem pagar, que o checkout da integração oferece somente cartão.</label>
-          <label className="checkbox-label"><input type="checkbox" checked={cardEnabled} disabled={!checkoutReady || !handle.trim()} onChange={(event) => setCardEnabled(event.target.checked)} />Habilitar pagamento por cartão de crédito para novos pedidos de clientes</label>
-          <p>Desabilitar esta opção impede novos checkouts de cartão. Links já emitidos continuam disponíveis nas compras pendentes.</p>
+          }} />Conferi que esta InfiniteTag e a API Key são da minha conta, habilitei o Checkout Integrado, cartão e PIX e conferi o recebedor e os meios do checkout sem concluir pagamento.</label>
+          <label className="checkbox-label"><input type="checkbox" checked={cardEnabled} disabled={!checkoutReady || !handle.trim()} onChange={(event) => setCardEnabled(event.target.checked)} />Habilitar checkout InfinitePay (cartão e PIX) para novos pedidos de clientes</label>
+          <p>Desabilitar esta opção impede novos checkouts InfinitePay. Links já emitidos continuam disponíveis no Carrinho.</p>
         </> : null}
         <label>Senha atual do Pick-your-Pic<input ref={passwordInput} name="infinitepay_current_password" type="password" autoComplete="current-password" maxLength={128} required /></label>
         <div className="action-grid">

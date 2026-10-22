@@ -26,7 +26,7 @@ synthetic_infinitepay_binding = _binding
 def test_reaberta_sai_da_compra_ativa_e_esvaziar_carrinho_preserva_historico(case):
     buyer = browser_for(case["owner"], role=Role.CLIENT)
     admin = browser_for(case["actor"])
-    assert buyer.get("/library/purchases").json()["provider_payment_groups"]
+    assert buyer.get("/library/cart").json()["card_payment"]["id"] == str(case["payment"])
     decision(case, preview(case))
     before = state(case)
     assert not buyer.get("/library/purchases").json().get("provider_payment_groups")
@@ -141,9 +141,9 @@ def test_nova_compra_aparece_sem_ressuscitar_tentativa_antiga(case):
         db.commit()
         issue_provider_payment(db, new_id, SyntheticPaymentProvider("accepted"))
         db.commit()
-    groups = buyer.get("/library/purchases").json()["provider_payment_groups"]
-    assert [UUID(group["id"]) for group in groups] == [new_id]
-    assert groups[0]["state"] == "awaiting_payment"
+    assert not buyer.get("/library/purchases").json().get("provider_payment_groups")
+    payment = buyer.get("/library/cart").json()["card_payment"]
+    assert UUID(payment["id"]) == new_id and payment["status"] == "awaiting_payment"
 
 
 def test_confirmado_sem_reabertura_continua_em_compras_e_fora_do_historico(case):

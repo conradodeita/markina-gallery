@@ -543,7 +543,7 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={order.provider_cart_recovery?.reopened_at ? undefined : `payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={order.provider_cart_recovery?.reopened_at ? undefined : `payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.provider_payment_id ? order.payment_method === "pix" ? " · PIX InfinitePay" : " · InfinitePay" : order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>
@@ -552,8 +552,8 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
       {expanded && order.folders?.length ? <OrderPhotos folders={order.folders} /> : !order.folders?.length ? <p>Nenhuma fotografia disponível.</p> : null}
       <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p></section>
       <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
-      {order.payment_method === "credit_card" ? <>
-        <p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
+      {order.provider_payment_id || order.payment_method === "credit_card" ? <>
+        <p>Estado do checkout InfinitePay: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
         {showCartRecovery && order.provider_payment_id && order.provider_cart_recovery && !isConfirmedFinancialStatus(order.financial_status)
           ? <CartRecoveryActions paymentId={order.provider_payment_id} state={order.provider_payment_state}
             status={order.provider_cart_recovery} clientName={clientName} onRefresh={onCartRecoveryRefresh} /> : null}

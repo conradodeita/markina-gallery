@@ -1,5 +1,7 @@
 # Plano coordenado API/web — sem execução
 
+> Atualização22/10/2026: o candidato passou a incluir `add-infinitepay-pix-and-pending-cart`. Seu `release-plan.md` define o alvo final0086 e a compatibilidade de rollback; referências históricas a0085 abaixo continuam documentadas como checkpoints, sem autorizar publicação. Não habilitar PIX InfinitePay até a implementação publicada.
+
 ## Dependências e escopo
 
 ### Atualização de continuidade — 21/10/2026 após CI776

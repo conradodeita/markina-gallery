@@ -104,13 +104,13 @@ def prepare_provider_payment(
             or not 0 < total <= MAX_PROVIDER_CENTS or any(not 0 < price <= MAX_PROVIDER_CENTS for price in amounts)):
         raise CheckoutError("Valores ou quantidade indisponíveis para checkout.")
     if total < MIN_PROVIDER_CENTS:
-        raise CheckoutError("O pagamento com cartão exige um total mínimo de R$ 1,00. "
-                            "Adicione mais fotos ou escolha PIX, se disponível.")
+        raise CheckoutError("O checkout da InfinitePay exige um total mínimo de R$ 1,00. "
+                            "Adicione mais fotos ou escolha PIX do sistema, se disponível.")
     key = str(UUID(checkout_key)) if _is_uuid(checkout_key) else checkout_key
     new_payment = ProviderPayment(
         tenant_id=tenant_id, client_id=client.id, checkout_key=key,
         cart_revision=revision, total_cents=total, handle_snapshot=settings.handle,
-        credential_id=settings.credential_id,
+        credential_id=settings.credential_id, checkout_methods_snapshot=["credit_card", "pix"],
         configuration_version=settings.version, verification_profile=settings.verification_profile,
         state="creating", revision_number=0,
     )
@@ -192,7 +192,8 @@ def checkout_request_for(db: Session, payment: ProviderPayment) -> CheckoutReque
         items = tuple(CheckoutItem(quantity=quantity, price=price)
                       for price, quantity in sorted(grouped.items()))
         return CheckoutRequest(payment_id=payment.id, tenant_id=payment.tenant_id,
-                               handle=payment.handle_snapshot, items=items)
+                               handle=payment.handle_snapshot, items=items,
+                               payment_methods=tuple(payment.checkout_methods_snapshot))
     except ValueError as exc:
         raise CheckoutError("Valores indisponíveis para checkout.") from exc
 
@@ -214,8 +215,8 @@ def issue_provider_payment(db: Session, payment_id: UUID, provider) -> ProviderP
         raise CheckoutError("Tentativa já utilizada; conciliação necessária.")
     capabilities = provider.capabilities
     if (capabilities.profile != "synthetic-only"
-            and not all((capabilities.operational, capabilities.credit_only,
-                         capabilities.payment_binding_verified))):
+            and not all((capabilities.operational, capabilities.payment_binding_verified,
+                         set(payment.checkout_methods_snapshot).issubset(capabilities.payment_methods)))):
         raise CheckoutError("Perfil do provedor não atende ao fluxo documentado de cartão.")
     request = checkout_request_for(db, payment)
     client_id = payment.client_id

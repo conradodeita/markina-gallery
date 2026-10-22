@@ -36,11 +36,21 @@ const privateGallery = {
 };
 
 describe("biblioteca e compras da cliente", () => {
-  it("agrupa uma compra de cartão e mostra apenas o link hospedado enquanto aguarda pagamento", async () => {
+  it("identifica PIX confirmado pela InfinitePay sem solicitar informe manual", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ orders: [], payment_groups: [], removed_movements: [],
+      provider_payment_groups: [{ id: "pix-external", state: "confirmed", capture_method: "pix",
+        total_cents: 1400, checkout_url: null, orders: [] }] })));
+    render(<PurchasesPage />);
+    expect(await screen.findByRole("region", { name: "Compra PIX InfinitePay pix-exte" })).toBeTruthy();
+    expect(screen.getByText(/PIX InfinitePay · Pagamento confirmado/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Informar pagamento" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
+  });
+  it("omite checkout pendente que a API classificou para o Carrinho", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({
       orders: [], payment_groups: [], removed_movements: [],
       provider_payment_groups: [{
-        id: "payment-card-1", state: "awaiting_payment",
+        id: "payment-card-1", state: "awaiting_payment", requires_reconciliation: false,
         checkout_url: "https://checkout.example.invalid/synthetic",
         total_cents: 2100,
         orders: [1, 2].map((id) => ({
@@ -52,10 +62,9 @@ describe("biblioteca e compras da cliente", () => {
       }],
     })));
     render(<PurchasesPage />);
-    expect(await screen.findByText(/Cartão de crédito · Aguardando pagamento/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Continuar pagamento" }).getAttribute("href"))
-      .toBe("https://checkout.example.invalid/synthetic");
-    expect(screen.getAllByText(/Aguardando pagamento no cartão/)).toHaveLength(2);
+    expect(await screen.findByText("Nenhuma compra.")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
+    expect(screen.queryByText("Compra payment-")).toBeNull();
     expect(screen.queryByText(/transaction_nsu|slug/)).toBeNull();
   });
 

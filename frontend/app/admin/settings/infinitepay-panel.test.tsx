@@ -18,7 +18,7 @@ async function fillInitial() {
   fireEvent.change(screen.getByLabelText("InfiniteTag"), { target: { value: "synthetic_tag" } });
   fireEvent.change(screen.getByLabelText("API Key InfinitePay"), { target: { value: "synthetic-private-key" } });
   fireEvent.click(screen.getByLabelText(/Conferi que esta InfiniteTag/));
-  fireEvent.click(screen.getByLabelText(/Habilitar pagamento por cartão/));
+  fireEvent.click(screen.getByLabelText(/Habilitar checkout InfinitePay/));
   fireEvent.change(screen.getByLabelText("Senha atual do Pick-your-Pic"), { target: { value: "synthetic-password" } });
 }
 
@@ -27,7 +27,7 @@ describe("Credenciais InfinitePay no card existente", () => {
     vi.stubGlobal("fetch", vi.fn(() => response(empty)));
     render(<InfinitePayPanel />);
     fireEvent.click(await screen.findByRole("button", { name: "Preparar InfinitePay" }));
-    expect(screen.getByText(/Cada link criado pelo Pick-your-Pic oferece somente cartão/)).toBeTruthy();
+    expect(screen.getByText(/Novos links criados pelo Pick-your-Pic oferecem cartão e PIX no mesmo checkout/)).toBeTruthy();
     expect(screen.getByText(/O PIX manual do Pick-your-Pic continua independente/)).toBeTruthy();
     expect(screen.queryByText(/deixe cartão de crédito ligado e PIX desligado/)).toBeNull();
     expect(screen.getByLabelText(/Conferi que esta InfiniteTag/).closest("label")?.textContent).not.toContain("desliguei o PIX");
@@ -69,7 +69,7 @@ describe("Credenciais InfinitePay no card existente", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirmar configuração InfinitePay" }));
     expect(await screen.findByText("API Key cadastrada. Seu valor não é exibido.")).toBeTruthy();
     expect(screen.getByText(/Validação remota indisponível/)).toBeTruthy();
-    expect(screen.getAllByRole("heading", { name: "Cartão de crédito · InfinitePay" })).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { name: "Cartão e PIX · InfinitePay" })).toHaveLength(1);
     expect(screen.queryByDisplayValue("synthetic-private-key")).toBeNull();
     expect(storage).not.toHaveBeenCalled();
     expect(document.cookie + window.location.href).not.toContain("synthetic-private-key");
@@ -110,12 +110,12 @@ describe("Credenciais InfinitePay no card existente", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<InfinitePayPanel />);
-    fireEvent.click(await screen.findByRole("button", { name: "Alterar InfiniteTag ou disponibilidade do cartão" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alterar InfiniteTag ou disponibilidade do checkout" }));
     expect(screen.getByLabelText("Nova API Key InfinitePay")).toHaveProperty("required", false);
-    fireEvent.click(screen.getByLabelText(/Habilitar pagamento por cartão/));
+    fireEvent.click(screen.getByLabelText(/Habilitar checkout InfinitePay/));
     fireEvent.change(screen.getByLabelText("Senha atual do Pick-your-Pic"), { target: { value: "synthetic-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar código InfinitePay" }));
-    expect(await screen.findByText(/Esta alteração manterá cartão desabilitado/)).toBeTruthy();
+    expect(await screen.findByText(/Esta alteração manterá checkout InfinitePay desabilitado/)).toBeTruthy();
   });
 
   it("impede abandono acidental e descarta o segredo somente após confirmação", async () => {
