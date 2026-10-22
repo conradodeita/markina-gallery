@@ -109,3 +109,9 @@ Validação com **gitleaks8.24.3**, mesma versão do CI, pacote oficial Windows 
 - Clone temporário isolou as refs do candidato, preservando TODA sua ancestralidade e o scanner padrão. A primeira execução sobre o repositório local compartilhado encontrou a mesma ocorrência no recibo local não publicado2abb7d2 de uma branch irmã; essa ref não é ancestral do candidato nem estava no CI. Não foi criada exceção para ela. CI permanece varrendo seu histórico completo, sem redução de escopo.
 
 Relatório local sanitizado: C:/codex-data/tmp/vault-gitleaks-fingerprint-validation.json; relatórios do scanner redigidos em100%. Resultado final de CI do novo head permanece pendente; backend e demais resultados do CI780 não são presumidos aprovados.
+
+### Integração do ajuste de scanner de #266
+
+Merge local afb6ee15 incorpora o ajuste de metadados de #266/320588ca. A fingerprint é idêntica à validada na task6.6; não há nova exceção. A admissão de `.gitleaksignore` é exata e não amplia runtime/migration. Nenhum arquivo de aplicação mudou após as matrizes37 PostgreSQL/610 frontend, cujas premissas permanecem válidas. A política técnica confirma novamente a recusa operacional deste candidato: publication_candidate_ready=false/api_fora_do_escopo; política0084 não autoriza publicação do cofre. O CI780 do head anterior falhou no scanner; não deve ser apresentado como aprovado. O novo head deve concluir todos os checks antes da integração.
+
+Após esse merge:7 testes reais de política aprovados em32,097s; Ruff dos scripts aprovado; gitleaks8.24.3 novamente1 achado antes/0depois e canário1detectado; OpenSpec1.14.0 global134aprovados/0falhas. CI remoto do novo head permanece pendente.
