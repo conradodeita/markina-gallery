@@ -111,3 +111,7 @@ Imagens de recuperação da fase anterior são as antigas92bcf865/c1be0a01 já i
 Recibos verificáveis no deploy-state: payments0086-native-images.json, payments0086-native-distributions.json, payments0086-native-homolog-v6-result.json, payments0086-real-backup-restore-result.json. Cópia sanitizada agregada em C:/codex-data/tmp/payments0086-prepublication-receipts.json. Matriz de referência/limitações preservada acima.
 
 **Decisão:** preparação técnica e guarda externa concluídas; GO para revisão/solicitação de autorização da operação concreta0084→0086/API/web com temporária interna. Execução permanece pendente dessa autorização operacional específica, conforme release-plan.md. Não declarar deploy ou cofre ativo na aplicação publicada.
+
+## Resultado posterior à autorização expressa
+
+O proprietário autorizou a operação acima (“Autorizado”, reiterada por “Então continue”). Inventário renovado sem divergência; execução concluída22/10/2026,10:07:37SãoPaulo. A decisão anterior é histórica: schema0086 e API/web d7944bae agora estão publicados. Nenhuma nova autorização era necessária para repetir o mesmo escopo aprovado. Recibo atual, verificações e limites em `publication-20261022.md`; PIX InfinitePay não foi habilitado pelo executor e nenhum pagamento real foi criado.
