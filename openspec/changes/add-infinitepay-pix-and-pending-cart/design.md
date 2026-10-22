@@ -27,4 +27,8 @@ Local/testes sintéticos somente. Migration0086 preserva legado com crédito exc
 
 # Validation
 
+## Preparação operacional — 22/10/2026
+
+Geração inicial do keyring SHALL ser manual, com senha de backup em terminal interativo, sem argumentos/segredos no chat. O preparador faz escrita exclusiva de arquivo0600 fora do checkout e backup AES-GCM independente, derivado com scrypt(n=131072,r=8,p=1), verificado antes do material ativo. Chave mestra aleatória de32bytes; não é a APIKey do fotógrafo. Ausência de keyring é pré-condição; material existente nunca é sobrescrito. Host/owner/modo do diretório, ambiente staging, marcadores de operação e confirmação da senha são validados. Falha parcial preserva arquivos para reconciliação. Somente API candidata carrega o material; demais serviços e binding legado permanecem intocados. O proprietário guarda somente arquivo cifrado no PC e senha separada. Provisionar não é publicar, nem comprova custódia externa ou restauração do backup real. O helper antigo de manutenção bloqueia o novo webhook e não pode ser reutilizado como prova de continuidade neste release sem ajuste/revisão/ensaio próprios.
+
 Regressões de payload misto/legado, captura PIX e cartão, mismatch/snapshot, retorno e webhook falsificado/duplicado/tardio, concorrência, downgrade protegido e isolamento. Carrinho com fotos/retomada/remoção/refresh, Compras PIX informado/recusado/confirmado e entregas; PIX manual intacto, limites100, idempotência e nenhum segredo. Gates locais e CI final do mesmo PR.

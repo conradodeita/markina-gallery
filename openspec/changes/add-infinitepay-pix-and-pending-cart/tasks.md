@@ -18,6 +18,11 @@
 
 O CI final SHALL ser conferido no head atual, com todos os jobs concluídos, antes de declarar aprovação ou solicitar integração. O resultado auditável SHALL ser registrado no corpo do mesmo PR262 com SHA/run exatos, preservando a evidência do CI787 que falhou; resultados antigos não aprovam head novo. Fonte dinâmica:[checks do PR262](https://github.com/conradodeita/markina-gallery/pull/262/checks). Não criar commit documental recursivo somente para citar o próprio SHA/CI; a conclusão desta task local não declara o CI aprovado. Acompanhar esse gate até resultado final ou solicitação explícita do proprietário para parar.
 
+## 5. Preparação operacional autorizada — 22/10/2026
+- [x] 5.1 Renovar inventário somente leitura da Oracle, ensaiar upgrade/restore/keyring com dois tenants sintéticos e smoke da API ARM64 preservando todas as distribuições; registrar limites em release-preparation-20261022.md. Schema real0084,quinze serviços healthy;restore97tabelas/idênticas;smoke isolado aprovado;nenhuma operação financeira.
+- [x] 5.2 Versionar preparador manual do keyring/backup, validar restauração correta/recusas e proteções de pré-condição sem segredo real; registrar checksum do utilitário disponibilizado. Oito testes ARM64/zero skips,63,672s;Ruff/OpenSpec estrito aprovados;fonte/checksum/inventário/limites em release-preparation-20261022.md. Código preparado não declara cofre provisionado.
+- [ ] 5.3 Concluir gates operacionais do release-plan.md: homologação completa API/web/PostgreSQL, imagens fixas/recuperação, provisionamento com proprietário, custódia externa, backup real restaurável, barreira preservando webhook e inventário/plano aprovados. Não executar publicação enquanto faltarem evidências.
+
 ## Workflow follow-up
 
 Não habilitar PIX na InfinitePay até a implementação publicada; proprietário confirmou essa decisão. Revisão, autorização operacional, inventário, backups/keyring/restore e release0086 permanecem gates humanos próprios. Não alterar PR261 ou ampliar escopo do PR266 aprovado.

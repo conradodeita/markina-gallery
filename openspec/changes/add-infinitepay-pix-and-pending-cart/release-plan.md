@@ -1,5 +1,7 @@
 # Plano coordenado de pagamentos — 0086 — não executado
 
+> Preparação autorizada em22/10/2026, após merge262/266: inventário atual, ensaios sintéticos, preparador manual e gates remanescentes estão em `release-preparation-20261022.md`. CI789 comprovou validações técnicas aprovadas e bloqueio `release_scope=protected`. O proprietário escolheu backup cifrado da chave mestra no próprio PC, senha sob sua guarda. O provisionamento real exige sua entrada no SSH e ainda não ocorreu; a publicação continua não executada. Este seguimento não amplia o workflow0084.
+
 ## Escopo e precedência
 
 Este plano atualiza o alvo do candidato combinado do PR262 para a cadeia0085→0086. O plano do cofre continua aplicável a autorização, isolamento, keyring, restore e callbacks; suas referências a0085 como alvo final ficam substituídas por0086 neste conjunto. PR266 tem CI785 aprovado e foi incorporado anteriormente; CI786 aprovou somente o checkpoint anterior à integração mista. Nenhum desses resultados aprova automaticamente o novo head.
