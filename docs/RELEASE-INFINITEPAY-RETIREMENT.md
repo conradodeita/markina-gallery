@@ -27,7 +27,7 @@ O executor adquire o lock compartilhado de releases, valida o fingerprint de nov
 
 O processo não recria Nginx, banco, Redis, workers faciais nem serviços de terceiros e não altera proxy, DNS, firewall, volumes ou redes. O worker geral da Markina é pausado e recriado com API/web para alinhar o ORM ao schema removido. Nenhum prazo de interrupção é prometido: a duração do dump e o tempo de healthcheck dependem do estado real do host.
 
-Depois da migration, o executor confirma schema, imagens, healthchecks locais e HTTPS, compara evidência financeira antes/depois e remove somente o binding cujo inode/metadados foram aprovados, desde que a versão nova esteja saudável e nenhum Compose/arquivo do host ainda o referencie. As evidências são agregadas; o conteúdo do binding, payloads, nomes e IDs de cliente não são registrados.
+Depois da migration, o executor confirma schema, imagens, healthchecks locais e HTTPS, compara evidência financeira antes/depois e remove somente o binding cujo inode/metadados foram aprovados, desde que a versão nova esteja saudável e nenhum arquivo Compose encontrado nas raízes `/opt`, `/home`, `/srv`, `/etc`, `/root`, `/mnt` e no diretório de estado da Markina, nem mount bind de container de outro projeto, o referencie. A varredura usa `sudo -n` quando necessário e falha fechada se não conseguir ler uma raiz ou inspecionar todos os containers. As evidências são agregadas; o conteúdo do binding, payloads, nomes e IDs de cliente não são registrados.
 
 ## Falhas e recuperação
 

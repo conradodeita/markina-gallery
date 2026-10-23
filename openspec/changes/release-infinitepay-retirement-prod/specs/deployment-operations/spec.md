@@ -2,6 +2,17 @@
 
 ## ADDED Requirements
 
+### Requirement: Classificação CI de alterações protegidas
+A CI SHALL reportar `protected` como classificação válida sem iniciar publicação automática; somente o workflow manual dedicado pode publicar a aposentadoria. Uma classificação `mixed` MUST continuar falhando fechada.
+
+#### Scenario: Aposentadoria integrada em main
+- **WHEN** o push à `main` contém somente a change protegida de aposentadoria
+- **THEN** a CI conclui sua classificação com sucesso e não executa os gates de publicação API/web ou facial
+
+#### Scenario: Delta mistura runtimes protegidos
+- **WHEN** o classificador detecta um delta `mixed`
+- **THEN** o job geral de escopo falha e nenhum release automático é autorizado
+
 ### Requirement: Release protegido da aposentadoria InfinitePay
 O sistema SHALL oferecer um procedimento de produção exclusivo para aplicar a migration `20261022_0087` e publicar a aposentadoria InfinitePay, condicionado a SHA revisado em `main`, CI aprovado, inventário remoto e aprovação explícita do inventário e do plano de impacto.
 
@@ -19,6 +30,8 @@ O sistema SHALL oferecer um procedimento de produção exclusivo para aplicar a 
 
 ### Requirement: Remoção delimitada do binding InfinitePay no host
 O sistema SHALL remover do host somente o arquivo de binding InfinitePay comprovadamente exclusivo, após a versão sem mount estar ativa e saudável, sem exibir ou copiar seu conteúdo.
+
+O inventário SHALL verificar referências em arquivos Compose das raízes compartilhadas e mounts bind de todos os containers existentes. Falha de leitura, erro do daemon ou inventário parcial MUST bloquear a aprovação de exclusividade e a remoção.
 
 #### Scenario: Binding exclusivo identificado
 - **WHEN** o inventário confirma caminho, tipo e uso exclusivo do arquivo pelo serviço da Markina e a versão publicada já não o referencia
