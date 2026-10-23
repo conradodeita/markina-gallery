@@ -133,19 +133,15 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "runtime_diverge_do_blob_aprovado"))
 
-    def test_payment_retirement_runtime_and_migration_require_reviewed_blobs(self):
-        for name in ("backend/app/payment_availability.py",
-                     "backend/migrations/versions/20261022_0087_retire_infinitepay.py"):
-            with self.subTest(path=name):
-                self.assertIn(name, policy.RUNTIME_FILES)
-                path = self.root / name
-                path.write_text("reviewed tenant payment availability\n", encoding="utf-8")
-                self.commit()
-                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                                 (False, "runtime_diverge_do_blob_aprovado"))
-                self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
-                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                                 (True, "somente_api_web"))
+    def test_retirement_migration_stays_outside_generic_api_web_release(self):
+        name = "backend/migrations/versions/20261022_0087_retire_infinitepay.py"
+        self.assertNotIn(name, policy.RUNTIME_FILES)
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("retirement migration\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
 
     def test_each_dependency_vault_and_migration_path_remains_rejected(self):
         for name in ("backend/requirements-push.txt", "backend/requirements.txt",
@@ -161,7 +157,7 @@ class AppReleaseScopeTests(unittest.TestCase):
                                  (False, "arquivo_fora_do_escopo"))
                 path.unlink()
                 self.commit()
-        changed_runtime = self.root / "backend/app/integration_secrets.py"
+        changed_runtime = self.root / "backend/app/main.py"
         changed_runtime.write_text("outside emergency payment scope\n", encoding="utf-8")
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
@@ -233,7 +229,7 @@ class AppReleaseScopeTests(unittest.TestCase):
         (self.root / "backend/app/auth.py").write_text("unapproved runtime\n", encoding="utf-8")
         self.commit()
         self.assertEqual(policy.evaluate(self.root, "HEAD", "HEAD", self.manifest),
-                         (False, "runtime_diverge_do_blob_aprovado"))
+                         (False, "api_fora_do_escopo"))
 
     def test_retired_statistics_pages_are_exactly_allowlisted_and_removed_from_runtime_manifest(self):
         self.assertNotIn("frontend/app/admin/statistics/page.tsx", policy.RUNTIME_FILES)
