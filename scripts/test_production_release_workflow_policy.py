@@ -183,6 +183,18 @@ def main() -> None:
     require("compose up -d --no-deps --force-recreate --wait --wait-timeout 120 api web worker", "API/web/worker publicados e aguardados", release_script)
     require("remove_binding_after_health", "binding removido somente após saúde", release_script)
     require("retirement_host_references.py", "varredura recursiva das configurações compartilhadas", retirement_script)
+    host_references_blob = git(ROOT, "rev-parse", "HEAD:scripts/retirement_host_references.py")
+    require(
+        f'HOST_REFERENCES_SCRIPT_BLOB_SHA="{host_references_blob}"',
+        "scanner remoto fixa o blob versionado exato",
+        retirement_script,
+    )
+    require(
+        'raw.githubusercontent.com/$EXPECTED_REPOSITORY/$TARGET_SHA/scripts/retirement_host_references.py',
+        "scanner remoto é buscado da revisão aprovada",
+        retirement_script,
+    )
+    require('python3 -c "$host_references_source"', "scanner remoto não depende do checkout de produção", retirement_script)
     require("docker ps -aq", "inventário de containers completos para mounts externos", retirement_script)
     require("sudo -n python3", "varredura privilegiada sem prompt interativo", retirement_script)
     financial_source = (ROOT / "scripts/retirement_financial_evidence.py").read_text(encoding="utf-8")

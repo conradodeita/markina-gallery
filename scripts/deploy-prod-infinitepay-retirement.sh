@@ -12,6 +12,7 @@ readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
 readonly BACKUP_DIR="/var/lib/markina-gallery/backups"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
+readonly HOST_REFERENCES_SCRIPT_BLOB_SHA="daf10a33d72a7239dea59206a1384e7eb5224c21"
 readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/branding.compose.yml"
   "docker/docker-compose.raw-development.yml"
@@ -142,12 +143,19 @@ print(json.dumps({"path":resolved,"type":kind,"symlink":stat.S_ISLNK(info.st_mod
 }
 
 outside_references() {
-  local target="$1" file_refs container_refs container_ids container_id container_data
+  local target="$1" file_refs container_refs container_ids container_id container_data host_references_source host_references_sha raw_url
+  raw_url="https://raw.githubusercontent.com/$EXPECTED_REPOSITORY/$TARGET_SHA/scripts/retirement_host_references.py"
+  host_references_source="$(curl --location --fail --silent --show-error --proto '=https' --proto-redir '=https' \
+    --tlsv1.2 --max-time 20 "$raw_url")" || fail "scanner de referências versionado indisponível"
+  host_references_sha="$(printf '%s\n' "$host_references_source" | git hash-object --stdin)" \
+    || fail "não foi possível verificar o scanner de referências"
+  [[ "$host_references_sha" == "$HOST_REFERENCES_SCRIPT_BLOB_SHA" ]] \
+    || fail "scanner de referências diverge do blob revisado"
   if [[ "$EUID" -eq 0 ]]; then
-    file_refs="$(python3 "$PROJECT_ROOT/scripts/retirement_host_references.py" --target "$target" \
+    file_refs="$(python3 -c "$host_references_source" --target "$target" \
       --roots /opt /home /srv /etc /root /mnt /var/lib/markina-gallery/deploy-state)" || fail "varredura de arquivos de configuração incompleta"
   else
-    file_refs="$(sudo -n python3 "$PROJECT_ROOT/scripts/retirement_host_references.py" --target "$target" \
+    file_refs="$(sudo -n python3 -c "$host_references_source" --target "$target" \
       --roots /opt /home /srv /etc /root /mnt /var/lib/markina-gallery/deploy-state)" || fail "varredura privilegiada de arquivos de configuração indisponível ou incompleta"
   fi
   container_ids="$(docker ps -aq)" || fail "inventário de containers Docker indisponível"
@@ -157,7 +165,7 @@ outside_references() {
       docker inspect --format '{{json .Mounts}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}' "$container_id" \
         || exit 1
     done <<<"$container_ids")" || fail "inspeção de mounts Docker incompleta"
-    container_refs="$(printf '%s\n' "$container_data" | python3 "$PROJECT_ROOT/scripts/retirement_host_references.py" \
+    container_refs="$(printf '%s\n' "$container_data" | python3 -c "$host_references_source" \
       --target "$target" --container-inspect)" || fail "varredura de mounts Docker incompleta"
   else
     container_refs=""
