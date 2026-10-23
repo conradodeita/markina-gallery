@@ -1,4 +1,8 @@
-# Plano coordenado de pagamentos — 0086 — não executado
+# Plano coordenado de pagamentos — 0086
+
+> **Estado atual22/10/2026,10:07SãoPaulo:** operação explicitamente autorizada e concluída:0085/0086 aplicadas, API/web d7944bae saudáveis, cofre disponível, callbacks atendidos pela API temporária durante a troca. Recibo, imagens, verificação e limites em `publication-20261022.md`. As afirmações de não execução/provisionamento abaixo são checkpoints históricos anteriores e não descrevem o estado atual. PIX no provedor e pagamento real não foram acionados pelo executor; habilitação pelo proprietário continua separada.
+
+> Preparação autorizada em22/10/2026, após merge262/266: inventário atual, ensaios sintéticos, preparador manual e gates remanescentes estão em `release-preparation-20261022.md`. CI789 comprovou validações técnicas aprovadas e bloqueio `release_scope=protected`. O proprietário escolheu backup cifrado da chave mestra no próprio PC, senha sob sua guarda. O provisionamento real exige sua entrada no SSH e ainda não ocorreu; a publicação continua não executada. Este seguimento não amplia o workflow0084.
 
 ## Escopo e precedência
 

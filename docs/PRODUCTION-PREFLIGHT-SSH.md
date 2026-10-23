@@ -35,6 +35,14 @@ O environment existente `production` permanece protegido pelo revisor `conradode
 
 O preflight não reutiliza nem modifica a chave ou os secrets de deploy. A aprovação de `production` permanece separada e protegida.
 
+## Preflight específico da aposentadoria InfinitePay
+
+A operação manual `infinitepay-retirement` usa a mesma chave SSH restrita de `production-preflight`. O wrapper versionado reconhece somente `MARKINA_RETIREMENT_TARGET_SHA=<SHA completo>` e baixa `scripts/deploy-prod-infinitepay-retirement.sh` pelo SHA da `main`, comparando o blob imutável antes de executar apenas `--mode inventory`. O inventário é minimizado e não imprime configuração Compose, conteúdo do binding ou valores de segredo.
+
+Após integração do código em `main`, a cópia root-owned do wrapper em `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` precisa ser atualizada por uma sessão operacional autorizada para fixar o blob do wrapper e do script do SHA integrado. Conferir conteúdo, proprietário `root:root`, modo `0755`, hash do script e os comandos permitidos em `authorized_keys`; não ampliar a chave para shell nem conceder modo release. Até essa atualização e conferência, o workflow remoto falhará fechado e nenhum inventário pode ser alegado.
+
+O inventário só fica apto quando comprova checkout/runtime alinhados, `20261021_0086`, serviços saudáveis, hashes Compose API/web, domínio/porta registrados, smoke HTTPS e binding regular exclusivo sem link simbólico, hardlink ou referência externa. O JSON sanitizado e seu fingerprint são apresentados antes de qualquer etapa mutável. O manifesto de release API/web em `0084` segue sem alteração até que esse estado seja confirmado pelo host.
+
 ## Verificação de ancestralidade do candidato
 
 O checkout de produção pode não conter o commit recém-mergeado em `main`. Para verificar que o SHA candidato descende do último release saudável sem alterar refs ou objetos do checkout ativo, o inventário busca a ponta de `main` com filtro de blobs em um repositório Git bare temporário configurado como partial clone, confirma que ela continua igual ao SHA solicitado e verifica a ancestralidade nesse banco temporário. O diretório é removido ao terminar; qualquer falha ou mudança da ponta de `main` faz o preflight falhar fechado antes de produzir o fingerprint.

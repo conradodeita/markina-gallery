@@ -1,9 +1,0 @@
-.dialog { width:min(560px,calc(100% - 24px)); max-height:calc(100dvh - 32px); padding:24px; border:1px solid var(--mk-border); border-radius:var(--mk-radius-lg); color:var(--mk-ink); background:var(--mk-surface); box-shadow:var(--mk-shadow-md); overflow:auto; }
-.dialog::backdrop { background:#000a; }
-.dialog form { display:grid; gap:14px; }
-.dialog h2,.dialog p { margin:0; line-height:1.5; }
-.dialog input:not([type=checkbox]) { width:100%; min-height:44px; padding:10px; border:1px solid var(--mk-border); border-radius:var(--mk-radius-sm); color:var(--mk-ink); background:var(--mk-surface); font:inherit; }
-.acknowledgement { display:flex; align-items:flex-start; gap:10px; line-height:1.5; }
-.acknowledgement input { flex:0 0 20px; width:20px; height:20px; margin-top:2px; }
-.actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; margin-top:6px; }
-@media(max-width:600px) { .dialog { padding:18px; } .actions { flex-direction:column-reverse; } .actions button { width:100%; } }

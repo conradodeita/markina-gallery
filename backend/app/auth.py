@@ -230,7 +230,7 @@ class AdminSecurityChallenge(Base):
     __table_args__ = (
         CheckConstraint(
             "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp', "
-            "'change_pix_otp', 'change_infinitepay_otp')",
+            "'change_pix_otp')",
             name="ck_admin_security_purpose",
         ),
         CheckConstraint("attempts >= 0"),
@@ -1042,13 +1042,10 @@ class PaymentGroup(Base):
 
 
 class ProviderPayment(Base):
-    """Compra de cartão isolada do PIX; UUID público é o order_nsu."""
+    """Registro legado de compra InfinitePay, preservado para consulta financeira."""
 
     __tablename__ = "provider_payment"
     __table_args__ = (
-        ForeignKeyConstraint(["credential_id", "tenant_id"],
-                             ["infinitepay_credential.id", "infinitepay_credential.tenant_id"],
-                             name="fk_provider_payment_credential_owner"),
         UniqueConstraint("id", "tenant_id", "client_id", name="uq_provider_payment_owner"),
         UniqueConstraint("tenant_id", "client_id", "checkout_key", name="uq_provider_payment_checkout"),
         UniqueConstraint("provider", "provider_transaction_nsu", name="uq_provider_payment_transaction"),
@@ -1070,7 +1067,6 @@ class ProviderPayment(Base):
     cart_revision: Mapped[str] = mapped_column(String(64))
     total_cents: Mapped[int] = mapped_column(Integer)
     handle_snapshot: Mapped[str] = mapped_column(String(100))
-    credential_id: Mapped[UUID | None] = mapped_column(nullable=True)
     checkout_methods_snapshot: Mapped[list] = mapped_column(JSON, default=lambda: ["credit_card"],
                                                           server_default='["credit_card"]')
     capture_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
@@ -1079,7 +1075,6 @@ class ProviderPayment(Base):
     verification_profile: Mapped[str] = mapped_column(String(100))
     state: Mapped[str] = mapped_column(String(32), default="creating", index=True)
     revision_number: Mapped[int] = mapped_column(Integer, default=0)
-    checkout_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_transaction_nsu: Mapped[str | None] = mapped_column(String(200), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -1634,64 +1629,6 @@ class PixCheckoutSettings(Base):
     review_required: Mapped[bool] = mapped_column(Boolean, default=False)
     instructions: Mapped[str | None] = mapped_column(String(500), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
-
-
-class InfinitePayCredential(Base):
-    """Cofre dedicado: somente envelope autenticado, nunca plaintext."""
-
-    __tablename__ = "infinitepay_credential"
-    __table_args__ = (
-        UniqueConstraint("id", "tenant_id", name="uq_infinitepay_credential_owner"),
-        CheckConstraint("(ciphertext IS NOT NULL AND nonce IS NOT NULL AND revoked_at IS NULL) OR "
-                        "(ciphertext IS NULL AND nonce IS NULL AND revoked_at IS NOT NULL)",
-                        name="ck_infinitepay_credential_envelope"),
-    )
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
-    environment: Mapped[str] = mapped_column(String(40))
-    key_id: Mapped[str] = mapped_column(String(48))
-    ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-class InfinitePaySettings(Base):
-    """InfiniteTag por conta e autodeclaração de Checkout Integrado.
-
-    `verified_at` remains the legacy column name for the timestamp when the
-    owner attested to the setup; it does not mean remote ownership verification.
-    """
-
-    __tablename__ = "infinitepay_settings"
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
-    __table_args__ = (
-        ForeignKeyConstraint(["credential_id", "tenant_id"],
-                             ["infinitepay_credential.id", "infinitepay_credential.tenant_id"],
-                             name="fk_infinitepay_settings_credential_owner"),
-        CheckConstraint("credential_source IN ('server_binding', 'managed') AND "
-                        "(credential_source != 'server_binding' OR credential_id IS NULL)",
-                        name="ck_infinitepay_settings_credential_source"),
-        UniqueConstraint("tenant_id", name="uq_infinitepay_settings_tenant"),
-        CheckConstraint("version >= 0", name="ck_infinitepay_settings_version"),
-        CheckConstraint("status IN ('pending', 'inactive', 'active')",
-                        name="ck_infinitepay_settings_status"),
-        CheckConstraint("status = 'inactive' OR handle IS NOT NULL",
-                        name="ck_infinitepay_settings_handle"),
-        CheckConstraint("status != 'active' OR (verification_profile IS NOT NULL "
-                        "AND verified_at IS NOT NULL)", name="ck_infinitepay_settings_activation"),
-    )
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
-    version: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(16), default="pending")
-    handle: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    card_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    credential_source: Mapped[str] = mapped_column(String(16), default="server_binding")
-    credential_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    verification_profile: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class GlobalPixSettings(Base):

@@ -16,6 +16,8 @@ WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
 )
 INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes()
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
+RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retirement.sh").read_bytes()
+RETIREMENT_BINDING_SCRIPT = (ROOT / "scripts/retirement_binding_removal.py").read_text(encoding="utf-8")
 APP_RUNBOOK = (ROOT / "docs/DEPLOY-PROD-APP.md").read_text(encoding="utf-8")
 CLASSIFIER = (ROOT / "scripts/classify_prod_release.py").read_text(encoding="utf-8")
 
@@ -62,6 +64,15 @@ def main() -> None:
         "  production-app-release:", 1
     )[0]
     app_release = WORKFLOW.split("  production-app-release:", 1)[1]
+    retirement_scope = WORKFLOW.split("  infinitepay-retirement-scope:", 1)[1].split(
+        "  infinitepay-retirement-preflight:", 1
+    )[0]
+    retirement_preflight = WORKFLOW.split("  infinitepay-retirement-preflight:", 1)[1].split(
+        "  infinitepay-retirement-release:", 1
+    )[0]
+    retirement_release = WORKFLOW.split("  infinitepay-retirement-release:", 1)[1].split(
+        "  production-preflight:", 1
+    )[0]
     rollback_preflight = WORKFLOW.split("  production-app-rollback-preflight:", 1)[1].split(
         "  production-app-rollback:", 1
     )[0]
@@ -78,6 +89,17 @@ def main() -> None:
     require("environment: production", "aprovação protegida para API/web", app_release)
     require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
     require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)
+    require("- infinitepay-retirement", "operação manual de aposentadoria", WORKFLOW)
+    require("inputs.operation == 'infinitepay-retirement'", "preflight limitado à operação selecionada", retirement_scope)
+    require("check_infinitepay_retirement_scope.py", "gate exato antes do inventário", retirement_scope)
+    require("environment: production-preflight", "inventário usa somente credencial read-only", retirement_preflight)
+    require("MARKINA_RETIREMENT_TARGET_SHA=$GITHUB_SHA", "comando do inventário aposentadoria restrito", retirement_preflight)
+    require("retirement_inventory_policy.py", "validação local do inventário minimizado", retirement_preflight)
+    require("secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY", "inventário não usa credencial mutável", retirement_preflight)
+    require("needs.infinitepay-retirement-preflight.outputs.approval_fingerprint", "release vinculado ao fingerprint read-only", retirement_release)
+    require("environment: production", "release de aposentadoria exige aprovação protegida", retirement_release)
+    require("scripts/deploy-prod-infinitepay-retirement.sh", "executor dedicado da aposentadoria", retirement_release)
+    require("scripts/test_deploy_prod_infinitepay_retirement.sh", "CI testa o despacho de modo da aposentadoria", WORKFLOW)
     require("MARKINA_APP_ROLLBACK_SHA=$GITHUB_SHA", "inventário de rollback read-only", rollback_preflight)
     require("environment: production", "rollback protegido", rollback_release)
     require(
@@ -97,6 +119,8 @@ def main() -> None:
     require('^MARKINA_TARGET_SHA=([0-9a-f]{40})$', "comando SSH validado por regex estrita", WRAPPER)
     require('inventory_mode="inventory"', "wrapper fixa modo somente-leitura padrão", WRAPPER)
     require('inventory_mode="rollback-inventory"', "wrapper limita o segundo modo a inventário de rollback", WRAPPER)
+    require('MARKINA_RETIREMENT_TARGET_SHA=([0-9a-f]{40})', "comando de aposentadoria exige SHA completo", WRAPPER)
+    require('script_name="deploy-prod-infinitepay-retirement.sh"', "wrapper aponta para o inventário de aposentadoria", WRAPPER)
     require('--mode "$inventory_mode"', "wrapper não encaminha modo enviado pelo cliente", WRAPPER)
     inventory_text = INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
     blob_header = f"blob {len(inventory_text)}\0".encode()
@@ -118,6 +142,10 @@ def main() -> None:
     app_blob_header = f"blob {len(app_inventory_text)}\0".encode()
     app_blob_sha = hashlib.sha1(app_blob_header + app_inventory_text).hexdigest()
     require(f'APP_SCRIPT_BLOB_SHA="{app_blob_sha}"', "wrapper fixa o script API/web exato", WRAPPER)
+    retirement_inventory_text = RETIREMENT_INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
+    retirement_blob_header = f"blob {len(retirement_inventory_text)}\0".encode()
+    retirement_blob_sha = hashlib.sha1(retirement_blob_header + retirement_inventory_text).hexdigest()
+    require(f'RETIREMENT_SCRIPT_BLOB_SHA="{retirement_blob_sha}"', "wrapper fixa o inventário de aposentadoria exato", WRAPPER)
     require("MARKINA_APP_TARGET_SHA=([0-9a-f]{40})", "wrapper aceita somente SHA app completo", WRAPPER)
     require("MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})", "wrapper aceita apenas SHA para inventário de rollback", WRAPPER)
     if "--mode release" in WRAPPER or '"$SSH_ORIGINAL_COMMAND"' in WRAPPER:
@@ -128,6 +156,40 @@ def main() -> None:
     require("printf '%s\\n' \"$script_body\" | MARKINA_EXPECTED_REPOSITORY=", "somente conteúdo validado alimenta stdin", WRAPPER)
     script = INVENTORY_SCRIPT.decode("utf-8")
     app_script = APP_INVENTORY_SCRIPT.decode("utf-8")
+    retirement_script = RETIREMENT_INVENTORY_SCRIPT.decode("utf-8")
+    require('MODE" == inventory', "script remoto aceita somente modo de inventário", retirement_script)
+    require('"20261021_0086"', "preflight confere schema anterior exato", retirement_script)
+    require("compose_binding_metadata", "preflight coleta apenas metadados do binding", retirement_script)
+    require("nenhuma mutação foi executada", "preflight confirma operação read-only", retirement_script)
+    release_script = retirement_script.split("release() {", 1)[1].split("main() {", 1)[0]
+    require('if [[ "$MODE" == inventory ]]; then', "modo release despacha para a rotina mutável apenas após o gate", retirement_script)
+    require("verify_restore_receipt", "restauração anterior testada é gate", release_script)
+    require("pg_dump -Fc", "backup custom consistente antes da migration", retirement_script)
+    require("pg_restore --list", "arquivo de backup validado", retirement_script)
+    require("retirement_financial_evidence.py", "evidência agregada pré/pós migration", retirement_script)
+    require("retirement_pix_evidence.py", "continuidade do PIX próprio verificada antes/depois", retirement_script)
+    require("alembic upgrade 20261022_0087", "somente migration de aposentadoria", release_script)
+    require("compose stop api", "API antiga pausada antes da migration destrutiva", release_script)
+    require("compose stop --timeout 180 worker", "worker antigo tem janela explícita para finalizar ciclo", release_script)
+    require("{{.State.Status}}:{{.State.ExitCode}}", "release aborta se o worker não sair limpo", release_script)
+    require("compose build api web worker", "imagem do worker atualizada com o schema", release_script)
+    require("compose up -d --no-deps --force-recreate --wait --wait-timeout 120 api web worker", "API/web/worker publicados e aguardados", release_script)
+    require("remove_binding_after_health", "binding removido somente após saúde", release_script)
+    financial_source = (ROOT / "scripts/retirement_financial_evidence.py").read_text(encoding="utf-8")
+    if "checkout_url" in financial_source or "credential_id" in financial_source:
+        raise AssertionError("evidência não pode depender de colunas removidas pela migration")
+    if "upgrade head" in release_script or "alembic downgrade" in release_script:
+        raise AssertionError("release não pode executar migration adicional ou downgrade")
+    if not (release_script.index("verify_restore_receipt") < release_script.index("compose build api web worker")
+            < release_script.index("compose stop api") < release_script.index("compose stop --timeout 180 worker")
+            < release_script.index("create_backup")
+            < release_script.index("pre_evidence=\"$(financial_evidence)\"")
+            < release_script.index("pre_pix=\"$(pix_evidence)\"")
+            < release_script.index("MIGRATION_STARTED=true") < release_script.index("alembic upgrade 20261022_0087")
+            < release_script.index("compose up -d --no-deps") < release_script.index("remove_binding_after_health")):
+        raise AssertionError("ordem protegida do release/migration/limpeza diverge")
+    if "rm -rf" in RETIREMENT_BINDING_SCRIPT or "rmtree" in RETIREMENT_BINDING_SCRIPT:
+        raise AssertionError("limpeza do binding deve remover somente um arquivo")
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))

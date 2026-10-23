@@ -1,4 +1,6 @@
-# Plano coordenado API/web — sem execução
+# Plano coordenado API/web
+
+> **Atualização operacional22/10/2026:** publicação conjunta autorizada de #262/#266 concluída em d7944bae, schema0086, às10:07:37SãoPaulo. Cofre disponível na API publicada, ainda sem credenciais geridas cadastradas; binding anterior preservado. Evidências e limites em `../add-infinitepay-pix-and-pending-cart/publication-20261022.md`. Os estados draft/não executado abaixo são checkpoints históricos, não o estado atual. Nenhuma APIKey do fotógrafo foi substituída ou removida durante a operação.
 
 > Atualização22/10/2026: o candidato passou a incluir `add-infinitepay-pix-and-pending-cart`. Seu `release-plan.md` define o alvo final0086 e a compatibilidade de rollback; referências históricas a0085 abaixo continuam documentadas como checkpoints, sem autorizar publicação. Não habilitar PIX InfinitePay até a implementação publicada.
 

@@ -6,9 +6,9 @@ import pytest
 import sqlalchemy as sa
 
 from app import auth
+from tests.payment_migration_fixtures import payment_migration_database as _migration_database
 from tests.tenant_fixtures import insert_legacy_model
 from tests.test_global_pix_migration import alembic
-from tests.test_tenant_infinitepay_migration import migration_database as _migration_database
 
 migration_database = _migration_database
 SOURCE = "20261012_0075"

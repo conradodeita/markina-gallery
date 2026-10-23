@@ -20,4 +20,8 @@ O proprietário aprovou cartão e PIX no mesmo checkout InfinitePay, preservando
 
 # Impact
 
-API/web, cliente HTTP, confirmação e callback, projeções, testes e migration aditiva0086 após0085. Nenhuma operação real, chave, Oracle, merge ou publicação. O proprietário manterá PIX do checkout desligado até publicação. PR266 já verde permanece isolado; alteração no mesmo PR262, ainda draft.
+## Seguimento operacional autorizado em 22/10/2026
+
+Após merge262/266 e recusa esperada do CI789 no gate protegido, o proprietário autorizou preparar a operação0086 e escolheu guardar no PC o backup cifrado da chave mestra. Preparar inventário, ensaios de restore e utilitário manual de geração/custódia, sem relaxar workflow0084. O preparador não publica nem reinicia aplicação. Execução com segredo exige participação do proprietário em terminal oculto; dados financeiros e pagamentos reais permanecem fora desta preparação. Evidência em release-preparation-20261022.md.
+
+Escopo inicial antes do merge: API/web, cliente HTTP, confirmação e callback, projeções, testes e migration aditiva0086 após0085. Sem operação real, chave, Oracle, merge ou publicação naquela fase. O proprietário manterá PIX do checkout desligado até publicação. PR266 então verde e isolado; implementação no mesmo PR262, à época draft. O seguimento acima e release-preparation-20261022.md registram o estado posterior.

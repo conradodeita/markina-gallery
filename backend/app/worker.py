@@ -1,6 +1,8 @@
 """Worker isolado para mídia privada e entregas transacionais."""
 
 import os
+import signal
+import threading
 import time
 from datetime import timedelta
 from uuid import UUID
@@ -874,17 +876,37 @@ def run_cycle() -> bool:
     )
 
 
-def main() -> None:
-    from app.system_monitor.runtime import start_monitor
-    start_monitor()
-    print("markina-gallery-worker: pronto para filas privadas", flush=True)
-    while True:
+def run_worker_until_stopped(*, stop_requested=None, cycle=None, sleep=None) -> None:
+    stop_requested = stop_requested or _STOP_REQUESTED
+    cycle = cycle or run_cycle
+    sleep = sleep or time.sleep
+    while not stop_requested.is_set():
         try:
-            worked = run_cycle()
+            worked = cycle()
         except TenantContextError:
             worked = False
-        if not worked:
-            time.sleep(2)
+        if not worked and not stop_requested.is_set():
+            sleep(2)
+
+
+_STOP_REQUESTED = threading.Event()
+
+
+def _request_worker_stop(_signum, _frame) -> None:
+    """Finish the current durable queue cycle before the container exits."""
+
+    _STOP_REQUESTED.set()
+
+
+def main() -> None:
+    from app.system_monitor.runtime import start_monitor
+    _STOP_REQUESTED.clear()
+    signal.signal(signal.SIGTERM, _request_worker_stop)
+    signal.signal(signal.SIGINT, _request_worker_stop)
+    start_monitor()
+    print("markina-gallery-worker: pronto para filas privadas", flush=True)
+    run_worker_until_stopped()
+    print("markina-gallery-worker: ciclo atual concluído; parada graciosa", flush=True)
 
 
 _last_asset_cleanup = 0.0

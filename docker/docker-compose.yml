@@ -99,9 +99,6 @@ services:
       - path: ${WHATSAPP_BINDINGS_ENV_FILE:-.env.whatsapp-bindings}
         required: false
         format: raw
-      - path: ${INFINITEPAY_BINDINGS_ENV_FILE:-.env.infinitepay-bindings}
-        required: false
-        format: raw
       - path: ${INTEGRATION_SECRETS_ENV_FILE:-.env.integration-secrets}
         required: false
         format: raw

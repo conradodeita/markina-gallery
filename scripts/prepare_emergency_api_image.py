@@ -28,7 +28,7 @@ print('synthetic_api_startup=passed')
 def maintenance_configuration(server):
     if server.count("server {") != 1:
         raise ValueError("expected single project server")
-    guarded = server.replace("server {", 'server {\n    if ($uri !~ "^/(healthz|api/health|api/infinitepay/return)$") { return 503; }', 1)
+    guarded = server.replace("server {", 'server {\n    if ($uri !~ "^/(healthz|api/health)$") { return 503; }', 1)
     return "worker_processes auto;\nevents { worker_connections 1024; }\nhttp {\n" + guarded + "\n}\n"
 
 

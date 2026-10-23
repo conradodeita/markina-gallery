@@ -78,7 +78,7 @@ class IntegrationCipher:
         if (not isinstance(tenant_id, UUID) or not isinstance(credential_id, UUID)
                 or envelope.environment != self.environment):
             raise IntegrationSecretError(MESSAGE)
-        return json.dumps({"v": 1, "purpose": "infinitepay-api-key", "tenant": str(tenant_id),
+        return json.dumps({"v": 1, "purpose": "integration-credential", "tenant": str(tenant_id),
                            "credential": str(credential_id), "environment": self.environment,
                            "key_id": envelope.key_id}, sort_keys=True, separators=(",", ":")).encode()
 

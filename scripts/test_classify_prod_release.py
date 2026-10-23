@@ -19,13 +19,20 @@ from classify_prod_release import (
 
 class ReleaseClassifierTests(unittest.TestCase):
     def test_application_only(self):
-        self.assertEqual(classify(set(APP_RUNTIME)), "app")
+        protected = {
+            "docker/docker-compose.yml",
+            "backend/migrations/versions/20261022_0087_retire_infinitepay.py",
+        }
+        shared = APP_RUNTIME & FACIAL_RUNTIME
+        self.assertEqual(classify(APP_RUNTIME - protected - shared), "app")
+        self.assertEqual(classify(protected), "protected")
 
     def test_checkout_minimum_and_redirect_are_application_runtime(self):
-        for path in ("backend/app/provider_checkout.py", "frontend/app/library/cart/page.tsx",
-                     "frontend/app/library/cart/checkout-navigation.ts"):
+        for path in ("backend/app/payment_availability.py", "frontend/app/library/cart/page.tsx"):
             with self.subTest(path=path):
                 self.assertEqual(classify({path}), "app")
+        self.assertEqual(classify({"backend/migrations/versions/20261022_0087_retire_infinitepay.py"}),
+                         "protected")
 
     def test_private_folder_owner_runtime_uses_app_gate(self):
         self.assertEqual(
@@ -80,7 +87,12 @@ class ReleaseClassifierTests(unittest.TestCase):
             self.assertFalse(git_is_ancestor(target, baseline, root=root))
 
     def test_facial_only(self):
-        self.assertEqual(classify({p for p in FACIAL_RUNTIME if not p.startswith(("docker/", "backend/migrations/"))}), "facial")
+        facial_only = {
+            p for p in FACIAL_RUNTIME - APP_RUNTIME
+            if not p.startswith(("docker/", "backend/migrations/"))
+        }
+        self.assertEqual(classify(facial_only), "facial")
+        self.assertEqual(classify({"backend/app/auth.py"}), "mixed")
 
     def test_cli_uses_deployed_baseline_and_exports_it_to_app_preflight(self):
         with tempfile.TemporaryDirectory() as directory:

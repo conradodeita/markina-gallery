@@ -53,7 +53,7 @@ PRESERVED_TABLES = MONITOR_PRESERVED_TABLES | frozenset({
     "branding_settings", "email_delivery", "email_delivery_attempt",
     "facial_calibration_approval", "facial_rollout_operation",
     "facial_embedding_experiment_setting",
-    "global_pix_settings", "infinitepay_settings", "infinitepay_credential", "notification_setting", "payment_message_template",
+    "global_pix_settings", "notification_setting", "payment_message_template",
     "preview_adjustment_settings", "progressive_pricing_preset",
     "progressive_pricing_tier", "whatsapp_channel_settings", "tenant", "tenant_admin",
     "raw_development_settings",
