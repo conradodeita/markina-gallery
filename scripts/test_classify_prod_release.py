@@ -12,12 +12,17 @@ from classify_prod_release import (
     FACIAL_RUNTIME,
     classify,
     classify_from_baseline,
+    classification_exit_code,
     git_is_ancestor,
     production_baseline_from_manifest,
 )
 
 
 class ReleaseClassifierTests(unittest.TestCase):
+    def test_protected_classification_succeeds_without_automatic_release(self):
+        self.assertEqual(classification_exit_code("protected"), 0)
+        self.assertEqual(classification_exit_code("mixed"), 1)
+
     def test_application_only(self):
         protected = {
             "docker/docker-compose.yml",

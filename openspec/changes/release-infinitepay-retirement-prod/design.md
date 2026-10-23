@@ -23,6 +23,7 @@ Ver `proposal.md` e `specs/deployment-operations/spec.md`. A migration `20261022
 ## Decisions
 
 - Usar workflow manual dedicado, executável somente a partir de `main`, com ambientes protegidos de preflight e produção. Não ampliar o release rotineiro API/web nem reutilizar o release facial de alvo fixo.
+- O classificador geral da CI deve concluir com sucesso ao identificar um delta `protected`, sem autorizar publicação automática; o release de aposentadoria só pode ocorrer pelo workflow manual dedicado. Deltas `mixed` continuam falhando fechados.
 - O preflight remoto é somente leitura e coleta minimizada: SHA/checkout, revisão Alembic, serviços e health, Compose efetivo e suas fontes, publicação de portas/domínio e metadados do binding (caminho, tipo, mount/consumidores), sem conteúdo de segredos, PII ou dados de pagamento. O gate para se qualquer valor for inesperado ou ambíguo.
 - A prova de exclusividade do binding examina recursivamente as raízes de configuração compartilhadas e os mounts bind de todos os containers existentes no daemon Docker. Erro de leitura ou inspeção incompleta SHALL bloquear o inventário e a remoção; nunca deve ser interpretado como ausência de referência.
 - O release cria e valida backup consistente do banco e registra evidência agregada de contagens/digests financeiros antes da migration. A remoção do binding é uma etapa pós-publicação e saúde; seu caminho deve ser exatamente o inventariado e exclusivo da Markina.

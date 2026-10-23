@@ -100,6 +100,11 @@ def classify(changed: set[str]) -> str:
     return "none"
 
 
+def classification_exit_code(scope: str) -> int:
+    """Protected deltas are valid classifications but never auto-released."""
+    return 1 if scope == "mixed" else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", required=True)
@@ -129,7 +134,7 @@ def main() -> int:
         with open(output, "a", encoding="utf-8") as handle:
             handle.write(f"release_scope={scope}\n")
             handle.write(f"base_sha={baseline}\n")
-    return 1 if scope in {"mixed", "protected"} else 0
+    return classification_exit_code(scope)
 
 
 if __name__ == "__main__":
