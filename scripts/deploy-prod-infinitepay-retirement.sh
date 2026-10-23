@@ -90,18 +90,41 @@ resolved_hashes() {
 }
 
 compose_binding_metadata() {
-  # Compose output may contain injected secret values. Keep it on this pipe and
-  # emit only binding path, file metadata, and service references.
-  compose config --format json 2>/dev/null | python3 -c '
+  # `config` resolves env_file contents by default and removes their source
+  # paths. Read only the interpolation value for this path, then keep the raw
+  # Compose model on the pipe and emit metadata only.
+  local binding_path_override
+  binding_path_override="$(compose config --environment 2>/dev/null \
+    | sed -nE 's/^INFINITEPAY_BINDINGS_ENV_FILE=(.*)$/\1/p' | tail -n1)" \
+    || fail "não foi possível resolver o caminho do binding"
+  compose config --no-env-resolution --no-interpolate --no-path-resolution --no-normalize --format json 2>/dev/null \
+    | MARKINA_RETIREMENT_BINDING_PATH_OVERRIDE="$binding_path_override" \
+      MARKINA_RETIREMENT_COMPOSE_DIR="$PROJECT_ROOT/docker" python3 -c '
 import json, os, pathlib, stat, sys
 data=json.load(sys.stdin)
 matches=[]
+compose_dir=os.environ["MARKINA_RETIREMENT_COMPOSE_DIR"]
+override=os.environ.get("MARKINA_RETIREMENT_BINDING_PATH_OVERRIDE", "")
+default_expression="${INFINITEPAY_BINDINGS_ENV_FILE:-.env.infinitepay-bindings}"
+required_expression="${INFINITEPAY_BINDINGS_ENV_FILE}"
+def resolve_path(value):
+    if value == default_expression:
+        value=override or ".env.infinitepay-bindings"
+    elif value == required_expression:
+        value=override
+    elif "$" in value:
+        raise SystemExit("interpolação de caminho de binding não suportada")
+    if not value or "$" in value or "\n" in value or "\r" in value:
+        raise SystemExit("caminho de binding inválido")
+    return os.path.abspath(value if os.path.isabs(value) else os.path.join(compose_dir, value))
 for service, config in data.get("services", {}).items():
     for item in config.get("env_file", []):
-        path=item if isinstance(item, str) else item.get("path", "")
-        if "infinitepay" in pathlib.Path(path).name.lower():
-            resolved=os.path.abspath(path if os.path.isabs(path) else os.path.join("/opt/markina-gallery/docker", path))
-            matches.append((service, resolved, path))
+        original=item if isinstance(item, str) else item.get("path", "")
+        if "infinitepay" not in pathlib.Path(original).name.lower():
+            continue
+        resolved=resolve_path(original)
+        if "infinitepay" in pathlib.Path(resolved).name.lower():
+            matches.append((service, resolved, original))
 if len(matches) != 1:
     raise SystemExit("binding ausente ou ambíguo")
 service, resolved, original=matches[0]

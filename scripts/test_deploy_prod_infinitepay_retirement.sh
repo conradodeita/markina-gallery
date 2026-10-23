@@ -21,17 +21,49 @@ end = shell_source.index("\n'", start)
 python_source = shell_source[start:end]
 compiled = compile(python_source, f"{path}:compose_binding_metadata", "exec")
 
-with tempfile.NamedTemporaryFile(prefix="infinitepay-bindings-") as binding:
+with tempfile.TemporaryDirectory(prefix="retirement-compose-") as compose_dir:
+    binding_path = Path(compose_dir) / ".env.infinitepay-bindings"
+    binding_path.write_text("opaque fixture", encoding="utf-8")
+    os.environ["MARKINA_RETIREMENT_COMPOSE_DIR"] = compose_dir
+    os.environ.pop("MARKINA_RETIREMENT_BINDING_PATH_OVERRIDE", None)
     sys.stdin = io.StringIO(json.dumps({
-        "services": {"api": {"env_file": [binding.name]}},
+        "services": {"api": {"env_file": [
+            {"path": "${WHATSAPP_BINDINGS_ENV_FILE:-.env.whatsapp-bindings}"},
+            {"path": "${INFINITEPAY_BINDINGS_ENV_FILE:-.env.infinitepay-bindings}"},
+        ]}},
     }))
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         exec(compiled, {})
     metadata = json.loads(output.getvalue())
-    assert metadata["path"] == os.path.abspath(binding.name)
+    assert metadata["path"] == str(binding_path)
     assert metadata["type"] == "regular_file"
     assert metadata["compose_consumers"] == ["markina-gallery/api"]
+
+    override_path = Path(compose_dir) / "custom-infinitepay-bindings.env"
+    override_path.write_text("opaque fixture", encoding="utf-8")
+    os.environ["MARKINA_RETIREMENT_BINDING_PATH_OVERRIDE"] = str(override_path)
+    sys.stdin = io.StringIO(json.dumps({
+        "services": {"api": {"env_file": [{
+            "path": "${INFINITEPAY_BINDINGS_ENV_FILE:-.env.infinitepay-bindings}",
+        }]}},
+    }))
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        exec(compiled, {})
+    metadata = json.loads(output.getvalue())
+    assert metadata["path"] == str(override_path)
+
+    sys.stdin = io.StringIO(json.dumps({
+        "services": {"api": {"env_file": [{"path": "${INFINITEPAY_CUSTOM_PATH:-bindings.env}"}]}},
+    }))
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            exec(compiled, {})
+    except SystemExit as error:
+        assert "não suportada" in str(error)
+    else:
+        raise AssertionError("interpolação de caminho não reconhecida não foi recusada")
 PY
 
 calls=()

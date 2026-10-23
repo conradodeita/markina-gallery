@@ -160,6 +160,13 @@ def main() -> None:
     require('MODE" == inventory', "script remoto aceita somente modo de inventário", retirement_script)
     require('"20261021_0086"', "preflight confere schema anterior exato", retirement_script)
     require("compose_binding_metadata", "preflight coleta apenas metadados do binding", retirement_script)
+    require("compose config --environment", "preflight resolve somente a variável de caminho do binding", retirement_script)
+    require(
+        "config --no-env-resolution --no-interpolate --no-path-resolution --no-normalize --format json",
+        "preflight preserva referências env_file sem resolver seu conteúdo",
+        retirement_script,
+    )
+    require("MARKINA_RETIREMENT_BINDING_PATH_OVERRIDE", "preflight passa somente o caminho resolvido ao parser", retirement_script)
     require("nenhuma mutação foi executada", "preflight confirma operação read-only", retirement_script)
     release_script = retirement_script.split("release() {", 1)[1].split("main() {", 1)[0]
     require('if [[ "$MODE" == inventory ]]; then', "modo release despacha para a rotina mutável apenas após o gate", retirement_script)
