@@ -15,6 +15,7 @@ on:
           - none
           - app-release
           - app-rollback
+          - infinitepay-retirement
 
 jobs:
   ci-scope:
@@ -97,8 +98,15 @@ jobs:
           python scripts/test_preserve_branding.py -v
           python -m unittest scripts.test_third_party_report -v
           python -m unittest scripts.test_python_security_release -v
+          python -m unittest scripts.test_infinitepay_retirement_scope -v
+          python -m unittest scripts.test_retirement_inventory_policy -v
+          python -m unittest scripts.test_retirement_financial_evidence -v
+          python -m unittest scripts.test_retirement_binding_removal -v
+          python -m unittest scripts.test_retirement_pix_evidence -v
           bash scripts/test_deploy_homolog.sh
           bash scripts/test_deploy_prod_web.sh
+          bash -n scripts/deploy-prod-infinitepay-retirement.sh
+          bash scripts/test_deploy_prod_infinitepay_retirement.sh
           bash -n scripts/deploy-prod-facial-services.sh
           bash scripts/test_reset_homolog_owner.sh
           python scripts/test_owner_reset_policy.py
@@ -135,22 +143,6 @@ jobs:
             backend/tests/test_tenant_notification_transport.py::test_suspensao_durante_consulta_canal_preserva_A_e_envia_B \
             backend/tests/test_tenant_notification_transport.py::test_revogacao_membership_apos_consulta_canal_impede_envio \
             -q
-      - name: Regressões de checkout e reabertura do carrinho em PostgreSQL
-        run: >-
-          DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
-          pytest backend/tests/test_provider_checkout.py::test_clique_concorrente_com_mesma_chave_produz_uma_reserva
-          backend/tests/test_provider_cart_recovery.py backend/tests/test_provider_cart_recovery_api.py
-          backend/tests/test_reopened_purchase_visibility.py
-          backend/tests/test_provider_confirmation.py
-          backend/tests/test_infinitepay_pending_cart.py
-          backend/tests/test_infinitepay_webhook.py -q
-      - name: Cofre InfinitePay e snapshots de checkout em PostgreSQL
-        run: >-
-          DATABASE_URL="$PHOTOGRAPHER_TEST_DATABASE_URL"
-          pytest backend/tests/test_infinitepay_credential_checkout.py
-          backend/tests/test_infinitepay_credential_management.py
-          backend/tests/test_infinitepay_credentials_migration.py
-          backend/tests/test_infinitepay_mixed_migration.py -q
       - name: Regressão do inventário de exclusão em PostgreSQL
         run: >-
           DATABASE_URL="$TENANT_TEST_DATABASE_URL"
@@ -322,7 +314,6 @@ jobs:
           python scripts/test_prod_facial_release_gates.py
           python scripts/test_prod_app_release_scope.py
           python scripts/test_prepare_emergency_api_image.py
-          python scripts/test_provision_infinitepay_binding.py
           python scripts/test_classify_prod_release.py
           python scripts/test_production_release_workflow_policy.py
 
@@ -428,6 +419,114 @@ jobs:
             event_base_sha="$(git rev-parse "$GITHUB_SHA^")"
           fi
           python scripts/classify_prod_release.py --base "$event_base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  infinitepay-retirement-scope:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement' }}"
+    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validar escopo exato da aposentadoria
+        run: python scripts/check_infinitepay_retirement_scope.py --base "$(git rev-parse "$GITHUB_SHA^")" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  infinitepay-retirement-preflight:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement' }}"
+    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
+      inventory_json: ${{ steps.inventory.outputs.inventory_json }}
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verificar configuração protegida de inventário
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]] || { echo 'Domínio diverge do alvo' >&2; exit 1; }
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || { echo 'Porta SSH inválida' >&2; exit 1; }
+      - name: Obter inventário minimizado somente-leitura
+        id: inventory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          output_file="$(mktemp)"
+          inventory_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file" "$output_file" "$inventory_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "MARKINA_RETIREMENT_TARGET_SHA=$GITHUB_SHA" </dev/null | tee "$output_file"
+          sed -n 's/^retirement_inventory_json=//p' "$output_file" | tail -n1 > "$inventory_file"
+          [[ -s "$inventory_file" ]] || { echo 'Inventário remoto não forneceu JSON' >&2; exit 1; }
+          python scripts/retirement_inventory_policy.py < "$inventory_file" | tee -a "$GITHUB_STEP_SUMMARY" > "$output_file.validated"
+          fingerprint="$(sed -nE 's/^approval_fingerprint=([0-9a-f]{64})$/\1/p' "$output_file.validated" | tail -n1)"
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint de inventário inválido' >&2; exit 1; }
+          inventory_json="$(sed -n 's/^inventario_sanitizado=//p' "$output_file.validated" | tail -n1)"
+          echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "inventory_json=$inventory_json" >> "$GITHUB_OUTPUT"
+
+  infinitepay-retirement-release:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement' && needs.infinitepay-retirement-preflight.outputs.approval_fingerprint != '' }}"
+    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope, infinitepay-retirement-preflight]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Publicar aposentadoria somente após aprovação protegida
+        shell: bash
+        env:
+          APPROVAL_FINGERPRINT: ${{ needs.infinitepay-retirement-preflight.outputs.approval_fingerprint }}
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL APPROVAL_FINGERPRINT; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]] || { echo 'Domínio diverge do alvo' >&2; exit 1; }
+          [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint inválido' >&2; exit 1; }
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
+            < scripts/deploy-prod-infinitepay-retirement.sh
 
   production-preflight:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'facial' }}"

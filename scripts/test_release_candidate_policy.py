@@ -63,7 +63,7 @@ class ReleaseCandidatePolicyTests(unittest.TestCase):
                          (self.source, False, "arquivo_fora_do_escopo"))
 
     def test_unreviewed_app_blob_still_fails_technical_contract(self):
-        self.write("backend/app/provider_checkout.py", "unreviewed runtime\n")
+        self.write("backend/app/payment_availability.py", "unreviewed runtime\n")
         self.commit()
         with self.assertRaisesRegex(AssertionError, "recusa protegida"):
             release_candidate_snapshot(self.root, self.manifest)
@@ -77,7 +77,7 @@ class ReleaseCandidatePolicyTests(unittest.TestCase):
             release_candidate_snapshot(self.root, self.manifest)
 
     def test_runtime_pin_adulteration_in_manifest_still_fails(self):
-        self.manifest["runtime_blobs"]["backend/app/provider_checkout.py"] = "a" * 40
+        self.manifest["runtime_blobs"]["backend/app/payment_availability.py"] = "a" * 40
         self.write(self.path, json.dumps(self.manifest))
         self.commit()
         with self.assertRaisesRegex(AssertionError, "snapshot do manifesto"):

@@ -42,7 +42,7 @@ function orderLabel(order: Order) {
       creating: "Preparando checkout",
       awaiting_payment: "Aguardando pagamento no cartão",
       verification_required: "Verificando pagamento",
-      confirmed: order.payment_method === "pix" ? "PIX InfinitePay confirmado" : "Pagamento por cartão confirmado",
+      confirmed: "Pagamento por cartão InfinitePay legado confirmado",
       failed_before_issue: "Checkout não iniciado",
       exception: "Pagamento em análise",
       hold: "Pagamento em revisão",

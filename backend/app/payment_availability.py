@@ -7,15 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.acervo_context import require_active_owner
-from app.auth import InfinitePaySettings, ParentGallery, PhotoFolder, Tenant
+from app.auth import ParentGallery, PhotoFolder, Tenant
 from app.global_pix import checkout_pix
-from app.infinitepay_binding import api_key_configured
-from app.infinitepay_settings import configuration_payload
 from app.pix import PixCodeError
 
 PAYMENT_REQUIRED_MESSAGE = (
-    "Pagamento obrigatório exige ao menos uma forma de pagamento disponível na sua conta. "
-    "Configure o PIX ou habilite cartão em Configurações, ou desmarque Pagamento obrigatório."
+    "Pagamento obrigatório exige PIX do sistema configurado na sua conta. "
+    "Configure o PIX em Configurações ou desmarque Pagamento obrigatório."
 )
 
 
@@ -32,17 +30,12 @@ def payment_methods(db: Session, *, tenant_id: UUID) -> dict:
         pix_available = True
     except PixCodeError:
         pix_available = False
-    settings = db.scalar(select(InfinitePaySettings).where(
-        InfinitePaySettings.tenant_id == tenant_id,
-    ).execution_options(populate_existing=True))
-    card_available = configuration_payload(
-        settings, api_key_configured=api_key_configured(tenant_id, db=db),
-    )["checkout_available"]
+    card_available = False
     return {
         "pix_available": pix_available,
         "card_available": card_available,
-        "available": pix_available or card_available,
-        "default_method": "pix" if pix_available else "card" if card_available else None,
+        "available": pix_available,
+        "default_method": "pix" if pix_available else None,
     }
 
 

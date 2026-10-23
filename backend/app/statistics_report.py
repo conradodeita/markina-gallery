@@ -51,7 +51,7 @@ def _payment(db: Session, order: SaleOrder, tenant_id: UUID) -> tuple[str, str, 
             ProviderPayment.tenant_id == tenant_id,
             ProviderPayment.client_id == order.client_id,
         ))
-        return payment.capture_method if payment and payment.capture_method else "credit_card", "InfinityPay", bool(payment and payment.provider == "infinitepay" and payment.state == "confirmed"), payment.state if payment else "missing"
+        return payment.capture_method if payment and payment.capture_method else "credit_card", "InfinitePay (legado)", bool(payment and payment.provider == "infinitepay" and payment.state == "confirmed"), payment.state if payment else "missing"
     if not order.payment_required_snapshot and order.payment_status == "not_required":
         return "not_required", "", True, "not_required"
     return "unknown", "", order.payment_status == "confirmed", "unknown"

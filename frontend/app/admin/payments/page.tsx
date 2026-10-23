@@ -4,7 +4,6 @@ import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, use
 
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
 import { PaymentActions } from "./payment-actions";
-import { CartRecoveryActions, type CartRecoveryStatus } from "./cart-recovery";
 
 import RemovedHistory from "./removed-history";
 import { OrderDeliveryForm, type OrderDelivery } from "./order-delivery";
@@ -48,7 +47,6 @@ type Order = {
   payment_method?: "credit_card" | "pix";
   provider_payment_state?: string;
   provider_payment_id?: string;
-  provider_cart_recovery?: CartRecoveryStatus;
   created_at: string;
   selection_expires_at: string | null;
   communications: Communication[];
@@ -129,14 +127,7 @@ const financialColor: Record<FinancialStatus, string> = {
   hold: "var(--payment-status-hold)",
 };
 function groupPresentation(group: ClientGroup) {
-  if (group.orders.some((order) => order.provider_cart_recovery?.requires_reconciliation
-      && !isConfirmedFinancialStatus(order.financial_status))) {
-    return { label: "Conferência após reabertura", tone: "warning" as const, className: undefined };
-  }
-  return group.orders.length > 0 && group.orders.every((order) => order.provider_payment_state === "exception"
-    && Boolean(order.provider_cart_recovery?.reopened_at))
-    ? { label: "Tentativa encerrada por reabertura", tone: "neutral" as const, className: undefined }
-    : { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
+  return { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
 }
 const decisionLabel = {
   pending_review: "Aguardando revisão",
@@ -356,7 +347,7 @@ function PaymentsDashboard() {
         <div>
         <div className="filter-grid">
           <label>Galeria pública<select name="parent_gallery_id" value={draftFilters.parent_gallery_id ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, parent_gallery_id: event.target.value })}><option value="">Todas</option>{dashboard.facets.parent_galleries.map((gallery) => <option key={gallery.id} value={gallery.id}>{gallery.name} ({gallery.count})</option>)}</select></label>
-          <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}<option value="reopened">Histórico de tentativas reabertas</option></select></label>
+          <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}</select></label>
           <label>De<input type="date" name="created_from" value={draftFilters.created_from?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_from: event.target.value })} /></label>
           <label>Até<input type="date" name="created_to" value={draftFilters.created_to?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_to: event.target.value })} /></label>
           <div className="payment-filter-actions"><MarkinaButton type="submit">Aplicar filtros</MarkinaButton>{hasFilters ? <MarkinaButton type="button" variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}</div>
@@ -387,9 +378,7 @@ function PaymentsDashboard() {
           <StatusBadge tone={groupPresentation(group).tone} className={groupPresentation(group).className}>{groupPresentation(group).label}</StatusBadge>
           <h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
-          {group.orders.map((order, index) => <OrderCard key={order.id} order={order} clientId={group.client.id} clientName={group.client.name}
-            showCartRecovery={!group.orders.slice(0, index).some((previous) => previous.provider_payment_id === order.provider_payment_id)}
-            onCartRecoveryRefresh={() => load(filters, undefined, false, loadedPages.current)} onRefresh={() => load(filters)} />)}
+          {group.orders.map((order) => <OrderCard key={order.id} order={order} clientId={group.client.id} onRefresh={() => load(filters)} />)}
         </div>
       </section>)}
     </div>
@@ -523,17 +512,9 @@ function ClientAutocomplete({
   </div>;
 }
 
-function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecoveryRefresh, onRefresh }: {
-  order: Order; clientId: string; clientName: string; showCartRecovery: boolean;
-  onCartRecoveryRefresh: () => Promise<void>; onRefresh: () => Promise<void>;
-}) {
+function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void>; }) {
   const [expanded, setExpanded] = useState(false);
-  const presentation = order.provider_cart_recovery?.reopened_at
-    && !isConfirmedFinancialStatus(order.financial_status)
-    ? order.provider_cart_recovery.requires_reconciliation
-      ? { label: "Conferência após reabertura", tone: "warning" as const }
-      : { label: "Tentativa encerrada por reabertura", tone: "neutral" as const }
-    : financialPresentation[order.financial_status];
+  const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
   const paymentGroup = communication?.payment_group;
   const quantity = order.folders.reduce((total, folder) => total + folder.items.length, 0);
@@ -543,7 +524,7 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={order.provider_cart_recovery?.reopened_at ? undefined : `payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.provider_payment_id ? order.payment_method === "pix" ? " · PIX InfinitePay" : " · InfinitePay" : order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.provider_payment_id ? " · InfinitePay (histórico)" : order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>
@@ -553,10 +534,7 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
       <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p></section>
       <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
       {order.provider_payment_id || order.payment_method === "credit_card" ? <>
-        <p>Estado do checkout InfinitePay: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
-        {showCartRecovery && order.provider_payment_id && order.provider_cart_recovery && !isConfirmedFinancialStatus(order.financial_status)
-          ? <CartRecoveryActions paymentId={order.provider_payment_id} state={order.provider_payment_state}
-            status={order.provider_cart_recovery} clientName={clientName} onRefresh={onCartRecoveryRefresh} /> : null}
+        <p>Registro de pagamento InfinitePay legado, somente leitura: {order.provider_payment_state ?? "estado indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}.</p>
         {downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}
       </> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
@@ -567,8 +545,7 @@ function OrderCard({ order, clientId, clientName, showCartRecovery, onCartRecove
       </>}
       </section>
       <section className={styles.deliverySection} aria-label="Entrega do pedido"><h4>Entrega</h4><p>{order.delivery?.album_url && isConfirmedFinancialStatus(order.financial_status) ? "Fotos disponíveis" : "Fotos indisponíveis"}</p>
-      {!order.provider_cart_recovery?.reopened_at || isConfirmedFinancialStatus(order.financial_status)
-        ? <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} /> : null}
+      <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
       </section></div>
     </details>
   </article>;

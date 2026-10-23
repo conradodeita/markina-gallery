@@ -6,31 +6,15 @@ import { PurchasePreview } from "../../purchase-preview";
 import { notifyCartChanged } from "../../client-navigation";
 import { SelectionDeadline } from "../../selection-deadline";
 import { SystemState } from "../../ui-kit";
-import { navigateToCardCheckout } from "./checkout-navigation";
 
 type CartGroup = { payment_required?: boolean; message?: string; revision?: string; gallery_id: string; parent_gallery_id: string; name: string; quantity: number;
-  legacy_review_url?: string | null;
-  total_cents: number | null; error: string | null; browse_url: string; selection_expires_at: string | null;
+  legacy_review_url?: string | null; total_cents: number | null; error: string | null; browse_url: string; selection_expires_at: string | null;
   items: Array<{ id: string; name: string; folder_name: string | null; preview_url: string }> };
 type Payment = { id: string; revision: string; total_cents: number; pix_copy_paste: string;
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
-type CardPayment = { id: string; status: "creating" | "awaiting_payment" | "verification_required" | "failed_before_issue";
-  checkout_url: string | null; total_cents: number; revision?: number; quantity?: number;
-  payment_methods?: Array<"credit_card" | "pix">;
-  orders?: Array<{ id: string; name: string | null; items: Array<{ id: string; name: string; preview_url: string | null }> }> };
 type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
-  recovery_revision?: string | null;
-  pix_available?: boolean; card_available?: boolean; payment_error?: string | null; card_payment?: CardPayment | null;
-  pending_card_payments?: CardPayment[]; total_cents: number | null; payment?: Payment };
+  pix_available?: boolean; payment_error?: string | null; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-function cardCheckoutUrl(value: unknown): string | null {
-  if (typeof value !== "string" || !value || value.length > 8192) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password && !url.port
-      && ["checkout.infinitepay.io", "checkout.infinitepay.com.br"].includes(url.hostname) ? url.href : null;
-  } catch { return null; }
-}
 
 export default function CartPage() {
   const [cart, setCart] = useState<Cart | null>(null);
@@ -38,23 +22,14 @@ export default function CartPage() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [reported, setReported] = useState<string | null>(null);
-  const [method, setMethod] = useState<"pix" | "card">("pix");
-  const cardCheckoutIssued = cart?.card_payment?.status === "awaiting_payment";
-  const cardCheckoutUncertain = cart?.card_payment?.status === "verification_required";
-  const cardCheckoutPending = cardCheckoutIssued || cardCheckoutUncertain || cart?.card_payment?.status === "creating";
-  const cardBelowMinimum = cart?.total_cents !== null && cart?.total_cents !== undefined
-    && cart.total_cents < 100;
   const sequence = useRef(0);
   const locked = useRef(false);
   const requestKey = useRef<string | null>(null);
-  const cardRequestKey = useRef<string | null>(null);
-  const cardAttemptRevision = useRef<string | null>(null);
-  const recoveryRevision = useRef<string | null | undefined>(undefined);
   const finalizationKeys = useRef<Record<string, string>>({});
+
   const refresh = useCallback(async () => {
     const current = ++sequence.current;
     setError("");
-    // Oculta o PIX durante revalidação para não oferecer uma revisão obsoleta.
     setCart((previous) => previous ? { ...previous, payment: undefined } : previous);
     try {
       const response = await fetch("/api/library/cart", { credentials: "same-origin", cache: "no-store" });
@@ -63,20 +38,8 @@ export default function CartPage() {
       if (!response.ok) throw new Error("Não foi possível consultar o carrinho.");
       const data: Cart = await response.json();
       if (sequence.current !== current) return;
-      if (data.recovery_revision && data.recovery_revision !== recoveryRevision.current
-          && data.can_prepare && !data.card_payment) {
-        const alreadyLoaded = recoveryRevision.current !== undefined;
-        recoveryRevision.current = data.recovery_revision;
-        cardRequestKey.current = null; cardAttemptRevision.current = null; requestKey.current = null;
-        setReported(null);
-        if (alreadyLoaded) setNotice("O fotógrafo reabriu seu carrinho. Suas fotos já estão selecionadas; confira o total e escolha como pagar.");
-      } else if (recoveryRevision.current === undefined && !data.recovery_revision) {
-        recoveryRevision.current = null;
-      }
       setCart(data);
-      setMethod((currentMethod) => currentMethod === "card" && data.card_available
-        ? "card" : data.pix_available !== false ? "pix" : data.card_available ? "card" : "pix");
-      if (!data.can_prepare || data.pix_available === false || data.card_payment) return;
+      if (!data.can_prepare || data.pix_available === false) return;
       const prepared = await fetch("/api/library/cart/prepare", { method: "POST", credentials: "same-origin" });
       const result = await prepared.json();
       if (sequence.current !== current) return;
@@ -87,6 +50,7 @@ export default function CartPage() {
       if (sequence.current === current) setError(failure instanceof Error ? failure.message : "Não foi possível consultar o carrinho.");
     }
   }, []);
+
   useEffect(() => {
     const initial = setTimeout(() => void refresh(), 0);
     const focus = () => { if (!locked.current) void refresh(); };
@@ -105,24 +69,6 @@ export default function CartPage() {
       notifyCartChanged();
       await refresh();
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Não foi possível salvar."); }
-    finally { locked.current = false; setBusy(false); }
-  }
-
-  async function dismissPending(payment: CardPayment) {
-    if (locked.current || payment.revision === undefined) return;
-    if (!window.confirm("Retirar estas fotos do carrinho? Isso não cancela o link anterior na InfinitePay nem um pagamento já realizado. Eventuais retornos continuarão sendo conferidos.")) return;
-    locked.current = true; setBusy(true); setError("");
-    try {
-      const response = await fetch(`/api/library/cart/checkouts/${payment.id}?expected_revision=${payment.revision}`, {
-        method: "DELETE", credentials: "same-origin",
-      });
-      if (!response.ok) {
-        await refresh();
-        throw new Error("O pagamento mudou ou não foi possível retirar a tentativa. Confira o carrinho atualizado.");
-      }
-      await refresh(); notifyCartChanged();
-      setNotice("Tentativa retirada do carrinho. Se um pagamento for identificado, ele aparecerá em Compras.");
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Não foi possível atualizar o carrinho."); }
     finally { locked.current = false; setBusy(false); }
   }
 
@@ -162,10 +108,7 @@ export default function CartPage() {
       const result = await response.json();
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) setCart(null);
-        if (response.status === 409) {
-          setCart((previous) => previous ? { ...previous, payment: undefined } : previous);
-          requestKey.current = null;
-        }
+        if (response.status === 409) { setCart((previous) => previous ? { ...previous, payment: undefined } : previous); requestKey.current = null; }
         throw new Error(result.detail ?? "Não foi possível informar o pagamento.");
       }
       sequence.current++;
@@ -174,63 +117,13 @@ export default function CartPage() {
     finally { locked.current = false; setBusy(false); }
   }
 
-  async function prepareCard() {
-    if (!cart?.cart_revision || !cart.can_prepare || !cart.card_available || cardBelowMinimum || locked.current) return;
-    locked.current = true; setBusy(true); setError("");
-    if (cardAttemptRevision.current !== cart.cart_revision) {
-      cardRequestKey.current = null;
-      cardAttemptRevision.current = cart.cart_revision;
-    }
-    cardRequestKey.current ??= crypto.randomUUID();
-    try {
-      const response = await fetch("/api/library/cart/prepare-card", {
-        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cart_revision: cart.cart_revision, idempotency_key: cardRequestKey.current }),
-      });
-      const result = await response.json();
-      if (response.status === 401 || response.status === 403) setCart(null);
-      if (!response.ok) {
-        if (response.status === 409) cardRequestKey.current = null;
-        throw new Error(result.detail ?? "Não foi possível preparar o pagamento com cartão.");
-      }
-      if (result.status === "failed_before_issue") {
-        cardRequestKey.current = null;
-        setCart((previous) => previous ? { ...previous, card_payment: null } : previous);
-        setNotice("A InfinitePay confirmou que não criou o checkout. Suas fotos continuam selecionadas; você pode tentar o cartão novamente ou escolher PIX.");
-        notifyCartChanged();
-        return;
-      }
-      if (["exception", "hold", "confirmed"].includes(result.status)) {
-        await refresh();
-        notifyCartChanged();
-        return;
-      }
-      setCart((previous) => previous ? { ...previous, card_payment: result } : previous);
-      const checkoutUrl = cardCheckoutUrl(result.checkout_url);
-      if (result.status === "awaiting_payment" && checkoutUrl) {
-        setNotice("Link seguro pronto. Confira o recebedor e pague no checkout da InfinitePay.");
-        navigateToCardCheckout(checkoutUrl);
-      } else {
-        setNotice("A InfinitePay não devolveu um link utilizável. O checkout não foi aberto e nenhum pagamento foi iniciado por esta tela. A compra segue reservada enquanto verificamos a resposta; não tente iniciar outro pagamento. Acompanhe neste carrinho ou solicite conferência ao fotógrafo.");
-      }
-      notifyCartChanged();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Não foi possível preparar o cartão.");
-    } finally { locked.current = false; setBusy(false); }
-  }
-
   if (reported) return <section className="unified-cart"><h1>Pagamento informado</h1><p>Seu pagamento aguarda a confirmação do fotógrafo.</p><Link className="primary" href={`/library/purchases#payment-${reported}`}>Ver compra</Link><Link href="/library">Continuar nas galerias</Link></section>;
   return <section className="unified-cart">
     <h1>{cart?.groups.length && cart.groups.every((group) => group.payment_required === false) ? "Revise suas fotos" : "Revise suas fotos e escolha como pagar"}</h1>
-    {notice ? <p role="status">{notice} {!cardCheckoutPending ? <Link href="/library/purchases">Ver histórico</Link> : null}</p> : null}
+    {notice ? <p role="status">{notice} <Link href="/library/purchases">Ver histórico</Link></p> : null}
     {error ? <div role="alert"><p>{error}</p><button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Atualizar revisão</button></div> : null}
     {!cart && !error ? <SystemState tone="loading" title="Carregando carrinho" detail="Buscando suas fotos selecionadas." /> : null}
-    {cart?.quantity === 0 && !cart.card_payment && !cart.pending_card_payments?.length ? <><p>Seu carrinho está vazio.</p><Link className="primary" href="/library">Escolher fotos</Link></> : null}
-    {cart?.card_payment ? <PendingCheckout payment={cart.card_payment} busy={busy} onDismiss={dismissPending} /> : null}
-    {cart?.pending_card_payments?.length ? <section aria-label="Checkouts pendentes no carrinho">
-      <p>Estas fotos já têm um pagamento em aberto e não compõem a seleção nova abaixo.</p>
-      {cart.pending_card_payments.map((payment) => <PendingCheckout key={payment.id} payment={payment} busy={busy} onDismiss={dismissPending} />)}
-    </section> : null}
+    {cart?.quantity === 0 ? <><p>Seu carrinho está vazio.</p><Link className="primary" href="/library">Escolher fotos</Link></> : null}
     {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
       <div className="section-heading"><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>
       {group.message?.trim() ? <p style={{ whiteSpace: "pre-wrap" }}>{group.message}</p> : null}
@@ -245,22 +138,11 @@ export default function CartPage() {
       {group.payment_required === false ? <button type="button" className="primary" disabled={busy || !!group.error || !group.revision} onClick={() => void finalize(group)}>{busy ? "Salvando…" : "Finalizar seleção"}</button> : null}
       {error && group.legacy_review_url ? <Link href={group.legacy_review_url}>Retomar pagamento anterior de {group.name}</Link> : null}
     </section>)}
-    {cart && cart.groups.some((group) => group.payment_required !== false) ? <section className="unified-payment" aria-label="Pagamento único">
+    {cart && cart.groups.some((group) => group.payment_required !== false) ? <section className="unified-payment" aria-label="Pagamento PIX do sistema">
       <h2>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</h2>
       <p>{cart.groups.filter((group) => group.payment_required !== false).reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</p>
       {cart.payment_error ? <p role="alert">{cart.payment_error}</p> : null}
-      {!cardCheckoutPending && cart.can_prepare && cart.card_available ? <fieldset>
-        <legend>Forma de pagamento</legend>
-        {cart.pix_available !== false ? <label><input type="radio" name="payment-method" checked={method === "pix"} onChange={() => setMethod("pix")} /> PIX do sistema</label> : null}
-        <label><input type="radio" name="payment-method" checked={method === "card"} onChange={() => setMethod("card")} /> Cartão ou PIX na InfinitePay</label>
-      </fieldset> : null}
-      {!cardCheckoutPending && cart.can_prepare && method === "card" && cart.card_available ? <>
-        <p>Escolha cartão ou PIX no mesmo checkout seguro da InfinitePay. O Pick-your-Pic não recebe dados do cartão. O PIX pago lá é confirmado automaticamente após verificação; o PIX do sistema continua separado.</p>
-        {cardBelowMinimum ? <p role="status">O checkout da InfinitePay exige um total mínimo de R$ 1,00. Adicione mais fotos{cart.pix_available !== false ? " ou escolha PIX do sistema" : " para continuar"}.</p> : null}
-        <button type="button" className="primary" disabled={busy || !cart.cart_revision || cardBelowMinimum} onClick={() => void prepareCard()}>{busy ? "Preparando checkout…" : "Continuar na InfinitePay (cartão ou PIX)"}</button>
-      </> : null}
-      {!cardCheckoutPending && cart.pix_available !== false && (method === "pix" || !cart.card_available) ? <>
-      {cart.payment ? <>
+      {cart.pix_available !== false ? cart.payment ? <>
         <h3>Pague com PIX</h3>
         {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}
         <img className="unified-pix-qr" src={cart.payment.pix_qr_code} alt="QR Code do PIX da compra" width={240} height={240} />
@@ -269,33 +151,8 @@ export default function CartPage() {
         {cart.payment.pix_instructions ? <p>{cart.payment.pix_instructions}</p> : null}
         <p>Após pagar {money(cart.payment.total_cents)}, informe o pagamento para o fotógrafo conferir.</p>
         <button type="button" className="primary" disabled={busy} onClick={() => void report()}>{busy ? "Salvando…" : "Informar pagamento"}</button>
-      </> : !error && cart.can_prepare ? <p role="status">Preparando PIX…</p> : <p>Confira os avisos acima para continuar.</p>}
-      </> : null}
+      </> : !error && cart.can_prepare ? <p role="status">Preparando PIX…</p> : <p>Confira os avisos acima para continuar.</p>
+        : <p role="alert">O PIX do sistema está temporariamente indisponível. Contate o fotógrafo.</p>}
     </section> : null}
-  </section>;
-}
-
-
-function PendingCheckout({ payment, busy, onDismiss }: {
-  payment: CardPayment; busy: boolean; onDismiss: (payment: CardPayment) => Promise<void>;
-}) {
-  const url = cardCheckoutUrl(payment.checkout_url);
-  const pixAllowed = payment.payment_methods?.includes("pix") === true;
-  return <section className="unified-payment" aria-label="Pagamento InfinitePay em andamento">
-    <h2>Pagamento na InfinitePay · {money(payment.total_cents)}</h2>
-    {payment.quantity !== undefined ? <p>{payment.quantity} foto(s) · total preservado deste checkout</p> : null}
-    {payment.orders?.map((order) => <section key={order.id} aria-label={`Fotos de ${order.name ?? "sua seleção"}`}>
-      <h3>{order.name ?? "Fotografias selecionadas"}</h3>
-      <div className="unified-cart-photos">{order.items.map((photo) => <figure key={photo.id}>
-        {photo.preview_url ? <PurchasePreview path={photo.preview_url} name={photo.name} /> : <span>Prévia indisponível</span>}
-        <figcaption>{photo.name}</figcaption>
-      </figure>)}</div>
-    </section>)}
-    {payment.status === "awaiting_payment" && url
-      ? <><p>{pixAllowed ? "Continue no mesmo checkout seguro da InfinitePay e escolha cartão ou PIX." : "Este link anterior oferece cartão de crédito. Continue no mesmo checkout da InfinitePay."}</p>
-        <a className="primary" href={url}>{pixAllowed ? "Continuar pagamento na InfinitePay (cartão ou PIX)" : "Continuar para pagamento com cartão"}</a></>
-      : <p role="status">Pagamento em verificação. Não inicie outra cobrança para essas fotos; solicite conferência ao fotógrafo.</p>}
-    {payment.revision !== undefined ? <button type="button" className="secondary" disabled={busy}
-      onClick={() => void onDismiss(payment)}>Esvaziar este checkout do carrinho</button> : null}
   </section>;
 }

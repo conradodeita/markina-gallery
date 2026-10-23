@@ -77,7 +77,7 @@ O próximo executor deve conseguir retomar o trabalho lendo apenas o repositóri
 
 ### Pós-MVP, porém preparar interfaces e dados
 
-- Infinity Pay por cartão, por meio de um `PaymentProvider` e webhooks assinados.
+- Cartão: indisponível durante a transição para o Mercado Pago Orders API; não reativar InfinitePay.
 - Busca facial: implementar apenas depois de um spike de compatibilidade ARM, licença comercial, desempenho e precisão.
 - Múltiplos administradores, impressos, laboratórios, produtos físicos e edição dentro da plataforma.
 
@@ -270,7 +270,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Gates de implantação/segredos e validação Android/iPhone permanecem humanos. Consulte `docs/transactional-notifications.md`; transporte desabilitado por padrão, sem alterar `.env` automaticamente.
 
 - `WhatsAppProvider`: OTP, mensagens transacionais, lembretes, status e erro. Inicialmente Evolution API; não acoplar regras de negócio ao fornecedor.
-- `PaymentProvider`: PIX manual no MVP; Infinity Pay posterior com criação de cobrança, webhook assinado e reconciliação.
+- `PaymentProvider`: PIX manual ativo; checkout de cartão indisponível durante a transição para o Mercado Pago.
 - `DriveStorageProvider`: upload resumível, checksum, retentativa exponencial, restauração e deleção controlada.
 - `EmailProvider`: SMTP transacional para verificação e recuperação de senha.
 - `FaceRecognitionProvider`: implementação somente depois de spike aprovado, sempre protegida por feature flag desligada por padrão. A habilitação de dados reais é uma decisão operacional externa e aprovada; uma vez habilitado o ambiente, galerias ativas são indexadas automaticamente, sem declaração manual do fotógrafo.
@@ -320,3 +320,4 @@ Não iniciar a fase facial antes de o restante estar funcional e validado em hom
 - Documento de decisões técnicas e limitações conhecidas.
 - Checklist de deploy e rollback.
 - Relatório do spike facial antes de qualquer ativação da feature.
+> **Decisão de pagamentos — `retire-infinitepay-checkout`:** a InfinitePay foi aposentada para novas compras. O único pagamento disponível no Pick-your-Pic é o PIX manual configurado pelo fotógrafo. Checkout de cartão fica indisponível até a change independente do Mercado Pago Orders API. Compras InfinitePay anteriores continuam somente para consulta; preserve seus registros e identificadores financeiros.

@@ -59,12 +59,12 @@ class CandidateTests(unittest.TestCase):
             extract_source(stream.getvalue(), Path(folder))
             self.assertEqual((Path(folder) / "backend/app/example.py").read_bytes(), b"ok\n")
 
-    def test_maintenance_preserves_only_health_and_financial_return(self):
+    def test_maintenance_preserves_only_health(self):
         result = maintenance_configuration("server {\n location / { proxy_pass http://web; }\n}\n")
         allowed = re.search(r'\$uri !~ "([^"]+)"', result).group(1)
-        for path in ("/healthz", "/api/health", "/api/infinitepay/return"):
+        for path in ("/healthz", "/api/health"):
             self.assertRegex(path, allowed)
-        for path in ("/", "/admin", "/api/admin/settings", "/api/client/checkout", "/api/infinitepay/return/extra"):
+        for path in ("/", "/admin", "/api/admin/settings", "/api/client/checkout"):
             self.assertIsNone(re.search(allowed, path))
         self.assertIn("return 503", result)
 

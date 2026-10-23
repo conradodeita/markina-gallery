@@ -1,0 +1,24 @@
+# Tasks
+
+## 1. Inventário e gate de escopo
+
+- [x] 1.1 Implementar gate local de paths da aposentadoria e validar que migration e Compose exatos são requisitos; rejeitar paths não listados, migration adicional e qualquer alteração Compose além da remoção do `env_file` InfinitePay. Evidência: `scripts/check_infinitepay_retirement_scope.py`; `PYTHONPATH=scripts python -m unittest scripts.test_infinitepay_retirement_scope -v` passou (6 testes); o teste cobre adição de serviço/alteração de outro binding e paths extras. O workflow comum API/web e facial permanecem isolados; a operação ganhou opção manual própria e job de escopo no workflow.
+- [x] 1.2 Implementar workflow de inventário remoto somente leitura que valide SHA ativo, schema, domínio/porta, serviços, Compose efetivo, fingerprint e metadados do binding sem ler conteúdo de segredos; cobrir condições de recusa com testes. Evidência local: `scripts/deploy-prod-infinitepay-retirement.sh` coleta somente metadados e redige configuração Compose via pipe; `scripts/retirement_inventory_policy.py` valida schema/host/domain/porta, serviços, hashes, binding regular e exclusivo, hardlink e HTTPS antes de emitir fingerprint; `scripts/production-preflight-ssh-wrapper.sh` aceita apenas SHA completo e fixa o blob do script read-only; workflow manual `infinitepay-retirement` exige `main`, CI e ambiente `production-preflight`; testes focados de escopo/inventário e `scripts/test_production_release_workflow_policy.py` passaram. Limitação: workflow remoto ainda não foi executado; o wrapper root-owned do host precisa receber o novo blob após integração para que o comando restrito seja aceito. Nenhum acesso ou alteração no servidor foi feito.
+- [ ] 1.3 Reconciliar o manifesto de runtime API/web com o baseline e blobs de produção somente após inventário remoto confirmar o estado real e o SHA integrado; não aprovar hashes a partir do checkout local.
+
+## 2. Execução protegida e preservação
+
+- [x] 2.1 Implementar o fluxo manual protegido condicionado a `main`, CI, ambientes protegidos, fingerprint aprovado e schema exato `20261021_0086`; testar as políticas locais e o despacho dos modos. Evidência: `scripts/test_production_release_workflow_policy.py` e `scripts/test_deploy_prod_infinitepay_retirement.sh` passaram; o release real continua pendente dos gates 4.1/4.2.
+- [x] 2.2 Implementar backup `pg_dump -Fc`, verificação `pg_restore --list`, checksum, permissões e prova prévia de restauração isolada, além da evidência financeira agregada anterior/posterior. Evidência: política estática do executor e testes `scripts.test_retirement_financial_evidence` passaram; não houve backup nem acesso ao host nesta etapa.
+- [x] 2.3 Implementar executor para somente `20261022_0087`, publicar API/web/worker após a migration, encerrar o ciclo atual do worker antes da parada e recuperar checkout/imagens anteriores em falha pré-migration; falha posterior mantém backup e exige restauração coordenada, sem downgrade. Evidência: `backend/tests/test_worker_graceful_shutdown.py`, `bash -n scripts/deploy-prod-infinitepay-retirement.sh`, `scripts/test_deploy_prod_infinitepay_retirement.sh`, `scripts/test_production_release_workflow_policy.py` e testes direcionados da migration passaram; execução real pendente de 4.2.
+
+## 3. Limpeza delimitada e verificação
+
+- [x] 3.1 Remover o mount do Compose na versão aprovada e implementar a remoção única do binding inventariado após saúde; testar recusa para caminho ausente, compartilhado, inesperado, alterado ou link simbólico. Evidência: `scripts.test_retirement_binding_removal` e `scripts.test_retirement_inventory_policy` passaram; arquivo real não foi removido nesta etapa.
+- [x] 3.2 Implementar verificações de healthchecks locais/HTTPS, PIX próprio, projeções somente leitura das duas compras InfinitePay e ausência do mount, com documentação sem dados sensíveis. Evidência: `scripts.test_retirement_pix_evidence`, `scripts.test_retirement_financial_evidence` e a política do executor passaram; as evidências reais de produção serão coletadas em 4.2.
+- [x] 3.3 Executar validações locais de CI/OpenSpec, revisar diff e conferir classificação do release; registrar bloqueios e atualizar tasks com evidência. A aposentadoria passa no seu gate dedicado; o classificador API/web a rejeita deliberadamente como fora daquele fluxo. Sincronização das specs principais e arquivamento aguardam revisão humana.
+
+## 4. Release de produção
+
+- [ ] 4.1 Após código revisado e integrado em `main`, executar inventário protegido e apresentar fingerprint, inventário, domínio/porta, impacto, backup e recuperação para aprovação explícita.
+- [ ] 4.2 Somente após aprovação do inventário e plano, executar o release; registrar SHA, schema antes/depois, serviços/saúde, backup, validação do histórico financeiro e limpeza do binding, sem acessar recursos de terceiros.
