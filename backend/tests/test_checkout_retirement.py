@@ -5,7 +5,7 @@ from app.main import app
 
 
 def test_rotas_de_operacao_infinitepay_nao_estao_registradas():
-    paths = {route.path for route in app.routes}
+    paths = set(app.openapi()["paths"])
     assert "/admin/settings/infinitepay" not in paths
     assert "/admin/settings/infinitepay/challenge" not in paths
     assert "/library/cart/prepare-card" not in paths
@@ -15,7 +15,7 @@ def test_rotas_de_operacao_infinitepay_nao_estao_registradas():
 
 
 def test_pix_manual_e_historico_financeiro_continuam_mapeados():
-    paths = {route.path for route in app.routes}
+    paths = set(app.openapi()["paths"])
     assert "/library/cart/prepare" in paths
     assert "/library/payments/{group_id}/report" in paths
     assert "infinitepay_settings" not in Base.metadata.tables
