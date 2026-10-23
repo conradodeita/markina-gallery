@@ -100,8 +100,8 @@ for service, config in data.get("services", {}).items():
     for item in config.get("env_file", []):
         path=item if isinstance(item, str) else item.get("path", "")
         if "infinitepay" in pathlib.Path(path).name.lower():
-        resolved=os.path.abspath(path if os.path.isabs(path) else os.path.join("/opt/markina-gallery/docker", path))
-        matches.append((service, resolved, path))
+            resolved=os.path.abspath(path if os.path.isabs(path) else os.path.join("/opt/markina-gallery/docker", path))
+            matches.append((service, resolved, path))
 if len(matches) != 1:
     raise SystemExit("binding ausente ou ambíguo")
 service, resolved, original=matches[0]
