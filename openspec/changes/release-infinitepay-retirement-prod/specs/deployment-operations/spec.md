@@ -20,6 +20,8 @@ O sistema SHALL oferecer um procedimento de produção exclusivo para aplicar a 
 ### Requirement: Remoção delimitada do binding InfinitePay no host
 O sistema SHALL remover do host somente o arquivo de binding InfinitePay comprovadamente exclusivo, após a versão sem mount estar ativa e saudável, sem exibir ou copiar seu conteúdo.
 
+O inventário SHALL verificar referências em arquivos Compose das raízes compartilhadas e mounts bind de todos os containers existentes. Falha de leitura, erro do daemon ou inventário parcial MUST bloquear a aprovação de exclusividade e a remoção.
+
 #### Scenario: Binding exclusivo identificado
 - **WHEN** o inventário confirma caminho, tipo e uso exclusivo do arquivo pelo serviço da Markina e a versão publicada já não o referencia
 - **THEN** o procedimento remove somente esse arquivo e registra o resultado sem revelar conteúdo ou valor de segredo

@@ -119,13 +119,27 @@ print(json.dumps({"path":resolved,"type":kind,"symlink":stat.S_ISLNK(info.st_mod
 }
 
 outside_references() {
-  local target="$1" file
-  find /opt -maxdepth 4 -type f \( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' \
-    -o -name 'compose*.yml' -o -name 'compose*.yaml' \) -print0 2>/dev/null \
-    | while IFS= read -r -d '' file; do
-        [[ "$file" == "$PROJECT_ROOT/$COMPOSE_FILE" ]] && continue
-        if grep -Fq -- "$target" "$file"; then printf '%s\n' "$file"; fi
-      done
+  local target="$1" file_refs container_refs container_ids container_id container_data
+  if [[ "$EUID" -eq 0 ]]; then
+    file_refs="$(python3 "$PROJECT_ROOT/scripts/retirement_host_references.py" --target "$target" \
+      --roots /opt /home /srv /etc /root /mnt /var/lib/markina-gallery/deploy-state)" || fail "varredura de arquivos de configuração incompleta"
+  else
+    file_refs="$(sudo -n python3 "$PROJECT_ROOT/scripts/retirement_host_references.py" --target "$target" \
+      --roots /opt /home /srv /etc /root /mnt /var/lib/markina-gallery/deploy-state)" || fail "varredura privilegiada de arquivos de configuração indisponível ou incompleta"
+  fi
+  container_ids="$(docker ps -aq)" || fail "inventário de containers Docker indisponível"
+  if [[ -n "$container_ids" ]]; then
+    container_data="$(while IFS= read -r container_id; do
+      [[ -n "$container_id" ]] || continue
+      docker inspect --format '{{json .Mounts}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}' "$container_id" \
+        || exit 1
+    done <<<"$container_ids")" || fail "inspeção de mounts Docker incompleta"
+    container_refs="$(printf '%s\n' "$container_data" | python3 "$PROJECT_ROOT/scripts/retirement_host_references.py" \
+      --target "$target" --container-inspect)" || fail "varredura de mounts Docker incompleta"
+  else
+    container_refs=""
+  fi
+  printf '%s\n%s\n' "$file_refs" "$container_refs" | sed '/^$/d' | sort -u
 }
 
 financial_evidence() {

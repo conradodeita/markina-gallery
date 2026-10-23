@@ -175,6 +175,9 @@ def main() -> None:
     require("compose build api web worker", "imagem do worker atualizada com o schema", release_script)
     require("compose up -d --no-deps --force-recreate --wait --wait-timeout 120 api web worker", "API/web/worker publicados e aguardados", release_script)
     require("remove_binding_after_health", "binding removido somente após saúde", release_script)
+    require("retirement_host_references.py", "varredura recursiva das configurações compartilhadas", retirement_script)
+    require("docker ps -aq", "inventário de containers completos para mounts externos", retirement_script)
+    require("sudo -n python3", "varredura privilegiada sem prompt interativo", retirement_script)
     financial_source = (ROOT / "scripts/retirement_financial_evidence.py").read_text(encoding="utf-8")
     if "checkout_url" in financial_source or "credential_id" in financial_source:
         raise AssertionError("evidência não pode depender de colunas removidas pela migration")

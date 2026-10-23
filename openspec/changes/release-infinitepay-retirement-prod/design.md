@@ -24,6 +24,7 @@ Ver `proposal.md` e `specs/deployment-operations/spec.md`. A migration `20261022
 
 - Usar workflow manual dedicado, executável somente a partir de `main`, com ambientes protegidos de preflight e produção. Não ampliar o release rotineiro API/web nem reutilizar o release facial de alvo fixo.
 - O preflight remoto é somente leitura e coleta minimizada: SHA/checkout, revisão Alembic, serviços e health, Compose efetivo e suas fontes, publicação de portas/domínio e metadados do binding (caminho, tipo, mount/consumidores), sem conteúdo de segredos, PII ou dados de pagamento. O gate para se qualquer valor for inesperado ou ambíguo.
+- A prova de exclusividade do binding examina recursivamente as raízes de configuração compartilhadas e os mounts bind de todos os containers existentes no daemon Docker. Erro de leitura ou inspeção incompleta SHALL bloquear o inventário e a remoção; nunca deve ser interpretado como ausência de referência.
 - O release cria e valida backup consistente do banco e registra evidência agregada de contagens/digests financeiros antes da migration. A remoção do binding é uma etapa pós-publicação e saúde; seu caminho deve ser exatamente o inventariado e exclusivo da Markina.
 - Aplicar somente `20261022_0087` quando a revisão real for exatamente `20261021_0086`; qualquer outra revisão bloqueia a execução e exige reconciliação humana.
 - Construir as imagens de `api`, `web` e `worker` no SHA aprovado enquanto a versão atual atende. Pausar API e worker antes do backup/migration porque o worker importa o modelo de pagamentos e pode consultar colunas removidas; aplicar a migration explicitamente antes de iniciar a versão nova, publicar os três serviços com o projeto/Compose `markina-gallery`, e verificar a revisão final, saúde e HTTPS. Não recriar nginx nem outros serviços; se a mudança de upstream exigir reload do Nginx, bloquear e exigir plano/aceite específico antes dessa ação.
@@ -35,6 +36,7 @@ Ver `proposal.md` e `specs/deployment-operations/spec.md`. A migration `20261022
 - [O estado real do servidor diverge de `0086` ou do manifesto conhecido] → interromper antes de mutação e reconciliar o estado com inventário protegido.
 - [Backup existe, mas não pode ser restaurado] → exigir verificação técnica de integridade e evidência de restauração em ambiente descartável antes da aprovação.
 - [Arquivo de binding tem uso compartilhado ou localização diferente] → não apagá-lo; remover somente o mount da versão aprovada e registrar bloqueio de limpeza do arquivo.
+- [Scanner não consegue ler uma raiz de configuração ou inspecionar todos os containers] → falhar fechado e exigir que a cobertura de inventário seja completada antes de aprovar exclusividade.
 - [Falha de API/web/worker após migration] → manter serviços anteriores/imagens identificadas, parar novos passos, restaurar backup se necessário e validar a versão anterior com o schema restaurado.
 - [Evidência agregada pode expor valores financeiros] → registrar apenas totais/contagens e hashes estáveis aprovados; nunca escrever tokens, payloads, nomes ou conteúdo de recibos nos logs.
 

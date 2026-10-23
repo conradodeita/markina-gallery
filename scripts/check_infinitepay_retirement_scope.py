@@ -59,6 +59,8 @@ ALLOWED_EXACT = {
     "scripts/test_infinitepay_retirement_scope.py",
     "scripts/retirement_inventory_policy.py",
     "scripts/test_retirement_inventory_policy.py",
+    "scripts/retirement_host_references.py",
+    "scripts/test_retirement_host_references.py",
     "scripts/retirement_financial_evidence.py",
     "scripts/test_retirement_financial_evidence.py",
     "scripts/retirement_binding_removal.py",
