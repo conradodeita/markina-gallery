@@ -506,6 +506,9 @@ jobs:
     outputs:
       approved: ${{ steps.validate.outputs.approved }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Validar fingerprint aprovado contra inventário recém-coletado
         id: validate
         shell: bash
