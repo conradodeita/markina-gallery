@@ -8,6 +8,10 @@ from pathlib import Path
 
 from check_prod_app_release_scope import evaluate, git
 from classify_prod_release import classify
+from check_infinitepay_retirement_scope import (
+    evaluate as evaluate_retirement_scope,
+    evaluate_followup_scope as evaluate_retirement_followup_scope,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -35,7 +39,14 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
         raise AssertionError("manifesto diverge do snapshot ancestral comprovado")
     baseline = manifest["production_baseline_sha"]
     if evaluate(root, baseline, source, manifest) != (True, "somente_api_web"):
-        raise AssertionError("snapshot do manifesto não é um candidato API/web admitido")
+        changed = set(git(root, "diff", "--name-only", baseline, source).splitlines())
+        compose_diff = git(root, "diff", "--no-ext-diff", "--unified=0", baseline, source,
+                           "--", "docker/docker-compose.yml")
+        original_retirement = evaluate_retirement_scope(changed, compose_diff)[0]
+        parent = git(root, "rev-parse", f"{source}^")
+        integrated_followup = evaluate_retirement_followup_scope(root, parent, source)[0]
+        if classify(changed) != "protected" or not (original_retirement or integrated_followup):
+            raise AssertionError("snapshot do manifesto não é candidato API/web nem change de aposentadoria aprovada")
     ready, reason = evaluate(root, baseline, target, manifest)
     if not ready:
         changed = set(git(root, "diff", "--name-only", baseline, target).splitlines())
@@ -215,7 +226,7 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "21b89c332c6937b7079679888d52bd6a8aefe25d":
+    if app_manifest.get("production_baseline_sha") != "d7944baef5191ade6ac26fa86cd631bd5ad464d1":
         raise AssertionError("baseline web diverge do inventário registrado")
     emergency = app_manifest.get("emergency_api", {})
     if emergency.get("baseline_sha") != "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f":
@@ -223,7 +234,7 @@ def main() -> None:
     if emergency.get("input_blobs") != {"backend/requirements-push.txt": "2e23bf84e3eae38396218bada0ee37d3da722843"}:
         raise AssertionError("somente os quatro pins autorizados podem mudar")
     require("scripts/prepare_emergency_api_image.py", "homologação de imagem API antes da troca", app_script)
-    if app_manifest.get("expected_database_revision") != "20261017_0084":
+    if app_manifest.get("expected_database_revision") != "20261021_0086":
         raise AssertionError("revisão de banco app diverge do inventário registrado")
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
     require('baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"', "baseline facial usa o marcador operacional", script)
@@ -280,13 +291,13 @@ def main() -> None:
     if not (release_script.index('alembic upgrade') < release_script.index("compose up")):
         raise AssertionError("migration deve concluir antes da recriação de serviços")
 
-    require('EXPECTED_DATABASE_REVISION="20261017_0084"', "schema atual da aplicação fixado", app_script)
+    require('EXPECTED_DATABASE_REVISION="20261021_0086"', "schema atual da aplicação fixado", app_script)
     require('readonly SERVICES=(api web)', "release app inclui somente API e web", app_script)
     require('compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
             "release app não recria dependências", app_script)
     for fragment, label in (
-        ("20261017_0084", "schema app documentado"),
-        ("fe1f3bc6e1a483bd1ac5f4e71149f903e724873f", "baseline app documentado"),
+        ("20261021_0086", "schema app documentado"),
+        ("d7944baef5191ade6ac26fa86cd631bd5ad464d1", "baseline app documentado"),
         ("127.0.0.1:8080", "porta Markina documentada"),
         ("https://markina.pickyourpic.com.br", "domínio documentado"),
         ("worker OTP", "exclusão do worker OTP documentada"),

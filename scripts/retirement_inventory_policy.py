@@ -14,6 +14,7 @@ EXPECTED_ROOT = "/opt/markina-gallery"
 EXPECTED_PROJECT = "markina-gallery"
 EXPECTED_URL = "https://markina.pickyourpic.com.br"
 EXPECTED_SCHEMA = "20261021_0086"
+EXPECTED_ACTIVE_COMPOSE_REFERENCE = f"{EXPECTED_ROOT}/docker/docker-compose.yml"
 SHA1 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -94,7 +95,9 @@ def evaluate(inventory: dict[str, Any]) -> tuple[bool, str, str | None]:
         return False, "binding_compartilhado_por_hardlink", None
     if binding["compose_consumers"] != ["markina-gallery/api"]:
         return False, "binding_compartilhado_ou_consumidor_desconhecido", None
-    if binding["host_references"] != [] or binding["target_references"] != []:
+    # O Compose ativo ainda monta o binding até o release; nenhuma outra referência é permitida.
+    if binding["host_references"] != [EXPECTED_ACTIVE_COMPOSE_REFERENCE] \
+            or binding["target_references"] != []:
         return False, "binding_referenciado_por_outro_arquivo", None
     # Include only minimized operational metadata in the approval fingerprint.
     canonical = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()

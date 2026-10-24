@@ -9,12 +9,12 @@ Este fluxo publica somente `api` e `web` para uma mudança comercial previamente
 - Domínio público: `https://markina.pickyourpic.com.br`.
 - Entrada Nginx da Markina: `127.0.0.1:8080`; o inventário valida o bind antes da aprovação.
 - Serviços recriados: somente `api` e `web`, com `--no-deps`; nenhum worker, banco, Nginx, volume ou serviço externo é recriado.
-- Sem migrations. O schema precisa permanecer em `20261017_0084`.
+- Sem migrations. O schema precisa permanecer em `20261021_0086`.
 - A reinicialização da API pode interromper brevemente qualquer rota atendida por ela, inclusive a disponibilidade temporária do Monitor. Nenhum arquivo, regra ou dado próprio do Monitor faz parte do release.
 
 ## Gates
 
-CI verde e classificação `app` são pré-requisitos. O manifesto registra a base saudável `fe1f3bc6e1a483bd1ac5f4e71149f903e724873f`, publicada em 18/10/2026, e o schema observado `20261017_0084`. O classificador usa essa base em vez do `before` da branch: uma reconciliação de `main` com commits que já estão implantados resulta em `none`, enquanto um delta descendente pode selecionar um release. Após cada release saudável, a base deve ser avançada para o novo SHA confirmado, sem runtime adicional, e o manifesto de blobs deve refletir o estado aprovado.
+CI verde e classificação `app` são pré-requisitos. O manifesto registra a base saudável `d7944baef5191ade6ac26fa86cd631bd5ad464d1` e o schema observado `20261021_0086`, confirmados pelo inventário de produção usado para preparar a aposentadoria da InfinitePay. O classificador usa essa base em vez do `before` da branch: uma reconciliação de `main` com commits que já estão implantados resulta em `none`, enquanto um delta descendente pode selecionar um release. Após cada release saudável, a base deve ser avançada para o novo SHA confirmado, sem runtime adicional, e o manifesto de blobs deve refletir o estado aprovado.
 
 Para a identificação de responsáveis em pastas privadas, o manifesto fixa `backend/app/main.py`, `backend/app/private_folder_overview.py`, `frontend/app/admin/galleries/private-folder-client-overview.tsx` e `frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx`, além dos runtimes já permitidos. Testes, OpenSpec e runbooks podem acompanhar. Alterações em Docker/Compose, migrations, workers, código do Monitor ou outros runtimes bloqueiam o fluxo. O preflight também compara o candidato com o checkout ativo; alterações faciais não são publicadas junto com o app.
 

@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import check_prod_app_release_scope as app_policy
 from check_prod_app_release_scope import RUNTIME_FILES, evaluate
 from test_production_release_workflow_policy import release_candidate_snapshot
 
@@ -20,7 +21,15 @@ class ReleaseCandidatePolicyTests(unittest.TestCase):
         self.git("config", "maintenance.auto", "false")
         self.git("config", "gc.auto", "0")
         for path in RUNTIME_FILES:
-            self.write(path, "reviewed runtime\n")
+            content = (
+                "      - path: ${INFINITEPAY_BINDINGS_ENV_FILE:-.env.infinitepay-bindings}\n"
+                "        required: false\n"
+                "        format: raw\n"
+                if path == "docker/docker-compose.yml" else "reviewed runtime\n"
+            )
+            self.write(path, content)
+        for path in app_policy.RETIRED_INFINITEPAY_FILES:
+            self.write(path, "legacy InfinitePay runtime\n")
         self.commit()
         self.base = self.git("rev-parse", "HEAD")
         self.manifest = {"production_baseline_sha": self.base,
@@ -82,6 +91,23 @@ class ReleaseCandidatePolicyTests(unittest.TestCase):
         self.commit()
         with self.assertRaisesRegex(AssertionError, "snapshot do manifesto"):
             release_candidate_snapshot(self.root, self.manifest)
+
+    def test_manifest_can_pin_exact_infinitepay_retirement_snapshot(self):
+        for path in app_policy.RETIRED_INFINITEPAY_FILES:
+            (self.root / path).unlink()
+        self.write("docker/docker-compose.yml", "")
+        migration = "backend/migrations/versions/20261022_0087_retire_infinitepay.py"
+        self.write(migration, "retirement migration\n")
+        self.manifest["runtime_blobs"] = {
+            path: self.git("hash-object", str(self.root / path)) for path in RUNTIME_FILES
+        }
+        self.write(self.path, json.dumps(self.manifest))
+        self.commit()
+
+        source, ready, reason = release_candidate_snapshot(self.root, self.manifest)
+        self.assertEqual(source, self.git("rev-parse", "HEAD"))
+        self.assertFalse(ready)
+        self.assertEqual(reason, "arquivo_fora_do_escopo")
 
     def test_uncommitted_or_foreign_manifest_is_not_trusted(self):
         changed = dict(self.manifest, note="uncommitted proposal")

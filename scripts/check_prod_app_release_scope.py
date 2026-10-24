@@ -14,14 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
 RUNTIME_FILES = {
     "backend/app/client_lifecycle.py",
+    "backend/app/auth.py",
     "backend/app/main.py",
-    "backend/app/infinitepay_binding.py",
-    "backend/app/infinitepay_settings.py",
     "backend/app/payment_availability.py",
-    "backend/app/payment_provider.py",
     "backend/app/order_visibility.py",
-    "backend/app/provider_cart_recovery.py",
-    "backend/app/provider_checkout.py",
     "backend/app/payment_export.py",
     "backend/app/statistics_report.py",
     "backend/app/private_folder_overview.py",
@@ -30,22 +26,29 @@ RUNTIME_FILES = {
     "frontend/app/globals.css",
     "frontend/app/admin/admin-navigation.tsx",
     "frontend/app/admin/payments/page.tsx",
-    "frontend/app/admin/payments/cart-recovery.tsx",
-    "frontend/app/admin/payments/cart-recovery.module.css",
     "frontend/app/admin/payments/order-photos.tsx",
     "frontend/app/admin/payments/payments.module.css",
-    "frontend/app/admin/settings/infinitepay-panel.tsx",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
     "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
     "frontend/app/library/cart/page.tsx",
-    "frontend/app/library/cart/checkout-navigation.ts",
     "frontend/app/library/purchase-card.tsx",
     "frontend/app/library/purchases/page.tsx",
 }
 RETIRED_STATISTICS_FILES = {
     "frontend/app/admin/statistics/page.tsx",
     "frontend/app/admin/statistics/page.test.tsx",
+}
+RETIRED_INFINITEPAY_FILES = {
+    "backend/app/infinitepay_binding.py",
+    "backend/app/infinitepay_settings.py",
+    "backend/app/payment_provider.py",
+    "backend/app/provider_cart_recovery.py",
+    "backend/app/provider_checkout.py",
+    "frontend/app/admin/payments/cart-recovery.module.css",
+    "frontend/app/admin/payments/cart-recovery.tsx",
+    "frontend/app/admin/settings/infinitepay-panel.tsx",
+    "frontend/app/library/cart/checkout-navigation.ts",
 }
 ALLOWED_PREFIXES = (
     "backend/tests/",
@@ -115,7 +118,11 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
         return False, "manifesto_runtime_incompleto"
     try:
         git(root, "merge-base", "--is-ancestor", base, target)
-        changed = set(git(root, "diff", "--name-only", base, target).splitlines())
+        statuses = {}
+        for line in git(root, "diff", "--name-status", "--no-renames", base, target).splitlines():
+            status, path = line.split("\t", 1)
+            statuses[path] = status
+        changed = set(statuses)
         emergency = manifest.get("emergency_api")
         extra_blobs = {}
         if emergency is not None:
@@ -130,6 +137,10 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
                     return False, "api_fora_do_escopo"
             changed |= api_changes
         for path in changed:
+            if path in RETIRED_INFINITEPAY_FILES:
+                if statuses[path] != "D":
+                    return False, "arquivo_fora_do_escopo"
+                continue
             if path in RUNTIME_FILES or path in extra_blobs or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES):
                 continue
             return False, "arquivo_fora_do_escopo"
