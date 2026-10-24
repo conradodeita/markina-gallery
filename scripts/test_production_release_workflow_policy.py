@@ -121,6 +121,10 @@ def main() -> None:
     require("REQUESTED_APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}", "gate recebe fingerprint informado pelo operador", retirement_release_approval)
     require("PREFLIGHT_FINGERPRINT: ${{ needs.infinitepay-retirement-preflight.outputs.approval_fingerprint }}", "gate recebe fingerprint recém-coletado", retirement_release_approval)
     require("scripts/validate_retirement_approval.py", "release valida formato e igualdade de fingerprint", retirement_release_approval)
+    require("uses: actions/checkout@v4", "job disponibiliza o helper versionado", retirement_release_approval)
+    require("persist-credentials: false", "checkout do gate não persiste credenciais", retirement_release_approval)
+    if retirement_release_approval.index("uses: actions/checkout@v4") > retirement_release_approval.index("python scripts/validate_retirement_approval.py"):
+        raise AssertionError("checkout precisa anteceder a execução do helper de aprovação")
     require("approved=true", "gate emite aprovação somente após igualdade", retirement_release_approval)
     require("needs.infinitepay-retirement-release-approval.outputs.approved == 'true'", "release depende do gate explícito", retirement_release)
     require("needs.infinitepay-retirement-preflight.outputs.approval_fingerprint", "release vinculado ao fingerprint read-only", retirement_release)
