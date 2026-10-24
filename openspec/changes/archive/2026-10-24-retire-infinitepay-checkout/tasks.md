@@ -8,7 +8,7 @@
 - [x] 6. Adicionar testes de regressão para preservação de pagamentos históricos, remoção de segredos/configuração, bloqueio de novos checkouts e continuidade independente do PIX. Evidência: testes de aposentadoria, migration, disponibilidade de pagamento e interface adicionados/ajustados; testes focados passaram.
 - [x] 7. Executar testes, lint, typecheck, build e validação OpenSpec aplicáveis; registrar comandos, resultados e limitações neste change. Evidência: resultados em “Validação executada” abaixo.
 - [x] 8. Revisar diff e busca de referências InfinitePay restantes; justificar cada ocorrência legada e confirmar ausência de código ativo órfão. Evidência: `rg` em runtime encontrou apenas proveniência/modelo e rótulos de histórico, relatório histórico e os dois scripts que incluem a migration no gate de release; paths órfãos de testes removidos foram limpos; `git diff --check` limpo.
-- [ ] 9. Após implementação validada e revisão humana, sincronizar a spec principal e arquivar esta change; iniciar Mercado Pago somente em change posterior.
+- [x] 9. Após implementação validada e revisão humana, sincronizar a spec principal e arquivar esta change. Em 2026-10-24 o proprietário autorizou explicitamente concluir sincronização e arquivamento; os quatro requisitos do delta foram conferidos integralmente em `openspec/specs/gallery-sales/infinitepay-retirement/spec.md`, a validação global passou com 23 specs e zero erros, e a change foi movida para `archive/2026-10-24-retire-infinitepay-checkout`. Mercado Pago permanece em change posterior.
 
 ## Validação executada
 
@@ -18,3 +18,7 @@
 - `npm run lint`, `npx tsc --noEmit`, `npm run build`, Ruff nos arquivos Python alterados, `python -m compileall`, `git diff --check` e `openspec validate retire-infinitepay-checkout --strict`: passaram.
 - Limitação: a cadeia Alembic completa requer PostgreSQL e não foi aplicada localmente. A migration 0087 foi testada diretamente em schema SQLite sintético, que comprovou exclusão de configuração/credencial/URL e preservação do pagamento, tentativa, recibo e correção. Nenhuma migration foi executada em instalação real.
 - Nenhum `.env`, segredo externo, banco remoto/produção ou recurso compartilhado foi lido ou alterado; nenhum deploy foi feito. URLs InfinitePay já emitidas não foram consultadas nem revogadas no provedor.
+
+## Encerramento
+
+As limitações acima descrevem a etapa original de implementação local. A publicação posterior, coberta pela change de release arquivada `2026-10-24-release-infinitepay-retirement-prod`, concluiu a migration `20261022_0087` em produção, removeu o binding e comprovou preservação financeira e PIX. A sincronização e o arquivamento desta change encerram a pendência documental original; o histórico e as migrations anteriores permanecem como evidência.
