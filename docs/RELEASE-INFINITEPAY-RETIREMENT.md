@@ -1,6 +1,6 @@
 # Release de aposentadoria InfinitePay
 
-Este procedimento é dedicado à change `release-infinitepay-retirement-prod`. Ele não autoriza um deploy por si só. O workflow é manual, exige `main`, CI, inventário de produção com fingerprint e aprovação do environment `production` antes de qualquer alteração no banco ou nos serviços.
+Este procedimento é dedicado à change `release-infinitepay-retirement-prod`. O workflow usa operações manuais separadas de preflight e release, exige `main`, CI e aprovação explícita do inventário/plano com seu fingerprint. O environment `production` sozinho não substitui essa aprovação.
 
 ## Pré-condições
 
@@ -31,9 +31,9 @@ Depois da migration, o executor confirma schema, imagens, healthchecks locais e 
 
 ## Falhas e recuperação
 
-- Antes de iniciar a migration, a falha tenta restaurar o checkout e API/web/worker anteriores, retagando suas imagens preservadas; o banco permanece sem mudança de schema.
+- Antes de iniciar a migration, a falha restaura o SHA de checkout observado no inventário e, se pausados, inicia os mesmos containers de API e worker anteriores e aguarda saúde. Web só é recriado após a migration; as imagens anteriores ficam preservadas por tags derivadas de seus digests.
 - Depois que a migration começa, o executor não executa downgrade nem restauração automática. Mantém o arquivo `infinitepay-retirement-in-flight.sha`, preserva o archive e as imagens antigas e declara o release inconclusivo.
 - A recuperação pós-migration é uma operação coordenada separada: reconciliar o estado, obter autorização explícita, restaurar o backup validado somente no banco Markina, restaurar o SHA/imagens anteriores e confirmar saúde. Não usar `alembic downgrade`, `pg_restore --clean`, `compose down`, prune ou remoção de volumes como resposta automática.
 - Se o binding for inesperado, compartilhado, symlink/hardlink, alterado desde o inventário ou ainda referenciado, a limpeza física para. O mount removido do Compose não autoriza apagar outro arquivo.
 
-O inventário anterior e a aprovação protegida são condições obrigatórias. O preflight somente leitura de 2026-10-24 confirmou schema `20261021_0086`, 11 serviços saudáveis, HTTPS e binding exclusivo da API. Um dump foi restaurado integralmente em PostgreSQL isolado, e o recibo `0600` passou a validação do executor, incluindo o checksum. Ainda não há fingerprint aprovado para o release; nenhum serviço, schema ou binding ativo foi alterado.
+O inventário anterior e a aprovação vinculada são condições obrigatórias. O preflight de 2026-10-24 confirmou schema `20261021_0086`, 11 serviços saudáveis, HTTPS e binding exclusivo da API. Um dump foi restaurado integralmente em PostgreSQL isolado, e o recibo `0600` passou a validação privilegiada, incluindo checksum. O fingerprint aprovado para `f0c28caa` não foi executado: a conferência final encontrou falhas no executor, reproduzidas e corrigidas por quatro cenários locais do corpo real do release. Após integrar a correção, coletar e aprovar novo fingerprint. O wrapper de preflight foi atualizado com cópia anterior verificada; runtime, schema e binding permanecem sem alteração.
