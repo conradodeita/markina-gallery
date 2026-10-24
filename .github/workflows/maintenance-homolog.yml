@@ -40,7 +40,7 @@ jobs:
       OWNER_EMAIL: ${{ inputs.owner_email }}
       EXPECTED_APP_SHA: ${{ inputs.expected_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Validar escopo e confirmação

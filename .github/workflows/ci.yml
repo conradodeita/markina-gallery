@@ -35,7 +35,7 @@ jobs:
       preview: ${{ steps.classify.outputs.preview }}
       raw: ${{ steps.classify.outputs.raw }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Testar classificação de escopo e gate agregado
@@ -91,7 +91,7 @@ jobs:
       TENANT_TEST_DATABASE_URL: postgresql+psycopg://pyp_test:synthetic-test-only@127.0.0.1:55469/pyp_tenant_test
       PHOTOGRAPHER_TEST_DATABASE_URL: postgresql+psycopg://postgres:synthetic-test-only@127.0.0.1:15470/pyp_photographer_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -161,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build CPU AMD64 isolado
         run: |
           docker buildx create --name gemma-validation --driver docker-container \
@@ -183,7 +183,7 @@ jobs:
     if: ${{ needs.ci-scope.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -216,7 +216,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Conferir arquitetura nativa do runner
         shell: bash
         run: |
@@ -257,7 +257,7 @@ jobs:
   openspec:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -278,7 +278,7 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Exigir sucesso de cada validação necessária
@@ -328,7 +328,7 @@ jobs:
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Instalar gitleaks
@@ -352,7 +352,7 @@ jobs:
       HOMOLOG_PUBLIC_BASE_URL: ${{ secrets.HOMOLOG_PUBLIC_BASE_URL }}
       HOMOLOG_FACIAL_MAX_REFERENCE_BYTES: "31457280"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -413,7 +413,7 @@ jobs:
       scope: ${{ steps.classify.outputs.release_scope }}
       base_sha: ${{ steps.classify.outputs.base_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Classificar delta desde o SHA saudável registrado
@@ -435,7 +435,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -460,7 +460,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -534,7 +534,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Executar release somente após gate explícito e inventário idêntico
@@ -576,7 +576,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -634,7 +634,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Publicar somente os serviços aprovados
@@ -672,7 +672,7 @@ jobs:
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
       APP_SCOPE_BASE_SHA: ${{ needs.release-scope.outputs.base_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -719,7 +719,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Publicar somente API e web aprovados
@@ -756,7 +756,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -797,7 +797,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Restaurar somente API e web aprovados
