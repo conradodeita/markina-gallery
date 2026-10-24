@@ -75,6 +75,7 @@ class RetirementScopeTests(unittest.TestCase):
             for path in (
                 "scripts/check_prod_app_release_scope.py",
                 ".github/workflows/ci.yml",
+                "scripts/deploy-prod-infinitepay-retirement.sh",
                 "scripts/test_production_release_workflow_policy.py",
                 "scripts/validate_retirement_approval.py",
                 "scripts/test_retirement_approval.py",

@@ -35,6 +35,13 @@ O workflow SHALL separar o preflight somente leitura do release mutável em oper
 - **WHEN** o fingerprint informado está ausente, tem formato inválido ou diverge do inventário recém-coletado
 - **THEN** o gate falha e o job mutável não inicia
 
+### Requirement: Validação read-only do recibo de restauração protegido
+O release SHALL validar o recibo de restauração e o checksum do backup com privilégio não interativo, preservando o owner root e o modo `0600`; a falha da validação MUST interromper a execução antes de qualquer alteração.
+
+#### Scenario: Recibo legível somente por root
+- **WHEN** a conta SSH de release não pode ler o recibo `0600`
+- **THEN** o verificador executa somente a leitura e o cálculo de checksum via `sudo -n`, não altera permissões ou owner e falha fechado se `sudo` ou qualquer validação não passar
+
 #### Scenario: Migration aplicada ao schema esperado
 - **WHEN** o inventário aprovado confirma a revisão anterior exata e o backup anterior é verificável
 - **THEN** o procedimento aplica somente a migration `20261022_0087`, confirma a nova revisão e preserva pedidos, pagamentos, tentativas, recibos, correções e relações financeiras

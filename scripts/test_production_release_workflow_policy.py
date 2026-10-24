@@ -198,6 +198,19 @@ def main() -> None:
     release_script = retirement_script.split("release() {", 1)[1].split("main() {", 1)[0]
     require('if [[ "$MODE" == inventory ]]; then', "modo release despacha para a rotina mutável apenas após o gate", retirement_script)
     require("verify_restore_receipt", "restauração anterior testada é gate", release_script)
+    receipt_verifier = retirement_script.split("verify_restore_receipt() {", 1)[1].split("\n}\n", 1)[0]
+    require(
+        'sudo -n python3 - "$receipt" "$BACKUP_DIR"',
+        "recibo root-only validado sem prompt e sem alterar permissões",
+        receipt_verifier,
+    )
+    require(
+        'info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o600',
+        "verificador confirma owner root e modo 0600 sem seguir symlink",
+        receipt_verifier,
+    )
+    if "chmod " in receipt_verifier or "chown " in receipt_verifier:
+        raise AssertionError("verificador não pode alterar owner ou permissões do recibo")
     require("pg_dump -Fc", "backup custom consistente antes da migration", retirement_script)
     require("pg_restore --list", "arquivo de backup validado", retirement_script)
     require("retirement_financial_evidence.py", "evidência agregada pré/pós migration", retirement_script)
