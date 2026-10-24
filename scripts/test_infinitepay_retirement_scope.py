@@ -76,6 +76,8 @@ class RetirementScopeTests(unittest.TestCase):
                 "scripts/check_prod_app_release_scope.py",
                 ".github/workflows/ci.yml",
                 "scripts/deploy-prod-infinitepay-retirement.sh",
+                "scripts/test_deploy_prod_infinitepay_retirement.sh",
+                "scripts/test_retirement_release_flow.py",
                 "scripts/test_production_release_workflow_policy.py",
                 "scripts/validate_retirement_approval.py",
                 "scripts/test_retirement_approval.py",

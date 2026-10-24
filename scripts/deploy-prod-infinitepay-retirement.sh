@@ -36,12 +36,6 @@ INVENTORY_JSON=""
 MIGRATION_STARTED=false
 API_STOPPED=false
 WORKER_STOPPED=false
-ROLLBACK_API_IMAGE=""
-ROLLBACK_API_TAG=""
-ROLLBACK_WEB_IMAGE=""
-ROLLBACK_WEB_TAG=""
-ROLLBACK_WORKER_IMAGE=""
-ROLLBACK_WORKER_TAG=""
 ROLLBACK_API_CONTAINER=""
 ROLLBACK_WORKER_CONTAINER=""
 COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=false
@@ -62,14 +56,18 @@ parse_arguments() {
   fi
 }
 
-compose() {
+compose_command() {
   local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
   for file in "${COMPOSE_EXTRA_FILES[@]}"; do files+=(-f "$file"); done
   if [[ "$COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY" == true ]]; then
     files+=(-f "$ACTIVE_IMAGES_OVERLAY")
   fi
-  APP_VERSION="$ACTIVE_SHA" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+  APP_VERSION="$ACTIVE_SHA" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@"
 }
+
+compose() { compose_command "$@" </dev/null; }
+
+compose_with_stdin() { compose_command "$@"; }
 
 compose_label_for_service() {
   local service="$1"
@@ -206,14 +204,14 @@ financial_evidence() {
   local source
   source="$(git show "$TARGET_SHA:scripts/retirement_financial_evidence.py")" \
     || fail "coletor de evidência financeira ausente no SHA aprovado"
-  printf '%s\n' "$source" | compose run --rm --no-deps -T api python -
+  printf '%s\n' "$source" | compose_with_stdin run --rm --no-deps -T api python -
 }
 
 pix_evidence() {
   local source
   source="$(git show "$TARGET_SHA:scripts/retirement_pix_evidence.py")" \
     || fail "verificador do PIX próprio ausente no SHA aprovado"
-  printf '%s\n' "$source" | compose run --rm --no-deps -T api python -
+  printf '%s\n' "$source" | compose_with_stdin run --rm --no-deps -T api python -
 }
 
 create_backup() {
@@ -238,7 +236,7 @@ create_backup() {
     || { rm -f -- "$partial"; fail "pg_dump falhou"; }
   chmod 0600 "$partial"
   [[ -s "$partial" ]] || { rm -f -- "$partial"; fail "pg_dump vazio"; }
-  compose exec -T db pg_restore --list < "$partial" >/dev/null 2>&1 \
+  compose_with_stdin exec -T db pg_restore --list < "$partial" >/dev/null 2>&1 \
     || { rm -f -- "$partial"; fail "arquivo de backup não passou pg_restore --list"; }
   checksum="$(sha256sum "$partial" | awk '{print $1}')"
   [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || { rm -f -- "$partial"; fail "checksum do backup inválido"; }
@@ -485,6 +483,9 @@ release() {
   INVENTORY_JSON="$(sed -n 's/^retirement_inventory_json=//p' <<<"$inventory_output" | tail -n1)"
   actual_fp="$(printf '%s' "$INVENTORY_JSON" | python3 -c 'import hashlib,json,sys; d=json.load(sys.stdin); raw=json.dumps(d,sort_keys=True,separators=(",",":" )).encode(); print(hashlib.sha256(raw).hexdigest())')"
   [[ "$actual_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário mudou durante a aprovação; nada foi alterado"
+  CHECKOUT_SHA="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkout_sha"])' <<<"$INVENTORY_JSON")"
+  [[ "$CHECKOUT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA anterior ausente no inventário aprovado"
+  ACTIVE_SHA="$CHECKOUT_SHA"
   verify_restore_receipt
   trap restore_pre_migration_runtime EXIT
   git fetch --quiet --no-tags origin main || fail "fetch da main aprovada falhou"
@@ -500,9 +501,6 @@ release() {
   tag_api="$PROJECT_NAME-retirement-rollback-api-${old_api#sha256:}"
   tag_web="$PROJECT_NAME-retirement-rollback-web-${old_web#sha256:}"
   tag_worker="$PROJECT_NAME-retirement-rollback-worker-${old_worker#sha256:}"
-  ROLLBACK_API_IMAGE="$old_api"; ROLLBACK_API_TAG="$old_api_tag"
-  ROLLBACK_WEB_IMAGE="$old_web"; ROLLBACK_WEB_TAG="$old_web_tag"
-  ROLLBACK_WORKER_IMAGE="$old_worker"; ROLLBACK_WORKER_TAG="$old_worker_tag"
   docker image tag "$old_api" "$tag_api" || fail "não preservou imagem API anterior"
   docker image tag "$old_web" "$tag_web" || fail "não preservou imagem web anterior"
   docker image tag "$old_worker" "$tag_worker" || fail "não preservou imagem worker anterior"

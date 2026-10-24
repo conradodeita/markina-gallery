@@ -118,3 +118,14 @@ O sistema SHALL aguardar o ciclo de trabalho em andamento antes de parar o worke
 #### Scenario: Worker excede o timeout de parada
 - **WHEN** o worker não sai com código zero após o timeout configurado
 - **THEN** a migration não é iniciada e o runtime anterior é restaurado
+
+### Requirement: Continuidade verificável do executor de aposentadoria
+O executor SHALL preservar as imagens e o SHA anteriores antes da parada e SHALL encaminhar integralmente a entrada explícita de validação do backup e dos coletores financeiros. Falhas anteriores à migration MUST recuperar o checkout e os containers anteriores sem aplicar migration ou remover o binding.
+
+#### Scenario: Release percorre o fluxo aprovado
+- **WHEN** inventário, recibo, build, backup e evidências passam
+- **THEN** o executor preserva as imagens por digest, valida o archive recebido por stdin, coleta evidências antes/depois e só limpa o binding após saúde e igualdade financeira
+
+#### Scenario: Falha após pausa e antes da migration
+- **WHEN** a validação do backup ou a parada graciosa falha
+- **THEN** o executor volta ao SHA observado no inventário, reinicia os mesmos containers anteriores e não inicia migration nem limpeza
