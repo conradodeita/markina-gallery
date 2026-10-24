@@ -8,7 +8,10 @@ from pathlib import Path
 
 from check_prod_app_release_scope import evaluate, git
 from classify_prod_release import classify
-from check_infinitepay_retirement_scope import evaluate as evaluate_retirement_scope
+from check_infinitepay_retirement_scope import (
+    evaluate as evaluate_retirement_scope,
+    evaluate_followup_scope as evaluate_retirement_followup_scope,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -39,9 +42,10 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
         changed = set(git(root, "diff", "--name-only", baseline, source).splitlines())
         compose_diff = git(root, "diff", "--no-ext-diff", "--unified=0", baseline, source,
                            "--", "docker/docker-compose.yml")
-        if classify(changed) != "protected" or evaluate_retirement_scope(changed, compose_diff) != (
-            True, "somente_aposentadoria_infinitepay",
-        ):
+        original_retirement = evaluate_retirement_scope(changed, compose_diff)[0]
+        parent = git(root, "rev-parse", f"{source}^")
+        integrated_followup = evaluate_retirement_followup_scope(root, parent, source)[0]
+        if classify(changed) != "protected" or not (original_retirement or integrated_followup):
             raise AssertionError("snapshot do manifesto não é candidato API/web nem change de aposentadoria aprovada")
     ready, reason = evaluate(root, baseline, target, manifest)
     if not ready:

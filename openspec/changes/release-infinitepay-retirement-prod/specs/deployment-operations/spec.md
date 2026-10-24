@@ -64,6 +64,17 @@ O gate API/web SHALL fixar somente os arquivos de runtime presentes no alvo inte
 - **WHEN** um caminho InfinitePay aposentado é modificado ou adicionado novamente
 - **THEN** o gate recusa a publicação e não o trata como exclusão aprovada
 
+### Requirement: Continuação do gate após integração da aposentadoria
+Após a aposentadoria estar integrada, a CI MAY aceitar um commit de manutenção somente se a base já contiver a migration `20261022_0087`, o Compose não referenciar o binding e o diff estiver limitado à allowlist exata de arquivos operacionais, testes e documentação. Alterações de runtime, migration ou Compose MUST continuar recusadas por esse caminho.
+
+#### Scenario: Ajuste operacional sobre aposentadoria integrada
+- **WHEN** um commit subsequente altera somente os arquivos de gate aprovados e a base já contém a migration sem referência ao binding no Compose
+- **THEN** a CI valida o ajuste operacional sem reabrir ou republicar o escopo de runtime
+
+#### Scenario: Base ainda não aposentada ou diff amplo
+- **WHEN** a base não contém a migration, ainda referencia o binding ou o diff altera runtime
+- **THEN** a validação do follow-up falha fechada
+
 ### Requirement: Verificação pós-release da aposentadoria InfinitePay
 O sistema SHALL verificar saúde local e HTTPS, continuidade do PIX próprio e disponibilidade somente leitura do histórico InfinitePay antes de declarar o release concluído.
 

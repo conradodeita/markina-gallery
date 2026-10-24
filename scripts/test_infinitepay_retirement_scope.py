@@ -1,8 +1,12 @@
 """Fail-closed scope policy tests for InfinitePay retirement."""
 
+import os
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
-from check_infinitepay_retirement_scope import evaluate
+from check_infinitepay_retirement_scope import evaluate, evaluate_followup_scope
 
 
 class RetirementScopeTests(unittest.TestCase):
@@ -57,6 +61,58 @@ class RetirementScopeTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(evaluate(self.valid_paths() | {path}, self.COMPOSE_DIFF),
                                  (False, "arquivo_fora_do_escopo"))
+
+    def test_exact_gate_followup_is_allowed_only_after_retirement_is_in_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.git(root, "init", "-q")
+            self.git(root, "config", "user.name", "Fixture")
+            self.git(root, "config", "user.email", "fixture@example.invalid")
+            self.write(root, "backend/migrations/versions/20261022_0087_retire_infinitepay.py", "reviewed migration\n")
+            self.write(root, "docker/docker-compose.yml", "services:\n  api:\n    image: api\n")
+            self.commit(root)
+            base = self.git(root, "rev-parse", "HEAD")
+            self.write(root, "scripts/check_prod_app_release_scope.py", "reviewed gate update\n")
+            self.commit(root)
+            target = self.git(root, "rev-parse", "HEAD")
+            self.assertEqual(evaluate_followup_scope(root, base, target),
+                             (True, "ajuste_gate_pos_integracao"))
+
+            self.write(root, "backend/app/main.py", "unreviewed runtime\n")
+            self.commit(root)
+            self.assertEqual(evaluate_followup_scope(root, target, "HEAD"),
+                             (False, "ajuste_pos_integracao_fora_do_escopo"))
+
+    def test_gate_followup_is_rejected_if_binding_reference_remains_in_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.git(root, "init", "-q")
+            self.git(root, "config", "user.name", "Fixture")
+            self.git(root, "config", "user.email", "fixture@example.invalid")
+            self.write(root, "backend/migrations/versions/20261022_0087_retire_infinitepay.py", "reviewed migration\n")
+            self.write(root, "docker/docker-compose.yml", "INFINITEPAY_BINDINGS_ENV_FILE\n")
+            self.commit(root)
+            base = self.git(root, "rev-parse", "HEAD")
+            self.write(root, "scripts/check_prod_app_release_scope.py", "reviewed gate update\n")
+            self.commit(root)
+            self.assertEqual(evaluate_followup_scope(root, base, "HEAD"),
+                             (False, "binding_ainda_referenciado_na_base"))
+
+    @staticmethod
+    def git(root, *args):
+        return subprocess.check_output(["git", *args], cwd=root, text=True,
+                                       env=dict(os.environ, GIT_TERMINAL_PROMPT="0")).strip()
+
+    @classmethod
+    def write(cls, root, name, content):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    @classmethod
+    def commit(cls, root):
+        cls.git(root, "add", ".")
+        cls.git(root, "commit", "-qm", "fixture")
 
 
 if __name__ == "__main__":

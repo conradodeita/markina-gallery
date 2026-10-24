@@ -170,6 +170,27 @@ COMPOSE_REMOVAL = [
     "-        required: false",
     "-        format: raw",
 ]
+RETIREMENT_MIGRATION = "backend/migrations/versions/20261022_0087_retire_infinitepay.py"
+FOLLOWUP_EXACT = {
+    "docs/DEPLOY-PROD-APP.md",
+    "docs/RELEASE-INFINITEPAY-RETIREMENT.md",
+    "openspec/changes/add-production-app-release-workflow/runtime-gates.json",
+    "openspec/changes/release-infinitepay-retirement-prod/design.md",
+    "openspec/changes/release-infinitepay-retirement-prod/specs/deployment-operations/spec.md",
+    "openspec/changes/release-infinitepay-retirement-prod/tasks.md",
+    "scripts/check_infinitepay_retirement_scope.py",
+    "scripts/check_prod_app_release_scope.py",
+    "scripts/deploy-prod-app-services.sh",
+    "scripts/production-preflight-ssh-wrapper.sh",
+    "scripts/retirement_inventory_policy.py",
+    "scripts/test_deploy_prod_app_services.sh",
+    "scripts/test_infinitepay_retirement_scope.py",
+    "scripts/test_prod_app_release_scope.py",
+    "scripts/test_prod_release_state.py",
+    "scripts/test_production_release_workflow_policy.py",
+    "scripts/test_release_candidate_policy.py",
+    "scripts/test_retirement_inventory_policy.py",
+}
 
 
 def changed_paths(root: Path, base: str, target: str) -> set[str]:
@@ -204,6 +225,31 @@ def evaluate(paths: set[str], compose_diff: str) -> tuple[bool, str]:
     return True, "somente_aposentadoria_infinitepay"
 
 
+def evaluate_followup_scope(root: Path, base: str, target: str) -> tuple[bool, str]:
+    """Allow only exact release-gate maintenance after retirement is already integrated."""
+    try:
+        subprocess.run(["git", "merge-base", "--is-ancestor", base, target], cwd=root,
+                       check=True, capture_output=True, text=True)
+        paths = changed_paths(root, base, target)
+        if not paths or paths - FOLLOWUP_EXACT:
+            return False, "ajuste_pos_integracao_fora_do_escopo"
+        migration = subprocess.run(
+            ["git", "cat-file", "-e", f"{base}:{RETIREMENT_MIGRATION}"], cwd=root,
+            check=False, capture_output=True,
+        )
+        if migration.returncode != 0:
+            return False, "aposentadoria_nao_integrada_na_base"
+        compose = subprocess.run(
+            ["git", "show", f"{base}:docker/docker-compose.yml"], cwd=root,
+            check=True, capture_output=True, text=True,
+        ).stdout
+        if "INFINITEPAY_BINDINGS_ENV_FILE" in compose or ".env.infinitepay-bindings" in compose:
+            return False, "binding_ainda_referenciado_na_base"
+    except subprocess.CalledProcessError:
+        return False, "historico_ou_estado_base_nao_comprovado"
+    return True, "ajuste_gate_pos_integracao"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", required=True)
@@ -217,6 +263,10 @@ def main() -> int:
             cwd=ROOT, check=True, capture_output=True, text=True,
         ).stdout
         ready, reason = evaluate(paths, compose_diff)
+        if not ready:
+            followup_ready, followup_reason = evaluate_followup_scope(ROOT, args.base, args.target)
+            if followup_ready:
+                ready, reason = followup_ready, followup_reason
     except subprocess.CalledProcessError:
         ready, reason = False, "historico_nao_comprovado"
     print(f"retirement_release_ready={'true' if ready else 'false'}")
