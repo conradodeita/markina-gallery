@@ -259,15 +259,12 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "d7944baef5191ade6ac26fa86cd631bd5ad464d1":
+    if app_manifest.get("production_baseline_sha") != "1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8":
         raise AssertionError("baseline web diverge do inventário registrado")
-    emergency = app_manifest.get("emergency_api", {})
-    if emergency.get("baseline_sha") != "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f":
-        raise AssertionError("baseline API diverge do inventário registrado")
-    if emergency.get("input_blobs") != {"backend/requirements-push.txt": "2e23bf84e3eae38396218bada0ee37d3da722843"}:
-        raise AssertionError("somente os quatro pins autorizados podem mudar")
+    if "emergency_api" in app_manifest:
+        raise AssertionError("contrato API emergencial não pode permanecer após a publicação convencional comprovada")
     require("scripts/prepare_emergency_api_image.py", "homologação de imagem API antes da troca", app_script)
-    if app_manifest.get("expected_database_revision") != "20261021_0086":
+    if app_manifest.get("expected_database_revision") != "20261022_0087":
         raise AssertionError("revisão de banco app diverge do inventário registrado")
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
     require('baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"', "baseline facial usa o marcador operacional", script)
@@ -324,13 +321,13 @@ def main() -> None:
     if not (release_script.index('alembic upgrade') < release_script.index("compose up")):
         raise AssertionError("migration deve concluir antes da recriação de serviços")
 
-    require('EXPECTED_DATABASE_REVISION="20261021_0086"', "schema atual da aplicação fixado", app_script)
+    require('EXPECTED_DATABASE_REVISION="20261022_0087"', "schema atual da aplicação fixado", app_script)
     require('readonly SERVICES=(api web)', "release app inclui somente API e web", app_script)
     require('compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
             "release app não recria dependências", app_script)
     for fragment, label in (
-        ("20261021_0086", "schema app documentado"),
-        ("d7944baef5191ade6ac26fa86cd631bd5ad464d1", "baseline app documentado"),
+        ("20261022_0087", "schema app documentado"),
+        ("1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8", "baseline app documentado"),
         ("127.0.0.1:8080", "porta Markina documentada"),
         ("https://markina.pickyourpic.com.br", "domínio documentado"),
         ("worker OTP", "exclusão do worker OTP documentada"),

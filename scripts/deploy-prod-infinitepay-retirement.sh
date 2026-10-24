@@ -39,6 +39,7 @@ WORKER_STOPPED=false
 ROLLBACK_API_CONTAINER=""
 ROLLBACK_WORKER_CONTAINER=""
 COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=false
+ALLOW_LEGACY_WORKER_INTERRUPTION=false
 
 parse_arguments() {
   while [[ $# -gt 0 ]]; do
@@ -46,6 +47,7 @@ parse_arguments() {
       --mode) MODE="${2:-}"; shift 2 ;;
       --sha) TARGET_SHA="${2:-}"; shift 2 ;;
       --approval-fingerprint) APPROVAL_FINGERPRINT="${2:-}"; shift 2 ;;
+      --allow-legacy-worker-interruption) ALLOW_LEGACY_WORKER_INTERRUPTION=true; shift ;;
       *) fail "argumento não permitido: $1" ;;
     esac
   done
@@ -283,7 +285,7 @@ print(json.dumps(sorted(set(found)),separators=(",",":")))
   [[ "$health_ok" == true ]] || fail "API/web/worker não estão saudáveis no inventário final"
   python3 scripts/retirement_binding_removal.py --runtime-healthy \
     --compose-consumers-json "$compose_consumers" \
-    --host-references-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].splitlines() if sys.argv[1] else [],separators=(",",":"))' "$host_refs")" \
+    --host-references-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].splitlines() if sys.argv[1] else [],separators=(",",":")))' "$host_refs")" \
     --target-references-json "$target_refs" <<<"$inventory_json" || fail "binding mudou, compartilhado ou ainda referenciado"
 }
 
@@ -443,6 +445,46 @@ acquire_retirement_lock() {
   done
 }
 
+interrupt_approved_legacy_worker() {
+  local id="$1" image source_hash pending idle state attempt
+  [[ "$ALLOW_LEGACY_WORKER_INTERRUPTION" == true && "$API_STOPPED" == true ]] \
+    || fail "interrupção do worker legado não autorizada ou API ainda ativa"
+  image="$(docker inspect --format '{{.Image}}' "$id")"
+  [[ "$image" == sha256:25067618cf99f3b662f9096fc2f7aa88bcf272da5b2ea62dd91d9de9bd8d3b21 ]] \
+    || fail "imagem do worker legado diverge do inventário"
+  source_hash="$(docker exec "$id" python -B -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("/app/app/worker.py").read_bytes()).hexdigest())')"
+  [[ "$source_hash" == 2731fb50695ea6cac2df54b85994bf2f4162dbf5e811a3adc97f7b4668dbfc8a ]] \
+    || fail "source do worker legado diverge do inventário"
+  pending="$(compose_with_stdin exec -T db sh -ceu 'exec psql -X -q -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '10s';
+SELECT
+ (SELECT count(*) FROM media_job WHERE status IN ('queued','processing')) +
+ (SELECT count(*) FROM whatsapp_delivery WHERE status IN ('queued','processing','unknown')) +
+ (SELECT count(*) FROM email_delivery WHERE status IN ('queued','processing')) +
+ (SELECT count(*) FROM notification_delivery WHERE status IN ('queued','processing')) +
+ (SELECT count(*) FROM gallery_lifecycle_operation WHERE status NOT IN ('completed','failed')) +
+ (SELECT count(*) FROM asset_file_cleanup WHERE status IN ('pending','processing'));
+ROLLBACK;
+SQL
+  )" || fail "não confirmou filas antes da interrupção do legado"
+  [[ "$pending" == 0 ]] || fail "há trabalho elegível/ativo; worker legado não será interrompido"
+  idle="$(docker exec "$id" python -B -c 'import pathlib; print(pathlib.Path("/proc/1/wchan").read_text().strip())')"
+  [[ "$idle" == hrtimer_nanosleep ]] || fail "worker legado não está na espera ociosa inventariada"
+  docker kill --signal=SIGINT "$id" >/dev/null || fail "SIGINT do worker legado falhou"
+  WORKER_STOPPED=true
+  for ((attempt=0; attempt<20; attempt++)); do
+    state="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$id")"
+    if [[ "$state" == exited:130 ]]; then
+      echo "worker_legado=interrompido_com_autorizacao exit_code=130 filas_ativas=0"
+      return 0
+    fi
+    [[ "$state" == running:* || "$state" == stopping:* ]] || fail "saída inesperada do worker legado: $state"
+    sleep 0.5
+  done
+  fail "worker legado não concluiu SIGINT; migration não será aplicada"
+}
+
 restore_pre_migration_runtime() {
   local status="$?"
   if [[ "$status" -ne 0 && "$MIGRATION_STARTED" == false ]]; then
@@ -518,10 +560,14 @@ release() {
   local worker_container worker_exit
   worker_container="$(compose ps -q worker)"
   [[ -n "$worker_container" ]] || fail "worker Markina ausente antes da migration"
-  compose stop --timeout 180 worker || fail "não foi possível pausar o worker antes da migration"
-  WORKER_STOPPED=true
-  worker_exit="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$worker_container")"
-  [[ "$worker_exit" == exited:0 ]] || fail "worker não concluiu parada graciosa; migration não será aplicada"
+  if [[ "$ALLOW_LEGACY_WORKER_INTERRUPTION" == true ]]; then
+    interrupt_approved_legacy_worker "$worker_container"
+  else
+    compose stop --timeout 180 worker || fail "não foi possível pausar o worker antes da migration"
+    WORKER_STOPPED=true
+    worker_exit="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$worker_container")"
+    [[ "$worker_exit" == exited:0 ]] || fail "worker não concluiu parada graciosa; migration não será aplicada"
+  fi
   create_backup
   pre_evidence="$(financial_evidence)" || fail "snapshot financeiro pré-migration falhou"
   [[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("confirmed_infinitepay_count",-1))' <<<"$pre_evidence")" == 2 ]] \

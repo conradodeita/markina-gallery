@@ -119,6 +119,10 @@ O sistema SHALL aguardar o ciclo de trabalho em andamento antes de parar o worke
 - **WHEN** o worker não sai com código zero após o timeout configurado
 - **THEN** a migration não é iniciada e o runtime anterior é restaurado
 
+#### Scenario: Transição autorizada do worker legado sem handler SIGTERM
+- **WHEN** o proprietário autoriza explicitamente indisponibilidade e interrupção do worker legado, sua imagem/source são os inventariados, a API está pausada, não há tarefa ativa/elegível nas filas e o processo principal está ocioso
+- **THEN** o executor MAY usar SIGINT por opt-in específico e aceitar exclusivamente saída `130` para esse legado antes da migration, preservando filas e histórico; timeout, SIGKILL, trabalho ativo ou identidade divergente MUST abortar e recuperar o runtime anterior
+
 ### Requirement: Continuidade verificável do executor de aposentadoria
 O executor SHALL preservar as imagens e o SHA anteriores antes da parada e SHALL encaminhar integralmente a entrada explícita de validação do backup e dos coletores financeiros. Falhas anteriores à migration MUST recuperar o checkout e os containers anteriores sem aplicar migration ou remover o binding.
 

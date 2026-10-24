@@ -1,7 +1,7 @@
 {
   "scope": "api_web_only",
-  "production_baseline_sha": "d7944baef5191ade6ac26fa86cd631bd5ad464d1",
-  "expected_database_revision": "20261021_0086",
+  "production_baseline_sha": "1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8",
+  "expected_database_revision": "20261022_0087",
   "runtime_blobs": {
     "backend/app/auth.py": "d29aa1a44ba3995c728377b62fe73b6e593ef944",
     "backend/app/client_lifecycle.py": "5757fc8f7ddefeaa93d0624cce93d1111131e761",
@@ -24,12 +24,5 @@
     "frontend/app/library/cart/page.tsx": "cbb6a7a7a4668b468dbe511c6979f052091ff00c",
     "frontend/app/library/purchase-card.tsx": "c3cc10391746ea1661479ab0df4e1692091a9e89",
     "frontend/app/library/purchases/page.tsx": "25f04af90a9379cc5bd0db015c084b6171a50202"
-  },
-  "emergency_api": {
-    "baseline_sha": "fe1f3bc6e1a483bd1ac5f4e71149f903e724873f",
-    "baseline_image": "sha256:afc54e0ff0b008ac7bcc2ab28095f279da6213aaa5bec1ac98fae8269fc0715c",
-    "input_blobs": {
-      "backend/requirements-push.txt": "2e23bf84e3eae38396218bada0ee37d3da722843"
-    }
   }
 }

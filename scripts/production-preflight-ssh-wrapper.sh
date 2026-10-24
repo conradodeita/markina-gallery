@@ -9,8 +9,8 @@ readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly FACIAL_SCRIPT_BLOB_SHA="bc07f8a4acb90526ed98b74ea5a8acd23cc0d90e"
-readonly APP_SCRIPT_BLOB_SHA="8eb442a6fd1026ddede53933c773a406f8d5f39e"
-readonly RETIREMENT_SCRIPT_BLOB_SHA="cdb6c0a8fb2ad0fe2b0c7865621cfc04bd65dc28"
+readonly APP_SCRIPT_BLOB_SHA="646852479c83d0bfa356203379a95cbd9e4019f6"
+readonly RETIREMENT_SCRIPT_BLOB_SHA="935af96ec1b650eb2c9ae188186eec38f0dd532b"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
