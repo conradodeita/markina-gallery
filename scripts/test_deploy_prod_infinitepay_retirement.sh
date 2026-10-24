@@ -4,6 +4,20 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/deploy-prod-infinitepay-retirement.sh"
 
+[[ "$(compose_label_for_service api)" == "$COMPOSE_FILE_LABEL" ]] \
+  || { echo "Compose base API label diverge" >&2; exit 1; }
+COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=true
+expected_api_label="$COMPOSE_FILE_LABEL,$ACTIVE_IMAGES_OVERLAY"
+[[ "$(compose_label_for_service api)" == "$expected_api_label" ]] \
+  || { echo "API deve reconhecer o overlay de imagens ativo durante o inventário" >&2; exit 1; }
+[[ "$(compose_label_for_service web)" == "$expected_api_label" ]] \
+  || { echo "web deve reconhecer o overlay de imagens ativo durante o inventário" >&2; exit 1; }
+[[ "$(compose_label_for_service nginx)" == "$COMPOSE_FILE_LABEL" ]] \
+  || { echo "nginx deve preservar sua proveniência sem overlay" >&2; exit 1; }
+COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=false
+[[ "$(compose_label_for_service api)" == "$COMPOSE_FILE_LABEL" ]] \
+  || { echo "Compose de destino não deve carregar overlay legado" >&2; exit 1; }
+
 python3 - "$SCRIPT_DIR/deploy-prod-infinitepay-retirement.sh" <<'PY'
 import contextlib
 import io

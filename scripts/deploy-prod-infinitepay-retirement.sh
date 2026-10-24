@@ -11,6 +11,8 @@ readonly COMPOSE_FILE_LABEL="/opt/markina-gallery/docker/docker-compose.yml,/var
 readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
 readonly BACKUP_DIR="/var/lib/markina-gallery/backups"
+readonly ACTIVE_IMAGES_OVERLAY="/var/lib/markina-gallery/deploy-state/payments0086-active-images.compose.json"
+readonly ACTIVE_IMAGES_OVERLAY_SHA256="899df26fa54fbdd369d66aa0f446340853591e9163a27ae5963564961f0d8e60"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly HOST_REFERENCES_SCRIPT_BLOB_SHA="acd38067afccc3476a80f8804b8cda8f5a09b27d"
 readonly COMPOSE_EXTRA_FILES=(
@@ -40,6 +42,9 @@ ROLLBACK_WEB_IMAGE=""
 ROLLBACK_WEB_TAG=""
 ROLLBACK_WORKER_IMAGE=""
 ROLLBACK_WORKER_TAG=""
+ROLLBACK_API_CONTAINER=""
+ROLLBACK_WORKER_CONTAINER=""
+COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=false
 
 parse_arguments() {
   while [[ $# -gt 0 ]]; do
@@ -60,7 +65,31 @@ parse_arguments() {
 compose() {
   local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
   for file in "${COMPOSE_EXTRA_FILES[@]}"; do files+=(-f "$file"); done
+  if [[ "$COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY" == true ]]; then
+    files+=(-f "$ACTIVE_IMAGES_OVERLAY")
+  fi
   APP_VERSION="$ACTIVE_SHA" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+}
+
+compose_label_for_service() {
+  local service="$1"
+  if [[ "$COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY" == true && ( "$service" == api || "$service" == web ) ]]; then
+    printf '%s,%s\n' "$COMPOSE_FILE_LABEL" "$ACTIVE_IMAGES_OVERLAY"
+  else
+    printf '%s\n' "$COMPOSE_FILE_LABEL"
+  fi
+}
+
+wait_for_healthy_container() {
+  local id="$1" status attempt
+  for ((attempt=0; attempt<60; attempt++)); do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id")" \
+      || return 1
+    [[ "$status" == healthy ]] && return 0
+    [[ "$status" == unhealthy || "$status" == exited || "$status" == dead ]] && return 1
+    sleep 2
+  done
+  return 1
 }
 
 database_revision() {
@@ -273,7 +302,7 @@ services_health() {
       || fail "container fora do projeto: $service"
     if [[ "$service" == api || "$service" == web || "$service" == nginx ]]; then
       [[ "$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$id")" == "/opt/markina-gallery/docker" \
-        && "$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id")" == "$COMPOSE_FILE_LABEL" ]] \
+        && "$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id")" == "$(compose_label_for_service "$service")" ]] \
         || fail "origem Compose de $service diverge"
     fi
     health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id")"
@@ -288,11 +317,15 @@ services_health() {
 
 inventory() {
   local checkout main active schema hashes api_hash web_hash worker_hash nginx_id ports binding path refs health_json target_refs origin git_dir fetched_sha
+  COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=true
   [[ "$(hostname)" == "$EXPECTED_HOST" ]] || fail "host diverge do alvo registrado"
   [[ "$(pwd -P)" == "$PROJECT_ROOT" && "$(git rev-parse --show-toplevel)" == "$PROJECT_ROOT" ]] \
     || fail "checkout Markina ausente"
   [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" && -d "$STATE_DIR" ]] || fail "Compose, env ou estado ausente"
   for file in "${COMPOSE_EXTRA_FILES[@]}"; do [[ -f "$file" ]] || fail "Compose auxiliar ausente"; done
+  [[ -f "$ACTIVE_IMAGES_OVERLAY" && ! -L "$ACTIVE_IMAGES_OVERLAY" ]] || fail "overlay de imagens ativas ausente ou inválido"
+  [[ "$(sha256sum "$ACTIVE_IMAGES_OVERLAY" | awk '{print $1}')" == "$ACTIVE_IMAGES_OVERLAY_SHA256" ]] \
+    || fail "overlay de imagens ativas diverge da publicação 0086 registrada"
   [[ -n "$EXPECTED_REPOSITORY" ]] || fail "repositório esperado ausente"
   [[ -z "$(git status --porcelain)" ]] || fail "checkout contém alterações locais"
   case "$(git remote get-url origin)" in
@@ -357,6 +390,7 @@ print(json.dumps(inventory,sort_keys=True,separators=(",",":")))
 PY
   )"
   [[ -n "$INVENTORY_JSON" ]] || fail "não foi possível serializar o inventário sanitizado"
+  COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=false
   printf 'retirement_inventory_json=%s\n' "$INVENTORY_JSON"
   echo "nenhuma mutação foi executada"
 }
@@ -414,17 +448,17 @@ restore_pre_migration_runtime() {
       echo "ATENÇÃO: checkout anterior não foi restaurado automaticamente" >&2
     elif [[ "$API_STOPPED" == true || "$WORKER_STOPPED" == true ]]; then
       ACTIVE_SHA="$CHECKOUT_SHA"
-      [[ -z "$ROLLBACK_API_IMAGE" || -z "$ROLLBACK_API_TAG" ]] \
-        || docker image tag "$ROLLBACK_API_IMAGE" "$ROLLBACK_API_TAG" >/dev/null 2>&1 \
-        || echo "ATENÇÃO: imagem API anterior não pôde ser restaurada para seu nome original" >&2
-      [[ -z "$ROLLBACK_WEB_IMAGE" || -z "$ROLLBACK_WEB_TAG" ]] \
-        || docker image tag "$ROLLBACK_WEB_IMAGE" "$ROLLBACK_WEB_TAG" >/dev/null 2>&1 \
-        || echo "ATENÇÃO: imagem web anterior não pôde ser restaurada para seu nome original" >&2
-      [[ -z "$ROLLBACK_WORKER_IMAGE" || -z "$ROLLBACK_WORKER_TAG" ]] \
-        || docker image tag "$ROLLBACK_WORKER_IMAGE" "$ROLLBACK_WORKER_TAG" >/dev/null 2>&1 \
-        || echo "ATENÇÃO: imagem worker anterior não pôde ser restaurada para seu nome original" >&2
-      compose up -d --no-deps --force-recreate --wait --wait-timeout 120 api web worker >/dev/null 2>&1 \
-        || echo "ATENÇÃO: recuperação pré-migration da API/web requer intervenção" >&2
+      if [[ -n "$ROLLBACK_API_CONTAINER" && -n "$ROLLBACK_WORKER_CONTAINER" ]]; then
+        if docker start "$ROLLBACK_API_CONTAINER" "$ROLLBACK_WORKER_CONTAINER" >/dev/null 2>&1 \
+          && wait_for_healthy_container "$ROLLBACK_API_CONTAINER" \
+          && wait_for_healthy_container "$ROLLBACK_WORKER_CONTAINER"; then
+          echo "runtime anterior reiniciado e saudável" >&2
+        else
+          echo "ATENÇÃO: recuperação pré-migration dos containers anteriores requer intervenção" >&2
+        fi
+      else
+        echo "ATENÇÃO: IDs dos containers anteriores incompletos; recuperação requer intervenção" >&2
+      fi
     fi
   elif [[ "$status" -ne 0 && "$MIGRATION_STARTED" == true ]]; then
     echo "falha após início da migration; não executar downgrade; recuperar com backup e versão anterior" >&2
@@ -434,7 +468,7 @@ restore_pre_migration_runtime() {
 
 release() {
   local inventory_output actual_fp pre_evidence post_evidence pre_pix post_pix old_api old_web old_worker
-  local old_api_tag old_web_tag old_worker_tag tag_api tag_web tag_worker migrated target_api target_web target_worker
+  local tag_api tag_web tag_worker migrated target_api target_web target_worker
   inventory_output="$(inventory)"
   INVENTORY_JSON="$(sed -n 's/^retirement_inventory_json=//p' <<<"$inventory_output" | tail -n1)"
   [[ -n "$INVENTORY_JSON" ]] || fail "inventário de release ausente"
@@ -452,10 +486,10 @@ release() {
   old_api="$(docker inspect --format '{{.Image}}' "$(compose ps -q api)")"
   old_web="$(docker inspect --format '{{.Image}}' "$(compose ps -q web)")"
   old_worker="$(docker inspect --format '{{.Image}}' "$(compose ps -q worker)")"
-  old_api_tag="$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q api)")"
-  old_web_tag="$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q web)")"
-  old_worker_tag="$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q worker)")"
-  [[ -n "$old_api" && -n "$old_web" && -n "$old_worker" && -n "$old_api_tag" && -n "$old_web_tag" && -n "$old_worker_tag" ]] \
+  ROLLBACK_API_CONTAINER="$(compose ps -q api)"
+  ROLLBACK_WORKER_CONTAINER="$(compose ps -q worker)"
+  [[ "$old_api" =~ ^sha256:[0-9a-f]{64}$ && "$old_web" =~ ^sha256:[0-9a-f]{64}$ \
+    && "$old_worker" =~ ^sha256:[0-9a-f]{64}$ ]] \
     || fail "imagens anteriores API/web/worker incompletas"
   tag_api="$PROJECT_NAME-retirement-rollback-api-${old_api#sha256:}"
   tag_web="$PROJECT_NAME-retirement-rollback-web-${old_web#sha256:}"
