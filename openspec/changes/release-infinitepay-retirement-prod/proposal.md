@@ -6,7 +6,7 @@ A aposentadoria local da InfinitePay está implementada, mas o caminho de releas
 
 ## What Changes
 
-- Criar um release de produção específico para a aposentadoria InfinitePay, condicionado a código integrado em `main`, CI aprovado, inventário remoto somente leitura e aprovação vinculada ao SHA e ao fingerprint do estado observado.
+- Criar um release de produção específico para a aposentadoria InfinitePay, condicionado a código integrado em `main`, CI aprovado, inventário remoto somente leitura e aprovação vinculada ao SHA e ao fingerprint do estado observado. As ações de inventário e release são despachos separados; a segunda exige o fingerprint aprovado e uma nova conferência remota idêntica.
 - Validar o domínio `markina.pickyourpic.com.br`, a porta publicada `127.0.0.1:8080`, o projeto Compose `markina-gallery`, serviços ativos e revisão Alembic real antes de definir a execução.
 - Exigir backup verificável e evidência de preservação dos registros financeiros antes da migration `20261022_0087`; bloquear em schema, containers, mounts, arquivos de credencial ou estado que divirjam do inventário aprovado.
 - Aplicar somente a migration `20261022_0087_retire_infinitepay`, publicar API/web/worker com o Compose revisado e remover do host apenas o arquivo de binding InfinitePay identificado e confirmado como exclusivo após saúde do release.

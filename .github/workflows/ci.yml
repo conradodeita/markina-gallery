@@ -15,7 +15,13 @@ on:
           - none
           - app-release
           - app-rollback
-          - infinitepay-retirement
+          - infinitepay-retirement-preflight
+          - infinitepay-retirement-release
+      approval_fingerprint:
+        description: Fingerprint do inventário de aposentadoria aprovado (obrigatório para release)
+        type: string
+        required: false
+        default: ''
 
 jobs:
   ci-scope:
@@ -316,6 +322,7 @@ jobs:
           python scripts/test_prod_app_release_scope.py
           python scripts/test_prepare_emergency_api_image.py
           python scripts/test_classify_prod_release.py
+          python scripts/test_retirement_approval.py
           python scripts/test_production_release_workflow_policy.py
 
   gitleaks:
@@ -422,7 +429,7 @@ jobs:
           python scripts/classify_prod_release.py --base "$event_base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
 
   infinitepay-retirement-scope:
-    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement' }}"
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'infinitepay-retirement-preflight' || inputs.operation == 'infinitepay-retirement-release') }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     permissions:
@@ -436,7 +443,7 @@ jobs:
         run: python scripts/check_infinitepay_retirement_scope.py --base "$(git rev-parse "$GITHUB_SHA^")" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
 
   infinitepay-retirement-preflight:
-    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement' }}"
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'infinitepay-retirement-preflight' || inputs.operation == 'infinitepay-retirement-release') }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope]
     runs-on: ubuntu-latest
     environment: production-preflight
@@ -490,9 +497,31 @@ jobs:
           echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "inventory_json=$inventory_json" >> "$GITHUB_OUTPUT"
 
-  infinitepay-retirement-release:
-    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement' && needs.infinitepay-retirement-preflight.outputs.approval_fingerprint != '' }}"
+  infinitepay-retirement-release-approval:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement-release' }}"
     needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope, infinitepay-retirement-preflight]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      approved: ${{ steps.validate.outputs.approved }}
+    steps:
+      - name: Validar fingerprint aprovado contra inventário recém-coletado
+        id: validate
+        shell: bash
+        env:
+          REQUESTED_APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          PREFLIGHT_FINGERPRINT: ${{ needs.infinitepay-retirement-preflight.outputs.approval_fingerprint }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$REQUESTED_APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint aprovado ausente ou inválido' >&2; exit 1; }
+          [[ "$PREFLIGHT_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || { echo 'Inventário não produziu fingerprint válido' >&2; exit 1; }
+          python scripts/validate_retirement_approval.py
+          echo 'approved=true' >> "$GITHUB_OUTPUT"
+
+  infinitepay-retirement-release:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement-release' && needs.infinitepay-retirement-release-approval.outputs.approved == 'true' }}"
+    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope, infinitepay-retirement-preflight, infinitepay-retirement-release-approval]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -508,7 +537,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Publicar aposentadoria somente após aprovação protegida
+      - name: Executar release somente após gate explícito e inventário idêntico
         shell: bash
         env:
           APPROVAL_FINGERPRINT: ${{ needs.infinitepay-retirement-preflight.outputs.approval_fingerprint }}

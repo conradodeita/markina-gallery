@@ -79,6 +79,9 @@ def main() -> None:
         "  infinitepay-retirement-preflight:", 1
     )[0]
     retirement_preflight = WORKFLOW.split("  infinitepay-retirement-preflight:", 1)[1].split(
+        "  infinitepay-retirement-release-approval:", 1
+    )[0]
+    retirement_release_approval = WORKFLOW.split("  infinitepay-retirement-release-approval:", 1)[1].split(
         "  infinitepay-retirement-release:", 1
     )[0]
     retirement_release = WORKFLOW.split("  infinitepay-retirement-release:", 1)[1].split(
@@ -100,13 +103,26 @@ def main() -> None:
     require("environment: production", "aprovação protegida para API/web", app_release)
     require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
     require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)
-    require("- infinitepay-retirement", "operação manual de aposentadoria", WORKFLOW)
-    require("inputs.operation == 'infinitepay-retirement'", "preflight limitado à operação selecionada", retirement_scope)
+    require("- infinitepay-retirement-preflight", "operação manual de preflight", WORKFLOW)
+    require("- infinitepay-retirement-release", "operação manual de release", WORKFLOW)
+    require("approval_fingerprint:", "campo explícito de aprovação", WORKFLOW)
+    require("inputs.operation == 'infinitepay-retirement-preflight'", "operação de preflight", retirement_scope)
+    require("inputs.operation == 'infinitepay-retirement-release'", "operação de release", retirement_scope)
     require("check_infinitepay_retirement_scope.py", "gate exato antes do inventário", retirement_scope)
     require("environment: production-preflight", "inventário usa somente credencial read-only", retirement_preflight)
     require("MARKINA_RETIREMENT_TARGET_SHA=$GITHUB_SHA", "comando do inventário aposentadoria restrito", retirement_preflight)
     require("retirement_inventory_policy.py", "validação local do inventário minimizado", retirement_preflight)
     require("secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY", "inventário não usa credencial mutável", retirement_preflight)
+    require("inputs.operation == 'infinitepay-retirement-preflight'", "preflight pode ser chamado isoladamente", retirement_preflight)
+    require("inputs.operation == 'infinitepay-retirement-release'", "release também repete o preflight", retirement_preflight)
+    if "environment: production\n" in retirement_preflight or "--mode release" in retirement_preflight:
+        raise AssertionError("preflight não pode usar ambiente/command de release")
+    require("inputs.operation == 'infinitepay-retirement-release'", "gate de aprovação só executa no release", retirement_release_approval)
+    require("REQUESTED_APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}", "gate recebe fingerprint informado pelo operador", retirement_release_approval)
+    require("PREFLIGHT_FINGERPRINT: ${{ needs.infinitepay-retirement-preflight.outputs.approval_fingerprint }}", "gate recebe fingerprint recém-coletado", retirement_release_approval)
+    require("scripts/validate_retirement_approval.py", "release valida formato e igualdade de fingerprint", retirement_release_approval)
+    require("approved=true", "gate emite aprovação somente após igualdade", retirement_release_approval)
+    require("needs.infinitepay-retirement-release-approval.outputs.approved == 'true'", "release depende do gate explícito", retirement_release)
     require("needs.infinitepay-retirement-preflight.outputs.approval_fingerprint", "release vinculado ao fingerprint read-only", retirement_release)
     require("environment: production", "release de aposentadoria exige aprovação protegida", retirement_release)
     require("scripts/deploy-prod-infinitepay-retirement.sh", "executor dedicado da aposentadoria", retirement_release)

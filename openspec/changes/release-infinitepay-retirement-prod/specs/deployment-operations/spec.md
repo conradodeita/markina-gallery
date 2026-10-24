@@ -20,6 +20,21 @@ O sistema SHALL oferecer um procedimento de produção exclusivo para aplicar a 
 - **WHEN** o SHA ativo, schema, serviços, portas, domínio, Compose ou fingerprint diferem dos valores esperados ou do inventário apresentado
 - **THEN** o procedimento interrompe antes de alterar banco, containers, segredos ou arquivos do host
 
+### Requirement: Aprovação explícita vinculada ao inventário de aposentadoria
+O workflow SHALL separar o preflight somente leitura do release mutável em operações manuais distintas. O release MUST exigir o fingerprint integral apresentado e aprovado pelo operador, executar nova coleta read-only e falhar fechado se o valor informado não corresponder exatamente ao fingerprint recém-coletado. A existência do ambiente GitHub `production` não substitui esse gate.
+
+#### Scenario: Preflight somente leitura
+- **WHEN** o operador despacha `infinitepay-retirement-preflight`
+- **THEN** o workflow executa apenas escopo e inventário remoto read-only e não inicia qualquer job de release, mesmo quando o inventário produz fingerprint válido
+
+#### Scenario: Release com inventário aprovado e inalterado
+- **WHEN** o operador despacha `infinitepay-retirement-release` com o fingerprint apresentado e aprovado, CI passa e o novo inventário remoto produz o mesmo fingerprint
+- **THEN** o gate de aprovação passa e o job mutável pode iniciar usando a credencial de produção
+
+#### Scenario: Fingerprint ausente, inválido ou divergente
+- **WHEN** o fingerprint informado está ausente, tem formato inválido ou diverge do inventário recém-coletado
+- **THEN** o gate falha e o job mutável não inicia
+
 #### Scenario: Migration aplicada ao schema esperado
 - **WHEN** o inventário aprovado confirma a revisão anterior exata e o backup anterior é verificável
 - **THEN** o procedimento aplica somente a migration `20261022_0087`, confirma a nova revisão e preserva pedidos, pagamentos, tentativas, recibos, correções e relações financeiras

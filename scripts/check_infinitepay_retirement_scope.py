@@ -72,6 +72,8 @@ ALLOWED_EXACT = {
     "scripts/production-preflight-ssh-wrapper.sh",
     "scripts/test_production_retirement_workflow_policy.py",
     "scripts/test_production_release_workflow_policy.py",
+    "scripts/validate_retirement_approval.py",
+    "scripts/test_retirement_approval.py",
     "scripts/test_classify_prod_release.py",
     "scripts/classify_prod_release.py",
     "scripts/check_prod_app_release_scope.py",
@@ -173,6 +175,8 @@ COMPOSE_REMOVAL = [
 RETIREMENT_MIGRATION = "backend/migrations/versions/20261022_0087_retire_infinitepay.py"
 FOLLOWUP_EXACT = {
     ".gitleaksignore",
+    ".github/workflows/ci.yml",
+    "openspec/changes/release-infinitepay-retirement-prod/proposal.md",
     "docs/DEPLOY-PROD-APP.md",
     "docs/RELEASE-INFINITEPAY-RETIREMENT.md",
     "openspec/changes/add-production-app-release-workflow/runtime-gates.json",
@@ -189,6 +193,8 @@ FOLLOWUP_EXACT = {
     "scripts/test_prod_app_release_scope.py",
     "scripts/test_prod_release_state.py",
     "scripts/test_production_release_workflow_policy.py",
+    "scripts/validate_retirement_approval.py",
+    "scripts/test_retirement_approval.py",
     "scripts/test_release_candidate_policy.py",
     "scripts/test_retirement_inventory_policy.py",
 }

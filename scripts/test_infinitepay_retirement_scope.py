@@ -72,7 +72,18 @@ class RetirementScopeTests(unittest.TestCase):
             self.write(root, "docker/docker-compose.yml", "services:\n  api:\n    image: api\n")
             self.commit(root)
             base = self.git(root, "rev-parse", "HEAD")
-            self.write(root, "scripts/check_prod_app_release_scope.py", "reviewed gate update\n")
+            for path in (
+                "scripts/check_prod_app_release_scope.py",
+                ".github/workflows/ci.yml",
+                "scripts/test_production_release_workflow_policy.py",
+                "scripts/validate_retirement_approval.py",
+                "scripts/test_retirement_approval.py",
+                "openspec/changes/release-infinitepay-retirement-prod/proposal.md",
+                "openspec/changes/release-infinitepay-retirement-prod/design.md",
+                "openspec/changes/release-infinitepay-retirement-prod/specs/deployment-operations/spec.md",
+                "openspec/changes/release-infinitepay-retirement-prod/tasks.md",
+            ):
+                self.write(root, path, "reviewed gate update\n")
             self.commit(root)
             target = self.git(root, "rev-parse", "HEAD")
             self.assertEqual(evaluate_followup_scope(root, base, target),
