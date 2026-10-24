@@ -285,7 +285,7 @@ print(json.dumps(sorted(set(found)),separators=(",",":")))
   [[ "$health_ok" == true ]] || fail "API/web/worker não estão saudáveis no inventário final"
   python3 scripts/retirement_binding_removal.py --runtime-healthy \
     --compose-consumers-json "$compose_consumers" \
-    --host-references-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].splitlines() if sys.argv[1] else [],separators=(",",":"))' "$host_refs")" \
+    --host-references-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].splitlines() if sys.argv[1] else [],separators=(",",":")))' "$host_refs")" \
     --target-references-json "$target_refs" <<<"$inventory_json" || fail "binding mudou, compartilhado ou ainda referenciado"
 }
 
