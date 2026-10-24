@@ -183,7 +183,7 @@ def main() -> None:
     require("compose up -d --no-deps --force-recreate --wait --wait-timeout 120 api web worker", "API/web/worker publicados e aguardados", release_script)
     require("remove_binding_after_health", "binding removido somente após saúde", release_script)
     require("retirement_host_references.py", "varredura recursiva das configurações compartilhadas", retirement_script)
-    host_references_blob = git(ROOT, "rev-parse", "HEAD:scripts/retirement_host_references.py")
+    host_references_blob = git(ROOT, "hash-object", "--", "scripts/retirement_host_references.py")
     require(
         f'HOST_REFERENCES_SCRIPT_BLOB_SHA="{host_references_blob}"',
         "scanner remoto fixa o blob versionado exato",
