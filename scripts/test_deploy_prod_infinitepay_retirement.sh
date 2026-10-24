@@ -99,3 +99,4 @@ fi
 
 echo "retirement deployment dispatch: ok"
 python3 "$SCRIPT_DIR/test_retirement_release_flow.py"
+python3 "$SCRIPT_DIR/test_retirement_legacy_worker.py"
