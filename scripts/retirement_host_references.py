@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -24,6 +25,7 @@ def find_references(target: str, roots: list[Path]) -> list[str]:
     basename_bytes = os.fsencode(Path(target).name)
     variable_bytes = b"INFINITEPAY_BINDINGS_ENV_FILE"
     references: list[str] = []
+    visited_directories: set[tuple[int, int]] = set()
 
     def onerror(error: OSError) -> None:
         raise error
@@ -37,9 +39,28 @@ def find_references(target: str, roots: list[Path]) -> list[str]:
             raise OSError(f"não foi possível verificar raiz de configuração: {root}") from error
         if root.is_symlink() or not root.is_dir() or not os.access(root, os.R_OK | os.X_OK):
             raise PermissionError(f"raiz de configuração inacessível: {root}")
-        for directory, directories, names in os.walk(root, onerror=onerror, followlinks=False):
-            if any((Path(directory) / name).is_symlink() for name in directories):
-                raise OSError(f"atalho de diretório impede varredura completa: {directory}")
+        for directory, directories, names in os.walk(root, onerror=onerror, followlinks=True):
+            current = Path(directory)
+            try:
+                info = current.stat()
+            except OSError as error:
+                raise OSError(f"não foi possível verificar diretório: {current}") from error
+            identity = (info.st_dev, info.st_ino)
+            if identity in visited_directories:
+                directories[:] = []
+                continue
+            visited_directories.add(identity)
+            for name in directories[:]:
+                child = current / name
+                try:
+                    child_info = child.stat()
+                except OSError as error:
+                    raise OSError(f"não foi possível verificar diretório: {child}") from error
+                if not stat.S_ISDIR(child_info.st_mode):
+                    directories.remove(name)
+                    continue
+                if (child_info.st_dev, child_info.st_ino) in visited_directories:
+                    directories.remove(name)
             for name in names:
                 if not _is_compose_file(name):
                     continue

@@ -12,7 +12,7 @@ readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
 readonly BACKUP_DIR="/var/lib/markina-gallery/backups"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
-readonly HOST_REFERENCES_SCRIPT_BLOB_SHA="daf10a33d72a7239dea59206a1384e7eb5224c21"
+readonly HOST_REFERENCES_SCRIPT_BLOB_SHA="acd38067afccc3476a80f8804b8cda8f5a09b27d"
 readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/branding.compose.yml"
   "docker/docker-compose.raw-development.yml"

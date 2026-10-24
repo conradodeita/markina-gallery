@@ -28,6 +28,26 @@ class HostReferenceScanTests(unittest.TestCase):
             (root / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
             self.assertEqual(find_references("/opt/markina-gallery/docker/.env.infinitepay-bindings", [root]), [])
 
+    def test_follows_symlink_directories_and_stops_cycles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root = base / "scan-root"
+            root.mkdir()
+            target_dir = base / "external-configs"
+            target_dir.mkdir()
+            compose_file = target_dir / "docker-compose.external.yml"
+            target = "/opt/markina-gallery/docker/.env.infinitepay-bindings"
+            compose_file.write_text(f"env_file: {target}\n", encoding="utf-8")
+            try:
+                (root / "external").symlink_to(target_dir, target_is_directory=True)
+                (target_dir / "cycle").symlink_to(root, target_is_directory=True)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"symlinks unavailable: {error}")
+            self.assertEqual(
+                find_references(target, [root]),
+                [str(root / "external" / compose_file.name)],
+            )
+
     def test_aborts_when_a_configuration_root_cannot_be_scanned(self):
         with tempfile.TemporaryDirectory() as temp:
             with patch("retirement_host_references.os.walk", side_effect=PermissionError("denied")):
