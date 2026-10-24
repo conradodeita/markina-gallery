@@ -172,6 +172,7 @@ COMPOSE_REMOVAL = [
 ]
 RETIREMENT_MIGRATION = "backend/migrations/versions/20261022_0087_retire_infinitepay.py"
 FOLLOWUP_EXACT = {
+    ".gitleaksignore",
     "docs/DEPLOY-PROD-APP.md",
     "docs/RELEASE-INFINITEPAY-RETIREMENT.md",
     "openspec/changes/add-production-app-release-workflow/runtime-gates.json",
