@@ -31,8 +31,6 @@ O sistema SHALL oferecer um procedimento de produção exclusivo para aplicar a 
 ### Requirement: Remoção delimitada do binding InfinitePay no host
 O sistema SHALL remover do host somente o arquivo de binding InfinitePay comprovadamente exclusivo, após a versão sem mount estar ativa e saudável, sem exibir ou copiar seu conteúdo.
 
-O inventário SHALL verificar referências em arquivos Compose das raízes compartilhadas e mounts bind de todos os containers existentes. Falha de leitura, erro do daemon ou inventário parcial MUST bloquear a aprovação de exclusividade e a remoção.
-
 #### Scenario: Binding exclusivo identificado
 - **WHEN** o inventário confirma caminho, tipo e uso exclusivo do arquivo pelo serviço da Markina e a versão publicada já não o referencia
 - **THEN** o procedimento remove somente esse arquivo e registra o resultado sem revelar conteúdo ou valor de segredo
@@ -40,6 +38,31 @@ O inventário SHALL verificar referências em arquivos Compose das raízes compa
 #### Scenario: Binding compartilhado, inesperado ou ambíguo
 - **WHEN** o arquivo é usado por outro projeto, é link simbólico, ou seu caminho/escopo não corresponde ao inventário aprovado
 - **THEN** o procedimento não o remove e interrompe essa etapa para revisão humana
+
+### Requirement: Cobertura do inventário de referências do binding
+O inventário SHALL verificar referências em arquivos Compose das raízes compartilhadas e mounts bind de todos os containers existentes. Falha de leitura, erro do daemon ou inventário parcial MUST bloquear a aprovação de exclusividade e a remoção.
+
+#### Scenario: Varredura incompleta
+- **WHEN** a leitura de qualquer raiz ou inspeção do daemon falha ou fica incompleta
+- **THEN** a aprovação de exclusividade e a remoção do binding são bloqueadas
+
+### Requirement: Gate pré-release para referências do binding
+O preflight SHALL permitir somente a referência do Compose ativo antes do release. Referências adicionais ou no Compose alvo MUST bloquear a aprovação.
+
+#### Scenario: Apenas a referência do Compose ativo
+- **WHEN** o preflight encontra somente /opt/markina-gallery/docker/docker-compose.yml e markina-gallery/api como consumidor, sem referências no Compose alvo ou em outra configuração
+- **THEN** o inventário pode emitir fingerprint para apresentação, mas a remoção permanece bloqueada até a versão sem mount ficar ativa e saudável
+
+### Requirement: Manifesto do runtime API/web após a aposentadoria
+O gate API/web SHALL fixar somente os arquivos de runtime presentes no alvo integrado e permitir caminhos InfinitePay removidos somente quando o diff Git comprova exclusão. Modificação ou reintrodução de caminho aposentado MUST bloquear o gate.
+
+#### Scenario: Caminhos aposentados excluídos
+- **WHEN** o diff remove somente os caminhos InfinitePay explicitamente aposentados e os demais blobs coincidem com o manifesto
+- **THEN** a validação do manifesto passa sem autorizar o workflow comum para a migration protegida
+
+#### Scenario: Caminho aposentado modificado ou reintroduzido
+- **WHEN** um caminho InfinitePay aposentado é modificado ou adicionado novamente
+- **THEN** o gate recusa a publicação e não o trata como exclusão aprovada
 
 ### Requirement: Verificação pós-release da aposentadoria InfinitePay
 O sistema SHALL verificar saúde local e HTTPS, continuidade do PIX próprio e disponibilidade somente leitura do histórico InfinitePay antes de declarar o release concluído.

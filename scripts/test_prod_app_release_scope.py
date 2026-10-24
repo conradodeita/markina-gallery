@@ -20,7 +20,7 @@ class AppReleaseScopeTests(unittest.TestCase):
         # Nenhum processo deve continuar escrevendo depois do cleanup do teste.
         self.run_git("config", "maintenance.auto", "false")
         self.run_git("config", "gc.auto", "0")
-        for name in policy.RUNTIME_FILES | policy.RETIRED_STATISTICS_FILES:
+        for name in policy.RUNTIME_FILES | policy.RETIRED_STATISTICS_FILES | policy.RETIRED_INFINITEPAY_FILES:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("approved runtime\n", encoding="utf-8")
@@ -143,6 +143,28 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "arquivo_fora_do_escopo"))
 
+    def test_only_deletion_of_exact_retired_infinitepay_files_is_admitted(self):
+        for name in policy.RETIRED_INFINITEPAY_FILES:
+            (self.root / name).unlink()
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
+        name = sorted(policy.RETIRED_INFINITEPAY_FILES)[0]
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("reintroduced InfinitePay behavior\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
+    def test_modification_of_retired_infinitepay_path_is_not_treated_as_removal(self):
+        name = sorted(policy.RETIRED_INFINITEPAY_FILES)[0]
+        (self.root / name).write_text("modified retired behavior\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
     def test_each_dependency_vault_and_migration_path_remains_rejected(self):
         for name in ("backend/requirements-push.txt", "backend/requirements.txt",
                      "backend/Dockerfile", "frontend/package.json", "frontend/package-lock.json",
@@ -229,7 +251,7 @@ class AppReleaseScopeTests(unittest.TestCase):
         (self.root / "backend/app/auth.py").write_text("unapproved runtime\n", encoding="utf-8")
         self.commit()
         self.assertEqual(policy.evaluate(self.root, "HEAD", "HEAD", self.manifest),
-                         (False, "api_fora_do_escopo"))
+                         (False, "runtime_diverge_do_blob_aprovado"))
 
     def test_retired_statistics_pages_are_exactly_allowlisted_and_removed_from_runtime_manifest(self):
         self.assertNotIn("frontend/app/admin/statistics/page.tsx", policy.RUNTIME_FILES)

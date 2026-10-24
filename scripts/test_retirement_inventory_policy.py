@@ -33,7 +33,7 @@ class RetirementInventoryTests(unittest.TestCase):
                 "device": 7,
                 "uid": 1000,
                 "compose_consumers": ["markina-gallery/api"],
-                "host_references": [],
+                "host_references": ["/opt/markina-gallery/docker/docker-compose.yml"],
                 "target_references": [],
             },
             "https_health": {"healthz": True, "api_health": True, "web": True},
@@ -80,6 +80,17 @@ class RetirementInventoryTests(unittest.TestCase):
                 inventory = self.valid_inventory()
                 inventory["binding"].update(change)
                 self.assertEqual(evaluate(inventory)[1], expected)
+
+    def test_only_expected_active_compose_reference_is_allowed_before_release(self):
+        active_compose = "/opt/markina-gallery/docker/docker-compose.yml"
+        for references in ([], [active_compose, "/opt/other/docker-compose.yml"]):
+            with self.subTest(references=references):
+                inventory = self.valid_inventory()
+                inventory["binding"]["host_references"] = references
+                self.assertEqual(evaluate(inventory)[1], "binding_referenciado_por_outro_arquivo")
+        inventory = self.valid_inventory()
+        inventory["binding"]["target_references"] = ["docker/docker-compose.yml"]
+        self.assertEqual(evaluate(inventory)[1], "binding_referenciado_por_outro_arquivo")
 
     def test_refuses_secret_values_and_extra_fields_in_inventory(self):
         inventory = self.valid_inventory()

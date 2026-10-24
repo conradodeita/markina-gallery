@@ -75,6 +75,7 @@ ALLOWED_EXACT = {
     "scripts/test_classify_prod_release.py",
     "scripts/classify_prod_release.py",
     "scripts/check_prod_app_release_scope.py",
+    "scripts/test_release_candidate_policy.py",
     "scripts/test_prod_app_release_scope.py",
     "scripts/deploy-prod-app-services.sh",
     "scripts/test_deploy_prod_app_services.sh",
@@ -144,6 +145,7 @@ ALLOWED_EXACT = {
     "openspec/changes/release-infinitepay-retirement-prod/proposal.md",
     "openspec/changes/release-infinitepay-retirement-prod/.openspec.yaml",
     "openspec/changes/release-infinitepay-retirement-prod/specs/deployment-operations/spec.md",
+    "openspec/changes/add-production-app-release-workflow/runtime-gates.json",
     "openspec/changes/add-infinitepay-pix-and-pending-cart/design.md",
     "openspec/changes/add-infinitepay-pix-and-pending-cart/proposal.md",
     "openspec/changes/add-infinitepay-pix-and-pending-cart/publication-20261022.md",
@@ -159,6 +161,7 @@ ALLOWED_EXACT = {
 
 ALLOWED_DOCS = {
     "docs/PRODUCAO-FACIAL-INVENTARIO-E-PLANO.md",
+    "docs/DEPLOY-PROD-APP.md",
     "docs/PRODUCTION-PREFLIGHT-SSH.md",
     "docs/RELEASE-INFINITEPAY-RETIREMENT.md",
 }
