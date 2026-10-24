@@ -186,6 +186,7 @@ FOLLOWUP_EXACT = {
     "scripts/check_infinitepay_retirement_scope.py",
     "scripts/check_prod_app_release_scope.py",
     "scripts/deploy-prod-app-services.sh",
+    "scripts/deploy-prod-infinitepay-retirement.sh",
     "scripts/production-preflight-ssh-wrapper.sh",
     "scripts/retirement_inventory_policy.py",
     "scripts/test_deploy_prod_app_services.sh",

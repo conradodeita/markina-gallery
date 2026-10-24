@@ -397,12 +397,18 @@ PY
 
 verify_restore_receipt() {
   local receipt="$STATE_DIR/infinitepay-retirement-restore-test.json"
-  [[ -f "$receipt" && ! -L "$receipt" && "$(stat -c '%a' "$receipt")" == "600" ]] \
+  [[ -f "$receipt" && ! -L "$receipt" && "$(stat -c '%a' "$receipt")" == "600" \
+    && "$(stat -c '%u' "$receipt")" == "0" ]] \
     || fail "falta recibo 0600 de restauração previamente testada em ambiente isolado"
-  python3 - "$receipt" "$BACKUP_DIR" <<'PY' || fail "recibo de restauração inválido ou backup testado divergente"
-import datetime,hashlib,json,pathlib,sys
+  sudo -n python3 - "$receipt" "$BACKUP_DIR" <<'PY' || fail "recibo de restauração inválido ou backup testado divergente"
+import datetime,hashlib,json,os,pathlib,stat,sys
 receipt=pathlib.Path(sys.argv[1]); backup_root=pathlib.Path(sys.argv[2]).resolve()
-data=json.loads(receipt.read_text(encoding="utf-8"))
+fd=os.open(receipt, os.O_RDONLY | getattr(os,"O_NOFOLLOW",0))
+with os.fdopen(fd,"r",encoding="utf-8") as stream:
+    info=os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o600:
+        raise SystemExit(1)
+    data=json.load(stream)
 required={"result","database_revision","backup_file","backup_sha256","tested_at","isolated"}
 if set(data)!=required or data["result"]!="passed" or data["database_revision"]!="20261021_0086" or data["isolated"] is not True:
     raise SystemExit(1)
