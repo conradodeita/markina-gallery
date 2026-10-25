@@ -17,6 +17,7 @@ on:
           - app-rollback
           - infinitepay-retirement-preflight
           - infinitepay-retirement-release
+          - orders-pilot-inventory
       approval_fingerprint:
         description: Fingerprint do inventário de aposentadoria aprovado (obrigatório para release)
         type: string
@@ -823,3 +824,85 @@ jobs:
           ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
             "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode rollback --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
             < scripts/deploy-prod-app-services.sh
+
+  orders-pilot-preflight:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'orders-pilot-inventory' }}"
+    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verificar configuração de preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]] || { echo 'Domínio diverge do inventário aprovado' >&2; exit 1; }
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || { echo 'Porta SSH inválida' >&2; exit 1; }
+      - name: Inventário Orders read-only
+        id: inventory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          output_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file" "$output_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "MARKINA_ORDERS_TARGET_SHA=$GITHUB_SHA" </dev/null > "$output_file"
+          python - "$output_file" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          inventory = json.loads(lines[0])
+          match = [line.partition("=")[2] for line in lines if line.startswith("inventory_fingerprint=")]
+          if len(match) != 1 or not re.fullmatch(r"[0-9a-f]{64}", match[0]):
+              raise SystemExit("fingerprint do inventário Orders inválido")
+          Path(sys.argv[2]).write_text(f"approval_fingerprint={match[0]}\n", encoding="utf-8")
+          services = inventory["services"]
+          summary = [
+              "## Inventário Orders de produção (somente leitura)",
+              "",
+              f"- Commit de código solicitado: `{inventory['target_sha']}`",
+              f"- Checkout ativo: `{inventory['checkout_sha']}`",
+              f"- Schema: `{inventory['schema']}`; tabelas Orders: `{inventory['orders_tables']}`",
+              f"- Origem: `{inventory['origin']}`; projeto: `{inventory['project']}`",
+              f"- Fingerprint: `{match[0]}`",
+              "",
+              "| Serviço | Estado | Saúde | Imagem | Portas publicadas |",
+              "|---|---|---|---|---|",
+          ]
+          for name, service in sorted(services.items()):
+              ports = ", ".join(
+                  f"{binding['HostIp']}:{binding['HostPort']}"
+                  for bindings in (service.get("ports") or {}).values()
+                  for binding in (bindings or [])
+              ) or "—"
+              summary.append(
+                  f"| {name} | {service['status']} | {service['health']} | `{service['image']}` | {ports} |"
+              )
+          with Path(sys.argv[3]).open("a", encoding="utf-8") as output:
+              output.write("\n".join(summary) + "\n")
+          PY

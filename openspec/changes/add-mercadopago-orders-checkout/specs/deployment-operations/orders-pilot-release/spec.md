@@ -71,3 +71,18 @@ O gate de fonte SHALL manter igualdade estrita em backend/frontend/docker com o 
 #### Scenario: Outra alteração de runtime depois da reconciliação
 - **WHEN** a preparação ou selagem encontra diferença adicional em backend/frontend/docker
 - **THEN** o procedimento recusa sem ampliar allowlist ou publicar o candidato
+
+### Requirement: Preflight Orders somente leitura por SSH restrito
+O acesso remoto para atualizar o inventário Orders SHALL aceitar somente um comando forçado com SHA completo da `main`, script imutável conferido por blob Git e modo fixo de inventário. SHALL usar exclusivamente a credencial dedicada `production-preflight`; SHALL NOT permitir shell, stdin arbitrário, argumentos remotos, modo prepare/apply, credenciais de deploy ou escrita no checkout.
+
+#### Scenario: Preflight Orders autorizado
+- **WHEN** o operador dispara o workflow manual na `main` com a operação `orders-pilot-inventory`
+- **THEN** o job envia somente `MARKINA_ORDERS_TARGET_SHA=<SHA completo>`, o wrapper verifica o blob aprovado e executa somente `inventory`; o helper confirma que o SHA ainda é a ponta da `main` e emite o inventário minimizado/fingerprint
+
+#### Scenario: Comando, SHA ou blob divergente
+- **WHEN** o cliente envia comando diferente, SHA malformado/desatualizado ou o conteúdo baixado diverge do blob fixado
+- **THEN** o wrapper falha fechado antes de executar Python ou consultar serviços
+
+#### Scenario: Aplicação ou credencial mutável
+- **WHEN** alguém tenta usar o canal preflight para executar `prepare`, `apply`, shell ou credenciais de deploy
+- **THEN** a rota rejeita a operação e não inicia alteração remota

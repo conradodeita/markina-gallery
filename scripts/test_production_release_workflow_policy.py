@@ -23,6 +23,7 @@ WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
 INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes()
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
 RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retirement.sh").read_bytes()
+ORDERS_INVENTORY_SCRIPT = (ROOT / "scripts/orders_pilot_release.py").read_bytes()
 RETIREMENT_BINDING_SCRIPT = (ROOT / "scripts/retirement_binding_removal.py").read_text(encoding="utf-8")
 APP_RUNBOOK = (ROOT / "docs/DEPLOY-PROD-APP.md").read_text(encoding="utf-8")
 CLASSIFIER = (ROOT / "scripts/classify_prod_release.py").read_text(encoding="utf-8")
@@ -93,6 +94,7 @@ def main() -> None:
         "  production-app-rollback:", 1
     )[0]
     rollback_release = WORKFLOW.split("  production-app-rollback:", 1)[1]
+    orders_preflight = WORKFLOW.split("  orders-pilot-preflight:", 1)[1]
 
     require("environment: production-preflight", "environment sem revisor para preflight", preflight)
     require("fetch-depth: 0", "histórico para comparar o baseline autorizado", preflight)
@@ -107,6 +109,13 @@ def main() -> None:
     require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)
     require("- infinitepay-retirement-preflight", "operação manual de preflight", WORKFLOW)
     require("- infinitepay-retirement-release", "operação manual de release", WORKFLOW)
+    require("- orders-pilot-inventory", "operação manual de inventário Orders", WORKFLOW)
+    require("inputs.operation == 'orders-pilot-inventory'", "inventário Orders só manual", orders_preflight)
+    require("environment: production-preflight", "Orders usa somente ambiente read-only", orders_preflight)
+    require("MARKINA_ORDERS_TARGET_SHA=$GITHUB_SHA", "Orders envia somente SHA completo", orders_preflight)
+    require("inventory_fingerprint", "Orders exige fingerprint remoto", orders_preflight)
+    if "environment: production\n" in orders_preflight or "--mode prepare" in orders_preflight or "--mode apply" in orders_preflight:
+        raise AssertionError("preflight Orders não pode usar credencial mutável nem executar prepare/apply")
     require("approval_fingerprint:", "campo explícito de aprovação", WORKFLOW)
     require("inputs.operation == 'infinitepay-retirement-preflight'", "operação de preflight", retirement_scope)
     require("inputs.operation == 'infinitepay-retirement-release'", "operação de release", retirement_scope)
@@ -153,6 +162,10 @@ def main() -> None:
     require('inventory_mode="inventory"', "wrapper fixa modo somente-leitura padrão", WRAPPER)
     require('inventory_mode="rollback-inventory"', "wrapper limita o segundo modo a inventário de rollback", WRAPPER)
     require('MARKINA_RETIREMENT_TARGET_SHA=([0-9a-f]{40})', "comando de aposentadoria exige SHA completo", WRAPPER)
+    require('MARKINA_ORDERS_TARGET_SHA=([0-9a-f]{40})', "comando Orders exige SHA completo", WRAPPER)
+    require('script_name="orders_pilot_release.py"', "wrapper seleciona o helper Orders fixo", WRAPPER)
+    require('inventory_runtime="python"', "wrapper despacha Orders somente para Python", WRAPPER)
+    require('python3 -B - --mode "$inventory_mode" --sha "$target_sha"', "wrapper força inventory Orders com SHA", WRAPPER)
     require('script_name="deploy-prod-infinitepay-retirement.sh"', "wrapper aponta para o inventário de aposentadoria", WRAPPER)
     require('--mode "$inventory_mode"', "wrapper não encaminha modo enviado pelo cliente", WRAPPER)
     inventory_text = INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
@@ -179,6 +192,10 @@ def main() -> None:
     retirement_blob_header = f"blob {len(retirement_inventory_text)}\0".encode()
     retirement_blob_sha = hashlib.sha1(retirement_blob_header + retirement_inventory_text).hexdigest()
     require(f'RETIREMENT_SCRIPT_BLOB_SHA="{retirement_blob_sha}"', "wrapper fixa o inventário de aposentadoria exato", WRAPPER)
+    orders_inventory_text = ORDERS_INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
+    orders_blob_header = f"blob {len(orders_inventory_text)}\0".encode()
+    orders_blob_sha = hashlib.sha1(orders_blob_header + orders_inventory_text).hexdigest()
+    require(f'ORDERS_SCRIPT_BLOB_SHA="{orders_blob_sha}"', "wrapper fixa o helper Orders exato", WRAPPER)
     require("MARKINA_APP_TARGET_SHA=([0-9a-f]{40})", "wrapper aceita somente SHA app completo", WRAPPER)
     require("MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})", "wrapper aceita apenas SHA para inventário de rollback", WRAPPER)
     if "--mode release" in WRAPPER or '"$SSH_ORIGINAL_COMMAND"' in WRAPPER:

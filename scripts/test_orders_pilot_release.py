@@ -20,6 +20,15 @@ def test_release_targets_integrated_orders_runtime_and_schema_0089():
     assert release.TARGET_SCHEMA == '20261025_0089'
 
 
+def test_inventory_sha_must_match_current_main_before_host_reads():
+    with (patch.object(release.Host, 'main_sha', return_value='a' * 40),
+          patch.object(release.Host, 'inventory') as inventory,
+          patch('sys.argv', ['orders_pilot_release.py', 'inventory', '--sha', 'b' * 40]),
+          unittest.TestCase().assertRaisesRegex(release.GateError, 'candidato_nao_e_main')):
+        release.main()
+    inventory.assert_not_called()
+
+
 def inventory():
     return {'host': 'clearbudget-vnic', 'root': str(release.ROOT), 'project': release.PROJECT,
         'origin': release.ORIGIN, 'checkout_sha': release.BASELINE_SHA, 'clean': True, 'schema': release.SCHEMA,

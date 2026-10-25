@@ -11,10 +11,12 @@ readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly FACIAL_SCRIPT_BLOB_SHA="bc07f8a4acb90526ed98b74ea5a8acd23cc0d90e"
 readonly APP_SCRIPT_BLOB_SHA="646852479c83d0bfa356203379a95cbd9e4019f6"
 readonly RETIREMENT_SCRIPT_BLOB_SHA="935af96ec1b650eb2c9ae188186eec38f0dd532b"
+readonly ORDERS_SCRIPT_BLOB_SHA="95770b8fc36471f5efc1d77f0752c252433bf8a0"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
 original_command="${SSH_ORIGINAL_COMMAND:-}"
+inventory_runtime="bash"
 if [[ "$original_command" =~ ^MARKINA_TARGET_SHA=([0-9a-f]{40})$ ]]; then
   target_sha="${BASH_REMATCH[1]}"
   script_name="deploy-prod-facial-services.sh"
@@ -35,6 +37,12 @@ elif [[ "$original_command" =~ ^MARKINA_RETIREMENT_TARGET_SHA=([0-9a-f]{40})$ ]]
   script_name="deploy-prod-infinitepay-retirement.sh"
   script_blob_sha="$RETIREMENT_SCRIPT_BLOB_SHA"
   inventory_mode="inventory"
+elif [[ "$original_command" =~ ^MARKINA_ORDERS_TARGET_SHA=([0-9a-f]{40})$ ]]; then
+  target_sha="${BASH_REMATCH[1]}"
+  script_name="orders_pilot_release.py"
+  script_blob_sha="$ORDERS_SCRIPT_BLOB_SHA"
+  inventory_mode="inventory"
+  inventory_runtime="python"
 else
   fail "comando SSH nÃƒÂ£o permitido"
 fi
@@ -53,5 +61,10 @@ actual_blob_sha="$(printf '%s\n' "$script_body" | git hash-object --stdin)"
 [[ "$actual_blob_sha" == "$script_blob_sha" ]] || fail "script diverge do blob revisado"
 
 # Stdin vem exclusivamente do conteÃƒÂºdo cujo hash acabou de ser validado.
-printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
-  MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha"
+if [[ "$inventory_runtime" == "python" ]]; then
+  printf '%s\n' "$script_body" | PYTHONPATH="$PROJECT_ROOT/scripts" \
+    python3 -B - --mode "$inventory_mode" --sha "$target_sha"
+else
+  printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
+    MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha"
+fi
