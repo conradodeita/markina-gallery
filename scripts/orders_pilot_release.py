@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Procedimento pontual Orders 0087 -> 0088; inventário é o modo padrão.
+"""Procedimento pontual Orders 0087 -> 0089; inventário é o modo padrão.
 
 Uso no host inventariado. Nunca importar configuração operacional para logs.
 Preparação não substitui containers ativos. Aplicação exige recibo e fingerprint.
@@ -31,9 +31,9 @@ PROJECT = 'markina-gallery'
 ORIGIN = 'https://markina.pickyourpic.com.br'
 REPOSITORY = 'https://github.com/conradodeita/markina-gallery.git'
 SCHEMA = '20261022_0087'
-TARGET_SCHEMA = '20261024_0088'
+TARGET_SCHEMA = '20261025_0089'
 BASELINE_SHA = '1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8'
-APPROVED_RUNTIME = 'cbb2362fcc2c3277ff1a8e7c8c4de963ea125b02'
+APPROVED_RUNTIME = 'b69a95c526912d725863a57a13f8735a62f671ed'
 PILLOW_SOURCE = '3d2ac6e7fb2e621e6ad468f9fd1233ffc909c7a3'
 PILLOW_APPROVAL = 'cf1c0d5227f9218519acd741ffe596032dc38c932b90ddb79ec4469fa70ab3a9'
 PILLOW_WORK = STATE / 'pillow-prepare-20261025-01'
@@ -983,7 +983,7 @@ def apply(h, receipt, approval, *, legacy):
 
 
 def resume(h, receipt, approval):
-    """Recuperação da mesma versão 0088 com emissão fechada; não restaura dados."""
+    """Recuperação da versão 0089 com emissão fechada; não restaura dados."""
     require(HASH.fullmatch(approval or '') and fingerprint(receipt) == approval, 'fingerprint_nao_aprovado')
     work = Path(receipt['work'])
     require(work.parent == STATE and work.name.startswith('orders-prepare-') and not work.is_symlink(), 'artefato_inseguro')

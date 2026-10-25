@@ -4,19 +4,26 @@
 
 Preparação solicitada em 24/10/2026: revisão, commit/PR e plano operacional. O proprietário informou que não possui homologação privada e escolheu fazer o aceite final na instalação de produção, com seu administrador e seu próprio cliente, **exclusivamente com credenciais de Teste**. Reforçou que cada fotógrafo configura sua própria conta pela UI. Esta decisão substitui a previsão de homologação privada como destino do aceite; não substitui o inventário e a autorização concreta de publicação/migration exigidos pelo AGENTS.md.
 
-**Checkout Orders ainda não publicado: sem migration0088 operacional ou cobrança real.** Em25/10/2026 foram feitos inventários SSH e ensaios isolados/backup/restore. A correção Pillow foi autorizada e publicada separadamente pelo PR258, sem DDL. O piloto Orders continua sujeito ao CI da revisão atual e à aprovação concreta de seu próprio release. A tabela inicial abaixo é histórica; o inventário e os recibos atuais estão na seção de reconciliação de25/10/2026 ao final.
+**Checkout Orders ainda não publicado: sem migrations 0088/0089 operacionais ou cobrança real.** Em25/10/2026 foram feitos inventários SSH e ensaios isolados/backup/restore somente até 0088. A correção Pillow foi autorizada e publicada separadamente pelo PR258, sem DDL. PR #286 foi integrado em `b69a95c526912d725863a57a13f8735a62f671ed`; CI do PR `40226448908` e CI da main integrada `40229694785` passaram, com workflows de deploy/release ignorados. Isso não publica o piloto. A tabela inicial e os recibos abaixo são históricos; são necessárias nova preparação e autorização específica para o release com 0089.
 
 **Atualização de escopo em 25/10/2026:** a correção de compras simultâneas adiciona migration 0089, que substitui o índice de tentativa ativa por cliente por unicidade da revisão ativa. A preparação/recibo existente foi ensaiada somente para 0088 e está supersedida para publicação. Nenhuma migration ou release é autorizado por esta mudança; antes de novo release será necessário reconstruir o candidato incluindo 0089 e repetir inventário, backup/restore e validações do procedimento de publicação.
 
 ## Escopo candidato
 
+### Baseline integrado após PR #286
+
+- Código funcional a preparar: `main` em `b69a95c526912d725863a57a13f8735a62f671ed`, CI pós-merge `40229694785` verde; nenhum job de deploy/release foi executado. A versão preserva o PIX e permite tentativas Orders distintas para seleções disjuntas.
+- Instalação observada anteriormente: checkout `1f4483bd`, schema `20261022_0087`, API/Web/worker geral anteriores e seis imagens especializadas com Pillow 13. Isso é somente o inventário histórico de 25/10; exige confirmação live antes de preparar.
+- O script anterior, recibos, backup e restauração pararam em `20261024_0088` e não são válidos para o candidato atual. A cadeia necessária é `20261022_0087 → 20261024_0088 → 20261025_0089`.
+- A preparação local atualiza `scripts/orders_pilot_release.py` para alvo 0089 e runtime integrado acima. Antes de usar o modo `inventory` ou `prepare` no host, validar esse diff, testes, OpenSpec e CI; isso não autoriza `apply`.
+
 | Item | Alvo a revisar | Estado |
 |---|---|---|
-| Repositório | `conradodeita/markina-gallery`; branch `feature/mercadopago-orders` → `main` | main conferida em `cef5bdf8` antes da preparação; confirmar novamente no release |
+| Repositório | `conradodeita/markina-gallery`; `main` | candidato integrado `b69a95c526912d725863a57a13f8735a62f671ed`; atualizar candidato e CI antes da preparação |
 | Instalação esperada | host `clearbudget-vnic`, checkout `/opt/markina-gallery` | referência histórica; inventário live pendente |
 | Projeto/Compose | `-p markina-gallery -f docker/docker-compose.yml`, mantendo todos os overlays operacionais atuais | overlays e hashes efetivos pendentes de inventário |
 | Origem e porta esperadas | `https://markina.pickyourpic.com.br`, Nginx `127.0.0.1:8080 → 80/tcp` | conferir sem criar portas/subdomínios/DNS/certificados |
-| Schema | pré-requisito da migration: `20261022_0087`; alvo: `20261024_0088` | cadeia ensaiada localmente; revisão do banco ativo pendente |
+| Schema | baseline `20261022_0087`; aplicar cadeia Alembic até `20261025_0089` (0088 + 0089) | procedimento e preparação atuais ainda esperam 0088; substituir antes de inventariar/preparar |
 | Aplicações afetadas | API, web e worker geral/financeiro; imagem de migrate compatível | construir e fixar IDs/digests por serviço antes da janela |
 | Cofre | binding genérico existente da API entregue também a `worker` | arquivo/owner/permissões/ambiente/backup precisam de prova no alvo |
 | Emissão real | `MERCADOPAGO_ALLOW_LIVE_PAYMENTS=false` | condição obrigatória de todo este ensaio |
@@ -47,7 +54,7 @@ Consulta GitHub read-only em 24/10/2026 retornou 50 alertas abertos na main (5 c
 
 1. Conferir CI integral do SHA candidato e compatibilidade do SHA integrado; fixar imagens de API/web/worker/migrate e preservar as referências saudáveis anteriores. Construir antes da janela; não alterar imagens/containers/volumes de terceiros.
 2. Sob o lock exclusivo de release já previsto no projeto, renovar inventário e recusar divergência. Iniciar a barreira específica e drenar/interromper somente os escritores Markina inventariados. Responder de modo recuperável a novas ações durante a pausa e manter a prova das operações em curso. Não executar `compose down`, prune ou reset.
-3. Aplicar somente 0088 após backup/restore comprovados e interrupção dos escritores verificada. Não carimbar schema nem fazer downgrade para contornar divergência. Subir os binários compatíveis e retomar filas; conferir schema, hashes carregados, saúde e logs sem dados sensíveis.
+3. Aplicar a cadeia 0088→0089 partindo de 0087 somente após backup/restore e ensaio isolado da mesma cadeia, com interrupção dos escritores verificada. Não carimbar schema nem fazer downgrade para contornar divergência. Subir os binários compatíveis e retomar filas; conferir schema 0089, hashes carregados, saúde e logs sem dados sensíveis.
 4. Habilitar no servidor apenas o par tenant/cliente do proprietário. Manter cobrança real bloqueada e PIX atual habilitado. Não criar lista de clientes no frontend. Confirmar por API autenticada que um cliente não permitido não recebe o método e não consegue preparar/enviar por acesso direto.
 5. O proprietário acompanha o login administrativo e conclui senha/TOTP/OTP quando solicitados. Configurar **sua** aplicação com credenciais Teste pela UI segura, sem enviá-las ao chat ou ao Git. Verificar identidade MLB/test_user, conta, flags e URL de webhook pertencentes ao mesmo tenant.
 6. Registrar no ambiente **Teste** do Mercado Pago a URL HTTPS completa retornada nessa instalação, evento `order`. Substituir o túnel encerrado: a versão de conta local anterior não deve ser reaproveitada no servidor. Não editar o ambiente Produção do provedor nem registrar token/assinatura em documentação.
@@ -73,12 +80,12 @@ Chargeback/expiração e aprovações tardias que dependam de tempo/evento não 
 ## Recuperação e rollback
 
 - Antes de schema/qualquer tentativa: preservar o estado anterior e interromper a operação se inventário, backup, filas ou gate divergirem.
-- Depois de 0088: manter schema/evidência; não restaurar dump antigo sobre novas operações e não executar downgrade destrutivo. A migration recusa perda de dados financeiros.
-- Depois da primeira tentativa Orders: um binário anterior sem Orders pode classificar esses pedidos incorretamente. **Não voltar automaticamente para 0087.** Recuperação precisa de versão compatível com 0088 e os novos registros, ou correção para frente, previamente ensaiada e aprovada.
+- Depois da cadeia 0088→0089: manter schema/evidência; não restaurar dump antigo sobre novas operações e não executar downgrade destrutivo. A migration 0089 recusa perda de representação financeira.
+- Depois da primeira tentativa Orders: um binário anterior sem Orders pode classificar esses pedidos incorretamente. **Não voltar automaticamente para 0087.** Recuperação precisa de versão compatível com schema 0089 e os novos registros, ou correção para frente, previamente ensaiada e aprovada.
 - Se for necessário retirar disponibilidade, fechar somente novas emissões e manter receiver/worker/consulta compatíveis para as tentativas existentes. Dados de teste permanecem identificados e não geram receita real.
 - Sem prova de compatibilidade de recuperação e sem operação de release específica testada, publicação permanece bloqueada. Este documento prepara a revisão; não alega impacto zero já comprovado no host.
 
-## Inventário live após aprovação — 25/10/2026
+## Inventário live anterior — 25/10/2026 (histórico, não usar como atual)
 
 O proprietário respondeu “Aprovado” ao encaminhamento de inventário e preparação. Esse encaminhamento foi executado por SSH autenticado, exclusivamente com consultas de leitura, entre **03:39 e 03:45 de São Paulo**. A aprovação foi registrada; não executa por si só um procedimento ainda inexistente nem comprova seus gates.
 
@@ -124,9 +131,9 @@ A próxima unidade operacional deve especificar e ensaiar um procedimento própr
 
 Estado ao apresentar o inventário: procedimento ainda não implementado/testado. A janela foi aceita posteriormente, conforme o registro acima. A implementação e seus ensaios estão descritos a seguir; não executar o roteiro antigo nem declarar publicação concluída a partir do aceite da janela.
 
-## Procedimento pontual implementado e ensaios de preparação
+## Procedimento pontual e ensaios de preparação — alvo 0088 (histórico/supersedido)
 
-`scripts/orders_pilot_release.py` não altera os gates antigos e não adiciona deploy automático. O inventário padrão foi executado via SSH com sucesso e passou a cobrir 13 filas/outboxes, digests minimizados de 12 tabelas financeiras/de mensagens, identidade dos serviços e comparação entre o arquivo do cofre e a configuração efetivamente carregada pela API, sem imprimir valores. Corrigida a distinção `external_status` da outbox de membros. Nenhum trabalho queued/pending/processing encontrado; unknown não é elegível à drenagem/reenvio.
+`scripts/orders_pilot_release.py` não altera os gates antigos e não adiciona deploy automático. O procedimento foi implementado e testado para 0087→0088, com inventário que cobre 13 filas/outboxes, digests minimizados de 12 tabelas financeiras/de mensagens, identidade dos serviços e comparação entre o arquivo do cofre e a configuração efetivamente carregada pela API, sem imprimir valores. A distinção `external_status` da outbox de membros foi corrigida. Nenhum trabalho queued/pending/processing foi encontrado naquele inventário; unknown não é elegível à drenagem/reenvio. **Esse procedimento/recibo não serve para 0089 até atualização e novo ensaio.**
 
 Preparação nativa ARM64, usando exclusivamente fontes de runtime do SHA `47af72bdf503295e93b1ee8e68bef97da2d9d947`, já aprovado no CI:
 
@@ -156,7 +163,7 @@ O retry Evolution observado é em memória e limitado; não é uma inbox duráve
 
 32 testes de política/sequência aprovados, incluindo falhas antes/depois de DDL, timeout sem SIGKILL, inventário/CI divergente, alteração de runtime na integração, fechamento de emissão na recuperação, recusa de 0087 após DDL, recuperação de conexão interrompida, processo ainda terminando, legado ocupado, restart policy alterada/restaurada, SQL read-only e sanitização de erros. Regressões dos gates preservados: 21 API/web, 15 classificação, 6 preparação anterior e política de workflow aprovadas. Ruff e validação OpenSpec da change aprovados. Ainda validar no CI o novo commit operacional, revisar diff e reconciliar o recibo com o SHA integrado antes de qualquer aplicação.
 
-## Continuidade
+## Continuidade após preparação 0088 (histórica)
 
 Concluídos nesta retomada: CI atual reconfirmado, inventário SSH read-only, schema, topologia, imagens, identificação exata do cliente/tenant, validação booleana do cofre e consultas minimizadas de filas/contagens. Não houve merge/deploy/migration, backup de dados operacionais, mudança de segredo/configuração, parada/restart de container ou cobrança.
 
@@ -169,4 +176,11 @@ Pendentes antes da execução: fechamento da revisão/CI do mecanismo, vinculaç
 - Nova preparação privada: `/var/lib/markina-gallery/deploy-state/orders-prepare-ed5c1242020a45ce8772d68756a4c363/prepared.json`, fingerprint74e83c2682aa2af92ac6bc0f3c8ec8794219a0eef148488a6987910baabcc000. API0b4d4fcd1f0a23f958c18db5d4dd661739dc027fdccd5c3692861c132bfd6aa8; web360f1ca8d6422d4a61adade971acb849a0d73c95b0a25cc2d5cf05443d4b5f10. Candidatos ARM64, SDK somente adicional, código completo da aplicação e distribuições idênticos à candidata financeira anterior validada em60 contratos nativos PostgreSQL; apenas manifest corrigido. Não repetir esses60 como nova execução.
 - Backup110.898.809bytes e cópia protegida do cofre, restore/migration0088/cifragem ensaiados em PostgreSQL isolado; shutdown/restart/callback503 e barreira aprovados. Schema de produção permaneceu0087. Nenhum segredo/UUID real é incluído no Git.
 - Após CI/revisão: integrar main, seal com equivalência estrita de runtimes, revalidar inventário e aprovação concreta da operação Orders. Nova janela pausa os mesmos seis corrigidos, substitui somente API/web/worker geral, aplica somente0088 com backup final restaurado em ensaio e retoma os mesmos seis IDs. PIX preservado; conta real bloqueada e teste limitado ao par autenticado do proprietário. Cofre existente entregue ao worker sem rotação.
+- **Supersedido por PR #286:** os pontos acima descrevem a preparação antiga 0088 e não autorizam nem devem ser usados para a nova execução. O script atualizado não foi ainda validado/CI e não foi executado remotamente. Para a próxima etapa: fechar task 10.1 com testes e CI, então usar inventário read-only na versão compatível, revalidar os gates e preparar novo recibo/backup/restore `0087→0089`. Parar antes de DDL/deploy e apresentar inventário, portas, escopo de manutenção e impacto zero para uma autorização específica da migração/publicação.
 - Saúde pública após nginx reload usa polling limitado15s;503 persistente mantém bloqueio. Não remover journal por uma leitura de sucesso no frontend nem usar saúde HTTP como prova financeira.
+
+## Repreparação operacional — cadeia 0087→0089
+
+- O procedimento local foi atualizado para `TARGET_SCHEMA=20261025_0089`, preservando `SCHEMA=20261022_0087` como baseline e fixando `APPROVED_RUNTIME=b69a95c526912d725863a57a13f8735a62f671ed`, commit integrado do PR #286. O `alembic upgrade 20261025_0089` aplica a cadeia 0088→0089 a partir de 0087.
+- Validação local da atualização: 37 testes sintéticos de `scripts/test_orders_pilot_release.py` aprovados; OpenSpec estrito válido; `git diff --check` aprovado. Nenhum comando de inventário, preparação, backup, migration, deploy ou cobrança foi executado no host nesta etapa. A alteração operacional ainda precisa de revisão/CI.
+- Depois do CI verde e integração desta atualização, o próximo passo técnico é executar somente `inventory` read-only e recusar qualquer diferença frente ao baseline. Só então preparar imagens/backup e ensaiar restauração e migração até 0089 em banco isolado. A preparação não autoriza `apply`; antes da janela, apresentar inventário atual, serviços/portas, escopo de manutenção e plano de recuperação para autorização específica.

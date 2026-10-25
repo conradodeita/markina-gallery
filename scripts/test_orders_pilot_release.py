@@ -14,6 +14,12 @@ from unittest.mock import patch
 import orders_pilot_release as release
 
 
+def test_release_targets_integrated_orders_runtime_and_schema_0089():
+    assert release.APPROVED_RUNTIME == 'b69a95c526912d725863a57a13f8735a62f671ed'
+    assert release.SCHEMA == '20261022_0087'
+    assert release.TARGET_SCHEMA == '20261025_0089'
+
+
 def inventory():
     return {'host': 'clearbudget-vnic', 'root': str(release.ROOT), 'project': release.PROJECT,
         'origin': release.ORIGIN, 'checkout_sha': release.BASELINE_SHA, 'clean': True, 'schema': release.SCHEMA,
@@ -187,7 +193,7 @@ class PolicyTests(unittest.TestCase):
             host.public_ready()
 
     def test_runtime_snapshot_remains_frozen_and_overlay_is_in_all_compose_commands(self):
-        self.assertEqual(release.APPROVED_RUNTIME, 'cbb2362fcc2c3277ff1a8e7c8c4de963ea125b02')
+        self.assertEqual(release.APPROVED_RUNTIME, 'b69a95c526912d725863a57a13f8735a62f671ed')
         with patch.object(release.Host, 'run', return_value='') as run:
             release.Host().compose(Path('/synthetic'), 'config', '--quiet')
         self.assertIn(str(release.PILLOW_OVERLAY), run.call_args.args)
@@ -500,7 +506,7 @@ class SequenceTests(unittest.TestCase):
         names = [item.removeprefix('stop:') for item in host.events if item.startswith('stop:')]
         self.assertEqual(set(names), set(release.WRITERS) | {'web'})
 
-    def test_recovery_keeps_0088_and_closes_emission_without_touching_database(self):
+    def test_recovery_keeps_0089_and_closes_emission_without_touching_database(self):
         host = FakeHost(fail='new-healthy')
         with self.assertRaises(release.GateError):
             self.apply(host)
@@ -536,7 +542,7 @@ class SequenceTests(unittest.TestCase):
         self.assertEqual(host.events, ['restore-before-ddl'])
         self.assertFalse((self.state / 'app-in-flight.sha').exists())
 
-    def test_crash_recovery_never_restores_original_after_0088(self):
+    def test_crash_recovery_never_restores_original_after_0089(self):
         stage = {'sha': self.receipt['sha'], 'schema_started': False, 'baseline': inventory()}
         release.save(self.work / 'stage.json', stage)
         (self.state / 'app-in-flight.sha').write_text(self.receipt['sha'])
