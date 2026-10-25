@@ -22,6 +22,10 @@ O sistema SHALL criar ordens exclusivamente por POST /v1/orders com type online,
 - **WHEN** o cliente altera fotos após preparar ou enviar uma tentativa
 - **THEN** fotos/total daquela tentativa permanecem imutáveis e nova cobrança exige nova revisão e reconciliação/cancelamento da tentativa potencialmente ativa
 
+#### Tentativa em processamento não pode ser cancelada
+- **WHEN** a Orders API confirma que a ordem está em `processing` ou `in_review`
+- **THEN** a seleção vinculada permanece bloqueada, a UI explica que é preciso aguardar o resultado e o sistema não oferece nem envia cancelamento; só estados externos `created` ou `action_required` podem ser cancelados para liberar a edição
+
 #### Scenario: Duplo clique e resposta perdida
 - **WHEN** há chamadas concorrentes, repetição ou timeout na criação
 - **THEN** somente uma emissão é admitida e resultado incerto exige consulta autoritativa, sem reenvio cego ou liberação para cobrança duplicada
@@ -90,6 +94,21 @@ O sistema SHALL oferecer tela própria responsiva com resumo, total, escolha de 
 #### Scenario: Pagamento externo em desenvolvimento
 - **WHEN** testes tentam processar com uma conta real sem autorização operacional
 - **THEN** o servidor impede a emissão e mantém a seleção
+
+### Requirement: Compra mínima para Mercado Pago
+Novas tentativas Mercado Pago SHALL exigir total do carrinho de pelo menos R$ 1,00 para qualquer fotógrafo e método Mercado Pago. O frontend SHALL explicar o requisito e impedir a preparação abaixo do piso; backend SHALL revalidar em preparação e antes de congelar pedidos ou enviar a Orders API. O limite mínimo dinâmico retornado pelo Mercado Pago para a bandeira/meio escolhido SHALL prevalecer quando superior. O PIX manual existente SHALL manter seu comportamento.
+
+#### Scenario: Carrinho abaixo do mínimo Mercado Pago
+- **WHEN** o total autoritativo é inferior a 100 centavos
+- **THEN** o cliente vê a orientação para completar pelo menos R$ 1,00, o checkout Orders não é preparado nem enviado e nenhuma foto é removida da seleção
+
+#### Scenario: Limite mínimo dinâmico superior
+- **WHEN** o limite retornado pelo Mercado Pago para o método selecionado excede 100 centavos
+- **THEN** o cliente não envia uma tentativa abaixo desse limite e recebe orientação clara para ajustar a seleção
+
+#### Scenario: Valor na fronteira e preservação do PIX manual
+- **WHEN** o total Mercado Pago é exatamente 100 centavos ou o cliente usa o PIX manual existente
+- **THEN** o valor exato de R$ 1,00 é aceito pela regra do produto e o fluxo PIX manual permanece inalterado
 
 ### Requirement: Histórico e lifecycle financeiro preservados
 O sistema SHALL incluir tentativas Orders no inventário comercial protegido da cliente e classificar as novas tabelas no inventário operacional. Reset integral SHALL recusar perda de qualquer tentativa enviada ou inbox financeira existente. O CSV padrão SHALL conservar quatro colunas; detalhes de provedor/estados SHALL exigir opção explícita.

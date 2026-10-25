@@ -4,7 +4,7 @@
 
 Preparação solicitada em 24/10/2026: revisão, commit/PR e plano operacional. O proprietário informou que não possui homologação privada e escolheu fazer o aceite final na instalação de produção, com seu administrador e seu próprio cliente, **exclusivamente com credenciais de Teste**. Reforçou que cada fotógrafo configura sua própria conta pela UI. Esta decisão substitui a previsão de homologação privada como destino do aceite; não substitui o inventário e a autorização concreta de publicação/migration exigidos pelo AGENTS.md.
 
-**Nenhum deploy, migration operacional, alteração de configuração/segredo remoto ou cobrança real foi executado nesta preparação.** Não houve SSH no servidor. As referências históricas abaixo não são um inventário atual nem uma autorização de execução. O PR permanece separado do merge e da publicação.
+**Checkout Orders ainda não publicado: sem migration0088 operacional ou cobrança real.** Em25/10/2026 foram feitos inventários SSH e ensaios isolados/backup/restore. A correção Pillow foi autorizada e publicada separadamente pelo PR258, sem DDL. O piloto Orders continua sujeito ao CI da revisão atual e à aprovação concreta de seu próprio release. A tabela inicial abaixo é histórica; o inventário e os recibos atuais estão na seção de reconciliação de25/10/2026 ao final.
 
 ## Escopo candidato
 
@@ -159,3 +159,12 @@ O retry Evolution observado é em memória e limitado; não é uma inbox duráve
 Concluídos nesta retomada: CI atual reconfirmado, inventário SSH read-only, schema, topologia, imagens, identificação exata do cliente/tenant, validação booleana do cofre e consultas minimizadas de filas/contagens. Não houve merge/deploy/migration, backup de dados operacionais, mudança de segredo/configuração, parada/restart de container ou cobrança.
 
 Pendentes antes da execução: fechamento da revisão/CI do mecanismo, vinculação do recibo à main integrada, inventário/fingerprint renovados e autorização da operação concreta, seguida do login acompanhado. A janela já foi aceita, o procedimento/backup/recuperação foram ensaiados e os UUIDs estão conferidos; não pedir novamente dados pessoais. Não sincronizar specs principais nem arquivar esta change como publicada antes de evidência e aceite.
+
+## Reconciliação de25/10/2026 após Pillow
+
+- Produção: checkout/API1f4483bd, schema0087,15 saudáveis, HTTPS200/200/200. Seis especializados agora usam os IDs Pillow13 aprovados e o overlay persistente de pillow-prepare-20261025-01/active.compose.json. Preservar esse overlay em todos os comandos; novo preflight exige published.json e IDs, não apenas um pin.
+- Fonte: main3d2ac6e7 integrado na branch Orders, snapshotcbb2362f; única diferença de backend/frontend/docker versus47af72bd é pin13. O gate permanece congelado. Head do coordenador b89c352d/PR283, CI40209291187 em andamento; não é autorização de aplicação.
+- Nova preparação privada: `/var/lib/markina-gallery/deploy-state/orders-prepare-ed5c1242020a45ce8772d68756a4c363/prepared.json`, fingerprint74e83c2682aa2af92ac6bc0f3c8ec8794219a0eef148488a6987910baabcc000. API0b4d4fcd1f0a23f958c18db5d4dd661739dc027fdccd5c3692861c132bfd6aa8; web360f1ca8d6422d4a61adade971acb849a0d73c95b0a25cc2d5cf05443d4b5f10. Candidatos ARM64, SDK somente adicional, código completo da aplicação e distribuições idênticos à candidata financeira anterior validada em60 contratos nativos PostgreSQL; apenas manifest corrigido. Não repetir esses60 como nova execução.
+- Backup110.898.809bytes e cópia protegida do cofre, restore/migration0088/cifragem ensaiados em PostgreSQL isolado; shutdown/restart/callback503 e barreira aprovados. Schema de produção permaneceu0087. Nenhum segredo/UUID real é incluído no Git.
+- Após CI/revisão: integrar main, seal com equivalência estrita de runtimes, revalidar inventário e aprovação concreta da operação Orders. Nova janela pausa os mesmos seis corrigidos, substitui somente API/web/worker geral, aplica somente0088 com backup final restaurado em ensaio e retoma os mesmos seis IDs. PIX preservado; conta real bloqueada e teste limitado ao par autenticado do proprietário. Cofre existente entregue ao worker sem rotação.
+- Saúde pública após nginx reload usa polling limitado15s;503 persistente mantém bloqueio. Não remover journal por uma leitura de sucesso no frontend nem usar saúde HTTP como prova financeira.

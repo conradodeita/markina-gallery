@@ -9,6 +9,7 @@ import { SystemState } from "../../ui-kit";
 import MercadoPagoResume from "./mercadopago-resume";
 import PaymentLogo from "../payment-logo";
 import paymentStyles from "../payment-methods.module.css";
+import { MERCADO_PAGO_MINIMUM_TOTAL_CENTS, paymentMoney } from "../mercadopago";
 
 type CartGroup = { payment_required?: boolean; message?: string; revision?: string; gallery_id: string; parent_gallery_id: string; name: string; quantity: number;
   legacy_review_url?: string | null; total_cents: number | null; error: string | null; browse_url: string; selection_expires_at: string | null;
@@ -150,10 +151,15 @@ export default function CartPage() {
         {cart.pix_available !== false ? <a className={paymentStyles.option} href="#cart-system-pix" aria-label="Pagar com PIX do sistema">
           <PaymentLogo provider="pix" /><span><strong>PIX do sistema</strong><small>Pague pelo QR Code. O fotógrafo confere seu pagamento.</small></span>
         </a> : null}
-        {cart.mercadopago_available && cart.cart_revision ? <Link className={paymentStyles.option}
-          aria-label="Pagar com Mercado Pago" data-mp-checkout-cta="checkout-api" href="/library/checkout">
-          <PaymentLogo provider="mercadopago" /><span><strong>Pagar com Mercado Pago</strong><small>Cartão de crédito ou PIX · confirmação automática</small></span>
-        </Link> : null}
+        {cart.mercadopago_available && cart.cart_revision ? cart.total_cents !== null &&
+          cart.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS ? <div className={paymentStyles.option}
+            aria-disabled="true" aria-label="Mercado Pago indisponível para este valor">
+            <PaymentLogo provider="mercadopago" /><span><strong>Mercado Pago</strong>
+              <small>Disponível a partir de {paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Selecione mais fotos ou use o PIX do sistema.</small></span>
+          </div> : <Link className={paymentStyles.option}
+            aria-label="Pagar com Mercado Pago" data-mp-checkout-cta="checkout-api" href="/library/checkout">
+            <PaymentLogo provider="mercadopago" /><span><strong>Pagar com Mercado Pago</strong><small>Cartão de crédito ou PIX · confirmação automática</small></span>
+          </Link> : null}
       </div>
       <div id="cart-system-pix" className={paymentStyles.manualPix}>
       {cart.pix_available !== false ? cart.payment ? <>

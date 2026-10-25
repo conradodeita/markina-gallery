@@ -30,4 +30,18 @@ describe("carrinho após aposentadoria da InfinitePay", () => {
     expect(screen.queryByRole("button", { name: /cartão|InfinitePay/i })).toBeNull();
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/library/cart/prepare", expect.objectContaining({ method: "POST" })));
   });
+
+  it("explica o mínimo Mercado Pago e mantém o PIX manual abaixo de R$ 1,00", async () => {
+    const lowCart = { ...cart, total_cents: 99, mercadopago_available: true,
+      cart_revision: "a".repeat(64) };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(
+      JSON.stringify(init?.method === "POST" ? { ...prepared, ...lowCart } : lowCart), { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetch);
+    render(<CartPage />);
+
+    expect(await screen.findByText(/disponível a partir de R\$ 1,00/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Pagar com PIX do sistema" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Pagar com Mercado Pago" })).toBeNull();
+  });
 });

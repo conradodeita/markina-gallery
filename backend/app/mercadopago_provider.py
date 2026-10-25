@@ -47,7 +47,7 @@ class OrdersProvider:
             request_options=RequestOptions(connection_timeout=15.0, max_retries=0),
         )
 
-    def _call(self, operation, *args, **kwargs):
+    def _call(self, operation, *args, allow_list=False, **kwargs):
         try:
             result = operation(*args, **kwargs)
         except MercadoPagoError:
@@ -63,12 +63,17 @@ class OrdersProvider:
             category = "unauthorized" if status in (401, 403) else "unavailable"
             raise MercadoPagoError(category, status)
         data = result.get("response")
+        if allow_list and isinstance(data, list):
+            return data
         if not isinstance(data, dict):
             raise MercadoPagoError("invalid_response")
         return data
 
     def identity(self):
         return self._call(self.sdk.user().get)
+
+    def payment_methods(self):
+        return self._call(self.sdk.payment_methods().list_all, allow_list=True)
 
     def create(self, body, key):
         options = RequestOptions(custom_headers={"x-idempotency-key": str(key)}, max_retries=0)

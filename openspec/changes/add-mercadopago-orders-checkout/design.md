@@ -28,7 +28,7 @@ Fotos de uma tentativa submetida ficam reservadas pelo contrato de pedido congel
 
 POST /v1/orders, type online, processing_mode automatic, total_amount e payment.amount em decimal textual de duas casas, external_reference UUID e X-Idempotency-Key durável. Cartões coletados pelo Card Payment Brick de MercadoPago.js segundo a documentação específica Orders atual; a referência genérica da skill que limita Bricks a Payments está superada para esse contrato. Cartão em uma parcela; Pix via payment_method id pix/type bank_transfer. Não usar issuer_id no payment_method. Nunca persistir/logar token de cartão, CPF, PAN/CVV ou corpo bruto.
 
-GET /v1/orders/{id} confirma estado, referência, valor, método e conta da credencial congelada. GET /v1/orders com begin_date/end_date/external_reference recupera ID perdido. Cancelamento POST /v1/orders/{id}/cancel; reembolso é reconhecido por conciliação, sem botão de movimentação financeira nova nesta missão. O histórico exibe estorno e parcial confirmados.
+GET /v1/orders/{id} confirma estado, referência, valor, método e conta da credencial congelada. GET /v1/orders com begin_date/end_date/external_reference recupera ID perdido. Cancelamento POST /v1/orders/{id}/cancel somente é elegível em estados externos `created` e `action_required` (internos `initiated` e `pending`), conforme a referência oficial: https://www.mercadopago.com.br/developers/pt/reference/online-payments/checkout-api/cancel-order/post. Se a reconciliação encontrar `processing`/`in_review`, a tentativa e seu snapshot continuam ativos e bloqueados para edição, sem chamada de cancelamento; a interface orienta aguardar o resultado. Reembolso é reconhecido por conciliação, sem botão de movimentação financeira nova nesta missão. O histórico exibe estorno e parcial confirmados.
 
 ### Estados
 
@@ -49,6 +49,10 @@ Seguimento solicitado pelo proprietário: refinar somente o card Meios de pagame
 CTA no carrinho, sob o total e junto ao PIX atual, leva a /library/checkout. Detector bundled não reconheceu JSX existente; o local concreto foi resolvido pelo objetivo explícito de integrar o carrinho e pelo componente existente. Tela própria mostra resumo, total, método, loading/erro/pendência, formulário oficial e retorno seguro. Instância do componente é desmontada ao sair. Compras e dashboard identificam Mercado Pago, ID de compra/pedido, método, status externo e situação financeira. Manual PIX continua manual; nenhuma ação administrativa de confirmação PIX pode confirmar Mercado Pago. CSV respeita filtros e colunas adicionais.
 
 Consulta automática que altera estado/atividade também notifica a navegação para recarregar a quantidade do carrinho. Isso mantém a contagem coerente quando a resposta do submit se perde e o polling recupera uma aprovação. Não há reemissão nessa recuperação.
+
+### Mínimo de compra Mercado Pago
+
+Decisão do proprietário em 25/10/2026: aplicar piso uniforme de R$ 1,00 (100 centavos) a novas tentativas Mercado Pago, sem configuração por fotógrafo e sem alterar o PIX manual existente. A UI deve explicar o piso e não montar o Card Payment Brick para carrinho abaixo dele. Backend revalida em preparação e imediatamente antes de congelar pedidos/enviar à Orders API, preservando a seleção em recusas. O mínimo dinâmico de cada meio/bandeira informado pelo Mercado Pago continua aplicável quando for superior ao piso do produto; a integração não presume que R$ 1,00 substitui limites do provedor.
 
 ## Risks / Trade-offs
 

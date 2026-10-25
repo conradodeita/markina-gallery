@@ -10,6 +10,7 @@ O Pick-your-Pic precisa receber pagamentos dentro da própria experiência por C
 - Criar tentativa financeira imutável com pedidos por galeria, valores autoritativos, idempotência, conciliação e webhook durável do tópico `order`.
 - Integrar cartão tokenizado por MercadoPago.js e Pix da Orders API numa tela própria, com retomada, cancelamento e proteção contra duplicidade.
 - Projetar estados de pagamento, pedido e provedor no histórico, dashboard e CSV.
+- Aplicar piso global de R$ 1,00 às novas tentativas Mercado Pago, sem alterar o PIX manual, e preservar os mínimos dinâmicos por método retornados pelo provedor.
 - Validar em desenvolvimento com fixtures oficiais simuladas e testes de integração; contas/credenciais de teste externas continuam dependentes de disponibilidade.
 - Preparar a validação final solicitada pelo proprietário na instalação de produção, exclusivamente com credenciais de teste e seu próprio cliente. Fora de desenvolvimento/teste, emissão de teste SHALL exigir autorização por par tenant/cliente no servidor; a preparação do PR/plano não executa publicação.
 

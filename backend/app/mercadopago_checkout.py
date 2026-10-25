@@ -29,6 +29,7 @@ from app.unified_checkout import _fingerprint, _valid_materials
 
 TERMINAL_UNPAID = {"rejected", "canceled", "expired"}
 FINANCIAL_REVIEW = {"partially_refunded", "charged_back", "duplicate_review"}
+MINIMUM_MERCADOPAGO_TOTAL_CENTS = 100
 
 
 def utc(value):
@@ -91,7 +92,9 @@ def payment_payload(db, payment):
         "pix_copy_paste": payment.pix_copy_paste if payment.state == "pending" else None,
         "pix_qr_code": qr_image,
         "test_account": account.test_account if account else False,
-        "can_cancel": payment.active and payment.state not in FINANCIAL_REVIEW | {"confirmed"},
+        # Orders API permits cancellation only while the order is created or
+        # action_required. In particular, processing/in_review must stay locked.
+        "can_cancel": payment.active and payment.state in {"prepared", "initiated", "pending"},
         "items": [{"name": item.filename_snapshot, "unit_price_cents": item.unit_price_cents,
                    "order_id": str(item.sale_order_id)} for item in items],
     }
@@ -105,6 +108,8 @@ def prepare_payment(db, client, *, revision, key, method):
     if existing:
         if existing.cart_revision != revision or existing.method != method:
             raise CheckoutError("Esta solicitação pertence a outra revisão. Atualize o carrinho.")
+        if existing.state == "prepared" and existing.total_cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
+            raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
         return existing
     active = active_payment(db, client)
     if active and active.state != "prepared":
@@ -115,6 +120,9 @@ def prepare_payment(db, client, *, revision, key, method):
     materials = _valid_materials(db, client)
     if _fingerprint(materials) != revision:
         raise CheckoutError("Sua seleção mudou. Confira o carrinho antes de pagar.")
+    total_cents = sum(material[3].quote.total_cents for _, _, material, _ in materials)
+    if total_cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
+        raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
     if (active and active.cart_revision == revision and active.method == method
             and active.account_id == account.id):
         return active
@@ -124,7 +132,7 @@ def prepare_payment(db, client, *, revision, key, method):
     payment = MercadoPagoPayment(
         tenant_id=client.tenant_id, client_id=client.id, account_id=account.id,
         checkout_key=str(key), cart_revision=revision, method=method, state="prepared",
-        total_cents=sum(material[3].quote.total_cents for _, _, material, _ in materials))
+        total_cents=total_cents)
     db.add(payment)
     db.flush()
     audit(db, "mercadopago.prepared", str(payment.id), tenant_id=payment.tenant_id)
@@ -417,13 +425,37 @@ def submit_payment(db, client, payment_id, data):
     account = effective_mercadopago(db, client.tenant_id, client_id=client.id)
     if not account or account.id != payment.account_id:
         raise CheckoutError("A configuração mudou. Confira o carrinho novamente.")
-    freeze_orders(db, client, payment)
     cents = payment.total_cents
+    if cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
+        raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
     method = {"id": "pix", "type": "bank_transfer"} if payment.method == "pix" else {
         "id": data.payment_method_id, "type": "credit_card",
         "token": data.token.get_secret_value() if data.token else None, "installments": 1}
     if payment.method == "credit_card" and (not method["token"] or not method["id"]):
         raise CheckoutError("Confira os dados do cartão no formulário seguro.")
+    provider = credential_provider(account)
+    try:
+        available_methods = provider.payment_methods()
+    except (MercadoPagoError, IntegrationSecretError):
+        raise CheckoutError("Não foi possível conferir o valor mínimo do Mercado Pago. Tente novamente.") from None
+    selected_method = next((item for item in available_methods if
+                            item.get("id") == method["id"] and
+                            item.get("payment_type_id") == method["type"] and
+                            item.get("status") == "active"), None)
+    if not selected_method:
+        raise CheckoutError("Essa forma de pagamento está indisponível. Escolha outra e tente novamente.")
+    try:
+        provider_minimum_cents = amount(selected_method["min_allowed_amount"])
+    except (KeyError, CheckoutError):
+        raise CheckoutError("Não foi possível conferir o valor mínimo do Mercado Pago. Tente novamente.") from None
+    if cents < max(MINIMUM_MERCADOPAGO_TOTAL_CENTS, provider_minimum_cents):
+        minimum = max(MINIMUM_MERCADOPAGO_TOTAL_CENTS, provider_minimum_cents)
+        minimum_text = f"R$ {minimum // 100},{minimum % 100:02d}"
+        raise CheckoutError(
+            f"Essa forma de pagamento aceita compras a partir de {minimum_text}. "
+            "Ajuste sua seleção e tente novamente."
+        )
+    freeze_orders(db, client, payment)
     body = {
         "type": "online", "processing_mode": "automatic",
         "total_amount": f"{cents // 100}.{cents % 100:02d}",
@@ -437,7 +469,7 @@ def submit_payment(db, client, payment_id, data):
     payment.next_check_at = now() + timedelta(seconds=45)
     db.commit()  # Tentativa/reservas duráveis ANTES da rede; token nunca é persistido.
     try:
-        response = credential_provider(account).create(body, payment.id)
+        response = provider.create(body, payment.id)
     except (MercadoPagoError, IntegrationSecretError):
         response = None
     lock_customer(db, client)
@@ -465,6 +497,10 @@ def cancel_payment(db, client, payment_id):
         return payment
     payment = reconcile(db, client, payment.id)
     if not payment.active or not payment.provider_order_id:
+        return payment
+    # Reconciliation may have advanced the order since the UI rendered. Never
+    # call cancel for processing/unknown states; the Orders API rejects them.
+    if payment.state not in {"initiated", "pending"}:
         return payment
     try:
         account = account_for(db, payment.account_id, payment.tenant_id)
