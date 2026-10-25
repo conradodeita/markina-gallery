@@ -1,6 +1,8 @@
 """Contratos isolados; Docker CLI real só acessa API sintética em loopback, nunca daemon/SSH."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -11,6 +13,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -594,7 +597,19 @@ source {quote(path.as_posix())}
         result = subprocess.run([BASH, '-c', command], capture_output=True, text=True, timeout=20, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('verified-orders-body', result.stdout)
-        self.assertEqual(args.read_text().splitlines(), ['-B', '-', '--mode', 'inventory', '--sha', SHA_MAIN])
+        python_args = args.read_text().splitlines()
+        self.assertEqual(python_args[:2], ['-B', '-'])
+        import orders_pilot_release as release
+
+        output = io.StringIO()
+        with (patch('sys.argv', ['orders_pilot_release.py', *python_args[2:]]),
+              patch.object(release.Host, 'main_sha', return_value=SHA_MAIN),
+              patch.object(release.Host, 'inventory', return_value={'checkout_sha': SHA_OLD}) as inventory,
+              patch.object(release, 'validate_inventory', return_value='f' * 64),
+              contextlib.redirect_stdout(output)):
+            release.main()
+        inventory.assert_called_once_with()
+        self.assertEqual(json.loads(output.getvalue().splitlines()[0])['target_sha'], SHA_MAIN)
         self.assertEqual(before, self.snapshot())
 
     def test_malformed_sha_is_rejected_without_queries(self):

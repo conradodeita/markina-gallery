@@ -86,3 +86,7 @@ O acesso remoto para atualizar o inventário Orders SHALL aceitar somente um com
 #### Scenario: Aplicação ou credencial mutável
 - **WHEN** alguém tenta usar o canal preflight para executar `prepare`, `apply`, shell ou credenciais de deploy
 - **THEN** a rota rejeita a operação e não inicia alteração remota
+
+#### Scenario: Contrato CLI do wrapper com o helper
+- **WHEN** o wrapper encaminha a execução Python para o helper Orders
+- **THEN** os argumentos fixos `inventory --sha <SHA completo>` SHALL ser aceitos pelo parser real do helper; o teste de contrato SHALL exercer essa fronteira com acesso ao host simulado, antes da instalação operacional

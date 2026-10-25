@@ -165,7 +165,7 @@ def main() -> None:
     require('MARKINA_ORDERS_TARGET_SHA=([0-9a-f]{40})', "comando Orders exige SHA completo", WRAPPER)
     require('script_name="orders_pilot_release.py"', "wrapper seleciona o helper Orders fixo", WRAPPER)
     require('inventory_runtime="python"', "wrapper despacha Orders somente para Python", WRAPPER)
-    require('python3 -B - --mode "$inventory_mode" --sha "$target_sha"', "wrapper força inventory Orders com SHA", WRAPPER)
+    require('python3 -B - "$inventory_mode" --sha "$target_sha"', "wrapper força inventory Orders com SHA", WRAPPER)
     require('script_name="deploy-prod-infinitepay-retirement.sh"', "wrapper aponta para o inventário de aposentadoria", WRAPPER)
     require('--mode "$inventory_mode"', "wrapper não encaminha modo enviado pelo cliente", WRAPPER)
     inventory_text = INVENTORY_SCRIPT.replace(b"\r\n", b"\n")

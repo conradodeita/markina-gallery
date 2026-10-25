@@ -63,7 +63,7 @@ actual_blob_sha="$(printf '%s\n' "$script_body" | git hash-object --stdin)"
 # Stdin vem exclusivamente do conteÃƒÂºdo cujo hash acabou de ser validado.
 if [[ "$inventory_runtime" == "python" ]]; then
   printf '%s\n' "$script_body" | PYTHONPATH="$PROJECT_ROOT/scripts" \
-    python3 -B - --mode "$inventory_mode" --sha "$target_sha"
+    python3 -B - "$inventory_mode" --sha "$target_sha"
 else
   printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
     MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha"
