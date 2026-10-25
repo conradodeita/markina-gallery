@@ -87,7 +87,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 ## Fase 4 — Pagamentos, edição e entrega
 
 - MVP: PIX com QR Code, copia-e-cola e confirmação manual do fotógrafo.
-- Arquitetura de provedor de pagamento preparada para integração posterior com Infinity Pay e webhooks assinados.
+- Checkout de cartão indisponível durante a transição da InfinitePay para a integração posterior do Mercado Pago Orders API.
 - Estados: seleção, checkout, aguardando pagamento, pagamento informado, confirmado, em edição, pronto, link enviado, entregue, cancelado, reembolsado e não localizado.
 - Ao disponibilizar entrega, fotógrafo cola link do Google Photos, aciona mensagem WhatsApp e libera cartão verde “Acessar minhas fotos” no portal.
 - Antes disso, o portal mostra cartão vermelho/amarelo: “Fotos disponíveis em breve” ou “Suas fotos estão em edição”.

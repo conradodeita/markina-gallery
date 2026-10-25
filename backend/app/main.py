@@ -25,6 +25,8 @@ from zoneinfo import ZoneInfo
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import String, and_, cast, delete, func, or_, select, update
@@ -35,10 +37,8 @@ from starlette.responses import (
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
-    RedirectResponse,
 )
 
-from app import infinitepay_settings
 from app.acervo_context import (
     client_tenant_id,
     namespaced_upload_key,
@@ -330,6 +330,7 @@ from app.order_delivery import (
     set_delivery,
     validate_album_url,
 )
+from app.order_visibility import visible_sale_order_condition
 from app.parent_registration import link_client_to_parent
 from app.payment_availability import (
     PAYMENT_REQUIRED_MESSAGE,
@@ -338,7 +339,6 @@ from app.payment_availability import (
     payment_methods,
     require_payment_method,
 )
-from app.payment_provider import PaymentCheckRequest, operational_provider
 from app.payment_templates import (
     DEFAULT_PAYMENT_TEMPLATES,
     preview_payment_template_migration,
@@ -381,8 +381,6 @@ from app.private_upload_batches import (
     folder_batch_for,
 )
 from app.product_brand import PRODUCT_NAME
-from app.provider_checkout import issue_provider_payment, prepare_provider_payment
-from app.provider_confirmation import apply_payment_check
 from app.public_gallery_access import (
     CanonicalPhotoAccessDenied,
     PublicGalleryAccessDenied,
@@ -442,6 +440,11 @@ from app.whatsapp_webhook import process_whatsapp_webhook
 
 app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
 logger = logging.getLogger(__name__)
+
+
+@app.exception_handler(RequestValidationError)
+async def protect_credential_validation_input(request: Request, exc: RequestValidationError):
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.middleware("http")
@@ -2342,125 +2345,6 @@ def admin_global_pix_confirm(
     audit(db, "pix.global_updated", f"{admin.id}:{settings.id}:{settings.version}", tenant_id=session.tenant_id)
     db.commit()
     return pix_payload(settings, editable=True)
-
-
-@app.get("/admin/settings/infinitepay")
-def admin_infinitepay(request: Request, db: Session = Depends(db_session)) -> dict:
-    session = current_session(request, Role.ADMIN)
-    active_admin_for_session(db, session)
-    return infinitepay_settings.configuration_payload(
-        infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id))
-
-
-@app.post("/admin/settings/infinitepay/challenge", status_code=status.HTTP_202_ACCEPTED)
-def admin_infinitepay_challenge(
-    payload: infinitepay_settings.ConfigurationChallengeInput, request: Request,
-    db: Session = Depends(db_session),
-) -> dict:
-    require_same_origin(request)
-    session = current_session(request, Role.ADMIN)
-    admin = active_admin_for_session(db, session)
-    enforce_rate_limit(db, "admin_change_infinitepay", str(admin.id),
-                       request.client.host if request.client else "unknown")
-    try:
-        reauthenticate_admin(admin, payload.current_password)
-    except AdminAccountError:
-        audit(db, "admin_security.change_infinitepay.reauthentication_failed", str(admin.id),
-              tenant_id=session.tenant_id)
-        db.commit()
-        raise neutral_error() from None
-    db.scalar(select(Tenant).where(Tenant.id == session.tenant_id).with_for_update())
-    settings = infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id)
-    try:
-        infinitepay_settings.check_version(settings, payload.expected_version)
-    except infinitepay_settings.ConfigurationConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    target = infinitepay_settings.canonical_proposal(
-        payload.configuration, payload.expected_version, payload.checkout_ready, payload.card_enabled,
-    )
-    try:
-        challenge, _code, queued = create_security_challenge(
-            db, purpose="change_infinitepay_otp", subject_fingerprint=pii_fingerprint(str(admin.id)),
-            admin=admin, session_id=session.id, target=target, tenant_id=session.tenant_id,
-        )
-    except (AdminSecurityConfigurationError, WhatsAppConfigurationError):
-        db.rollback()
-        raise HTTPException(status_code=503, detail="Confirmação segura temporariamente indisponível.") from None
-    if not queued:
-        challenge.used_at = now()
-        challenge.encrypted_target = None
-        db.commit()
-        raise HTTPException(status_code=409, detail="Canal WhatsApp indisponível para confirmação.")
-    return {"challenge_id": str(challenge.id), "expires_at": challenge.expires_at.isoformat(),
-            "proposal": json.loads(target),
-            "message": "Código de confirmação enviado ao WhatsApp administrativo do Pick-your-Pic."}
-
-
-def _infinitepay_challenge_for_session(db: Session, session: AuthSession, admin: AdminUser,
-                                     challenge_id: UUID) -> AdminSecurityChallenge:
-    db.scalar(select(Tenant).where(Tenant.id == session.tenant_id).with_for_update())
-    stored = db.scalar(select(AdminSecurityChallenge).where(
-        AdminSecurityChallenge.id == challenge_id,
-        AdminSecurityChallenge.tenant_id == session.tenant_id,
-    ).with_for_update())
-    if (not stored or stored.admin_id != admin.id or stored.session_id != session.id
-            or stored.purpose != "change_infinitepay_otp"):
-        raise neutral_error()
-    return stored
-
-
-@app.post("/admin/settings/infinitepay/confirm")
-def admin_infinitepay_confirm(
-    payload: infinitepay_settings.ConfigurationConfirmInput, request: Request,
-    db: Session = Depends(db_session),
-) -> dict:
-    require_same_origin(request)
-    session = current_session(request, Role.ADMIN)
-    admin = active_admin_for_session(db, session)
-    _infinitepay_challenge_for_session(db, session, admin, payload.challenge_id)
-    try:
-        challenge = verify_security_challenge(
-            db, challenge_id=payload.challenge_id, purpose="change_infinitepay_otp",
-            code=payload.code, session_id=session.id, tenant_id=session.tenant_id,
-        )
-        target = challenge_target(challenge)
-        if challenge.target_fingerprint != pii_fingerprint(target.strip().casefold()):
-            raise AdminAccountError("Proposta indisponível.")
-        settings = infinitepay_settings.apply_proposal(db, tenant_id=session.tenant_id,
-                                                     admin_id=admin.id, target=target)
-    except (AdminAccountError, AdminSecurityConfigurationError):
-        db.rollback()
-        raise neutral_error() from None
-    except infinitepay_settings.ConfigurationConflict as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    challenge.encrypted_target = None
-    audit(db, "infinitepay.configuration_updated", f"{settings.id}:{settings.version}", tenant_id=session.tenant_id)
-    db.commit()
-    return infinitepay_settings.configuration_payload(settings)
-
-
-@app.post("/admin/settings/infinitepay/resend", status_code=status.HTTP_202_ACCEPTED)
-def admin_infinitepay_resend(
-    payload: infinitepay_settings.ConfigurationResendInput, request: Request,
-    db: Session = Depends(db_session),
-) -> dict:
-    require_same_origin(request)
-    session = current_session(request, Role.ADMIN)
-    admin = active_admin_for_session(db, session)
-    enforce_rate_limit(db, "admin_resend_infinitepay", str(admin.id),
-                       request.client.host if request.client else "unknown")
-    _infinitepay_challenge_for_session(db, session, admin, payload.challenge_id)
-    try:
-        challenge = resend_security_challenge(db, challenge_id=payload.challenge_id,
-            purpose="change_infinitepay_otp", tenant_id=session.tenant_id, session_id=session.id)
-    except AdminAccountError:
-        db.rollback()
-        raise neutral_error() from None
-    except (AdminSecurityConfigurationError, WhatsAppConfigurationError):
-        db.rollback()
-        raise HTTPException(status_code=503, detail="Confirmação segura temporariamente indisponível.") from None
-    return {"challenge_id": str(challenge.id), "expires_at": challenge.expires_at.isoformat()}
 
 
 @app.post("/admin/security/password/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -7492,7 +7376,8 @@ def admin_gallery_orders(
     orders = list(
         db.scalars(
             select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
-            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id)
+            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                   visible_sale_order_condition(tenant_id=tenant_id))
             .order_by(SaleOrder.created_at.desc())
         )
     )
@@ -9283,7 +9168,8 @@ def _commerce_client(request: Request, db: Session) -> Client:
 
 @app.get("/library/cart")
 def unified_cart(request: Request, db: Session = Depends(db_session)) -> dict:
-    return cart_payload(db, _commerce_client(request, db))
+    client = _commerce_client(request, db)
+    return cart_payload(db, client)
 
 
 @app.post("/library/cart/prepare")
@@ -9303,93 +9189,6 @@ class ProviderCheckoutInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cart_revision: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     idempotency_key: UUID
-
-
-@app.post("/library/cart/prepare-card")
-def prepare_unified_card(request: Request, payload: ProviderCheckoutInput,
-                         db: Session = Depends(db_session)) -> dict:
-    """Freeze this client's current cart, then issue one tenant-bound card link."""
-    client = _commerce_client(request, db)
-    try:
-        payment = prepare_provider_payment(
-            db, client, cart_revision=payload.cart_revision,
-            checkout_key=str(payload.idempotency_key),
-        )
-        if payment.state == "creating":
-            callback = f"{public_app_origin()}/api/infinitepay/return"
-            provider = operational_provider(redirect_url=callback)
-            if provider is None:
-                raise CheckoutError("Checkout de cartão indisponível.")
-            try:
-                payment = issue_provider_payment(db, payment.id, provider)
-            finally:
-                close = getattr(provider, "close", None)
-                if close:
-                    close()
-        else:
-            db.commit()
-        return {
-            "id": str(payment.id), "status": payment.state,
-            "checkout_url": payment.checkout_url if payment.state == "awaiting_payment" else None,
-            "total_cents": payment.total_cents,
-        }
-    except (CheckoutError, EmailConfigurationError) as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.get("/infinitepay/return")
-def infinitepay_return(request: Request,
-                       order_nsu: str | None = Query(default=None, max_length=64),
-                       transaction_nsu: str | None = Query(default=None, max_length=200),
-                       slug: str | None = Query(default=None, max_length=512),
-                       db: Session = Depends(db_session)) -> RedirectResponse:
-    """Treat browser values only as candidates; payment_check is authoritative."""
-    destination = "/library/purchases"
-    try:
-        payment_id = UUID(order_nsu) if order_nsu else None
-        if payment_id is not None and str(payment_id) != order_nsu:
-            payment_id = None
-    except ValueError:
-        payment_id = None
-    if payment_id:
-        destination += f"#payment-{payment_id}"
-    client_ip = request.client.host if request.client else "unknown"
-    enforce_rate_limit(db, "infinitepay_return", client_ip, client_ip)
-    candidates_ok = (
-        payment_id is not None and transaction_nsu is not None and bool(transaction_nsu.strip())
-        and transaction_nsu == transaction_nsu.strip()
-        and slug is not None and bool(slug.strip()) and slug == slug.strip()
-    )
-    if candidates_ok:
-        payment = db.scalar(select(ProviderPayment).where(
-            ProviderPayment.id == payment_id,
-            ProviderPayment.provider == "infinitepay",
-        ))
-        if payment and payment.state in {"awaiting_payment", "verification_required"}:
-            try:
-                callback = f"{public_app_origin()}/api/infinitepay/return"
-                provider = operational_provider(redirect_url=callback)
-            except EmailConfigurationError:
-                logger.exception("InfinitePay return unavailable: public app origin is invalid")
-                return RedirectResponse(destination, status_code=303)
-            if provider is not None:
-                try:
-                    result = provider.check_payment(PaymentCheckRequest(
-                        payment_id=payment.id, tenant_id=payment.tenant_id,
-                        handle=payment.handle_snapshot, transaction_nsu=transaction_nsu,
-                        slug=slug, expected_total_cents=payment.total_cents,
-                    ))
-                    apply_payment_check(db, payment.id, requested_slug=slug, result=result)
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    logger.exception("InfinitePay return verification failed for payment %s", payment.id)
-                finally:
-                    close = getattr(provider, "close", None)
-                    if close:
-                        close()
-    return RedirectResponse(destination, status_code=303)
 
 
 class GroupPaymentInput(BaseModel):
@@ -9520,6 +9319,7 @@ def client_purchase_history(
             ProviderPayment.id.in_(provider_payment_ids),
         ))
     } if provider_payment_ids else {}
+    order_ids = [order.id for order in orders]
     item_rows = (
         list(
             db.scalars(
@@ -9607,11 +9407,9 @@ def client_purchase_history(
                 "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 **({
-                    "payment_method": "credit_card",
+                    "payment_method": provider_payments[order.provider_payment_id].capture_method or "credit_card",
                     "provider_payment_id": str(provider_payments[order.provider_payment_id].id),
                     "provider_payment_state": provider_payments[order.provider_payment_id].state,
-                    "provider_checkout_url": provider_payments[order.provider_payment_id].checkout_url
-                    if provider_payments[order.provider_payment_id].state == "awaiting_payment" else None,
                 } if order.provider_payment_id in provider_payments else {}),
                 "commercial_state": (
                     "selection_finalized"
@@ -9659,7 +9457,7 @@ def client_purchase_history(
         group = card_groups.setdefault(str(payment_id), {
             "id": str(payment_id),
             "state": order_payload["provider_payment_state"],
-            "checkout_url": order_payload["provider_checkout_url"],
+            "capture_method": provider_payments[UUID(str(payment_id))].capture_method,
             "total_cents": 0,
             "orders": [],
         })
@@ -11931,10 +11729,7 @@ def list_payment_communications(
     query: str | None = Query(default=None, max_length=200),
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
-    financial_status: Literal[
-        "priority", "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
-        "not_found", "overdue", "verifying", "exception", "hold",
-    ] | None = Query(default=None),
+    financial_status: PaymentFinancialFilter | None = Query(default=None),
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
     | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
@@ -11965,6 +11760,7 @@ def _payment_dashboard_data(
 
     order_query = (
         select(SaleOrder, Client, DerivedGallery, ParentGallery).where(or_(Client.id.is_(None), Client.tenant_id == tenant_id), or_(DerivedGallery.id.is_(None), DerivedGallery.tenant_id == tenant_id), or_(ParentGallery.id.is_(None), ParentGallery.tenant_id == tenant_id), SaleOrder.tenant_id == tenant_id)
+        .where(visible_sale_order_condition(tenant_id=tenant_id))
         .outerjoin(Client, Client.id == SaleOrder.client_id)
         .outerjoin(DerivedGallery, DerivedGallery.id == SaleOrder.derived_gallery_id)
         .outerjoin(ParentGallery, ParentGallery.id == SaleOrder.parent_gallery_id_snapshot)
@@ -12201,9 +11997,7 @@ def _payment_dashboard_data(
         if financial_state == "awaiting_payment" and canonical_state and canonical_state.selection_expires_at and expired(canonical_state.selection_expires_at):
             financial_state = "overdue"
         delivery_states = {notification.status for notification in order_notifications} or {"none"}
-        if financial_status == "priority" and financial_state not in {
-            "reported", "confirmed_undelivered",
-        }:
+        if financial_status == "priority" and financial_state not in {"reported", "confirmed_undelivered"}:
             continue
         if financial_status and financial_status != "priority" and financial_state != financial_status:
             continue
@@ -12263,10 +12057,11 @@ def _payment_dashboard_data(
                 },
                 "total_cents": order.total_cents,
                 "financial_status": financial_state,
-                **({"payment_method": "credit_card" if provider_payment else "pix"}
+                **({"payment_method": (provider_payment.capture_method or "credit_card") if provider_payment else "pix"}
                    if provider_payment or order.payment_group_id or latest_communication else {}),
                 **({"provider_payment_state": provider_payment.state,
-                    "provider_payment_id": str(provider_payment.id)} if provider_payment else {}),
+                    "provider_payment_id": str(provider_payment.id),
+                    } if provider_payment else {}),
                 "confirmed_at": (order.confirmed_at.isoformat()
                                  if order.payment_status == "confirmed" and order.confirmed_at
                                  else None),

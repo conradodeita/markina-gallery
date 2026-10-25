@@ -6,7 +6,6 @@ import { PRODUCT_NAME, DEFAULT_WATERMARK_TEXT } from "../../product-brand";
 import { ChangeEvent, CSSProperties, FormEvent, useEffect, useRef, useState } from "react";
 import { SystemState } from "../../ui-kit";
 import PixPanel from "./pix-panel";
-import InfinitePayPanel from "./infinitepay-panel";
 import WhatsAppPanel from "./whatsapp-panel";
 import SecurityPanel from "./security-panel";
 import FacialEnginePanel from "./facial-engine-panel";
@@ -303,7 +302,6 @@ export default function AdminSettingsPage() {
       <WhatsAppPanel />
       <SecurityPanel />
       <PixPanel />
-      <InfinitePayPanel />
       <FacialEnginePanel />
       <RawDevelopmentPanel />
       <form className="gallery-editor-panel gallery-settings-form" onSubmit={save}>

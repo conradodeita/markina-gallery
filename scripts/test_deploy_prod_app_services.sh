@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 script="$(cat scripts/deploy-prod-app-services.sh)"
-for required in 'readonly SERVICES=(api web)' 'readonly EXPECTED_DATABASE_REVISION="20261017_0084"' \
+for required in 'readonly SERVICES=(api web)' 'readonly EXPECTED_DATABASE_REVISION="20261022_0087"' \
   'verify_readonly_target_ancestry' 'GIT_WORK_TREE="$PROJECT_ROOT"' 'scripts/check_prod_app_release_scope.py' \
-  'git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/ backend/migrations/' \
+  'git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/' \
   'compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"' \
   'compose exec -T nginx nginx -t' 'compose exec -T nginx nginx -s reload' 'runtime_snapshot' \
   'app-web-rollback.identity' 'app-api-rollback.version' 'web-current.identity' 'app-$service-rollback-id'; do

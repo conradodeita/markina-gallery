@@ -35,6 +35,14 @@ O environment existente `production` permanece protegido pelo revisor `conradode
 
 O preflight não reutiliza nem modifica a chave ou os secrets de deploy. A aprovação de `production` permanece separada e protegida.
 
+## Preflight específico da aposentadoria InfinitePay
+
+A operação manual `infinitepay-retirement` usa a mesma chave SSH restrita de `production-preflight`. O wrapper versionado reconhece somente `MARKINA_RETIREMENT_TARGET_SHA=<SHA completo>` e baixa `scripts/deploy-prod-infinitepay-retirement.sh` pelo SHA da `main`, comparando o blob imutável antes de executar apenas `--mode inventory`. O inventário é minimizado e não imprime configuração Compose, conteúdo do binding ou valores de segredo.
+
+Após integração do código em `main`, a cópia root-owned do wrapper em `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` precisa ser atualizada por uma sessão operacional autorizada para fixar o blob do wrapper e do script do SHA integrado. Conferir conteúdo, proprietário `root:root`, modo `0755`, hash do script e os comandos permitidos em `authorized_keys`; não ampliar a chave para shell nem conceder modo release. Até essa atualização e conferência, o workflow remoto falhará fechado e nenhum inventário pode ser alegado.
+
+O inventário só fica apto quando comprova checkout/runtime alinhados, `20261021_0086`, serviços saudáveis, hashes Compose API/web, domínio/porta registrados, smoke HTTPS e binding regular exclusivo sem link simbólico, hardlink ou referência externa. O JSON sanitizado e seu fingerprint são apresentados antes de qualquer etapa mutável. O manifesto de release API/web em `0084` segue sem alteração até que esse estado seja confirmado pelo host.
+
 ## Verificação de ancestralidade do candidato
 
 O checkout de produção pode não conter o commit recém-mergeado em `main`. Para verificar que o SHA candidato descende do último release saudável sem alterar refs ou objetos do checkout ativo, o inventário busca a ponta de `main` com filtro de blobs em um repositório Git bare temporário configurado como partial clone, confirma que ela continua igual ao SHA solicitado e verifica a ancestralidade nesse banco temporário. O diretório é removido ao terminar; qualquer falha ou mudança da ponta de `main` faz o preflight falhar fechado antes de produzir o fingerprint.
@@ -48,3 +56,9 @@ A conclusão anterior de divergência real foi refutada. Compose 2.35.1 omite a 
 O script corrigido completou inventário remoto somente leitura, saúde dos três serviços, bind exclusivo `127.0.0.1:8080`, HTTPS 200 e fingerprint `141aa2f1f90286bc915ec6a5eed6b94b71e8a91f819846840901341bdf5987ec`, com alvo `57bbc7c`. A correção também relê hashes após a troca, aguarda saúde por até 120 segundos e valida/recarrega exclusivamente o nginx Markina antes do smoke. CI e instalação do novo blob fixado no wrapper devem preceder o próximo preflight automático. Isso não aprova os gates jurídicos, do corpus, capacidade ou restauração.
 
 O wrapper foi atualizado no host em 2026-10-17 para fixar o blob `081350c451047cd4f26da4e8bb807881901ce741` do inventário corrigido; proprietário/modo conferidos `root:root 0755`, SHA-256 `fddafdb3652e211a49880ab617cfa7ab4c5e29020072c1e627919859830b37a0`. A chave dedicada continua limitada ao inventário. O inventário Docker somente leitura confirmou os serviços Markina saudáveis, Nginx em `127.0.0.1:8080` e domínio `https://markina.pickyourpic.com.br`; a alteração não reiniciou serviços nem alterou credenciais. O preflight automático positivo desta correção ainda aguarda CI verde e merge.
+
+## Estado após a aposentadoria InfinitePay — 2026-10-24
+
+A publicação está em `1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8`, schema `20261022_0087`. Após CI verde e merge da PR #281 (`172aef76c6cc971cd81466200da399a6912e90f9`), o wrapper root-owned foi atualizado atomicamente para SHA-256 `96150855a71fe790aa5405cc0de53710e570d2c0768165f9224738316c4373e1`, modo `0755`, pin app `646852479c83d0bfa356203379a95cbd9e4019f6` e pin de aposentadoria `935af96ec1b650eb2c9ae188186eec38f0dd532b`. A versão anterior foi preservada com checksum em `/var/backups/markina-gallery/preflight-ssh-wrapper-20261024T1926Z-close-pr281`.
+
+O inventário API/web pelo wrapper instalado passou para a revisão integrada: schema `0087`, identidade e hashes das imagens ativas, bind `127.0.0.1:8080`, domínio esperado e três checks HTTPS `200`. Fingerprint de evidência `07a56b90e3baf3f75a046c42ea2395b08e9a0aa720a01400515d8b746d74b991`. O checkout de runtime permaneceu no SHA publicado e nenhum serviço foi reiniciado. O inventário de aposentadoria `0086` é histórico e não deve ser reexecutado como se a migration ainda estivesse pendente. Novas publicações continuam exigindo seu próprio inventário e aprovação.

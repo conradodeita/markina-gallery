@@ -126,6 +126,9 @@ const financialColor: Record<FinancialStatus, string> = {
   exception: "var(--payment-status-exception)",
   hold: "var(--payment-status-hold)",
 };
+function groupPresentation(group: ClientGroup) {
+  return { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
+}
 const decisionLabel = {
   pending_review: "Aguardando revisão",
   confirmed: "Pagamento confirmado",
@@ -187,6 +190,7 @@ function PaymentsDashboard() {
   const [exportMessage, setExportMessage] = useState("");
   const loadRequest = useRef<AbortController | null>(null);
   const exportRequest = useRef<AbortController | null>(null);
+  const loadedPages = useRef(1);
 
   useEffect(() => {
     const header = document.querySelector<HTMLElement>(".admin-topbar");
@@ -203,7 +207,7 @@ function PaymentsDashboard() {
     };
   }, []);
 
-  const load = useCallback(async (nextFilters: Filters, cursor?: string | null, append = false) => {
+  const load = useCallback(async (nextFilters: Filters, cursor?: string | null, append = false, pages = 1) => {
     loadRequest.current?.abort();
     const controller = new AbortController();
     loadRequest.current = controller;
@@ -213,8 +217,17 @@ function PaymentsDashboard() {
     try {
       const response = await fetch(requestPath(nextFilters, cursor), { credentials: "same-origin", signal: controller.signal });
       if (!response.ok) throw new Error();
-      const payload = await response.json() as Dashboard;
+      let payload = await response.json() as Dashboard;
+      let fetchedPages = 1;
+      while (fetchedPages < pages && payload.page.next_cursor && !controller.signal.aborted) {
+        const next = await fetch(requestPath(nextFilters, payload.page.next_cursor), { credentials: "same-origin", signal: controller.signal });
+        if (!next.ok) throw new Error();
+        const page = await next.json() as Dashboard;
+        payload = { ...payload, groups: [...payload.groups, ...page.groups], page: page.page };
+        fetchedPages++;
+      }
       if (controller.signal.aborted) return;
+      loadedPages.current = append ? loadedPages.current + fetchedPages : fetchedPages;
       setDashboard((current) => append && current ? {
         ...payload,
         groups: [...current.groups, ...payload.groups],
@@ -361,7 +374,9 @@ function PaymentsDashboard() {
 
     <div className="payment-client-groups">
       {dashboard.groups.map((group) => <section className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
-        <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p><StatusBadge tone={financialPresentation[group.financial_status].tone} className={`payment-status-badge--${group.financial_status}`}>{financialPresentation[group.financial_status].label}</StatusBadge><h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
+        <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p>
+          <StatusBadge tone={groupPresentation(group).tone} className={groupPresentation(group).className}>{groupPresentation(group).label}</StatusBadge>
+          <h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
         <div className="payment-orders">
           {group.orders.map((order) => <OrderCard key={order.id} order={order} clientId={group.client.id} onRefresh={() => load(filters)} />)}
         </div>
@@ -497,7 +512,7 @@ function ClientAutocomplete({
   </div>;
 }
 
-function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void> }) {
+function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void>; }) {
   const [expanded, setExpanded] = useState(false);
   const presentation = financialPresentation[order.financial_status];
   const communication = order.communication;
@@ -509,7 +524,7 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.provider_payment_id ? " · InfinitePay (histórico)" : order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>
@@ -518,8 +533,8 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
       {expanded && order.folders?.length ? <OrderPhotos folders={order.folders} /> : !order.folders?.length ? <p>Nenhuma fotografia disponível.</p> : null}
       <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p></section>
       <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
-      {order.payment_method === "credit_card" ? <>
-        <p>Estado da compra de cartão: {order.provider_payment_state ?? "indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}. A confirmação não usa a decisão manual do PIX.</p>
+      {order.provider_payment_id || order.payment_method === "credit_card" ? <>
+        <p>Registro de pagamento InfinitePay legado, somente leitura: {order.provider_payment_state ?? "estado indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}.</p>
         {downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}
       </> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>

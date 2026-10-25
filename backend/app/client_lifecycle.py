@@ -58,6 +58,7 @@ from app.auth import (
 )
 from app.client_identity import ClientIdentityConflict, require_identity_tenant
 from app.facial.reference_store import delete_reference_file
+from app.order_visibility import visible_sale_order_condition
 from app.tenancy import TenantContextError, require_admin_tenant
 
 
@@ -129,6 +130,13 @@ def list_client_directory(
         .correlate(Client)
         .scalar_subquery()
     )
+    visible_order_count = (
+        select(func.count(SaleOrder.id))
+        .where(SaleOrder.tenant_id == tenant_id, SaleOrder.client_id == Client.id,
+               visible_sale_order_condition(tenant_id=tenant_id))
+        .correlate(Client)
+        .scalar_subquery()
+    )
     payment_count = (
         select(func.count(PaymentCommunication.id))
         .where(PaymentCommunication.tenant_id == tenant_id, PaymentCommunication.client_id == Client.id)
@@ -146,9 +154,10 @@ def list_client_directory(
         Client,
         public_count.label("public_count"),
         (membership_count + owned_without_membership).label("private_count"),
-        order_count.label("order_count"),
+        visible_order_count.label("order_count"),
         (payment_count + payment_group_count).label("payment_count"),
         normalized_name.label("sort_name"),
+        order_count.label("protected_order_count"),
     ).where(Client.tenant_id == tenant_id)
     normalized_query = (query or "").strip().casefold()
     if normalized_query:
@@ -188,9 +197,9 @@ def list_client_directory(
                     "private_galleries": int(private_galleries or 0),
                     "orders": int(orders or 0),
                 },
-                "deletion_eligible": not int(orders or 0) and not int(payments or 0),
+                "deletion_eligible": not int(protected_orders or 0) and not int(payments or 0),
             }
-            for item, public_galleries, private_galleries, orders, payments, _sort_name in visible
+            for item, public_galleries, private_galleries, orders, payments, _sort_name, protected_orders in visible
         ],
         "page": {"has_more": has_more, "next_cursor": next_cursor},
     }

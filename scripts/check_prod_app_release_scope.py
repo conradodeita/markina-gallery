@@ -13,10 +13,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
 RUNTIME_FILES = {
+    "backend/app/client_lifecycle.py",
+    "backend/app/auth.py",
     "backend/app/main.py",
+    "backend/app/payment_availability.py",
+    "backend/app/order_visibility.py",
     "backend/app/payment_export.py",
     "backend/app/statistics_report.py",
     "backend/app/private_folder_overview.py",
+    "backend/app/unified_checkout.py",
+    "docker/docker-compose.yml",
     "frontend/app/globals.css",
     "frontend/app/admin/admin-navigation.tsx",
     "frontend/app/admin/payments/page.tsx",
@@ -24,10 +30,25 @@ RUNTIME_FILES = {
     "frontend/app/admin/payments/payments.module.css",
     "frontend/app/admin/galleries/private-folder-client-overview.tsx",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
+    "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
+    "frontend/app/library/cart/page.tsx",
+    "frontend/app/library/purchase-card.tsx",
+    "frontend/app/library/purchases/page.tsx",
 }
 RETIRED_STATISTICS_FILES = {
     "frontend/app/admin/statistics/page.tsx",
     "frontend/app/admin/statistics/page.test.tsx",
+}
+RETIRED_INFINITEPAY_FILES = {
+    "backend/app/infinitepay_binding.py",
+    "backend/app/infinitepay_settings.py",
+    "backend/app/payment_provider.py",
+    "backend/app/provider_cart_recovery.py",
+    "backend/app/provider_checkout.py",
+    "frontend/app/admin/payments/cart-recovery.module.css",
+    "frontend/app/admin/payments/cart-recovery.tsx",
+    "frontend/app/admin/settings/infinitepay-panel.tsx",
+    "frontend/app/library/cart/checkout-navigation.ts",
 }
 ALLOWED_PREFIXES = (
     "backend/tests/",
@@ -35,15 +56,26 @@ ALLOWED_PREFIXES = (
     "docs/",
 )
 ALLOWED_OPERATIONS = {
+    ".gitleaksignore",
     ".github/workflows/ci.yml",
     "scripts/check_prod_app_release_scope.py",
+    "scripts/reset_homolog_owner.py",
     "scripts/classify_prod_release.py",
     "scripts/deploy-prod-app-services.sh",
+    "scripts/check_infinitepay_retirement_scope.py",
+    "scripts/deploy-prod-infinitepay-retirement.sh",
+    "scripts/test_deploy_prod_infinitepay_retirement.sh",
+    "scripts/test_retirement_legacy_worker.py",
     "scripts/production-preflight-ssh-wrapper.sh",
     "scripts/test_prod_app_release_scope.py",
     "scripts/test_classify_prod_release.py",
     "scripts/test_deploy_prod_app_services.sh",
     "scripts/test_production_release_workflow_policy.py",
+    "scripts/build_python_security_candidates.py",
+    "scripts/python_security_release.py",
+    "scripts/test_python_security_release.py",
+    "scripts/prepare_emergency_api_image.py",
+    "scripts/test_prepare_emergency_api_image.py",
     "scripts/check_prod_facial_release_gates.py",
     "scripts/deploy-prod-facial-services.sh",
     "scripts/test_prod_facial_release_gates.py",
@@ -60,10 +92,16 @@ ALLOWED_OPERATIONS = {
     "frontend/app/admin/payments/page.test.tsx",
     "frontend/app/admin/payments/order-photos.test.tsx",
     "frontend/app/admin/payments/redesign.test.tsx",
+    "frontend/app/admin/galleries/[galleryId]/orders/orders.test.tsx",
+    "frontend/app/library/cart/cart.test.tsx",
+    "frontend/app/library/cart/checkout-navigation.test.ts",
+    "frontend/app/library/library.test.tsx",
     "frontend/app/admin/retirement.test.ts",
     "frontend/scripts/payments-visual-qa.cjs",
     "RELATORIO_IMPLEMENTACAO_VENDAS_PAGAMENTOS.md",
     "design-qa.md",
+    "INSTRUCOES_EXECUTOR_CLAUDE_CODE.md",
+    "ROADMAP_ARQUITETURA.md",
     *RETIRED_STATISTICS_FILES,
     "openspec/changes/improve-client-face-reference-capture/production-gates.json",
     "openspec/changes/improve-client-face-reference-capture/tasks.md",
@@ -84,12 +122,33 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
         return False, "manifesto_runtime_incompleto"
     try:
         git(root, "merge-base", "--is-ancestor", base, target)
-        changed = set(git(root, "diff", "--name-only", base, target).splitlines())
+        statuses = {}
+        for line in git(root, "diff", "--name-status", "--no-renames", base, target).splitlines():
+            status, path = line.split("\t", 1)
+            statuses[path] = status
+        changed = set(statuses)
+        emergency = manifest.get("emergency_api")
+        extra_blobs = {}
+        if emergency is not None:
+            api_base = emergency["baseline_sha"]
+            git(root, "merge-base", "--is-ancestor", api_base, target)
+            extra_blobs = emergency["input_blobs"]
+            if set(extra_blobs) != {"backend/requirements-push.txt"}:
+                return False, "inputs_emergenciais_invalidos"
+            api_changes = set(git(root, "diff", "--name-only", api_base, target, "--", "backend/").splitlines())
+            for path in api_changes:
+                if path not in RUNTIME_FILES and path not in extra_blobs and not path.startswith("backend/tests/"):
+                    return False, "api_fora_do_escopo"
+            changed |= api_changes
         for path in changed:
-            if path in RUNTIME_FILES or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES):
+            if path in RETIRED_INFINITEPAY_FILES:
+                if statuses[path] != "D":
+                    return False, "arquivo_fora_do_escopo"
+                continue
+            if path in RUNTIME_FILES or path in extra_blobs or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES):
                 continue
             return False, "arquivo_fora_do_escopo"
-        for path, expected in manifest["runtime_blobs"].items():
+        for path, expected in {**manifest["runtime_blobs"], **extra_blobs}.items():
             actual = git(root, "rev-parse", f"{target}:{path}")
             if actual != expected:
                 return False, "runtime_diverge_do_blob_aprovado"

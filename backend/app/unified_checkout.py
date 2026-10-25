@@ -18,7 +18,6 @@ from app.auth import (
     PaymentGroup,
     PhotoFolder,
     PhotoSelection,
-    ProviderPayment,
     SaleOrder,
     SaleOrderItem,
     audit,
@@ -224,11 +223,6 @@ def cart_payload(db: Session, client: Client):
     paid = [group for group in groups if group["payment_required"]]
     valid = bool(paid) and all(not group["error"] for group in paid)
     methods = payment_methods(db, tenant_id=tenant_id)
-    active_card = db.scalar(select(ProviderPayment).where(
-        ProviderPayment.tenant_id == tenant_id,
-        ProviderPayment.client_id == client.id,
-        ProviderPayment.state.in_(("awaiting_payment", "verification_required")),
-    ).order_by(ProviderPayment.created_at.desc()).limit(1))
     return {
         "groups": groups,
         "quantity": sum(group["quantity"] for group in groups),
@@ -239,17 +233,10 @@ def cart_payload(db: Session, client: Client):
             if paid and not methods["available"] else None
         ),
         "cart_revision": _fingerprint(_valid_materials(db, client)) if valid else None,
-        "card_available": methods["card_available"],
+        "card_available": False,
         "pix_available": methods["pix_available"],
         "default_method": methods["default_method"],
-        "card_payment": ({
-            "id": str(active_card.id), "status": active_card.state,
-            "checkout_url": active_card.checkout_url if active_card.state == "awaiting_payment" else None,
-            "total_cents": active_card.total_cents,
-        } if active_card else None),
     }
-
-
 
 def _fingerprint(materials):
     values = [

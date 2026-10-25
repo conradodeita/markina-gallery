@@ -15,6 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = "openspec/changes/add-production-app-release-workflow/runtime-gates.json"
 
 APP_RUNTIME = {
+    "backend/app/auth.py",
+    "backend/app/payment_availability.py",
+    "backend/app/provider_checkout.py",
+    "frontend/app/library/cart/page.tsx",
+    "frontend/app/library/cart/checkout-navigation.ts",
     "backend/app/main.py",
     "backend/app/statistics_report.py",
     "backend/app/private_folder_overview.py",
@@ -81,8 +86,7 @@ def production_baseline_from_manifest(manifest: dict) -> str:
 def classify(changed: set[str]) -> str:
     app = bool(changed & APP_RUNTIME)
     facial = bool(changed & FACIAL_RUNTIME)
-    if any("/Dockerfile" in p or p.endswith(".dockerignore") or p.startswith("docker/") or p.startswith("backend/facial-assets/")
-           or p.startswith("backend/migrations/")
+    if any("/Dockerfile" in p or p.endswith(".dockerignore") or p.startswith(("docker/", "backend/facial-assets/", "backend/migrations/"))
            or (p.startswith("backend/app/") and "worker" in p and p not in FACIAL_RUNTIME) for p in changed):
         return "protected"
     if any(is_dependency_manifest(p) for p in changed):
@@ -96,6 +100,11 @@ def classify(changed: set[str]) -> str:
     return "none"
 
 
+def classification_exit_code(scope: str) -> int:
+    """Protected deltas are valid classifications but never auto-released."""
+    return 1 if scope == "mixed" else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", required=True)
@@ -107,6 +116,15 @@ def main() -> int:
     baseline_is_ancestor = git_is_ancestor(baseline, args.target, root=ROOT)
     changed = changed_paths(baseline, args.target) if baseline_is_ancestor else set()
     scope = classify_from_baseline(changed, baseline_is_ancestor=baseline_is_ancestor)
+    # Only the complete, exact-blob emergency contract may admit its reviewed
+    # API-only Compose and four-pin update. Never weaken generic classification.
+    if baseline_is_ancestor and changed & APP_RUNTIME:
+        manifest = json.loads(subprocess.check_output(
+            ["git", "show", f"{args.target}:{MANIFEST_PATH}"], cwd=ROOT, text=True))
+        if manifest.get("emergency_api"):
+            from check_prod_app_release_scope import evaluate
+            if evaluate(ROOT, baseline, args.target, manifest)[0]:
+                scope = "app"
     print(f"release_baseline_sha={baseline}")
     print(f"release_scope={scope}")
     if scope == "dependencies":
@@ -116,7 +134,7 @@ def main() -> int:
         with open(output, "a", encoding="utf-8") as handle:
             handle.write(f"release_scope={scope}\n")
             handle.write(f"base_sha={baseline}\n")
-    return 1 if scope in {"mixed", "protected"} else 0
+    return classification_exit_code(scope)
 
 
 if __name__ == "__main__":

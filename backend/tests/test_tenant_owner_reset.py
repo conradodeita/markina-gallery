@@ -57,8 +57,6 @@ def graph(monkeypatch, tmp_path):
                 auth.AuthSession(tenant_id=tenant.id, role="admin", subject_id=admin.id,
                                  admin_subject_id=admin.id, token_hash=f"synthetic-session-{i}",
                                  expires_at=auth.now() + timedelta(days=7)),
-                auth.InfinitePaySettings(tenant_id=tenant.id, admin_user_id=admin.id,
-                                         status="inactive", handle=f"synthetic-tag-{i}"),
                 auth.NotificationSetting(tenant_id=tenant.id, event_type="first_access",
                                          whatsapp_body=f"synthetic-preference-{i}",
                                          push_title="Synthetic title", push_body="Synthetic body"),
@@ -88,7 +86,8 @@ def graph(monkeypatch, tmp_path):
                                      photo_asset_id_snapshot=photo.id, filename_snapshot="synthetic.jpg", unit_price_cents=1000)
             payment = auth.ProviderPayment(tenant_id=tenant.id, client_id=client.id, checkout_key=f"synthetic-card-{i}",
                                            cart_revision="a" * 64, total_cents=1000, handle_snapshot=f"synthetic-tag-{i}",
-                                           configuration_version=1, verification_profile="synthetic")
+                                           configuration_version=1, verification_profile="synthetic",
+                                           state="awaiting_payment")
             db.add_all([item, payment])
             db.flush()
             db.add_all([
@@ -155,7 +154,6 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     owner = db.get(auth.AdminUser, admins[0].id)
     assert owner.password_hash == "synthetic-password-0"
     assert owner.totp_secret == "synthetic-totp-0"
-    assert db.scalar(select(auth.InfinitePaySettings.handle)) == "synthetic-tag-0"
     assert db.scalar(select(auth.NotificationSetting.whatsapp_body)) == "synthetic-preference-0"
     assert db.scalar(select(auth.AuthSession.token_hash)) == "synthetic-session-0"
     assert count(db, monitor.MonitorSample) == 1

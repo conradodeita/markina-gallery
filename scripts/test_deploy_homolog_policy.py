@@ -179,9 +179,9 @@ def main() -> int:
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
     require('MARKINA_PUBLIC_BASE_URL=%q', "origem pública encaminhada ao deploy", WORKFLOW)
     forbid(r'HOMOLOG_FACIAL_PROCESSING_ENABLED:\s*"true"|--facial-enabled\s+%q',
-           "deploy InfinitePay não deve habilitar processamento facial", WORKFLOW)
+           "deploy de homologação não deve habilitar processamento facial", WORKFLOW)
     forbid(r'HOMOLOG_RAW_DEVELOPMENT_ENABLED:\s*"true"|--raw-development-enabled\s+%q',
-           "deploy InfinitePay não deve habilitar o worker RAW", WORKFLOW)
+           "deploy de homologação não deve habilitar o worker RAW", WORKFLOW)
     require('REQUESTED_RAW_DEVELOPMENT_ENABLED="auto"', "RAW preservado automaticamente por padrão", SCRIPT)
     require('resolve_raw_development_state', "estado RAW resolvido após detectar worker ativo", SCRIPT)
     require('extra+=(-f docker/docker-compose.raw-development.yml)', "overlay RAW restrito ao deploy autorizado", SCRIPT)
