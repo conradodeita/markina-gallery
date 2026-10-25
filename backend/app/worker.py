@@ -855,6 +855,11 @@ def reconcile_next_unknown_delivery() -> bool:
 
 @observe_work("general")
 def run_cycle() -> bool:
+    from app.mercadopago_webhook import (
+        process_next_mercadopago_event,
+        reconcile_next_mercadopago_payment,
+    )
+
     # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
     with domain_session(SessionLocal) as batch_db:
         process_ready_batches(batch_db)
@@ -862,6 +867,8 @@ def run_cycle() -> bool:
     process_asset_file_cleanup()
     process_next_notification("push")
     process_next_notification("whatsapp")
+    event_worked = process_next_mercadopago_event()
+    payment_worked = reconcile_next_mercadopago_payment() or event_worked
     return (
         process_next_gallery_lifecycle_operation()
         or process_next_media_job()
@@ -873,6 +880,7 @@ def run_cycle() -> bool:
         or reconcile_next_unknown_delivery()
         or process_otp_privacy_cleanup()
         or process_admin_security_cleanup()
+        or payment_worked
     )
 
 

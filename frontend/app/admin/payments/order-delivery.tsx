@@ -12,7 +12,7 @@ export type OrderDelivery = {
   can_resend: boolean;
 };
 
-export function OrderDeliveryForm({ orderId, delivery, onRefresh }: { orderId: string; delivery: OrderDelivery; onRefresh: () => Promise<void> }) {
+export function OrderDeliveryForm({ orderId, delivery, onRefresh, unavailableMessage }: { orderId: string; delivery: OrderDelivery; onRefresh: () => Promise<void>; unavailableMessage?: string }) {
   const [draft, setDraft] = useState(delivery.album_url ?? "");
   const [saved, setSaved] = useState(delivery);
   const [seen, setSeen] = useState(delivery);
@@ -61,7 +61,7 @@ export function OrderDeliveryForm({ orderId, delivery, onRefresh }: { orderId: s
     <label htmlFor={`delivery-link-${orderId}`}>Link externo do álbum</label>
     <input id={`delivery-link-${orderId}`} type="url" maxLength={2048} value={draft} disabled={busy || !delivery.can_send}
       placeholder="https://drive.google.com/…" onChange={(event) => setDraft(event.target.value)} aria-describedby={`delivery-help-${orderId}`} />
-    <p id={`delivery-help-${orderId}`}>{delivery.can_send ? "Cole o link HTTPS de compartilhamento do serviço de armazenamento (Google Photos, Drive ou equivalente). Enviar libera o botão em Compras e avisa pelos canais habilitados em Notificações." : "Confirme o pagamento para disponibilizar as fotos."}</p>
+    <p id={`delivery-help-${orderId}`}>{delivery.can_send ? "Cole o link HTTPS de compartilhamento do serviço de armazenamento (Google Photos, Drive ou equivalente). Enviar libera o botão em Compras e avisa pelos canais habilitados em Notificações." : unavailableMessage ?? "Confirme o pagamento para disponibilizar as fotos."}</p>
     <div className="order-delivery-actions">
       <MarkinaButton type="submit" disabled={busy || !delivery.can_send || !draft.trim()}>{busy ? "Aguarde…" : "Enviar"}</MarkinaButton>
       {saved.album_url ? <>

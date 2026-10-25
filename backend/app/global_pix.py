@@ -146,6 +146,11 @@ def proposal_preview(target: str) -> dict:
 
 
 def checkout_pix(db: Session, *, tenant_id: UUID) -> GlobalPixSettings:
+    from app.mercadopago_settings import preferences
+
+    pref = preferences(db, tenant_id)
+    if pref and not pref.pix_enabled:
+        raise PixCodeError("O PIX do sistema está desabilitado para novos pagamentos.")
     settings = global_pix_settings(db, tenant_id=tenant_id)
     if not settings or settings.status != "active" or not settings.copy_paste:
         raise PixCodeError(

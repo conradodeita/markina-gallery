@@ -27,7 +27,7 @@ from tests.test_integration_secrets import secret_keyring  # noqa: F401
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261022_0087"
+CURRENT_SCHEMA = "20261024_0088"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
@@ -35,6 +35,7 @@ POST_TRANSITION_TABLES = frozenset({
     "facial_embedding_experiment_setting",
     "provider_payment", "provider_payment_attempt", "provider_payment_receipt",
     "provider_payment_correction", "raw_development_settings", "raw_development_job",
+    "mercadopago_account", "mercadopago_payment", "mercadopago_webhook", "payment_preferences",
 })
 
 
@@ -243,7 +244,7 @@ def assert_catalog(connection):
         future_columns = {
             "facial_search_request": {"search_engine"},
             "private_upload_batch": {"folder_id", "parent_gallery_id"},
-            "sale_order": {"provider_payment_id"},
+            "sale_order": {"provider_payment_id", "mercadopago_payment_id"},
             "tenant": {"canonical_host"},
         }
         future_nullability = {

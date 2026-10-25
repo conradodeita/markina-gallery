@@ -40,6 +40,7 @@ from app.auth import (
     GalleryMembershipNotificationOutbox,
     GalleryReopeningNotificationOutbox,
     GalleryReopeningRequest,
+    MercadoPagoPayment,
     ParentGalleryRegistration,
     PaymentCommunication,
     PaymentGroup,
@@ -340,6 +341,10 @@ def deletion_inventory(db: Session, client: Client, *, tenant_id: UUID) -> dict[
             tenant_id=tenant_id,
        ),
     }
+    attempts = _count(db, MercadoPagoPayment, MercadoPagoPayment.client_id == client.id,
+                      tenant_id=tenant_id)
+    if attempts:
+        protected["mercadopago_payments"] = attempts
     from app.auth import RemovedPhotoMovement
     retained_movements = _count(db, RemovedPhotoMovement, RemovedPhotoMovement.client_id == client.id, tenant_id=tenant_id)
     if retained_movements:

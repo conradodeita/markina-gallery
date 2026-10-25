@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from scripts import third_party_report as monitor
 
@@ -13,7 +13,7 @@ class ThirdPartyReportTests(unittest.TestCase):
         self.assertEqual(pins["LightCraft"], "0.6.0")
         self.assertEqual(pins["RawTherapee"], "5.9")
         self.assertRegex(pins["EmbeddingGemma 2"], r"^[0-9a-f]{40}$")
-        self.assertEqual(monitor.inventory_count(), 68)
+        self.assertEqual(monitor.inventory_count(), 72)
 
     def test_specialized_versions_compare_semver_and_model_revision_without_guessing(self):
         release = {"tag_name": "v5.12.1"}
@@ -114,7 +114,7 @@ class ThirdPartyReportTests(unittest.TestCase):
                 return {"sha": monitor.pinned_versions()["EmbeddingGemma 2"]}
             raise AssertionError("unexpected source")
 
-        report, failed = monitor.build_report("org/repo", "synthetic-token", fake_fetch, datetime(2026, 10, 19, tzinfo=timezone.utc))
+        report, failed = monitor.build_report("org/repo", "synthetic-token", fake_fetch, datetime(2026, 10, 19, tzinfo=UTC))
         self.assertFalse(failed)
         self.assertIn("2026-10-19T00:00:00+00:00", report)
         self.assertIn("P1 · HIGH · cryptography (pip)", report)
@@ -212,7 +212,7 @@ class ThirdPartyReportTests(unittest.TestCase):
         self.assertIn("zero jobs", inventory)
         self.assertIn("não prova", inventory.lower())
         self.assertIn("carrega o modelo sob demanda", inventory)
-        self.assertIn("68 itens rastreáveis", inventory)
+        self.assertIn("72 itens rastreáveis", inventory)
 
 
 if __name__ == "__main__":

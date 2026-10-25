@@ -106,6 +106,8 @@ services:
       <<: *facial-environment
       PUBLIC_APP_ORIGINS: ${PUBLIC_APP_ORIGINS:-}
       APP_ENV: ${APP_ENV:-development}
+      MERCADOPAGO_ALLOW_LIVE_PAYMENTS: ${MERCADOPAGO_ALLOW_LIVE_PAYMENTS:-false}
+      MERCADOPAGO_TEST_CUSTOMERS: ${MERCADOPAGO_TEST_CUSTOMERS:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-markina_session}
       SESSION_DAYS: ${SESSION_DAYS:-7}
@@ -322,6 +324,9 @@ services:
     command: ["python", "-m", "app.worker"]
     env_file:
       - path: ${WHATSAPP_BINDINGS_ENV_FILE:-.env.whatsapp-bindings}
+        required: false
+        format: raw
+      - path: ${INTEGRATION_SECRETS_ENV_FILE:-.env.integration-secrets}
         required: false
         format: raw
     environment:

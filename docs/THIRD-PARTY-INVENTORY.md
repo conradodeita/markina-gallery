@@ -5,7 +5,7 @@
 
 ## Resumo executivo copiável
 
-Foram organizados **68 itens rastreáveis** em unidades explícitas (pacotes, runtime, serviços, modelos, ferramentas e integrações). O primeiro inventário registrava 43 grupos mais agregados; a diferença numérica decorre principalmente de decompor famílias de dependências/integrações e incluir o runtime Gemma encontrado na `main`, não significa 25 novos serviços.
+Foram organizados **72 itens rastreáveis** em unidades explícitas (pacotes, runtime, serviços, modelos, ferramentas e integrações). O primeiro inventário registrava 43 grupos mais agregados; a reconciliação de 19/10 tinha 68 itens. Em 24/10 foram acrescentados SDK, JS, ferramenta temporária e assets da integração Orders. A diferença numérica não equivale à criação de novos serviços.
 
 | Área | Principais itens | Prioridade |
 |---|---|---|
@@ -117,6 +117,19 @@ Outros pacotes diretos backend e todos os lockfile transitivos continuam represe
 | 66 | curl/procps | pacotes apt nos Dockerfiles | Healthchecks e gerenciamento de processo; cadeia OS. |
 | 67 | DigiKam/XMP | protocolo/export do fotógrafo e parser interno | Nenhum cliente/versão do DigiKam declarados; cobrir variantes XMP nas fixtures. |
 | 68 | Google Drive/OCI/GitHub APIs | backup/arquivo previstos, host Oracle e APIs de monitoramento | Não foi encontrado SDK Google Drive no app; serviço real e agent/CLI OCI não confirmados. API GitHub usada pelo relatório só leitura. |
+
+### Adição em desenvolvimento — 24/10/2026
+
+Esta adição da change `add-mercadopago-orders-checkout` acrescenta dois componentes de integração, uma ferramenta temporária de desenvolvimento e assets de identificação ao inventário anterior de 68 itens, totalizando 72. Não altera a evidência histórica de produção acima.
+
+| ID | Componente e origem | Versão / licença / ativação | Consumidor e validação |
+|---|---|---|---|
+| 69 | [SDK Python oficial Mercado Pago](https://github.com/mercadopago/sdk-python), distribuição PyPI `mercadopago` | `==3.6.0`, MIT, versão estável conferida em 24/10/2026; instalação autorizada pelo proprietário. | Orders API e consulta de conta no backend. Instalado apenas no venv isolado; transporte limitado, timeout 15s, sem retries de criação. Contratos locais e operações externas com credencial verificada de teste: criação/GET/busca/cancel/refund. Nenhuma execução em produção. |
+| 70 | [MercadoPago.js V2](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/payment-integration/websites/cards) em `https://sdk.mercadopago.com/js/v2` | Versão pública V2 do serviço, conteúdo móvel do provedor; termos Mercado Pago e aplicação própria por tenant; sem cópia local de código do provedor. | Card Payment na tela Next.js /library/checkout. Montagem/tokenização oficiais comprovadas em Edge 390 px, com APRO/FUND/CONT e resposta perdida. Matriz visual 390/768/1440 claro/escuro permanece explicitamente sintética. Evidência: external-validation.md da change. |
+| 71 | [cloudflared 2026.10.3](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.3), ferramenta temporária de desenvolvimento | Origem oficial Cloudflare, Apache-2.0; SHA-256 `76b2805253d0d6ffacb092a7acfbee99e7af6917835c0c5410e23f3ef5052da2` confrontado com o digest oficial do release. Binário local ignorado, sem instalação de serviço/ativação produtiva. | Somente ensaio externo Orders em 24/10/2026, autorizado pelo proprietário. Gateway restrito ao callback de teste, duas entregas genuínas comprovadas. Túnel encerrado; não integra imagens/runtime da aplicação nem cria DNS/firewall. URL efêmera, sem SLA; nunca reutilizar como endpoint de produção. |
+| 72 | Assets de identificação Pix/Mercado Pago; fontes primárias do provedor/participante em `frontend/public/payments/README.md` | SVGs estáticos originais, obtidos em 24/10/2026; direitos de marca dos titulares, uso limitado à identificação de pagamentos; sem biblioteca ou serviço novo. | Thumbnails locais no carrinho e nos métodos do checkout; preservadas proporções, contraste/base branca e texto acessível. Sem scripts, eventos ou referências externas. 24 capturas locais sem overflow/imagens ausentes; não interfere em autorização/estado financeiro. |
+
+Pagamentos são críticos: upgrade futuro exige contratos Orders, SDK, HMAC, idempotência, migração e regressão de PIX/tenant. Chave mestra permanece externa; nenhum segredo ou teste de cobrança real faz parte deste inventário. Verificação de alerts de segurança das contas/registries não foi executada nesta adição.
 
 ## Evidência runtime e proveniência conhecida
 

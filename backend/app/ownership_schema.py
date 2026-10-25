@@ -135,7 +135,7 @@ def apply_ownership_constraints(metadata: MetaData) -> None:
     add_owner_fk(metadata.tables["admin_security_challenge"], ("session_id", "tenant_id"),
                  metadata.tables["auth_session"], ("id", "tenant_id"))
     metadata.tables["admin_security_challenge"].append_constraint(CheckConstraint(
-        "purpose != 'change_pix_otp' OR tenant_id IS NOT NULL",
+        "purpose NOT IN ('change_pix_otp', 'change_payment_otp') OR tenant_id IS NOT NULL",
         name="ck_admin_challenge_pix_context",
     ))
     metadata.info["ownership_constraints_applied"] = True

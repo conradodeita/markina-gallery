@@ -36,7 +36,8 @@ type Communication = {
   client_notification: Delivery | null;
 };
 
-type FinancialStatus = "reported" | "confirmed" | "confirmed_undelivered" | "awaiting_payment" | "not_found" | "overdue" | "verifying" | "exception" | "hold";
+type FinancialStatus = "reported" | "confirmed" | "confirmed_undelivered" | "awaiting_payment" | "not_found" | "overdue" | "verifying" | "exception" | "hold"
+  | "processing" | "rejected" | "canceled" | "expired" | "refunded" | "partially_refunded" | "charged_back" | "duplicate_review";
 type Order = {
   assets_removed?: boolean;
   id: string;
@@ -47,6 +48,13 @@ type Order = {
   payment_method?: "credit_card" | "pix";
   provider_payment_state?: string;
   provider_payment_id?: string;
+  payment_provider?: string;
+  payment_status?: string;
+  mercadopago?: { id: string; state: string; method: string; active: boolean;
+    test_account?: boolean;
+    provider_order_id: string | null; provider_payment_id: string | null;
+    order_status: string | null; order_detail: string | null;
+    transaction_status: string | null; transaction_detail: string | null };
   created_at: string;
   selection_expires_at: string | null;
   communications: Communication[];
@@ -99,6 +107,7 @@ type Filters = {
   client_id?: string;
   parent_gallery_id?: string;
   financial_status?: string;
+  payment_provider?: string;
   created_from?: string;
   created_to?: string;
 };
@@ -114,6 +123,14 @@ const financialPresentation: Record<FinancialStatus, { label: string; tone: "neu
   verifying: { label: "Verificando cartão", tone: "warning" },
   exception: { label: "Pagamento em análise", tone: "danger" },
   hold: { label: "Pagamento em revisão", tone: "dark" },
+  processing: { label: "Pagamento em processamento", tone: "warning" },
+  rejected: { label: "Pagamento recusado", tone: "danger" },
+  canceled: { label: "Pagamento cancelado", tone: "neutral" },
+  expired: { label: "Pagamento expirado", tone: "dark" },
+  refunded: { label: "Pagamento reembolsado", tone: "neutral" },
+  partially_refunded: { label: "Reembolso parcial", tone: "warning" },
+  charged_back: { label: "Pagamento contestado", tone: "danger" },
+  duplicate_review: { label: "Conferir possível duplicidade", tone: "danger" },
 };
 const financialColor: Record<FinancialStatus, string> = {
   reported: "var(--payment-status-reported)",
@@ -125,6 +142,10 @@ const financialColor: Record<FinancialStatus, string> = {
   verifying: "var(--payment-status-verifying)",
   exception: "var(--payment-status-exception)",
   hold: "var(--payment-status-hold)",
+  processing: "var(--payment-status-verifying)", rejected: "var(--payment-status-not-found)",
+  canceled: "var(--payment-status-awaiting)", expired: "var(--payment-status-overdue)",
+  refunded: "var(--payment-status-awaiting)", partially_refunded: "var(--payment-status-reported)",
+  charged_back: "var(--payment-status-exception)", duplicate_review: "var(--payment-status-exception)",
 };
 function groupPresentation(group: ClientGroup) {
   return { ...financialPresentation[group.financial_status], className: `payment-status-badge--${group.financial_status}` };
@@ -162,7 +183,7 @@ function requestPath(filters: Filters, cursor?: string | null) {
 export default function AdminPaymentsPage() {
   const [view, setView] = useState("payments");
   return <main className={`admin-shell payments-dashboard ${styles.page}`}>
-    <header className={styles.pageHeading}><div><p className="eyebrow">Operação financeira · decisão manual</p>
+    <header className={styles.pageHeading}><div><p className="eyebrow">Operação financeira</p>
     <h1>Vendas e pagamentos</h1></div>
     <label className={styles.mode}>Exibir<select value={view} onChange={(event) => setView(event.target.value)}>
       <option value="payments">Pedidos e pagamentos</option>
@@ -277,6 +298,7 @@ function PaymentsDashboard() {
       client_id: selectedClientId || undefined,
       parent_gallery_id: String(data.get("parent_gallery_id") ?? "") || undefined,
       financial_status: String(data.get("financial_status") ?? "") || undefined,
+      payment_provider: String(data.get("payment_provider") ?? "") || undefined,
       created_from: dateBoundary(data.get("created_from"), false),
       created_to: dateBoundary(data.get("created_to"), true),
     };
@@ -300,13 +322,14 @@ function PaymentsDashboard() {
     void load(next);
   }
 
-  async function exportCsv() {
+  async function exportCsv(detailed = false) {
     if (exportRequest.current) return;
     const controller = new AbortController(); exportRequest.current = controller;
     setExporting(true); setExportMessage("");
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
     try {
+      if (detailed) params.set("include_financial_details", "true");
       const response = await fetch(`/api/admin/payment-communications/export.csv?${params}`, { credentials: "same-origin", signal: controller.signal });
       if (response.status === 204) { setExportMessage("Nenhum pedido nos filtros aplicados para exportar."); return; }
       if (!response.ok) throw new Error();
@@ -326,7 +349,7 @@ function PaymentsDashboard() {
 
   const hasFilters = filters.financial_status !== "priority" || Object.entries(filters).some(([key, value]) => key !== "financial_status" && Boolean(value));
   return <section>
-    <p className="intro">A comunicação da cliente não confirma o PIX. Revise cada pedido e registre uma única decisão; o histórico comercial permanece mesmo quando a galeria é removida.</p>
+    <p className="intro">Confira o PIX do sistema informado pela cliente. Pagamentos Mercado Pago são confirmados automaticamente pela integração; o histórico comercial permanece mesmo quando a galeria é removida.</p>
 
     <div className="payment-dashboard-body">
       <div className="payment-filter-sticky" style={{ top: `${adminHeaderHeight}px` }}>
@@ -339,6 +362,7 @@ function PaymentsDashboard() {
         <div className="payment-filter-bar__actions">
           <MarkinaButton type="submit" form="payment-dashboard-filter">Aplicar</MarkinaButton>
           <MarkinaButton variant="secondary" disabled={exporting} onClick={() => void exportCsv()}>{exporting ? "Exportando…" : "Exportar CSV"}</MarkinaButton>
+          <MarkinaButton variant="secondary" disabled={exporting} onClick={() => void exportCsv(true)}>CSV financeiro detalhado</MarkinaButton>
         </div>
       </div>
       <form id="payment-dashboard-filter" className="payment-filter-form" onSubmit={applyFilters}>
@@ -348,6 +372,11 @@ function PaymentsDashboard() {
         <div className="filter-grid">
           <label>Galeria pública<select name="parent_gallery_id" value={draftFilters.parent_gallery_id ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, parent_gallery_id: event.target.value })}><option value="">Todas</option>{dashboard.facets.parent_galleries.map((gallery) => <option key={gallery.id} value={gallery.id}>{gallery.name} ({gallery.count})</option>)}</select></label>
           <label>Situação financeira<select name="financial_status" value={draftFilters.financial_status ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, financial_status: event.target.value })}><option value="priority">Pendências prioritárias</option><option value="">Todos</option>{Object.entries(financialPresentation).map(([value, presentation]) => <option key={value} value={value} style={{ color: financialColor[value as FinancialStatus] }}>{presentation.label}</option>)}</select></label>
+          <label>Provedor<select name="payment_provider" value={draftFilters.payment_provider ?? ""}
+            onChange={(event) => setDraftFilters({ ...draftFilters, payment_provider: event.target.value })}>
+            <option value="">Todos</option><option value="pix">PIX do sistema</option>
+            <option value="mercadopago">Mercado Pago</option><option value="infinitepay">InfinitePay (histórico)</option>
+          </select></label>
           <label>De<input type="date" name="created_from" value={draftFilters.created_from?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_from: event.target.value })} /></label>
           <label>Até<input type="date" name="created_to" value={draftFilters.created_to?.slice(0, 10) ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, created_to: event.target.value })} /></label>
           <div className="payment-filter-actions"><MarkinaButton type="submit">Aplicar filtros</MarkinaButton>{hasFilters ? <MarkinaButton type="button" variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}</div>
@@ -524,7 +553,7 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.provider_payment_id ? " · InfinitePay (histórico)" : order.payment_method === "credit_card" ? " · cartão de crédito" : ""} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.mercadopago ? <>Compra {order.mercadopago.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.mercadopago ? ` · Mercado Pago · ${order.payment_method === "pix" ? "PIX" : "Cartão de crédito"}` : order.provider_payment_id ? " · InfinitePay (histórico)" : order.payment_method === "credit_card" ? " · cartão de crédito" : " · PIX do sistema"} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>
@@ -533,7 +562,19 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
       {expanded && order.folders?.length ? <OrderPhotos folders={order.folders} /> : !order.folders?.length ? <p>Nenhuma fotografia disponível.</p> : null}
       <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p></section>
       <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
-      {order.provider_payment_id || order.payment_method === "credit_card" ? <>
+      {order.mercadopago ? <>
+        {order.mercadopago.test_account ? <p>TESTE · Compra simulada, excluída da receita e do CSV padrão.</p> : null}
+        <p>Confirmação automática pelo Mercado Pago. Estado do pedido: {order.payment_status === "confirmed" ? "confirmado" : order.payment_status === "cancelled" ? "cancelado" : "aguardando confirmação"}.</p>
+        <dl className="payment-order__facts">
+          <div><dt>Order Mercado Pago</dt><dd>{order.mercadopago.provider_order_id ?? "Em verificação"}</dd></div>
+          <div><dt>Estado da order</dt><dd>{order.mercadopago.order_status ?? "Em verificação"}{order.mercadopago.order_detail ? ` / ${order.mercadopago.order_detail}` : ""}</dd></div>
+          <div><dt>Transação</dt><dd>{order.mercadopago.provider_payment_id ?? "Em verificação"}</dd></div>
+          <div><dt>Estado da transação</dt><dd>{order.mercadopago.transaction_status ?? "Em verificação"}{order.mercadopago.transaction_detail ? ` / ${order.mercadopago.transaction_detail}` : ""}</dd></div>
+        </dl>
+        {["partially_refunded", "charged_back", "duplicate_review"].includes(order.financial_status)
+          ? <p>Confira a operação na conta Mercado Pago. A entrega desta compra aguarda revisão financeira.</p> : null}
+        {downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}
+      </> : order.provider_payment_id || order.payment_method === "credit_card" ? <>
         <p>Registro de pagamento InfinitePay legado, somente leitura: {order.provider_payment_state ?? "estado indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}.</p>
         {downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}
       </> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
@@ -545,7 +586,8 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
       </>}
       </section>
       <section className={styles.deliverySection} aria-label="Entrega do pedido"><h4>Entrega</h4><p>{order.delivery?.album_url && isConfirmedFinancialStatus(order.financial_status) ? "Fotos disponíveis" : "Fotos indisponíveis"}</p>
-      <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh} />
+      <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh}
+        unavailableMessage={order.mercadopago ? "A entrega depende da confirmação automática e da liberação financeira desta compra." : undefined} />
       </section></div>
     </details>
   </article>;

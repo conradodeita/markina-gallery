@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { StatusBadge } from "../ui-kit";
 import { PurchasePreview } from "../purchase-preview";
 import { safeExternalAlbumUrl } from "../order-album-url";
+import { mercadoPagoState } from "./mercadopago";
 export type Order = {
   id: string;
   gallery_name: string;
@@ -19,6 +20,8 @@ export type Order = {
   payment_required?: boolean;
   payment_method?: "credit_card" | "pix";
   provider_payment_state?: string;
+  payment_provider?: string;
+  mercadopago?: { state: string; method: string };
   provider_cart_reopened_at?: string | null;
   provider_requires_reconciliation?: boolean;
   delivery_album_url?: string | null;
@@ -34,6 +37,7 @@ function orderState(order: Order) {
 }
 
 function orderLabel(order: Order) {
+  if (order.mercadopago) return mercadoPagoState[order.mercadopago.state] ?? "Pagamento em conferência";
   if (order.provider_payment_state || order.payment_method === "credit_card") {
     if (order.provider_cart_reopened_at && order.commercial_state === "cancelled"
         && order.provider_payment_state !== "confirmed") return order.provider_requires_reconciliation

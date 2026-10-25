@@ -9,7 +9,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -78,7 +78,7 @@ def pinned_versions() -> dict[str, str]:
 def inventory_count() -> int:
     document = read_text("docs/THIRD-PARTY-INVENTORY.md")
     records = re.findall(r"^\|\s*(\d{2})\s*\|", document, re.MULTILINE)
-    expected = [f"{index:02d}" for index in range(1, 69)]
+    expected = [f"{index:02d}" for index in range(1, 73)]
     if records != expected:
         raise SourceError("contagem/ordem do inventário local divergente")
     return len(records)
@@ -253,7 +253,7 @@ def build_report(repo: str, token: str, fetch: Callable = fetch_json, now: datet
         raise SourceError("identificador do repositório ausente ou inválido")
     if not token:
         raise SourceError("GITHUB_TOKEN ausente; fontes de PR/alertas não foram consultadas")
-    generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(timespec="seconds")
+    generated_at = (now or datetime.now(UTC)).astimezone(UTC).isoformat(timespec="seconds")
     sections: list[str] = [
         "# Revisão semanal de dependências externas",
         "",

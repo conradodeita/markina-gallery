@@ -12,8 +12,8 @@ from app.global_pix import checkout_pix
 from app.pix import PixCodeError
 
 PAYMENT_REQUIRED_MESSAGE = (
-    "Pagamento obrigatório exige PIX do sistema configurado na sua conta. "
-    "Configure o PIX em Configurações ou desmarque Pagamento obrigatório."
+    "Pagamento obrigatório exige um meio de pagamento configurado na sua conta. "
+    "Configure PIX ou Mercado Pago em Configurações ou desmarque Pagamento obrigatório."
 )
 
 
@@ -23,19 +23,21 @@ def lock_payment_account(db: Session, tenant_id: UUID) -> None:
               .execution_options(populate_existing=True))
 
 
-def payment_methods(db: Session, *, tenant_id: UUID) -> dict:
+def payment_methods(db: Session, *, tenant_id: UUID, client_id: UUID | None = None) -> dict:
     require_active_owner(db, tenant_id)
     try:
         checkout_pix(db, tenant_id=tenant_id)
         pix_available = True
     except PixCodeError:
         pix_available = False
-    card_available = False
+    from app.mercadopago_settings import effective_mercadopago
+
+    card_available = effective_mercadopago(db, tenant_id, client_id=client_id) is not None
     return {
         "pix_available": pix_available,
         "card_available": card_available,
-        "available": pix_available,
-        "default_method": "pix" if pix_available else None,
+        "available": pix_available or card_available,
+        "default_method": "pix" if pix_available else "mercadopago" if card_available else None,
     }
 
 
