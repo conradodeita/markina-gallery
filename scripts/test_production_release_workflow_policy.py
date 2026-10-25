@@ -6,12 +6,14 @@ import json
 import subprocess
 from pathlib import Path
 
-from check_prod_app_release_scope import evaluate, git
-from classify_prod_release import classify
 from check_infinitepay_retirement_scope import (
     evaluate as evaluate_retirement_scope,
+)
+from check_infinitepay_retirement_scope import (
     evaluate_followup_scope as evaluate_retirement_followup_scope,
 )
+from check_prod_app_release_scope import evaluate, git
+from classify_prod_release import classify
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -50,7 +52,7 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
     ready, reason = evaluate(root, baseline, target, manifest)
     if not ready:
         changed = set(git(root, "diff", "--name-only", baseline, target).splitlines())
-        if classify(changed) != "protected" or reason not in {
+        if classify(changed) not in {"protected", "dependencies"} or reason not in {
             "api_fora_do_escopo", "arquivo_fora_do_escopo", "runtime_diverge_do_blob_aprovado",
         }:
             raise AssertionError(f"candidato não comprova a recusa protegida esperada: {reason}")

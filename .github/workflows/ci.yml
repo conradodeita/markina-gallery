@@ -104,6 +104,9 @@ jobs:
           python scripts/test_preserve_branding.py -v
           python -m unittest scripts.test_third_party_report -v
           python -m unittest scripts.test_python_security_release -v
+          python scripts/test_specialized_pillow_pin.py -v
+          python scripts/test_specialized_pillow_candidate.py -v
+          python scripts/test_specialized_pillow_release.py -v
           PYTHONPATH=scripts python -m unittest scripts.test_infinitepay_retirement_scope -v
           PYTHONPATH=scripts python -m unittest scripts.test_retirement_inventory_policy -v
           PYTHONPATH=scripts python -m unittest scripts.test_retirement_host_references -v
