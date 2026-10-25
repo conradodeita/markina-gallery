@@ -572,6 +572,31 @@ source {quote(path.as_posix())}
             self.assertEqual('verified-body' in result.stdout, not tamper)
             self.assertEqual(before, self.snapshot())
 
+    def test_orders_wrapper_runs_only_pinned_python_inventory_with_exact_sha(self):
+        source = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(encoding="utf-8")
+        source = source.replace('/opt/markina-gallery', self.model['root'])
+        path = self.base / 'orders-wrapper.sh'
+        path.write_text(source, encoding='utf-8', newline='\n')
+        payload = self.base / 'orders-payload.py'
+        payload.write_text((ROOT / 'scripts/orders_pilot_release.py').read_text(encoding='utf-8'),
+                           encoding='utf-8', newline='\n')
+        args = self.base / 'orders-args.txt'
+        quote = lambda p: "'" + str(p).replace("'", "'\\''") + "'"
+        python = quote(Path(os.sys.executable).as_posix())
+        command = f'''
+export SSH_ORIGINAL_COMMAND=MARKINA_ORDERS_TARGET_SHA={SHA_MAIN}
+curl() {{ cat {quote(payload.as_posix())}; }}
+git() {{ {python} -c 'import sys; sys.stdout.reconfigure(newline="\\n"); b=sys.stdin.buffer.read(); import hashlib; print(hashlib.sha1(b"blob "+str(len(b)).encode()+b"\\0"+b).hexdigest())'; }}
+python3() {{ printf '%s\\n' "$@" > {quote(args.as_posix())}; cat >/dev/null; echo verified-orders-body; }}
+source {quote(path.as_posix())}
+'''
+        before = self.snapshot()
+        result = subprocess.run([BASH, '-c', command], capture_output=True, text=True, timeout=20, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('verified-orders-body', result.stdout)
+        self.assertEqual(args.read_text().splitlines(), ['-B', '-', '--mode', 'inventory', '--sha', SHA_MAIN])
+        self.assertEqual(before, self.snapshot())
+
     def test_malformed_sha_is_rejected_without_queries(self):
         self.run_shell('main --mode inventory --sha invalid', ok=False)
         self.assertEqual(self.log(), '')

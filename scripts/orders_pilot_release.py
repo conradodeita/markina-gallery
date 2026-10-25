@@ -1059,7 +1059,12 @@ def main():
     args = parser.parse_args()
     h = Host()
     if args.mode == 'inventory':
+        if args.sha is not None:
+            require(SHA.fullmatch(args.sha), 'sha_invalido')
+            require(h.main_sha() == args.sha, 'candidato_nao_e_main')
         data = h.inventory()
+        if args.sha is not None:
+            data['target_sha'] = args.sha
         print(json.dumps(data, sort_keys=True))
         print('inventory_fingerprint=' + validate_inventory(data))
     elif args.mode == 'prepare':
