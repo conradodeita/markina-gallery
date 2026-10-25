@@ -190,3 +190,9 @@ Pendentes antes da execução: fechamento da revisão/CI do mecanismo, vinculaç
 - O forced-command root-owned instalado em `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` não reconhece `MARKINA_ORDERS_TARGET_SHA`; aceita somente os comandos facial, API/web, rollback e InfinitePay. Portanto, ainda não há canal autorizado para executar o helper Orders remoto. Nenhum comando SSH arbitrário será usado como fallback.
 - Esta revisão prepara um modo manual `orders-pilot-inventory` pela chave `production-preflight`, enviando somente o SHA completo da main. O wrapper validará o blob do helper e forçará o modo `inventory`; o próprio helper recusará SHA que não corresponda à ponta atual da main. O job não recebe credencial de deploy nem habilita prepare/apply.
 - A atualização da cópia root-owned no host é uma operação separada. Mesmo com CI verde, só pode ser feita após autorização específica e conferência de conteúdo/hash, owner `root:root`, modo `0755` e preservação das rotas/restrições existentes.
+
+### Contrato CLI antes da instalação
+
+- O PR #288 passou no CI `40240294423` e foi integrado em `e79263c9359f9f7037070e05754d2005cd752dcd`. Na revisão operacional anterior à instalação foi identificado que a rota Python enviava `--mode inventory`, enquanto o parser Orders recebe `inventory` como argumento posicional. O wrapper desse commit não foi instalado nem executado no host.
+- O teste da fronteira wrapper/helper foi reforçado para encaminhar os argumentos capturados ao parser real com Host simulado; reproduziu `SystemExit: 2 / unrecognized arguments: --mode`. A correção usa `inventory --sha <SHA>`, preservando o modo fixo e o blob do helper. A instalação operacional aguarda o CI dessa correção.
+- A avaliação proporcional de refatoração não identificou limpeza adicional segura neste ajuste; apenas o contrato de chamada, o teste e a documentação foram alterados.
