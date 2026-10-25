@@ -136,11 +136,23 @@ def active():
     return result
 
 
+def sync_directory(path):
+    if os.name != 'nt':
+        descriptor = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def save(path, data):
     # Exclusive creation: retries never overwrite a previous evidence receipt.
     descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, 'w') as stream:
         json.dump(data, stream, indent=2, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
+    sync_directory(path.parent)
 
 
 def prepare(receipt):

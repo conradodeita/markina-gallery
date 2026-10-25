@@ -25,6 +25,7 @@ from specialized_pillow_candidate import (
     isolated,
     require,
     save,
+    sync_directory,
     validate,
 )
 
@@ -174,6 +175,7 @@ class Host:
                     stream.flush()
                     os.fsync(stream.fileno())
                 os.replace(pending, backup)
+                sync_directory(work)
             source = self.run('docker', 'exec', name, 'cat', '/etc/nginx/conf.d/default.conf')
             config = maintenance_configuration(source)
         else:
@@ -256,6 +258,15 @@ def overlay(receipt, previous=False):
         'previous_image' if previous else 'candidate_image']} for service in SERVICES}}
 
 
+def result_receipt(path, result):
+    # A crash after evidence fsync but before marker removal must be recoverable.
+    # Preserve an existing matching result; never overwrite divergent evidence.
+    if path.exists():
+        require(not path.is_symlink() and json.loads(path.read_text()) == result, 'result receipt drift')
+    else:
+        save(path, result)
+
+
 def seal(host, prepared, sha, destination):
     host.verify_ci(sha)
     require(prepared['project'] == 'markina-gallery' and prepared['active_unchanged'] is True,
@@ -331,6 +342,7 @@ def apply(host, receipt, path, approval, *, recovery=False):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, journal)
+        sync_directory(STATE)
     host.deadline = time.monotonic() + 300
     try:
         host.guard(work, True)
@@ -376,10 +388,12 @@ def apply(host, receipt, path, approval, *, recovery=False):
         verify_services(host, receipt, previous=recovery)
         host.guard(work, False)
         require(host.health() == [200, 200, 200], 'public health failed')
-        save(work / ('recovered.json' if recovery else 'published.json'),
+        result_receipt(work / ('recovered.json' if recovery else 'published.json'),
              {'fingerprint': approval, 'source_sha': receipt['source_sha'], 'services': overlay(receipt, recovery),
-              'financial_preserved': True, 'schema': SCHEMA, 'security_fixed': not recovery})
+              'financial_preserved': True, 'financial': record['financial'],
+              'schema': SCHEMA, 'security_fixed': not recovery})
         journal.unlink()
+        sync_directory(STATE)
         print('recovered_previous_images=true security_fixed=false' if recovery else 'published_pillow13=6')
     except Exception:
         # Leave admission fenced and durable recovery information. No blind restart

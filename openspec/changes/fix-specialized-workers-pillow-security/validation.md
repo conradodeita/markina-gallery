@@ -35,10 +35,10 @@ Imports dos seis entrypoints passaram. Containers descartáveis com imagens cand
 
 ## Testes e limites
 
--2 testes de pin/consumidores,13 de candidato/origem/deriva/algoritmo/recibos e12 de orquestração sintética passaram. Cobrem aprovação/CI/inventário/filas, parada/saúde/digest, recuperação antes do snapshot e composição parcial, configuração/mounts preservados.
--9 testes de contrato técnico de candidato passaram; dependência continua recusada para publicação API/web. Reexecutar o teste completo de workflow após commit dos manifests: o HEAD anterior continha só spike/documentação e era categoria none, não a alteração backend ainda sem commit. Nenhum executor antigo foi ampliado.
+-2 testes de pin/consumidores,13 de candidato/origem/deriva/algoritmo/recibos e13 de orquestração sintética passaram. Cobrem aprovação/CI/inventário/filas, parada/saúde/digest, recuperação antes do snapshot e composição parcial, configuração/mounts preservados e recibo final idempotente após crash. Arquivos e diretórios de recibos/journal são sincronizados em disco; o resultado preserva o digest financeiro, sem valores de clientes.
+-9 testes de contrato técnico de candidato passaram; dependência continua recusada para publicação API/web. Teste completo do workflow passou após commit0d694614: `publication_candidate_ready=false / arquivo_fora_do_escopo`. A falha anterior avaliava o HEAD antigo, ainda sem o manifest backend. Nenhum executor antigo foi ampliado.
 -Ruff dos novos scripts e OpenSpec strict passaram. Sem limpeza de runtime elegível; apenas asserção da categoria de recusa técnica corrigida com regressão.
--Backend local:77 cenários passaram inicialmente com Pillow13.6 falhas de harness: chave sintética de startup ausente e SQLite em memória não compartilhado pelo TestClient;4 passaram após chave explícita. Reexecução completa com DB sintético em arquivo em andamento.19 testes faciais/provider Gemma passaram em venv existente com NumPy/Pillow12.3 (regressão de fonte, não prova de13); versão13 facial coberta nas imagens ARM64 e sujeita ao CI com face-requirements.
+-Backend local com Pillow13: **83 aprovados/60 avisos em310,35s** (reference_store,media,RAWengines,preview_adjustment). Falhas iniciais do harness resolvidas por chave sintética explícita e SQLite em arquivo privado compartilhável pelo TestClient; nenhuma asserção ou código do produto mudou.19 testes faciais/provider Gemma adicionais passaram em venv existente com NumPy/Pillow12.3 (regressão de fonte, não prova de13); versão13 facial coberta nas imagens ARM64 e sujeita ao CI com face-requirements.
 
 ## Gates pendentes
 

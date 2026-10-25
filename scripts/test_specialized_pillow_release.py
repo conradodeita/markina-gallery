@@ -214,6 +214,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(set(data['services']), set(release.SERVICES))
         self.assertTrue(all(set(item) == {'image'} for item in data['services'].values()))
 
+    def test_result_receipt_is_idempotent_after_crash_but_rejects_different_evidence(self):
+        result = {'security_fixed': False, 'fingerprint': self.approval}
+        path = self.work / 'recovered.json'
+        release.result_receipt(path, result)
+        release.result_receipt(path, result)
+        with self.assertRaisesRegex(ValueError, 'receipt drift'):
+            release.result_receipt(path, dict(result, security_fixed=True))
+
     def test_configuration_ignores_only_volatile_identity_and_candidate_label(self):
         old = container('face-index-worker')
         new = copy.deepcopy(old)
