@@ -52,6 +52,8 @@ Consulta automática que altera estado/atividade também notifica a navegação 
 
 ## Risks / Trade-offs
 
+Integração do inventário: os quatro itens novos (SDK, JS, ferramenta temporária e assets) elevam a contagem reconciliada de 68 para 72. O consumidor `scripts/third_party_report.py` mantém validação estrita de sequência/contagem; atualizar sua expectativa e os testes ao atualizar o inventário, sem relaxar o contrato ou os gates de release.
+
 Credenciais de teste e webhook HTTPS externos não são pressupostos. Testes locais simulam contratos, não comprovam aprovação real do provedor. Não acessar produção. Segurança da coleta é delegada ao SDK oficial carregado diretamente. Chave mestra e conta do provedor permanecem pré-requisitos operacionais explícitos.
 
 ## Migration Plan

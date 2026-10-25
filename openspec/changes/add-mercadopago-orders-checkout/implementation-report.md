@@ -19,7 +19,7 @@ Preparação validada: **58 testes PostgreSQL/contratos operacionais**, **5 de c
 - API e worker são os únicos consumidores do cofre genérico no Compose. Binding operacional ainda precisa ser verificado no alvo.
 - Compras de teste são identificadas e excluídas de receita/vendas reais e CSV padrão; detalhes preservam TESTE. Conta real sintética conserva os indicadores/CSV anteriores.
 - Card responsivo com dicas acessíveis, status, referências oficiais, segredos sem preenchimento e URL completa copiável. Escolhas do cliente exibem thumbnails locais Pix/Mercado Pago, com texto e fluxos anteriores preservados.
-- Varredura de 67 arquivos revisados não encontrou os valores reais de token/assinatura externos; SVGs não contêm scripts/eventos/rede. Nenhum `.env`, segredo remoto, produção ou histórico operacional foi alterado.
+- Varredura de 69 arquivos revisados não encontrou os valores reais de token/assinatura externos; SVGs não contêm scripts/eventos/rede. Nenhum `.env`, segredo remoto, produção ou histórico operacional foi alterado.
 
 ## Decisões implementadas
 
@@ -62,7 +62,7 @@ A matriz visual local cobre 390, 768 e 1440 px nos temas claro/escuro, cartão, 
 
 ## Arquivos modificados e adicionados
 
-Inventario revisado do diff desta change, sem caches, credenciais ou artefatos locais:
+Inventário revisado do diff desta change, sem caches, credenciais ou artefatos locais:
 
 - `backend/app/admin_account.py`
 - `backend/app/auth.py`
@@ -131,3 +131,5 @@ Inventario revisado do diff desta change, sem caches, credenciais ou artefatos l
 - `openspec/changes/add-mercadopago-orders-checkout/specs/gallery-sales/mercadopago-orders/spec.md`
 - `openspec/changes/add-mercadopago-orders-checkout/tasks.md`
 - `openspec/changes/add-mercadopago-orders-checkout/validation.md`
+- `scripts/test_third_party_report.py`
+- `scripts/third_party_report.py`
