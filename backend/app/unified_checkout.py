@@ -222,7 +222,7 @@ def cart_payload(db: Session, client: Client):
         )
     paid = [group for group in groups if group["payment_required"]]
     valid = bool(paid) and all(not group["error"] for group in paid)
-    methods = payment_methods(db, tenant_id=tenant_id)
+    methods = payment_methods(db, tenant_id=tenant_id, client_id=client.id)
     return {
         "groups": groups,
         "quantity": sum(group["quantity"] for group in groups),
@@ -233,7 +233,8 @@ def cart_payload(db: Session, client: Client):
             if paid and not methods["available"] else None
         ),
         "cart_revision": _fingerprint(_valid_materials(db, client)) if valid else None,
-        "card_available": False,
+        "card_available": methods["card_available"],
+        "mercadopago_available": methods["card_available"],
         "pix_available": methods["pix_available"],
         "default_method": methods["default_method"],
     }

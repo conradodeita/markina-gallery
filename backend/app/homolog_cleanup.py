@@ -57,6 +57,7 @@ PRESERVED_TABLES = MONITOR_PRESERVED_TABLES | frozenset({
     "preview_adjustment_settings", "progressive_pricing_preset",
     "progressive_pricing_tier", "whatsapp_channel_settings", "tenant", "tenant_admin",
     "raw_development_settings",
+    "payment_preferences", "mercadopago_account",
 })
 MIXED_TABLES = frozenset({"audit_event", "auth_session", "push_subscription"})
 OPERATIONAL_TABLES = frozenset({
@@ -76,6 +77,7 @@ OPERATIONAL_TABLES = frozenset({
     "payment_communication", "payment_confirmation_correction", "payment_group",
     "provider_payment", "provider_payment_attempt", "provider_payment_correction",
     "provider_payment_receipt",
+    "mercadopago_payment", "mercadopago_webhook",
     "payment_notification_outbox", "photo_analysis", "photo_asset", "photo_comment",
     "photo_face_embedding", "photo_favorite", "photo_folder", "photo_selection",
     "photo_view", "pix_checkout_settings", "preview_adjustment", "price_rule",
@@ -241,6 +243,17 @@ def execute(db: Session, confirmation: str) -> dict[str, object]:
     db.execute(text(f"LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE"))
     require_single_tenant(db)
     require_known_schema(db)
+    from app.auth import MercadoPagoPayment, MercadoPagoWebhook
+    financial_tables = []
+    for model in (MercadoPagoPayment, MercadoPagoWebhook):
+        name = preparer.quote(model.__tablename__)
+        financial_tables.append(f"{preparer.quote_schema(schema)}.{name}" if schema else name)
+    db.execute(text(f"LOCK TABLE {', '.join(financial_tables)} IN EXCLUSIVE MODE"))
+    if (db.scalar(select(MercadoPagoPayment.id).where(
+        MercadoPagoPayment.sent_at.is_not(None)).limit(1))
+            or db.scalar(select(MercadoPagoWebhook.id).limit(1))):
+        raise RuntimeError(
+            "Reset bloqueado: preserve e reconcilie as evidências financeiras Mercado Pago.")
     order = operational_delete_order()
     if db.scalar(select(AuthSession.id).where(
         AuthSession.role == Role.ADMIN.value, AuthSession.client_subject_id.is_not(None)

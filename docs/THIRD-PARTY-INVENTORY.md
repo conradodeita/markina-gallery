@@ -101,6 +101,19 @@ O inventário anterior estava incorreto ao descrever Gemma apenas como proposta.
 
 Outros pacotes diretos backend e todos os lockfile transitivos continuam representados nas fontes de inventário (`requirements*.txt`, `package-lock.json`); esta tabela destaca os componentes por criticidade e agrupamento funcional, não duplica centenas de transitivos.
 
+### Adição em desenvolvimento — 24/10/2026
+
+Esta adição da change `add-mercadopago-orders-checkout` acrescenta dois componentes de integração e uma ferramenta temporária de desenvolvimento ao inventário anterior de 68 itens. Não altera a evidência histórica de produção acima.
+
+| ID | Componente e origem | Versão / licença / ativação | Consumidor e validação |
+|---|---|---|---|
+| 69 | [SDK Python oficial Mercado Pago](https://github.com/mercadopago/sdk-python), distribuição PyPI `mercadopago` | `==3.6.0`, MIT, versão estável conferida em 24/10/2026; instalação autorizada pelo proprietário. | Orders API e consulta de conta no backend. Instalado apenas no venv isolado; transporte limitado, timeout 15s, sem retries de criação. Contratos locais e operações externas com credencial verificada de teste: criação/GET/busca/cancel/refund. Nenhuma execução em produção. |
+| 70 | [MercadoPago.js V2](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/payment-integration/websites/cards) em `https://sdk.mercadopago.com/js/v2` | Versão pública V2 do serviço, conteúdo móvel do provedor; termos Mercado Pago e aplicação própria por tenant; sem cópia local de código do provedor. | Card Payment na tela Next.js /library/checkout. Montagem/tokenização oficiais comprovadas em Edge 390 px, com APRO/FUND/CONT e resposta perdida. Matriz visual 390/768/1440 claro/escuro permanece explicitamente sintética. Evidência: external-validation.md da change. |
+| 71 | [cloudflared 2026.10.3](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.3), ferramenta temporária de desenvolvimento | Origem oficial Cloudflare, Apache-2.0; SHA-256 `76b2805253d0d6ffacb092a7acfbee99e7af6917835c0c5410e23f3ef5052da2` confrontado com o digest oficial do release. Binário local ignorado, sem instalação de serviço/ativação produtiva. | Somente ensaio externo Orders em 24/10/2026, autorizado pelo proprietário. Gateway restrito ao callback de teste, duas entregas genuínas comprovadas. Túnel encerrado; não integra imagens/runtime da aplicação nem cria DNS/firewall. URL efêmera, sem SLA; nunca reutilizar como endpoint de produção. |
+| 72 | Assets de identificação Pix/Mercado Pago; fontes primárias do provedor/participante em `frontend/public/payments/README.md` | SVGs estáticos originais, obtidos em 24/10/2026; direitos de marca dos titulares, uso limitado à identificação de pagamentos; sem biblioteca ou serviço novo. | Thumbnails locais no carrinho e nos métodos do checkout; preservadas proporções, contraste/base branca e texto acessível. Sem scripts, eventos ou referências externas. 24 capturas locais sem overflow/imagens ausentes; não interfere em autorização/estado financeiro. |
+
+Pagamentos são críticos: upgrade futuro exige contratos Orders, SDK, HMAC, idempotência, migração e regressão de PIX/tenant. Chave mestra permanece externa; nenhum segredo ou teste de cobrança real faz parte deste inventário. Verificação de alerts de segurança das contas/registries não foi executada nesta adição.
+
 ### D — Infraestrutura e desenvolvimento
 
 | # | Componente | Versão/declarado e fonte | Uso e cuidado |

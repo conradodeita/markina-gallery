@@ -17,6 +17,7 @@ from app.auth import (
     DerivedGallery,
     FolderClientGrant,
     GalleryClientState,
+    MercadoPagoPayment,
     NotificationDelivery,
     NotificationEvent,
     NotificationSetting,
@@ -148,6 +149,13 @@ def recipient_allowed(db, event, item) -> bool:
         order = owned_record(db, SaleOrder, event.sale_order_id, tenant_id=owner)
         if not order or order.client_id != event.client_id:
             return False
+        if event.event_key.startswith("mp-confirmed:"):
+            payment = owned_record(db, MercadoPagoPayment, order.mercadopago_payment_id,
+                                   tenant_id=owner) if order.mercadopago_payment_id else None
+            return bool(event.event_type == "payment_confirmed" and payment
+                        and event.event_key == f"mp-confirmed:{payment.id}"
+                        and payment.client_id == order.client_id
+                        and payment.state == "confirmed" and order.payment_status == "confirmed")
         if event.event_key.startswith("provider-payment-confirmed:"):
             if event.event_type != "payment_confirmed":
                 return False

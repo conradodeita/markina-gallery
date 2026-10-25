@@ -4,13 +4,26 @@ import re
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 
 from app.acervo_context import require_active_owner
 from app.auth import Client, NotificationDelivery, NotificationEvent, SaleOrder, audit, now
 from app.notification_settings import enqueue_event
 
 EVENT_TYPE = "order_delivery_ready"
+
+
+def suspend_delivery_access(db, *, order):
+    """Mantém URL histórica; revisa a capacidade e cancela avisos ainda não enviados."""
+    order.delivery_revision += 1
+    db.execute(update(NotificationDelivery).where(
+        NotificationDelivery.tenant_id == order.tenant_id,
+        NotificationDelivery.event_id.in_(select(NotificationEvent.id).where(
+            NotificationEvent.tenant_id == order.tenant_id,
+            NotificationEvent.sale_order_id == order.id,
+            NotificationEvent.event_type.in_((EVENT_TYPE, "payment_confirmed")))),
+        NotificationDelivery.status == "queued",
+    ).values(status="cancelled", last_error="financial_review"))
 
 
 def validate_album_url(value: str | None) -> str | None:

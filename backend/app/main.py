@@ -300,6 +300,18 @@ from app.membership_notifications import (
     enqueue_membership_notification,
     mark_membership_notification_read,
 )
+from app.mercadopago_projection import (
+    financial_fields as mercadopago_fields,
+)
+from app.mercadopago_projection import (
+    financial_status as mercadopago_financial_status,
+)
+from app.mercadopago_projection import (
+    mercadopago_for_orders,
+)
+from app.mercadopago_projection import (
+    purchase_groups as mercadopago_purchase_groups,
+)
 from app.messaging import (
     WhatsAppConfigurationError,
     WhatsAppDeliveryError,
@@ -444,6 +456,9 @@ logger = logging.getLogger(__name__)
 
 @app.exception_handler(RequestValidationError)
 async def protect_credential_validation_input(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith(("/admin/settings/payment-providers", "/library/mercadopago",
+                                    "/mercadopago/")):
+        return JSONResponse({"detail": "Confira os dados da solicitação."}, status_code=422)
     return await request_validation_exception_handler(request, exc)
 
 
@@ -6849,6 +6864,7 @@ def admin_purchase_history(
     if client_id:
         query = query.where(SaleOrder.client_id == client_id)
     orders = list(db.scalars(query.order_by(SaleOrder.confirmed_at.desc(), SaleOrder.created_at.desc())))
+    mp_payments = mercadopago_for_orders(db, orders, tenant_id=tenant_id)
     card_ids = {order.provider_payment_id for order in orders if order.provider_payment_id}
     card_payments = {
         payment.id: payment for payment in db.scalars(select(ProviderPayment).where(
@@ -6875,6 +6891,7 @@ def admin_purchase_history(
                 "total_cents": order.total_cents,
                 **({"payment_method": "credit_card" if order.provider_payment_id else "pix"}
                    if order.provider_payment_id or order.payment_group_id else {}),
+                **mercadopago_fields(order, mp_payments),
                 **({"provider_payment_state": card_payments[order.provider_payment_id].state}
                    if order.provider_payment_id in card_payments else {}),
                 "items": [
@@ -9305,11 +9322,13 @@ def client_purchase_history(
                         )
                     ),
                     SaleOrder.provider_payment_id.is_not(None),
+                    SaleOrder.mercadopago_payment_id.is_not(None),
                 ),
             )
             .order_by(SaleOrder.created_at.desc())
         )
     )
+    mp_payments = mercadopago_for_orders(db, orders, tenant_id=tenant_id)
     order_ids = [order.id for order in orders]
     provider_payment_ids = {order.provider_payment_id for order in orders if order.provider_payment_id}
     provider_payments = {
@@ -9411,6 +9430,7 @@ def client_purchase_history(
                     "provider_payment_id": str(provider_payments[order.provider_payment_id].id),
                     "provider_payment_state": provider_payments[order.provider_payment_id].state,
                 } if order.provider_payment_id in provider_payments else {}),
+                **mercadopago_fields(order, mp_payments),
                 "commercial_state": (
                     "selection_finalized"
                     if order.payment_status == "not_required"
@@ -9464,8 +9484,10 @@ def client_purchase_history(
         group["orders"].append(order_payload)
         group["total_cents"] += order_payload["total_cents"]
     return {"orders": [item for item in result if not item["payment_group_id"]
-                       and not item.get("provider_payment_id")],
+                       and not item.get("provider_payment_id") and not item.get("mercadopago")],
             "payment_groups": list(groups.values()),
+            **({"mercadopago_payment_groups": mercadopago_purchase_groups(result)}
+               if any(item.get("mercadopago") for item in result) else {}),
             **({"provider_payment_groups": list(card_groups.values())} if card_groups else {}),
             "removed_movements": removed_movements_payload(db, tenant_id=tenant_id, client_id=session.subject_id)}
 
@@ -11650,6 +11672,8 @@ def admin_removed_photo_movements(
 PaymentFinancialFilter = Literal[
     "priority", "reported", "confirmed", "confirmed_undelivered",
     "awaiting_payment", "not_found", "overdue", "verifying", "exception", "hold",
+    "processing", "rejected", "canceled", "expired", "refunded", "partially_refunded",
+    "charged_back", "duplicate_review",
 ]
 
 
@@ -11701,6 +11725,8 @@ def export_payment_orders(
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = None,
     financial_status: PaymentFinancialFilter | None = None,
+    payment_provider: Literal["pix", "mercadopago", "infinitepay"] | None = None,
+    include_financial_details: bool = False,
     created_from: datetime | None = None,
     created_to: datetime | None = None,
     db: Session = Depends(db_session),
@@ -11712,12 +11738,13 @@ def export_payment_orders(
     data = _payment_dashboard_data(
         db, tenant_id=tenant_id, query=query, client_id=client_id, parent_gallery_id=parent_gallery_id,
         financial_status=financial_status, created_from=created_from, created_to=created_to,
-        export_all=True, include_selections=False,
+        export_all=True, include_selections=False, payment_provider=payment_provider,
     )
     if not data["groups"]:
         return Response(status_code=204)
     return Response(
-        payment_orders_csv(data["groups"]), media_type="text/csv; charset=utf-8",
+        payment_orders_csv(data["groups"], include_financial_details=include_financial_details),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="pick-your-pic-vendas-pagamentos.csv"',
                  "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
@@ -11730,6 +11757,7 @@ def list_payment_communications(
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
     financial_status: PaymentFinancialFilter | None = Query(default=None),
+    payment_provider: Literal["pix", "mercadopago", "infinitepay"] | None = None,
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
     | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
@@ -11743,6 +11771,7 @@ def list_payment_communications(
     return _payment_dashboard_data(
         db, tenant_id=tenant_id, query=query, client_id=client_id, parent_gallery_id=parent_gallery_id,
         financial_status=financial_status, delivery_status=delivery_status,
+        payment_provider=payment_provider,
         created_from=created_from, created_to=created_to, cursor=cursor, limit=limit,
     )
 
@@ -11750,8 +11779,10 @@ def list_payment_communications(
 def _payment_dashboard_data(
     db: Session, *, tenant_id: UUID, query=None, client_id=None, parent_gallery_id=None,
     financial_status=None, delivery_status=None, created_from=None, created_to=None,
-    cursor=None, limit=20, export_all=False, include_selections=True,
+    cursor=None, limit=20, export_all=False, include_selections=True, payment_provider=None,
 ) -> dict[str, object]:
+    if payment_provider:
+        include_selections = False
     if created_from and created_to and created_from > created_to:
         raise HTTPException(
             status_code=422,
@@ -11796,6 +11827,7 @@ def _payment_dashboard_data(
     order_rows = list(db.execute(order_query))
     order_ids = [order.id for order, _client, _gallery, _parent in order_rows]
     order_entities = [row[0] for row in order_rows]
+    mp_payments = mercadopago_for_orders(db, order_entities, tenant_id=tenant_id)
     card_payment_ids = {order.provider_payment_id for order in order_entities if order.provider_payment_id}
     card_payments = {
         payment.id: payment for payment in db.scalars(select(ProviderPayment).where(
@@ -11993,11 +12025,17 @@ def _payment_dashboard_data(
             for notification in notifications_by_communication.get(communication.id, [])
         ]
         provider_payment = card_payments.get(order.provider_payment_id)
-        financial_state = _payment_financial_status(order, latest_communication, gallery, provider_payment)
+        mp_payment = mp_payments.get(order.mercadopago_payment_id)
+        financial_state = _payment_financial_status(
+            order, latest_communication, gallery, provider_payment, mp_payment)
+        if payment_provider and mercadopago_fields(order, mp_payments)["payment_provider"] != payment_provider:
+            continue
         if financial_state == "awaiting_payment" and canonical_state and canonical_state.selection_expires_at and expired(canonical_state.selection_expires_at):
             financial_state = "overdue"
         delivery_states = {notification.status for notification in order_notifications} or {"none"}
-        if financial_status == "priority" and financial_state not in {"reported", "confirmed_undelivered"}:
+        if financial_status == "priority" and financial_state not in {
+            "reported", "confirmed_undelivered", "partially_refunded", "charged_back", "duplicate_review"
+        }:
             continue
         if financial_status and financial_status != "priority" and financial_state != financial_status:
             continue
@@ -12062,6 +12100,7 @@ def _payment_dashboard_data(
                 **({"provider_payment_state": provider_payment.state,
                     "provider_payment_id": str(provider_payment.id),
                     } if provider_payment else {}),
+                **mercadopago_fields(order, mp_payments),
                 "confirmed_at": (order.confirmed_at.isoformat()
                                  if order.payment_status == "confirmed" and order.confirmed_at
                                  else None),
@@ -12125,7 +12164,8 @@ def _payment_dashboard_data(
         if order_payload["financial_status"] == "reported":
             group["totals"]["reported_orders"] += 1
             group["totals"]["reported_cents"] += order_payload["total_cents"]
-        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
+        elif (order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}
+              and not (order_payload.get("mercadopago") or {}).get("test_account")):
             group["totals"]["confirmed_orders"] += 1
             group["totals"]["confirmed_cents"] += order_payload["total_cents"]
         # Compatibilidade temporária: `total_cents` passa a representar somente
@@ -12178,7 +12218,8 @@ def _payment_dashboard_data(
         if order_payload["financial_status"] == "reported":
             reported_orders += 1
             reported_cents += order_payload["total_cents"]
-        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
+        elif (order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}
+              and not (order_payload.get("mercadopago") or {}).get("test_account")):
             confirmed_orders += 1
             confirmed_cents += order_payload["total_cents"]
         for state in order_payload["delivery_statuses"]:
@@ -12254,7 +12295,12 @@ def _payment_financial_status(
     latest_communication: PaymentCommunication | None,
     gallery: DerivedGallery | None,
     provider_payment: ProviderPayment | None = None,
+    mercadopago_payment=None,
 ) -> str:
+    if mercadopago_payment:
+        return mercadopago_financial_status(mercadopago_payment, order)
+    if order.mercadopago_payment_id:
+        return "verifying"
     if provider_payment:
         financial_state = {
             "creating": "awaiting_payment",
@@ -12290,6 +12336,8 @@ def _payment_financial_priority(financial_status: str) -> int:
         "verifying": 6,
         "exception": 7,
         "hold": 8,
+        "partially_refunded": 0, "charged_back": 0, "duplicate_review": 0,
+        "processing": 6, "rejected": 7, "canceled": 8, "expired": 8, "refunded": 8,
     }.get(financial_status, 9)
 
 
@@ -12692,6 +12740,13 @@ def remove_comment_as_admin(
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
+from app.mercadopago_api import register_mercadopago_routes
+
+register_mercadopago_routes(
+    app, db_session=db_session, require_same_origin=require_same_origin,
+    commerce_client=_commerce_client,
+)
 
 register_preview_adjustment_routes(
     app, db_session=db_session, require_admin=require_admin,

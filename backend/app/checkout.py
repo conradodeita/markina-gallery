@@ -479,6 +479,8 @@ def freeze_pending_checkout(
         raise CheckoutError("Pedido indisponível para comunicação.")
     if order.payment_group_id:
         raise CheckoutError("Informe o pagamento único pela revisão em /library/cart.")
+    if order.mercadopago_payment_id or order.provider_payment_id:
+        raise CheckoutError("Este pedido depende da confirmação do provedor.")
     if order.frozen_at is not None:
         return order
     parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)

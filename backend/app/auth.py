@@ -230,7 +230,7 @@ class AdminSecurityChallenge(Base):
     __table_args__ = (
         CheckConstraint(
             "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp', "
-            "'change_pix_otp')",
+            "'change_pix_otp', 'change_payment_otp')",
             name="ck_admin_security_purpose",
         ),
         CheckConstraint("attempts >= 0"),
@@ -1155,6 +1155,115 @@ class ProviderPaymentCorrection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class MercadoPagoAccount(Base):
+    """Versão imutável da conta; envelopes em tabela dedicada ao cofre."""
+
+    __tablename__ = "mercadopago_account"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    seller_id: Mapped[str] = mapped_column(String(32))
+    public_key: Mapped[str] = mapped_column(String(200))
+    access_token_envelope: Mapped[dict] = mapped_column(JSON)
+    webhook_secret_envelope: Mapped[dict] = mapped_column(JSON)
+    test_account: Mapped[bool] = mapped_column(Boolean)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'unauthorized')", name="ck_mp_account_status"),
+    )
+
+
+class PaymentPreferences(Base):
+    __tablename__ = "payment_preferences"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), unique=True)
+    account_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("mercadopago_account.id"), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    pix_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    mercadopago_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false")
+    __table_args__ = (
+        CheckConstraint("version >= 0", name="ck_payment_preferences_version"),
+        CheckConstraint("NOT mercadopago_enabled OR account_id IS NOT NULL",
+                        name="ck_payment_preferences_account"),
+    )
+
+
+class MercadoPagoPayment(Base):
+    """Uma tentativa de cobrança com seus pedidos e referência imutáveis."""
+
+    __tablename__ = "mercadopago_payment"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("mercadopago_account.id"))
+    account: Mapped[MercadoPagoAccount] = relationship(
+        primaryjoin=(account_id == MercadoPagoAccount.id) & (tenant_id == MercadoPagoAccount.tenant_id),
+        viewonly=True)
+    checkout_key: Mapped[str] = mapped_column(String(36))
+    cart_revision: Mapped[str] = mapped_column(String(64))
+    total_cents: Mapped[int] = mapped_column(Integer)
+    method: Mapped[str] = mapped_column(String(24))
+    state: Mapped[str] = mapped_column(String(32), default="prepared")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    provider_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    order_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    order_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transaction_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    transaction_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    pix_copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    check_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_check_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", "client_id", name="uq_mp_payment_owner"),
+        UniqueConstraint("tenant_id", "client_id", "checkout_key", name="uq_mp_checkout_key"),
+        UniqueConstraint("account_id", "provider_order_id", name="uq_mp_provider_order"),
+        CheckConstraint("total_cents > 0", name="ck_mp_total"),
+        CheckConstraint("method IN ('credit_card', 'pix')", name="ck_mp_method"),
+        CheckConstraint("state IN ('prepared', 'sending', 'initiated', 'pending', 'processing', "
+                        "'confirmed', 'rejected', 'canceled', 'expired', 'refunded', "
+                        "'partially_refunded', 'charged_back', 'verification_required', "
+                        "'duplicate_review', 'abandoned')", name="ck_mp_state"),
+        CheckConstraint("state != 'confirmed' OR (provider_order_id IS NOT NULL "
+                        "AND provider_payment_id IS NOT NULL AND confirmed_at IS NOT NULL)",
+                        name="ck_mp_confirmed"),
+        Index("uq_mp_active_client", "tenant_id", "client_id", unique=True,
+              sqlite_where=text("active = true"), postgresql_where=text("active = true")),
+    )
+
+
+class MercadoPagoWebhook(Base):
+    """Inbox mínima durável; eventos diferentes de uma order não são descartados."""
+
+    __tablename__ = "mercadopago_webhook"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("mercadopago_account.id"))
+    provider_order_id: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(16), default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("account_id", "digest", name="uq_mp_webhook_digest"),
+        CheckConstraint("state IN ('queued', 'processing', 'done', 'ignored', 'failed')",
+                        name="ck_mp_webhook_state"),
+        CheckConstraint("attempts >= 0", name="ck_mp_webhook_attempts"),
+        Index("ix_mp_webhook_queue", "state", "next_attempt_at"),
+    )
+
+
 class SaleOrder(Base):
     __tablename__ = "sale_order"
     tenant_id: Mapped[UUID] = mapped_column(
@@ -1181,6 +1290,12 @@ class SaleOrder(Base):
                              name="fk_sale_order_provider_payment_owner"),
         CheckConstraint("payment_group_id IS NULL OR provider_payment_id IS NULL",
                         name="ck_sale_order_single_payment_method"),
+        ForeignKeyConstraint(["mercadopago_payment_id", "tenant_id", "client_id"],
+                             ["mercadopago_payment.id", "mercadopago_payment.tenant_id",
+                              "mercadopago_payment.client_id"], name="fk_sale_order_mp_owner"),
+        CheckConstraint("mercadopago_payment_id IS NULL OR "
+                        "(payment_group_id IS NULL AND provider_payment_id IS NULL)",
+                        name="ck_sale_order_mp_exclusive"),
         Index(
             "ix_sale_order_parent_payment_status",
             "parent_gallery_id_snapshot",
@@ -1261,6 +1376,7 @@ class SaleOrder(Base):
     assets_removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payment_group_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     provider_payment_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    mercadopago_payment_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
