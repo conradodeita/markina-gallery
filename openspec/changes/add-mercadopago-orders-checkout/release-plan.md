@@ -76,6 +76,86 @@ Chargeback/expiração e aprovações tardias que dependam de tempo/evento não 
 - Se for necessário retirar disponibilidade, fechar somente novas emissões e manter receiver/worker/consulta compatíveis para as tentativas existentes. Dados de teste permanecem identificados e não geram receita real.
 - Sem prova de compatibilidade de recuperação e sem operação de release específica testada, publicação permanece bloqueada. Este documento prepara a revisão; não alega impacto zero já comprovado no host.
 
+## Inventário live após aprovação — 25/10/2026
+
+O proprietário respondeu “Aprovado” ao encaminhamento de inventário e preparação. Esse encaminhamento foi executado por SSH autenticado, exclusivamente com consultas de leitura, entre **03:39 e 03:45 de São Paulo**. A aprovação foi registrada; não executa por si só um procedimento ainda inexistente nem comprova seus gates.
+
+| Verificação | Evidência atual |
+|---|---|
+| Host/raiz | `clearbudget-vnic`, `/opt/markina-gallery`; checkout limpo |
+| Checkout/API ativos | `1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8`; APP_VERSION da API confere |
+| Main/candidato | main `cef5bdf82e254ec908d238aa3a5d09f1069e3cfd`; PR #283 aberto/draft, candidato `47af72bdf503295e93b1ee8e68bef97da2d9d947`, CI integral verde reconfirmado |
+| Schema | `20261022_0087`; tabelas Orders ainda ausentes; alvo aditivo `20261024_0088` |
+| Saúde | 15 serviços ativos/saudáveis; migrate antigo encerrado, sem tratá-lo como serviço ativo saudável; sem marcadores de release pendente |
+| Porta/origem | somente Nginx `127.0.0.1:8080`; `/healthz` e `/api/health` HTTPS 200 |
+| Disco | 57 GiB disponíveis, 71% ocupado; capacidade de build/backup precisa ser reavaliada na janela |
+| Runtime API/worker/web | Python 3.13.17 em API e worker geral; Node v24.22.1 no web; imagens distintas registradas abaixo |
+| Workers especializados | imagens preservadas, Python 3.13.16; não presumir a mesma capacidade de parada graciosa do worker geral |
+| Cofre | API configurada e `IntegrationCipher` válido, ambiente `staging` coerente; worker geral sem configuração e com validação recusada, conforme a lacuna que o Compose candidato corrige |
+| Binding | `docker/.env.integration-secrets` é symlink para `/var/lib/markina-gallery/deploy-state/integration-secrets.env`; alvo regular, UID/GID 1001, permissão `600`; não imprimir conteúdo nem substituir a chave |
+| Cliente do ensaio | consulta exata dos dados fornecidos retornou um único cadastro, nome conferente, tenant ativo pertencente ao proprietário; UUIDs guardados somente em evidência local ignorada, sem reproduzir dados pessoais neste documento |
+| PIX/histórico | 64 sale_order, 64 payment_group, 12 provider_payment e uma configuração PIX ativa; consulta de contagem, sem alterar registros; ainda não é digest de preservação nem backup |
+
+Imagens ativas conferidas por ID real, não por tag:
+
+- API: `sha256:c2f16d9d94903b0dd0da8f75b6b3cbbee635b0b162d904cc027a241e8d8b8175`.
+- Worker geral: `sha256:24547390f9072815d7fa56479c27da22ee7b4a3fdf75709830c480ac6975a583`.
+- Web: `sha256:13ba2e7232cf367f057b214fe765512c7330089a4ce760dbe0713451390e6de4`.
+
+Base Compose mais cinco overlays observados: branding, raw-development, preview-adjustment, system-monitor e o segundo binding system-monitor em deploy-state. Nenhum overlay ativo de imagens 0086 foi observado nas labels atuais; não reutilizar a exigência específica desse overlay do executor antigo. Metadados completos/minimizados e IDs dos demais serviços ficam em `.codex-tmp/mp-production-readonly-inventory-20261025.json`, ignorado pelo Git. SHA-256 do conteúdo canônico capturado: `2becf639755e49fefe7cacaf261953ce5a59b9b8074ffedf17a1303c35bd997b`. Este hash identifica **a captura**, não uma aprovação de release nem um fingerprint operacional completo.
+
+As consultas de filas não encontraram `queued`/`processing` nas oito tabelas verificadas (`media_job`, `whatsapp_delivery`, `email_delivery`, `notification_delivery`, `gallery_lifecycle_operation`, `asset_file_cleanup`, `facial_job`, `raw_development_job`). **Há 68 notification_delivery em `unknown`**, além de falhas históricas. Não reclassificar esses registros como concluídos, não reenviar, apagar ou resolver automaticamente. A captura não prova ausência de callbacks externos em trânsito, outboxes elegíveis ou trabalho que surgiu depois; a barreira operacional ainda precisa ser ensaiada e reconferida sob lock.
+
+### Decisão operacional e aceite da janela
+
+Após receber o inventário acima, o proprietário respondeu **“Sim, aceito”** à pergunta explícita sobre janela de manutenção com indisponibilidade temporária do Pick-your-Pic, preservando os outros projetos. Essa decisão permite concluir a implementação/ensaio do procedimento próprio descrito abaixo. Não solicitar novamente a mesma decisão sobre a janela; os gates técnicos continuam obrigatórios.
+
+O inventário confirma que o novo checkout pode usar a cadeia de schema esperada e o cofre existente, mas **não torna os executores atuais compatíveis com este release**. O caminho de API/web exclui migrations/worker/dependência; o executor InfinitePay aceita schema 0086 e overlay/hashes próprios que divergem do host atual. Não alterar essas exigências para fazer Orders passar.
+
+A próxima unidade operacional deve especificar e ensaiar um procedimento próprio, sob o lock compartilhado, com estes contratos revisáveis:
+
+1. Candidato imutável e CI verde após integração; inventário renovado vinculado a SHA, schema, imagens, overlays, cofre e portas. Construir/fixar somente API/web/worker/migrate antes da interrupção, avaliando mudanças de dependências resolvidas; não reconstruir os seis workers especializados.
+2. Janela explícita de indisponibilidade da API/checkout do Pick-your-Pic durante a migration. Drenagem e parada **verificadas** da API, do worker geral e dos seis workers especializados que escrevem no mesmo banco, mantendo as imagens/configurações especializadas. Não usar SIGKILL ou pressupor que workers legados tratam SIGTERM. Provar recuperação de falha na parada e continuidade de filas/callbacks, preservando os 68 resultados desconhecidos. Evolution, bancos, Redis, proxy e outros projetos não entram na parada.
+3. Backup consistente, restauração ensaiada em destino descartável sem canais externos e recuperação do cofre comprovada antes de 0088. Um backup de banco sem a chave existente não é prova de recuperação das credenciais.
+4. Migration exclusivamente 0087→0088; novos binários compatíveis; binding existente também no worker; `APP_ENV=staging` preservado, cobrança real bloqueada e lista de teste com o único par verificado. Reconferir isolamento, PIX, histórico financeiro, HTTPS e workers sem usar credenciais reais do Mercado Pago.
+5. Antes da primeira tentativa Orders, ensaiar a recuperação compatível com 0088. Depois de envio, falha não permite downgrade/restauração do banco antigo; fechamento de novas emissões deve manter reconciliação e webhook dos registros existentes. Retomar workers especializados pelas imagens anteriores e comprovar saúde.
+
+Estado ao apresentar o inventário: procedimento ainda não implementado/testado. A janela foi aceita posteriormente, conforme o registro acima. A implementação e seus ensaios estão descritos a seguir; não executar o roteiro antigo nem declarar publicação concluída a partir do aceite da janela.
+
+## Procedimento pontual implementado e ensaios de preparação
+
+`scripts/orders_pilot_release.py` não altera os gates antigos e não adiciona deploy automático. O inventário padrão foi executado via SSH com sucesso e passou a cobrir 13 filas/outboxes, digests minimizados de 12 tabelas financeiras/de mensagens, identidade dos serviços e comparação entre o arquivo do cofre e a configuração efetivamente carregada pela API, sem imprimir valores. Corrigida a distinção `external_status` da outbox de membros. Nenhum trabalho queued/pending/processing encontrado; unknown não é elegível à drenagem/reenvio.
+
+Preparação nativa ARM64, usando exclusivamente fontes de runtime do SHA `47af72bdf503295e93b1ee8e68bef97da2d9d947`, já aprovado no CI:
+
+- API candidata `sha256:4eb82fa5d305f3920854a000341279f6545f399203159a0beae320265a3bf9c7`. Mesma imagem base, mesma versão Python e todas as distribuições anteriores idênticas, acrescentando somente `mercadopago==3.6.0`; pip check e inicialização sintética da API aprovados sem rede externa.
+- Web candidato `sha256:4115c9670bad7ff49fffcab880885c39c5da687f6c9041e9b5ca08e7586c5d3d`. Compilado em container limitado a 2 GiB/1 CPU, com Node ativo e npm ci/lockfile; versão Node comparada e preservada. Nenhuma tag dos serviços ativos foi substituída.
+- Parada exercitada em containers descartáveis, sem filas, sem rede externa e sem carregar modelos: SIGTERM/saída 0 do loop real do worker atual e candidato; SIGINT/saída 130 nos seis interpretadores das imagens especializadas atuais. Frontend candidato iniciado, health 200 e SIGTERM confirmado. Os seis workers reais usam `unless-stopped`: ensaio adicional comprovou suspender/restaurar exatamente essa política em containers descartáveis antes/depois da parada. Nenhuma política dos containers ativos foi alterada nesta preparação. Containers de ensaio encerrados/removidos exclusivamente por identidade/label próprias, sem SIGKILL.
+- Backup customizado de **110.898.909 bytes**, arquivo e cópia de recuperação do cofre em modo 0600, diretório 0700 no mesmo host. Restauração executada em PostgreSQL temporário sem portas ou saída externa; migration 0087→0088 aplicada apenas nessa cópia. Digests financeiros/PIX e mensagens preservados e cifragem validada com a cópia protegida da chave. PostgreSQL de ensaio encerrado/removido; backup e recibos preservados para a publicação.
+- Callback Evolution exercitado isoladamente na imagem efetiva `sha256:5cf854f2eb3af149ed87841c2c882d8eecff68d278aa87e765e88f7541a36409`, extraindo apenas o método já instalado, sem iniciar a aplicação/conectar instância/contatos. Servidor loopback sintético retornou 503 e conexão recusada antes da recuperação: retentativa confirmou um único recibo. HTTP 400 não foi reenviado. Método SHA-256 `6f71b669adaecc765e62d89634cda43fbf26bc4a6d30c0a50e0bbb2a573c978a`. O container Evolution real não foi alterado/reiniciado, nem houve envio de mensagem.
+
+Recibos privados em `/var/lib/markina-gallery/deploy-state/orders-prepare-219bc85d9f5d40d0bcfcb3b9150a83d6/`: `prepared.json`, `prepared-tested.json`, `prepared-validated.json` e `prepared-reviewed.json`. O último incorpora callbacks, StartedAt, barreira Nginx, parada do web e suspensão/restauração de restart policy; baseline/inventário foram renovados com esses metadados. Não copiar esses arquivos ao Git: contêm o par UUID operacional. Logs locais minimizados ficam sob `.codex-tmp/`, ignorados. O fingerprint deste recibo é de **preparação**, não prova de publicação.
+
+Barreira Nginx testada na imagem ativa, em namespace sem rede externa/portas, com health 200 e ações administrativas/checkout 503. O primeiro ensaio isolado detectou que root sem DAC_OVERRIDE não lia o arquivo de fixture 0600 pertencente ao operador; corrigido somente o conjunto de capabilities do container descartável, sem alterar permissões dos arquivos ou do Nginx real. Novo ensaio passou; logs sintéticos de diagnóstico preservados no diretório protegido.
+
+### Uso e limites do executor
+
+1. `inventory`: consultas read-only; baseline fixado em `1f4483bd`, schema 0087, 15 serviços saudáveis, porta/origem atuais e cofre válido. Não faz fetch no checkout ativo.
+2. `prepare --sha <SHA> --pair <arquivo-0600>`: artefatos isolados, clone próprio, fontes Git sem links/traversal, imagens imutáveis, ensaios de sinais/callbacks e backup/restore. Não substitui serviços/configuração operacional.
+3. `seal --receipt <recibo> --sha <merge-main>`: depois de CI integral da main, confere que backend/frontend/docker inteiros continuam idênticos ao runtime preparado; vincula os mesmos binários ao merge, sem rebuild. Recusa runtime diferente e produz `prepared-main.json` e fingerprint novos para a aplicação.
+4. `apply --receipt <recibo-main> --approval-fingerprint <fingerprint> --allow-legacy-interruption`: verifica CI público da main, imagens, backup, dono/tenant, inventário atual e lock. Ativa barreira 503 no Nginx exclusivo, finaliza requests da API, para API/worker/web e os seis escritores especializados sem SIGKILL e confirma ausência de transações ativas. Journal durável registra cada pedido de sinal antes do envio; políticas `unless-stopped` são suspensas somente nos containers pausados e restauradas na retomada. Cria **outro backup atualizado** sob a barreira e repete restore/migration/validação financeira nessa cópia antes da migration real. Orçamento de comandos da manutenção: 300s; falha antes de DDL recupera os mesmos containers/checkout, sem confundir processo ainda terminando com recuperação saudável. Não alterar o proxy compartilhado, DNS, portas ou outros projetos.
+5. Depois de 0088, confere digests antes de iniciar escritores, sobe somente API/web/worker pelas imagens preparadas, valida cofre/API/worker e gates de emissão, retoma os mesmos seis containers especializados e comprova que DB/Redis/Nginx/Evolution não foram reiniciados. Abre o ingresso após saúde e restaura a configuração Nginx original.
+6. `resume --receipt <recibo-main> --approval-fingerprint <fingerprint>`: recuperação específica depois de DDL, apenas com schema 0088 e o mesmo candidato. Fecha a lista de testes, mantém cobrança real bloqueada e receiver/conciliação, não executa migration/downgrade/restore de dados e não volta a 0087. Falha mantém marcador/evidência para diagnóstico.
+7. `recover --receipt <recibo-main> --approval-fingerprint <fingerprint>`: após interrupção abrupta do executor antes de DDL, confere journal/schema 0087 e retoma os mesmos containers anteriores, sem consulta externa de CI. Recusa 0088. A recuperação de um legado ainda ativo continua exigindo ociosidade/filas quiescentes; nunca forçar SIGKILL.
+
+O retry Evolution observado é em memória e limitado; não é uma inbox durável e não comprova entrega se o provedor reiniciar ou uma indisponibilidade exceder todas as retentativas. O procedimento não reinicia esse serviço e verifica seu StartedAt; deve manter a janela dentro do orçamento ensaiado. Não declarar garantia absoluta de callbacks nem substituir `unknown` por sucesso. Mercado Pago recebe 503/sem ACK durante a barreira e suas notificações continuam dependendo do receiver assinado e da conciliação oficial; antes desta primeira migration não há tabelas/tentativas Orders no destino.
+
+### Validação local do procedimento
+
+32 testes de política/sequência aprovados, incluindo falhas antes/depois de DDL, timeout sem SIGKILL, inventário/CI divergente, alteração de runtime na integração, fechamento de emissão na recuperação, recusa de 0087 após DDL, recuperação de conexão interrompida, processo ainda terminando, legado ocupado, restart policy alterada/restaurada, SQL read-only e sanitização de erros. Regressões dos gates preservados: 21 API/web, 15 classificação, 6 preparação anterior e política de workflow aprovadas. Ruff e validação OpenSpec da change aprovados. Ainda validar no CI o novo commit operacional, revisar diff e reconciliar o recibo com o SHA integrado antes de qualquer aplicação.
+
 ## Continuidade
 
-Pendentes antes da execução: revisão humana/CI, mecanismo de release deste escopo, inventário live, backup/restore e recuperação compatível, UUIDs do proprietário, autorização concreta e login acompanhado. Não sincronizar specs principais nem arquivar esta change como publicada antes de evidência e aceite.
+Concluídos nesta retomada: CI atual reconfirmado, inventário SSH read-only, schema, topologia, imagens, identificação exata do cliente/tenant, validação booleana do cofre e consultas minimizadas de filas/contagens. Não houve merge/deploy/migration, backup de dados operacionais, mudança de segredo/configuração, parada/restart de container ou cobrança.
+
+Pendentes antes da execução: fechamento da revisão/CI do mecanismo, vinculação do recibo à main integrada, inventário/fingerprint renovados e autorização da operação concreta, seguida do login acompanhado. A janela já foi aceita, o procedimento/backup/recuperação foram ensaiados e os UUIDs estão conferidos; não pedir novamente dados pessoais. Não sincronizar specs principais nem arquivar esta change como publicada antes de evidência e aceite.

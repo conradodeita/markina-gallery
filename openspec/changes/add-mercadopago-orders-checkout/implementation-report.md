@@ -2,6 +2,8 @@
 
 ## Resultado e limite da evidência
 
+Atualização operacional de **25/10/2026**: inventário remoto concluído; schema 0087 e 15 serviços saudáveis. API com cofre válido, worker geral ainda sem binding; cliente/tenant do proprietário identificados sem publicar dados pessoais. As 68 notificações `unknown` foram preservadas. O proprietário aceitou a janela; procedimento próprio implementado com **32 testes de contrato** e ensaios nativos ARM64 de imagens, SDK, sinais/restart policy, callbacks, Nginx, backup/restore/0088 e recuperação cifrada. Artefatos protegidos no host e containers descartáveis isolados não substituíram serviços/configuração ativos. Nenhuma publicação/migration operacional/cobrança foi executada. Pendente CI/revisão do commit operacional e gates finais. Evidência em [release-plan.md](release-plan.md#inventário-live-após-aprovação--25102026). Notas anteriores de “nenhum SSH” descrevem a preparação anterior à captura.
+
 Implementação de desenvolvimento no worktree `mercadopago-orders`, branch `feature/mercadopago-orders`, base `origin/main` cef5bdf8. Checkout integrado por Orders, cartão oficial em uma parcela e MP Pix; PIX manual permanece independente. Não houve publicação, migration operacional, operação financeira real ou alteração de credenciais de produção.
 
 Validação local concluída: matriz final de **42 testes Orders em PostgreSQL**, **4 testes de configuração**, **97 regressões aprovadas/7 skips**, **16 regressões adicionais**. Checkpoint frontend final de **84 testes em 13 arquivos**, build/typecheck/lint e matriz visual. Os detalhes e repetições estão em [validation.md](validation.md). Lint frontend completo tem 36 avisos e zero erros. Essas contagens não devem ser somadas como testes distintos.
@@ -20,6 +22,12 @@ Preparação validada: **58 testes PostgreSQL/contratos operacionais**, **5 de c
 - Compras de teste são identificadas e excluídas de receita/vendas reais e CSV padrão; detalhes preservam TESTE. Conta real sintética conserva os indicadores/CSV anteriores.
 - Card responsivo com dicas acessíveis, status, referências oficiais, segredos sem preenchimento e URL completa copiável. Escolhas do cliente exibem thumbnails locais Pix/Mercado Pago, com texto e fluxos anteriores preservados.
 - Varredura de 69 arquivos revisados não encontrou os valores reais de token/assinatura externos; SVGs não contêm scripts/eventos/rede. Nenhum `.env`, segredo remoto, produção ou histórico operacional foi alterado.
+
+## CI final da revisão
+
+[Run 40148076942](https://github.com/conradodeita/markina-gallery/actions/runs/40148076942) aprovado no SHA `47af72bdf503295e93b1ee8e68bef97da2d9d947`, em 24/10/2026 às 22:10:17 de São Paulo. Pytest integral: **1661 aprovados/23 skips**; testes adicionais PostgreSQL, frontend, Gemma, imagens AMD64/ARM64, OpenSpec 1.14.0, segredos e gate agregado aprovados. Nenhum job de publicação executado. [PR #283](https://github.com/conradodeita/markina-gallery/pull/283) permanece em rascunho para revisão humana, sem merge automático.
+
+O recibo detalhado está em validation.md e na descrição do PR; este fechamento documental é local e não modifica o SHA validado. Publicação/aceite operacional continuam pendentes dos gates de release-plan.md.
 
 ## Decisões implementadas
 
