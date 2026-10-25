@@ -58,6 +58,8 @@ Credenciais de teste e webhook HTTPS externos não são pressupostos. Testes loc
 
 ## Migration Plan
 
+Reconciliação do CI integral: testes de catálogos históricos 0069/0070 SHALL continuar congelados, excluindo explicitamente tabelas/colunas introduzidas por 0088; não alterar migrations publicadas. Ensaios que exercitam o ORM/inventário atuais SHALL migrar até 0088. O reset proprietário também SHALL classificar conta/preferências Orders como configuração por tenant e tentativas/inbox como operacionais, preservando configuração do proprietário. Um predicado compartilhado com a limpeza integral SHALL impedir inventário/execução proprietários diante de tentativa enviada/inbox em qualquer tenant, com nova conferência após os locks na execução. Nenhum reset operacional é autorizado ou executado por esta correção.
+
 0088 adiciona configuração, credenciais versionadas, tentativa e inbox, FK de SaleOrder e finalidade de challenge. Histórico anterior preservado. Ensaiar upgrade/constraints em banco descartável. Downgrade com dados financeiros novos SHALL recusar perda. Não executar em ambientes operacionais.
 
 Dependências de lifecycle: inventário de exclusão de cliente inclui tentativas Orders, inclusive preparações locais, evitando erro tardio de FK. O reset integral de homologação classifica configurações/cofre como preservados e tentativas/inbox como operacionais, mas recusa a execução se existir qualquer tentativa enviada ou inbox financeira; não apagar evidência que ainda possa receber atualização remota. Esta missão não executa reset.

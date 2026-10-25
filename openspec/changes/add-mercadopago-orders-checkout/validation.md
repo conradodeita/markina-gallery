@@ -102,3 +102,21 @@ O OpenSpec local 1.14.1, executado globalmente com --strict --all --no-interacti
 ### CI do PR #283 — correção do consumidor de inventário
 
 Run 40145339494 do SHA 5dfce1fd: OpenSpec 1.14.0, gitleaks, frontend e imagens AMD64/ARM64 aprovados; backend interrompido no teste do relatório de terceiros porque o consumidor ainda exigia 68 itens e as entradas novas estavam antes de 57–68. Inventário ordenado 01–72, resumo/expectativa/testes sincronizados sem relaxar a validação. Manutenção local usa alias UTC equivalente nos dois scripts afetados. **11 testes unittest aprovados**, 0,022s; Ruff aprovado. Nenhum workflow de deploy, gate operacional, fonte externa ou configuração foi alterado. O novo CI precisa validar o SHA corrigido.
+
+### Ponto de retomada solicitado pelo proprietário
+
+O proprietário pediu interromper o acompanhamento do CI e informou que trará o resultado. PR #283 em https://github.com/conradodeita/markina-gallery/pull/283; SHA candidato bda3751a8600e024cbc40895c4ded0f76b82376c; run 40145688931. Na última consulta anterior ao pedido, OpenSpec/gitleaks/escopo/frontend/Gemma/imagens AMD64 e ARM64 estavam aprovados; backend executava pytest. Não consultar novamente nem cancelar o run neste encerramento; confirmar o resultado e o SHA ao retomar. Task 6.2 permanece pendente dessa evidência.
+
+O proprietário identificou seu cadastro de cliente já existente em produção no chat; nome/telefone não foram copiados ao repositório. UUID de cliente/tenant ainda não conferido no painel. Nenhum cadastro, carrinho, seleção ou compra operacional foi alterado; não reutilizar os clientes sintéticos locais como identidade produtiva. Consulta HTTPS pública read-only em 24/10/2026 às 21:14:24 de São Paulo retornou 200 em /healthz e /api/health (status ok, TLS verificado); não identifica SHA/schema/UUIDs nem substitui inventário operacional. Nenhum SSH/deploy/migration/configuração remota foi executado.
+
+A nota de continuidade é local e ainda não foi commitada/enviada, para não iniciar outro CI enquanto o proprietário acompanha o resultado. Após o CI do código, registrar evidência final e concluir a preparação do PR; execução operacional continua dependendo dos gates de release-plan.md.
+
+### Acompanhamento retomado — correções do CI integral
+
+O proprietário pediu retomar o acompanhamento. Run 40145688931 (bda3751a) terminou com OpenSpec/gitleaks/escopo/frontend/Gemma/imagens AMD64 e ARM64 aprovados. Pytest integral: **9 falhas, 1648 aprovados, 23 skips**, 665 avisos, 1316,07s. O gate agregado recusou corretamente o resultado; nenhum job de deploy foi executado.
+
+Correções: expectativa explícita do campo aditivo payment_provider no histórico PIX; catálogos históricos 0069/0070 excluem as quatro tabelas e a FK posteriores de 0088; ensaios que usam ORM/inventário atuais agora migram até 0088. Nenhuma migration histórica foi editada. Reset proprietário classifica configuração Orders por tenant, preserva conta/envelopes/preferências do proprietário e pode remover somente preparações locais não enviadas; predicado compartilhado impede inventário/execução com tentativa enviada ou inbox de qualquer tenant, inclusive outra conta. A execução verifica novamente sob locks.
+
+Validação dirigida: **21 aprovados, 2 skips, 7 avisos**, 159,99s, cobrindo as nove falhas e quatro casos novos de evidência financeira (envio/inbox × proprietário/outro tenant). Skips: limpeza SQLite não aplicável e symlink não disponível neste Windows; CI Linux cobre o symlink. Guarda de limpeza integral repetida: **1 aprovado**, 7 avisos, 6,28s. Política estática owner-reset, Ruff dos afetados, OpenSpec da change e git diff --check aprovados.
+
+O PostgreSQL adicional é exclusivamente local e descartável: container markina-gallery-mp-migration-ci, loopback 15470, banco pyp_photographer_test, imagem já disponível sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73, tmpfs. Fixtures usam schemas/bancos UUID próprios. Nenhum reset/migration operacional, SSH ou recurso de terceiros foi alterado. O container original 55888 com histórico externo de teste foi preservado.

@@ -98,6 +98,14 @@ O sistema SHALL incluir tentativas Orders no inventário comercial protegido da 
 - **WHEN** há tentativa vinculada à cliente ou evidência financeira remota em um reset
 - **THEN** a operação apresenta o bloqueio antes da exclusão, mantendo IDs, snapshots e rastreabilidade
 
+#### Scenario: Reset proprietário com conta Mercado Pago
+- **WHEN** a homologação executa o reset proprietário com configurações Orders e somente tentativas locais não enviadas
+- **THEN** preserva integralmente conta/credenciais/preferências do proprietário e classifica as tentativas locais como operacionais
+
+#### Scenario: Reset proprietário com evidência enviada em qualquer tenant
+- **WHEN** existe tentativa Orders enviada ou inbox financeira de qualquer fotógrafo
+- **THEN** inventário e execução do reset proprietário recusam a operação antes de excluir registros ou mídia
+
 #### Scenario: Consumidor do CSV anterior
 - **WHEN** exporta sem solicitar detalhes financeiros
 - **THEN** recebe o contrato anterior de quatro colunas sob os filtros aplicados

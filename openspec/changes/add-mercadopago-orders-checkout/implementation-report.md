@@ -62,7 +62,7 @@ A matriz visual local cobre 390, 768 e 1440 px nos temas claro/escuro, cartão, 
 
 ## Arquivos modificados e adicionados
 
-Inventário revisado do diff desta change, sem caches, credenciais ou artefatos locais:
+Inventário revisado do diff, sem caches, credenciais ou artefatos locais:
 
 - `backend/app/admin_account.py`
 - `backend/app/auth.py`
@@ -87,6 +87,7 @@ Inventário revisado do diff desta change, sem caches, credenciais ou artefatos 
 - `backend/app/worker.py`
 - `backend/migrations/versions/20261024_0088_mercadopago_orders.py`
 - `backend/requirements.txt`
+- `backend/tests/test_gallery_lifecycle.py`
 - `backend/tests/test_mercadopago_checkout.py`
 - `backend/tests/test_mercadopago_operations.py`
 - `backend/tests/test_mercadopago_projections.py`
@@ -94,6 +95,9 @@ Inventário revisado do diff desta change, sem caches, credenciais ou artefatos 
 - `backend/tests/test_mercadopago_settings.py`
 - `backend/tests/test_mercadopago_webhook.py`
 - `backend/tests/test_mercadopago_worker.py`
+- `backend/tests/test_tenant_migration.py`
+- `backend/tests/test_tenant_owner_reset.py`
+- `backend/tests/test_tenant_photographer_migration.py`
 - `docker/docker-compose.yml`
 - `docs/THIRD-PARTY-INVENTORY.md`
 - `frontend/app/admin/payments/order-delivery.tsx`
@@ -127,9 +131,11 @@ Inventário revisado do diff desta change, sem caches, credenciais ou artefatos 
 - `openspec/changes/add-mercadopago-orders-checkout/proposal.md`
 - `openspec/changes/add-mercadopago-orders-checkout/release-plan.md`
 - `openspec/changes/add-mercadopago-orders-checkout/review.md`
+- `openspec/changes/add-mercadopago-orders-checkout/specs/deployment-operations/owner-reset/spec.md`
 - `openspec/changes/add-mercadopago-orders-checkout/specs/gallery-sales/global-pix-configuration/spec.md`
 - `openspec/changes/add-mercadopago-orders-checkout/specs/gallery-sales/mercadopago-orders/spec.md`
 - `openspec/changes/add-mercadopago-orders-checkout/tasks.md`
 - `openspec/changes/add-mercadopago-orders-checkout/validation.md`
+- `scripts/reset_homolog_owner.py`
 - `scripts/test_third_party_report.py`
 - `scripts/third_party_report.py`

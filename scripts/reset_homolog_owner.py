@@ -12,7 +12,10 @@ import os
 from pathlib import Path
 
 from app import auth
-from app.homolog_cleanup import admin_security_audit_criteria
+from app.homolog_cleanup import (
+    admin_security_audit_criteria,
+    has_mercadopago_financial_history,
+)
 from app.system_monitor import models as monitor
 from sqlalchemy import delete, false, func, inspect, or_, select, text, true, update
 
@@ -47,11 +50,13 @@ OPERATIONAL = frozenset({
     "provider_payment_receipt", "raw_development_job", "removed_photo_movement", "sale_order", "sale_order_item",
     "whatsapp_delivery", "whatsapp_delivery_attempt", "whatsapp_webhook_receipt", "email_delivery",
     "email_delivery_attempt",
+    "mercadopago_payment", "mercadopago_webhook",
 })
 TENANT_CONFIG = frozenset({
     "branding_settings", "facial_calibration_approval", "facial_rollout_operation", "global_pix_settings",
     "notification_setting", "payment_message_template", "preview_adjustment_settings",
     "progressive_pricing_preset", "progressive_pricing_tier", "raw_development_settings", "whatsapp_channel_settings",
+    "mercadopago_account", "payment_preferences",
 })
 GLOBAL_PRESERVED = frozenset({
     "facial_embedding_experiment_setting", "platform_owner", "system_monitor_bucket", "system_monitor_sample",
@@ -116,6 +121,9 @@ def owner_context(db, email):
     tenant = db.get(auth.Tenant, memberships[0].tenant_id)
     if tenant is None or tenant.status != "active":
         raise ResetPolicyError("Tenant proprietário não está ativo.")
+    if has_mercadopago_financial_history(db):
+        raise ResetPolicyError(
+            "Reset bloqueado: preserve e reconcilie as evidências financeiras Mercado Pago.")
     return owner, memberships[0], tenant
 
 

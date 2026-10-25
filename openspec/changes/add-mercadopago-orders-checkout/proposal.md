@@ -22,6 +22,7 @@ O Pick-your-Pic precisa receber pagamentos dentro da própria experiência por C
 ### Modified Capabilities
 
 - `gallery-sales/global-pix-configuration`: habilitação independente sem apagar configuração ou snapshots.
+- `deployment-operations/owner-reset`: preservar configuração Orders do proprietário e impedir reset com evidência financeira enviada de qualquer tenant.
 
 ## Impact
 

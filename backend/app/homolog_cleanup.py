@@ -226,6 +226,15 @@ def _clear_media_root(root: Path) -> None:
             entry.rmdir()
 
 
+def has_mercadopago_financial_history(db: Session) -> bool:
+    """Resets integrais não podem apagar prova financeira de nenhum fotógrafo."""
+    from app.auth import MercadoPagoPayment, MercadoPagoWebhook
+
+    return bool(db.scalar(select(MercadoPagoPayment.id).where(
+        MercadoPagoPayment.sent_at.is_not(None)).limit(1))
+        or db.scalar(select(MercadoPagoWebhook.id).limit(1)))
+
+
 def execute(db: Session, confirmation: str) -> dict[str, object]:
     require_homolog_environment()
     if confirmation not in {CONFIRMATION, WITHOUT_BACKUP_CONFIRMATION}:
@@ -249,9 +258,7 @@ def execute(db: Session, confirmation: str) -> dict[str, object]:
         name = preparer.quote(model.__tablename__)
         financial_tables.append(f"{preparer.quote_schema(schema)}.{name}" if schema else name)
     db.execute(text(f"LOCK TABLE {', '.join(financial_tables)} IN EXCLUSIVE MODE"))
-    if (db.scalar(select(MercadoPagoPayment.id).where(
-        MercadoPagoPayment.sent_at.is_not(None)).limit(1))
-            or db.scalar(select(MercadoPagoWebhook.id).limit(1))):
+    if has_mercadopago_financial_history(db):
         raise RuntimeError(
             "Reset bloqueado: preserve e reconcilie as evidências financeiras Mercado Pago.")
     order = operational_delete_order()

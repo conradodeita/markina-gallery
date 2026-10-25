@@ -3942,6 +3942,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
                 "gallery_removed": True,
                 "assets_removed": False,
                 "payment_status": "confirmed",
+                "payment_provider": "pix",
                 "commercial_state": "purchased",
                 "communication_status": None,
                 "communicated_at": None,

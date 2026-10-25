@@ -66,6 +66,21 @@ def graph(monkeypatch, tmp_path):
             gallery = auth.ParentGallery(tenant_id=tenant.id, name="Synthetic gallery")
             db.add_all([client, gallery])
             db.flush()
+            account = auth.MercadoPagoAccount(
+                tenant_id=tenant.id, seller_id=str(1000 + i),
+                public_key=f"APP_USR-synthetic-owner-reset-{i}", test_account=True,
+                access_token_envelope={"synthetic_encrypted_token": str(i)},
+                webhook_secret_envelope={"synthetic_encrypted_webhook": str(i)})
+            db.add(account)
+            db.flush()
+            db.add_all([
+                auth.PaymentPreferences(tenant_id=tenant.id, account_id=account.id,
+                                        pix_enabled=True, mercadopago_enabled=True, version=3),
+                auth.MercadoPagoPayment(
+                    tenant_id=tenant.id, client_id=client.id, account_id=account.id,
+                    checkout_key=str(uuid4()), cart_revision="a" * 64,
+                    total_cents=1000, method="pix", state="prepared"),
+            ])
             folder = auth.PhotoFolder(tenant_id=tenant.id, parent_gallery_id=gallery.id, name="Synthetic folder")
             derived = auth.DerivedGallery(tenant_id=tenant.id, parent_gallery_id=gallery.id,
                                           client_id=client.id, name="Synthetic private gallery")
@@ -141,6 +156,8 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     assert report["delete"]["sale_order"] == 5
     assert report["delete"]["sale_order_item"] == report["delete"]["commercial_history_media"] == 5
     assert report["delete"]["provider_payment"] == report["delete"]["provider_payment_attempt"] == 5
+    assert report["delete"]["mercadopago_payment"] == 5
+    assert report["delete"]["mercadopago_account"] == report["delete"]["payment_preferences"] == 4
     assert report["owner_branding_files"] == 1
     assert OWNER_EMAIL not in str(report)
     result = reset.execute(db, OWNER_EMAIL, reset.CONFIRMATION)
@@ -149,6 +166,13 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     assert count(db, auth.AdminUser) == count(db, auth.Tenant) == count(db, auth.TenantAdmin) == 1
     assert count(db, auth.Client) == count(db, auth.SaleOrder) == count(db, auth.ParentGallery) == 0
     assert count(db, auth.ProviderPayment) == count(db, auth.ProviderPaymentAttempt) == 0
+    assert count(db, auth.MercadoPagoPayment) == count(db, auth.MercadoPagoWebhook) == 0
+    assert count(db, auth.MercadoPagoAccount) == count(db, auth.PaymentPreferences) == 1
+    account = db.scalar(select(auth.MercadoPagoAccount))
+    assert account.access_token_envelope == {"synthetic_encrypted_token": "0"}
+    assert account.webhook_secret_envelope == {"synthetic_encrypted_webhook": "0"}
+    assert account.tenant_id == _tenants[0].id
+    assert db.scalar(select(auth.PaymentPreferences)).version == 3
     assert count(db, auth.SaleOrderItem) == count(db, auth.CommercialHistoryMedia) == 0
     db.expire_all()
     owner = db.get(auth.AdminUser, admins[0].id)
@@ -247,3 +271,29 @@ def test_legacy_cleanup_still_refuses_multiple_photographers(graph, monkeypatch)
     with pytest.raises(RuntimeError):
         homolog_cleanup.execute(db, homolog_cleanup.CONFIRMATION)
     assert count(db, auth.AdminUser) == count(db, auth.Client) == 5
+
+
+@pytest.mark.parametrize("kind", ["sent_payment", "webhook"])
+@pytest.mark.parametrize("tenant_index", [0, 1])
+def test_reset_preserva_evidencia_orders_em_qualquer_tenant(graph, kind, tenant_index):
+    db, _admins, tenants, media, brand, key = graph
+    account = db.scalar(select(auth.MercadoPagoAccount).where(
+        auth.MercadoPagoAccount.tenant_id == tenants[tenant_index].id))
+    if kind == "sent_payment":
+        payment = db.scalar(select(auth.MercadoPagoPayment).where(
+            auth.MercadoPagoPayment.account_id == account.id))
+        payment.sent_at, payment.state = auth.now(), "sending"
+    else:
+        db.add(auth.MercadoPagoWebhook(
+            tenant_id=account.tenant_id, account_id=account.id,
+            provider_order_id="ORDSYNTHETICRESET", digest="b" * 64))
+    db.commit()
+    for operation in (lambda: reset.inventory(db, OWNER_EMAIL),
+                      lambda: reset.execute(db, OWNER_EMAIL, reset.CONFIRMATION)):
+        with pytest.raises(reset.ResetPolicyError, match="evidências financeiras Mercado Pago"):
+            operation()
+        db.rollback()
+        assert count(db, auth.Client) == count(db, auth.MercadoPagoPayment) == 5
+        assert count(db, auth.MercadoPagoAccount) == count(db, auth.PaymentPreferences) == 5
+        assert all((root / "test-acervo.jpg").exists() for root in media.values())
+        assert (brand / key).read_bytes() == b"official-owner-logo-synthetic"
