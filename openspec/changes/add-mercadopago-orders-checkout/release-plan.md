@@ -37,6 +37,10 @@ Este candidato modifica migration, dependência, worker e Compose: o classificad
 
 Preparar uma operação de release específica e revisável, com gates e testes para este escopo, antes da publicação. Não relaxar allowlists, alterar fingerprints antigos ou usar um script genérico para contornar o bloqueio. O plano não declara esse mecanismo implementado nem substitui seu ensaio. A necessidade está registrada como gate operacional, separado da funcionalidade testada em desenvolvimento.
 
+## Avisos de dependências antes da publicação
+
+Consulta GitHub read-only em 24/10/2026 retornou 50 alertas abertos na main (5 críticos, 25 altos, 19 médios, 1 baixo). Não são uma avaliação completa deste candidato e não foram corrigidos nesta integração. Antes da publicação, identificar aplicabilidade/exposição e responsável pelas pendências relevantes ao runtime selecionado; não tratar a mera passagem do CI ou ausência de alerta de um pacote como prova de segurança. A evidência distingue a resposta atual da observação histórica de fonte desabilitada.
+
 ## Sequência proposta após revisão e autorização concreta
 
 1. Conferir CI integral do SHA candidato e compatibilidade do SHA integrado; fixar imagens de API/web/worker/migrate e preservar as referências saudáveis anteriores. Construir antes da janela; não alterar imagens/containers/volumes de terceiros.

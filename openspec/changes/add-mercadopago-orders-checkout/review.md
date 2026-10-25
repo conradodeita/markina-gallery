@@ -12,6 +12,8 @@
 
 ### WARNINGS
 
+- GitHub retornou 50 alertas abertos na main em consulta read-only (5 críticos/25 altos/19 médios/1 baixo); aplicabilidade ao candidato/runtime exige revisão antes da publicação. Não se trata de conclusão de auditoria de dependências nem de regressão atribuída ao SDK novo.
+
 - Cofre/chaves do servidor e URL HTTPS/registro de webhook não foram configurados em ambiente operacional nesta missão.
 - Refund parcial/integral comprovados na conta de teste, inclusive por dois callbacks genuínos. Chargeback/expiração/aprovação tardia real permanecem limitados aos cenários contratuais. Sem iniciação automática de reembolso no produto.
 - Compartilhamento externo já conhecido não é revogado pela suspensão interna de entrega.
