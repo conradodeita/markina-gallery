@@ -4,7 +4,9 @@ import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { notifyCartChanged } from "../../client-navigation";
 import { SystemState } from "../../ui-kit";
-import { mercadoPagoState, paymentMoney, paymentRequest, type MercadoPagoPayment } from "../mercadopago";
+import { mercadoPagoState, paymentMoney, paymentRequest, PaymentRequestError,
+  MERCADO_PAGO_MINIMUM_TOTAL_CENTS,
+  type MercadoPagoPayment } from "../mercadopago";
 import CardPayment, { type CardData } from "./card-payment";
 import PaymentLogo from "../payment-logo";
 import styles from "./checkout.module.css";
@@ -30,6 +32,9 @@ export default function CheckoutPage() {
     if (!current.mercadopago_available || !current.cart_revision) {
       throw new Error("Mercado Pago indisponível para esta seleção. Volte ao carrinho para conferir.");
     }
+    if (current.total_cents === null || current.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS) {
+      throw new Error(`Para pagar com Mercado Pago, selecione fotos que somem pelo menos ${paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}.`);
+    }
     const result = await paymentRequest<MercadoPagoPayment>("/library/mercadopago/prepare", {
       cart_revision: current.cart_revision, idempotency_key: crypto.randomUUID(), method,
     });
@@ -46,13 +51,27 @@ export default function CheckoutPage() {
           paymentRequest<Cart>("/library/cart"),
           selectedId
             ? paymentRequest<MercadoPagoPayment>(`/library/mercadopago/${encodeURIComponent(selectedId)}`)
-            : paymentRequest<{ payment: MercadoPagoPayment | null }>("/library/mercadopago/active")
-              .then((result) => result.payment),
+            : paymentRequest<{ payments: MercadoPagoPayment[] }>("/library/mercadopago/active")
+              .then((result) => result.payments),
         ]);
         if (disposed) return;
         setCart(currentCart);
-        if (active) setPayment(active);
-        else await prepare(currentCart, "credit_card");
+        if (selectedId && !Array.isArray(active)) setPayment(active);
+        else if (Array.isArray(active)) {
+          const matching = currentCart.cart_revision
+            ? active.find((candidate) => candidate.cart_revision === currentCart.cart_revision) : undefined;
+          const latestSubmitted = active.find((candidate) => candidate.state !== "prepared");
+          if (matching) setPayment(matching);
+          else if (currentCart.cart_revision && currentCart.total_cents !== null
+            && currentCart.total_cents >= MERCADO_PAGO_MINIMUM_TOTAL_CENTS) await prepare(currentCart, "credit_card");
+          else if (currentCart.cart_revision) setNotice(
+            `O Mercado Pago está disponível para compras a partir de ${paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.`);
+          else if (latestSubmitted) setPayment(latestSubmitted);
+          else setNotice(`O Mercado Pago está disponível para compras a partir de ${paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.`);
+        }
+        else if (currentCart.total_cents === null || currentCart.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS) {
+          setNotice(`O Mercado Pago está disponível para compras a partir de ${paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.`);
+        } else await prepare(currentCart, "credit_card");
       } catch (failure) {
         if (!disposed) setError((failure as Error).message);
       } finally { if (!disposed) setLoaded(true); }
@@ -82,10 +101,14 @@ export default function CheckoutPage() {
       const result = await paymentRequest<MercadoPagoPayment>(
         `/library/mercadopago/${payment.id}/submit`, body);
       if (mounted.current) { setPayment(result); notifyCartChanged(); }
-    } catch {
+    } catch (failure) {
       if (mounted.current) {
-        setPayment({ ...payment, state: "verification_required" });
-        setError("O resultado ainda precisa ser conferido. Atualize o pagamento antes de tentar novamente.");
+        if (failure instanceof PaymentRequestError && failure.status === 409) {
+          setError(failure.message);
+        } else {
+          setPayment({ ...payment, state: "verification_required" });
+          setError("O resultado ainda precisa ser conferido. Atualize o pagamento antes de tentar novamente.");
+        }
       }
     } finally { locked.current = false; if (mounted.current) setBusy(false); }
   }, [payment]);
@@ -111,6 +134,8 @@ export default function CheckoutPage() {
         `/library/mercadopago/${payment.id}/${kind}`, {});
       setPayment(result); notifyCartChanged();
       if (kind === "cancel" && !result.active) setNotice("Checkout encerrado. Sua seleção disponível está no carrinho.");
+      else if (kind === "cancel" && result.state === "processing") setNotice(
+        "Esta tentativa está em processamento. Aguarde o resultado; a seleção vinculada não pode ser cancelada ou editada agora.");
       else if (kind === "cancel") setNotice("O cancelamento ainda não foi confirmado. Aguarde a conferência.");
     } catch (failure) { setError((failure as Error).message); }
     finally { locked.current = false; setBusy(false); }
@@ -149,7 +174,10 @@ export default function CheckoutPage() {
         <p>Compra {payment.id.slice(0, 8)}</p>
         <details><summary>Ver fotografias</summary><ul>{photos.map((name, index) => <li key={index}>{name}</li>)}</ul></details>
       </section>
-      {payment.state === "prepared" ? <>
+      {payment.state === "prepared" ? payment.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS ?
+        <p role="alert" className={styles.error}>
+          Para pagar com Mercado Pago, selecione fotos que somem pelo menos {paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.
+        </p> : <>
         <fieldset className={styles.methods} disabled={busy}><legend>Como você quer pagar?</legend>
           <label data-selected={payment.method === "credit_card"}><input type="radio" name="payment-method" checked={payment.method === "credit_card"}
             aria-label="Cartão de crédito" onChange={() => void switchMethod("credit_card")} /><PaymentLogo provider="mercadopago" /> Cartão de crédito</label>
@@ -167,7 +195,8 @@ export default function CheckoutPage() {
         <p>{payment.method === "pix" ? "PIX Mercado Pago" : "Cartão de crédito · Mercado Pago"}</p>
         {payment.state === "confirmed" ? <p>Pagamento recebido. Acompanhe a entrega das fotografias em Compras.</p> : null}
         {payment.state === "rejected" ? <p>Confira os dados ou tente outro cartão. Suas fotos disponíveis voltaram ao carrinho.</p> : null}
-        {["verification_required", "sending", "processing"].includes(payment.state)
+        {payment.state === "processing" ? <p role="status">Esta tentativa está em processamento. Aguarde o resultado; a seleção vinculada não pode ser cancelada ou editada agora.</p> : null}
+        {["verification_required", "sending"].includes(payment.state)
           ? <p>Aguarde a confirmação. Você pode sair e acompanhar esta compra depois.</p> : null}
         {payment.state === "pending" && payment.pix_copy_paste ? <>
           {payment.pix_qr_code ? <img src={payment.pix_qr_code} alt="QR Code PIX Mercado Pago" width={240} height={240} /> : null}
@@ -187,7 +216,11 @@ export default function CheckoutPage() {
         <Link href="/library/cart">Voltar ao carrinho</Link>
         <Link href="/library/purchases">Ver compras</Link>
       </nav>
-      {payment.active && payment.state !== "prepared" ? <small>Voltar ao carrinho não cancela o pagamento. Para alterar estas fotos, aguarde um resultado ou confirme o cancelamento.</small> : null}
+      {payment.active && payment.state !== "prepared" ? <small>Voltar ao carrinho não cancela o pagamento.</small> : null}
+    </> : loaded && cart && cart.total_cents !== null && cart.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS ? <>
+      <p role="status" className={styles.error}>
+        Para pagar com Mercado Pago, selecione fotos que somem pelo menos {paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.
+      </p><Link className="primary" href="/library/cart">Voltar ao carrinho</Link>
     </> : loaded ? <Link className="primary" href="/library/cart">Voltar ao carrinho</Link> : null}
   </section>;
 }

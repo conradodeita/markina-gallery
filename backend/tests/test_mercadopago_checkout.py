@@ -17,8 +17,11 @@ from app.auth import (
     Client,
     MercadoPagoAccount,
     MercadoPagoPayment,
+    ParentGallery,
     PaymentPreferences,
+    PhotoAsset,
     PhotoSelection,
+    PriceRule,
     Role,
     SaleOrder,
     SaleOrderItem,
@@ -33,9 +36,11 @@ from app.integration_secrets import IntegrationCipher
 from app.main import app
 from app.mercadopago_api import SubmitInput
 from app.mercadopago_checkout import (
+    active_payments,
     apply_order,
     cancel_payment,
     own_payment,
+    payment_payload,
     prepare_payment,
     reconcile,
     submit_payment,
@@ -49,13 +54,22 @@ from tests.test_unified_checkout import isolated_cart_database, setup_cart  # no
 class Network:
     def __init__(self):
         self.creates = []
+        self.cancels = []
         self.resource = None
         self.fail = False
         self.state = "confirmed"
         self.create_status = 201
         self.live_mode = False
+        self.minimum_allowed_amount = 0.5
 
     def request(self, _transport, method, url, **kwargs):
+        if method == "GET" and url.endswith("/v1/payment_methods"):
+            return {"status": 200, "response": [
+                {"id": "visa", "payment_type_id": "credit_card", "status": "active",
+                 "min_allowed_amount": self.minimum_allowed_amount},
+                {"id": "pix", "payment_type_id": "bank_transfer", "status": "active",
+                 "min_allowed_amount": 0.5},
+            ]}
         if url.endswith("/v1/orders") and method == "POST":
             data = json.loads(kwargs["data"])
             self.creates.append((deepcopy(data), kwargs["headers"]))
@@ -63,7 +77,7 @@ class Network:
                 raise MercadoPagoError("timeout")
             state, detail = {
                 "confirmed": ("processed", "accredited"), "pending": ("action_required", "waiting_payment"),
-                "rejected": ("failed", "rejected_by_issuer"),
+                "rejected": ("failed", "rejected_by_issuer"), "processing": ("processing", "processing"),
             }[self.state]
             self.resource = {
                 "id": f"ORDSYNTHETIC{len(self.creates)}", "type": "online", "status": state, "status_detail": detail,
@@ -84,6 +98,7 @@ class Network:
         if self.fail:
             raise MercadoPagoError("timeout")
         if method == "POST" and url.endswith("/cancel"):
+            self.cancels.append(url)
             self.resource["status"], self.resource["status_detail"] = "canceled", "canceled"
             self.resource["transactions"]["payments"][0].update(status="canceled", status_detail="canceled")
             self.resource["last_updated_date"] = now().isoformat()
@@ -161,6 +176,57 @@ def test_cria_snapshot_valor_do_servidor_e_envia_orders_uma_vez(commerce):
         assert submit_payment(db, client, payment.id, input_data()).id == payment.id
         assert len(network.creates) == 1
         assert "single-use" not in str(payment.__dict__)
+
+
+def test_prepara_recusa_total_abaixo_de_um_real_sem_alterar_selecao(commerce):
+    client_id, _, _, network = commerce
+    with SessionLocal() as db:
+        db.query(ParentGallery).filter_by(tenant_id=FIXTURE_TENANT_ID).update(
+            {ParentGallery.fixed_unit_price_cents: 33})
+        db.query(PriceRule).filter_by(tenant_id=FIXTURE_TENANT_ID).update(
+            {PriceRule.unit_price_cents: 33})
+        db.commit()
+        client = db.get(Client, client_id)
+        payload = cart_payload(db, client)
+        assert payload["total_cents"] == 99
+        with pytest.raises(CheckoutError, match=r"pelo menos R\$ 1,00"):
+            prepare_payment(db, client, revision=payload["cart_revision"], key=uuid4(), method="credit_card")
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 3
+        assert db.scalar(select(func.count(SaleOrder.id))) == 0
+    assert network.creates == []
+
+
+def test_total_exatamente_um_real_e_aceito(commerce):
+    client_id, _, _, network = commerce
+    with SessionLocal() as db:
+        selections = list(db.scalars(select(PhotoSelection).where(
+            PhotoSelection.client_id == client_id).order_by(PhotoSelection.id)))
+        for selection in selections[1:]:
+            db.delete(selection)
+        db.query(ParentGallery).filter_by(tenant_id=FIXTURE_TENANT_ID).update(
+            {ParentGallery.fixed_unit_price_cents: 100})
+        db.query(PriceRule).filter_by(tenant_id=FIXTURE_TENANT_ID).update(
+            {PriceRule.unit_price_cents: 100})
+        db.commit()
+        client, payment = prepared(db, client_id)
+        assert payment.total_cents == 100
+        result = submit_payment(db, client, payment.id, input_data())
+        db.commit()
+        assert result.state == "confirmed"
+        assert network.creates[0][0]["total_amount"] == "1.00"
+
+
+def test_limite_dinamico_superior_nao_congela_fotos_nem_envia_ordem(commerce):
+    client_id, _, _, network = commerce
+    network.minimum_allowed_amount = 21.01
+    with SessionLocal() as db:
+        client, payment = prepared(db, client_id)
+        with pytest.raises(CheckoutError, match=r"R\$ 21,01"):
+            submit_payment(db, client, payment.id, input_data())
+        db.rollback()
+        assert db.scalar(select(func.count(PhotoSelection.id))) == 3
+        assert db.scalar(select(func.count(SaleOrder.id))) == 0
+    assert network.creates == []
 
 
 def test_piloto_disponibilidade_e_envio_nao_aceitam_outro_cliente(commerce, monkeypatch):
@@ -277,6 +343,109 @@ def test_pix_cancelamento_confirmado_e_inalterabilidade(commerce):
         assert payment.state == "canceled" and not payment.active
         assert db.scalar(select(func.count(PhotoSelection.id))) == 3
         assert payment.total_cents == 2100
+
+
+def test_orders_em_processamento_permanece_bloqueada_sem_tentar_cancelar(commerce):
+    client_id, _, _, network = commerce
+    network.state = "processing"
+    with SessionLocal() as db:
+        client, payment = prepared(db, client_id)
+        payment = submit_payment(db, client, payment.id, input_data())
+        db.commit()
+        assert payment.state == "processing" and payment.active
+        assert payment_payload(db, payment)["can_cancel"] is False
+
+        # A requisição pode chegar depois de a tela ter sido renderizada;
+        # o servidor reconcilia primeiro e respeita o estado novo do provedor.
+        payment = cancel_payment(db, client, payment.id)
+        db.commit()
+        assert payment.state == "processing" and payment.active
+        assert payment.total_cents == 2100
+        assert network.cancels == []
+
+
+def test_orders_ativos_disjuntos_permitem_checkout_paralelo_e_aprovacao_tardia(commerce):
+    client_id, _, galleries, network = commerce
+    network.state = "processing"
+    with SessionLocal() as db:
+        client, first = prepared(db, client_id)
+        first = submit_payment(db, client, first.id, input_data())
+        first_resource = deepcopy(network.resource)
+        db.commit()
+        assert first.state == "processing"
+
+        # Uma quarta foto fica livre depois que a primeira tentativa congelou
+        # suas três fotos. Ela representa uma segunda compra independente.
+        existing = db.scalar(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == galleries[0]))
+        new_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=existing.parent_gallery_id,
+            derived_gallery_id=existing.derived_gallery_id, folder_id=existing.folder_id,
+            filename="foto-extra.jpg", storage_key=f"synthetic/{uuid4()}.jpg")
+        db.add(new_photo)
+        db.flush()
+        db.add(PhotoSelection(
+            tenant_id=FIXTURE_TENANT_ID, client_id=client_id,
+            photo_asset_id=new_photo.id, derived_gallery_id=galleries[0]))
+        db.commit()
+
+        payload = cart_payload(db, db.get(Client, client_id))
+        second = prepare_payment(db, db.get(Client, client_id), revision=payload["cart_revision"],
+                                 key=uuid4(), method="credit_card")
+        second = submit_payment(db, db.get(Client, client_id), second.id, input_data())
+        db.commit()
+        assert second.id != first.id
+        assert second.state == "processing"
+        assert {payment.id for payment in active_payments(db, db.get(Client, client_id))} == {
+            first.id, second.id}
+        with TestClient(app) as browser:
+            browser.cookies.set("markina_session", "cart-test")
+            response = browser.get("/library/mercadopago/active")
+            assert response.status_code == 200
+            assert {item["id"] for item in response.json()["payments"]} == {
+                str(first.id), str(second.id)}
+        first_items = set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).join(
+            SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id).where(
+                SaleOrder.mercadopago_payment_id == first.id)))
+        second_items = set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).join(
+            SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id).where(
+                SaleOrder.mercadopago_payment_id == second.id)))
+        assert first_items.isdisjoint(second_items)
+
+        # A aprovação tardia confirma apenas o snapshot da ordem antiga.
+        first_resource["status"], first_resource["status_detail"] = "processed", "accredited"
+        first_resource["total_paid_amount"] = "21.00"
+        first_resource["transactions"]["payments"][0].update(
+            status="processed", status_detail="accredited")
+        first.state = "processing"
+        assert apply_order(db, first, first_resource)
+        db.commit()
+        assert first.state == "confirmed" and not first.active
+        assert second.state == "processing" and second.active
+        assert set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).join(
+            SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id).where(
+                SaleOrder.mercadopago_payment_id == second.id))) == second_items
+
+
+def test_foto_reservada_nao_pode_ser_preparada_em_outra_revisao(commerce):
+    client_id, _, _, network = commerce
+    network.state = "processing"
+    with SessionLocal() as db:
+        client, payment = prepared(db, client_id)
+        payment = submit_payment(db, client, payment.id, input_data())
+        db.commit()
+        frozen = db.scalar(select(SaleOrderItem).where(
+            SaleOrderItem.sale_order_id.in_(select(SaleOrder.id).where(
+                SaleOrder.mercadopago_payment_id == payment.id))))
+        frozen_order = db.get(SaleOrder, frozen.sale_order_id)
+        db.add(PhotoSelection(
+            tenant_id=FIXTURE_TENANT_ID, client_id=client_id,
+            photo_asset_id=frozen.photo_asset_id_snapshot,
+            derived_gallery_id=frozen_order.derived_gallery_id))
+        db.commit()
+        with pytest.raises(CheckoutError, match="congelado"):
+            prepare_payment(db, db.get(Client, client_id), revision="f" * 64,
+                            key=uuid4(), method="credit_card")
+        assert len(network.creates) == 1
 
 
 def test_revisao_alterada_recusa_sem_rede_e_abandono_preserva_fotos(commerce):

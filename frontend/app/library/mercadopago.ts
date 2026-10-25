@@ -29,6 +29,13 @@ export const mercadoPagoState: Record<string, string> = {
 
 export const paymentMoney = (cents: number) => (cents / 100).toLocaleString(
   "pt-BR", { style: "currency", currency: "BRL" });
+export const MERCADO_PAGO_MINIMUM_TOTAL_CENTS = 100;
+
+export class PaymentRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
 
 export async function paymentRequest<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api${path}`, {
@@ -39,7 +46,8 @@ export async function paymentRequest<T>(path: string, body?: unknown): Promise<T
     } : {}),
   });
   const result = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(
-    typeof result?.detail === "string" ? result.detail : "Não foi possível consultar o pagamento. Tente atualizar.");
+  if (!response.ok) throw new PaymentRequestError(
+    typeof result?.detail === "string" ? result.detail : "Não foi possível consultar o pagamento. Tente atualizar.",
+    response.status);
   return result as T;
 }

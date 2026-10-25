@@ -33,7 +33,7 @@ from app.auth import (
 from app.checkout import CheckoutError
 from app.integration_secrets import IntegrationSecretError
 from app.mercadopago_checkout import (
-    active_payment,
+    active_payments,
     cancel_payment,
     own_payment,
     payment_payload,
@@ -215,8 +215,8 @@ def register_mercadopago_routes(app, *, db_session, require_same_origin, commerc
     @router.get("/library/mercadopago/active")
     def active_checkout(request: Request, db: Annotated[Session, Depends(db_session)]):
         client = commerce_client(request, db)
-        payment = active_payment(db, client)
-        return {"payment": payment_payload(db, payment) if payment else None}
+        payments = active_payments(db, client)
+        return {"payments": [payment_payload(db, payment) for payment in payments]}
 
     @router.post("/library/mercadopago/prepare")
     def prepare_checkout(payload: PrepareInput, request: Request,

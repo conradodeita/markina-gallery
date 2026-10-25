@@ -29,6 +29,7 @@ from app.unified_checkout import _fingerprint, _valid_materials
 
 TERMINAL_UNPAID = {"rejected", "canceled", "expired"}
 FINANCIAL_REVIEW = {"partially_refunded", "charged_back", "duplicate_review"}
+MINIMUM_MERCADOPAGO_TOTAL_CENTS = 100
 
 
 def utc(value):
@@ -53,21 +54,24 @@ def own_payment(db, payment_id, client, *, lock=False):
     return payment
 
 
-def active_payment(db, client):
-    return db.scalar(select(MercadoPagoPayment).where(
+def active_payments(db, client):
+    return list(db.scalars(select(MercadoPagoPayment).where(
         MercadoPagoPayment.tenant_id == client.tenant_id, MercadoPagoPayment.client_id == client.id,
-        MercadoPagoPayment.active.is_(True)).execution_options(populate_existing=True))
+        MercadoPagoPayment.active.is_(True)).order_by(
+            MercadoPagoPayment.created_at.desc(), MercadoPagoPayment.id.desc()
+        ).execution_options(populate_existing=True)))
 
 
-def payment_orders(db, payment):
-    return list(db.scalars(select(SaleOrder).where(
+def payment_orders(db, payment, *, lock=True):
+    query = select(SaleOrder).where(
         SaleOrder.tenant_id == payment.tenant_id, SaleOrder.client_id == payment.client_id,
-        SaleOrder.mercadopago_payment_id == payment.id).order_by(SaleOrder.id).with_for_update()))
+        SaleOrder.mercadopago_payment_id == payment.id).order_by(SaleOrder.id)
+    return list(db.scalars(query.with_for_update() if lock else query))
 
 
 def payment_payload(db, payment):
     account = account_for(db, payment.account_id, payment.tenant_id)
-    orders = payment_orders(db, payment)
+    orders = payment_orders(db, payment, lock=False)
     items = list(db.scalars(select(SaleOrderItem).where(
         SaleOrderItem.tenant_id == payment.tenant_id,
         SaleOrderItem.sale_order_id.in_([order.id for order in orders])
@@ -91,7 +95,9 @@ def payment_payload(db, payment):
         "pix_copy_paste": payment.pix_copy_paste if payment.state == "pending" else None,
         "pix_qr_code": qr_image,
         "test_account": account.test_account if account else False,
-        "can_cancel": payment.active and payment.state not in FINANCIAL_REVIEW | {"confirmed"},
+        # Orders API permits cancellation only while the order is created or
+        # action_required. In particular, processing/in_review must stay locked.
+        "can_cancel": payment.active and payment.state in {"prepared", "initiated", "pending"},
         "items": [{"name": item.filename_snapshot, "unit_price_cents": item.unit_price_cents,
                    "order_id": str(item.sale_order_id)} for item in items],
     }
@@ -105,26 +111,63 @@ def prepare_payment(db, client, *, revision, key, method):
     if existing:
         if existing.cart_revision != revision or existing.method != method:
             raise CheckoutError("Esta solicitação pertence a outra revisão. Atualize o carrinho.")
+        if existing.state == "prepared" and existing.total_cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
+            raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
         return existing
-    active = active_payment(db, client)
-    if active and active.state != "prepared":
-        return active
+    active = active_payments(db, client)
+    has_selection = db.scalar(select(PhotoSelection.id).where(
+        PhotoSelection.tenant_id == client.tenant_id,
+        PhotoSelection.client_id == client.id).limit(1))
+    if not has_selection:
+        # Uma ordem enviada continua acessível mesmo após seu snapshot remover
+        # as fotos do carrinho. Não tente recriar nem trocar essa ordem.
+        submitted = next((payment for payment in active if payment.state != "prepared"), None)
+        if submitted:
+            return submitted
     account = effective_mercadopago(db, client.tenant_id, client_id=client.id)
     if not account:
         raise CheckoutError("Mercado Pago indisponível. Sua seleção foi mantida.")
     materials = _valid_materials(db, client)
     if _fingerprint(materials) != revision:
         raise CheckoutError("Sua seleção mudou. Confira o carrinho antes de pagar.")
-    if (active and active.cart_revision == revision and active.method == method
-            and active.account_id == account.id):
-        return active
-    if active:
-        active.state, active.active = "abandoned", False
+    total_cents = sum(material[3].quote.total_cents for _, _, material, _ in materials)
+    if total_cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
+        raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
+    same_revision = next((payment for payment in active if payment.cart_revision == revision), None)
+    if same_revision:
+        if same_revision.state != "prepared":
+            if same_revision.method == method and same_revision.total_cents == total_cents:
+                return same_revision
+            raise CheckoutError("Esta seleção já está vinculada a um pagamento em andamento. Aguarde a confirmação antes de alterá-la.")
+        if same_revision.method == method and same_revision.account_id == account.id:
+            return same_revision
+        same_revision.state, same_revision.active = "abandoned", False
         db.flush()
+
+    # A preparação local ainda não reservou fotos junto ao provedor. Tentativas
+    # submetidas, em compensação, mantêm os itens congelados até o desfecho.
+    submitted_ids = [payment.id for payment in active if payment.state != "prepared"]
+    selected_ids = {selection.photo_asset_id for _, _, material, _ in materials
+                    for selection in material[0]}
+    if submitted_ids and selected_ids:
+        reserved_ids = set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).join(
+            SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id).where(
+            SaleOrder.tenant_id == client.tenant_id, SaleOrder.client_id == client.id,
+            SaleOrder.mercadopago_payment_id.in_(submitted_ids),
+            SaleOrderItem.photo_asset_id_snapshot.in_(selected_ids))))
+        if reserved_ids:
+            raise CheckoutError("Uma ou mais fotos já estão vinculadas a outro pagamento em andamento. Confira o carrinho.")
+
+    # Rascunhos preparados sem envio podem ser substituídos quando a seleção
+    # muda; pedidos enviados permanecem ativos, cada um na própria revisão.
+    for payment in active:
+        if payment.state == "prepared":
+            payment.state, payment.active = "abandoned", False
+    db.flush()
     payment = MercadoPagoPayment(
         tenant_id=client.tenant_id, client_id=client.id, account_id=account.id,
         checkout_key=str(key), cart_revision=revision, method=method, state="prepared",
-        total_cents=sum(material[3].quote.total_cents for _, _, material, _ in materials))
+        total_cents=total_cents)
     db.add(payment)
     db.flush()
     audit(db, "mercadopago.prepared", str(payment.id), tenant_id=payment.tenant_id)
@@ -417,13 +460,37 @@ def submit_payment(db, client, payment_id, data):
     account = effective_mercadopago(db, client.tenant_id, client_id=client.id)
     if not account or account.id != payment.account_id:
         raise CheckoutError("A configuração mudou. Confira o carrinho novamente.")
-    freeze_orders(db, client, payment)
     cents = payment.total_cents
+    if cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
+        raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
     method = {"id": "pix", "type": "bank_transfer"} if payment.method == "pix" else {
         "id": data.payment_method_id, "type": "credit_card",
         "token": data.token.get_secret_value() if data.token else None, "installments": 1}
     if payment.method == "credit_card" and (not method["token"] or not method["id"]):
         raise CheckoutError("Confira os dados do cartão no formulário seguro.")
+    provider = credential_provider(account)
+    try:
+        available_methods = provider.payment_methods()
+    except (MercadoPagoError, IntegrationSecretError):
+        raise CheckoutError("Não foi possível conferir o valor mínimo do Mercado Pago. Tente novamente.") from None
+    selected_method = next((item for item in available_methods if
+                            item.get("id") == method["id"] and
+                            item.get("payment_type_id") == method["type"] and
+                            item.get("status") == "active"), None)
+    if not selected_method:
+        raise CheckoutError("Essa forma de pagamento está indisponível. Escolha outra e tente novamente.")
+    try:
+        provider_minimum_cents = amount(selected_method["min_allowed_amount"])
+    except (KeyError, CheckoutError):
+        raise CheckoutError("Não foi possível conferir o valor mínimo do Mercado Pago. Tente novamente.") from None
+    if cents < max(MINIMUM_MERCADOPAGO_TOTAL_CENTS, provider_minimum_cents):
+        minimum = max(MINIMUM_MERCADOPAGO_TOTAL_CENTS, provider_minimum_cents)
+        minimum_text = f"R$ {minimum // 100},{minimum % 100:02d}"
+        raise CheckoutError(
+            f"Essa forma de pagamento aceita compras a partir de {minimum_text}. "
+            "Ajuste sua seleção e tente novamente."
+        )
+    freeze_orders(db, client, payment)
     body = {
         "type": "online", "processing_mode": "automatic",
         "total_amount": f"{cents // 100}.{cents % 100:02d}",
@@ -437,7 +504,7 @@ def submit_payment(db, client, payment_id, data):
     payment.next_check_at = now() + timedelta(seconds=45)
     db.commit()  # Tentativa/reservas duráveis ANTES da rede; token nunca é persistido.
     try:
-        response = credential_provider(account).create(body, payment.id)
+        response = provider.create(body, payment.id)
     except (MercadoPagoError, IntegrationSecretError):
         response = None
     lock_customer(db, client)
@@ -465,6 +532,10 @@ def cancel_payment(db, client, payment_id):
         return payment
     payment = reconcile(db, client, payment.id)
     if not payment.active or not payment.provider_order_id:
+        return payment
+    # Reconciliation may have advanced the order since the UI rendered. Never
+    # call cancel for processing/unknown states; the Orders API rejects them.
+    if payment.state not in {"initiated", "pending"}:
         return payment
     try:
         account = account_for(db, payment.account_id, payment.tenant_id)

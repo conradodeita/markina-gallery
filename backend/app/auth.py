@@ -1235,7 +1235,7 @@ class MercadoPagoPayment(Base):
         CheckConstraint("state != 'confirmed' OR (provider_order_id IS NOT NULL "
                         "AND provider_payment_id IS NOT NULL AND confirmed_at IS NOT NULL)",
                         name="ck_mp_confirmed"),
-        Index("uq_mp_active_client", "tenant_id", "client_id", unique=True,
+        Index("uq_mp_active_client_revision", "tenant_id", "client_id", "cart_revision", unique=True,
               sqlite_where=text("active = true"), postgresql_where=text("active = true")),
     )
 

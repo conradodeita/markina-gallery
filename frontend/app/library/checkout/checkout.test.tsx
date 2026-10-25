@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CardData } from "./card-payment";
 import CheckoutPage from "./page";
-import type { MercadoPagoPayment } from "../mercadopago";
+import { PaymentRequestError, type MercadoPagoPayment } from "../mercadopago";
 
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: {
   children: React.ReactNode; href: string;
@@ -43,11 +43,12 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 function mockFetch(submit?: (body: Record<string, unknown>) => Promise<MercadoPagoPayment>,
-  active: MercadoPagoPayment | null = null) {
+  active: MercadoPagoPayment | null = null,
+  currentCart: typeof cart = cart) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     let result: unknown;
-    if (url === "/api/library/cart") result = cart;
-    else if (url.endsWith("/active")) result = { payment: active };
+    if (url === "/api/library/cart") result = currentCart;
+    else if (url.endsWith("/active")) result = { payments: active ? [active] : [] };
     else if (url.endsWith("/prepare")) {
       const body = JSON.parse(String(init?.body));
       result = { ...prepared, method: body.method };
@@ -69,6 +70,37 @@ describe("Checkout Transparente Orders", () => {
     expect(settings.customization.paymentMethods).toMatchObject({ minInstallments: 1, maxInstallments: 1 });
     expect(screen.getByRole("link", { name: "Voltar ao carrinho" }).getAttribute("href")).toBe("/library/cart");
     expect(screen.queryByLabelText(/número do cartão/i)).toBeNull();
+  });
+
+  it("prepara a seleção atual sem retomar uma compra ativa de outra revisão", async () => {
+    const older: MercadoPagoPayment = { ...prepared, id: "22222222-2222-4222-8222-222222222222",
+      state: "processing", total_cents: 10500, cart_revision: "b".repeat(64) };
+    const fetch = mockFetch(undefined, older);
+    render(<CheckoutPage />);
+    expect(await screen.findByText("3 foto(s) · R$ 21,00")).toBeTruthy();
+    expect(fetch.mock.calls.some(([url]) => url.endsWith("/prepare"))).toBe(true);
+    expect(screen.queryByText("Compra 22222222")).toBeNull();
+  });
+
+  it("não prepara Mercado Pago abaixo de R$ 1 e mantém a seleção", async () => {
+    const fetch = mockFetch(undefined, null, { ...cart, total_cents: 99 });
+    render(<CheckoutPage />);
+    expect(await screen.findByText(/selecione fotos que somem pelo menos R\$ 1,00/i)).toBeTruthy();
+    expect(fetch.mock.calls.some(([url]) => url.endsWith("/prepare"))).toBe(false);
+    expect(screen.queryByLabelText(/pagamento seguro com cartão/i)).toBeNull();
+  });
+
+  it("mostra recusa de validação HTTP sem marcar pagamento como incerto", async () => {
+    const fetch = mockFetch(async () => {
+      throw new PaymentRequestError("Essa forma de pagamento aceita compras a partir de R$ 22,00.", 409);
+    });
+    render(<CheckoutPage />);
+    await waitFor(() => expect(settings).toBeTruthy());
+    await act(async () => { await settings.callbacks.onSubmit(cardData); });
+    expect(await screen.findByText("Essa forma de pagamento aceita compras a partir de R$ 22,00.")).toBeTruthy();
+    expect(screen.queryByText("Verificando pagamento")).toBeNull();
+    expect(screen.getByRole("radio", { name: "Cartão de crédito" })).toBeTruthy();
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith("/submit"))).toHaveLength(1);
   });
 
   it("envia token uma vez, sem aceitar valor do formulário e desmonta o componente", async () => {
@@ -129,22 +161,35 @@ describe("Checkout Transparente Orders", () => {
     expect(screen.getByRole("button", { name: "Cancelar tentativa e editar seleção" })).toBeTruthy();
   });
 
+  it("mantém edição bloqueada e explica enquanto a tentativa está em processamento", async () => {
+    mockFetch(undefined, { ...prepared, state: "processing", can_cancel: false });
+    render(<CheckoutPage />);
+    expect(await screen.findByText("Pagamento em processamento")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain(
+      "Aguarde o resultado; a seleção vinculada não pode ser cancelada ou editada agora.");
+    expect(screen.queryByRole("button", { name: "Cancelar tentativa e editar seleção" })).toBeNull();
+  });
+
   it("atualiza o carrinho quando polling recupera a confirmação", async () => {
     const pending = { ...prepared, state: "verification_required" };
     const fetch = mockFetch(undefined, pending);
-    let poll: () => void = () => undefined;
-    const allocate = globalThis.setInterval;
+    let poll: (() => void) | null = null;
     const timer = vi.spyOn(window, "setInterval").mockImplementation((handler, delay, ...args) => {
-      if (typeof handler === "function") poll = () => handler(...args);
-      return allocate(handler, delay, ...args);
+      if (typeof handler === "function" && delay === 10_000) poll = () => handler(...args);
+      return 0 as unknown as ReturnType<typeof window.setInterval>;
     });
     const changed = vi.fn();
     window.addEventListener("client-cart-changed", changed);
     try {
       render(<CheckoutPage />);
       await screen.findByText("Verificando pagamento");
+      await waitFor(() => expect(poll).not.toBeNull());
       pending.state = "confirmed"; pending.active = false;
-      await act(async () => { poll(); });
+      await act(async () => {
+        poll?.();
+      });
+      await waitFor(() => expect(fetch.mock.calls.some(([url]) =>
+        String(url).endsWith(`/library/mercadopago/${pending.id}`))).toBe(true));
       await screen.findByText("Pagamento confirmado");
       expect(changed).toHaveBeenCalledOnce();
       expect(fetch.mock.calls.some(([url]) => url.endsWith("/submit") || url.endsWith("/prepare"))).toBe(false);
