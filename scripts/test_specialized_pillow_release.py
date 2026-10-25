@@ -222,6 +222,13 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'receipt drift'):
             release.result_receipt(path, dict(result, security_fixed=True))
 
+    def test_config_backup_reads_preserve_original_newlines(self):
+        host = release.Host()
+        with patch.object(release.subprocess, 'run') as command:
+            command.return_value.stdout = '  original config\n\n'
+            self.assertEqual(host.run('synthetic', raw=True), '  original config\n\n')
+            self.assertEqual(host.run('synthetic'), 'original config')
+
     def test_configuration_ignores_only_volatile_identity_and_candidate_label(self):
         old = container('face-index-worker')
         new = copy.deepcopy(old)

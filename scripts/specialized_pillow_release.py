@@ -85,13 +85,14 @@ def validate_inventory(data):
 class Host:
     deadline = None
 
-    def run(self, *args, data=None, timeout=60):
+    def run(self, *args, data=None, timeout=60, raw=False):
         if self.deadline:
             timeout = min(timeout, self.deadline - time.monotonic())
             require(timeout > 0, 'maintenance time budget exceeded')
         try:
-            return subprocess.run(args, input=data, text=True, capture_output=True, check=True,
-                                  cwd=ROOT, timeout=timeout).stdout.strip()
+            result = subprocess.run(args, input=data, text=True, capture_output=True, check=True,
+                                    cwd=ROOT, timeout=timeout).stdout
+            return result if raw else result.strip()
         except (subprocess.SubprocessError, OSError):
             raise ValueError('operational command failed; inspect private journal') from None
 
@@ -167,7 +168,7 @@ class Host:
         backup = work / 'nginx-before.conf'
         if enabled:
             if not backup.exists():
-                source = self.run('docker', 'exec', name, 'cat', '/etc/nginx/nginx.conf')
+                source = self.run('docker', 'exec', name, 'cat', '/etc/nginx/nginx.conf', raw=True)
                 pending = backup.with_suffix('.pending-' + os.urandom(8).hex())
                 fd = os.open(str(pending), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, 'w') as stream:
