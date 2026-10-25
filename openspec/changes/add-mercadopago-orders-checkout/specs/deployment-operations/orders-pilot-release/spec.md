@@ -53,3 +53,21 @@ Cobranças reais MUST permanecer bloqueadas. Teste SHALL aceitar somente o par t
 #### Scenario: Outros clientes e projetos
 - **WHEN** o ensaio é publicado
 - **THEN** outros clientes não recebem nem conseguem emitir com a conta de teste; PIX permanece disponível e serviços externos ao escopo não são parados/recriados
+
+### Requirement: Preservar a correção Pillow já publicada
+O piloto Orders SHALL exigir os seis IDs corrigidos e o recibo Pillow aprovado, incluir seu overlay persistente no inventário/Compose e preservar os mesmos containers/imagens. Preparação, backup e fingerprint Orders SHALL ser renovados após essa publicação, sem reaproveitar o recibo anterior.
+
+#### Scenario: Tentativa de retornar a um especializado antigo
+- **WHEN** imagem ativa, recibo ou overlay Pillow diverge da publicação aprovada
+- **THEN** o preflight recusa antes de manutenção, migration ou troca de serviço
+
+#### Scenario: Recarga nginx ainda em propagação
+- **WHEN** a configuração original é restaurada depois da janela
+- **THEN** a saúde pública SHALL ser confirmada com espera limitada antes de remover o journal, mantendo falha e recuperação para503 persistente
+
+### Requirement: Snapshot Orders reconciliado permanece congelado
+O gate de fonte SHALL manter igualdade estrita em backend/frontend/docker com o snapshotcbb2362f. A reconciliação desse merge com47af72bd SHALL conter somente o pin Pillow13 já autorizado.
+
+#### Scenario: Outra alteração de runtime depois da reconciliação
+- **WHEN** a preparação ou selagem encontra diferença adicional em backend/frontend/docker
+- **THEN** o procedimento recusa sem ampliar allowlist ou publicar o candidato

@@ -33,7 +33,20 @@ REPOSITORY = 'https://github.com/conradodeita/markina-gallery.git'
 SCHEMA = '20261022_0087'
 TARGET_SCHEMA = '20261024_0088'
 BASELINE_SHA = '1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8'
-APPROVED_RUNTIME = '47af72bdf503295e93b1ee8e68bef97da2d9d947'
+APPROVED_RUNTIME = 'cbb2362fcc2c3277ff1a8e7c8c4de963ea125b02'
+PILLOW_SOURCE = '3d2ac6e7fb2e621e6ad468f9fd1233ffc909c7a3'
+PILLOW_APPROVAL = 'cf1c0d5227f9218519acd741ffe596032dc38c932b90ddb79ec4469fa70ab3a9'
+PILLOW_WORK = STATE / 'pillow-prepare-20261025-01'
+PILLOW_OVERLAY = PILLOW_WORK / 'active.compose.json'
+PILLOW_RECEIPT = PILLOW_WORK / 'published.json'
+PILLOW_IMAGES = {
+    'face-index-worker': 'sha256:1b34cf3b21957c3e1cd26e84ca462dd66196579809dcb0a8981b40c317613e22',
+    'face-search-worker': 'sha256:ae32bc36c0d6b0eaca0bba0b86ff4e4647486cd66a6882141e735575041ce6be',
+    'face-maintenance-worker': 'sha256:dd9a526e220a6bd8fd79dadb55ea8b28df20f7d56ccce4908a75514f998cd6c3',
+    'face-gemma-index-worker': 'sha256:adca63778e0da8daebc56cf3f1a87fceefac9bf1d688d6c237d34d260ff56117',
+    'preview-adjustment-worker': 'sha256:c7ded32123eeaf348ae2c9b911797edd017949664633dfe1ccb2a77338a28e5e',
+    'raw-development-worker': 'sha256:ec62cb836dad36b18f59340ab3774247d5f77ebc6ca57ebd6ea26fa314481b03',
+}
 SHA = re.compile(r'[0-9a-f]{40}')
 HASH = re.compile(r'[0-9a-f]{64}')
 IMAGE = re.compile(r'sha256:[0-9a-f]{64}')
@@ -43,12 +56,12 @@ WRITERS = ('api', 'worker') + SPECIALIZED
 SERVICES = set(WRITERS) | {'web', 'nginx', 'db', 'redis', 'evolution-api', 'evolution-db', 'evolution-redis'}
 EXTRAS = (STATE / 'branding.compose.yml', ROOT / 'docker/docker-compose.raw-development.yml',
           ROOT / 'docker/docker-compose.preview-adjustment.yml', ROOT / 'docker/docker-compose.system-monitor.yml',
-          STATE / 'system-monitor.compose.yml')
+    STATE / 'system-monitor.compose.yml', PILLOW_OVERLAY)
 CONFIGS = (ROOT / 'docker/docker-compose.yml',) + EXTRAS
 KEY_BINDING = ROOT / 'docker/.env.integration-secrets'
 KEY_TARGET = STATE / 'integration-secrets.env'
 PENDING = ('app-in-flight.sha', 'app-rollback-in-flight.sha', 'web-in-flight.sha',
-           'web-pending.identity', 'infinitepay-retirement-in-flight.sha')
+           'web-pending.identity', 'infinitepay-retirement-in-flight.sha', 'pillow-in-flight.json')
 FINANCIAL = ('sale_order', 'sale_order_item', 'payment_group', 'provider_payment',
              'provider_payment_attempt', 'provider_payment_receipt', 'provider_payment_correction',
              'payment_confirmation_correction', 'payment_communication', 'global_pix_settings',
@@ -143,6 +156,13 @@ def validate_inventory(data):
             'configuracao_incompleta')
     require(all(HASH.fullmatch(h) for h in data['files'].values()), 'hash_de_configuracao_invalido')
     require(data.get('https') == [200, 200, 200], 'https_indisponivel')
+    pillow = data.get('pillow', {})
+    require(pillow.get('source_sha') == PILLOW_SOURCE and pillow.get('approval') == PILLOW_APPROVAL
+            and HASH.fullmatch(pillow.get('receipt_sha256', '')), 'publicacao_pillow_nao_comprovada')
+    for service, image in PILLOW_IMAGES.items():
+        require(services[service]['image'] == image, 'imagem_pillow_divergente')
+        require(str(PILLOW_OVERLAY) in (services[service].get('compose_files') or '').split(','),
+                'overlay_pillow_ausente')
     return fingerprint(data)
 
 
@@ -217,6 +237,23 @@ class Host:
                              '--max-time', '10', '--output', '/dev/null', '--write-out', '%{http_code}', ORIGIN + p))
                 for p in ('/healthz', '/api/health', '/')]
 
+    def public_ready(self):
+        end = time.monotonic() + 15
+        while self.health() != [200, 200, 200]:
+            require(time.monotonic() < end, 'smoke_publico_persistente')
+            time.sleep(0.5)
+
+    def pillow(self):
+        proof = load(PILLOW_RECEIPT)
+        expected = {'services': {name: {'image': image} for name, image in PILLOW_IMAGES.items()}}
+        require(proof.get('security_fixed') is True and proof.get('financial_preserved') is True
+                and proof.get('fingerprint') == PILLOW_APPROVAL and proof.get('source_sha') == PILLOW_SOURCE
+                and proof.get('schema') == [SCHEMA] and proof.get('services') == expected,
+                'recibo_pillow_divergente')
+        require(load(PILLOW_OVERLAY) == expected, 'overlay_pillow_divergente')
+        return {'source_sha': PILLOW_SOURCE, 'approval': PILLOW_APPROVAL,
+                'receipt_sha256': hashlib.sha256(PILLOW_RECEIPT.read_bytes()).hexdigest()}
+
     def inventory(self):
         require(socket.gethostname() == 'clearbudget-vnic' and ROOT.resolve() == ROOT, 'host_ou_raiz_divergente')
         require(self.run('git', 'remote', 'get-url', 'origin') in {
@@ -262,7 +299,8 @@ class Host:
                 'files': {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
                           for p in CONFIGS + (ROOT / 'docker/.env.homolog',)},
                 'free_bytes': shutil.disk_usage(ROOT).free,
-                'pending': [n for n in PENDING if (STATE / n).exists()], 'https': self.health()}
+                'pending': [n for n in PENDING if (STATE / n).exists()], 'https': self.health(),
+                'pillow': self.pillow()}
         # Free space is a gate, not a fingerprint that changes with unrelated disk writes.
         require(data['free_bytes'] >= 8 * 1024**3, 'espaco_insuficiente')
         data['free_bytes'] = 8 * 1024**3
@@ -623,7 +661,7 @@ class Host:
         self.verify_restored(inventory)
         if (work / 'nginx-original.conf').exists():
             self.maintenance(work, False)
-        require(self.health() == [200, 200, 200], 'recuperacao_pre_ddl_inconclusiva')
+        self.public_ready()
 
 
 def save(path, data, *, exclusive=False):
@@ -919,7 +957,7 @@ def apply(h, receipt, approval, *, legacy):
                 h.start_existing(current['services'][name])
             h.verify_restored(current, specialized_only=True)
             h.maintenance(work, False)
-            require(h.health() == [200, 200, 200], 'smoke_final_falhou')
+            h.public_ready()
             stage['completed'] = True
             save(work / 'stage.json', stage)
             save(STATE / 'orders-current.identity.json', {'sha': receipt['sha'], 'images': receipt['images'],
@@ -984,7 +1022,7 @@ def resume(h, receipt, approval):
             h.start_existing(stage['baseline']['services'][name])
         h.verify_restored(stage['baseline'], specialized_only=True)
         h.maintenance(work, False)
-        require(h.health() == [200, 200, 200], 'smoke_de_recuperacao_falhou')
+        h.public_ready()
         stage.update(completed=True, recovered_emission_closed=True)
         save(work / 'stage.json', stage)
         save(STATE / 'orders-current.identity.json', {'sha': receipt['sha'], 'images': receipt['images'],

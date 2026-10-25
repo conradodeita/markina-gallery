@@ -22,12 +22,15 @@ def inventory():
         'app_env': 'staging', 'free_bytes': 8 * 1024**3,
         'files': {str(p): 'b' * 64 for p in release.CONFIGS + (release.ROOT / 'docker/.env.homolog',)},
         'https': [200, 200, 200], 'services': {
-            s: {'id': str(n).zfill(64), 'image': 'sha256:' + str(n).zfill(64),
+            s: {'id': str(n).zfill(64), 'image': release.PILLOW_IMAGES.get(s, 'sha256:' + str(n).zfill(64)),
+                'compose_files': str(release.PILLOW_OVERLAY) if s in release.SPECIALIZED else 'synthetic-compose',
                 'command': ['python', '-m', 'synthetic.' + s], 'status': 'running', 'health': 'healthy',
                 'restart_policy': {'Name': 'unless-stopped' if s in release.SPECIALIZED else 'no', 'MaximumRetryCount': 0},
                 'version': release.BASELINE_SHA if s == 'api' else None,
                 'ports': {'80/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8080'}]} if s == 'nginx' else {}}
-            for n, s in enumerate(sorted(release.SERVICES), 1)}}
+            for n, s in enumerate(sorted(release.SERVICES), 1)},
+        'pillow': {'source_sha': release.PILLOW_SOURCE, 'approval': release.PILLOW_APPROVAL,
+                   'receipt_sha256': 'e' * 64}}
 
 
 PAIR = {'tenant_id': '00000000-0000-4000-8000-000000000001',
@@ -130,11 +133,65 @@ class FakeHost:
     def health(self):
         return [200, 200, 200]
 
+    def public_ready(self):
+        release.Host.public_ready(self)
+
     def restore_before_ddl(self, *args):
         self.event('restore-before-ddl')
 
 
 class PolicyTests(unittest.TestCase):
+    def test_missing_pillow_proof_old_image_or_overlay_blocks_inventory(self):
+        for case in ('receipt', 'image', 'overlay', 'approval'):
+            data = inventory()
+            if case == 'receipt':
+                data.pop('pillow')
+            elif case == 'image':
+                data['services']['face-index-worker']['image'] = 'sha256:' + 'a' * 64
+            elif case == 'overlay':
+                data['services']['face-index-worker']['compose_files'] = 'old-compose-only'
+            else:
+                data['pillow']['approval'] = 'unapproved'
+            with self.assertRaisesRegex(release.GateError, 'pillow'):
+                release.validate_inventory(data)
+
+    def test_pillow_published_receipt_and_exact_overlay_are_required(self):
+        expected = {'services': {name: {'image': image} for name, image in release.PILLOW_IMAGES.items()}}
+        proof = {'security_fixed': True, 'financial_preserved': True, 'fingerprint': release.PILLOW_APPROVAL,
+                 'source_sha': release.PILLOW_SOURCE, 'schema': [release.SCHEMA], 'services': expected}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'published.json'
+            path.write_text(json.dumps(proof))
+            with (patch.object(release, 'PILLOW_RECEIPT', path),
+                  patch.object(release, 'load', side_effect=[proof, expected])):
+                self.assertEqual(release.Host().pillow()['source_sha'], release.PILLOW_SOURCE)
+            for field, value in (('security_fixed', False), ('source_sha', 'other'),
+                                 ('schema', ['other']), ('fingerprint', 'other'), ('services', {})):
+                changed = dict(proof, **{field: value})
+                with (patch.object(release, 'load', return_value=changed),
+                      self.assertRaisesRegex(release.GateError, 'recibo_pillow')):
+                    release.Host().pillow()
+            with (patch.object(release, 'load', side_effect=[proof, {'services': {}}]),
+                  self.assertRaisesRegex(release.GateError, 'overlay_pillow')):
+                release.Host().pillow()
+
+    def test_nginx_reload_waits_for_public_health_but_refuses_persistent_failure(self):
+        host = release.Host()
+        with (patch.object(host, 'health', side_effect=[[200, 200, 503], [200, 200, 200]]),
+              patch.object(release.time, 'sleep') as sleep):
+            host.public_ready()
+            sleep.assert_called_once_with(0.5)
+        with (patch.object(host, 'health', return_value=[200, 200, 503]),
+              patch.object(release.time, 'monotonic', side_effect=[0, 16]),
+              self.assertRaisesRegex(release.GateError, 'smoke_publico')):
+            host.public_ready()
+
+    def test_runtime_snapshot_remains_frozen_and_overlay_is_in_all_compose_commands(self):
+        self.assertEqual(release.APPROVED_RUNTIME, 'cbb2362fcc2c3277ff1a8e7c8c4de963ea125b02')
+        with patch.object(release.Host, 'run', return_value='') as run:
+            release.Host().compose(Path('/synthetic'), 'config', '--quiet')
+        self.assertIn(str(release.PILLOW_OVERLAY), run.call_args.args)
+
     def test_complete_inventory_has_stable_fingerprint(self):
         data = inventory()
         self.assertRegex(release.validate_inventory(data), r'^[0-9a-f]{64}$')

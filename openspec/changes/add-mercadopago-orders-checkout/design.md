@@ -70,6 +70,12 @@ Compatibilidade CSV: o exportador padrão conserva exatamente quatro colunas, pa
 
 ## Open Questions
 
+### Baseline após correção Pillow autorizada/publicada
+
+Em25/10/2026 os seis especializados receberam somente Pillow13, com PR258/main3d2ac6e7 e CI40206489337 aprovados; fonte/modelos/pacotes restantes preservados, schema0087/digest financeiro iguais e15 serviços saudáveis. O overlay persistente `pillow-prepare-20261025-01/active.compose.json` SHALL integrar CONFIGS/EXTRAS Orders. Inventário confere o published.json privado/fingerprint autorizado, IDs exatos e hash do overlay; não confiar apenas no pin da fonte nem reiniciar imagens antigas. A integração de main na branch Orders produziu cbb2362fcc2c3277ff1a8e7c8c4de963ea125b02; diff de backend/frontend/docker versus47af72bd é exclusivamente `Pillow>=10.0`→`Pillow==13.0.0`. Fixar esse novo snapshot e manter igualdade estrita dos runtimes futuros, sem exceção genérica no gate. Refazer preparação/backup/restore e recibo; API anterior já carregava13 e continua admitindo somente SDKmercadopago adicional.
+
+A publicação Pillow comprovou propagação assíncrona do nginx reload ([200,200,503]→[200,200,200]). Confirmar saúde pública por polling limitado15s antes de concluir publicação ou recuperação Orders;503 persistente continua bloqueando/remantendo manutenção. Não modificar o receiver financeiro nem usar sucesso do frontend como prova de pagamento.
+
 ### Validação final na instalação de produção — decisão do proprietário em 24/10/2026
 
 Compras da conta de teste SHALL ser identificadas explicitamente no histórico/painel. Indicadores de receita e vendas reais e CSV padrão SHALL excluí-las; CSV detalhado SHALL mantê-las com descrição TESTE, preservando os contratos de quatro/doze colunas. A classificação vem da versão da conta verificada pelo servidor, não de flag do navegador. Não alterar status, snapshots ou IDs para simular remoção dos testes.
