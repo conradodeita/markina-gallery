@@ -51,12 +51,24 @@ export default function CheckoutPage() {
           paymentRequest<Cart>("/library/cart"),
           selectedId
             ? paymentRequest<MercadoPagoPayment>(`/library/mercadopago/${encodeURIComponent(selectedId)}`)
-            : paymentRequest<{ payment: MercadoPagoPayment | null }>("/library/mercadopago/active")
-              .then((result) => result.payment),
+            : paymentRequest<{ payments: MercadoPagoPayment[] }>("/library/mercadopago/active")
+              .then((result) => result.payments),
         ]);
         if (disposed) return;
         setCart(currentCart);
-        if (active) setPayment(active);
+        if (selectedId && !Array.isArray(active)) setPayment(active);
+        else if (Array.isArray(active)) {
+          const matching = currentCart.cart_revision
+            ? active.find((candidate) => candidate.cart_revision === currentCart.cart_revision) : undefined;
+          const latestSubmitted = active.find((candidate) => candidate.state !== "prepared");
+          if (matching) setPayment(matching);
+          else if (currentCart.cart_revision && currentCart.total_cents !== null
+            && currentCart.total_cents >= MERCADO_PAGO_MINIMUM_TOTAL_CENTS) await prepare(currentCart, "credit_card");
+          else if (currentCart.cart_revision) setNotice(
+            `O Mercado Pago está disponível para compras a partir de ${paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.`);
+          else if (latestSubmitted) setPayment(latestSubmitted);
+          else setNotice(`O Mercado Pago está disponível para compras a partir de ${paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.`);
+        }
         else if (currentCart.total_cents === null || currentCart.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS) {
           setNotice(`O Mercado Pago está disponível para compras a partir de ${paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Sua seleção foi mantida.`);
         } else await prepare(currentCart, "credit_card");

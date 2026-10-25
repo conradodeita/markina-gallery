@@ -27,7 +27,7 @@ from tests.test_integration_secrets import secret_keyring  # noqa: F401
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261024_0088"
+CURRENT_SCHEMA = "20261025_0089"
 POST_TRANSITION_TABLES = frozenset({
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",

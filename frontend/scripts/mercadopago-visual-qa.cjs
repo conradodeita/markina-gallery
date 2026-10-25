@@ -52,7 +52,7 @@ const sdk = `window.MercadoPago = function () {
         else if (url.pathname.endsWith('/auth/destination')) body = { destination: role === 'admin' ? '/admin' : '/library' };
         else if (url.pathname.endsWith('/push/subscription')) body = { available: false, active: false };
         else if (url.pathname.endsWith('/library/cart')) body = cart;
-        else if (url.pathname.endsWith('/mercadopago/active')) body = { payment };
+        else if (url.pathname.endsWith('/mercadopago/active')) body = { payments: payment ? [payment] : [] };
         else if (url.pathname.endsWith('/mercadopago/prepare')) {
           const input = route.request().postDataJSON();
           payment = { ...base, method: input.method }; body = payment;

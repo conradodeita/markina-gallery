@@ -64,7 +64,7 @@ def test_upgrade_preserva_registros_e_acrescenta_contratos():
         migration().downgrade()
 
 
-def test_constraints_rejeitam_conta_cruzada_e_duas_tentativas_ativas():
+def test_constraints_rejeitam_conta_cruzada_e_mesma_revisao_ativa():
     engine = sa.create_engine("sqlite://")
     @sa.event.listens_for(engine, "connect")
     def foreign_keys(connection, _record):
@@ -85,17 +85,48 @@ def test_constraints_rejeitam_conta_cruzada_e_duas_tentativas_ativas():
             "id": account, "tenant_id": first, "seller_id": "123", "public_key": "public",
             "access_token_envelope": {}, "webhook_secret_envelope": {}, "test_account": True})
     table = Base.metadata.tables["mercadopago_payment"]
-    def insert(tenant, key):
+    def insert(tenant, key, revision="a" * 64):
         with engine.begin() as connection:
             connection.execute(table.insert(), {
                 "id": uuid4(), "tenant_id": tenant, "client_id": client, "account_id": account,
-                "checkout_key": key, "cart_revision": "a" * 64, "total_cents": 100,
+                "checkout_key": key, "cart_revision": revision, "total_cents": 100,
                 "method": "credit_card"})
     with pytest.raises(IntegrityError):
         insert(second, str(uuid4()))
     insert(first, str(uuid4()))
+    insert(first, str(uuid4()), "b" * 64)
     with pytest.raises(IntegrityError):
         insert(first, str(uuid4()))
+
+
+def test_migration_0089_substitui_indice_e_downgrade_preserva_multiplas_tentativas():
+    path = Path(__file__).parents[1] / "migrations/versions/20261025_0089_mercadopago_parallel_attempts.py"
+    spec = importlib.util.spec_from_file_location("mp_parallel_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE mercadopago_payment (id TEXT, tenant_id TEXT, client_id TEXT, "
+            "cart_revision TEXT, active BOOLEAN NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX uq_mp_active_client ON mercadopago_payment "
+            "(tenant_id, client_id) WHERE active = true"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO mercadopago_payment VALUES ('one', 'tenant', 'client', 'a', true)"
+        )
+        with Operations.context(MigrationContext.configure(connection)):
+            module.upgrade()
+        connection.exec_driver_sql(
+            "INSERT INTO mercadopago_payment VALUES ('two', 'tenant', 'client', 'b', true)"
+        )
+        indexes = {row["name"] for row in sa.inspect(connection).get_indexes("mercadopago_payment")}
+        assert "uq_mp_active_client_revision" in indexes
+        with pytest.raises(RuntimeError, match="Downgrade recusado"), \
+                Operations.context(MigrationContext.configure(connection)):
+            module.downgrade()
 
 
 def test_upgrade_postgresql_sobre_schema_completo_preserva_infinitepay():

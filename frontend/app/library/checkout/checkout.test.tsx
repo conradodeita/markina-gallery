@@ -48,7 +48,7 @@ function mockFetch(submit?: (body: Record<string, unknown>) => Promise<MercadoPa
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     let result: unknown;
     if (url === "/api/library/cart") result = currentCart;
-    else if (url.endsWith("/active")) result = { payment: active };
+    else if (url.endsWith("/active")) result = { payments: active ? [active] : [] };
     else if (url.endsWith("/prepare")) {
       const body = JSON.parse(String(init?.body));
       result = { ...prepared, method: body.method };
@@ -70,6 +70,16 @@ describe("Checkout Transparente Orders", () => {
     expect(settings.customization.paymentMethods).toMatchObject({ minInstallments: 1, maxInstallments: 1 });
     expect(screen.getByRole("link", { name: "Voltar ao carrinho" }).getAttribute("href")).toBe("/library/cart");
     expect(screen.queryByLabelText(/número do cartão/i)).toBeNull();
+  });
+
+  it("prepara a seleção atual sem retomar uma compra ativa de outra revisão", async () => {
+    const older: MercadoPagoPayment = { ...prepared, id: "22222222-2222-4222-8222-222222222222",
+      state: "processing", total_cents: 10500, cart_revision: "b".repeat(64) };
+    const fetch = mockFetch(undefined, older);
+    render(<CheckoutPage />);
+    expect(await screen.findByText("3 foto(s) · R$ 21,00")).toBeTruthy();
+    expect(fetch.mock.calls.some(([url]) => url.endsWith("/prepare"))).toBe(true);
+    expect(screen.queryByText("Compra 22222222")).toBeNull();
   });
 
   it("não prepara Mercado Pago abaixo de R$ 1 e mantém a seleção", async () => {
@@ -163,19 +173,23 @@ describe("Checkout Transparente Orders", () => {
   it("atualiza o carrinho quando polling recupera a confirmação", async () => {
     const pending = { ...prepared, state: "verification_required" };
     const fetch = mockFetch(undefined, pending);
-    let poll: () => void = () => undefined;
-    const allocate = globalThis.setInterval;
+    let poll: (() => void) | null = null;
     const timer = vi.spyOn(window, "setInterval").mockImplementation((handler, delay, ...args) => {
-      if (typeof handler === "function") poll = () => handler(...args);
-      return allocate(handler, delay, ...args);
+      if (typeof handler === "function" && delay === 10_000) poll = () => handler(...args);
+      return 0 as unknown as ReturnType<typeof window.setInterval>;
     });
     const changed = vi.fn();
     window.addEventListener("client-cart-changed", changed);
     try {
       render(<CheckoutPage />);
       await screen.findByText("Verificando pagamento");
+      await waitFor(() => expect(poll).not.toBeNull());
       pending.state = "confirmed"; pending.active = false;
-      await act(async () => { poll(); });
+      await act(async () => {
+        poll?.();
+      });
+      await waitFor(() => expect(fetch.mock.calls.some(([url]) =>
+        String(url).endsWith(`/library/mercadopago/${pending.id}`))).toBe(true));
       await screen.findByText("Pagamento confirmado");
       expect(changed).toHaveBeenCalledOnce();
       expect(fetch.mock.calls.some(([url]) => url.endsWith("/submit") || url.endsWith("/prepare"))).toBe(false);

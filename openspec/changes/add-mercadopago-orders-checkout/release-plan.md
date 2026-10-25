@@ -6,6 +6,8 @@ Preparação solicitada em 24/10/2026: revisão, commit/PR e plano operacional. 
 
 **Checkout Orders ainda não publicado: sem migration0088 operacional ou cobrança real.** Em25/10/2026 foram feitos inventários SSH e ensaios isolados/backup/restore. A correção Pillow foi autorizada e publicada separadamente pelo PR258, sem DDL. O piloto Orders continua sujeito ao CI da revisão atual e à aprovação concreta de seu próprio release. A tabela inicial abaixo é histórica; o inventário e os recibos atuais estão na seção de reconciliação de25/10/2026 ao final.
 
+**Atualização de escopo em 25/10/2026:** a correção de compras simultâneas adiciona migration 0089, que substitui o índice de tentativa ativa por cliente por unicidade da revisão ativa. A preparação/recibo existente foi ensaiada somente para 0088 e está supersedida para publicação. Nenhuma migration ou release é autorizado por esta mudança; antes de novo release será necessário reconstruir o candidato incluindo 0089 e repetir inventário, backup/restore e validações do procedimento de publicação.
+
 ## Escopo candidato
 
 | Item | Alvo a revisar | Estado |

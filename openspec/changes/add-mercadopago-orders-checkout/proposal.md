@@ -8,6 +8,7 @@ O Pick-your-Pic precisa receber pagamentos dentro da própria experiência por C
 
 - Adicionar conta Mercado Pago cifrada por tenant, configuração protegida por senha/OTP e controles independentes de PIX e Mercado Pago.
 - Criar tentativa financeira imutável com pedidos por galeria, valores autoritativos, idempotência, conciliação e webhook durável do tópico `order`.
+- Permitir compras simultâneas com conjuntos de fotos independentes, mantendo cada snapshot e tentativa isolados; fotos reservadas por uma ordem ativa não podem ser cobradas por outra tentativa.
 - Integrar cartão tokenizado por MercadoPago.js e Pix da Orders API numa tela própria, com retomada, cancelamento e proteção contra duplicidade.
 - Projetar estados de pagamento, pedido e provedor no histórico, dashboard e CSV.
 - Aplicar piso global de R$ 1,00 às novas tentativas Mercado Pago, sem alterar o PIX manual, e preservar os mínimos dinâmicos por método retornados pelo provedor.
@@ -28,4 +29,4 @@ O Pick-your-Pic precisa receber pagamentos dentro da própria experiência por C
 
 ## Impact
 
-Backend FastAPI/SQLAlchemy/Alembic, carrinho e compras Next.js, Configurações, Vendas e pagamentos, worker e exportação. Migration aditiva após 0087, sem reescrever IDs ou tabelas financeiras InfinitePay. Dependências oficiais somente conforme autorização. Não autoriza publicação, migração operacional, envio de mensagens ou operações financeiras reais.
+Backend FastAPI/SQLAlchemy/Alembic, carrinho e compras Next.js, Configurações, Vendas e pagamentos, worker e exportação. A cadeia de schema passa a exigir migration aditiva 0089 após 0088; a preparação operacional somente para 0088 fica supersedida e precisa ser refeita antes de qualquer publicação. Sem reescrever IDs ou tabelas financeiras legadas. Dependências oficiais somente conforme autorização. Não autoriza publicação, migração operacional, envio de mensagens ou operações financeiras reais.

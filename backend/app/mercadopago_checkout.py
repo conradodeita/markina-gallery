@@ -54,21 +54,24 @@ def own_payment(db, payment_id, client, *, lock=False):
     return payment
 
 
-def active_payment(db, client):
-    return db.scalar(select(MercadoPagoPayment).where(
+def active_payments(db, client):
+    return list(db.scalars(select(MercadoPagoPayment).where(
         MercadoPagoPayment.tenant_id == client.tenant_id, MercadoPagoPayment.client_id == client.id,
-        MercadoPagoPayment.active.is_(True)).execution_options(populate_existing=True))
+        MercadoPagoPayment.active.is_(True)).order_by(
+            MercadoPagoPayment.created_at.desc(), MercadoPagoPayment.id.desc()
+        ).execution_options(populate_existing=True)))
 
 
-def payment_orders(db, payment):
-    return list(db.scalars(select(SaleOrder).where(
+def payment_orders(db, payment, *, lock=True):
+    query = select(SaleOrder).where(
         SaleOrder.tenant_id == payment.tenant_id, SaleOrder.client_id == payment.client_id,
-        SaleOrder.mercadopago_payment_id == payment.id).order_by(SaleOrder.id).with_for_update()))
+        SaleOrder.mercadopago_payment_id == payment.id).order_by(SaleOrder.id)
+    return list(db.scalars(query.with_for_update() if lock else query))
 
 
 def payment_payload(db, payment):
     account = account_for(db, payment.account_id, payment.tenant_id)
-    orders = payment_orders(db, payment)
+    orders = payment_orders(db, payment, lock=False)
     items = list(db.scalars(select(SaleOrderItem).where(
         SaleOrderItem.tenant_id == payment.tenant_id,
         SaleOrderItem.sale_order_id.in_([order.id for order in orders])
@@ -111,9 +114,16 @@ def prepare_payment(db, client, *, revision, key, method):
         if existing.state == "prepared" and existing.total_cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
             raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
         return existing
-    active = active_payment(db, client)
-    if active and active.state != "prepared":
-        return active
+    active = active_payments(db, client)
+    has_selection = db.scalar(select(PhotoSelection.id).where(
+        PhotoSelection.tenant_id == client.tenant_id,
+        PhotoSelection.client_id == client.id).limit(1))
+    if not has_selection:
+        # Uma ordem enviada continua acessível mesmo após seu snapshot remover
+        # as fotos do carrinho. Não tente recriar nem trocar essa ordem.
+        submitted = next((payment for payment in active if payment.state != "prepared"), None)
+        if submitted:
+            return submitted
     account = effective_mercadopago(db, client.tenant_id, client_id=client.id)
     if not account:
         raise CheckoutError("Mercado Pago indisponível. Sua seleção foi mantida.")
@@ -123,12 +133,37 @@ def prepare_payment(db, client, *, revision, key, method):
     total_cents = sum(material[3].quote.total_cents for _, _, material, _ in materials)
     if total_cents < MINIMUM_MERCADOPAGO_TOTAL_CENTS:
         raise CheckoutError("Para pagar com Mercado Pago, selecione fotos que somem pelo menos R$ 1,00.")
-    if (active and active.cart_revision == revision and active.method == method
-            and active.account_id == account.id):
-        return active
-    if active:
-        active.state, active.active = "abandoned", False
+    same_revision = next((payment for payment in active if payment.cart_revision == revision), None)
+    if same_revision:
+        if same_revision.state != "prepared":
+            if same_revision.method == method and same_revision.total_cents == total_cents:
+                return same_revision
+            raise CheckoutError("Esta seleção já está vinculada a um pagamento em andamento. Aguarde a confirmação antes de alterá-la.")
+        if same_revision.method == method and same_revision.account_id == account.id:
+            return same_revision
+        same_revision.state, same_revision.active = "abandoned", False
         db.flush()
+
+    # A preparação local ainda não reservou fotos junto ao provedor. Tentativas
+    # submetidas, em compensação, mantêm os itens congelados até o desfecho.
+    submitted_ids = [payment.id for payment in active if payment.state != "prepared"]
+    selected_ids = {selection.photo_asset_id for _, _, material, _ in materials
+                    for selection in material[0]}
+    if submitted_ids and selected_ids:
+        reserved_ids = set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).join(
+            SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id).where(
+            SaleOrder.tenant_id == client.tenant_id, SaleOrder.client_id == client.id,
+            SaleOrder.mercadopago_payment_id.in_(submitted_ids),
+            SaleOrderItem.photo_asset_id_snapshot.in_(selected_ids))))
+        if reserved_ids:
+            raise CheckoutError("Uma ou mais fotos já estão vinculadas a outro pagamento em andamento. Confira o carrinho.")
+
+    # Rascunhos preparados sem envio podem ser substituídos quando a seleção
+    # muda; pedidos enviados permanecem ativos, cada um na própria revisão.
+    for payment in active:
+        if payment.state == "prepared":
+            payment.state, payment.active = "abandoned", False
+    db.flush()
     payment = MercadoPagoPayment(
         tenant_id=client.tenant_id, client_id=client.id, account_id=account.id,
         checkout_key=str(key), cart_revision=revision, method=method, state="prepared",

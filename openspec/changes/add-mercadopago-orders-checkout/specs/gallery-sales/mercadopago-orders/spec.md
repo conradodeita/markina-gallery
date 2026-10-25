@@ -20,7 +20,15 @@ O sistema SHALL criar ordens exclusivamente por POST /v1/orders com type online,
 
 #### Scenario: Alteração do carrinho
 - **WHEN** o cliente altera fotos após preparar ou enviar uma tentativa
-- **THEN** fotos/total daquela tentativa permanecem imutáveis e nova cobrança exige nova revisão e reconciliação/cancelamento da tentativa potencialmente ativa
+- **THEN** fotos/total daquela tentativa permanecem imutáveis; fotos ainda reservadas exigem desfecho confirmado antes de voltar à seleção, enquanto uma nova revisão formada só por fotos livres pode gerar compra independente
+
+#### Scenario: Nova compra com fotos diferentes enquanto há pagamento em processamento
+- **WHEN** o cliente seleciona fotos que não pertencem a nenhuma tentativa Mercado Pago ativa e inicia outra compra enquanto uma ordem anterior está `processing`/`in_review`
+- **THEN** o sistema cria uma tentativa independente com UUID, chave de idempotência, valor e snapshot próprios, mantém a tentativa anterior inalterada e acompanha os dois estados separadamente
+
+#### Scenario: Foto reservada não entra em outra tentativa
+- **WHEN** a seleção de uma nova tentativa contém uma foto já congelada em outra ordem ativa do mesmo cliente
+- **THEN** o backend recusa a nova tentativa antes de criar snapshot ou chamar o provedor e preserva as reservas existentes
 
 #### Tentativa em processamento não pode ser cancelada
 - **WHEN** a Orders API confirma que a ordem está em `processing` ou `in_review`
@@ -51,7 +59,7 @@ O sistema SHALL preservar estados de order e transação separadamente. Aprovaç
 
 #### Scenario: Aprovação tardia após retorno ao carrinho
 - **WHEN** tentativa anterior é aprovada após mudança de seleção
-- **THEN** somente as fotos e o total congelados nessa tentativa são confirmados e sobreposição financeira gera revisão explícita
+- **THEN** somente as fotos e o total congelados nessa tentativa são confirmados; uma compra simultânea de fotos disjuntas permanece inalterada e nenhuma foto é transferida entre tentativas
 
 ### Requirement: Inbox autenticada e idempotente
 O sistema SHALL validar HMAC oficial do tópico order, conta e ID antes de persistir inbox mínima durável e responder sucesso. Processamento SHALL consultar Orders, respeitar locks, deduplicar entregas e suportar backoff/reinício sem perder atualizações posteriores da mesma order.
