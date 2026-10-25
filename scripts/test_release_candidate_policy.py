@@ -77,6 +77,14 @@ class ReleaseCandidatePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "recusa protegida"):
             release_candidate_snapshot(self.root, self.manifest)
 
+    def test_dependency_only_head_is_valid_technical_refusal_not_app_publication(self):
+        self.write("backend/requirements.txt", "Pillow==13.0.0\n")
+        self.commit()
+        source, ready, reason = release_candidate_snapshot(self.root, self.manifest)
+        self.assertEqual(source, self.source)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "arquivo_fora_do_escopo")
+
     def test_manifest_cannot_turn_migration_into_positive_snapshot(self):
         self.write("backend/migrations/versions/new_vault.py", "protected schema\n")
         self.manifest["note"] = "attempted scope expansion"

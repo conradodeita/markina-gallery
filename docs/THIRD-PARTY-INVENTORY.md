@@ -68,7 +68,7 @@ O inventário anterior estava incorreto ao descrever Gemma apenas como proposta.
 | 29 | LightCraft | `0.6.0`, SHA-256 por arquitetura no Dockerfile RAW | Conversão RAW opt-in; alteração de cor/formato/câmera e comportamento CLI requer corpus/comparação visual e licença. |
 | 30 | RawTherapee RAW | `5.9-1+b1`, pin apt no worker RAW | Conversor RAW alternativo; validar formatos/câmeras, render e rollback. |
 | 31 | RawTherapee preview | pacote `rawtherapee` sem pin em `Dockerfile.preview-adjustment` | Ajuste opcional de prévia; apt móvel e saída visual podem variar. |
-| 32 | Pillow | `Pillow>=10.0` | Derivados, EXIF e imagem; faixa aberta, atualizar com teste de bytes/dimensões/metadados. |
+| 32 | Pillow | `Pillow==13.0.0` | Derivados, EXIF e imagem; MIT-CMU, sem ativação. Correção de segurança autorizada em 25/10/2026, com ensaio de bytes/dimensões/metadados; pin não prova publicação. |
 | 33 | Fontes DejaVu | pacote apt `fonts-dejavu-core` | Render de texto/previews; licença e métricas alteram output. |
 
 ### C — Dependências e runtimes da aplicação
