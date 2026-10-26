@@ -55,6 +55,12 @@ Após integração do código em `main`, a cópia root-owned do wrapper em `/usr
 
 O inventário só fica apto quando comprova checkout/runtime alinhados, `20261021_0086`, serviços saudáveis, hashes Compose API/web, domínio/porta registrados, smoke HTTPS e binding regular exclusivo sem link simbólico, hardlink ou referência externa. O JSON sanitizado e seu fingerprint são apresentados antes de qualquer etapa mutável. O manifesto de release API/web em `0084` segue sem alteração até que esse estado seja confirmado pelo host.
 
+## Preflight da migration de ajuste de prévias 0090
+
+Depois de integrar a change e revisar CI, atualizar a cópia root-owned deste wrapper para aceitar somente `MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=<40 hex>`. O branch versionado verifica o blob `PREVIEW_MIGRATION_INVENTORY_BLOB_SHA` de `scripts/preview_adjustment_migration_inventory.py`, baixa o helper do SHA imutável de suporte e executa somente `inventory`. Instale com backup, atomicamente, `root:root 0755`; confira SHA-256 e preserve a regra `restrict,command=`. Não conceda shell nem modo release à chave read-only. O procedimento completo, os SHAs permitidos, o fingerprint e a recuperação estão em `docs/RELEASE-PREVIEW-ADJUSTMENT-MIGRATION.md`.
+
+Até a instalação root-owned e a conferência do hash/pin, não iniciar o preflight nem usar SSH arbitrário como alternativa. A chave de deploy permanece separada e só fica disponível após preflight válido, igualdade do fingerprint informado e aprovação do environment `production`.
+
 ## Verificação de ancestralidade do candidato
 
 O checkout de produção pode não conter o commit recém-mergeado em `main`. Para verificar que o SHA candidato descende do último release saudável sem alterar refs ou objetos do checkout ativo, o inventário busca a ponta de `main` com filtro de blobs em um repositório Git bare temporário configurado como partial clone, confirma que ela continua igual ao SHA solicitado e verifica a ancestralidade nesse banco temporário. O diretório é removido ao terminar; qualquer falha ou mudança da ponta de `main` faz o preflight falhar fechado antes de produzir o fingerprint.

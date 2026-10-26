@@ -12,6 +12,7 @@ readonly FACIAL_SCRIPT_BLOB_SHA="bc07f8a4acb90526ed98b74ea5a8acd23cc0d90e"
 readonly APP_SCRIPT_BLOB_SHA="646852479c83d0bfa356203379a95cbd9e4019f6"
 readonly RETIREMENT_SCRIPT_BLOB_SHA="935af96ec1b650eb2c9ae188186eec38f0dd532b"
 readonly ORDERS_SCRIPT_BLOB_SHA="13371d50abfdeedbe02408546a685277b3e7f042"
+readonly PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="31cb1b8a2ad40acb4d2525cb243fd68e562575d2"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
@@ -43,6 +44,11 @@ elif [[ "$original_command" =~ ^MARKINA_ORDERS_TARGET_SHA=([0-9a-f]{40})$ ]]; th
   script_blob_sha="$ORDERS_SCRIPT_BLOB_SHA"
   inventory_mode="inventory"
   inventory_runtime="python"
+elif [[ "$original_command" =~ ^MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=([0-9a-f]{40})$ ]]; then
+  target_sha="${BASH_REMATCH[1]}"
+  script_name="preview_adjustment_migration_inventory.py"
+  script_blob_sha="$PREVIEW_MIGRATION_INVENTORY_BLOB_SHA"
+  inventory_runtime="preview-migration-python"
 else
   fail "comando SSH nÃƒÂ£o permitido"
 fi
@@ -64,6 +70,9 @@ actual_blob_sha="$(printf '%s\n' "$script_body" | git hash-object --stdin)"
 if [[ "$inventory_runtime" == "python" ]]; then
   printf '%s\n' "$script_body" | PYTHONPATH="$PROJECT_ROOT/scripts" \
     python3 -B - "$inventory_mode" --sha "$target_sha"
+elif [[ "$inventory_runtime" == "preview-migration-python" ]]; then
+  printf '%s\n' "$script_body" | MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA="$target_sha" \
+    PYTHONPATH="$PROJECT_ROOT/scripts" python3 -B -
 else
   printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
     MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha"

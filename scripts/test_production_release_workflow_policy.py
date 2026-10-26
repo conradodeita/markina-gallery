@@ -24,6 +24,8 @@ INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes(
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
 RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retirement.sh").read_bytes()
 ORDERS_INVENTORY_SCRIPT = (ROOT / "scripts/orders_pilot_release.py").read_bytes()
+PREVIEW_MIGRATION_INVENTORY = (ROOT / "scripts/preview_adjustment_migration_inventory.py").read_bytes()
+PREVIEW_MIGRATION_DEPLOY = (ROOT / "scripts/deploy-prod-preview-adjustment-migration.sh").read_text(encoding="utf-8")
 RETIREMENT_BINDING_SCRIPT = (ROOT / "scripts/retirement_binding_removal.py").read_text(encoding="utf-8")
 APP_RUNBOOK = (ROOT / "docs/DEPLOY-PROD-APP.md").read_text(encoding="utf-8")
 CLASSIFIER = (ROOT / "scripts/classify_prod_release.py").read_text(encoding="utf-8")
@@ -95,6 +97,18 @@ def main() -> None:
     )[0]
     rollback_release = WORKFLOW.split("  production-app-rollback:", 1)[1]
     orders_preflight = WORKFLOW.split("  orders-pilot-preflight:", 1)[1]
+    preview_scope = WORKFLOW.split("  preview-adjustment-migration-scope:", 1)[1].split(
+        "  preview-adjustment-migration-preflight:", 1
+    )[0]
+    preview_preflight = WORKFLOW.split("  preview-adjustment-migration-preflight:", 1)[1].split(
+        "  preview-adjustment-migration-release-approval:", 1
+    )[0]
+    preview_approval = WORKFLOW.split("  preview-adjustment-migration-release-approval:", 1)[1].split(
+        "  preview-adjustment-migration-release:", 1
+    )[0]
+    preview_release = WORKFLOW.split("  preview-adjustment-migration-release:", 1)[1].split(
+        "  production-preflight:", 1
+    )[0]
 
     require("environment: production-preflight", "environment sem revisor para preflight", preflight)
     require("fetch-depth: 0", "histórico para comparar o baseline autorizado", preflight)
@@ -110,6 +124,46 @@ def main() -> None:
     require("- infinitepay-retirement-preflight", "operação manual de preflight", WORKFLOW)
     require("- infinitepay-retirement-release", "operação manual de release", WORKFLOW)
     require("- orders-pilot-inventory", "operação manual de inventário Orders", WORKFLOW)
+    require("- preview-adjustment-migration-preflight", "preflight manual da migration 0090", WORKFLOW)
+    require("- preview-adjustment-migration-release", "release manual da migration 0090", WORKFLOW)
+    for operation in ("preview-adjustment-migration-preflight", "preview-adjustment-migration-release"):
+        require(f"inputs.operation == '{operation}'", f"operação {operation} limitada ao workflow manual", preview_scope)
+    require("check_preview_adjustment_migration_scope.py", "escopo e CI do candidato verificados", preview_scope)
+    require("0dd015a62447e0c8d4c6af16b381140c8118f2ec", "SHA exato do runtime", preview_scope)
+    require("environment: production-preflight", "preflight com credencial somente-leitura", preview_preflight)
+    require("MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=$GITHUB_SHA", "preflight identifica o helper integrado", preview_preflight)
+    require("inputs.operation == 'preview-adjustment-migration-release'", "release repete o preflight manual", preview_preflight)
+    if "environment: production\n" in preview_preflight or "--mode release" in preview_preflight:
+        raise AssertionError("preflight da migration não pode acessar credencial ou modo mutável")
+    require("REQUESTED_APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}", "gate usa fingerprint enviado pelo operador", preview_approval)
+    require("PREFLIGHT_FINGERPRINT: ${{ needs.preview-adjustment-migration-preflight.outputs.approval_fingerprint }}", "gate usa inventário recém-coletado", preview_approval)
+    require('os.environ["REQUESTED_APPROVAL_FINGERPRINT"] == os.environ["PREFLIGHT_FINGERPRINT"]', "gate compara fingerprints integralmente", preview_approval)
+    require("needs.preview-adjustment-migration-release-approval.outputs.approved == 'true'", "release depende da aprovação exata", preview_release)
+    require("environment: production", "release protegido", preview_release)
+    require("scripts/deploy-prod-preview-adjustment-migration.sh", "release chama executor dedicado", preview_release)
+    require('^MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=([0-9a-f]{40})$', "wrapper aceita apenas SHA exato para leitura", WRAPPER)
+    require('PREVIEW_MIGRATION_INVENTORY_BLOB_SHA=', "wrapper fixa blob do helper read-only", WRAPPER)
+    require('script_name="preview_adjustment_migration_inventory.py"', "wrapper seleciona helper somente-leitura", WRAPPER)
+    if "PENDING_PREVIEW_" in WRAPPER or "PENDING_PREVIEW_" in PREVIEW_MIGRATION_DEPLOY:
+        raise AssertionError("pins do fluxo de migration precisam ser fechados antes da integração")
+    inventory_blob = subprocess.run(
+        ["git", "hash-object", "--", "scripts/preview_adjustment_migration_inventory.py"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    require(f'PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="{inventory_blob}"', "wrapper fixa blob do inventário exato", WRAPPER)
+    for path, constant in (
+        ("scripts/preview_adjustment_migration_inventory.py", "INVENTORY_BLOB_SHA"),
+        ("scripts/preview_adjustment_migration_release_flow.py", "FLOW_BLOB_SHA"),
+        ("scripts/preview_adjustment_migration_release.py", "RELEASE_BLOB_SHA"),
+    ):
+        blob = subprocess.run(["git", "hash-object", "--", path], cwd=ROOT,
+                              check=True, capture_output=True, text=True).stdout.strip()
+        require(f'{constant}="{blob}"', f"executor fixa blob de {path}", PREVIEW_MIGRATION_DEPLOY)
+    require('approval_fingerprint="$6"', "executor exige fingerprint como argumento explícito", PREVIEW_MIGRATION_DEPLOY)
+    require("TARGET_SHA=\"0dd015a62447e0c8d4c6af16b381140c8118f2ec\"", "executor limita runtime candidato", PREVIEW_MIGRATION_DEPLOY)
+    require('python3 -B "$temporary/preview_adjustment_migration_release.py" release', "executor despacha apenas release", PREVIEW_MIGRATION_DEPLOY)
+    if "alembic upgrade head" in PREVIEW_MIGRATION_DEPLOY or "docker compose down" in PREVIEW_MIGRATION_DEPLOY:
+        raise AssertionError("executor contém operação genérica/destrutiva não permitida")
     require("inputs.operation == 'orders-pilot-inventory'", "inventário Orders só manual", orders_preflight)
     require("environment: production-preflight", "Orders usa somente ambiente read-only", orders_preflight)
     require("MARKINA_ORDERS_TARGET_SHA=$GITHUB_SHA", "Orders envia somente SHA completo", orders_preflight)
