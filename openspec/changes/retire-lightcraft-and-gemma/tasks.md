@@ -18,8 +18,8 @@
 
 ## 4. Manter RawTherapee no ajuste de prévias
 
-- [ ] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless estão no CI. Após corrigir `libexpat1` e a chamada CLI, build e smoke AMD64 passaram localmente em ambiente isolado; detalhes em Workflow follow-up. Evidência ARM64 e CI completo ainda pendentes.
-- [ ] 4.2 Atualizar documentação do worker, licença/origem e inventário de terceiros com versão, checksums, consumidores e limites do smoke; a documentação foi atualizada e o job `runtime-images` executará os comandos após push, ainda pendente de CI.
+- [x] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless passaram no CI `40318640756`, SHA `3b78c9dc`. Build e smoke AMD64 também passaram localmente em ambiente isolado; detalhes em Workflow follow-up. O CI completo ainda depende da correção do guard de deploy descrita abaixo.
+- [x] 4.2 Atualizar documentação do worker, licença/origem e inventário de terceiros com versão, checksums, consumidores e limites do smoke; documentação atualizada e jobs `runtime-images` AMD64/ARM64 verdes no CI `40318640756`. Smoke ARM64 confirmou 5.13 e três amostras sintéticas em 0,235 s, 0,224 s e 0,223 s. Isto não comprova equivalência estética em fotografias reais.
 
 ## 5. Integração e continuidade
 
@@ -31,6 +31,8 @@
 ## Workflow follow-up
 
 ### Correção dos checks da PR #292 — 26/10/2026
+
+- CI `40318640756` (`3b78c9dc`): frontend, OpenSpec, Gitleaks, escopo e imagens AMD64/ARM64 passaram. Backend falhou no teste de integridade do wrapper de preflight porque a retirada do caminho histórico `backend/gemma-requirements.txt` mudou o blob de `deploy-prod-app-services.sh`. Restaurada localmente essa referência de comparação histórica; o script voltou exatamente ao blob aprovado `646852479c83d0bfa356203379a95cbd9e4019f6`, sem alterar pin, executar serviço ou instalar Gemma. `python scripts/test_prod_release_state.py -q`: 36 testes executados, 35 passaram e 1 skip no Windows, em 817,638 s. Correção retomada após a nova solicitação humana: diff revisado, blob aprovado reconfirmado e OpenSpec estrito válido. O resultado dos 36 testes permanece aplicável porque o script não mudou desde a validação. Publicação na mesma PR e novo CI são a próxima etapa; nenhum merge ou deploy está autorizado por este registro.
 
 - CI `40317113432` (`9c16238a`): lint corrigido; dois testes de manutenção ainda referenciavam serviços RAW/Gemma ausentes do inventário. Os testes agora exercitam o worker opcional de prévias, mantendo as garantias de não ativar serviço inativo e de ignorar serviço ausente. Os 29 testes de `scripts.test_python_security_release` passaram.
 - Os builds AMD64/ARM64 revelaram ausência de `libexpat.so.1`; foi adicionada a dependência Debian `libexpat1`. O build local também demonstrou que `-v` retorna 255 na CLI 5.13. Conforme `rtgui/main-cli.cc` da tag upstream 5.13, a inicialização sem argumentos imprime a versão e retorna zero. Build e smoke agora exigem sucesso e banner de versão, sem ignorar falhas.
