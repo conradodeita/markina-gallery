@@ -10,13 +10,15 @@ Foram organizados **72 itens rastreáveis** em unidades explícitas (pacotes, ru
 | Área | Principais itens | Prioridade |
 |---|---|---|
 | Serviços que podem afetar acesso/cliente | Next/React, FastAPI, PostgreSQL, Redis, Nginx, Evolution, SMTP e push | Muito alta; Dependabot semanal em PR e alerts de segurança nativos assim que habilitados. |
-| Motores e mídia | YuNet/SFace/OpenCV; EmbeddingGemma 2 + stack PyTorch; LightCraft/RawTherapee/Pillow | Revisão humana especializada. Sem PR/atualização automática de pesos ou recomendação de renderer. |
+| Motores e mídia | YuNet/SFace/OpenCV; RawTherapee 5.13 no ajuste opcional de prévias; Pillow | SFace é o único motor facial servido. LightCraft, processamento RAW e Gemma aposentados no código em 26/10/2026. |
 | Build e desenvolvimento | runtimes Python/Node, npm/pip/apt, Actions e tags/digests Docker | Dependabot agrupado semanal; validar lockfiles, reprodutibilidade, arquitetura e supply chain. |
 | Oracle/runtime | evidências abaixo datadas; inspeção atual não realizada | Estado posterior à última observação fica não confirmado. Nunca inferir versão runtime somente de tag. |
 
-### Gemma reconciliado
+### Registro histórico da avaliação Gemma
 
-O inventário anterior estava incorreto ao descrever Gemma apenas como proposta. O código atual contém `backend/Dockerfile.gemma`, `gemma-requirements.txt`, modelo `google/embeddinggemma-2` na revisão `914f7f89142e33e77833254d9c9b90c3cef7303b`, service `face-gemma-index-worker` e configuração de monitoramento.
+Em 26/10/2026 o provider, dependências, assets pesados, serviço, seletor, jobs novos e gates de CI Gemma foram removidos da aplicação. Os IDs 22–28 abaixo preservam a proveniência da avaliação, não representam dependências ativas. Dados, embeddings, jobs, migrations e consultas históricas não foram apagados. O runtime remoto posterior a 19/10 continua não confirmado e exige inventário antes da próxima publicação.
+
+O inventário anterior estava incorreto ao descrever Gemma apenas como proposta. Antes da aposentadoria em 26/10/2026, o branch continha `backend/Dockerfile.gemma`, `gemma-requirements.txt`, modelo `google/embeddinggemma-2` na revisão `914f7f89142e33e77833254d9c9b90c3cef7303b`, service `face-gemma-index-worker` e configuração de monitoramento. Esses detalhes são proveniência da avaliação; os componentes executáveis foram removidos desta branch.
 
 - **11/10/2026, evidência operacional de homologação em `openspec/changes/evaluate-embeddinggemma-face-search/validation.md`:** worker explicitamente iniciado, `healthy`, assets e marcador da revisão verificados, heartbeat/monitor recentes. A configuração global era SFace; havia zero jobs `index_gemma`/`search_gemma` e zero vetores Gemma. Portanto, essa evidência comprova runtime preparado e serviço saudável, **não** inferência nem adoção de Gemma.
 - **19/10/2026, registro da publicação web-only em `openspec/changes/remediate-frontend-dependency-vulnerabilities/production-publication-2026-10-19.md`:** o inventário da Oracle listou 15/15 serviços ativos saudáveis, incluindo `face-gemma-index-worker`; a operação mudou somente `web` e preservou os IDs dos containers não web. Isso sustenta a presença/saúde histórica do serviço nesse host naquele horário, não estado posterior nem uso do modelo.
@@ -58,16 +60,16 @@ O inventário anterior estava incorreto ao descrever Gemma apenas como proposta.
 | 19 | OpenCV Zoo | Pesos por URL de commit fixo em `backend/facial-assets/model-manifest.json` | Origem upstream dos pesos; avanço de `main` não implica candidato seguro. |
 | 20 | OpenCV Headless | `4.12.0.88`, imagem facial | Runtime de inferência em CPU; ABI/ARM e precisão exigem teste específico. |
 | 21 | NumPy | `2.2.6`, imagem facial | Base numérica do motor; ABI/performance ligada a OpenCV/PyTorch. |
-| 22 | EmbeddingGemma 2 | `google/embeddinggemma-2`, 768 dimensões | Modelo experimental de embedding facial; não recomendar troca de SFace sem benchmark anotado autorizado. |
-| 23 | Revisão dos pesos Gemma | `914f7f89142e33e77833254d9c9b90c3cef7303b`, constante no provider e marcador asset | Revisão imutável Hugging Face. Somente acompanhar drift; nunca PR automático de pesos. |
-| 24 | PyTorch CPU | `torch==2.14.1`, instalação explícita no Dockerfile Gemma | Inferência CPU, alto uso de RAM/CPU; atualização requer smoke isolado e teste de segurança. |
-| 25 | Torchvision | `0.29.1`, Dockerfile Gemma | Processor de imagem Gemma; manter par compatível com PyTorch. |
-| 26 | sentence-transformers | `6.1.0`, `gemma-requirements.txt` | Carregamento/embedding Gemma; alto impacto e licença/dependências transitivas. |
-| 27 | Transformers | `5.19.0`, `gemma-requirements.txt` | Runtime de modelo; major/minor exigem inferência e compatibilidade do processor. |
-| 28 | Hugging Face Hub | `1.31.0`, `gemma-requirements.txt` | Aquisição de pesos no build; runtime fica offline. Mudança de revisão não é atualização de biblioteca. |
-| 29 | LightCraft | `0.6.0`, SHA-256 por arquitetura no Dockerfile RAW | Conversão RAW opt-in; alteração de cor/formato/câmera e comportamento CLI requer corpus/comparação visual e licença. |
-| 30 | RawTherapee RAW | `5.9-1+b1`, pin apt no worker RAW | Conversor RAW alternativo; validar formatos/câmeras, render e rollback. |
-| 31 | RawTherapee preview | pacote `rawtherapee` sem pin em `Dockerfile.preview-adjustment` | Ajuste opcional de prévia; apt móvel e saída visual podem variar. |
+| 22 | EmbeddingGemma 2 — aposentado em 26/10/2026 | `google/embeddinggemma-2`, 768 dimensões; histórico da avaliação | Não servido pela aplicação. Embeddings/consultas legados permanecem sem alteração; exclusão depende de retenção aprovada. |
+| 23 | Revisão dos pesos Gemma — histórico | `914f7f89142e33e77833254d9c9b90c3cef7303b`, referência histórica | O código não baixa nem verifica mais esses pesos. Registro mantido para auditoria da avaliação. |
+| 24 | PyTorch CPU — removido da imagem Gemma | `torch==2.14.1`, pin histórico | Não instalado nas imagens da aplicação por esta change. |
+| 25 | Torchvision — removido da imagem Gemma | `0.29.1`, pin histórico | Não instalado nas imagens da aplicação por esta change. |
+| 26 | sentence-transformers — removido | `6.1.0`, pin histórico | Arquivo de dependências Gemma removido. |
+| 27 | Transformers — removido | `5.19.0`, pin histórico | Arquivo de dependências Gemma removido. |
+| 28 | Hugging Face Hub — removido do runtime Gemma | `1.31.0`, pin histórico | Pesos/modelos e dados históricos não foram apagados por esta change. |
+| 29 | LightCraft — aposentado em 26/10/2026 | `0.6.0`, versão histórica do worker RAW | Ingestão e processamento RAW removidos. Nenhum RAW ou staging foi apagado. |
+| 30 | RawTherapee RAW — aposentado em 26/10/2026 | `5.9-1+b1`, versão histórica do worker RAW | O pipeline RAW foi removido; este item não representa a versão ativa de prévias. |
+| 31 | RawTherapee — ajuste opcional de prévias | `5.13`; AppImage oficial x86_64 SHA-256 `746a3509a234804c3a5f66649006ac29ac67f193a8559d2297357949a890b097`; ARM64 SHA-256 `9e424633272a49bb47afe4bf065604858acf9de77c4d80e0f6557024492e2b55` | Worker dedicado, CLI headless verificada no build e smoke sintético por arquitetura no CI; perfil `.pp3` mantido. |
 | 32 | Pillow | `Pillow==13.0.0` | Derivados, EXIF e imagem; MIT-CMU, sem ativação. Correção de segurança autorizada em 25/10/2026, com ensaio de bytes/dimensões/metadados; pin não prova publicação. |
 | 33 | Fontes DejaVu | pacote apt `fonts-dejavu-core` | Render de texto/previews; licença e métricas alteram output. |
 
@@ -145,6 +147,6 @@ Pagamentos são críticos: upgrade futuro exige contratos Orders, SDK, HMAC, ide
 
 - npm/pip/Dockerfile/Compose/GitHub Actions: Dependabot nativo semanal, grupos minor/patch e major, limite de PRs, sem automerge.
 - Dependabot alerts/security updates: fonte GitHub, consulta nativa de segurança mais frequente/acionada por advisory. Status atual desabilitado; pendência de owner action.
-- LightCraft e RawTherapee: GitHub Releases consultado semanalmente; só relatório/avaliação manual, sem PR automático de motor.
-- EmbeddingGemma: Hugging Face model metadata revision consultada semanalmente; drift vira candidato de revisão, nunca PR automático de pesos.
+- RawTherapee 5.13: GitHub Releases consultado semanalmente para o worker de ajuste JPEG; avaliação manual, sem PR automático de motor.
+- LightCraft/Gemma: acompanhamento upstream encerrado com a aposentadoria; os registros acima são históricos e não geram alertas de drift nem PRs.
 - Toda falha, fonte não disponível, falta de permissão ou lista vazia fica distinguível no job summary. O relatório não assume que ausência de PR significa ausência de updates no upstream ou que uma tag corresponda ao runtime.

@@ -25,8 +25,8 @@ def job_counts(db, instant):
         groups = [model.status]
         if model is FacialJob:
             kind = case(
-                (FacialJob.kind.in_(("search", "search_gemma")), "search"),
-                (FacialJob.kind.in_(("index", "index_gemma")), "index"),
+                (FacialJob.kind == "search", "search"),
+                (FacialJob.kind == "index", "index"),
                 else_="maintenance",
             )
             groups.insert(0, kind)

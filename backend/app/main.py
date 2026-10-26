@@ -96,7 +96,6 @@ from app.auth import (
     DerivedGalleryPhoto,
     DerivedGalleryPhotoOrigin,
     EmailDelivery,
-    FacialEmbeddingExperimentSetting,
     FacialJob,
     FolderClientGrant,
     GalleryAccessCapability,
@@ -127,7 +126,6 @@ from app.auth import (
     ProgressivePricingTier,
     ProviderPayment,
     PushSubscription,
-    RawDevelopmentJob,
     Role,
     SaleOrder,
     SaleOrderItem,
@@ -421,7 +419,6 @@ from app.push_subscriptions import (
 from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
-from app.raw_development.api import register_routes as register_raw_development_routes
 from app.storage_metrics import measure_owned_photo_storage
 from app.tenancy import (
     TenantContextError,
@@ -908,11 +905,6 @@ class FacialPolicyInput(BaseModel):
     quality_version: str = Field(min_length=1, max_length=120)
     calibration_version: str = Field(min_length=1, max_length=120)
     similarity_threshold_milli: int = Field(ge=0, le=1000)
-
-
-class FacialEmbeddingExperimentInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool
 
 
 class FacialIndexRetryInput(BaseModel):
@@ -2816,101 +2808,6 @@ def admin_facial_observability(
         "metrics": [asdict(metric) for metric in metrics],
         "alerts": [asdict(alert) for alert in alerts],
     }
-
-
-def _facial_embedding_experiment_payload(db: Session, setting: FacialEmbeddingExperimentSetting | None):
-    from datetime import UTC, timedelta
-
-    from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_REVISION
-
-    current = now()
-    worker_seen = setting.worker_last_seen_at if setting else None
-    if worker_seen is not None and worker_seen.tzinfo is None:
-        worker_seen = worker_seen.replace(tzinfo=UTC)
-    worker_ready = bool(worker_seen and timedelta(0) <= current - worker_seen <= timedelta(seconds=45))
-    model_id = GEMMA_MODEL_ID
-    model_version_prefix = f"embeddinggemma-2-{GEMMA_MODEL_REVISION[:12]}"
-    indexed_faces = db.scalar(select(func.count()).select_from(PhotoFaceEmbedding).where(
-        PhotoFaceEmbedding.model_id == model_id,
-        PhotoFaceEmbedding.model_version.startswith(model_version_prefix),
-    )) or 0
-    job_counts = {
-        state: int(db.scalar(select(func.count()).select_from(FacialJob).where(
-            FacialJob.kind == "index_gemma", FacialJob.status == state,
-        )) or 0)
-        for state in ("queued", "processing", "completed", "failed", "cancelled")
-    }
-    return {
-        "enabled": bool(setting and setting.enabled),
-        "mode": "shadow",
-        "model_id": "google/embeddinggemma-2",
-        "model_revision": GEMMA_MODEL_REVISION,
-        "worker_ready": worker_ready,
-        "worker_last_seen_at": worker_seen.isoformat() if worker_seen else None,
-        "indexed_faces": int(indexed_faces),
-        "jobs": job_counts,
-        "serving_engine": (
-            model_id if setting is not None and setting.enabled else "opencv-yunet-sface"
-        ),
-        "gallery_fallback": "opencv-yunet-sface",
-        "backfill_enabled": False,
-    }
-
-
-@app.get("/admin/facial-engine-experiment")
-def admin_facial_engine_experiment(
-    request: Request, response: Response, db: Session = Depends(db_session)
-) -> dict[str, object]:
-    require_installation_operator(request)
-    response.headers["Cache-Control"] = "private, no-store"
-    setting = db.get(FacialEmbeddingExperimentSetting, 1, populate_existing=True)
-    return _facial_embedding_experiment_payload(db, setting)
-
-
-@app.patch("/admin/facial-engine-experiment")
-def update_admin_facial_engine_experiment(
-    payload: FacialEmbeddingExperimentInput,
-    request: Request,
-    response: Response,
-    db: Session = Depends(db_session),
-) -> dict[str, object]:
-    session = require_admin(request)
-    require_installation_operator(request)
-    require_same_origin(request)
-    response.headers["Cache-Control"] = "private, no-store"
-    setting = db.get(FacialEmbeddingExperimentSetting, 1, with_for_update=True)
-    if payload.enabled:
-        try:
-            facial_runtime = facial_settings_from_environment(verify_runtime_assets=False)
-        except FacialConfigurationError:
-            facial_runtime = None
-        if facial_runtime is None or not facial_runtime.enabled:
-            raise HTTPException(status_code=409, detail="O processamento facial global está desligado.")
-        if facial_runtime.environment.lower() in {"prod", "production"}:
-            raise HTTPException(
-                status_code=409,
-                detail="Gemma só pode ser selecionado em homologação privada autorizada.",
-            )
-        state = _facial_embedding_experiment_payload(db, setting)
-        if not state["worker_ready"]:
-            raise HTTPException(status_code=409, detail="O worker Gemma local não está pronto.")
-    if setting is None:
-        setting = FacialEmbeddingExperimentSetting(singleton=1)
-        db.add(setting)
-    setting.enabled = payload.enabled
-    if payload.enabled and setting.enabled_since is None:
-        setting.enabled_since = now()
-    setting.mode = "shadow"
-    setting.updated_by_admin_id = session.subject_id
-    setting.updated_at = now()
-    audit(
-        db,
-        "facial.embedding_experiment_updated",
-        f"enabled:{str(payload.enabled).lower()};scope:new_galleries;"
-        "purpose:private_engine_comparison",
-    )
-    db.commit()
-    return _facial_embedding_experiment_payload(db, setting)
 
 
 @app.get("/admin/clients")
@@ -4967,9 +4864,6 @@ def _publish_photo_folder(
         select(FolderClientGrant.id).where(FolderClientGrant.tenant_id == folder.tenant_id).where(FolderClientGrant.folder_id == folder.id).limit(1)
     ):
         raise HTTPException(status_code=409, detail="Atribua a pasta a uma cliente antes de publicá-la.")
-    from app.raw_development.state import pending_raw_photo_ids
-    if pending_raw_photo_ids(db, folder.id, tenant_id=folder.tenant_id):
-        raise HTTPException(status_code=409, detail="Aguarde a conversão RAW e os derivados obrigatórios antes de liberar a pasta.")
     photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == folder.tenant_id).where(PhotoAsset.folder_id == folder.id)))
     unpublished_ids = [photo.id for photo in photos if not photo.available]
     ready_ids = (
@@ -5029,11 +4923,7 @@ def _publish_photo_folder(
         )
         if unpublished_ids
         else set()
-    ) | (set(db.scalars(select(RawDevelopmentJob.photo_asset_id).where(
-        RawDevelopmentJob.tenant_id == folder.tenant_id,
-        RawDevelopmentJob.photo_asset_id.in_(unpublished_ids),
-        RawDevelopmentJob.status.in_(("failed", "reupload_required")),
-    ))) if unpublished_ids else set())
+    )
     audit(db, "photo_folder.published", f"{folder.id}:{len(ready_ids)}", tenant_id=folder.tenant_id)
     if commit:
         db.commit()
@@ -6656,22 +6546,7 @@ async def import_photo_source(
     if not accepts_upload:
         raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
     if not content_type.startswith("image/jpeg"):
-        if content_type != "application/octet-stream":
-            raise HTTPException(status_code=415, detail="Envie uma imagem JPEG ou um RAW compatível.")
-        from app.raw_development.state import RawDevelopmentStateError, receive_raw_upload
-        try:
-            result = await receive_raw_upload(db, photo, request)
-        except RawDevelopmentStateError as exc:
-            message = str(exc)
-            status_code = 503 if "fila" in message.lower() else 413 if "limite" in message.lower() else 422
-            raise HTTPException(status_code=status_code, detail=message,
-                                headers={"Retry-After": "15"} if status_code == 503 else None) from exc
-        except (OSError, ValueError) as exc:
-            db.rollback()
-            raise HTTPException(status_code=422, detail="Arquivo RAW inválido ou indisponível.") from exc
-        audit(db, "raw_development.upload_accepted", str(photo.id), tenant_id=tenant_id)
-        db.commit()
-        return result
+        raise HTTPException(status_code=415, detail="Envie uma imagem JPEG.")
     body = await read_bounded_body(request, max_bytes=25 * 1024 * 1024,
                                    error_detail="A imagem excede o limite permitido.")
     if not body:
@@ -6760,9 +6635,7 @@ def photo_media_status(
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
     job = db.scalar(select(MediaJob).where(MediaJob.tenant_id == tenant_id).where(MediaJob.photo_asset_id == photo_id))
     if not job:
-        raw_job = db.scalar(select(RawDevelopmentJob).where(
-            RawDevelopmentJob.photo_asset_id == photo_id, RawDevelopmentJob.tenant_id == tenant_id))
-        return {"status": raw_job.status if raw_job else "not_imported"}
+        return {"status": "not_imported"}
     return {"status": job.status}
 
 
@@ -12753,10 +12626,6 @@ register_preview_adjustment_routes(
     preview_response=protected_preview_response, tenant_context=directory_tenant_id,
 )
 register_folder_processing_routes(
-    app, db_session=db_session, require_admin=require_admin,
-    require_same_origin=require_same_origin, tenant_context=directory_tenant_id,
-)
-register_raw_development_routes(
     app, db_session=db_session, require_admin=require_admin,
     require_same_origin=require_same_origin, tenant_context=directory_tenant_id,
 )

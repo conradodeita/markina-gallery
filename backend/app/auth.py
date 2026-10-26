@@ -167,7 +167,7 @@ class InstallationOperator(Base):
 
 
 class FacialEmbeddingExperimentSetting(Base):
-    """Chave global de indexação shadow, alterável apenas pelo operador proprietário."""
+    """Metadado Gemma histórico mapeado para compatibilidade com o schema publicado."""
 
     __tablename__ = "facial_embedding_experiment_setting"
     __table_args__ = (
@@ -565,7 +565,7 @@ class PhotoAsset(Base):
 
 
 class RawDevelopmentSettings(Base):
-    """Configuração RAW isolada por fotógrafo/tenant."""
+    """ConfiguraÃ§Ã£o RAW isolada por fotÃ³grafo/tenant."""
 
     __tablename__ = "raw_development_settings"
     __table_args__ = (
@@ -586,7 +586,7 @@ class RawDevelopmentSettings(Base):
 
 
 class RawDevelopmentJob(Base):
-    """Estado e proveniência mínima de uma conversão transitória por tenant."""
+    """Estado e proveniÃªncia mÃ­nima de uma conversÃ£o transitÃ³ria por tenant."""
 
     __tablename__ = "raw_development_job"
     __table_args__ = (
@@ -2765,6 +2765,8 @@ class FacialSearchRequest(Base):
             name="ck_facial_search_compare_progress",
         ),
         Index("ix_facial_search_client_gallery_expiry", "client_id", "parent_gallery_id", "expires_at"),
+        # O schema implantado 0089 mantém engines históricos; a aplicação cria
+        # novas buscas exclusivamente com SFace e o worker recusa outras engines.
         CheckConstraint(
             "search_engine IN ('opencv-yunet-sface', 'google-embeddinggemma-2')",
             name="ck_facial_search_engine",
@@ -2909,6 +2911,7 @@ class FacialJob(Base):
     )
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_facial_job_idempotency"),
+        # Preservado conforme schema 0089 para ler jobs legados sem reprocessá-los.
         CheckConstraint(
             "kind IN ('index', 'index_gemma', 'purge', 'search', 'search_gemma', 'cleanup')", name="ck_facial_job_kind"
         ),

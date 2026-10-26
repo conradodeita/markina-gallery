@@ -58,11 +58,20 @@ discover_services() {
     SERVICES+=("${FACIAL_SERVICES[@]}")
   fi
 
-  existing="$(docker ps --all --quiet \
+  existing="$(docker ps --quiet \
     --filter "label=com.docker.compose.project=$PROJECT_NAME" \
     --filter 'label=com.docker.compose.service=face-gemma-index-worker')"
   if [[ -n "$existing" ]]; then
-    SERVICES+=(face-gemma-index-worker)
+    fail "worker Gemma legado encontrado; retomada automática bloqueada até inventário e decisão operacional"
+    return 1
+  fi
+
+  existing="$(docker ps --quiet \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter 'label=com.docker.compose.service=raw-development-worker')"
+  if [[ -n "$existing" ]]; then
+    fail "worker RAW legado encontrado; retomada automática bloqueada até inventário e decisão operacional"
+    return 1
   fi
 
   existing="$(docker ps --all --quiet \

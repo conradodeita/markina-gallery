@@ -1000,7 +1000,6 @@ describe("editor administrativo de galeria", () => {
     let detailsCalls = 0;
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/raw-development/capabilities")) return response({ enabled: false, formats: [] });
       detailsCalls += 1;
       if (detailsCalls === 2) return Promise.reject(new Error("Conexão temporariamente indisponível."));
       return response(detailsCalls === 1 ? processingDetails : readyDetails);
@@ -1030,7 +1029,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<GalleryEditor sourceId="source-1" step="detalhes" />);
     await screen.findByRole("heading", { name: "Detalhes e apresentação" });
-    const input = container.querySelector('input[type="file"][accept="image/jpeg"]') as HTMLInputElement;
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(["jpeg"], "capa.jpg", { type: "image/jpeg" });
 
     fireEvent.change(input, { target: { files: [file] } });
@@ -1374,7 +1373,7 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
   it("mantém o lote identificado pela pasta de destino ao selecionar outra pasta", async () => {
     let finishUpload: (() => void) | undefined;
     vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("folder-a/file.jpg");
-    vi.spyOn(sourceUpload, "uploadPhotoSource").mockImplementation((_path, _file, _waiting, progress) => {
+    vi.spyOn(sourceUpload, "uploadJpeg").mockImplementation((_path, _file, _waiting, progress) => {
       progress?.(50, 100);
       return new Promise<void>((resolve) => { finishUpload = resolve; });
     });
@@ -1403,7 +1402,7 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
 
   it("fecha o lote de uma pasta privada enviada pela etapa Imagens mesmo com falha parcial", async () => {
     vi.spyOn(sourceUpload, "jpegStorageKey").mockImplementation(async (_sourceId, _folderId, file) => `private/${file.name}`);
-    vi.spyOn(sourceUpload, "uploadPhotoSource").mockImplementation(async (_path, file) => {
+    vi.spyOn(sourceUpload, "uploadJpeg").mockImplementation(async (_path, file) => {
       if (file.name === "falha.jpg") throw new Error("Transferência interrompida");
     });
     const batchCalls: Array<{ path: string; init?: RequestInit }> = [];
@@ -1456,7 +1455,7 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
 
   it("não cria lote de notificação para upload de pasta pública na etapa Imagens", async () => {
     vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("public/file.jpg");
-    vi.spyOn(sourceUpload, "uploadPhotoSource").mockResolvedValue();
+    vi.spyOn(sourceUpload, "uploadJpeg").mockResolvedValue();
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{

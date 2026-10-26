@@ -63,16 +63,10 @@ def replace_photo_index(
 
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     from app.facial.detection import normalized_box
-    from app.facial.gemma_provider import GEMMA_MODEL_ID
     from app.facial.lifecycle import analysis_for
     from app.media import safe_source_path
 
-    experimental = getattr(provider, "model_id", "opencv-yunet-sface") == GEMMA_MODEL_ID
-    analysis = analysis_for(db, photo_id, lock=not experimental, tenant_id=tenant_id)
-    source_identity = (
-        (analysis.source_fingerprint, analysis.expires_at, analysis.pipeline_version)
-        if analysis else None
-    )
+    analysis = analysis_for(db, photo_id, lock=True, tenant_id=tenant_id)
     if not photo or (not photo.available and not analysis):
         raise FacialEngineError("Foto não está elegível para indexação facial.")
     policy = db.scalar(
@@ -121,14 +115,6 @@ def replace_photo_index(
     def revalidate():
         if authorize:
             authorize()
-        if experimental and source_identity is not None:
-            current_source = analysis_for(db, photo_id, tenant_id=tenant_id)
-            if (
-                current_source is None or current_source.deleted_at is not None
-                or (current_source.source_fingerprint, current_source.expires_at,
-                    current_source.pipeline_version) != source_identity
-            ):
-                raise FacialEngineError("A fonte experimental foi alterada ou excluída.")
         current = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
         parent = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=tenant_id)
         current_policy = db.scalar(select(GalleryFacialPolicy).where(

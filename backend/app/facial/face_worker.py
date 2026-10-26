@@ -9,11 +9,9 @@ from pathlib import Path
 from fastapi import HTTPException
 from redis import Redis
 
-from app.auth import FacialEmbeddingExperimentSetting, FacialJob, SessionLocal, now
+from app.auth import FacialJob, SessionLocal
 from app.facial.config import FacialConfigurationError, facial_settings_from_environment
 from app.facial.crypto import FacialCipher
-from app.facial.gemma_assets import verify_gemma_model
-from app.facial.gemma_provider import GemmaFaceEmbeddingProvider
 from app.facial.indexing import reconcile_automatic_gallery_policies
 from app.facial.jobs import (
     FACIAL_JOB_KINDS_BY_CLASS,
@@ -46,28 +44,18 @@ def main(worker_class: str | None = None) -> None:
     active_class = (worker_class or os.getenv("FACIAL_WORKER_CLASS", "")).strip().lower()
     if active_class not in FACIAL_JOB_KINDS_BY_CLASS:
         raise FacialConfigurationError(
-            "FACIAL_WORKER_CLASS deve ser search, index, gemma ou maintenance."
+            "FACIAL_WORKER_CLASS deve ser search, index ou maintenance."
         )
     settings = facial_settings_from_environment(
         verify_runtime_assets=active_class != "maintenance"
     )
     if not settings.enabled:
         raise FacialConfigurationError("O worker facial não pode iniciar com a flag desligada.")
-    if active_class == "gemma" and settings.environment.lower() in {"prod", "production"}:
-        raise FacialConfigurationError("Gemma está limitado à homologação privada autorizada.")
     model_paths = (
         verify_models(settings.manifest_path, settings.model_root)
-        if active_class in {"search", "index", "gemma"}
+        if active_class in {"search", "index"}
         else {}
     )
-    gemma_model_path = Path(
-        os.getenv("FACIAL_GEMMA_MODEL_PATH", "/opt/markina-embeddinggemma-2")
-    )
-    if active_class == "gemma":
-        verify_gemma_model(gemma_model_path)
-        from app.system_monitor.runtime import start_monitor
-
-        start_monitor()
     cipher = FacialCipher(
         active_key_id=settings.active_key_id,
         keys=settings.aead_keys,
@@ -86,13 +74,7 @@ def main(worker_class: str | None = None) -> None:
             db.commit()
 
     def provider_loader():
-        detector = OpenCvSFaceProvider(model_paths["yunet"], model_paths["sface"])
-        if active_class == "gemma":
-            return GemmaFaceEmbeddingProvider(
-                detector,
-                model_path=gemma_model_path,
-            )
-        return detector
+        return OpenCvSFaceProvider(model_paths["yunet"], model_paths["sface"])
 
     def processor(db, claim: ClaimedFacialJob, provider: object | None) -> bool | None:
         try:
@@ -109,25 +91,8 @@ def main(worker_class: str | None = None) -> None:
                     settings=settings,
                     derivatives_root=derivatives_root,
                 )
-            elif claim.kind == "index_gemma":
-                if not isinstance(provider, GemmaFaceEmbeddingProvider):
-                    raise FacialJobError("Provider experimental não está disponível.")
-                process_claimed_index_job(
-                    db,
-                    claim,
-                    repository=repository,
-                    provider=provider,
-                    cipher=cipher,
-                    settings=settings,
-                    derivatives_root=derivatives_root,
-                )
-            elif claim.kind in {"search", "search_gemma"}:
-                expected_provider = (
-                    GemmaFaceEmbeddingProvider
-                    if claim.kind == "search_gemma"
-                    else OpenCvSFaceProvider
-                )
-                if not isinstance(provider, expected_provider):
+            elif claim.kind == "search":
+                if not isinstance(provider, OpenCvSFaceProvider):
                     raise FacialJobError("Provider facial não está disponível.")
                 process_claimed_search_job(
                     db,
@@ -185,7 +150,7 @@ def main(worker_class: str | None = None) -> None:
         wake_source=wake_source,
         provider_loader=provider_loader,
         provider_required=lambda claim: claim.kind in {
-            "index", "index_gemma", "search", "search_gemma"
+            "index", "search"
         },
         provider_failure=provider_failure,
         processor=processor,
@@ -200,14 +165,6 @@ def main(worker_class: str | None = None) -> None:
     ):
         try:
             worker.run_cycle()
-            if active_class == "gemma":
-                with SessionLocal() as db:
-                    state = db.get(FacialEmbeddingExperimentSetting, 1)
-                    if state is None:
-                        state = FacialEmbeddingExperimentSetting(singleton=1, enabled=False)
-                        db.add(state)
-                    state.worker_last_seen_at = now()
-                    db.commit()
             if active_class == "search":
                 with SessionLocal() as db:
                     process_next_search_notification(db, cipher=cipher, settings=settings)

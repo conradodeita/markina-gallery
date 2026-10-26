@@ -30,11 +30,9 @@ jobs:
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
       frontend: ${{ steps.classify.outputs.frontend }}
-      gemma: ${{ steps.classify.outputs.gemma }}
       backend_image: ${{ steps.classify.outputs.backend_image }}
       frontend_image: ${{ steps.classify.outputs.frontend_image }}
       preview: ${{ steps.classify.outputs.preview }}
-      raw: ${{ steps.classify.outputs.raw }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,7 +128,7 @@ jobs:
       - name: Regressões dos limites faciais por origem
         run: >-
           pytest backend/tests/test_facial_config.py backend/tests/test_facial_search_worker.py
-          -q -k 'candidate_policy or reference_possibilities or gemma_query_worker'
+          -q -k 'candidate_policy or reference_possibilities'
       - name: Regressão da chave do aviso privado em PostgreSQL
         run: >-
           pytest backend/tests/test_private_notification_postgres.py
@@ -159,29 +157,6 @@ jobs:
           DATABASE_URL="$TENANT_TEST_DATABASE_URL"
           pytest backend/tests/test_admin_client_directory.py::test_deletion_removes_combined_homolog_operational_inventory_and_keeps_tombstone -q
 
-  gemma-runtime:
-    needs: [ci-scope]
-    if: ${{ needs.ci-scope.outputs.gemma == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build CPU AMD64 isolado
-        run: |
-          docker buildx create --name gemma-validation --driver docker-container \
-            --driver-opt memory=2g --driver-opt memory-swap=2g \
-            --driver-opt cpu-period=100000 --driver-opt cpu-quota=100000
-          docker buildx build --builder gemma-validation --platform linux/amd64 \
-            --load --tag gemma-runtime:validation --file backend/Dockerfile.gemma backend
-          docker buildx stop gemma-validation
-      - name: Inferência sintética offline
-        run: |
-          docker run --rm --network none --memory 6g --memory-swap 6g --cpus 1 \
-            --pids-limit 256 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=128m \
-            -e PYTHONPATH=/app -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
-            -v "$GITHUB_WORKSPACE/scripts/check_gemma_runtime.py:/tmp/check_gemma_runtime.py:ro" \
-            gemma-runtime:validation python /tmp/check_gemma_runtime.py
-
   frontend:
     needs: [ci-scope]
     if: ${{ needs.ci-scope.outputs.frontend == 'true' }}
@@ -208,7 +183,7 @@ jobs:
 
   runtime-images:
     needs: [ci-scope]
-    if: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' || needs.ci-scope.outputs.preview == 'true' || needs.ci-scope.outputs.raw == 'true' }}
+    if: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' || needs.ci-scope.outputs.preview == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -252,11 +227,16 @@ jobs:
             const actual=Object.fromEntries(["next","react","react-dom"].map(n=>[n,JSON.parse(fs.readFileSync("/app/node_modules/"+n+"/package.json","utf8")).version]));
             assert.deepStrictEqual(actual, JSON.parse(process.env.EXPECTED_PACKAGES)); console.log(actual);'
       - name: Build local de prévias (sem publicar ou iniciar serviços)
-        if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.preview == 'true' }}
-        run: docker build --tag preview-adjustment:validation --file backend/Dockerfile.preview-adjustment backend
-      - name: Build local do conversor RAW opt-in (sem publicar ou iniciar serviços)
-        if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.raw == 'true' }}
-        run: docker build --tag raw-development:validation --file backend/Dockerfile.raw-development backend
+        if: ${{ needs.ci-scope.outputs.preview == 'true' }}
+        run: docker build --tag preview-adjustment:validation-${{ matrix.arch }} --file backend/Dockerfile.preview-adjustment backend
+      - name: Smoke sintético headless RawTherapee 5.13
+        if: ${{ needs.ci-scope.outputs.preview == 'true' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,size=128m --tmpfs /out:rw,noexec,nosuid,size=32m \
+            -e PYTHONPATH=/app -v "$GITHUB_WORKSPACE/scripts/preview_adjustment_smoke.py:/tmp/preview_adjustment_smoke.py:ro" \
+            "preview-adjustment:validation-${{ matrix.arch }}" python /tmp/preview_adjustment_smoke.py
 
   openspec:
     runs-on: ubuntu-latest
@@ -278,7 +258,7 @@ jobs:
           fi
 
   homolog-inventory-policy:
-    needs: [ci-scope, backend, frontend, gemma-runtime, runtime-images, openspec, gitleaks]
+    needs: [ci-scope, backend, frontend, runtime-images, openspec, gitleaks]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -293,9 +273,7 @@ jobs:
           BACKEND_RESULT: ${{ needs.backend.result }}
           FRONTEND_REQUIRED: ${{ needs.ci-scope.outputs.frontend }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
-          GEMMA_REQUIRED: ${{ needs.ci-scope.outputs.gemma }}
-          GEMMA_RESULT: ${{ needs.gemma-runtime.result }}
-          RUNTIME_IMAGES_REQUIRED: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' || needs.ci-scope.outputs.preview == 'true' || needs.ci-scope.outputs.raw == 'true' }}
+          RUNTIME_IMAGES_REQUIRED: ${{ needs.ci-scope.outputs.backend_image == 'true' || needs.ci-scope.outputs.frontend_image == 'true' || needs.ci-scope.outputs.preview == 'true' }}
           RUNTIME_IMAGES_RESULT: ${{ needs.runtime-images.result }}
           OPENSPEC_RESULT: ${{ needs.openspec.result }}
           GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
@@ -331,6 +309,23 @@ jobs:
           python scripts/test_retirement_approval.py
           python scripts/test_production_release_workflow_policy.py
 
+  # The protected main branch still requires this legacy context. It reports
+  # the current aggregate only; no Gemma runtime or image is built.
+  gemma-runtime:
+    needs: [homolog-inventory-policy]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Satisfazer o contexto legado somente após os gates atuais
+        env:
+          INVENTORY_POLICY_RESULT: ${{ needs.homolog-inventory-policy.result }}
+        run: |
+          if [[ "$INVENTORY_POLICY_RESULT" != "success" ]]; then
+            echo "O agregado de validações atuais não passou: $INVENTORY_POLICY_RESULT" >&2
+            exit 1
+          fi
+          echo "Gates atuais aprovados; nenhum runtime Gemma é executado."
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
@@ -344,7 +339,7 @@ jobs:
 
   deploy-homolog:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
-    needs: [backend, frontend, gemma-runtime, runtime-images, openspec, homolog-inventory-policy, gitleaks]
+    needs: [backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     environment: homolog
     permissions:
@@ -413,7 +408,7 @@ jobs:
 
   release-scope:
     if: "${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     outputs:
       scope: ${{ steps.classify.outputs.release_scope }}
@@ -436,7 +431,7 @@ jobs:
 
   infinitepay-retirement-scope:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'infinitepay-retirement-preflight' || inputs.operation == 'infinitepay-retirement-release') }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -450,7 +445,7 @@ jobs:
 
   infinitepay-retirement-preflight:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'infinitepay-retirement-preflight' || inputs.operation == 'infinitepay-retirement-release') }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope]
     runs-on: ubuntu-latest
     environment: production-preflight
     permissions:
@@ -505,7 +500,7 @@ jobs:
 
   infinitepay-retirement-release-approval:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement-release' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope, infinitepay-retirement-preflight]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope, infinitepay-retirement-preflight]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -530,7 +525,7 @@ jobs:
 
   infinitepay-retirement-release:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'infinitepay-retirement-release' && needs.infinitepay-retirement-release-approval.outputs.approved == 'true' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope, infinitepay-retirement-preflight, infinitepay-retirement-release-approval]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, infinitepay-retirement-scope, infinitepay-retirement-preflight, infinitepay-retirement-release-approval]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -569,7 +564,7 @@ jobs:
 
   production-preflight:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'facial' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, release-scope]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope]
     runs-on: ubuntu-latest
     environment: production-preflight
     permissions:
@@ -630,7 +625,7 @@ jobs:
 
   production-release:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'facial' && needs.production-preflight.outputs.release_ready == 'true' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, release-scope, production-preflight]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-preflight]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -664,7 +659,7 @@ jobs:
 
   production-app-preflight:
     if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, release-scope]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope]
     runs-on: ubuntu-latest
     environment: production-preflight
     permissions:
@@ -715,7 +710,7 @@ jobs:
 
   production-app-release:
     if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && needs.production-app-preflight.outputs.release_ready == 'true' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-preflight]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-preflight]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -749,7 +744,7 @@ jobs:
 
   production-app-rollback-preflight:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'app-rollback' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     environment: production-preflight
     permissions:
@@ -793,7 +788,7 @@ jobs:
 
   production-app-rollback:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'app-rollback' && needs.production-app-rollback-preflight.outputs.release_ready == 'true' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks, production-app-rollback-preflight]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, production-app-rollback-preflight]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -827,7 +822,7 @@ jobs:
 
   orders-pilot-preflight:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'orders-pilot-inventory' }}"
-    needs: [backend, frontend, gemma-runtime, openspec, homolog-inventory-policy, gitleaks]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
     runs-on: ubuntu-latest
     environment: production-preflight
     permissions:

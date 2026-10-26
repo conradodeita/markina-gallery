@@ -63,18 +63,6 @@ updates:
         update-types:
           - minor
           - patch
-      gemma-runtime-compatible:
-        applies-to: version-updates
-        patterns:
-          - huggingface-hub
-          - sentence-transformers
-          - torch
-          - torchvision
-          - transformers
-        update-types:
-          - minor
-          - patch
-
   - package-ecosystem: docker
     directory: /backend
     schedule:

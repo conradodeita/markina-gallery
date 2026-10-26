@@ -8,22 +8,18 @@ from scripts import third_party_report as monitor
 
 
 class ThirdPartyReportTests(unittest.TestCase):
-    def test_pins_are_read_from_current_code_and_keep_gemma_as_revision(self):
+    def test_rawtherapee_pin_is_read_from_the_preview_worker_image(self):
         pins = monitor.pinned_versions()
-        self.assertEqual(pins["LightCraft"], "0.6.0")
-        self.assertEqual(pins["RawTherapee"], "5.9")
-        self.assertRegex(pins["EmbeddingGemma 2"], r"^[0-9a-f]{40}$")
+        self.assertEqual(pins, {"RawTherapee": "5.13"})
         self.assertEqual(monitor.inventory_count(), 72)
 
     def test_specialized_versions_compare_semver_and_model_revision_without_guessing(self):
-        release = {"tag_name": "v5.12.1"}
-        self.assertTrue(monitor.parse_specialized_candidate(monitor.WATCHLIST[1], "5.9", release)["newer"])
-        same = {"tag_name": "v0.6.0"}
-        self.assertFalse(monitor.parse_specialized_candidate(monitor.WATCHLIST[0], "0.6.0", same)["newer"])
-        model = {"sha": "b" * 40}
-        self.assertTrue(monitor.parse_specialized_candidate(monitor.WATCHLIST[2], "a" * 40, model)["newer"])
+        release = {"tag_name": "v5.14"}
+        self.assertTrue(monitor.parse_specialized_candidate(monitor.WATCHLIST[0], "5.13", release)["newer"])
+        same = {"tag_name": "v5.13"}
+        self.assertFalse(monitor.parse_specialized_candidate(monitor.WATCHLIST[0], "5.13", same)["newer"])
         with self.assertRaises(monitor.SourceError):
-            monitor.parse_specialized_candidate(monitor.WATCHLIST[1], "stable", {"tag_name": "latest"})
+            monitor.parse_specialized_candidate(monitor.WATCHLIST[0], "5.13", {"tag_name": "latest"})
 
     def test_nginx_image_is_version_independent_and_remains_monitored(self):
         compose = (monitor.ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
@@ -106,12 +102,8 @@ class ThirdPartyReportTests(unittest.TestCase):
                     "security_advisory": {"severity": "high"},
                     "html_url": "https://github.com/org/repo/security/dependabot/1",
                 }]
-            if "storytold/lightcraft" in url:
-                return {"tag_name": "v0.6.0"}
             if "RawTherapee" in url:
-                return {"tag_name": "v5.9"}
-            if "huggingface.co" in url:
-                return {"sha": monitor.pinned_versions()["EmbeddingGemma 2"]}
+                return {"tag_name": "v5.13"}
             raise AssertionError("unexpected source")
 
         report, failed = monitor.build_report("org/repo", "synthetic-token", fake_fetch, datetime(2026, 10, 19, tzinfo=UTC))
@@ -119,11 +111,7 @@ class ThirdPartyReportTests(unittest.TestCase):
         self.assertIn("2026-10-19T00:00:00+00:00", report)
         self.assertIn("P1 · HIGH · cryptography (pip)", report)
         self.assertIn("`16.4.0` → `17.0.0`", report)
-        self.assertIn("declarado `0.6.0` em `backend/Dockerfile.raw-development`", report)
-        self.assertIn(
-            f"declarado `{monitor.pinned_versions()['EmbeddingGemma 2']}` em `backend/app/facial/gemma_provider.py`",
-            report,
-        )
+        self.assertIn("declarado `5.13` em `backend/Dockerfile.preview-adjustment`", report)
         self.assertIn("testar api, build", report.lower())
         self.assertIn("nenhuma versão/revisão diferente", report)
         self.assertNotIn("merge --auto", report)
@@ -146,12 +134,8 @@ class ThirdPartyReportTests(unittest.TestCase):
                 return []
             if "/dependabot/alerts?" in url:
                 raise monitor.SourceError("consulta falhou (HTTP 403)", state="disabled")
-            if "storytold/lightcraft" in url:
-                return {"tag_name": "v0.6.0"}
             if "RawTherapee" in url:
-                return {"tag_name": "v5.9"}
-            if "huggingface.co" in url:
-                return {"sha": monitor.pinned_versions()["EmbeddingGemma 2"]}
+                return {"tag_name": "v5.13"}
             raise AssertionError("unexpected source")
 
         report, failed = monitor.build_report("org/repo", "synthetic-token", fake_fetch)
@@ -187,7 +171,6 @@ class ThirdPartyReportTests(unittest.TestCase):
             [
                 "docker-compose.local.yml",
                 "docker-compose.preview-adjustment.yml",
-                "docker-compose.raw-development.yml",
                 "docker-compose.system-monitor.yml",
                 "docker-compose.yml",
             ],
@@ -197,7 +180,6 @@ class ThirdPartyReportTests(unittest.TestCase):
             "frontend-testing-compatible:",
             "web-push-compatible:",
             "face-runtime-compatible:",
-            "gemma-runtime-compatible:",
         ):
             self.assertIn(group, config)
         self.assertEqual(config.count("open-pull-requests-limit: 1"), 6)
@@ -206,12 +188,10 @@ class ThirdPartyReportTests(unittest.TestCase):
         self.assertNotRegex(config, r"(?m)^\s+- major$")
         self.assertIn("update-types:", config)
 
-    def test_inventory_distinguishes_gemma_service_assets_and_actual_inference(self):
+    def test_inventory_records_historical_engine_retirement_and_current_runtime(self):
         inventory = (monitor.ROOT / "docs/THIRD-PARTY-INVENTORY.md").read_text(encoding="utf-8")
-        self.assertIn("11/10/2026", inventory)
-        self.assertIn("zero jobs", inventory)
-        self.assertIn("não prova", inventory.lower())
-        self.assertIn("carrega o modelo sob demanda", inventory)
+        self.assertIn("aposentado", inventory.lower())
+        self.assertIn("5.13", inventory)
         self.assertIn("72 itens rastreáveis", inventory)
 
 

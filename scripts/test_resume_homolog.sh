@@ -10,6 +10,7 @@ fail_test() {
 }
 
 PREVIEW_ID=""
+LEGACY_SERVICE=""
 MISSING_SERVICE=""
 HEALTH_STATUS="healthy"
 CURL_FAIL="false"
@@ -21,7 +22,11 @@ read_facial_enabled() { printf '%s\n' "${FACIAL_ENABLED:-false}"; }
 docker() {
   case "$1" in
     ps)
-      [[ -z "$PREVIEW_ID" ]] || printf '%s\n' "$PREVIEW_ID"
+      if [[ "$*" == *"service=preview-adjustment-worker"* ]]; then
+        [[ -z "$PREVIEW_ID" ]] || printf '%s\n' "$PREVIEW_ID"
+      elif [[ -n "$LEGACY_SERVICE" && "$*" == *"service=$LEGACY_SERVICE"* ]]; then
+        printf 'legacy-container\n'
+      fi
       ;;
     inspect)
       printf '%s\n' "$HEALTH_STATUS"
@@ -51,6 +56,11 @@ sleep() { :; }
 FACIAL_ENABLED=false
 discover_services
 [[ "${SERVICES[*]}" == "api web worker nginx" ]] || fail_test "lista base incorreta: ${SERVICES[*]}"
+
+for LEGACY_SERVICE in face-gemma-index-worker raw-development-worker; do
+  if discover_services; then fail_test "worker aposentado foi retomado: $LEGACY_SERVICE"; fi
+done
+LEGACY_SERVICE=""
 
 FACIAL_ENABLED=true
 discover_services

@@ -11,9 +11,9 @@ BOUNDS_MS = (25, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000, 60000)
 OPERATIONS = frozenset({
     "http.auth", "http.upload", "http.preview", "http.gallery", "http.checkout",
     "http.other", "pool.acquire", "work.media", "work.preview_adjustment",
-    "work.search", "work.index", "work.gemma", "work.maintenance", "work.general",
+    "work.search", "work.index", "work.maintenance", "work.general",
 })
-WORKERS = frozenset({"general", "media", "preview_adjustment", "search", "index", "gemma", "maintenance"})
+WORKERS = frozenset({"general", "media", "preview_adjustment", "search", "index", "maintenance"})
 _lock = Lock()
 _buckets: dict[tuple, list] = {}
 _workers: dict[str, tuple] = {}

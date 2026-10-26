@@ -15,7 +15,6 @@ def validate_results(values: dict[str, str]) -> list[str]:
     scopes = {
         "backend": "BACKEND",
         "frontend": "FRONTEND",
-        "gemma": "GEMMA",
         "runtime-images": "RUNTIME_IMAGES",
     }
     for scope, prefix in scopes.items():

@@ -1,9 +1,40 @@
-# Dependência fotográfica exclusiva do worker opcional.
+# RawTherapee oficial 5.13 para o worker opcional de ajuste de prévias.
 FROM python:3.13-slim-bookworm
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1
+
+ARG TARGETARCH
+ARG RAWTHERAPEE_VERSION=5.13
+ARG RAWTHERAPEE_X86_64_SHA256=746a3509a234804c3a5f66649006ac29ac67f193a8559d2297357949a890b097
+ARG RAWTHERAPEE_ARM64_SHA256=9e424633272a49bb47afe4bf065604858acf9de77c4d80e0f6557024492e2b55
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 \
+    RAWTHERAPEE_APPDIR=/opt/rawtherapee
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends rawtherapee procps fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends curl libexpat1 libfuse2 procps fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) asset="RawTherapee_${RAWTHERAPEE_VERSION}_x86_64_release.AppImage"; expected="$RAWTHERAPEE_X86_64_SHA256" ;; \
+      arm64) asset="RawTherapee_${RAWTHERAPEE_VERSION}_arm64_release.AppImage"; expected="$RAWTHERAPEE_ARM64_SHA256" ;; \
+      *) echo "Arquitetura sem artefato oficial RawTherapee: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl --fail --location --retry 3 \
+      "https://github.com/RawTherapee/RawTherapee/releases/download/${RAWTHERAPEE_VERSION}/${asset}" \
+      --output /tmp/rawtherapee.AppImage; \
+    echo "$expected  /tmp/rawtherapee.AppImage" | sha256sum --check --status; \
+    chmod 0755 /tmp/rawtherapee.AppImage; \
+    cd /opt; /tmp/rawtherapee.AppImage --appimage-extract >/dev/null; \
+    mv /opt/squashfs-root "$RAWTHERAPEE_APPDIR"; \
+    rm /tmp/rawtherapee.AppImage; \
+    test -x "$RAWTHERAPEE_APPDIR/usr/bin/rawtherapee-cli"; \
+    printf '#!/bin/sh\nset -eu\nappdir="${RAWTHERAPEE_APPDIR:-/opt/rawtherapee}"\nexport APPDIR="$appdir"\nexport LD_LIBRARY_PATH="$appdir/usr/lib:$appdir/usr/lib64:$appdir/usr/lib/x86_64-linux-gnu:$appdir/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$appdir/usr/bin/rawtherapee-cli" "$@"\n' \
+      > /usr/local/bin/rawtherapee-cli; \
+    chmod 0755 /usr/local/bin/rawtherapee-cli; \
+    version_output="$(rawtherapee-cli 2>&1)" || { status=$?; printf '%s\n' "$version_output"; exit "$status"; }; \
+    printf '%s\n' "$version_output"; \
+    printf '%s\n' "$version_output" | grep -Fx "RawTherapee, version $RAWTHERAPEE_VERSION, command line."
+
 WORKDIR /app
 COPY requirements.txt requirements-push.txt ./
 RUN pip install --no-cache-dir -r requirements.txt

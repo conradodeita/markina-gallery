@@ -14,22 +14,6 @@ const summary = { collection_enabled: false, state: "unknown", last_collected_at
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Monitor do sistema sem servidor", () => {
-  it("identifica o worker Gemma no bloco de processamento", async () => {
-    const report = { ...summary, operations: [{ operation: "work.gemma", count: 1, errors: 0,
-      rejected: 0, timeouts: 0, error_percent: 0, rate_per_second: 1, mean_ms: 100,
-      latency: { samples: 1, p50: 100, p95: null, p99: null } }], latest: {
-      host: { status: "not_collected", data: null }, capacity: null, jobs: { counts: [] },
-      integrations: null, uploads: null, storage: {}, database_waits: {}, quality: {},
-      workers: [{ kind: "gemma", recent_instances: 1, observed_instances: 1,
-        status: "observed", last_cycle_at: "2026-10-09T12:00:00Z", last_progress_at: "2026-10-09T12:00:00Z" }],
-    } };
-    vi.stubGlobal("fetch", vi.fn((url: string) => json(url.includes("system-monitor/capabilities")
-      ? grants : url.includes("installation-capabilities") ? { capacity_diagnostics: false } : report)));
-    render(<SystemMonitorPage />);
-    expect(await screen.findByText(/Gemma — Coletado/)).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Aplicação e experiência" })).toBeNull();
-  });
-
   it("carrega resumo, incidentes e árvore sem disputar as duas leituras disponíveis", async () => {
     let active = 0;
     let peak = 0;

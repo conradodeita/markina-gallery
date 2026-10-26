@@ -1,6 +1,6 @@
 # Ajuste opcional de prévias
 
-Changes: `add-optional-preview-auto-adjustment` (origem), `gallery-preview-exposure-and-installable-ui` (evolução) e `unify-folder-processing-controls` (painel contextual). Na **etapa Imagens**, uma única área mostra reconhecimento facial, intensidade, exposição e progresso da pasta selecionada, pública ou privada. Pastas públicas começam em 50%/0 EV; privadas, em 75%/0 EV. Cada pasta possui configuração própria, sem herança. Falhas de ajuste preservam a prévia convencional. O funcionamento RAW/Lightcraft e seu lifecycle são descritos nos documentos próprios do módulo.
+Changes: `add-optional-preview-auto-adjustment` (origem), `gallery-preview-exposure-and-installable-ui` (evolução) e `unify-folder-processing-controls` (painel contextual). Na **etapa Imagens**, uma única área mostra reconhecimento facial, intensidade, exposição e progresso da pasta selecionada, pública ou privada. Pastas públicas começam em 50%/0 EV; privadas, em 75%/0 EV. Cada pasta possui configuração própria, sem herança. Falhas de ajuste preservam a prévia convencional. A ingestão RAW/LightCraft foi aposentada em 26/10/2026; o ajuste de prévias permanece limitado aos JPEGs.
 
 ## Comportamento
 
@@ -28,7 +28,9 @@ docker compose -p markina-gallery -f docker/docker-compose.yml -f docker/docker-
 
 O override adiciona somente `preview-adjustment-worker`, sem porta publicada, na rede interna existente. Monta apenas o volume de derivados (não originais ou referências faciais). Limites iniciais: 0,5 CPU, 768 MiB, um trabalho, uma thread de OpenMP, subprocesso com timeout de 90 segundos e reserva de 180 segundos. Reservas abandonadas são retomadas até três tentativas; falhas terminais exigem retentativa administrativa. Esses limites não são medição de capacidade ARM.
 
-O serviço tem imagem própria com RawTherapee; não instalar o editor na API. O arquivo `backend/Dockerfile.preview-adjustment` usa Debian Bookworm e o pacote da distribuição. Documentação oficial: https://rawpedia.rawtherapee.com/Command-Line_Options ; código/licença: https://github.com/RawTherapee/RawTherapee . O pacote é GPL-3.0; preservar seus avisos e a documentação de copyright instalada em `/usr/share/doc/rawtherapee/`. Distribuição de binários/imagem deve acompanhar as obrigações de fonte correspondente e licenças do pacote. O motor é invocado como processo externo; não há cópia de seu código para a aplicação.
+O serviço tem imagem própria com RawTherapee 5.13 oficial para x86_64 e ARM64; não instalar o editor na API. `backend/Dockerfile.preview-adjustment` valida SHA-256 do AppImage upstream, extrai o runtime para o worker e confere a versão CLI no build. Documentação oficial: https://rawpedia.rawtherapee.com/Command-Line_Options ; release/licença: https://github.com/RawTherapee/RawTherapee/releases/tag/5.13 . RawTherapee é GPL-3.0; preservar avisos e a oferta de fonte correspondente conforme os termos de distribuição do AppImage. O motor é invocado como processo externo; não há cópia de seu código para a aplicação.
+
+O runtime extraído requer `libexpat1` do Debian. A checagem usa `rawtherapee-cli` sem argumentos, exige retorno zero e o banner exato de 5.13; `-v` não é uma opção válida da CLI dessa versão. O smoke sintético também exige retorno zero antes de validar renderização, dimensões e preservação da entrada. Referência do contrato CLI: https://github.com/RawTherapee/RawTherapee/blob/5.13/rtgui/main-cli.cc .
 
 ## Desligamento e higienização
 
@@ -53,13 +55,12 @@ docker compose -p markina-gallery -f docker/docker-compose.yml exec -T api pytho
 
 A ferramenta aceita somente `derivatives/<UUID>/preview-adjustment/<UUID>.jpg`, rejeita links simbólicos e não usa exclusão recursiva. Ela apaga esses arquivos e linhas de `preview_adjustment`, mantendo a configuração desligada. Arquivos desconhecidos não são apagados. A limpeza física desses derivados não possui backup, mas eles são regeneráveis; originais, prévias convencionais e dados comerciais permanecem intactos. Não executar simultaneamente com o worker: `--worker-stopped` é uma declaração operacional explícita, não uma detecção de processos remotos.
 
-## Retirada futura do código
+## Aposentadoria do pipeline RAW
 
-- Remover painel e sua importação na etapa 04.
-- Retirar o agendamento pós-commit em `media.py`, resolução opcional e registro de rotas em `main.py`, e hooks de limpeza de foto/manifesto em `main.py` e `gallery_lifecycle.py`.
-- Remover pacote `app/preview_adjustment`, worker/override Docker e testes exclusivos, depois da limpeza.
-- As tabelas exclusivas (`preview_adjustment`, `gallery_preview_settings` e singleton legado `preview_adjustment_settings`) podem permanecer vazias/desligadas até migration de retirada aprovada; não reverter migrations ou commits de outras funcionalidades.
-- Verificar entrega convencional, marca-d'água, exclusão e ausência de jobs. Nenhum rollback de galerias/pedidos/clientes é necessário.
+- A change `retire-lightcraft-and-gemma` removeu o intake RAW, LightCraft, staging, conversor e UI do código executável. A seleção e a API agora aceitam somente JPEG.
+- O override RAW, Dockerfile, rotas/worker e testes exclusivos foram removidos. Migrations 0078/0079 e registros existentes permanecem históricos; nenhum RAW, volume ou linha de banco foi apagado.
+- A aposentadoria operacional de qualquer serviço/volume legado exige inventário atual e autorização específica; os registros de produção conhecidos são históricos.
+- O ajuste de prévias, suas rotas, perfil, jobs e worker continuam ativos para JPEG e não fazem parte desta retirada.
 
 ## Validação
 
@@ -69,4 +70,4 @@ Validação local de 13/09/2026: 67 testes de mídia/módulo aprovados no checkp
 
 O painel foi verificado em Chromium, com API simulada, em 390, 768 e 1440 px: nenhum overflow interno/erro JavaScript; comparação vertical no celular e lado a lado no desktop. A comparação visual nessa prova usa amostra sintética, não dados de clientes.
 
-Imagem inicial `markina-gallery-preview-adjustment:validation` construída e testada sem rede ou volumes de fotos reais, com 0,5 CPU/768 MiB/64 processos. RawTherapee 5.9 processou três sintéticos 640×420 em 1,340 s, 0,913 s e 0,637 s, com entrada intacta. Esses tempos não são benchmark de fotografias reais nem previsão de throughput ARM. A chamada usa `-a` porque a configuração inicial do CLI não inclui PNG nas extensões selecionadas. Publicação inicial e ativação posterior do worker estão registradas em `openspec/changes/add-optional-preview-auto-adjustment/deployment-result.md`. A evolução por galeria requer publicação própria; não confundir validação local com paridade remota.
+Histórico: a imagem inicial usava RawTherapee 5.9 e processou três sintéticos 640×420 sem alterar entradas; esses tempos não são benchmark de fotografias reais nem previsão de throughput ARM. A imagem atual usa 5.13, SHA por arquitetura e smoke sintético headless no CI. A aprovação estética continua dependendo do fotógrafo e não é demonstrada pelo smoke técnico. Publicação inicial e ativação posterior do worker estão registradas em `openspec/changes/add-optional-preview-auto-adjustment/deployment-result.md`; isso não comprova o runtime remoto atual.
