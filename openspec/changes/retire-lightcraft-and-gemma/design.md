@@ -31,7 +31,7 @@ A base de trabalho é `origin/main` no commit `4cc02068`, consultado novamente e
 
 5. **Separar código local da aposentadoria operacional.** A remoção do serviço da configuração Compose não prova que containers/imagens antigos foram removidos. Antes de release, um inventário atual deverá identificar serviços próprios ativos, ambiente, imagens, schema, filas/jobs RAW ou Gemma, linhas experimentais e volumes de staging. Drenagem/stop dos serviços Markina e qualquer purge permanecem fora desta execução sem plano de impacto zero e autorização operacional específica.
 
-6. **Atualizar gates de CI sem relaxar validações restantes.** Remover o job/check `gemma-runtime` e referências a ele em agregadores/políticas de teste; manter backend, frontend, OpenSpec, Gitleaks, migração e validações das imagens afetadas. O CI deverá construir/testar o worker RawTherapee 5.13 nas duas arquiteturas disponíveis.
+6. **Atualizar gates de CI sem relaxar validações restantes.** Remover o runtime, imagem, dependências e execução Gemma. A proteção externa da `main` ainda exige o contexto `gemma-runtime`; até que o mantenedor altere essa regra, conservar somente um job de compatibilidade com esse nome, que falha salvo quando `homolog-inventory-policy` (agregador dos gates atuais) conclui com sucesso. Esse job não instala, constrói, baixa nem executa Gemma. Manter backend, frontend, OpenSpec, Gitleaks, migração e validações das imagens afetadas. O CI deverá construir/testar o worker RawTherapee 5.13 nas duas arquiteturas disponíveis.
 
 ## Risks / Trade-offs
 

@@ -26,7 +26,7 @@
 - [x] 5.1 Atualizar roadmap, instruções e documentação de operação para registrar JPEG-only, SFace-only e RawTherapee 5.13; inventários/runbooks históricos agora estão identificados como snapshots e os guardas/dados legados têm finalidade documentada.
 - [x] 5.2 Regressões focadas, lint, typecheck e build locais: facial 56 testes; teste de upload backend 1; Vitest completo 550 testes/64 arquivos; ESLint sem erros; `next build` com TypeScript passou; Compose principal passou. `npx -y @fission-ai/openspec@1.14.0 validate --strict --all` (versão do CI) passou 140/140. A versão local 1.14.1 sinalizou 31 warnings antigos como falhas; CI usa 1.14.0. Builds do worker em ambas as arquiteturas aguardam o job runtime-images.
 - [x] 5.3 Revisar diff e busca residual: não há provider, endpoints, UI, dependências ou serviços executáveis RAW/Gemma. Referências remanescentes estão restritas a constraints/ORM e migrations históricas, inventário/limpeza de staging, guardas que bloqueiam runtime legado e runbooks snapshots. O checkout original continua com os mesmos 160 itens sujos e não foi alterado; `git diff --check`, `compileall` e busca residual foram concluídos.
-- [ ] 5.4 Após validação local, criar commit e push da branch desta change, abrir PR e conferir CI a cada 30 minutos até os checks exigidos terminarem; merge/deploy seguem os gates da etapa 6, autorizada posteriormente pelo proprietário.
+- [ ] 5.4 Publicar a correção da proteção da `main` na PR #292; acompanhar o SHA mais recente e conferir CI, preservar checks obrigatórios e completar merge/deploy após todos os gates passarem, conforme autorização humana de 26/10/2026.
 
 ## Workflow follow-up
 
@@ -55,3 +55,5 @@
 - [ ] 6.4 Confirmar imagens/versões ativas, schema 0089, saúde, contratos HTTPS, integridade e continuidade; atualizar evidência, rollback e pendências.
 
 Validação da correção 4ae2c4ac: 60 testes focados passaram em Python 3.13 com PostgreSQL 17 temporário isolado, 2 skips condicionais, em 225,06 s; cobre todas as 17 falhas observadas. Lint completo de backend e OpenSpec estrito da change passaram.
+
+- Bloqueio de merge observado no SHA `09d5dfd43d9af6debf649aaae048672e35fa7b7f`: todos os checks da PR passaram, mas a proteção externa da `main` ainda exige o contexto `gemma-runtime`. Sem alterar a regra protegida, o workflow mantém esse nome exclusivamente como alias condicionado ao sucesso do agregador `homolog-inventory-policy`; não há build ou execução de Gemma. Esta é uma compatibilidade temporária, sujeita à remoção quando o mantenedor atualizar a proteção.

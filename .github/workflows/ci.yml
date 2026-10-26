@@ -309,6 +309,23 @@ jobs:
           python scripts/test_retirement_approval.py
           python scripts/test_production_release_workflow_policy.py
 
+  # The protected main branch still requires this legacy context. It reports
+  # the current aggregate only; no Gemma runtime or image is built.
+  gemma-runtime:
+    needs: [homolog-inventory-policy]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Satisfazer o contexto legado somente após os gates atuais
+        env:
+          INVENTORY_POLICY_RESULT: ${{ needs.homolog-inventory-policy.result }}
+        run: |
+          if [[ "$INVENTORY_POLICY_RESULT" != "success" ]]; then
+            echo "O agregado de validações atuais não passou: $INVENTORY_POLICY_RESULT" >&2
+            exit 1
+          fi
+          echo "Gates atuais aprovados; nenhum runtime Gemma é executado."
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:

@@ -20,6 +20,17 @@ def passing_values():
 
 
 class CheckCIResultsTests(unittest.TestCase):
+    def test_legacy_gemma_branch_protection_context_only_mirrors_current_aggregate(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        alias = workflow.split("  gemma-runtime:\n", 1)[1].split("\n  gitleaks:", 1)[0]
+        self.assertIn("needs: [homolog-inventory-policy]", alias)
+        self.assertIn("if: ${{ always() }}", alias)
+        self.assertIn("${{ needs.homolog-inventory-policy.result }}", alias)
+        self.assertIn('!= "success"', alias)
+        self.assertIn("exit 1", alias)
+        self.assertNotIn("docker build", alias)
+        self.assertNotIn("pip install", alias)
+
     def test_accepts_skips_only_for_scopes_classified_as_not_required(self):
         self.assertEqual(validate_results(passing_values()), [])
 
