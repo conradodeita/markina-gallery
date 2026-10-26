@@ -23,7 +23,7 @@ from app.preview_adjustment.service import adjusted_path, configure, enqueue, se
 
 class ConfigurationInput(BaseModel):
     enabled: bool
-    strength: int = Field(default=50, ge=10, le=75)
+    strength: int = Field(default=50, ge=10, le=100)
     exposure_tenths: int = Field(default=0, ge=-20, le=20, strict=True)
 
 
