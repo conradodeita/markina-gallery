@@ -17,6 +17,7 @@ on:
           - app-rollback
           - infinitepay-retirement-preflight
           - infinitepay-retirement-release
+          - preview-adjustment-migration-wrapper-install
           - preview-adjustment-migration-preflight
           - preview-adjustment-migration-release
           - orders-pilot-inventory
@@ -298,6 +299,7 @@ jobs:
         if: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
+          bash -n scripts/install-prod-preview-migration-wrapper.sh
           bash -n scripts/deploy-prod-preview-adjustment-migration.sh
           bash scripts/test_deploy_prod_facial_services.sh
           python scripts/test_prod_facial_release_gates.py
@@ -306,6 +308,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
+          bash -n scripts/install-prod-preview-migration-wrapper.sh
           bash scripts/test_deploy_prod_facial_services.sh
           bash -n scripts/deploy-prod-app-services.sh
           bash scripts/test_deploy_prod_app_services.sh
@@ -570,8 +573,43 @@ jobs:
             "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
             < scripts/deploy-prod-infinitepay-retirement.sh
 
+  preview-adjustment-migration-wrapper-install:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'preview-adjustment-migration-wrapper-install' }}"
+    needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gemma-runtime, gitleaks, preview-adjustment-migration-scope]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Instalar somente o wrapper read-only aprovado
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"; known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          wrapper_blob="$(git rev-parse "$GITHUB_SHA:scripts/production-preflight-ssh-wrapper.sh")"
+          [[ "$wrapper_blob" =~ ^[0-9a-f]{40}$ ]]
+          remote_command="cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' bash -s -- --mode install --support-sha '$GITHUB_SHA' --wrapper-blob '$wrapper_blob'"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" "$remote_command" < scripts/install-prod-preview-migration-wrapper.sh
+
   preview-adjustment-migration-scope:
-    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'preview-adjustment-migration-preflight' || inputs.operation == 'preview-adjustment-migration-release') }}"
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'preview-adjustment-migration-wrapper-install' || inputs.operation == 'preview-adjustment-migration-preflight' || inputs.operation == 'preview-adjustment-migration-release') }}"
     needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gemma-runtime, gitleaks]
     runs-on: ubuntu-latest
     permissions:

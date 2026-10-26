@@ -26,6 +26,7 @@ RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retiremen
 ORDERS_INVENTORY_SCRIPT = (ROOT / "scripts/orders_pilot_release.py").read_bytes()
 PREVIEW_MIGRATION_INVENTORY = (ROOT / "scripts/preview_adjustment_migration_inventory.py").read_bytes()
 PREVIEW_MIGRATION_DEPLOY = (ROOT / "scripts/deploy-prod-preview-adjustment-migration.sh").read_text(encoding="utf-8")
+PREVIEW_MIGRATION_WRAPPER_INSTALL = (ROOT / "scripts/install-prod-preview-migration-wrapper.sh").read_text(encoding="utf-8")
 RETIREMENT_BINDING_SCRIPT = (ROOT / "scripts/retirement_binding_removal.py").read_text(encoding="utf-8")
 APP_RUNBOOK = (ROOT / "docs/DEPLOY-PROD-APP.md").read_text(encoding="utf-8")
 CLASSIFIER = (ROOT / "scripts/classify_prod_release.py").read_text(encoding="utf-8")
@@ -97,6 +98,9 @@ def main() -> None:
     )[0]
     rollback_release = WORKFLOW.split("  production-app-rollback:", 1)[1]
     orders_preflight = WORKFLOW.split("  orders-pilot-preflight:", 1)[1]
+    preview_wrapper_install = WORKFLOW.split("  preview-adjustment-migration-wrapper-install:", 1)[1].split(
+        "  preview-adjustment-migration-scope:", 1
+    )[0]
     preview_scope = WORKFLOW.split("  preview-adjustment-migration-scope:", 1)[1].split(
         "  preview-adjustment-migration-preflight:", 1
     )[0]
@@ -126,7 +130,27 @@ def main() -> None:
     require("- orders-pilot-inventory", "operação manual de inventário Orders", WORKFLOW)
     require("- preview-adjustment-migration-preflight", "preflight manual da migration 0090", WORKFLOW)
     require("- preview-adjustment-migration-release", "release manual da migration 0090", WORKFLOW)
-    for operation in ("preview-adjustment-migration-preflight", "preview-adjustment-migration-release"):
+    require("- preview-adjustment-migration-wrapper-install", "instalação manual do wrapper restrito", WORKFLOW)
+    require("inputs.operation == 'preview-adjustment-migration-wrapper-install'", "instalador só manual na main", preview_wrapper_install)
+    require("environment: production", "instalador usa proteção de produção", preview_wrapper_install)
+    require("needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gemma-runtime, gitleaks, preview-adjustment-migration-scope]", "instalador espera CI completo e escopo", preview_wrapper_install)
+    require("scripts/install-prod-preview-migration-wrapper.sh", "instalação executa helper dedicado", preview_wrapper_install)
+    if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in preview_wrapper_install or "docker" in preview_wrapper_install.lower():
+        raise AssertionError("instalador não pode usar chave read-only nem tocar Docker")
+    require('^MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=([0-9a-f]{40})$', "wrapper aceita SHA de suporte completo", WRAPPER)
+    for fragment, label in (
+        ("https://github.com/conradodeita/markina-gallery.git", "instalador limita repositório esperado"),
+        ('$(hostname -s)" == clearbudget-vnic', "instalador limita host esperado"),
+        ('sudo -n install -o root -g root -m 0600 -- "$WRAPPER" "$backup"', "backup do wrapper root-owned"),
+        ('sudo -n install -o root -g root -m 0755 -- "$temporary" "$staging"', "novo wrapper instalado root-owned"),
+        ('sudo -n mv -T -- "$staging" "$WRAPPER"', "wrapper trocado atomicamente"),
+        ('grep -Fq \'restrict,command="/usr/local/sbin/markina-gallery-preflight-ssh-wrapper"\'', "authorized_keys restrito preservado"),
+        ('SSH_ORIGINAL_COMMAND=\'id\' "$WRAPPER"', "recusa de comando arbitrário verificada"),
+    ):
+        require(fragment, label, PREVIEW_MIGRATION_WRAPPER_INSTALL)
+    if any(token in PREVIEW_MIGRATION_WRAPPER_INSTALL.lower() for token in ("docker ", "docker-compose", "alembic upgrade", "authorized_keys\" >", "authorized_keys\" >>")):
+        raise AssertionError("instalador excede o escopo de troca do wrapper")
+    for operation in ("preview-adjustment-migration-wrapper-install", "preview-adjustment-migration-preflight", "preview-adjustment-migration-release"):
         require(f"inputs.operation == '{operation}'", f"operação {operation} limitada ao workflow manual", preview_scope)
     require("check_preview_adjustment_migration_scope.py", "escopo e CI do candidato verificados", preview_scope)
     require("0dd015a62447e0c8d4c6af16b381140c8118f2ec", "SHA exato do runtime", preview_scope)

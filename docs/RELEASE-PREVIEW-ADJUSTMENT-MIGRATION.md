@@ -23,12 +23,12 @@ Este procedimento publica somente o candidato `0dd015a62447e0c8d4c6af16b381140c8
 
 O wrapper instalado em `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` permanece `root:root`, modo `0755`, com backup anterior e a regra `authorized_keys` `restrict,command=` existente. Não reutilizar a chave mutável de deploy e não acrescentar shell, PTY, forwarding, SFTP ou comandos livres.
 
-Na sessão operacional aprovada após o merge:
+Após integrar a PR e obter CI verde, despachar `preview-adjustment-migration-wrapper-install` em `main`. A operação usa o environment `production` protegido e o SHA atual de suporte:
 
-1. Baixar `scripts/production-preflight-ssh-wrapper.sh` do SHA integrado da `main` e comparar o conteúdo com a versão revisada do repositório.
-2. Conferir o blob Git de `scripts/preview_adjustment_migration_inventory.py` contra `PREVIEW_MIGRATION_INVENTORY_BLOB_SHA` na cópia do wrapper. O comando de preflight aceito é somente `MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=<40 hex>`.
-3. Fazer backup verificável da cópia instalada, substituir atomicamente como `root:root 0755`, conferir SHA-256 e regra SSH preservada. Um comando arbitrário deve continuar sendo recusado sem tocar containers ou banco.
-4. O wrapper baixa por HTTPS o arquivo do SHA de suporte imutável, confere o blob pinado e executa exclusivamente Python no modo inventário. Não encaminha stdin nem aceita modo ou argumentos fornecidos pelo cliente.
+1. O helper remoto baixa `scripts/production-preflight-ssh-wrapper.sh` do SHA imutável de suporte e compara o blob Git com o blob fornecido pelo checkout protegido.
+2. Antes da troca, confere o comando forçado `restrict,command=` já cadastrado em `authorized_keys`; a operação não edita essa chave.
+3. Faz backup verificável da cópia instalada, substitui atomicamente como `root:root 0755`, confere SHA-256 e confirma que um comando arbitrário continua recusado sem tocar containers ou banco.
+4. O wrapper baixa por HTTPS o inventário do SHA de suporte imutável, confere o blob pinado e executa exclusivamente Python no modo inventário. Não encaminha stdin nem aceita modo ou argumentos fornecidos pelo cliente.
 
 Esta instalação root-owned não é feita por workflow nem pela PR. Se não puder ser comprovada, não contornar o wrapper com SSH shell.
 
