@@ -21,9 +21,9 @@ TARGET_REVISION = "20261026_0090"
 MIGRATION = "backend/migrations/versions/20261026_0090_preview_adjustment_strength_100.py"
 
 # Paths are the complete runtime/documentation delta from the recorded healthy
-# runtime to the reviewed candidate. The unrelated PR #295 CSS is deliberately
-# absent. The reviewed checkout UI updates from PRs #295 and #297 are now part
-# of the candidate after their integration; no further paths are accepted.
+# runtime to the reviewed candidate. The payment layout touched by PR #295 and
+# the checkout UI updates from PR #297 are listed because they are already
+# integrated into this candidate; no further paths are accepted.
 ALLOWED_CANDIDATE_PATHS = {
     "backend/app/auth.py",
     "backend/app/folder_processing.py",
