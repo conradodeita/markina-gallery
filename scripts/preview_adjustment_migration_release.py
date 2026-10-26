@@ -71,6 +71,10 @@ class ReleaseHost(InventoryHost):
 
     def start_journal(self, fingerprint: str) -> None:
         require(not JOURNAL.exists() and not JOURNAL.is_symlink(), 'release_anterior_necessita_recuperacao')
+        require(not JOURNAL.with_name(JOURNAL.name + '.tmp').exists()
+                and not JOURNAL.with_name(JOURNAL.name + '.tmp').is_symlink(),
+                'journal_temporario_anterior_necessita_recuperacao')
+        require(not RECEIPT.exists() and not RECEIPT.is_symlink(), 'recibo_release_ja_existe')
         self.journal = {'format': 1, 'target_sha': TARGET_SHA, 'fingerprint': fingerprint,
                         'previous': self.inventory_data, 'phase': 'approved'}
         self.record('approved')

@@ -40,4 +40,4 @@ Esta instalação root-owned não é feita por workflow nem pela PR. Se não pud
 
 ## Evidência atual
 
-Em 26/10/2026, a execução CI #899 passou para `db839cc67cd55595c8571ab66ef8fc51286bdde1`. Ela não substitui o gate de CI do candidato mais recente `0dd015a62447e0c8d4c6af16b381140c8118f2ec`; essa execução de `main` precisa estar concluída e verde antes do preflight.
+Em 26/10/2026, a execução CI #899 passou para `db839cc67cd55595c8571ab66ef8fc51286bdde1`. A execução #901 (`40384426091`) passou para o SHA candidato mais recente `0dd015a62447e0c8d4c6af16b381140c8118f2ec`; os jobs obrigatórios concluíram com `success`. A execução #899 não substituiu o gate do SHA atual.

@@ -85,6 +85,9 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
         data = valid_inventory()
         data['migration_chain']['target_down_revision'] = 'wrong'
         self.assertEqual(validate_inventory(data)[1], 'cadeia_alembic_divergente')
+        data = valid_inventory()
+        data['pending_markers'] = ['preview-adjustment-migration-0090-published.json']
+        self.assertEqual(validate_inventory(data)[1], 'operacao_producao_pendente')
 
     def test_rejects_unhealthy_services_or_any_public_db_redis_port(self):
         data = valid_inventory()

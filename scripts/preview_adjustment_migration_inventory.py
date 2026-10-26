@@ -31,7 +31,9 @@ REQUIRED_SERVICES = {'api', 'web', 'worker', 'db', 'redis', 'nginx'}
 PENDING_MARKERS = ('web-in-flight.sha', 'app-in-flight.sha', 'app-rollback-in-flight.sha',
                    'web-pending.identity', 'infinitepay-retirement-in-flight.sha',
                    'pillow-in-flight.json', 'orders-in-flight.json',
-                   'preview-adjustment-migration-in-flight.json')
+                   'preview-adjustment-migration-in-flight.json',
+                   'preview-adjustment-migration-in-flight.json.tmp',
+                   'preview-adjustment-migration-0090-published.json')
 
 
 class InventoryError(RuntimeError):
@@ -318,7 +320,8 @@ class Host:
         schema_out = self.run('docker', 'exec', 'markina-gallery-api-1', 'python', '-B', '-m', 'alembic', 'current')
         schema_matches = re.findall(r'(?m)^([0-9]{8}_[0-9]{4})(?:\s|$)', schema_out)
         compose = self.compose_files(services)
-        pending = [name for name in PENDING_MARKERS if (STATE / name).exists()]
+        pending = [name for name in PENDING_MARKERS
+                   if (STATE / name).exists() or (STATE / name).is_symlink()]
         https = {}
         for key, path in (('healthz', '/healthz'), ('api_health', '/api/health'), ('web', '/')):
             try:

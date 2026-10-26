@@ -14,7 +14,7 @@ O release API/web padrão recusa migrations e permanece inalterado. A nova opera
 
 ## Decisions
 
-1. **Operação exclusiva por SHA e revisão.** O workflow terá operações manuais separadas de `preflight` e `release`, somente em `main`. O alvo de runtime é `0dd015a62447e0c8d4c6af16b381140c8118f2ec`. A execução #899 passou para `db839cc67cd55595c8571ab66ef8fc51286bdde1`, mas não representa o alvo; o run #40384426091/#901 para o SHA candidato ainda estava em andamento na última consulta. O diff candidato desde `c194418...` deve coincidir com os runtimes aprovados do ajuste de prévias, com as alterações de checkout revisadas das PRs #295/#297 e com a migration única `20261026_0090`. Nenhuma outra mudança posterior é admitida.
+1. **Operação exclusiva por SHA e revisão.** O workflow terá operações manuais separadas de `preflight` e `release`, somente em `main`. O alvo de runtime é `0dd015a62447e0c8d4c6af16b381140c8118f2ec`. A execução #899 passou para `db839cc67cd55595c8571ab66ef8fc51286bdde1`, mas não representa o alvo. O run `40384426091`/#901 para o candidato concluiu `success`; a allowlist foi conferida localmente contra esse SHA e CI. O diff desde `c194418...` corresponde às alterações revisadas das PRs #295/#297 e à migration única `20261026_0090`. Nenhuma outra mudança é admitida.
 
 2. **Preflight fail-closed.** O preflight, por chave restrita somente-leitura, confirma SHA/runtime, schema exato `20261025_0089`, chain Alembic até `20261026_0090`, checkout limpo, serviços/saúde, Compose efetivo, overlays ativos, portas, domínio e disponibilidade/recibo de backup. Gera fingerprint sanitizado que inclui o alvo e todo estado que afeta a operação. Divergência, coleta incompleta, backup não restaurável ou wrapper sem pin aprovado interrompe antes de qualquer mutação.
 
@@ -35,7 +35,7 @@ O release API/web padrão recusa migrations e permanece inalterado. A nova opera
 
 ## Migration Plan
 
-1. Implementar e validar os gates/scripts para o candidato integrado `0dd015a...`, abrir PR focada e obter CI verde para a change. A execução #40384426091 do candidato de runtime também deve estar verde; #899 em `db839cc...` não satisfaz esse requisito.
+1. Implementar e validar os gates/scripts para o candidato integrado `0dd015a...`, abrir PR focada e obter CI verde para a change. O CI do candidato de runtime passou no run #40384426091; #899 em `db839cc...` não substituiu esse gate.
 2. Mesclar o fluxo revisado; atualizar e conferir a cópia root-owned do wrapper por procedimento autorizado, sem ampliar a chave restrita.
 3. Despachar preflight somente-leitura e apresentar runtime, schema, serviços, portas, domínio, backup, impacto, fingerprint e recuperação; interromper se qualquer item diferir do baseline `c194418...`/`0089`.
 4. Após aprovação explícita do fingerprint, despachar release; confirmar schema `0090`, runtimes, saúde e HTTPS, registrar evidência minimizada e fechar a change somente após revisão humana.
