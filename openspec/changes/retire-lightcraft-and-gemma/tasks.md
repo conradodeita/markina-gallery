@@ -18,7 +18,7 @@
 
 ## 4. Manter RawTherapee no ajuste de prévias
 
-- [ ] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless foram incluídos no CI. A execução local foi evitada por compartilhar o Docker host com outros projetos. Primeira execução CI no SHA `8b494094` extraiu e encontrou o executável nas duas arquiteturas, mas falhou no smoke `rawtherapee-cli -v | grep 5.13`; o log não trouxe a saída do processo. O Dockerfile agora captura e imprime a saída/erro antes de validar a versão. `ruff check backend/app backend/tests` e `openspec validate retire-lightcraft-and-gemma --strict` passaram localmente após esta correção; builds e smoke aguardam nova execução CI.
+- [ ] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless estão no CI. Após corrigir `libexpat1` e a chamada CLI, build e smoke AMD64 passaram localmente em ambiente isolado; detalhes em Workflow follow-up. Evidência ARM64 e CI completo ainda pendentes.
 - [ ] 4.2 Atualizar documentação do worker, licença/origem e inventário de terceiros com versão, checksums, consumidores e limites do smoke; a documentação foi atualizada e o job `runtime-images` executará os comandos após push, ainda pendente de CI.
 
 ## 5. Integração e continuidade
@@ -29,6 +29,13 @@
 - [ ] 5.4 Após validação local, criar commit e push da branch desta change, abrir PR e conferir CI a cada 30 minutos até os checks exigidos terminarem; não fazer merge ou deploy.
 
 ## Workflow follow-up
+
+### Correção dos checks da PR #292 — 26/10/2026
+
+- CI `40317113432` (`9c16238a`): lint corrigido; dois testes de manutenção ainda referenciavam serviços RAW/Gemma ausentes do inventário. Os testes agora exercitam o worker opcional de prévias, mantendo as garantias de não ativar serviço inativo e de ignorar serviço ausente. Os 29 testes de `scripts.test_python_security_release` passaram.
+- Os builds AMD64/ARM64 revelaram ausência de `libexpat.so.1`; foi adicionada a dependência Debian `libexpat1`. O build local também demonstrou que `-v` retorna 255 na CLI 5.13. Conforme `rtgui/main-cli.cc` da tag upstream 5.13, a inicialização sem argumentos imprime a versão e retorna zero. Build e smoke agora exigem sucesso e banner de versão, sem ignorar falhas.
+- Build AMD64 local com tag exclusiva `markina-retirement-ci:20261026-amd64` passou; imagem config `sha256:43ea629ff7009f9927340cb943cd508b2f7b3c80ada9e83816eff62e1824e03d`. Smoke em container temporário sem rede, somente leitura, sem dados reais, com 1 CPU/768 MiB passou nas três amostras sintéticas (0,926 s; 0,483 s; 0,430 s), preservando entrada, dimensões e RGB. Nenhum serviço compartilhado foi alterado. A decisão anterior de não construir localmente foi substituída por esta validação isolada.
+- Lint de backend/testes/scripts alterados, OpenSpec estrito da change e `git diff --check` passaram; testes auxiliares de terceiros (11) e Pillow (2 + 13 + 14) passaram. `test_preview_adjustment.py`: 22 testes passaram na imagem Python 3.13, com testes/conftest/migrations montados somente para leitura e SQLite temporário. A tentativa no Python 3.12 do Windows teve 18 passes/4 erros de setup por ausência local de `mercadopago`; no container, a primeira montagem omitiu migrations (21 passes/1 erro), corrigida antes da execução final verde. As tasks 4.1/4.2 permanecem pendentes da evidência ARM64 e do CI completo no novo SHA.
 
 - Antes de release, atualizar o inventário remoto de schema, ambiente, serviços/imagens ativos, filas/jobs RAW/Gemma, embeddings e volumes staging. A observação de 19/10 é histórica e o schema 0089 informado pelo proprietário não comprova estado de containers.
 - Parada/recriação de workers, limpeza de imagens, exclusão de dados/volumes, migration ou deploy exigem plano de impacto zero e autorização operacional específica. Manter a change não arquivada até revisão humana e reconciliação do inventário de runtime.

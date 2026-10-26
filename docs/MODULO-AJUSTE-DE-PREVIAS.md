@@ -30,6 +30,8 @@ O override adiciona somente `preview-adjustment-worker`, sem porta publicada, na
 
 O serviço tem imagem própria com RawTherapee 5.13 oficial para x86_64 e ARM64; não instalar o editor na API. `backend/Dockerfile.preview-adjustment` valida SHA-256 do AppImage upstream, extrai o runtime para o worker e confere a versão CLI no build. Documentação oficial: https://rawpedia.rawtherapee.com/Command-Line_Options ; release/licença: https://github.com/RawTherapee/RawTherapee/releases/tag/5.13 . RawTherapee é GPL-3.0; preservar avisos e a oferta de fonte correspondente conforme os termos de distribuição do AppImage. O motor é invocado como processo externo; não há cópia de seu código para a aplicação.
 
+O runtime extraído requer `libexpat1` do Debian. A checagem usa `rawtherapee-cli` sem argumentos, exige retorno zero e o banner exato de 5.13; `-v` não é uma opção válida da CLI dessa versão. O smoke sintético também exige retorno zero antes de validar renderização, dimensões e preservação da entrada. Referência do contrato CLI: https://github.com/RawTherapee/RawTherapee/blob/5.13/rtgui/main-cli.cc .
+
 ## Desligamento e higienização
 
 1. O painel contextual não oferece desligamento. A higienização exige inventário de configurações da galeria e das pastas e desligamento explícito autorizado pelo contrato administrativo antes da limpeza. Confirmar `enabled=false` em `/admin/preview-adjustment/galleries/{id}/configuration`; para inventário global, consultar `gallery_preview_settings`. A limpeza recusa execução se qualquer galeria continua habilitada ou existe pasta restrita de cliente, pois essas pastas são sempre processadas.
