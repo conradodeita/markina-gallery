@@ -4,7 +4,7 @@ Changes: `add-optional-preview-auto-adjustment` (origem), `gallery-preview-expos
 
 ## Comportamento
 
-O RawTherapee CLI executa um perfil de níveis automáticos, sem nitidez, reconstrução de rostos ou mudança de balanço de branco. A intensidade mistura o resultado com a prévia limpa (50% inicialmente, de 10 a 75%). É um primeiro perfil moderado para avaliação, não equivalência ao Auto do Lightroom nem tratamento final. Nova implementação de `AdjustmentEngine` pode substituir o motor; IA não está integrada nesta versão.
+O RawTherapee CLI executa um perfil de níveis automáticos, sem nitidez, reconstrução de rostos ou mudança de balanço de branco. A intensidade mistura o resultado com a prévia limpa (50% inicialmente, de 10 a 100%). Em 100%, a prévia usa integralmente o resultado ajustado. É um primeiro perfil moderado para avaliação, não equivalência ao Auto do Lightroom nem tratamento final. Nova implementação de `AdjustmentEngine` pode substituir o motor; IA não está integrada nesta versão.
 
 Depois do ajuste automático, a exposição (-2 a +2 EV, passos de 0,1) clareia ou escurece somente aquela pasta em luz linear sRGB. Zero não altera os pixels do resultado automático. Valores altos podem recortar altas luzes; não recuperam detalhes ausentes. Cada processamento parte da prévia limpa, nunca do JPEG ajustado anterior, e a marca-d'água é aplicada por último. Não há importação de presets Lightroom.
 

@@ -145,7 +145,11 @@ def test_folder_processing_api_auth_and_override(api_client):
         "mode": "custom", "enabled": True, "strength": 60, "exposure_tenths": -3,
     }
     assert client.patch(endpoint, json={"preview_mode": "custom", "facial_mode": "off",
-                                        "preview_strength": 80, "preview_exposure_tenths": 5}).status_code == 422
+                                        "preview_strength": 101, "preview_exposure_tenths": 5}).status_code == 422
+    maximum = client.patch(endpoint, json={"preview_mode": "custom", "facial_mode": "off",
+                                           "preview_strength": 100, "preview_exposure_tenths": 5})
+    assert maximum.status_code == 200, maximum.text
+    assert maximum.json()["preview_strength"] == 100
     custom = client.patch(endpoint, json={"preview_mode": "custom", "facial_mode": "off",
                                         "preview_strength": 60, "preview_exposure_tenths": 5})
     assert custom.status_code == 200, custom.text

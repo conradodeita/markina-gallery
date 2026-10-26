@@ -2255,7 +2255,7 @@ class PreviewAdjustmentSettings(Base):
     __table_args__ = (
         CheckConstraint("id = 1"),
         CheckConstraint("generation >= 1"),
-        CheckConstraint("strength BETWEEN 10 AND 75"),
+        CheckConstraint("strength BETWEEN 10 AND 100", name="ck_preview_adjustment_strength"),
     )
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -2273,7 +2273,7 @@ class GalleryPreviewSettings(Base):
     )
     __table_args__ = (
         CheckConstraint("generation >= 1"),
-        CheckConstraint("strength BETWEEN 10 AND 75"),
+        CheckConstraint("strength BETWEEN 10 AND 100", name="ck_gallery_preview_strength"),
         CheckConstraint("exposure_tenths BETWEEN -20 AND 20"),
     )
     parent_gallery_id: Mapped[UUID] = mapped_column(
@@ -2296,7 +2296,7 @@ class FolderProcessingSettings(Base):
     __table_args__ = (
         CheckConstraint("preview_mode IN ('inherit', 'custom', 'off')"),
         CheckConstraint("facial_mode IN ('inherit', 'on', 'off')"),
-        CheckConstraint("preview_strength BETWEEN 10 AND 75"),
+        CheckConstraint("preview_strength BETWEEN 10 AND 100", name="ck_folder_preview_strength"),
         CheckConstraint("preview_exposure_tenths BETWEEN -20 AND 20"),
         CheckConstraint("revision >= 1"),
     )

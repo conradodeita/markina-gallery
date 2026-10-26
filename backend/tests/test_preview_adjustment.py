@@ -92,6 +92,9 @@ def test_engine_isolated_bounded_and_does_not_change_input(monkeypatch):
     result = RawTherapeeEngine().render(original, 50)
     assert original.getpixel((0, 0)) == (40, 40, 40)
     assert result.getpixel((0, 0)) == (70, 70, 70)
+    maximum = RawTherapeeEngine().render(original, 100)
+    assert maximum.getpixel((0, 0)) == (100, 100, 100)
+    assert original.getpixel((0, 0)) == (40, 40, 40)
     assert not Path(seen[0][-1]).exists()
 
 
@@ -426,6 +429,8 @@ def test_admin_api_auth_comparison_and_immediate_disable(api_client):
     assert client.get(f"{root}/photos/{photo_id}/before").status_code == 403
     client.cookies.set("markina_session", "adjustment-admin")
     assert client.patch(config_url, json={"enabled": True, "strength": 200}).status_code == 422
+    maximum = client.patch(config_url, json={"enabled": True, "strength": 100})
+    assert maximum.status_code == 200, maximum.text
     assert client.patch(config_url, json={"enabled": True, "exposure_tenths": 21}).status_code == 422
     assert client.get(f"{root}/photos/{photo_id}/after").status_code == 404
     before = client.get(f"{root}/photos/{photo_id}/before")

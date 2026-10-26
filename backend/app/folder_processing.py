@@ -99,7 +99,7 @@ def configure_folder(db: Session, folder_id: UUID, *, tenant_id: UUID, preview_m
         raise ValueError("Galeria indisponível para processamento.")
     if (preview_mode not in {"custom", "off"}
             or facial_mode not in {"on", "off"}
-            or not 10 <= strength <= 75 or not -20 <= exposure_tenths <= 20):
+            or not 10 <= strength <= 100 or not -20 <= exposure_tenths <= 20):
         raise ValueError("Configuração de processamento inválida.")
     is_private = folder.audience_scope == "selected"
     if is_private:
