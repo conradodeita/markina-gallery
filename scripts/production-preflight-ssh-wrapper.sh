@@ -11,7 +11,7 @@ readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly FACIAL_SCRIPT_BLOB_SHA="bc07f8a4acb90526ed98b74ea5a8acd23cc0d90e"
 readonly APP_SCRIPT_BLOB_SHA="646852479c83d0bfa356203379a95cbd9e4019f6"
 readonly RETIREMENT_SCRIPT_BLOB_SHA="935af96ec1b650eb2c9ae188186eec38f0dd532b"
-readonly ORDERS_SCRIPT_BLOB_SHA="95770b8fc36471f5efc1d77f0752c252433bf8a0"
+readonly ORDERS_SCRIPT_BLOB_SHA="13371d50abfdeedbe02408546a685277b3e7f042"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 

@@ -25,7 +25,7 @@ O Pick-your-Pic precisa receber pagamentos dentro da própria experiência por C
 
 - `gallery-sales/global-pix-configuration`: habilitação independente sem apagar configuração ou snapshots.
 - `deployment-operations/owner-reset`: preservar configuração Orders do proprietário e impedir reset com evidência financeira enviada de qualquer tenant.
-- `deployment-operations/orders-pilot-release`: procedimento pontual protegido para 0087→0088, com preparação isolada, restauração ensaiada, fingerprint, parada verificada dos escritores e emissão de teste restrita ao proprietário. Janela de manutenção aceita explicitamente em 25/10/2026.
+- `deployment-operations/orders-pilot-release`: atualizar o piloto já publicado em `9bd66c48`/0088 para 0089, preservando identidade, configurações e tentativas existentes, com preparação isolada, restauração ensaiada, fingerprint, parada verificada dos escritores e emissão de teste restrita ao proprietário. Janela de manutenção aceita explicitamente em 25/10/2026; a próxima aplicação depende de plano e aprovação concretos.
 
 ## Impact
 
