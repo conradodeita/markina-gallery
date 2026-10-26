@@ -25,4 +25,4 @@ A intensidade é atualmente limitada a 10–75% em três contratos de persistên
 
 ## Migration Plan
 
-Criar revision Alembic após `20261025_0089`; na upgrade, substituir as três constraints com limites 10–100. Na downgrade, bloquear se existir valor acima de 75 e, caso contrário, restaurar constraints antigas. Após CI verde e merge, a migration será aplicada pelo fluxo autorizado de release, com preflight operacional, backup e smoke do procedimento vigente.
+Criar revision Alembic após `20261025_0089`; na upgrade, substituir as três constraints com limites 10–100. Na downgrade, bloquear se existir valor acima de 75 e, caso contrário, restaurar constraints antigas. A migration não pode ser publicada pelo release API/web vigente: o classificador marca migrations como `protected`, o runbook proíbe migrations e o manifesto de runtime ainda espera `20261022_0087`, enquanto a última versão operacional informada pelo proprietário é `20261025_0089`. O merge e o deploy ficam pendentes até existir um fluxo suportado para migration, inventário atualizado e preflight aprovado; nenhum banco operacional foi alterado.

@@ -13,5 +13,6 @@
 ## 3. Validação e fechamento
 
 - [x] 3.1 Atualizar regressões para o limite 100%, limites inválidos, migration e resultado da mistura em 100%. Os arquivos foram revisados; execução separada registrada em 3.2.
-- [ ] 3.2 Completar os testes focados e obter CI verde. Evidência local: frontend 9/9, backend 24 aprovados, migration 3/3, ESLint, TypeScript e Ruff aprovados; nove cenários de API não iniciaram por ausência local do pacote `mercadopago`, então a validação completa depende do CI.
-- [x] 3.3 Revisar diff, validar OpenSpec em modo estrito e fazer `git diff --check`; release operacional segue o preflight aprovado.
+- [x] 3.2 Completar os testes focados e obter CI verde. Evidência: CI #40362799810 no SHA `165d84e0ea5e35ca7f55f0f47207d17d4fcf6105`; backend (`pytest` e regressões PostgreSQL), frontend, OpenSpec, Gitleaks, classificação de escopo, builds/smokes de runtime e política de inventário de homologação passaram. Localmente, frontend 9/9, migration 3/3, ESLint, TypeScript e Ruff passaram; nove cenários da API não iniciaram por ausência local de `mercadopago`.
+- [x] 3.3 Revisar diff, validar OpenSpec em modo estrito e fazer `git diff --check`.
+- [ ] 3.4 Publicar a migration `0090` e o código por um fluxo suportado, com inventário e preflight atualizados. **Bloqueada:** o classificador atual trata migrations como `protected`, o release API/web proíbe migrations e o manifesto ainda espera schema `20261022_0087`; a última versão operacional informada pelo proprietário é `20261025_0089`. Não há preflight aprovado nem fluxo de migration autorizado registrado para esta change.
