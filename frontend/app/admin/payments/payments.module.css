@@ -12,11 +12,17 @@
 .page :global(.payment-order__heading p) { margin-top:7px; line-height:1.6; overflow-wrap:anywhere; }
 .page :global(.payment-order__heading > strong) { font-size:1.2rem; }
 .page :global(.payment-order details > summary) { min-height:32px; color:var(--mk-ink); }
+.page :global(.payment-filters .filter-grid) { grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); }
+.page :global(.payment-filters .filter-grid > *) { min-width:0; }
+.page :global(.payment-filters .filter-grid select),.page :global(.payment-filters .filter-grid input) { width:100%; min-width:0; max-width:100%; box-sizing:border-box; }
 .orderDetail { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); grid-template-areas:"facts facts" "photos payment" "photos delivery"; gap:16px; padding-top:12px; }
 .orderDetail :global(.payment-order__facts) { grid-area:facts; margin:0; }
 .photoSection,.paymentSection,.deliverySection { min-width:0; padding:18px; border:1px solid var(--mk-border); border-radius:var(--mk-radius-md); background:var(--mk-surface); }
 .photoSection { grid-area:photos; }
 .paymentSection { grid-area:payment; }
+.paymentSection :global(.payment-order__facts) { grid-template-columns:minmax(0,1fr); }
+.paymentSection :global(.payment-order__facts > div) { min-width:0; }
+.paymentSection :global(.payment-order__facts dd) { overflow-wrap:anywhere; }
 .deliverySection { grid-area:delivery; }
 .orderDetail h4 { margin:0 0 14px; font-size:1rem; }
 .orderDetail h4 span { color:var(--mk-ink-muted); font-weight:500; }
