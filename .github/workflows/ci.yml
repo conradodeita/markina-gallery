@@ -17,9 +17,11 @@ on:
           - app-rollback
           - infinitepay-retirement-preflight
           - infinitepay-retirement-release
+          - preview-adjustment-migration-preflight
+          - preview-adjustment-migration-release
           - orders-pilot-inventory
       approval_fingerprint:
-        description: Fingerprint do inventário de aposentadoria aprovado (obrigatório para release)
+        description: Fingerprint do inventário aprovado (obrigatório para release protegido)
         type: string
         required: false
         default: ''
@@ -112,6 +114,10 @@ jobs:
           PYTHONPATH=scripts python -m unittest scripts.test_retirement_financial_evidence -v
           PYTHONPATH=scripts python -m unittest scripts.test_retirement_binding_removal -v
           PYTHONPATH=scripts python -m unittest scripts.test_retirement_pix_evidence -v
+          PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_scope -v
+          PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_inventory -v
+          PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_release_flow -v
+          PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_release -v
           bash scripts/test_deploy_homolog.sh
           bash scripts/test_deploy_prod_web.sh
           bash -n scripts/deploy-prod-infinitepay-retirement.sh
@@ -292,6 +298,7 @@ jobs:
         if: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
+          bash -n scripts/deploy-prod-preview-adjustment-migration.sh
           bash scripts/test_deploy_prod_facial_services.sh
           python scripts/test_prod_facial_release_gates.py
           python scripts/test_classify_prod_release.py
@@ -307,6 +314,7 @@ jobs:
           python scripts/test_prepare_emergency_api_image.py
           python scripts/test_classify_prod_release.py
           python scripts/test_retirement_approval.py
+          python -m unittest scripts.test_prod_release_state.ReleaseContracts.test_preview_migration_wrapper_runs_only_pinned_readonly_inventory scripts.test_prod_release_state.ReleaseContracts.test_preview_migration_wrapper_rejects_arbitrary_command -v
           python scripts/test_production_release_workflow_policy.py
 
   # The protected main branch still requires this legacy context. It reports
@@ -561,6 +569,136 @@ jobs:
           ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
             "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
             < scripts/deploy-prod-infinitepay-retirement.sh
+
+  preview-adjustment-migration-scope:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'preview-adjustment-migration-preflight' || inputs.operation == 'preview-adjustment-migration-release') }}"
+    needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gemma-runtime, gitleaks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validar candidato 0089 para 0090 e CI verde
+        run: python scripts/check_preview_adjustment_migration_scope.py --base c1944189761799be96eeeb921cad9906484d8b09 --target 0dd015a62447e0c8d4c6af16b381140c8118f2ec --ci-conclusion success | tee -a "$GITHUB_STEP_SUMMARY"
+
+  preview-adjustment-migration-preflight:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'preview-adjustment-migration-preflight' || inputs.operation == 'preview-adjustment-migration-release') }}"
+    needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gemma-runtime, gitleaks, preview-adjustment-migration-scope]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
+      inventory_json: ${{ steps.inventory.outputs.inventory_json }}
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verificar configuração protegida de inventário
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]]
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+      - name: Obter inventário minimizado somente-leitura
+        id: inventory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"; known_hosts_file="$(mktemp)"; output_file="$(mktemp)"; validated_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file" "$output_file" "$validated_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" "MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=$GITHUB_SHA" </dev/null | tee "$output_file"
+          python - "$output_file" "$GITHUB_OUTPUT" <<'PY'
+          import json, re, sys
+          lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+          inventory = next((line.split('=', 1)[1] for line in lines if line.startswith('inventario_sanitizado=')), None)
+          fingerprint = next((line.split('=', 1)[1] for line in lines if line.startswith('approval_fingerprint=')), None)
+          if not inventory or not re.fullmatch(r'[0-9a-f]{64}', fingerprint or ''):
+              raise SystemExit('Inventário ou fingerprint inválido')
+          parsed = json.loads(inventory)
+          with open(sys.argv[2], 'a', encoding='utf-8') as out:
+              out.write(f'approval_fingerprint={fingerprint}\n')
+              out.write('inventory_json<<INVENTORY\n' + json.dumps(parsed, sort_keys=True, separators=(',', ':')) + '\nINVENTORY\n')
+          PY
+          cat "$GITHUB_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
+
+  preview-adjustment-migration-release-approval:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'preview-adjustment-migration-release' }}"
+    needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gemma-runtime, gitleaks, preview-adjustment-migration-scope, preview-adjustment-migration-preflight]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      approved: ${{ steps.validate.outputs.approved }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exigir fingerprint idêntico ao inventário recém-coletado
+        id: validate
+        shell: bash
+        env:
+          REQUESTED_APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          PREFLIGHT_FINGERPRINT: ${{ needs.preview-adjustment-migration-preflight.outputs.approval_fingerprint }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$REQUESTED_APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$PREFLIGHT_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          python -c 'import os; assert os.environ["REQUESTED_APPROVAL_FINGERPRINT"] == os.environ["PREFLIGHT_FINGERPRINT"]'
+          echo 'approved=true' >> "$GITHUB_OUTPUT"
+
+  preview-adjustment-migration-release:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'preview-adjustment-migration-release' && needs.preview-adjustment-migration-release-approval.outputs.approved == 'true' }}"
+    needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gemma-runtime, gitleaks, preview-adjustment-migration-scope, preview-adjustment-migration-preflight, preview-adjustment-migration-release-approval]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Executar migration somente com fingerprint recém-aprovado
+        shell: bash
+        env:
+          APPROVAL_FINGERPRINT: ${{ needs.preview-adjustment-migration-preflight.outputs.approval_fingerprint }}
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL APPROVAL_FINGERPRINT; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"; known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          remote_command="cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --support-sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" "$remote_command" < scripts/deploy-prod-preview-adjustment-migration.sh
 
   production-preflight:
     if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'facial' }}"
