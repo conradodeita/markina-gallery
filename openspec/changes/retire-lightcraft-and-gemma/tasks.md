@@ -18,15 +18,15 @@
 
 ## 4. Manter RawTherapee no ajuste de prévias
 
-- [x] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless passaram no CI `40318640756`, SHA `3b78c9dc`. Build e smoke AMD64 também passaram localmente em ambiente isolado; detalhes em Workflow follow-up. O CI completo ainda depende da correção do guard de deploy descrita abaixo.
-- [x] 4.2 Atualizar documentação do worker, licença/origem e inventário de terceiros com versão, checksums, consumidores e limites do smoke; documentação atualizada e jobs `runtime-images` AMD64/ARM64 verdes no CI `40318640756`. Smoke ARM64 confirmou 5.13 e três amostras sintéticas em 0,235 s, 0,224 s e 0,223 s. Isto não comprova equivalência estética em fotografias reais.
+- [x] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless passaram nos CI `40318640756`, `40334382185` e `40338625688`. Build e smoke AMD64 também passaram localmente em ambiente isolado; detalhes em Workflow follow-up.
+- [x] 4.2 Atualizar documentação do worker, licença/origem e inventário de terceiros com versão, checksums, consumidores e limites do smoke; documentação atualizada e jobs `runtime-images` AMD64/ARM64 verdes nos CI `40318640756`, `40334382185` e `40338625688`. Smoke ARM64 confirmou 5.13 e amostras sintéticas. Isto não comprova equivalência estética em fotografias reais.
 
 ## 5. Integração e continuidade
 
 - [x] 5.1 Atualizar roadmap, instruções e documentação de operação para registrar JPEG-only, SFace-only e RawTherapee 5.13; inventários/runbooks históricos agora estão identificados como snapshots e os guardas/dados legados têm finalidade documentada.
-- [x] 5.2 Regressões focadas, lint, typecheck e build locais: facial 56 testes; teste de upload backend 1; Vitest completo 550 testes/64 arquivos; ESLint sem erros; `next build` com TypeScript passou; Compose principal passou. `npx -y @fission-ai/openspec@1.14.0 validate --strict --all` (versão do CI) passou 140/140. A versão local 1.14.1 sinalizou 31 warnings antigos como falhas; CI usa 1.14.0. Builds do worker em ambas as arquiteturas aguardam o job runtime-images.
+- [x] 5.2 Regressões focadas, lint, typecheck e build locais: facial 56 testes; teste de upload backend 1; Vitest completo 550 testes/64 arquivos; ESLint sem erros; `next build` com TypeScript passou; Compose principal passou. `npx -y @fission-ai/openspec@1.14.0 validate --strict --all` (versão do CI) passou 140/140. A versão local 1.14.1 sinalizou 31 warnings antigos como falhas; CI usa 1.14.0. Builds ARM64/AMD64 do worker passaram nos CI da PR e de `main`.
 - [x] 5.3 Revisar diff e busca residual: não há provider, endpoints, UI, dependências ou serviços executáveis RAW/Gemma. Referências remanescentes estão restritas a constraints/ORM e migrations históricas, inventário/limpeza de staging, guardas que bloqueiam runtime legado e runbooks snapshots. O checkout original continua com os mesmos 160 itens sujos e não foi alterado; `git diff --check`, `compileall` e busca residual foram concluídos.
-- [ ] 5.4 Publicar a correção da proteção da `main` na PR #292; acompanhar o SHA mais recente e conferir CI, preservar checks obrigatórios e completar merge/deploy após todos os gates passarem, conforme autorização humana de 26/10/2026.
+- [x] 5.4 Publicar a correção da proteção da `main` na PR #292; todos os checks exigidos passaram no SHA `0f8015157488085338d63322fc4fc8f450b64f2a` (run `40334382185`), a PR foi mesclada como `c1944189761799be96eeeb921cad9906484d8b09` e o CI pós-merge também passou (run `40338625688`). Deploy concluído sem bypass ou migration, conforme autorização humana de 26/10/2026.
 
 ## Workflow follow-up
 
@@ -49,10 +49,10 @@
 
 ## 6. Release autorizado pelo proprietário em 26/10/2026
 
-- [ ] 6.1 Revalidar inventário remoto: SHA, schema, imagens, serviços, portas, ambiente, filas RAW/Gemma e demais writers, modelos/dados históricos e capacidade; registrar evidências sanitizadas em deployment.md.
-- [ ] 6.2 Apresentar e concluir o plano de impacto zero e recuperação para o runtime especializado, preservando imagens saudáveis, dados, filas, credenciais e projetos vizinhos; validar candidatas antes da troca.
-- [ ] 6.3 Confirmar CI verde da revisão final, fazer merge da PR #292 e publicar a revisão autorizada pelo procedimento inventariado. Não executar migrations nem limpeza de dados/imagens/volumes.
-- [ ] 6.4 Confirmar imagens/versões ativas, schema 0089, saúde, contratos HTTPS, integridade e continuidade; atualizar evidência, rollback e pendências.
+- [x] 6.1 Revalidar inventário remoto: SHA, schema, imagens, serviços, portas, ambiente, filas RAW/Gemma e demais writers, modelos/dados históricos e capacidade; evidência sanitizada registrada em `deployment.md`.
+- [x] 6.2 Concluir plano especializado de impacto zero e recuperação; candidatas foram construídas e validadas antes da troca, imagens anteriores e arquivos de estado protegidos preservados, callbacks e encerramento gracioso ensaiados sem dados reais.
+- [x] 6.3 Confirmar CI verde da revisão final, fazer merge da PR #292 e publicar a revisão autorizada. Não foram executadas migrations nem limpeza de dados/imagens/volumes.
+- [x] 6.4 Confirmar imagens/versões ativas, schema 0089, saúde, contratos HTTPS e integridade; evidência pós-deploy, recuperação e estado dos serviços aposentados documentados em `deployment.md`.
 
 Validação da correção 4ae2c4ac: 60 testes focados passaram em Python 3.13 com PostgreSQL 17 temporário isolado, 2 skips condicionais, em 225,06 s; cobre todas as 17 falhas observadas. Lint completo de backend e OpenSpec estrito da change passaram.
 
