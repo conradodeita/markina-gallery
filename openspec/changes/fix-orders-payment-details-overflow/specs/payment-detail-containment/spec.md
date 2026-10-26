@@ -10,3 +10,10 @@ O painel administrativo SHALL apresentar cada identificador e estado do pagament
 #### Scenario: Preservação dos demais detalhes
 - **WHEN** o fotógrafo consulta metadados, fotografias e ações do pedido
 - **THEN** os contratos financeiros e os demais layouts e ações permanecem preservados
+
+### Requirement: Contenção dos filtros administrativos
+O painel SHALL distribuir Mais filtros conforme a largura disponível, mantendo labels, selects, datas e botão dentro de suas células sem sobreposição. As opções e critérios financeiros SHALL permanecer inalterados.
+
+#### Scenario: Situação financeira ao lado de Provedor
+- **WHEN** o fotógrafo abre Mais filtros no desktop ou mobile
+- **THEN** Situação financeira e Provedor não se sobrepõem e os controles permanecem utilizáveis dentro da grade

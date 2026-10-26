@@ -5,6 +5,7 @@ No desktop, os identificadores Orders do Mercado Pago ultrapassam as células do
 ## What Changes
 
 - Exibir os fatos do pagamento em uma coluna, com identificadores completos e quebra de linha dentro do card.
+- Conter os controles de Mais filtros em suas colunas e redistribuir a grade conforme a largura disponível, evitando sobreposição entre Situação financeira e Provedor.
 - Preservar estados, valores, ações, temas e demais detalhes do pedido.
 - Correção local de CSS, sem refatoração adicional ou alteração financeira.
 
