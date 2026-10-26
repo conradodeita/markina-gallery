@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -113,7 +114,7 @@ class ReleaseHost(InventoryHost):
         previous = {}
         for service in ('api', 'web'):
             image = inventory['services'][service]['image']
-            tag = f'markina-gallery-preview-migration-rollback:{service}-{image[-16:]}'
+            tag = f'markina-gallery-preview-migration-rollback:{service}-{uuid.uuid4().hex}'
             self.command(['docker', 'image', 'tag', image, tag])
             actual = self.run('docker', 'image', 'inspect', '--format', '{{.Id}}', tag)
             require(actual == image, 'imagem_anterior_nao_preservada')
