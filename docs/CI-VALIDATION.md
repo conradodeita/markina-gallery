@@ -18,6 +18,8 @@ Baseline observado em 26/10/2026: [run 40397675011](https://github.com/conradode
 
 A redução real de tempo de parede deve ser medida no CI da PR, incluindo filas, preparação e agregação. A distribuição aumenta o número de runners simultâneos e pode aumentar overhead faturado; não promete redução de minutos faturados. Se um módulo dominar uma parte, usar os novos tempos para analisar sua fixture, sem excluir testes ou reduzir assertions automaticamente.
 
+Na [PR #300, run 40406191752](https://github.com/conradodeita/markina-gallery/actions/runs/40406191752), SHA `dbd4f74ce5bae0869eb58410932b05548560569e`, as partes concluíram em 8min12s, 5min58s e 8min13s; o agregador passou em 5s. A coleção permaneceu com 1600 itens: 1577 aprovados e 23 skipped, cada um selecionado uma única vez. O tempo do caminho crítico caiu de aproximadamente 32min para 8min20s nessa comparação de execuções. Este resultado é uma medição pontual e não garante a mesma duração em outros runs.
+
 ## Reprodução local
 
 Em ambiente sintético com dependências e bancos de teste preparados:

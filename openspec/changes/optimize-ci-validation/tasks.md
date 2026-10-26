@@ -10,7 +10,7 @@
 
 ## 3. Validação e publicação
 - [x] 3.1 Executar testes focados, integração sintética pytest, lint, validação OpenSpec estrita e diff-check; registrar evidências. Evidência: 26 testes (backend_ci, check_ci_results, classify_ci_scope) passaram; ruff dos dois arquivos novos, production release workflow policy, OpenSpec strict e git diff --check passaram. A coleção real e o desempenho completo serão comprovados no runner Linux na tarefa 3.2.
-- [ ] 3.2 Publicar PR, acompanhar CI no SHA exato e medir resultado por parte, mantendo pendente qualquer evidência remota indisponível.
+- [x] 3.2 Publicar PR, acompanhar CI no SHA exato e medir resultado por parte, mantendo pendente qualquer evidência remota indisponível. Evidência: PR #300 SHA dbd4f74ce5bae0869eb58410932b05548560569e, CI 40406191752 success; partes 8min12s, 5min58s e 8min13s, qualidade 1min38s e agregador 5s; 1600 itens coletados exatamente uma vez, 1577 passaram e 23 skipped, comparáveis ao baseline de 32min. A alteração documental desta evidência gera outro SHA que requer novo CI antes do merge.
 
 ## Workflow follow-up
 - Integrar conforme autorização após CI verde e coordenação com release 0090. Não arquivar/sincronizar specs sem revisão humana.
