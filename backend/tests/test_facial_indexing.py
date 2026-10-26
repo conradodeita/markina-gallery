@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Base,
-    FacialEmbeddingExperimentSetting,
     FacialJob,
     FacialRollout,
     GalleryFacialPolicy,

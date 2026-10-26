@@ -18,7 +18,7 @@
 
 ## 4. Manter RawTherapee no ajuste de prévias
 
-- [ ] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless foram incluídos no CI. A execução local foi evitada por compartilhar o Docker host com outros projetos; aguarda evidência do CI.
+- [ ] 4.1 Fixar RawTherapee 5.13 no Dockerfile do worker opcional usando artefatos oficiais e SHA-256 por arquitetura; builds x86_64/ARM64 e smoke headless foram incluídos no CI. A execução local foi evitada por compartilhar o Docker host com outros projetos. Primeira execução CI no SHA `8b494094` extraiu e encontrou o executável nas duas arquiteturas, mas falhou no smoke `rawtherapee-cli -v | grep 5.13`; o log não trouxe a saída do processo. O Dockerfile agora captura e imprime a saída/erro antes de validar a versão. `ruff check backend/app backend/tests` e `openspec validate retire-lightcraft-and-gemma --strict` passaram localmente após esta correção; builds e smoke aguardam nova execução CI.
 - [ ] 4.2 Atualizar documentação do worker, licença/origem e inventário de terceiros com versão, checksums, consumidores e limites do smoke; a documentação foi atualizada e o job `runtime-images` executará os comandos após push, ainda pendente de CI.
 
 ## 5. Integração e continuidade

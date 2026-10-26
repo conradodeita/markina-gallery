@@ -16,7 +16,7 @@ from app.auth import (
     PhotoFolder,
 )
 from app.facial.config import FacialSettings
-from app.facial.crypto import FacialCipher, FacialCryptoError
+from app.facial.crypto import FacialCipher
 from app.facial.engine import replace_photo_index, search_gallery_index
 from app.facial.jobs import FacialJobRepository
 from app.facial.provider import FaceObservation, normalize_embedding

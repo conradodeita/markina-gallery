@@ -20,7 +20,6 @@ from app.auth import (
     Client,
     DerivedGallery,
     DerivedGalleryMembership,
-    FacialEmbeddingExperimentSetting,
     FacialJob,
     FacialRollout,
     FacialSearchCandidate,
