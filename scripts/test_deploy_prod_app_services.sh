@@ -17,5 +17,7 @@ python3 scripts/test_prod_release_state.py \
   ReleaseContracts.test_app_inventory_no_temporary_fetch_or_writes \
   ReleaseContracts.test_app_then_web_and_web_then_app \
   ReleaseContracts.test_web_then_app_inventory_preserves_api_version \
+  ReleaseContracts.test_orders_wrapper_runs_only_pinned_python_inventory_with_exact_sha \
+  ReleaseContracts.test_wrapper_validates_body_in_memory_and_rejects_tampering \
   ReleaseContracts.test_fingerprint_cannot_hide_runtime_failure
 printf 'production API/web release policy: ok\n'

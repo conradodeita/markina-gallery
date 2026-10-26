@@ -3,6 +3,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import tarfile
 import tempfile
 import unittest
@@ -14,36 +15,41 @@ from unittest.mock import patch
 import orders_pilot_release as release
 
 
-def test_release_targets_integrated_orders_runtime_and_schema_0089():
-    assert release.APPROVED_RUNTIME == 'b69a95c526912d725863a57a13f8735a62f671ed'
-    assert release.SCHEMA == '20261022_0087'
-    assert release.TARGET_SCHEMA == '20261025_0089'
+class CliContractTests(unittest.TestCase):
+    def test_release_targets_integrated_orders_runtime_and_schema_0089(self):
+        self.assertEqual(release.APPROVED_RUNTIME, 'b69a95c526912d725863a57a13f8735a62f671ed')
+        self.assertEqual(release.SCHEMA, '20261024_0088')
+        self.assertEqual(release.BASELINE_SHA, '9bd66c48d7d43462886652b8fe85fdcbff877f64')
+        self.assertEqual(release.TARGET_SCHEMA, '20261025_0089')
 
-
-def test_inventory_sha_must_match_current_main_before_host_reads():
-    with (patch.object(release.Host, 'main_sha', return_value='a' * 40),
-          patch.object(release.Host, 'inventory') as inventory,
-          patch('sys.argv', ['orders_pilot_release.py', 'inventory', '--sha', 'b' * 40]),
-          unittest.TestCase().assertRaisesRegex(release.GateError, 'candidato_nao_e_main')):
-        release.main()
-    inventory.assert_not_called()
+    def test_inventory_sha_must_match_current_main_before_host_reads(self):
+        with (patch.object(release.Host, 'main_sha', return_value='a' * 40),
+              patch.object(release.Host, 'inventory') as inventory,
+              patch('sys.argv', ['orders_pilot_release.py', 'inventory', '--sha', 'b' * 40]),
+              self.assertRaisesRegex(release.GateError, 'candidato_nao_e_main')):
+            release.main()
+        inventory.assert_not_called()
 
 
 def inventory():
     return {'host': 'clearbudget-vnic', 'root': str(release.ROOT), 'project': release.PROJECT,
         'origin': release.ORIGIN, 'checkout_sha': release.BASELINE_SHA, 'clean': True, 'schema': release.SCHEMA,
-        'orders_tables': 0, 'pending': [], 'key': {'valid': True, 'mode': 0o600, 'path': str(release.KEY_TARGET),
+        'orders_tables': 4, 'pending': [], 'key': {'valid': True, 'mode': 0o600, 'path': str(release.KEY_TARGET),
           'sha256': hashlib.sha256(b'synthetic-key').hexdigest()},
         'app_env': 'staging', 'free_bytes': 8 * 1024**3,
         'files': {str(p): 'b' * 64 for p in release.CONFIGS + (release.ROOT / 'docker/.env.homolog',)},
         'https': [200, 200, 200], 'services': {
-            s: {'id': str(n).zfill(64), 'image': release.PILLOW_IMAGES.get(s, 'sha256:' + str(n).zfill(64)),
-                'compose_files': str(release.PILLOW_OVERLAY) if s in release.SPECIALIZED else 'synthetic-compose',
+            s: {'id': str(n).zfill(64), 'image': release.PILLOW_IMAGES.get(s,
+                    release.BASELINE_IMAGES.get('api' if s == 'worker' else s, 'sha256:' + str(n).zfill(64))),
+                'compose_files': str(release.PILLOW_OVERLAY) + ',' + str(release.BASELINE_ORDERS_OVERLAY),
                 'command': ['python', '-m', 'synthetic.' + s], 'status': 'running', 'health': 'healthy',
                 'restart_policy': {'Name': 'unless-stopped' if s in release.SPECIALIZED else 'no', 'MaximumRetryCount': 0},
-                'version': release.BASELINE_SHA if s == 'api' else None,
+                'version': release.BASELINE_SHA if s in ('api', 'worker') else None,
                 'ports': {'80/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8080'}]} if s == 'nginx' else {}}
             for n, s in enumerate(sorted(release.SERVICES), 1)},
+        'orders_identity': {'sha256': release.BASELINE_IDENTITY_SHA256,
+                            'overlay_sha256': release.BASELINE_OVERLAY_SHA256,
+                            'receipt_sha256': release.BASELINE_RECEIPT_SHA256},
         'pillow': {'source_sha': release.PILLOW_SOURCE, 'approval': release.PILLOW_APPROVAL,
                    'receipt_sha256': 'e' * 64}}
 
@@ -73,6 +79,9 @@ class FakeHost:
 
     def main_sha(self):
         return 'f' * 40
+
+    def published_orders(self):
+        return {}, PAIR, {}
 
     def verify_ci(self, sha):
         self.event('ci')
@@ -173,7 +182,7 @@ class PolicyTests(unittest.TestCase):
     def test_pillow_published_receipt_and_exact_overlay_are_required(self):
         expected = {'services': {name: {'image': image} for name, image in release.PILLOW_IMAGES.items()}}
         proof = {'security_fixed': True, 'financial_preserved': True, 'fingerprint': release.PILLOW_APPROVAL,
-                 'source_sha': release.PILLOW_SOURCE, 'schema': [release.SCHEMA], 'services': expected}
+                 'source_sha': release.PILLOW_SOURCE, 'schema': ['20261022_0087'], 'services': expected}
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'published.json'
             path.write_text(json.dumps(proof))
@@ -236,9 +245,9 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaises(release.GateError):
                 release.validate_inventory(data)
 
-    def test_only_authorized_distribution_addition(self):
-        before = {'python': '3.13.17', 'packages': {'requests': '2.34.2'}}
-        after = {'python': before['python'], 'packages': {**before['packages'], 'mercadopago': '3.6.0'}}
+    def test_upgrade_preserves_all_existing_distributions(self):
+        before = {'python': '3.13.17', 'packages': {'requests': '2.34.2', 'mercadopago': '3.6.0'}}
+        after = copy.deepcopy(before)
         release.package_parity(before, after)
         for mutate in [lambda d: d.update(python='3.14.0'),
                        lambda d: d['packages'].update(requests='changed'),
@@ -248,6 +257,57 @@ class PolicyTests(unittest.TestCase):
             mutate(value)
             with self.assertRaises(release.GateError):
                 release.package_parity(before, value)
+        missing_sdk = copy.deepcopy(before)
+        missing_sdk['packages'].pop('mercadopago')
+        with self.assertRaises(release.GateError):
+            release.package_parity(missing_sdk, after)
+
+    def test_financial_snapshot_includes_all_orders_and_reference_columns(self):
+        host = release.Host()
+        queries = []
+        host.pg = lambda query, db: queries.append(query) or {'count': 9, 'digest': 'synthetic'}
+        result = host.financial('isolated-fixture')
+        self.assertTrue({'mercadopago_account', 'mercadopago_payment', 'mercadopago_webhook',
+                         'payment_preferences'} <= set(result))
+        self.assertTrue(all('to_jsonb(t)::text' in query for query in queries))
+        self.assertFalse(any("-'mercadopago_payment_id'" in query for query in queries))
+
+    def test_historical_first_release_cannot_be_used_as_upgrade_inventory(self):
+        for field, value in (('schema', '20261022_0087'), ('orders_tables', 0),
+                             ('checkout_sha', '1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8'),
+                             ('orders_identity', {})):
+            data = inventory()
+            data[field] = value
+            with self.subTest(field=field), self.assertRaises(release.GateError):
+                release.validate_inventory(data)
+
+    @unittest.skipUnless(os.name == 'posix', 'Permissoes do recibo sao verificadas no host Linux/CI.')
+    def test_published_orders_pins_identity_receipt_overlay_and_owner_pair(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            work = state / 'published'
+            work.mkdir()
+            overlay = work / 'active.compose.json'
+            overlay.write_text('{}')
+            receipt_path = work / 'prepared-main.json'
+            receipt = {'sha': release.BASELINE_SHA, 'images': release.BASELINE_IMAGES, 'pair': PAIR}
+            release.save(receipt_path, receipt)
+            identity_path = state / 'orders-current.identity.json'
+            identity = {'sha': release.BASELINE_SHA, 'schema': release.SCHEMA,
+                        'images': release.BASELINE_IMAGES, 'receipt': str(receipt_path), 'emission': 'owner_test'}
+            release.save(identity_path, identity)
+            original = {path: path.read_bytes() for path in (identity_path, receipt_path, overlay)}
+            with (patch.object(release, 'STATE', state), patch.object(release, 'BASELINE_ORDERS_WORK', work),
+                  patch.object(release, 'BASELINE_ORDERS_OVERLAY', overlay),
+                  patch.object(release, 'BASELINE_IDENTITY_SHA256', hashlib.sha256(original[identity_path]).hexdigest()),
+                  patch.object(release, 'BASELINE_RECEIPT_SHA256', hashlib.sha256(original[receipt_path]).hexdigest()),
+                  patch.object(release, 'BASELINE_OVERLAY_SHA256', hashlib.sha256(original[overlay]).hexdigest())):
+                self.assertEqual(release.Host().published_orders()[1], PAIR)
+                for path, contents in original.items():
+                    path.write_bytes(contents + b' ')
+                    with self.subTest(path=path.name), self.assertRaises(release.GateError):
+                        release.Host().published_orders()
+                    path.write_bytes(contents)
 
     def test_pair_strict_and_sql_safe(self):
         self.assertEqual(release.pilot_pair(PAIR), PAIR)
@@ -398,13 +458,25 @@ class SequenceTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.state = Path(temporary.name)
+        self.addCleanup(patch.stopall)
+        patch.object(release, 'STATE', self.state).start()
+        identity = json.dumps({'sha': release.BASELINE_SHA, 'schema': release.SCHEMA,
+                               'images': release.BASELINE_IMAGES}).encode()
+        self.original_identity = identity
+        (self.state / 'orders-current.identity.json').write_bytes(identity)
+        patch.object(release, 'BASELINE_IDENTITY_SHA256', hashlib.sha256(identity).hexdigest()).start()
         self.work = self.state / 'orders-prepare-fixture'
         self.work.mkdir()
         self.backup = self.work / 'database.custom'
         self.backup.write_bytes(b'synthetic')
         (self.work / 'integration-secrets.backup.env').write_bytes(b'synthetic-key')
+        identity_backup = self.work / 'baseline-orders.identity.json'
+        identity_backup.write_bytes(identity)
+        identity_backup.chmod(0o600)
         baseline = inventory()
-        self.receipt = {'sha': 'f' * 40, 'build_sha': release.APPROVED_RUNTIME, 'rehearsal': 'passed', 'work': str(self.work),
+        self.receipt = {'format': 2, 'operation': 'orders-0088-to-0089',
+                        'previous_identity': str(self.work / 'baseline-orders.identity.json'),
+                        'sha': 'f' * 40, 'build_sha': release.APPROVED_RUNTIME, 'rehearsal': 'passed', 'work': str(self.work),
                         'guard': 'passed',
                         'restart_policy_rehearsal': 'passed',
                         'callbacks': {'retry503': True, 'retryRefused': True, 'nonRetryable400': True,
@@ -413,8 +485,6 @@ class SequenceTests(unittest.TestCase):
                         'key_backup': str(self.work / 'integration-secrets.backup.env'), 'inventory': baseline,
                         'baseline_fingerprint': release.validate_inventory(baseline),
                         'images': IMAGES, 'pair': PAIR}
-        self.addCleanup(patch.stopall)
-        patch.object(release, 'STATE', self.state).start()
         patch.object(release, 'release_lock', nullcontext).start()
 
     def apply(self, host, *, approval=None, legacy=True):
@@ -422,7 +492,8 @@ class SequenceTests(unittest.TestCase):
 
     def test_success_preserves_specialized_and_orders_actions(self):
         host = FakeHost()
-        self.apply(host)
+        with patch.object(release, 'load', side_effect=lambda path: json.loads(path.read_text())):
+            self.apply(host)
         self.assertNotIn('restore-before-ddl', host.events)
         self.assertEqual(host.events.count('resume-specialized'), 6)
         migration = host.events.index('compose:run')
@@ -431,6 +502,33 @@ class SequenceTests(unittest.TestCase):
         self.assertLess(host.events.index('rehearse'), migration)
         self.assertLess(host.events.index('new-healthy'), host.events.index('maintenance:False'))
         self.assertFalse((self.state / 'app-in-flight.sha').exists())
+        self.assertEqual((self.work / 'baseline-orders.identity.json').read_bytes(), self.original_identity)
+        identity = json.loads((self.state / 'orders-current.identity.json').read_text())
+        self.assertEqual(identity['schema'], release.TARGET_SCHEMA)
+        self.assertEqual(identity['images'], IMAGES)
+
+    def test_old_receipt_or_missing_identity_backup_blocks_before_host_calls(self):
+        for mutation in ('format', 'missing', 'tampered'):
+            receipt = copy.deepcopy(self.receipt)
+            if mutation == 'format':
+                receipt['format'] = 1
+            elif mutation == 'missing':
+                receipt.pop('previous_identity')
+            else:
+                Path(receipt['previous_identity']).write_bytes(b'tampered')
+            host = FakeHost()
+            with self.subTest(mutation=mutation), self.assertRaises(release.GateError):
+                release.apply(host, receipt, release.fingerprint(receipt), legacy=True)
+            self.assertEqual(host.events, [])
+
+    def test_unknown_current_identity_is_never_overwritten(self):
+        path = self.state / 'orders-current.identity.json'
+        path.write_text(json.dumps({'sha': 'unknown'}))
+        before = path.read_bytes()
+        with (patch.object(release, 'load', side_effect=lambda item: json.loads(item.read_text())),
+              self.assertRaisesRegex(release.GateError, 'identidade_orders_mudou')):
+            release.publish_identity(self.receipt, emission='owner_test')
+        self.assertEqual(path.read_bytes(), before)
 
     def test_wrong_approval_blocks_before_any_host_call(self):
         host = FakeHost()
@@ -530,7 +628,7 @@ class SequenceTests(unittest.TestCase):
         self.assertEqual(overlay['services']['api']['environment']['MERCADOPAGO_ALLOW_LIVE_PAYMENTS'], 'false')
         self.assertFalse((self.state / 'app-in-flight.sha').exists())
 
-    def test_0087_is_not_a_valid_post_ddl_recovery(self):
+    def test_0088_is_not_a_valid_post_ddl_recovery(self):
         host = FakeHost(fail='compose:run')
         with self.assertRaises(release.GateError):
             self.apply(host)

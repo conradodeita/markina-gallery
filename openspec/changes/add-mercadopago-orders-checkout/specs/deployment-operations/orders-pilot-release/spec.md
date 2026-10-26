@@ -1,14 +1,18 @@
 ## ADDED Requirements
 
 ### Requirement: Publicação pontual protegida de Orders
-O operador SHALL dispor de procedimento específico para o primeiro release Orders, com inventário somente leitura, preparação isolada e aplicação explicitamente aprovada. O procedimento MUST preservar os gates API/web, facial e InfinitePay existentes e MUST NOT iniciar deploy automático. A origem SHALL permanecer `https://markina.pickyourpic.com.br`, Nginx loopback 8080 e projeto `markina-gallery`.
+O operador SHALL atualizar somente o piloto Orders 0088→0089 com inventário somente leitura, preparação isolada e aplicação explicitamente aprovada. MUST preservar os gates existentes e MUST NOT iniciar deploy automático. A origem SHALL ser `https://markina.pickyourpic.com.br`, Nginx loopback 8080 e projeto `markina-gallery`.
+
+#### Scenario: Baseline publicado do piloto
+- **WHEN** o preflight confere a atualização
+- **THEN** ele exige checkout `9bd66c48d7d43462886652b8fe85fdcbff877f64`, schema 0088 e identidade existente antes de preparar o destino 0089
 
 #### Scenario: Aprovação da janela
 - **WHEN** o proprietário aceita a interrupção temporária apresentada em 25/10/2026
 - **THEN** a preparação e os ensaios do procedimento podem avançar; a aplicação continua condicionada a candidato, CI, backup/recuperação e inventário verificáveis
 
 ### Requirement: Preparação sem substituir runtime
-A preparação SHALL construir candidatos imutáveis usando as bases ativas, adicionar somente mercadopago 3.6.0 às distribuições Python e compilar o frontend com Node ativo e lockfile. Preparação MUST NOT alterar containers ativos, checkout, configuração ou credenciais existentes.
+A preparação SHALL construir candidatos imutáveis usando as bases ativas, preservar exatamente as distribuições Python com mercadopago 3.6.0 já instalado e compilar o frontend com Node ativo e lockfile. Preparação MUST NOT alterar containers ativos, checkout, configuração ou credenciais existentes.
 
 #### Scenario: Falha de ensaio
 - **WHEN** build, comparação de distribuições, restauração, cifragem ou preservação falha
@@ -18,11 +22,11 @@ A preparação SHALL construir candidatos imutáveis usando as bases ativas, adi
 O operador SHALL ensaiar backup/restore, cifragem, preservação financeira e migration em PostgreSQL descartável sem saída externa. Artefatos com dados/chaves SHALL permanecer fora do Git, no host, em diretório protegido e arquivos 0600.
 
 #### Scenario: Ensaio com dados operacionais
-- **WHEN** o backup é restaurado para validar a cadeia 0087→0088
+- **WHEN** o backup é restaurado para validar a cadeia 0088→0089
 - **THEN** o destino não possui portas públicas nem canais externos, o cofre é validado sem divulgar valores e os registros operacionais não são alterados
 
 ### Requirement: Interrupção verificável dos escritores Orders
-A aplicação SHALL usar lock compartilhado e fingerprint atual. API/web/worker geral SHALL parar por SIGTERM, sem SIGKILL. Os seis workers especializados SHALL conservar imagens/configurações; legados MAY receber SIGINT somente por opt-in, identidade conferida e filas quiescentes. Todos os escritores SHALL estar parados antes de 0088.
+A aplicação SHALL usar lock compartilhado e fingerprint atual. API/web/worker geral SHALL parar por SIGTERM, sem SIGKILL. Os seis workers especializados SHALL conservar imagens/configurações; legados MAY receber SIGINT somente por opt-in, identidade conferida e filas quiescentes. Todos os escritores SHALL estar parados antes de 0089.
 
 #### Scenario: Worker não confirma parada
 - **WHEN** o timeout expira, o código de saída diverge ou aparece trabalho ativo
@@ -38,14 +42,14 @@ A aplicação SHALL usar lock compartilhado e fingerprint atual. API/web/worker 
 
 #### Scenario: Executor interrompido antes de DDL
 - **WHEN** a conexão/executor é interrompida durante a janela e o journal registra schema ainda não iniciado
-- **THEN** a recuperação SHALL confirmar schema 0087, respeitar sinais já solicitados e retomar os mesmos containers anteriores, sem depender de consulta externa de CI ou aceitar um processo ainda terminando como recuperado
+- **THEN** a recuperação SHALL confirmar schema 0088, respeitar sinais já solicitados e retomar os mesmos containers anteriores, sem depender de consulta externa de CI ou aceitar um processo ainda terminando como recuperado
 
 ### Requirement: Recuperação conservadora e isolamento do ensaio
-A aplicação SHALL aceitar somente schema 0087 e aplicar somente 0088, comparar evidência financeira/PIX e conferir SHA, imagens e saúde. O cofre existente SHALL servir API/worker sem rotação e com APP_ENV preservado. Depois de iniciar DDL, falha MUST preservar manutenção/evidências e exigir recuperação compatível.
+A aplicação SHALL aceitar somente schema 0088 e aplicar somente 0089, comparar evidência financeira/PIX/Orders e conferir SHA, imagens e saúde. O cofre existente SHALL servir API/worker sem rotação e com APP_ENV preservado. Depois de iniciar DDL, falha MUST preservar manutenção/evidências e exigir recuperação compatível.
 
 #### Scenario: Falha depois de iniciar DDL
 - **WHEN** migration ou verificação posterior falha
-- **THEN** o procedimento não volta ao binário 0087 e não apaga ou reescreve tentativas financeiras
+- **THEN** o procedimento não volta automaticamente ao binário 0088 e não apaga ou reescreve tentativas financeiras
 
 ### Requirement: Emissão fechada e ensaio do proprietário
 Cobranças reais MUST permanecer bloqueadas. Teste SHALL aceitar somente o par tenant/cliente do proprietário verificado. Retirar esse par SHALL fechar emissão mantendo receiver/conciliação dos registros existentes.
@@ -66,7 +70,7 @@ O piloto Orders SHALL exigir os seis IDs corrigidos e o recibo Pillow aprovado, 
 - **THEN** a saúde pública SHALL ser confirmada com espera limitada antes de remover o journal, mantendo falha e recuperação para503 persistente
 
 ### Requirement: Snapshot Orders reconciliado permanece congelado
-O gate de fonte SHALL manter igualdade estrita em backend/frontend/docker com o snapshotcbb2362f. A reconciliação desse merge com47af72bd SHALL conter somente o pin Pillow13 já autorizado.
+O gate de fonte SHALL manter igualdade estrita em backend/frontend/docker com `b69a95c526912d725863a57a13f8735a62f671ed`, que inclui os ajustes revisados de mínimo, processamento e compras simultâneas. Os seis processos Pillow13 já publicados SHALL conservar as imagens e o overlay aprovados.
 
 #### Scenario: Outra alteração de runtime depois da reconciliação
 - **WHEN** a preparação ou selagem encontra diferença adicional em backend/frontend/docker
@@ -90,3 +94,17 @@ O acesso remoto para atualizar o inventário Orders SHALL aceitar somente um com
 #### Scenario: Contrato CLI do wrapper com o helper
 - **WHEN** o wrapper encaminha a execução Python para o helper Orders
 - **THEN** os argumentos fixos `inventory --sha <SHA completo>` SHALL ser aceitos pelo parser real do helper; o teste de contrato SHALL exercer essa fronteira com acesso ao host simulado, antes da instalação operacional
+
+### Requirement: Preservar o piloto Orders existente
+O inventário SHALL validar identidade publicada, imagens, overlay e restrição ao mesmo par proprietário, com cobranças reais bloqueadas. A preparação SHALL preservar uma cópia da identidade anterior. Sua substituição SHALL ocorrer atomicamente apenas depois da confirmação do novo runtime.
+
+#### Scenario: Identidade existente divergente
+- **WHEN** a identidade, imagens, overlay, par permitido ou schema divergem do piloto publicado inventariado
+- **THEN** o procedimento recusa antes de manutenção e DDL; não aceita o inventário histórico 0087 nem sobrescreve uma identidade sem sua cópia de recuperação
+
+### Requirement: Preservação financeira na atualização Orders
+A preparação SHALL ensaiar a migration sobre o backup atual com as quatro tabelas Orders existentes. As comparações financeiras SHALL incluir registros completos de Orders, configurações cifradas e todas as referências financeiras legadas, sem divulgar valores ou identificadores de clientes.
+
+#### Scenario: Pagamento anterior em processamento
+- **WHEN** a atualização encontra tentativas Orders pendentes, aprovadas ou recusadas
+- **THEN** ela preserva integralmente os registros, IDs, snapshots e estados; a migration altera somente a unicidade de tentativas ativas por revisão e a conciliação retoma com o novo worker

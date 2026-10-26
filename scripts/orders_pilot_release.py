@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Procedimento pontual Orders 0087 -> 0089; inventário é o modo padrão.
+"""Atualizacao pontual do piloto Orders existente 0088 -> 0089.
 
 Uso no host inventariado. Nunca importar configuração operacional para logs.
 Preparação não substitui containers ativos. Aplicação exige recibo e fingerprint.
@@ -30,9 +30,18 @@ STATE = Path('/var/lib/markina-gallery/deploy-state')
 PROJECT = 'markina-gallery'
 ORIGIN = 'https://markina.pickyourpic.com.br'
 REPOSITORY = 'https://github.com/conradodeita/markina-gallery.git'
-SCHEMA = '20261022_0087'
+SCHEMA = '20261024_0088'
 TARGET_SCHEMA = '20261025_0089'
-BASELINE_SHA = '1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8'
+BASELINE_SHA = '9bd66c48d7d43462886652b8fe85fdcbff877f64'
+BASELINE_IDENTITY_SHA256 = 'bb4998f77656691b2436c1d5ec635a9cf0e914c1d453eb4ad7595f2f318c8438'
+BASELINE_RECEIPT_SHA256 = '40d03be0c88f84ad634838837380e19622eac4a0eee0b6813be278d85a1dc289'
+BASELINE_ORDERS_WORK = STATE / 'orders-prepare-ed5c1242020a45ce8772d68756a4c363'
+BASELINE_ORDERS_OVERLAY = BASELINE_ORDERS_WORK / 'active.compose.json'
+BASELINE_OVERLAY_SHA256 = 'd7458bb91b221de791692efe4d09f86fd7e3916c4610234a9edfc010277ed490'
+BASELINE_IMAGES = {
+    'api': 'sha256:0b4d4fcd1f0a23f958c18db5d4dd661739dc027fdccd5c3692861c132bfd6aa8',
+    'web': 'sha256:360f1ca8d6422d4a61adade971acb849a0d73c95b0a25cc2d5cf05443d4b5f10',
+}
 APPROVED_RUNTIME = 'b69a95c526912d725863a57a13f8735a62f671ed'
 PILLOW_SOURCE = '3d2ac6e7fb2e621e6ad468f9fd1233ffc909c7a3'
 PILLOW_APPROVAL = 'cf1c0d5227f9218519acd741ffe596032dc38c932b90ddb79ec4469fa70ab3a9'
@@ -56,7 +65,7 @@ WRITERS = ('api', 'worker') + SPECIALIZED
 SERVICES = set(WRITERS) | {'web', 'nginx', 'db', 'redis', 'evolution-api', 'evolution-db', 'evolution-redis'}
 EXTRAS = (STATE / 'branding.compose.yml', ROOT / 'docker/docker-compose.raw-development.yml',
           ROOT / 'docker/docker-compose.preview-adjustment.yml', ROOT / 'docker/docker-compose.system-monitor.yml',
-    STATE / 'system-monitor.compose.yml', PILLOW_OVERLAY)
+    STATE / 'system-monitor.compose.yml', PILLOW_OVERLAY, BASELINE_ORDERS_OVERLAY)
 CONFIGS = (ROOT / 'docker/docker-compose.yml',) + EXTRAS
 KEY_BINDING = ROOT / 'docker/.env.integration-secrets'
 KEY_TARGET = STATE / 'integration-secrets.env'
@@ -65,7 +74,8 @@ PENDING = ('app-in-flight.sha', 'app-rollback-in-flight.sha', 'web-in-flight.sha
 FINANCIAL = ('sale_order', 'sale_order_item', 'payment_group', 'provider_payment',
              'provider_payment_attempt', 'provider_payment_receipt', 'provider_payment_correction',
              'payment_confirmation_correction', 'payment_communication', 'global_pix_settings',
-             'notification_delivery', 'whatsapp_delivery')
+             'notification_delivery', 'whatsapp_delivery', 'mercadopago_account',
+             'mercadopago_payment', 'mercadopago_webhook', 'payment_preferences')
 QUEUES = ('media_job', 'whatsapp_delivery', 'email_delivery', 'notification_delivery',
           'gallery_lifecycle_operation', 'asset_file_cleanup', 'facial_job', 'raw_development_job',
           'preview_adjustment', 'payment_notification_outbox', 'gallery_reopening_notification_outbox',
@@ -127,14 +137,19 @@ def pilot_pair(value):
 
 def package_parity(before, after):
     require(before['python'] == after['python'], 'python_divergente')
-    require(after['packages'] == {**before['packages'], 'mercadopago': '3.6.0'}, 'distribuicoes_divergentes')
+    require(before['packages'].get('mercadopago') == '3.6.0'
+            and after['packages'] == before['packages'], 'distribuicoes_divergentes')
 
 
 def validate_inventory(data):
     require(data.get('host') == 'clearbudget-vnic' and data.get('root') == str(ROOT), 'host_ou_raiz_divergente')
     require(data.get('project') == PROJECT and data.get('origin') == ORIGIN, 'projeto_ou_origem_divergente')
     require(data.get('checkout_sha') == BASELINE_SHA and data.get('clean') is True, 'checkout_divergente')
-    require(data.get('schema') == SCHEMA and data.get('orders_tables') == 0, 'schema_divergente')
+    require(data.get('schema') == SCHEMA and data.get('orders_tables') == 4, 'schema_divergente')
+    identity = data.get('orders_identity', {})
+    require(identity.get('sha256') == BASELINE_IDENTITY_SHA256
+            and identity.get('overlay_sha256') == BASELINE_OVERLAY_SHA256
+            and identity.get('receipt_sha256') == BASELINE_RECEIPT_SHA256, 'identidade_orders_divergente')
     require(data.get('pending') == [], 'operacao_pendente')
     require(data.get('key', {}).get('valid') is True and data['key'].get('mode') == 0o600, 'cofre_invalido')
     require(data['key'].get('path') == str(KEY_TARGET), 'binding_divergente')
@@ -152,6 +167,11 @@ def validate_inventory(data):
             require(item.get('restart_policy') == {'Name': 'unless-stopped' if service in SPECIALIZED else 'no',
                     'MaximumRetryCount': 0}, 'politica_de_reinicio_divergente')
     require(services['api'].get('version') == data['checkout_sha'], 'versao_ativa_divergente')
+    require(services['worker'].get('version') == data['checkout_sha'], 'versao_ativa_divergente')
+    for name in ('api', 'worker', 'web'):
+        require(services[name]['image'] == BASELINE_IMAGES['web' if name == 'web' else 'api']
+                and str(BASELINE_ORDERS_OVERLAY) in services[name].get('compose_files', '').split(','),
+                'runtime_orders_divergente')
     require(set(data.get('files', {})) == {str(p) for p in CONFIGS + (ROOT / 'docker/.env.homolog',)},
             'configuracao_incompleta')
     require(all(HASH.fullmatch(h) for h in data['files'].values()), 'hash_de_configuracao_invalido')
@@ -192,6 +212,31 @@ def release_overlay(images, pair, *, enabled=True):
 
 
 class Host:
+    def published_orders(self):
+        path = STATE / 'orders-current.identity.json'
+        require(path.resolve(strict=True) == path, 'identidade_orders_insegura')
+        info = path.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid()
+                and stat.S_IMODE(info.st_mode) == 0o600, 'identidade_orders_insegura')
+        identity_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        require(identity_hash == BASELINE_IDENTITY_SHA256, 'identidade_orders_divergente')
+        identity = load(path)
+        receipt_path = BASELINE_ORDERS_WORK / 'prepared-main.json'
+        require(identity.get('sha') == BASELINE_SHA and identity.get('schema') == SCHEMA
+                and identity.get('images') == BASELINE_IMAGES and identity.get('receipt') == str(receipt_path)
+                and identity.get('emission') == 'owner_test', 'identidade_orders_divergente')
+        receipt_hash = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+        require(receipt_hash == BASELINE_RECEIPT_SHA256, 'recibo_orders_divergente')
+        receipt = load(receipt_path)
+        require(receipt.get('sha') == BASELINE_SHA and receipt.get('images') == BASELINE_IMAGES,
+                'recibo_orders_divergente')
+        overlay_hash = hashlib.sha256(BASELINE_ORDERS_OVERLAY.read_bytes()).hexdigest()
+        require(BASELINE_ORDERS_OVERLAY.resolve(strict=True) == BASELINE_ORDERS_OVERLAY
+                and overlay_hash == BASELINE_OVERLAY_SHA256, 'overlay_orders_divergente')
+        return identity, pilot_pair(receipt['pair']), {'sha256': identity_hash,
+            'overlay_sha256': overlay_hash,
+            'receipt_sha256': receipt_hash}
+
     def run(self, *args, data=None, timeout=60, binary=False):
         if getattr(self, 'deadline', None) is not None:
             timeout = min(timeout, self.deadline - time.monotonic())
@@ -218,10 +263,9 @@ class Host:
     def financial(self, db='markina-gallery-db-1'):
         result = {}
         for table in FINANCIAL:
-            # New additive FK does not change a legacy order's financial snapshot.
             result[table] = self.pg("SELECT json_build_object('count',count(*),'digest',"
-                "md5(coalesce(string_agg(md5((to_jsonb(t)-'mercadopago_payment_id')::text),'' ORDER BY "
-                "(to_jsonb(t)-'mercadopago_payment_id')::text),''))) FROM " + table + ' t', db)
+                "md5(coalesce(string_agg(md5(to_jsonb(t)::text),'' ORDER BY "
+                "to_jsonb(t)::text),''))) FROM " + table + ' t', db)
         return result
 
     def queues(self):
@@ -248,7 +292,7 @@ class Host:
         expected = {'services': {name: {'image': image} for name, image in PILLOW_IMAGES.items()}}
         require(proof.get('security_fixed') is True and proof.get('financial_preserved') is True
                 and proof.get('fingerprint') == PILLOW_APPROVAL and proof.get('source_sha') == PILLOW_SOURCE
-                and proof.get('schema') == [SCHEMA] and proof.get('services') == expected,
+                and proof.get('schema') == ['20261022_0087'] and proof.get('services') == expected,
                 'recibo_pillow_divergente')
         require(load(PILLOW_OVERLAY) == expected, 'overlay_pillow_divergente')
         return {'source_sha': PILLOW_SOURCE, 'approval': PILLOW_APPROVAL,
@@ -256,6 +300,7 @@ class Host:
 
     def inventory(self):
         require(socket.gethostname() == 'clearbudget-vnic' and ROOT.resolve() == ROOT, 'host_ou_raiz_divergente')
+        _, pair, orders_identity = self.published_orders()
         require(self.run('git', 'remote', 'get-url', 'origin') in {
             REPOSITORY, REPOSITORY[:-4], 'git@github.com:conradodeita/markina-gallery.git'}, 'repositorio_divergente')
         ids = self.run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
@@ -267,6 +312,14 @@ class Host:
             name = labels.get('com.docker.compose.service')
             require(name not in services, 'servico_duplicado')
             env = dict(x.split('=', 1) for x in d['Config'].get('Env', []) if '=' in x)
+            if name in ('api', 'worker'):
+                require(env.get('MERCADOPAGO_ALLOW_LIVE_PAYMENTS') == 'false', 'cobrancas_reais_nao_bloqueadas')
+            if name == 'api':
+                try:
+                    allowed = json.loads(env.get('MERCADOPAGO_TEST_CUSTOMERS', '[]'))
+                except ValueError:
+                    raise GateError('par_de_teste_divergente') from None
+                require(allowed == [pair], 'par_de_teste_divergente')
             services[name] = {'id': d['Id'], 'image': d['Image'], 'command': d['Config']['Cmd'],
                 'health': d['State'].get('Health', {}).get('Status'), 'status': d['State']['Status'],
                 'config_hash': labels.get('com.docker.compose.config-hash'),
@@ -300,7 +353,7 @@ class Host:
                           for p in CONFIGS + (ROOT / 'docker/.env.homolog',)},
                 'free_bytes': shutil.disk_usage(ROOT).free,
                 'pending': [n for n in PENDING if (STATE / n).exists()], 'https': self.health(),
-                'pillow': self.pillow()}
+                'pillow': self.pillow(), 'orders_identity': orders_identity}
         # Free space is a gate, not a fingerprint that changes with unrelated disk writes.
         require(data['free_bytes'] >= 8 * 1024**3, 'espaco_insuficiente')
         data['free_bytes'] = 8 * 1024**3
@@ -512,10 +565,14 @@ class Host:
             require(self.schema(name) == [SCHEMA], 'schema_restaurado_divergente')
             before = self.financial(name)
             require(expected is None or before == expected, 'backup_nao_preservou_financas')
-            code = ("import subprocess; from app.integration_secrets import IntegrationCipher; "
-                    "from uuid import uuid4; c=IntegrationCipher(); t=uuid4(); a=uuid4(); "
-                    "e=c.encrypt('synthetic-recovery-check',tenant_id=t,credential_id=a); "
-                    "assert c.decrypt(e,tenant_id=t,credential_id=a)=='synthetic-recovery-check'; "
+            code = ("import subprocess\nfrom sqlalchemy import select\n"
+                    "from app.auth import SessionLocal,MercadoPagoAccount\n"
+                    "from app.integration_secrets import IntegrationCipher,SecretEnvelope\n"
+                    "c=IntegrationCipher()\nwith SessionLocal() as db:\n"
+                    " for account in db.scalars(select(MercadoPagoAccount)):\n"
+                    "  for envelope in (account.access_token_envelope,account.webhook_secret_envelope):\n"
+                    "   assert c.decrypt(SecretEnvelope.from_payload(envelope),"
+                    "tenant_id=account.tenant_id,credential_id=account.id)\n"
                     "subprocess.run(['python','-B','-m','alembic','upgrade','" + TARGET_SCHEMA + "'],check=True)")
             isolated(self, image, code, network='container:' + name,
                      env=('--env-file', str(key), '-e', 'APP_ENV=staging', '-e',
@@ -735,22 +792,16 @@ def prepare(h, target, pair):
     context = work / 'context'
     context.mkdir(mode=0o700)
     extract(archive, context)
-    # No broad update: reuse the API's actual image and add the single authorized wheel offline.
+    # The SDK is already deployed. Reuse every installed distribution unchanged.
     base = inventory['services']['api']['image']
     front = inventory['services']['web']['image']
     before = json.loads(isolated(h, base, METADATA))
-    wheels = context / 'wheels'
-    wheels.mkdir()
-    h.run('docker', 'run', '--rm', '--memory', '512m', '--cpus', '1', '--pids-limit', '128',
-          '-v', str(wheels) + ':/output', '--entrypoint', 'python', base, '-m', 'pip', 'download',
-          '--only-binary=:all:', '--no-deps', '--dest', '/output', 'mercadopago==3.6.0', timeout=120)
+    package_parity(before, before)
     base_tag = PROJECT + '-orders-base:' + base[7:]
     front_tag = PROJECT + '-orders-web-base:' + front[7:]
     h.run('docker', 'image', 'tag', base, base_tag)
     h.run('docker', 'image', 'tag', front, front_tag)
-    (context / 'Dockerfile.backend').write_text('FROM ' + base_tag + '\nCOPY wheels /orders-wheels\n'
-        'RUN python -m pip install --no-cache-dir --no-index --no-deps /orders-wheels/*.whl\n'
-        'COPY backend /app\n')
+    (context / 'Dockerfile.backend').write_text('FROM ' + base_tag + '\nCOPY backend /app\n')
     api_tag = PROJECT + '-orders-api:' + target
     h.run('docker', 'build', '--network', 'none', '--pull=false', '-f', str(context / 'Dockerfile.backend'),
           '-t', api_tag, str(context), timeout=300)
@@ -788,10 +839,19 @@ def prepare(h, target, pair):
         out.flush()
         os.fsync(out.fileno())
     backup = work / 'database.custom'
+    previous_identity = work / 'baseline-orders.identity.json'
+    with previous_identity.open('xb') as out:
+        os.chmod(previous_identity, 0o600)
+        out.write((STATE / 'orders-current.identity.json').read_bytes())
+        out.flush()
+        os.fsync(out.fileno())
+    require(hashlib.sha256(previous_identity.read_bytes()).hexdigest() == BASELINE_IDENTITY_SHA256,
+            'identidade_orders_mudou')
     h.dump(backup)
     backup_hash = hashlib.sha256(backup.read_bytes()).hexdigest()
     rehearsal = h.rehearse(backup, key_copy, images['api'])
-    receipt = {'format': 1, 'sha': target, 'build_sha': target, 'inventory': inventory, 'baseline_fingerprint': validate_inventory(inventory),
+    receipt = {'format': 2, 'operation': 'orders-0088-to-0089', 'previous_identity': str(previous_identity),
+               'sha': target, 'build_sha': target, 'inventory': inventory, 'baseline_fingerprint': validate_inventory(inventory),
                'pair': pair, 'images': images, 'work': str(work), 'backup': str(backup), 'backup_sha256': backup_hash,
                'key_backup': str(key_copy), 'rehearsal': rehearsal, 'callbacks': callbacks, 'guard': guard,
                'restart_policy_rehearsal': 'passed'}
@@ -825,6 +885,7 @@ def seal(h, receipt, target):
 def owner_check(h, pair):
     # UUID constructor above makes these two SQL literals unambiguous.
     pair = pilot_pair(pair)
+    require(pair == h.published_orders()[1], 'par_de_teste_divergente')
     value = h.pg("SELECT count(*) FROM client c JOIN tenant t ON t.id=c.tenant_id "
                  "WHERE c.id='" + pair['client_id'] + "' AND c.tenant_id='" + pair['tenant_id'] +
                  "' AND t.status='active' AND EXISTS(SELECT 1 FROM tenant_admin a "
@@ -891,6 +952,33 @@ def release_lock():
         yield
 
 
+def validate_upgrade_receipt(receipt):
+    require(receipt.get('format') == 2 and receipt.get('operation') == 'orders-0088-to-0089',
+            'recibo_de_atualizacao_obrigatorio')
+    previous = Path(receipt.get('previous_identity', ''))
+    work = Path(receipt['work'])
+    require(previous == work / 'baseline-orders.identity.json' and not previous.is_symlink()
+            and previous.is_file() and previous.stat().st_nlink == 1,
+            'copia_da_identidade_insegura')
+    info = previous.stat()
+    if os.name == 'posix':
+        require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o600,
+                'copia_da_identidade_insegura')
+    require(hashlib.sha256(previous.read_bytes()).hexdigest() == BASELINE_IDENTITY_SHA256,
+            'copia_da_identidade_divergente')
+
+
+def publish_identity(receipt, *, emission):
+    validate_upgrade_receipt(receipt)
+    path = STATE / 'orders-current.identity.json'
+    current = load(path)
+    require(hashlib.sha256(path.read_bytes()).hexdigest() == BASELINE_IDENTITY_SHA256
+            or (current.get('sha') == receipt['sha'] and current.get('schema') == TARGET_SCHEMA
+                and current.get('images') == receipt['images']), 'identidade_orders_mudou')
+    save(path, {'sha': receipt['sha'], 'images': receipt['images'], 'schema': TARGET_SCHEMA,
+                'receipt': str(Path(receipt['work']) / 'prepared-main.json'), 'emission': emission})
+
+
 def apply(h, receipt, approval, *, legacy):
     require(HASH.fullmatch(approval or '') and fingerprint(receipt) == approval, 'fingerprint_nao_aprovado')
     require(receipt.get('rehearsal') == 'passed', 'ensaio_pendente')
@@ -906,6 +994,7 @@ def apply(h, receipt, approval, *, legacy):
     require(work.parent == STATE and work.name.startswith('orders-prepare-') and not work.is_symlink(), 'artefato_inseguro')
     require(Path(receipt['backup']) == work / 'database.custom'
             and Path(receipt['key_backup']) == work / 'integration-secrets.backup.env', 'artefato_inseguro')
+    validate_upgrade_receipt(receipt)
     require(validate_inventory(receipt.get('inventory', {})) == receipt['baseline_fingerprint'], 'recibo_divergente')
     require(hashlib.sha256(Path(receipt['backup']).read_bytes()).hexdigest() == receipt['backup_sha256'], 'backup_divergente')
     require(hashlib.sha256(Path(receipt['key_backup']).read_bytes()).hexdigest() == receipt['inventory']['key']['sha256'],
@@ -960,8 +1049,7 @@ def apply(h, receipt, approval, *, legacy):
             h.public_ready()
             stage['completed'] = True
             save(work / 'stage.json', stage)
-            save(STATE / 'orders-current.identity.json', {'sha': receipt['sha'], 'images': receipt['images'],
-                 'schema': TARGET_SCHEMA, 'receipt': str(work / 'prepared-main.json'), 'emission': 'owner_test'}, exclusive=True)
+            publish_identity(receipt, emission='owner_test')
             marker.unlink()
         except Exception:
             h.deadline = None
@@ -976,7 +1064,7 @@ def apply(h, receipt, approval, *, legacy):
                 except GateError:
                     pass
                 save(work / 'stage.json', stage)
-            # DDL boundary: leave maintenance and marker, never restore 0087 automatically.
+            # DDL boundary: leave maintenance and marker, never restore 0088 automatically.
             raise
         finally:
             h.deadline = None
@@ -985,6 +1073,7 @@ def apply(h, receipt, approval, *, legacy):
 def resume(h, receipt, approval):
     """Recuperação da versão 0089 com emissão fechada; não restaura dados."""
     require(HASH.fullmatch(approval or '') and fingerprint(receipt) == approval, 'fingerprint_nao_aprovado')
+    validate_upgrade_receipt(receipt)
     work = Path(receipt['work'])
     require(work.parent == STATE and work.name.startswith('orders-prepare-') and not work.is_symlink(), 'artefato_inseguro')
     h.verify_ci(receipt['sha'])
@@ -1025,14 +1114,14 @@ def resume(h, receipt, approval):
         h.public_ready()
         stage.update(completed=True, recovered_emission_closed=True)
         save(work / 'stage.json', stage)
-        save(STATE / 'orders-current.identity.json', {'sha': receipt['sha'], 'images': receipt['images'],
-             'schema': TARGET_SCHEMA, 'receipt': str(work / 'prepared-main.json'), 'emission': 'closed'})
+        publish_identity(receipt, emission='closed')
         marker.unlink()
 
 
 def recover(h, receipt, approval):
     """Recuperação após interrupção do executor antes de DDL; não exige rede externa."""
     require(HASH.fullmatch(approval or '') and fingerprint(receipt) == approval, 'fingerprint_nao_aprovado')
+    validate_upgrade_receipt(receipt)
     work = Path(receipt['work'])
     require(work.parent == STATE and work.name.startswith('orders-prepare-') and not work.is_symlink(), 'artefato_inseguro')
     with release_lock():
