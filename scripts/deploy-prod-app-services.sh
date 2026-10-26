@@ -180,7 +180,7 @@ verify_repository() {
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("emergency_api",{}).get("baseline_sha",""))')"
     if [[ "$approved_api_base" == "$api_version" ]]; then
       git diff --quiet "$api_version" "$CHECKOUT_SHA" -- backend/app/ backend/migrations/ backend/Dockerfile \
-        backend/requirements.txt backend/face-requirements.txt backend/gemma-requirements.txt \
+        backend/requirements.txt backend/face-requirements.txt \
         || fail "API diverge dos inputs ativos aprovados"
       local approved_api_image
       approved_api_image="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \

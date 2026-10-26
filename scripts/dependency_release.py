@@ -16,12 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_MANIFESTS = {"frontend/package.json", "frontend/package-lock.json"}
 PYTHON_MANIFESTS = {
     "backend/requirements.txt", "backend/requirements-push.txt",
-    "backend/face-requirements.txt", "backend/gemma-requirements.txt",
+    "backend/face-requirements.txt",
 }
 DEPENDENCY_MANIFESTS = FRONTEND_MANIFESTS | PYTHON_MANIFESTS
 COMPOSE_FILES = (
     "docker/docker-compose.yml", "docker/docker-compose.preview-adjustment.yml",
-    "docker/docker-compose.raw-development.yml", "docker/docker-compose.system-monitor.yml",
+    "docker/docker-compose.system-monitor.yml",
 )
 WEB_BUILD_BLOBS = {
     "frontend/Dockerfile": "33c362d3d51c01b4c4504446736ca2682e59ce68",

@@ -127,16 +127,8 @@ def main() -> None:
     require("pg_dump -Fc", "backup lógico", SCRIPT)
     require("paused_services=(api worker)", "pausa restrita", SCRIPT)
     require("face-index-worker face-search-worker face-maintenance-worker", "writers faciais", SCRIPT)
-    require(
-        "face-index-worker face-search-worker face-maintenance-worker face-gemma-index-worker; do",
-        "Gemma pausado e restaurado entre os leitores ativos",
-        SCRIPT,
-    )
-    require(
-        "face-gemma-index-worker|preview-adjustment-worker)",
-        "Gemma reconhecido pela lista fechada de serviços",
-        SCRIPT,
-    )
+    if "face-gemma-index-worker" in SCRIPT:
+        raise AssertionError("worker aposentado não pode ser restaurado")
     require("preview_compose stop preview-adjustment-worker", "pausa do ajuste de prévia", SCRIPT)
     require("preview_compose up -d --no-deps preview-adjustment-worker", "retomada do ajuste de prévia", SCRIPT)
     require('compose --profile whatsapp-real config --format json | python3 -c', "topologia resolvida", SCRIPT)

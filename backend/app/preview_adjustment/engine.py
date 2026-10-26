@@ -8,7 +8,7 @@ from typing import Protocol
 
 from PIL import Image
 
-ENGINE_VERSION = "rawtherapee-natural-v1"
+ENGINE_VERSION = "rawtherapee-5.13-natural-v1"
 TIMEOUT_SECONDS = 90
 
 

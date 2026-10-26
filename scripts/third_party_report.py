@@ -19,28 +19,12 @@ API_ROOT = "https://api.github.com"
 USER_AGENT = "pick-your-pic-third-party-monitor"
 WATCHLIST = (
     {
-        "name": "LightCraft",
-        "source": "github-release",
-        "pin_source": "backend/Dockerfile.raw-development",
-        "url": "https://api.github.com/repos/storytold/lightcraft/releases/latest",
-        "source_url": "https://github.com/storytold/lightcraft/releases",
-        "risk": "Pode alterar decodificação, cor, formatos e suporte por câmera; exige corpus autorizado e comparação visual.",
-    },
-    {
         "name": "RawTherapee",
         "source": "github-release",
-        "pin_source": "backend/Dockerfile.raw-development",
+        "pin_source": "backend/Dockerfile.preview-adjustment",
         "url": "https://api.github.com/repos/RawTherapee/RawTherapee/releases/latest",
         "source_url": "https://github.com/RawTherapee/RawTherapee/releases",
-        "risk": "Pode alterar renderização RAW, codecs e comportamento do perfil; validar imagem e formatos/câmeras.",
-    },
-    {
-        "name": "EmbeddingGemma 2",
-        "source": "huggingface-model",
-        "pin_source": "backend/app/facial/gemma_provider.py",
-        "url": "https://huggingface.co/api/models/google/embeddinggemma-2",
-        "source_url": "https://huggingface.co/google/embeddinggemma-2",
-        "risk": "Mudança de pesos exige benchmark facial autorizado, avaliação de licença, qualidade, recursos e reindexação; nunca propor automaticamente.",
+        "risk": "Pode alterar renderização JPEG e comportamento do perfil de ajuste; validar imagem sintética e ambos os runtimes Linux.",
     },
 )
 
@@ -61,18 +45,11 @@ def read_text(path: str) -> str:
 
 
 def pinned_versions() -> dict[str, str]:
-    raw = read_text("backend/Dockerfile.raw-development")
-    raw_match = re.search(r"^ARG LIGHTCRAFT_VERSION=([^\s]+)", raw, re.MULTILINE)
-    rt_match = re.search(r"rawtherapee=([0-9][^\s\\]+)", raw)
-    gemma = read_text("backend/app/facial/gemma_provider.py")
-    gemma_match = re.search(r'^GEMMA_MODEL_REVISION\s*=\s*["\']([^"\']+)', gemma, re.MULTILINE)
-    if not (raw_match and rt_match and gemma_match):
-        raise SourceError("pin especializado ausente ou ilegível")
-    return {
-        "LightCraft": raw_match.group(1),
-        "RawTherapee": rt_match.group(1).split("-")[0],
-        "EmbeddingGemma 2": gemma_match.group(1),
-    }
+    image = read_text("backend/Dockerfile.preview-adjustment")
+    match = re.search(r"^ARG RAWTHERAPEE_VERSION=([^\s]+)", image, re.MULTILINE)
+    if not match:
+        raise SourceError("pin RawTherapee ausente ou ilegível")
+    return {"RawTherapee": match.group(1)}
 
 
 def inventory_count() -> int:
@@ -217,7 +194,7 @@ def _priority(package: str, transition: tuple[str, str] | None, security: str | 
         priority = {"critical": "P0", "high": "P1", "moderate": "P2", "low": "P3"}.get(level, "P2")
         return priority, "Corrigir vulnerabilidade indicada pela fonte", "Validar patch e regressões antes do merge"
     specialized = any(token in name for token in (
-        "torch", "transformers", "gemma", "opencv", "numpy", "rawtherapee", "lightcraft", "onnx"
+        "torch", "transformers", "opencv", "numpy", "rawtherapee", "onnx"
     ))
     if specialized:
         return "P1", "Correções upstream podem melhorar manutenção e compatibilidade", "Avaliação especializada; não atualizar automaticamente"

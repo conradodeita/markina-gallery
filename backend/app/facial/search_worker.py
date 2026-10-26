@@ -30,7 +30,6 @@ from app.auth import (
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
 from app.facial.engine import search_gallery_index
-from app.facial.gemma_provider import GEMMA_EMBEDDING_DIMENSION, GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
 from app.facial.jobs import ClaimedFacialJob, FacialJobError, FacialJobRepository
 from app.facial.notifications import enqueue_search_notification
 from app.facial.provider import analyze_query
@@ -68,13 +67,12 @@ def process_claimed_search_job(
     """Executa ou retoma a consulta sem depender da presença da cliente na UI."""
 
     job = repository._leased(db, claim)
-    if job is None or job.kind not in {"search", "search_gemma"} or job.search_request_id is None:
+    if job is None or job.kind != "search" or job.search_request_id is None:
         raise FacialJobError("Job facial não pode ser executado.")
     request = owned_record(db, FacialSearchRequest, job.search_request_id, tenant_id=claim.tenant_id)
     if request is None or request.parent_gallery_id != job.parent_gallery_id:
         raise FacialJobError("Consulta facial não pode ser executada.")
-    expected_kind = "search_gemma" if request.search_engine == GEMMA_MODEL_ID else "search"
-    if job.kind != expected_kind:
+    if request.search_engine != "opencv-yunet-sface":
         raise FacialJobError("Engine da consulta facial diverge do job.")
     store = reference_store or FacialReferenceStore(
         settings.reference_root,
@@ -158,8 +156,7 @@ def process_claimed_search_job(
         if request.reference_region_id:
             from app.facial.regions import authorized_region, region_embedding
             region = authorized_region(db, gallery_id=request.parent_gallery_id, client_id=request.client_id,
-                                       region_id=request.reference_region_id, settings=settings,
-                                       model_id=request.search_engine)
+                                       region_id=request.reference_region_id, settings=settings)
             query_embedding = region_embedding(db, region, cipher, settings, tenant_id=claim.tenant_id)
         else:
             repository._leased(db, claim)
@@ -240,16 +237,8 @@ def process_claimed_search_job(
             authorize=authorize_comparison,
             on_progress=publish_progress,
             model_id=request.search_engine,
-            model_version=(
-                GEMMA_MODEL_VERSION
-                if request.search_engine == GEMMA_MODEL_ID
-                else settings.model_version
-            ),
-            embedding_dimension=(
-                GEMMA_EMBEDDING_DIMENSION
-                if request.search_engine == GEMMA_MODEL_ID
-                else 128
-            ),
+            model_version=settings.model_version,
+            embedding_dimension=128,
         )
         repository._leased(db, claim)
         if not _request_is_authorized(db, request, settings):
@@ -448,19 +437,11 @@ def _refresh_snapshot(db: Session, request: FacialSearchRequest) -> bool:
         index_jobs = db.scalars(
             select(FacialJob)
             .where(
-                FacialJob.kind == (
-                    "index_gemma"
-                    if request.search_engine == GEMMA_MODEL_ID
-                    else "index"
-                ),
+                FacialJob.kind == "index",
                 FacialJob.tenant_id == request.tenant_id,
                     FacialJob.parent_gallery_id == request.parent_gallery_id,
                 FacialJob.photo_asset_id.in_(photo_ids),
-                FacialJob.model_version == (
-                    GEMMA_MODEL_VERSION
-                    if request.search_engine == GEMMA_MODEL_ID
-                    else request.model_version
-                ),
+                FacialJob.model_version == request.model_version,
                 FacialJob.quality_version == request.quality_version,
             )
             .order_by(FacialJob.created_at.desc(), FacialJob.id.desc())
@@ -504,10 +485,8 @@ def _comparison_photo_is_current(
             FacialJob.tenant_id == request.tenant_id,
             FacialJob.parent_gallery_id == request.parent_gallery_id,
             FacialJob.photo_asset_id == photo_id,
-            FacialJob.kind == ("index_gemma" if request.search_engine == GEMMA_MODEL_ID else "index"),
-            FacialJob.model_version == (
-                GEMMA_MODEL_VERSION if request.search_engine == GEMMA_MODEL_ID else request.model_version
-            ),
+            FacialJob.kind == "index",
+            FacialJob.model_version == request.model_version,
             FacialJob.quality_version == request.quality_version,
         )
         .order_by(FacialJob.created_at.desc(), FacialJob.id.desc())

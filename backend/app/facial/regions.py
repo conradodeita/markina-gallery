@@ -14,13 +14,11 @@ from app.auth import (
 )
 from app.facial.crypto import FacialEnvelope
 from app.facial.engine import _embedding_scope
-from app.facial.gemma_provider import GEMMA_EMBEDDING_DIMENSION, GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
 from app.facial.provider import normalize_embedding
 from app.public_gallery_access import authorized_canonical_photos, require_public_gallery_browsing
 
 
-def region_query(gallery_id, settings, *, tenant_id, model_id="opencv-yunet-sface"):
-    is_gemma = model_id == GEMMA_MODEL_ID
+def region_query(gallery_id, settings, *, tenant_id):
     return (
         select(PhotoFaceEmbedding)
         .join(PhotoAsset, PhotoAsset.id == PhotoFaceEmbedding.photo_asset_id)
@@ -41,13 +39,9 @@ def region_query(gallery_id, settings, *, tenant_id, model_id="opencv-yunet-sfac
             PhotoAsset.derived_gallery_id.is_(None),
             PhotoFaceEmbedding.derived_gallery_id.is_(None),
             PhotoFaceEmbedding.bbox_x.is_not(None),
-            PhotoFaceEmbedding.model_id == model_id,
-            PhotoFaceEmbedding.embedding_dimension == (
-                GEMMA_EMBEDDING_DIMENSION if is_gemma else 128
-            ),
-            PhotoFaceEmbedding.model_version == (
-                GEMMA_MODEL_VERSION if is_gemma else settings.model_version
-            ),
+            PhotoFaceEmbedding.model_id == "opencv-yunet-sface",
+            PhotoFaceEmbedding.embedding_dimension == 128,
+            PhotoFaceEmbedding.model_version == settings.model_version,
             PhotoFaceEmbedding.quality_version == settings.quality_version,
             select(MediaDerivative.id)
             .where(
@@ -63,13 +57,10 @@ def region_query(gallery_id, settings, *, tenant_id, model_id="opencv-yunet-sfac
 
 def authorized_region(
     db, *, gallery_id, client_id, region_id, settings,
-    model_id="opencv-yunet-sface",
 ):
     tenant_id = client_tenant_id(db, client_id)
     require_public_gallery_browsing(db, parent_gallery_id=gallery_id, client_id=client_id)
-    row = db.scalar(region_query(
-        gallery_id, settings, tenant_id=tenant_id, model_id=model_id
-    ).where(
+    row = db.scalar(region_query(gallery_id, settings, tenant_id=tenant_id).where(
         PhotoFaceEmbedding.id == region_id,
         PhotoAsset.id.in_(authorized_canonical_photos(gallery_id, client_id).with_only_columns(PhotoAsset.id)),
     ))
@@ -92,12 +83,7 @@ def region_embedding(db, row, cipher, settings, *, tenant_id):
     if not parent or not parent.active or parent.lifecycle_status != "active" or not photo or not photo.available or photo.derived_gallery_id is not None:
         raise ValueError("Região facial indisponível.")
     policy = read_policy(db, row.parent_gallery_id, tenant_id=tenant_id)
-    expected_version = (
-        GEMMA_MODEL_VERSION
-        if row.model_id == GEMMA_MODEL_ID
-        else settings.model_version
-    )
-    if not policy or policy.status != "active" or row.model_version != expected_version or policy.model_version != settings.model_version or policy.quality_version != row.quality_version or not rollout_is_active(db, settings=settings, parent_gallery_id=row.parent_gallery_id, tenant_id=tenant_id):
+    if not policy or policy.status != "active" or row.model_id != "opencv-yunet-sface" or row.embedding_dimension != 128 or row.model_version != settings.model_version or policy.model_version != settings.model_version or policy.quality_version != row.quality_version or not rollout_is_active(db, settings=settings, parent_gallery_id=row.parent_gallery_id, tenant_id=tenant_id):
         raise ValueError("Região facial indisponível.")
     payload = cipher.decrypt(
         FacialEnvelope(
@@ -122,11 +108,9 @@ def photo_regions(db, *, gallery_id, client_id, photo_id, settings):
     if not rollout_is_active(db, settings=settings, parent_gallery_id=gallery_id, tenant_id=client_tenant_id(db, client_id)):
         return []
     from app.facial.serving import gallery_search_engine
-    model_id = gallery_search_engine(
-        db, parent_gallery_id=gallery_id, client_id=client_id, settings=settings
-    )
+    gallery_search_engine(db, parent_gallery_id=gallery_id, client_id=client_id, settings=settings)
     rows = db.scalars(
-        region_query(gallery_id, settings, tenant_id=tenant_id, model_id=model_id)
+        region_query(gallery_id, settings, tenant_id=tenant_id)
         .where(PhotoFaceEmbedding.photo_asset_id == photo_id)
         .where(PhotoAsset.id.in_(authorized_canonical_photos(gallery_id, client_id).with_only_columns(PhotoAsset.id)))
         .order_by(PhotoFaceEmbedding.face_ordinal)

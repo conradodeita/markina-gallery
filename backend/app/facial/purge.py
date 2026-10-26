@@ -87,7 +87,7 @@ def invalidate_gallery_searches(
         update(FacialJob)
         .where(
             FacialJob.tenant_id == tenant_id, FacialJob.parent_gallery_id == parent_gallery_id,
-            FacialJob.kind.in_(("search", "search_gemma")),
+            FacialJob.kind == "search",
             FacialJob.status.in_(("queued", "processing")),
         )
         .values(

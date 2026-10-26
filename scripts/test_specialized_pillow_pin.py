@@ -7,9 +7,8 @@ from dependency_release import copied_inputs, parse_compose
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     'face-index-worker': 'Dockerfile.face', 'face-search-worker': 'Dockerfile.face',
-    'face-maintenance-worker': 'Dockerfile.face', 'face-gemma-index-worker': 'Dockerfile.gemma',
+    'face-maintenance-worker': 'Dockerfile.face',
     'preview-adjustment-worker': 'Dockerfile.preview-adjustment',
-    'raw-development-worker': 'Dockerfile.raw-development',
 }
 
 
@@ -22,8 +21,7 @@ class PillowPinTests(unittest.TestCase):
 
     def test_every_specialized_consumer_uses_common_fixed_requirements(self):
         services = {}
-        for file in ('docker/docker-compose.yml', 'docker/docker-compose.preview-adjustment.yml',
-                     'docker/docker-compose.raw-development.yml'):
+        for file in ('docker/docker-compose.yml', 'docker/docker-compose.preview-adjustment.yml'):
             for name, config in parse_compose((ROOT / file).read_text(encoding='utf-8')).items():
                 services.setdefault(name, {}).update(config)
         for name, dockerfile in EXPECTED.items():

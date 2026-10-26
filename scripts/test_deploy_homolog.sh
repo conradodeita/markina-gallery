@@ -72,34 +72,18 @@ if grep -Fq 'sensitive-value' "$output"; then
   exit 1
 fi
 
-# Optional modules are preserved by default; explicit deploy overrides remain available.
+# The retired RAW override is no longer accepted by the deploy interface.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     parse_arguments --sha 1111111111111111111111111111111111111111
-    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == auto ]]
-    RAW_DEVELOPMENT_WORKER_ACTIVE=0
-    resolve_raw_development_state
-    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == false ]]
-    RAW_DEVELOPMENT_WORKER_ACTIVE=1
-    resolve_raw_development_state
-    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == true ]]
-    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled true
-    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == true ]]
-    RAW_DEVELOPMENT_WORKER_ACTIVE=0
-    resolve_raw_development_state
-    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == true ]]
-    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled false
-    [[ "$REQUESTED_RAW_DEVELOPMENT_ENABLED" == false ]]
-    RAW_DEVELOPMENT_WORKER_ACTIVE=1
-    resolve_raw_development_state
-    [[ "$RAW_DEVELOPMENT_DEPLOY_ENABLED" == false ]]
+    parse_arguments --sha 1111111111111111111111111111111111111111
   ' >"$output" 2>&1
 
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
-    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled yes
+    parse_arguments --sha 1111111111111111111111111111111111111111 --raw-development-enabled false
   ' >"$output" 2>&1; then
   echo "o deploy aceitou estado RAW inválido" >&2
   exit 1
@@ -560,20 +544,34 @@ set -e
 grep -Fq 'banco não foi restaurado' "$output"
 
 python3 "$SCRIPT_DIR/test_deploy_homolog_policy.py"
-# Optional workers live in separate Compose files and are added only when authorized.
+# Retired workers block publication and are never included in Compose startup.
+for legacy_service in face-gemma-index-worker raw-development-worker; do
+  if LEGACY_SERVICE="$legacy_service" MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
+    bash -c '
+      source "$MARKINA_DEPLOY_SCRIPT_PATH"
+      docker() { [[ "$*" == *"service=$LEGACY_SERVICE"* ]] && printf "legacy-container\n"; }
+      case "$LEGACY_SERVICE" in
+        face-gemma-index-worker) discover_gemma_worker ;;
+        raw-development-worker) discover_raw_development_worker ;;
+      esac
+    ' >"$output" 2>&1; then
+    echo "publicação aceitou runtime legado: $legacy_service" >&2
+    exit 1
+  fi
+  grep -Fq 'inventário e parada controlada são pré-requisito humano' "$output"
+done
+# Only the still supported optional preview worker may be added to Compose.
 MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
   bash -c '
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     docker() { printf "%s\n" "$*"; }
-    RAW_DEVELOPMENT_DEPLOY_ENABLED=true
     compose config --services
-    RAW_DEVELOPMENT_DEPLOY_ENABLED=false
     PREVIEW_WORKER_ACTIVE=1
     compose config --services
     PREVIEW_WORKER_ACTIVE=0
     compose config --services
   ' >"$output" 2>&1
-[[ "$(grep -c -- '-f docker/docker-compose.raw-development.yml' "$output")" -eq 1 ]]
+[[ "$(grep -c -- '-f docker/docker-compose.raw-development.yml' "$output" || true)" -eq 0 ]]
 [[ "$(grep -c -- '-f docker/docker-compose.preview-adjustment.yml --profile preview-adjustment' "$output")" -eq 1 ]]
 # A failed preservation must never allow recreation, even through the ERR rollback.
 if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
@@ -612,11 +610,10 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
     source "$MARKINA_DEPLOY_SCRIPT_PATH"
     FACIAL_DEPLOY_ENABLED=true
     PREVIEW_WORKER_ACTIVE=1
-    RAW_DEVELOPMENT_WORKER_ACTIVE=1
     stopped=0
     compose() {
       if [[ "$1" == "stop" ]]; then
-        [[ "$*" == "stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker raw-development-worker preview-adjustment-worker" ]] || return 80
+        [[ "$*" == "stop --timeout 60 api worker face-search-worker face-index-worker face-maintenance-worker preview-adjustment-worker" ]] || return 80
         stopped=1
       fi
       if [[ "$*" == "run --rm --no-deps migrate alembic heads" ]]; then
@@ -635,23 +632,8 @@ MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/r
     }
     current_revision() { echo "20260929_0069"; }
     apply_target_migrations "20260928_0068"
-    [[ "$MIGRATION_CHANGED" -eq 1 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 1 && "$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 0 ]]
+    [[ "$MIGRATION_CHANGED" -eq 1 && "$SCHEMA_ROLLBACK_UNSAFE" -eq 1 ]]
   ' >"$output" 2>&1
-
-# When opted in, the RAW reader starts before the API consumes the overlay.
-START_LOG="$rollback_log" MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" \
-  bash -c '
-    source "$MARKINA_DEPLOY_SCRIPT_PATH"
-    BRANDING_REQUIRED=1
-    BRANDING_PRESERVED=1
-    RAW_DEVELOPMENT_DEPLOY_ENABLED=true
-    compose() { printf "%s\n" "$*" >> "$START_LOG"; }
-    start_application_services
-  ' >"$output" 2>&1
-raw_worker_line="$(grep -nF 'up -d --build --no-deps raw-development-worker' "$rollback_log" | head -n 1 | cut -d: -f1)"
-api_line="$(grep -nF 'up -d --build --no-deps api web worker' "$rollback_log" | head -n 1 | cut -d: -f1)"
-[[ -n "$raw_worker_line" && -n "$api_line" ]]
-(( raw_worker_line < api_line ))
 
 for failure in stop active; do
   if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owner/repository" FAILURE="$failure" \
@@ -714,5 +696,4 @@ done
 
 python3 "$SCRIPT_DIR/test_facial_production_policy.py"
 python3 "$SCRIPT_DIR/test_facial_rollout_homolog_policy.py"
-bash "$SCRIPT_DIR/test_gemma_operations.sh"
 echo "deploy-homolog shell: ok"

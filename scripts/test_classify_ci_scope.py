@@ -8,43 +8,32 @@ class ClassifyCIScopeTests(unittest.TestCase):
         result = classify(["frontend/package-lock.json"])
         self.assertEqual(result, {scope: scope in {"frontend", "frontend_image"} for scope in SCOPES})
 
-    def test_python_application_requirements_run_backend_gemma_and_photo_builds(self):
+    def test_python_application_requirements_run_backend_and_preview_builds(self):
         result = classify(["backend/requirements.txt"])
         self.assertEqual(
             result,
-            {"backend": True, "frontend": False, "gemma": True, "backend_image": True, "frontend_image": False, "preview": True, "raw": True},
+            {"backend": True, "frontend": False, "backend_image": True, "frontend_image": False, "preview": True},
         )
 
-    def test_push_adapter_dependency_runs_gemma_due_shared_image_install(self):
+    def test_push_adapter_dependency_runs_backend_and_preview_builds(self):
         result = classify(["backend/requirements-push.txt"])
         self.assertTrue(result["backend"])
-        self.assertTrue(result["gemma"])
         self.assertTrue(result["backend_image"])
         self.assertTrue(result["preview"])
-        self.assertTrue(result["raw"])
         self.assertFalse(result["frontend"])
 
-    def test_facial_source_requires_backend_and_gemma(self):
+    def test_facial_source_requires_backend(self):
         result = classify(["backend/app/facial/face_worker.py"])
         self.assertTrue(result["backend"])
-        self.assertTrue(result["gemma"])
         self.assertFalse(result["frontend"])
 
     def test_photo_dockerfiles_select_only_the_affected_image_build(self):
         preview = classify(["backend/Dockerfile.preview-adjustment"])
-        raw = classify(["backend/Dockerfile.raw-development"])
         self.assertTrue(preview["preview"])
-        self.assertFalse(preview["raw"])
-        self.assertTrue(raw["raw"])
-        self.assertFalse(raw["preview"])
 
     def test_photo_worker_source_requires_its_image_build(self):
         preview = classify(["backend/app/preview_adjustment/worker.py"])
-        raw = classify(["backend/app/raw_development/worker.py"])
         self.assertTrue(preview["preview"])
-        self.assertFalse(preview["raw"])
-        self.assertTrue(raw["raw"])
-        self.assertFalse(raw["preview"])
 
     def test_backend_runtime_manifest_changes_require_backend_image_build(self):
         result = classify(["backend/Dockerfile"])

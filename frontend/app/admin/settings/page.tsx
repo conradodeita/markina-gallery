@@ -9,8 +9,6 @@ import PixPanel from "./pix-panel";
 import PaymentProvidersPanel from "./payment-providers-panel";
 import WhatsAppPanel from "./whatsapp-panel";
 import SecurityPanel from "./security-panel";
-import FacialEnginePanel from "./facial-engine-panel";
-import RawDevelopmentPanel from "./raw-development-panel";
 
 type Branding = {
   login_title: string;
@@ -304,8 +302,6 @@ export default function AdminSettingsPage() {
       <SecurityPanel />
       <PixPanel />
       <PaymentProvidersPanel />
-      <FacialEnginePanel />
-      <RawDevelopmentPanel />
       <form className="gallery-editor-panel gallery-settings-form" onSubmit={save}>
         <label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label>
         <label>Texto introdutório<textarea name="login_intro" defaultValue={settings.login_intro} maxLength={300} rows={3} required /></label>

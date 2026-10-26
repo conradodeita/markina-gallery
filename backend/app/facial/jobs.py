@@ -30,7 +30,6 @@ from app.facial.reference_store import FacialReferenceError
 FACIAL_JOB_KINDS_BY_CLASS = {
     "search": frozenset({"search"}),
     "index": frozenset({"index"}),
-    "gemma": frozenset({"index_gemma", "search_gemma"}),
     "maintenance": frozenset({"purge", "cleanup"}),
 }
 
@@ -98,17 +97,17 @@ class FacialJobRepository:
         preview_fingerprint: str | None = None,
         available_at: datetime | None = None,
     ) -> tuple[FacialJob, bool]:
-        if kind not in {"index", "index_gemma", "purge", "search", "search_gemma", "cleanup"}:
+        if kind not in {"index", "purge", "search", "cleanup"}:
             raise FacialJobError("Tipo de job facial inválido.")
         if not idempotency_key or len(idempotency_key) > 240 or priority < 0:
             raise FacialJobError("Identidade do job facial inválida.")
-        if kind in {"index", "index_gemma"} and photo_asset_id is None:
+        if kind == "index" and photo_asset_id is None:
             raise FacialJobError("Job de índice facial sem foto.")
-        if kind in {"index", "index_gemma"} and not all(
+        if kind == "index" and not all(
             (model_version, quality_version, preview_fingerprint)
         ):
             raise FacialJobError("Job de índice facial sem versão ou fingerprint.")
-        if kind in {"search", "search_gemma"} and search_request_id is None:
+        if kind == "search" and search_request_id is None:
             raise FacialJobError("Job de consulta facial sem request.")
         self.require_origin(db, tenant_id=tenant_id, parent_gallery_id=parent_gallery_id,
                             derived_gallery_id=derived_gallery_id, photo_asset_id=photo_asset_id,

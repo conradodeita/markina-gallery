@@ -32,13 +32,13 @@ from specialized_pillow_candidate import (
 ROOT = Path('/opt/markina-gallery')
 STATE = Path('/var/lib/markina-gallery/deploy-state')
 CONFIGS = (ROOT / 'docker/docker-compose.yml', STATE / 'branding.compose.yml',
-           ROOT / 'docker/docker-compose.raw-development.yml', ROOT / 'docker/docker-compose.preview-adjustment.yml',
+           ROOT / 'docker/docker-compose.preview-adjustment.yml',
            ROOT / 'docker/docker-compose.system-monitor.yml', STATE / 'system-monitor.compose.yml')
 ENV_FILE = ROOT / 'docker/.env.homolog'
 SCHEMA = ['20261022_0087']
 EXPECTED = set(SERVICES) | {'api', 'worker', 'web', 'nginx', 'db', 'redis', 'evolution-api', 'evolution-db', 'evolution-redis'}
 QUEUES = ('media_job', 'whatsapp_delivery', 'email_delivery', 'notification_delivery',
-          'gallery_lifecycle_operation', 'asset_file_cleanup', 'facial_job', 'raw_development_job',
+          'gallery_lifecycle_operation', 'asset_file_cleanup', 'facial_job',
           'preview_adjustment', 'payment_notification_outbox', 'gallery_reopening_notification_outbox',
           'gallery_membership_notification_outbox', 'facial_search_notification_outbox')
 FINANCIAL = ('sale_order', 'sale_order_item', 'payment_group', 'provider_payment', 'provider_payment_attempt',

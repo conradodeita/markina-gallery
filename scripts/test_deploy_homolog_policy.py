@@ -157,14 +157,10 @@ def main() -> int:
     )
     require('deploy-homolog:', "job de deploy", WORKFLOW)
     require(
-        'needs: [backend, frontend, gemma-runtime, runtime-images, openspec, homolog-inventory-policy, gitleaks]',
+        'needs: [backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]',
         "dependência integral da CI",
         WORKFLOW,
     )
-    require('gemma-runtime:', "validação nativa Gemma antes do deploy", WORKFLOW)
-    require('--platform linux/amd64', "runtime Gemma em AMD64", WORKFLOW)
-    require('--memory 6g --memory-swap 6g --cpus 1', "inferência Gemma limitada", WORKFLOW)
-    require('--network none', "inferência sintética sem rede", WORKFLOW)
     require('environment: homolog', "Environment protegido", WORKFLOW)
     production_policy_step = WORKFLOW.split(
         "- name: Validar política de preflight e aprovação única de produção", 1
@@ -182,11 +178,10 @@ def main() -> int:
            "deploy de homologação não deve habilitar processamento facial", WORKFLOW)
     forbid(r'HOMOLOG_RAW_DEVELOPMENT_ENABLED:\s*"true"|--raw-development-enabled\s+%q',
            "deploy de homologação não deve habilitar o worker RAW", WORKFLOW)
-    require('REQUESTED_RAW_DEVELOPMENT_ENABLED="auto"', "RAW preservado automaticamente por padrão", SCRIPT)
-    require('resolve_raw_development_state', "estado RAW resolvido após detectar worker ativo", SCRIPT)
-    require('extra+=(-f docker/docker-compose.raw-development.yml)', "overlay RAW restrito ao deploy autorizado", SCRIPT)
-    require('"$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1', "overlay RAW mantido para parar worker ativo", SCRIPT)
-    require('compose up -d --build --no-deps raw-development-worker', "worker RAW iniciado antes da API", SCRIPT)
+    require('worker Gemma legado ativo; inventário e parada controlada', "bloqueio para runtime Gemma legado", SCRIPT)
+    require('worker RAW legado ativo; inventário e parada controlada', "bloqueio para runtime RAW legado", SCRIPT)
+    forbid('compose up -d --build --no-deps raw-development-worker', "worker RAW não pode ser reativado", SCRIPT)
+    forbid('compose up -d --build --no-deps face-gemma-index-worker', "worker Gemma não pode ser reativado", SCRIPT)
     forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)

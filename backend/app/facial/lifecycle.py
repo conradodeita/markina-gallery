@@ -192,13 +192,6 @@ def finalize_source(db, photo, *, settings=None):
         quality_version=policy.quality_version,
         preview_fingerprint=digest,
     )
-    from app.facial.gemma_provider import GEMMA_MODEL_VERSION
-    from app.facial.indexing import enqueue_gemma_index_if_eligible
-
-    enqueue_gemma_index_if_eligible(
-        db, photo, policy, fingerprint=digest, settings=active,
-        idempotency_key=source_job_key(photo.id, row, policy, model_version=GEMMA_MODEL_VERSION),
-    )
     row.state = "pending"
     db.flush()
 
@@ -262,7 +255,7 @@ def cleanup_source(db, photo_id, *, tenant_id):
         select(FacialJob.id).where(
             FacialJob.tenant_id == tenant_id,
             FacialJob.photo_asset_id == photo_id,
-            FacialJob.kind.in_(("index", "index_gemma")),
+            FacialJob.kind == "index",
             FacialJob.status == "processing",
             FacialJob.lease_expires_at > now(),
         )
@@ -281,16 +274,6 @@ def cleanup_source(db, photo_id, *, tenant_id):
         )
     )
     if not is_expired:
-        from app.auth import FacialEmbeddingExperimentSetting
-        setting = db.get(FacialEmbeddingExperimentSetting, 1, populate_existing=True)
-        if setting and setting.enabled and db.scalar(select(FacialJob.id).where(
-            FacialJob.tenant_id == tenant_id,
-            FacialJob.photo_asset_id == photo_id,
-            FacialJob.kind == "index_gemma",
-            FacialJob.status.in_(("queued", "processing")),
-            FacialJob.preview_fingerprint == row.source_fingerprint,
-        )):
-            return False
         if row.state != "ready":
             return False
         if len(derivatives) != 3:

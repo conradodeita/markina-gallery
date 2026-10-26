@@ -100,3 +100,6 @@ docker exec markina-gallery-nginx-1 nginx -s reload
 ```
 
 Esperar API/web saudáveis por até 120 segundos e repetir verificações de saúde interna/HTTPS, imagens e banco. Nenhuma reconstrução ou restauração de banco ocorre no rollback. Conservar as imagens novas e antigas para diagnóstico; não limpar recursos. Registrar a falha e o resultado real da recuperação.
+# Snapshot histórico — não representa o release atual
+
+Este procedimento registra uma publicação anterior, com schema 0081 e overlay RAW. O último deploy informado pelo proprietário está em 0089, e o overlay de RAW foi aposentado do checkout. Não executar os comandos abaixo para publicar esta change; a publicação atual exige inventário remoto e runbook compatível com o SHA/schema vigentes.

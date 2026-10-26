@@ -9,7 +9,7 @@ import sys
 from typing import Iterable
 
 
-SCOPES = ("backend", "frontend", "gemma", "backend_image", "frontend_image", "preview", "raw")
+SCOPES = ("backend", "frontend", "backend_image", "frontend_image", "preview")
 
 
 def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
@@ -50,32 +50,14 @@ def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
         if name.startswith("backend/"):
             result["backend"] = True
 
-            if (
-                name.startswith("backend/app/facial/")
-                or name.startswith("backend/facial-assets/")
-                or name in {
-                    "backend/Dockerfile.gemma",
-                    "backend/face-requirements.txt",
-                    "backend/gemma-requirements.txt",
-                    "backend/requirements.txt",
-                    "backend/requirements-push.txt",
-                }
-            ):
-                result["gemma"] = True
-
             if name == "backend/Dockerfile.preview-adjustment":
                 result["preview"] = True
-            if name == "backend/Dockerfile.raw-development":
-                result["raw"] = True
             if name.startswith("backend/app/preview_adjustment/"):
                 result["preview"] = True
-            if name.startswith("backend/app/raw_development/"):
-                result["raw"] = True
 
             if name in {"backend/requirements.txt", "backend/requirements-push.txt"}:
                 result["backend_image"] = True
                 result["preview"] = True
-                result["raw"] = True
             if name == "backend/Dockerfile":
                 result["backend_image"] = True
 

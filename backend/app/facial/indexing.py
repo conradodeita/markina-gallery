@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session, aliased
 
 from app.acervo_context import owned_record
 from app.auth import (
-    FacialEmbeddingExperimentSetting,
     FacialJob,
     GalleryFacialPolicy,
     MediaDerivative,
@@ -27,7 +26,6 @@ from app.facial.config import (
     FacialSettings,
     facial_settings_from_environment,
 )
-from app.facial.gemma_provider import GEMMA_MODEL_REVISION, GEMMA_MODEL_VERSION
 from app.facial.jobs import FacialJobError, FacialJobRepository
 from app.facial.policy import FacialPolicyError, ensure_automatic_policy
 from app.facial.rollout import rollout_is_active
@@ -173,9 +171,6 @@ def enqueue_photo_index_if_eligible(
                 quality_version=policy.quality_version,
                 preview_fingerprint=fingerprint,
             )
-        enqueue_gemma_index_if_eligible(
-            db, photo, policy, fingerprint=fingerprint, settings=active, repository=repository
-        )
         return item
     except (
         FacialConfigurationError,
@@ -186,56 +181,6 @@ def enqueue_photo_index_if_eligible(
     ) as error:
         logger.warning("Indexação facial ignorada: %s", type(error).__name__)
         return None
-
-
-def enqueue_gemma_index_if_eligible(
-    db: Session, photo: PhotoAsset, policy: GalleryFacialPolicy, *,
-    fingerprint: str, settings: FacialSettings,
-    repository: FacialJobRepository | None = None,
-    idempotency_key: str | None = None,
-) -> None:
-    """Fila opcional isolada, compartilhada pelos caminhos legado e high-res."""
-    experiment = db.get(FacialEmbeddingExperimentSetting, 1)
-    gallery = owned_record(
-        db, ParentGallery, photo.parent_gallery_id, tenant_id=photo.tenant_id
-    )
-    if (
-        settings.environment.lower() not in {"prod", "production"}
-        and experiment is not None
-        and experiment.enabled
-        and experiment.mode == "shadow"
-        and experiment.model_revision == GEMMA_MODEL_REVISION
-        and experiment.enabled_since is not None
-        and gallery is not None
-        and gallery.created_at is not None
-        and gallery.created_at > experiment.enabled_since
-    ):
-        # O índice principal SFace é independente; uma falha na fila experimental
-        # não deve desfazer nem ocultar o job de produto já enfileirado.
-        try:
-            with db.begin_nested():
-                (repository or FacialJobRepository()).enqueue(
-                    db,
-                    kind="index_gemma",
-                    tenant_id=photo.tenant_id,
-                    idempotency_key=idempotency_key or index_idempotency_key(
-                        environment=settings.environment,
-                        gallery_id=photo.parent_gallery_id,
-                        photo_id=photo.id,
-                        model_version=GEMMA_MODEL_VERSION,
-                        quality_version=policy.quality_version,
-                        index_generation=policy.index_generation,
-                        fingerprint=fingerprint,
-                    ),
-                    parent_gallery_id=photo.parent_gallery_id,
-                    derived_gallery_id=photo.derived_gallery_id,
-                    photo_asset_id=photo.id,
-                    model_version=GEMMA_MODEL_VERSION,
-                    quality_version=policy.quality_version,
-                    preview_fingerprint=fingerprint,
-                )
-        except (FacialJobError, SQLAlchemyError, OSError) as error:
-            logger.warning("Indexação shadow Gemma ignorada: %s", type(error).__name__)
 
 
 def enqueue_gallery_backfill_page(

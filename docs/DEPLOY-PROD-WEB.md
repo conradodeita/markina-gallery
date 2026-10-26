@@ -1,5 +1,7 @@
 # Release de produção limitado ao web
 
+> **Snapshot histórico:** este runbook descreve a publicação do PR #226 em outubro de 2026. A lista de arquivos Compose e os hashes de configuração refletem aquele runtime, não o checkout atual. A aposentadoria LightCraft/Gemma removeu o override RAW; o estado remoto atual não foi consultado. Não use os comandos deste snapshot para publicar o código desta change.
+
 ## Autorização e escopo
 
 Este runbook prepara a correção de segurança do PR #226. A fase de engenharia não autoriza executar comandos mutáveis na Oracle. Preparação operacional, publicação e recuperação contingencial precisam de uma autorização conjunta específica do proprietário, vinculada ao SHA final integrado, imagem atual e limites abaixo. Depois dessa aprovação, os fingerprints podem ser calculados e consumidos automaticamente dentro desses limites; mudança material exige interromper a operação afetada.
@@ -9,7 +11,7 @@ Este runbook prepara a correção de segurança do PR #226. A fase de engenharia
 - Serviço que pode ser substituído: somente `web`, sem dependências.
 - API, workers, PostgreSQL, Redis, nginx, proxy compartilhado, redes, volumes, fotografias, `.env`, secrets, DNS, firewall e certificados ficam intocados.
 - Arquivo de ambiente histórico: `docker/.env.homolog`; é produção real, não ambiente descartável. Não exibir valores.
-- Manifestos ativos: `docker/docker-compose.yml`, `/var/lib/markina-gallery/deploy-state/branding.compose.yml`, `docker/docker-compose.raw-development.yml`, `docker/docker-compose.preview-adjustment.yml`, `docker/docker-compose.system-monitor.yml`, `/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml`.
+- Manifestos inventariados naquele release: `docker/docker-compose.yml`, `/var/lib/markina-gallery/deploy-state/branding.compose.yml`, `docker/docker-compose.raw-development.yml`, `docker/docker-compose.preview-adjustment.yml`, `docker/docker-compose.system-monitor.yml`, `/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml`. A presença histórica do overlay RAW não comprova que ele esteja instalado ou ativo hoje.
 - Possível breve indisponibilidade durante recriação/recuperação do único web. Não há garantia de zero downtime.
 
 O workflow de `develop` publica vários serviços e pode migrar dados. Não usar esse caminho, o PR #177, o release app ou o release facial para esta atualização.

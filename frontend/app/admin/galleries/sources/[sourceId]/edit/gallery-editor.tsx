@@ -1,5 +1,5 @@
 "use client";
-import { isRawFilename, jpegStorageKey, uploadPhotoSource } from "../../../../../upload-jpeg";
+import { isJpegFilename, jpegStorageKey, uploadJpeg } from "../../../../../upload-jpeg";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -22,7 +22,6 @@ type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | 
 type CoverReadiness = { status: "missing" | "processing" | "failed" | "ready"; message: string };
 type Editor = { cover_readiness?: CoverReadiness; gallery: { id: string; name: string; event_name: string; description: string; active: boolean; access_mode: "standard" | "invite_only" | "collective_protected"; unlisted_link: string | null; public_link?: { status: string; capability_id: string | null; expires_at: string | null; secret_available: boolean }; cover_photo_id: string | null; cover_preview_url: string | null; folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean; can_complete?: boolean } };
 type PublicationCounts = { published: number; ready_to_publish: number; processing: number; failed: number };
-type RawUploadCapabilities = { enabled: boolean; formats: string[] };
 type Folder = { audience_scope?: "all" | "selected"; client_names?: string[]; id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null; publication_counts?: PublicationCounts };
 type Photo = { id: string; name: string; preview_url: string | null; status: string; publication_state?: "published" | "ready_to_publish" | "processing" | "failed"; available?: boolean; width?: number | null; height?: number | null; error: string | null; can_delete: boolean; is_cover: boolean };
 type ClientRow = ClientGalleryRow;
@@ -105,7 +104,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const router = useRouter();
   const currentStep = step as StepId;
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [rawCapabilities, setRawCapabilities] = useState<RawUploadCapabilities>({ enabled: false, formats: [] });
   const [folders, setFolders] = useState<Folder[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([]);
@@ -153,14 +151,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const uploadForm = useRef<HTMLFormElement>(null);
   const unlinkIdempotencyKey = useRef("");
   const loadedStep = useRef<StepId | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    void jsonRequest("/api/admin/settings/raw-development/capabilities")
-      .then((result) => { if (active) setRawCapabilities(result as RawUploadCapabilities); })
-      .catch(() => { if (active) setRawCapabilities({ enabled: false, formats: [] }); });
-    return () => { active = false; };
-  }, []);
 
   useEffect(() => {
     if (currentStep !== "clientes") return;
@@ -592,14 +582,13 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      if (isRawFilename(file.name) && !rawCapabilities.enabled) throw new Error("O envio RAW está desabilitado nas configurações.");
-      if (isRawFilename(file.name) && !rawCapabilities.formats.includes(file.name.slice(file.name.lastIndexOf(".")).toLowerCase())) throw new Error("Este formato RAW não está habilitado pelo motor selecionado.");
+      if (!isJpegFilename(file.name)) throw new Error("Envie uma capa em JPEG.");
       const registered = await jsonRequest(`/api/admin/parent-galleries/${sourceId}/cover-photos`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ filename: file.name, display_name: file.name, idempotency_key: crypto.randomUUID() }),
       });
-      await uploadPhotoSource(`/api${registered.upload_url}`, file);
+      await uploadJpeg(`/api${registered.upload_url}`, file);
       setMessage("Capa definida e enviada para processamento. A prévia será atualizada automaticamente.");
       setRefresh((value) => value + 1);
     } catch (error) {
@@ -640,6 +629,11 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     const input = formElement.elements.namedItem("jpeg") as HTMLInputElement;
     const files = Array.from(input.files ?? []);
     if (!folderId || !files.length || uploading) return;
+    if (files.some((file) => !isJpegFilename(file.name))) {
+      setMessage("Envie somente arquivos JPEG. Nenhum arquivo foi registrado.");
+      input.value = "";
+      return;
+    }
     const folderName = folders.find((folder) => folder.id === folderId)?.name ?? "Pasta";
     function updateUpload(value: Omit<FolderUpload, "folderId" | "folderName">) {
       setUploads((current) => ({ ...current, [folderId]: { folderId, folderName, ...value } }));
@@ -667,9 +661,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ filename: file.name, storage_key: storageKey, ...(batchId ? { upload_batch_id: batchId } : {}) }),
             });
-            if (isRawFilename(file.name) && !rawCapabilities.enabled) throw new Error("O envio RAW está desabilitado nas configurações.");
-            if (isRawFilename(file.name) && !rawCapabilities.formats.includes(file.name.slice(file.name.lastIndexOf(".")).toLowerCase())) throw new Error("Este formato RAW não está habilitado pelo motor selecionado.");
-            await uploadPhotoSource(`/api/admin/photo-assets/${photo.id}/source`, file, () => updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name, waiting: true }),
+            await uploadJpeg(`/api/admin/photo-assets/${photo.id}/source`, file, () => updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name, waiting: true }),
               (loaded, total) => updateUpload({ phase: "uploading", current: index + 1, progress: index + loaded / Math.max(total, 1), total: files.length, filename: file.name }));
           } catch (error) {
             firstFailure ??= { error, file, index };
@@ -864,9 +856,9 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               <div className="gallery-customization-panels">
                 <fieldset className="gallery-customization-panel">
                   <legend>Capa e título</legend>
-                  <p>A capa é obrigatória para salvar esta etapa e concluir a galeria. Envie um JPEG ou, com o módulo ativo, um RAW compatível; capas devem ser horizontais.</p>
+                    <p>A capa é obrigatória para salvar esta etapa e concluir a galeria. Envie um JPEG; capas devem ser horizontais.</p>
                   {!coverReady ? <p className="gallery-scope-note" role="status">{coverRequiredMessage}</p> : null}
-                  <input ref={coverUploadInput} type="file" accept={rawCapabilities.enabled ? `image/jpeg,.jpg,.jpeg,${rawCapabilities.formats.join(",")}` : "image/jpeg"} hidden onChange={uploadCover} />
+                  <input ref={coverUploadInput} type="file" accept="image/jpeg,.jpg,.jpeg" hidden onChange={uploadCover} />
                   <MarkinaButton type="button" variant="secondary" onClick={() => coverUploadInput.current?.click()}>{currentCover ? "Substituir imagem de capa" : "Enviar imagem de capa"}</MarkinaButton>
                   {currentCover ? <div className={`cover-upload-current cover-upload-current--${currentCover.status}`} role="status"><strong>{currentCover.name}</strong><small>{currentCover.status === "ready" ? "Capa pronta para apresentação" : currentCover.status === "failed" ? currentCover.error ?? "O processamento falhou. Envie novamente esta capa ou escolha outro JPEG." : "Processando a capa"}</small></div> : <p className="gallery-scope-note">Nenhuma imagem de capa enviada ainda.</p>}
                   {detailsPollingError ? <div className="cover-upload-current cover-upload-current--failed" role="alert"><small>{detailsPollingError}</small><MarkinaButton type="button" variant="secondary" onClick={() => { setDetailsPollingError(""); setDetailsPollingRetry((value) => value + 1); }}>Atualizar estado da capa</MarkinaButton></div> : null}
@@ -901,8 +893,8 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           {selectedFolder ? (
             <div className="gallery-folder-workspace">
               <FolderProcessingPanel key={selectedFolder.id} folderId={selectedFolder.id} folderName={selectedFolder.name} uploading={uploads[selectedFolder.id]?.phase === "uploading"} />
-              {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione JPEGs ou RAWs compatíveis para iniciar o processamento." />}
-              <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept={rawCapabilities.enabled ? `image/jpeg,.jpg,.jpeg,${rawCapabilities.formats.join(",")}` : "image/jpeg"} multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload || uploading} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
+                {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione arquivos JPEG para iniciar o processamento." />}
+                <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg,.jpg,.jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload || uploading} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
             </div>
           ) : null}
         </section>

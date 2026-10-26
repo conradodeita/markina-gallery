@@ -27,7 +27,6 @@ from app.auth import (
 from app.facial.capacity import require_search_capacity
 from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
-from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_VERSION
 from app.facial.jobs import FacialJobRepository
 from app.facial.notifications import cancel_pending_search_notifications
 from app.facial.policy import activation_inventory, read_policy
@@ -181,8 +180,7 @@ def create_search_request(
     if reference_region_id:
         from app.facial.regions import authorized_region
         authorized_region(db, gallery_id=parent_gallery_id, client_id=client_id,
-                          region_id=reference_region_id, settings=settings,
-                          model_id=search_engine)
+                          region_id=reference_region_id, settings=settings)
 
     request_id = request_id or uuid4()
     if request_id.version != 4:
@@ -192,11 +190,7 @@ def create_search_request(
         request_id=request_id,
         parent_gallery_id=parent_gallery_id,
         client_id=client_id,
-        model_version=(
-            GEMMA_MODEL_VERSION
-            if search_engine == GEMMA_MODEL_ID
-            else policy.model_version
-        ),
+        model_version=policy.model_version,
         quality_version=policy.quality_version,
         search_engine=search_engine,
     )
@@ -270,7 +264,7 @@ def create_search_request(
         job_repository = repository or FacialJobRepository()
         job_repository.enqueue(
             db,
-            kind="search_gemma" if item.search_engine != "opencv-yunet-sface" else "search",
+            kind="search",
             tenant_id=item.tenant_id,
             idempotency_key=f"facial-search:{item.id}",
             parent_gallery_id=parent_gallery_id,
@@ -351,7 +345,7 @@ def _build_snapshot(
         select(FacialJob)
         .where(
             FacialJob.tenant_id == tenant_id,
-            FacialJob.kind == ("index_gemma" if search_engine != "opencv-yunet-sface" else "index"),
+            FacialJob.kind == "index",
             FacialJob.parent_gallery_id == parent_gallery_id,
             FacialJob.photo_asset_id.in_(photo_ids),
             FacialJob.model_version == model_version,

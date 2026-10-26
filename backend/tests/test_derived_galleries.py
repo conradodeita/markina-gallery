@@ -1908,6 +1908,13 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
         f"/admin/photo-assets/{photo_id}/source", content=b"not-a-jpeg", headers={"content-type": "image/jpeg"}
     )
     assert rejected.status_code == 422
+    rejected_raw = client.put(
+        f"/admin/photo-assets/{photo_id}/source",
+        content=b"synthetic-raw",
+        headers={"content-type": "application/octet-stream"},
+    )
+    assert rejected_raw.status_code == 415
+    assert rejected_raw.json()["detail"] == "Envie uma imagem JPEG."
 
     image = BytesIO()
     Image.new("RGB", (16, 16), color=(10, 20, 30)).save(image, format="JPEG")
