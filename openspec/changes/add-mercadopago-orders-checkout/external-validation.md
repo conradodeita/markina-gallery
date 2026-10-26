@@ -1,5 +1,40 @@
 # Validação externa — 24/10/2026
 
+## Retomada manual do piloto — 26/10/2026
+
+Sessão do proprietário no Chrome, cartão oficial de teste e envio final realizado pelo próprio proprietário. Nova compra `602b1681-6bdf-4b2c-a1e1-6536729e0c29`, 15 fotos da galeria Batizado do Benjamin, R$ 105,00, preparada enquanto `70980398-54e3-4923-ba35-70519f0e34ac` permanecia em processamento (20 fotos, R$ 1,00).
+
+Painel Developers em Teste confirmou order `ORDTST01M5WMD3CZPFBZ0J9NPXYVN8E3`, transação `PAY01M5WMD3DCPD9ZVM66MPBZSVDY`, ambas `processed/accredited`, total e pago 105.00, `live_mode:false`, referência externa exatamente igual à nova compra. Corpo de evento exibido: `order.processed`. Essa exibição não comprova, isoladamente, entrega/validação do webhook no servidor.
+
+Carrinho inicialmente mostrava as duas como em processamento; ao abrir Acompanhar pagamento, a nova compra passou a Pagamento confirmado. Compras confirmou 15 fotos/R$ 105,00 na nova, 20 fotos/R$ 1,00 ainda em processamento na antiga e carrinho zerado. Recusa anterior `8df6f53b` e aprovação `fdb74f6f` também permaneciam no histórico. Cenário manual de nova compra independente concluído, sem confirmação forçada ou edição da tentativa antiga. Não foi inspecionado o banco nesta retomada; o mecanismo exato da atualização (consulta ou webhook) não foi atribuído sem evidência adicional.
+
+Formulário oficial montou e aceitou dados de teste; a inspeção visual confirmou contraste inadequado em alguns campos no tema escuro. Esse defeito visual permanece pendente de correção. Não declarar encerrada toda a task visual 8.2.
+
+### Recusa e nova tentativa com as mesmas fotos
+
+Selecionadas BAT06972.jpg e BAT06973.jpg, total R$ 14,00. Tentativa `07bc4bbe-89a1-4fb5-b39e-a131718d7f9c` preenchida com FUND; proprietário enviou. Houve estado intermediário Verificando cartão e posterior Pagamento recusado; duas fotos retornaram ao carrinho e Tentar novamente ficou disponível.
+
+Na retomada, a tela já apresentava nova tentativa `3c6a741b-d3df-4b35-8744-07b326b8607d`, com as mesmas duas fotos/R$ 14,00. Executor preencheu APRO e não acionou Pagar. Durante a inspeção seguinte a página já retornou Pagamento confirmado. Compras confirmou a nova tentativa e preservou a anterior como recusada, ambas com seus próprios pedidos e R$ 14,00; carrinho zerado. `70980398` permaneceu em processamento e `602b1681` confirmada.
+
+Após o proprietário concluir a verificação de identidade exigida pelo Mercado Pago, o painel Developers em Teste confirmou as duas referências externas:
+
+- Recusa `07bc4bbe`: order `ORDTST01M5WN1M77YB7P0XTNMK1WA9Z8` em `failed/failed`, transação `PAY01M5WN1M7QTQTPZZHJ0GA475H1` em `failed/insufficient_amount`; evento exibido `order.failed`, total 14.00 e `live_mode:false`.
+- Aprovação `3c6a741b`: order `ORDTST01M5WP296F24W1XNFQB3JAQ1G8` e transação `PAY01M5WP296WQPVYEE00S87WT8ZK` em `processed/accredited`; evento exibido `order.processed`, total/pago 14.00 e `live_mode:false`.
+
+Referências externas são exatamente os UUIDs internos acima. A lista apresentou uma order para cada tentativa nesta sequência; apenas a segunda está aprovada. A consulta é evidência independente no provedor, sem auditoria direta de banco nem prova isolada de entrega/validação da assinatura de webhook pelo backend. O corpo simulado da recusa também trouxe campos de valor pago preenchidos, apesar do estado failed; não foram interpretados como pagamento aprovado.
+
+### Abandono preparado, redução da seleção e carrinho vazio
+
+Na sessão autorizada do cliente, selecionadas BAT06976.jpg e BAT06977.jpg, R$ 14,00. Checkout preparado `1b67cecf`, sem preencher cartão nem clicar Pagar. Voltar ao carrinho preservou duas fotos/R$ 14,00. Remover BAT06977.jpg reduziu contador/total para uma foto/R$ 7,00; reabrir checkout mostrou nova referência `0ccbf0e7` e uma foto/R$ 7,00.
+
+### Retomada após recarga, ampliação e consulta de tentativas antigas
+
+Reabrir diretamente a compra confirmada `602b1681` mostrou 15 fotos/R$ 105,00 e Pagamento confirmado, sem formulário de pagamento. Recarregar o checkout da `70980398` preservou 20 fotos/R$ 1,00 em processamento, com Atualizar pagamento e sem formulário de envio. Evidência de UI; não foi disparado reenvio nem auditada a rede/banco nessa etapa.
+
+Nova seleção somente BAT06976.jpg gerou preparação `a69694bf`, uma foto/R$ 7,00. Recarregar a página manteve exatamente essa referência e total. Voltar ao carrinho, adicionar BAT06977.jpg e preparar novamente gerou `64b88461`, duas fotos/R$ 14,00. Nenhum preenchimento de cartão ou envio foi efetuado nesta sequência. Isso conclui os três cenários manuais adicionais anunciados (recarga de preparação, adição após preparo e reabertura de tentativas antigas enviadas), sem declarar teste financeiro completo ou encerramento dos problemas visuais pendentes.
+
+Encerrar checkout da preparação `0ccbf0e7` apresentou Checkout encerrado e informou seleção preservada. Retorno ao carrinho confirmou BAT06976.jpg/R$ 7,00. Remover a última foto mostrou Carrinho (0), vazio e sem CTA de novo pagamento. Acesso direto a `/library/checkout` retomou a tentativa já enviada `70980398`, 20 fotos/R$ 1,00 em processamento, com Atualizar pagamento e sem formulário para nova cobrança; não tratá-lo como criação de checkout vazio. Nenhum dado de cartão, geração de PIX ou envio de pagamento foi acionado nesta sequência. Escopo de evidência: comportamento de UI autenticada, sem inspeção direta de banco/API do provedor para essas preparações.
+
 ## Escopo autorizado
 
 O proprietário forneceu arquivo fora do Git com credenciais do ambiente Teste e autorizou todos os testes possíveis em desenvolvimento, inclusive cartão oficial de teste. A credencial foi lida sem imprimir valores; `/users/me` confirmou `MLB` e `test_user`. Gate de pagamentos reais permaneceu fechado. Não houve acesso à Oracle, alteração de dados de clientes, migration operacional ou deploy.
