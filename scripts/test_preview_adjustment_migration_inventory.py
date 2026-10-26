@@ -4,6 +4,7 @@ import copy
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preview_adjustment_migration_inventory import (  # noqa: E402
@@ -54,6 +55,56 @@ def valid_inventory():
 
 
 class PreviewMigrationInventoryTests(unittest.TestCase):
+    def test_candidate_chain_fetches_pinned_migration_and_rejects_divergence(self):
+        from preview_adjustment_migration_inventory import Host, InventoryError, MIGRATION
+
+        class Response:
+            def __init__(self, url, content):
+                self.url, self.content = url, content
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def geturl(self):
+                return self.url
+
+            def read(self, _size):
+                return self.content
+
+        comparison = ('{"status":"ahead","base_commit":{"sha":"' + TARGET_SHA
+                      + '"},"merge_base_commit":{"sha":"' + TARGET_SHA + '"}}').encode()
+        source = b'revision = "20261026_0090"\ndown_revision = "20261025_0089"\n'
+        urls = []
+
+        def fetch(request, timeout):
+            url = request.full_url if hasattr(request, 'full_url') else request
+            urls.append(url)
+            return Response(url, comparison if 'api.github.com' in url else source)
+
+        with patch('preview_adjustment_migration_inventory.urlopen', side_effect=fetch):
+            self.assertEqual(Host().candidate_commit_chain('a' * 40), source.decode())
+        self.assertTrue(urls[1].endswith('/' + TARGET_SHA + '/' + MIGRATION))
+        source = b'revision = "20261026_0090"\ndown_revision = "wrong"\n'
+        with patch('preview_adjustment_migration_inventory.urlopen', side_effect=fetch):
+            with self.assertRaisesRegex(InventoryError, 'cadeia_migration_alvo_divergente'):
+                Host().candidate_commit_chain('a' * 40)
+
+    def test_duplicate_diagnostic_is_fail_closed_and_never_prints_raw_unknown_values(self):
+        from preview_adjustment_migration_inventory import InventoryError, validate_service_identity
+
+        validate_service_identity('api', {}, 'running')
+        with self.assertRaisesRegex(InventoryError, 'servico=api;contagem_ao_menos=2;estados=running,exited'):
+            validate_service_identity('api', {'api': {'status': 'running'}}, 'exited')
+        with self.assertRaisesRegex(InventoryError, 'servico=ausente'):
+            validate_service_identity(None, {}, 'running')
+        with self.assertRaises(InventoryError) as error:
+            validate_service_identity('sensitive-label', {'sensitive-label': {'status': 'secret'}}, 'secret')
+        self.assertEqual(str(error.exception), 'servico_markina_duplicado;servico=desconhecido;'
+                         'contagem_ao_menos=2;estados=desconhecido,desconhecido')
+
     def test_complete_minimized_inventory_has_deterministic_fingerprint(self):
         data = valid_inventory()
         ready, reason, fingerprint = validate_inventory(data)

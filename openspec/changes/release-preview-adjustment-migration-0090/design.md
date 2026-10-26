@@ -14,6 +14,10 @@ O release API/web padrão recusa migrations e permanece inalterado. A nova opera
 
 ## Decisions
 
+**Diagnóstico da falha real #916:** a listagem inclui containers Markina parados, mas a validação aborta sem identificar a duplicidade ou nome ausente. Acrescentar ao erro somente nome de serviço reconhecido no Compose, estados Docker e contagem; não expor ambientes, IDs, comandos ou dados de clientes. Preservar a recusa e a inspeção de todos os containers, sem ignorar duplicidades. Atualizar os dois pins do inventário e reinstalar o wrapper por meio protegido antes de repetir o preflight; a alteração não autoriza deploy nem limpeza.
+
+O mesmo inventário referencia `MIGRATION` sem definição na verificação da cadeia candidata. Definir o caminho da migration fixa 0090 e testar a busca da cadeia com respostas sintéticas, incluindo recusa de revisão divergente, sem usar rede ou alterar dados.
+
 1. **Operação exclusiva por SHA e revisão.** O workflow terá operações manuais separadas para instalação do wrapper read-only, `preflight` e `release`, somente em `main`. O alvo de runtime é `0dd015a62447e0c8d4c6af16b381140c8118f2ec`. A execução #899 passou para `db839cc67cd55595c8571ab66ef8fc51286bdde1`, mas não representa o alvo. O run `40384426091`/#901 para o candidato concluiu `success`; a allowlist foi conferida localmente contra esse SHA e CI. O diff desde `c194418...` corresponde às alterações revisadas das PRs #295/#297 e à migration única `20261026_0090`. Nenhuma outra mudança é admitida.
 
 2. **Preflight fail-closed.** O preflight, por chave restrita somente-leitura, confirma SHA/runtime, schema exato `20261025_0089`, chain Alembic até `20261026_0090`, checkout limpo, serviços/saúde, Compose efetivo, overlays ativos, portas, domínio e disponibilidade/recibo de backup. Gera fingerprint sanitizado que inclui o alvo e todo estado que afeta a operação. Divergência, coleta incompleta, backup não restaurável ou wrapper sem pin aprovado interrompe antes de qualquer mutação.
