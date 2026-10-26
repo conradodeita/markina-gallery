@@ -43,6 +43,10 @@ O job não recebe a credencial mutável de deploy e não pode iniciar `prepare`,
 
 Em 25/10/2026, após a autorização de continuidade e o CI do PR #289, a cópia foi instalada atomicamente a partir de `5b9600f6`, SHA-256 `98514bc5c7712637b69c1c6b3219f6704c78b2bffd6310f872f15020f97c2733`, `root:root 0755`, com backup em `/var/backups/markina-gallery/preflight-ssh-wrapper-20261025T235604Z-pr289`. A chave dedicada recusou comando arbitrário. O helper histórico recusou `checkout_divergente`: o piloto já está em `9bd66c48`/0088 e possui registros Orders. O procedimento atualizado exige essa identidade e seu overlay, preserva as tentativas existentes e prepara somente 0088→0089. O novo pin do helper ainda precisa de revisão/CI e atualização autorizada da cópia root-owned; não há inventário Orders válido nem migration 0089 aplicada nesta etapa. Ver `openspec/changes/add-mercadopago-orders-checkout/release-plan.md`.
 
+## Estado após o piloto Orders 0089
+
+**Estado operacional posterior:** o piloto Orders foi atualizado para `f9091a7b`/schema `20261025_0089` em 26/10/2026, após CI `40251917299`, inventário restrito e backup restaurado. Wrapper atual SHA-256 `70573e11c190801069e007182fba1c9725c6b2817487b0107c14124ec71b45a0`, helper pin `13371d50abfdeedbe02408546a685277b3e7f042`. A publicação está documentada em `openspec/changes/add-mercadopago-orders-checkout/release-plan.md`. Os preflights abaixo e o helper pontual de baseline 0088 são históricos para esse estado: não reexecutá-los como se a migration estivesse pendente, nem afrouxar seus gates para outro release.
+
 ## Preflight específico da aposentadoria InfinitePay
 
 A operação manual `infinitepay-retirement` usa a mesma chave SSH restrita de `production-preflight`. O wrapper versionado reconhece somente `MARKINA_RETIREMENT_TARGET_SHA=<SHA completo>` e baixa `scripts/deploy-prod-infinitepay-retirement.sh` pelo SHA da `main`, comparando o blob imutável antes de executar apenas `--mode inventory`. O inventário é minimizado e não imprime configuração Compose, conteúdo do binding ou valores de segredo.

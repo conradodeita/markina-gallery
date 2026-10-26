@@ -108,3 +108,25 @@ A preparação SHALL ensaiar a migration sobre o backup atual com as quatro tabe
 #### Scenario: Pagamento anterior em processamento
 - **WHEN** a atualização encontra tentativas Orders pendentes, aprovadas ou recusadas
 - **THEN** ela preserva integralmente os registros, IDs, snapshots e estados; a migration altera somente a unicidade de tentativas ativas por revisão e a conciliação retoma com o novo worker
+
+### Requirement: Validação proporcional do piloto sandbox
+O piloto restrito ao cliente do proprietário SHALL usar validação proporcional: CI aplicável, checks focados no delta, preservação/recuperação da migration e smoke de publicação. Baterias rígidas adicionais, ampliação opcional de suíte e repetição sem mudança relevante SHALL NOT bloquear o deploy. Evidências ainda válidas MAY ser reaproveitadas. O acompanhamento manual do proprietário SHALL ser aceito para os cenários visuais/funcionais do sandbox.
+
+#### Scenario: Componente inalterado e evidência válida
+- **WHEN** não há mudança relevante no componente, dependência ou contrato já validado
+- **THEN** o executor reaproveita as evidências aplicáveis e não inicia outra bateria integral, teste de carga, calibração ou ensaio opcional para condicionar a publicação do piloto
+
+#### Scenario: Alteração de índice sobre tentativas existentes
+- **WHEN** a atualização aplica 0089 ao piloto 0088
+- **THEN** a validação essencial comprova backup recuperável, preservação das tentativas/referências e saúde/isolamento após a publicação, sem exigir uma nova homologação separada ou testes de cobranças reais
+
+### Requirement: Continuidade e rapidez da publicação autorizada
+O executor SHALL consolidar correções relacionadas no candidato atual e priorizar o deploy após seus gates essenciais. SHALL NOT criar sucessivas rodadas de push/CI apenas por testes opcionais ou atualização documental. Enquanto houver CI pendente, SHALL acompanhar a cada 30 minutos. A autorização explícita de merge e deploy deste piloto SHALL persistir durante a ausência do proprietário, sem nova confirmação do mesmo escopo.
+
+#### Scenario: CI pendente durante ausência do proprietário
+- **WHEN** o proprietário deixa autorizado merge/deploy e pede acompanhamento agendado
+- **THEN** o executor verifica o CI a cada 30 minutos, continua após sucesso e informa conclusão ou impedimento real; não encerra a missão apenas porque está esperando o CI nem repete mensagens sem mudança
+
+#### Scenario: Preparação recuperável e candidato aprovado
+- **WHEN** o CI aplicável passa e o inventário/backup/plano de recuperação estão conferidos
+- **THEN** o executor apresenta o inventário, portas/serviços e plano na conversa e aplica a atualização já autorizada, mantendo Mercado Pago sandbox, cobranças reais bloqueadas e o mesmo cliente permitido
