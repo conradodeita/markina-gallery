@@ -8,17 +8,18 @@
 
 ## 2. Integração protegida
 
-- [ ] 2.1 Adicionar operações manuais separadas de preflight e release no workflow, com credenciais distintas, proteção `production`, CI completo, SHA/fingerprint exatos e sem disparo em PR; validar política para nenhum job mutável fora da operação aprovada. Implementação e teste da política passaram; o CI desta change ainda é necessário.
-- [ ] 2.2 Atualizar o wrapper root-owned via contrato versionado e pin de blob do helper exato, preservando chave restrita; testar recusa de shell/comandos arbitrários e registrar procedimento de instalação/conferência no runbook. Código/pin versionados, simulação da chave restrita e runbook implementados; a cópia root-owned ainda depende da integração e instalação operacional da task 4.1.
+- [ ] 2.1 Adicionar operações manuais separadas de instalação do wrapper, preflight e release no workflow, com credenciais distintas, proteção `production`, CI completo, SHA/fingerprint exatos e sem disparo em PR; validar política para nenhum job mutável fora da operação aprovada. A parte de preflight/release passou na PR #298 (`5ce3267...`, run #40390178204); a operação de instalação do wrapper está no follow-up e ainda aguarda CI.
+- [ ] 2.2 Atualizar o wrapper root-owned via contrato versionado e pin de blob do helper exato, preservando chave restrita; testar recusa de shell/comandos arbitrários e registrar procedimento de instalação/conferência no runbook. O código/pin e testes read-only passaram; a cópia root-owned aguarda operação protegida manual após CI da main.
 - [x] 2.3 Atualizar runbook e evidências para o runtime `c194418...`, schema `0089`, candidato `0dd015a...`, inclusão revisada das PRs #295/#297, impactos, backup e recuperação; validar que não há segredos ou dados de cliente. Evidência: runbook dedicado e atualização do procedimento do wrapper; revisão textual de escopo, sem segredos nem payloads de cliente.
 
 ## 3. Validação e revisão
 
 - [ ] 3.1 Executar testes direcionados dos scripts, gates, backup/restore isolado e cenários de falha; corrigir regressões e registrar resultados reproduzíveis. Testes focais e policy passaram; a suíte completa `scripts.test_prod_release_state` ficou bloqueada no harness de RPC Bash no Windows (processos de teste suspensos sem tráfego RPC). Repetir no runner Linux/CI; nenhuma operação de backup ou restore real foi feita.
-- [ ] 3.2 Obter CI verde para o SHA da change, revisar diff e validar OpenSpec em modo estrito e `git diff --check`.
+- [ ] 3.2 Obter CI verde para o SHA da change, revisar diff e validar OpenSpec em modo estrito e `git diff --check`. CI PR #298 passou, merge `b00ef246236a9ad547cc6f734ae8bbb0473557b1` integrado; CI push/main #40396662987 ainda estava em andamento.
 
 ## 4. Publicação protegida
 
-- [ ] 4.1 Integrar o fluxo após PR revisada e CI verde; instalar e conferir a atualização root-owned do wrapper segundo o runbook, sem ampliar a chave SSH.
-- [ ] 4.2 Executar apenas o preflight read-only no host e registrar serviços, schema, portas, domínio, backup e fingerprint; apresentar o plano de impacto zero e aguardar aprovação do fingerprint exato.
-- [ ] 4.3 Após aprovação explícita do inventário atual, executar o release; validar schema `20261026_0090`, runtimes, healthchecks, smoke HTTPS e preservação dos serviços de terceiros antes de registrar conclusão.
+- [x] 4.1 Integrar o fluxo após PR revisada e CI verde. Evidência: PR #298 integrada em `b00ef246236a9ad547cc6f734ae8bbb0473557b1` após todos os checks exigidos passarem.
+- [ ] 4.2 Executar a operação manual protegida de instalação do wrapper, conferir `root:root 0755`, backup, SHA/blob e recusa de shell; não ampliar a chave SSH nem reiniciar serviços.
+- [ ] 4.3 Executar apenas o preflight read-only no host e registrar serviços, schema, portas, domínio, backup e fingerprint; apresentar o plano de impacto zero e aguardar aprovação do fingerprint exato.
+- [ ] 4.4 Após aprovação explícita do inventário atual, executar o release; validar schema `20261026_0090`, runtimes, healthchecks, smoke HTTPS e preservação dos serviços de terceiros antes de registrar conclusão.

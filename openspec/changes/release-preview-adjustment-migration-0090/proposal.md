@@ -6,7 +6,7 @@ A PR #296 já integrou o limite de intensidade de prévias até 100% e a migrati
 
 ## What Changes
 
-- Criar operações manuais distintas para inventário somente-leitura e release protegido, limitadas à migration `20261026_0090` e ao avanço validado de `20261025_0089`.
+- Criar operações manuais distintas para instalação do wrapper read-only, inventário e release protegido, limitadas ao fluxo da migration `20261026_0090` e ao avanço validado de `20261025_0089`.
 - Fixar como candidato de aplicação o SHA integrado `0dd015a62447e0c8d4c6af16b381140c8118f2ec`, que inclui a melhoria de prévias e as alterações revisadas das PRs #295 e #297. O CI do push à `main` para esse SHA ainda deve estar concluído com sucesso antes do release. O preflight SHALL confirmar o runtime `c1944189761799be96eeeb921cad9906484d8b09` e schema `20261025_0089` ou falhar fechado.
 - Exigir SHA completo integrado na `main`, CI verde, fingerprint do estado observado e aprovação humana vinculada ao inventário exato antes de qualquer mutação.
 - Verificar backup restaurável, identidade/saúde do projeto Markina, schema de origem, alvo e escopo exato; interromper somente os escritores Markina necessários, executar a migration aprovada e iniciar os runtimes compatíveis.

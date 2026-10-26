@@ -14,7 +14,7 @@ O release API/web padrão recusa migrations e permanece inalterado. A nova opera
 
 ## Decisions
 
-1. **Operação exclusiva por SHA e revisão.** O workflow terá operações manuais separadas de `preflight` e `release`, somente em `main`. O alvo de runtime é `0dd015a62447e0c8d4c6af16b381140c8118f2ec`. A execução #899 passou para `db839cc67cd55595c8571ab66ef8fc51286bdde1`, mas não representa o alvo. O run `40384426091`/#901 para o candidato concluiu `success`; a allowlist foi conferida localmente contra esse SHA e CI. O diff desde `c194418...` corresponde às alterações revisadas das PRs #295/#297 e à migration única `20261026_0090`. Nenhuma outra mudança é admitida.
+1. **Operação exclusiva por SHA e revisão.** O workflow terá operações manuais separadas para instalação do wrapper read-only, `preflight` e `release`, somente em `main`. O alvo de runtime é `0dd015a62447e0c8d4c6af16b381140c8118f2ec`. A execução #899 passou para `db839cc67cd55595c8571ab66ef8fc51286bdde1`, mas não representa o alvo. O run `40384426091`/#901 para o candidato concluiu `success`; a allowlist foi conferida localmente contra esse SHA e CI. O diff desde `c194418...` corresponde às alterações revisadas das PRs #295/#297 e à migration única `20261026_0090`. Nenhuma outra mudança é admitida.
 
 2. **Preflight fail-closed.** O preflight, por chave restrita somente-leitura, confirma SHA/runtime, schema exato `20261025_0089`, chain Alembic até `20261026_0090`, checkout limpo, serviços/saúde, Compose efetivo, overlays ativos, portas, domínio e disponibilidade/recibo de backup. Gera fingerprint sanitizado que inclui o alvo e todo estado que afeta a operação. Divergência, coleta incompleta, backup não restaurável ou wrapper sem pin aprovado interrompe antes de qualquer mutação.
 
@@ -24,7 +24,7 @@ O release API/web padrão recusa migrations e permanece inalterado. A nova opera
 
 5. **Compatibilidade e recuperação.** A migração apenas amplia CHECK constraints e preserva linhas. Se falhar antes de DDL, restaurar checkout/serviços anteriores. Se falhar depois de DDL, manter o schema `0090`, preservar backup e fechar o tráfego; o runtime anterior é compatível com as constraints ampliadas e pode ser retomado após verificação, sem downgrade ou restauração de dados automáticos. Qualquer restauração de banco é outra operação explicitamente aprovada.
 
-6. **Wrapper root-owned.** O wrapper SSH instalado no host reconhecerá apenas os comandos fixos deste preflight, com blob/hash revisado e pinado; a instalação será um passo operacional separado, verificando `root:root`, modo `0755`, preservando backup anterior e recusando shell/comandos arbitrários. Nenhum segredo ou conteúdo de Compose resolvido será registrado.
+6. **Wrapper root-owned.** Uma operação manual dedicada no environment `production` instala somente o wrapper versionado pelo SHA/blob de suporte, preserva backup e confirma `root:root 0755`; não altera `authorized_keys`, serviços, banco nem runtime. O wrapper SSH instalado no host reconhecerá somente os comandos fixos de inventário, com blob/hash revisado e pinado, e continuará recusando shell/comandos arbitrários. Nenhum segredo ou conteúdo de Compose resolvido será registrado.
 
 ## Risks / Trade-offs
 
