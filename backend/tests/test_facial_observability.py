@@ -284,7 +284,7 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
     FACIAL_ADMISSION_COUNTER.record("accepted")
     with TestClient(app) as client:
         assert client.get("/admin/facial-observability").status_code == 403
-        assert client.get("/admin/facial-engine-experiment").status_code == 403
+        assert client.get("/admin/facial-engine-experiment").status_code == 404
         anonymous_capacity = client.get("/admin/capacity-observability")
         assert anonymous_capacity.status_code == 403
         assert anonymous_capacity.headers["cache-control"] == "no-store"
@@ -313,21 +313,19 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
             "/admin/facial-observability", params={"expected_enabled": "false"}
         )
         experiment_response = client.get("/admin/facial-engine-experiment")
-        assert experiment_response.status_code == 200
-        assert experiment_response.json()["serving_engine"] == "opencv-yunet-sface"
-        assert experiment_response.json()["backfill_enabled"] is False
+        assert experiment_response.status_code == 404
         experiment_enable_response = client.patch(
             "/admin/facial-engine-experiment",
             json={"enabled": True},
             headers={"Origin": "http://testserver"},
         )
-        assert experiment_enable_response.status_code == 409
+        assert experiment_enable_response.status_code == 404
         experiment_disable_response = client.patch(
             "/admin/facial-engine-experiment",
             json={"enabled": False},
             headers={"Origin": "http://testserver"},
         )
-        assert experiment_disable_response.status_code == 200
+        assert experiment_disable_response.status_code == 404
         capacity_response = client.get("/admin/capacity-observability")
         client.cookies.set("markina_session", client_cookie)
         client_role_capacity_response = client.get("/admin/capacity-observability")
@@ -356,7 +354,7 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
     assert revoked_capacity_response.headers["cache-control"] == "no-store"
     assert capacity_response.headers["cache-control"] == "no-store"
     assert client_role_capacity_response.status_code == 403
-    assert client_role_experiment_response.status_code == 403
+    assert client_role_experiment_response.status_code == 404
     assert client_role_capacity_response.headers["cache-control"] == "no-store"
     capacity_payload = capacity_response.json()
     assert len(capacity_payload["queues"]) == 5

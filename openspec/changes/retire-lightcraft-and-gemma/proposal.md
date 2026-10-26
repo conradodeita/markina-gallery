@@ -26,3 +26,7 @@ LightCraft não atingiu a qualidade esperada e Gemma não trouxe benefício sufi
 ## Impact
 
 Backend FastAPI/SQLAlchemy e migrations futuras, workers de mídia/faciais, Dockerfiles e Compose, Nginx, frontend administrativo e seleção de arquivos, CI, documentação do roadmap e inventário de terceiros. O schema implantado informado pelo proprietário é 0089; o `origin/main` atualizado também tem head Alembic 0089. A remoção manterá essa compatibilidade sem migration destrutiva. RawTherapee será atualizado apenas no worker opcional de ajuste de prévias.
+
+## Operational authorization
+
+Em 26/10/2026, o proprietário autorizou explicitamente a correção até merge e deploy bem-sucedido. Essa autorização amplia o escopo operacional anterior, condicionada a CI verde, inventário atual, preservação do schema/dados, plano de impacto zero, validação e recuperação compatível. Não autoriza excluir imagens, volumes, histórico biométrico ou dados de clientes. O procedimento será registrado em `deployment.md` antes de qualquer mutação remota.

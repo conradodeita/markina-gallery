@@ -564,6 +564,63 @@ class PhotoAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class RawDevelopmentSettings(Base):
+    """ConfiguraÃ§Ã£o RAW isolada por fotÃ³grafo/tenant."""
+
+    __tablename__ = "raw_development_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1"),
+        CheckConstraint("selected_engine IN ('rawtherapee', 'lightcraft')"),
+        CheckConstraint("release_check_status IN ('unknown', 'ok', 'unavailable')"),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id", ondelete="CASCADE"), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    selected_engine: Mapped[str] = mapped_column(String(16), default="lightcraft")
+    lightcraft_latest_stable_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lightcraft_latest_stable_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    lightcraft_latest_stable_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_release_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    release_check_status: Mapped[str] = mapped_column(String(16), default="unknown", server_default="unknown")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class RawDevelopmentJob(Base):
+    """Estado e proveniÃªncia mÃ­nima de uma conversÃ£o transitÃ³ria por tenant."""
+
+    __tablename__ = "raw_development_job"
+    __table_args__ = (
+        CheckConstraint("status IN ('receiving', 'queued', 'processing', 'ready', 'failed', 'reupload_required')"),
+        CheckConstraint("engine IN ('rawtherapee', 'lightcraft')"),
+        CheckConstraint("attempts >= 0"),
+        CheckConstraint("input_bytes > 0"),
+        CheckConstraint("width IS NULL OR width > 0"),
+        CheckConstraint("height IS NULL OR height > 0"),
+        ForeignKeyConstraint(["photo_asset_id", "tenant_id"], ["photo_asset.id", "photo_asset.tenant_id"],
+                             ondelete="CASCADE", name="fk_raw_development_photo_tenant"),
+        Index("ix_raw_development_queue", "tenant_id", "status", "updated_at"),
+    )
+    photo_asset_id: Mapped[UUID] = mapped_column(primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id", ondelete="CASCADE"), primary_key=True)
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    input_bytes: Mapped[int] = mapped_column(Integer)
+    source_format: Mapped[str] = mapped_column(String(8))
+    camera_make: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    camera_model: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    staging_key: Mapped[str] = mapped_column(String(96), unique=True)
+    engine: Mapped[str] = mapped_column(String(16))
+    engine_version: Mapped[str] = mapped_column(String(64))
+    profile_version: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class PhotoFolder(Base):
     """Lote público ou privado preparado pelo fotógrafo."""
 

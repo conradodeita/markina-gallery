@@ -7,7 +7,7 @@
 
 ## 2. Encerrar admissão e processamento RAW
 
-- [x] 2.1 Remover rotas, validação, modelos e ramificações de upload RAW e manter o contrato JPEG; regressão backend `test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state` passou (1 teste), cobrindo 415 para conteúdo não JPEG e caminho JPEG. Vitest dos arquivos de upload/editor/monitor passou (89 testes).
+- [x] 2.1 Remover rotas, validação e ramificações de upload RAW, preservar somente os mapeamentos históricos exigidos pelo schema e manter o contrato JPEG; regressão backend `test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state` passou (1 teste), cobrindo 415 para conteúdo não JPEG e caminho JPEG. Vitest dos arquivos de upload/editor/monitor passou (89 testes).
 - [x] 2.2 Remover UI/seleção RAW, worker, adaptadores, Dockerfile, override Compose, configuração Nginx e testes exclusivos; `docker compose -p markina-gallery -f docker/docker-compose.yml config --quiet` passou. Overrides/rotas/worker e limites específicos foram removidos. Referências remanescentes são guardas/inventário de runtime legado ou preservação de dados e estão documentadas; migrations e arquivos não foram apagados.
 
 ## 3. Aposentar EmbeddingGemma
@@ -26,7 +26,7 @@
 - [x] 5.1 Atualizar roadmap, instruções e documentação de operação para registrar JPEG-only, SFace-only e RawTherapee 5.13; inventários/runbooks históricos agora estão identificados como snapshots e os guardas/dados legados têm finalidade documentada.
 - [x] 5.2 Regressões focadas, lint, typecheck e build locais: facial 56 testes; teste de upload backend 1; Vitest completo 550 testes/64 arquivos; ESLint sem erros; `next build` com TypeScript passou; Compose principal passou. `npx -y @fission-ai/openspec@1.14.0 validate --strict --all` (versão do CI) passou 140/140. A versão local 1.14.1 sinalizou 31 warnings antigos como falhas; CI usa 1.14.0. Builds do worker em ambas as arquiteturas aguardam o job runtime-images.
 - [x] 5.3 Revisar diff e busca residual: não há provider, endpoints, UI, dependências ou serviços executáveis RAW/Gemma. Referências remanescentes estão restritas a constraints/ORM e migrations históricas, inventário/limpeza de staging, guardas que bloqueiam runtime legado e runbooks snapshots. O checkout original continua com os mesmos 160 itens sujos e não foi alterado; `git diff --check`, `compileall` e busca residual foram concluídos.
-- [ ] 5.4 Após validação local, criar commit e push da branch desta change, abrir PR e conferir CI a cada 30 minutos até os checks exigidos terminarem; não fazer merge ou deploy.
+- [ ] 5.4 Após validação local, criar commit e push da branch desta change, abrir PR e conferir CI a cada 30 minutos até os checks exigidos terminarem; merge/deploy seguem os gates da etapa 6, autorizada posteriormente pelo proprietário.
 
 ## Workflow follow-up
 
@@ -42,3 +42,16 @@
 - Antes de release, atualizar o inventário remoto de schema, ambiente, serviços/imagens ativos, filas/jobs RAW/Gemma, embeddings e volumes staging. A observação de 19/10 é histórica e o schema 0089 informado pelo proprietário não comprova estado de containers.
 - Parada/recriação de workers, limpeza de imagens, exclusão de dados/volumes, migration ou deploy exigem plano de impacto zero e autorização operacional específica. Manter a change não arquivada até revisão humana e reconciliação do inventário de runtime.
 - Após CI verde e revisão humana, sincronizar as specs principais e arquivar a change pelo fluxo OpenSpec.
+
+### Regressão completa do SHA 4ae2c4ac
+
+- CI `40321202251`: 1.557 passes, 23 skips e 17 falhas. Dezesseis falhas decorrem da retirada dos mapeamentos históricos RAW, ainda classificados nos inventários/guardas de manutenção do schema 0089. Preservar essas declarações estruturais sem reintroduzir execução RAW, conforme decisão 2 do design. A outra falha está no teste do endpoint Gemma já aposentado; atualizar expectativas para 404, mantendo as garantias de autenticação e agregação dos endpoints ativos. Validação focada e novo CI pendentes.
+
+## 6. Release autorizado pelo proprietário em 26/10/2026
+
+- [ ] 6.1 Revalidar inventário remoto: SHA, schema, imagens, serviços, portas, ambiente, filas RAW/Gemma e demais writers, modelos/dados históricos e capacidade; registrar evidências sanitizadas em deployment.md.
+- [ ] 6.2 Apresentar e concluir o plano de impacto zero e recuperação para o runtime especializado, preservando imagens saudáveis, dados, filas, credenciais e projetos vizinhos; validar candidatas antes da troca.
+- [ ] 6.3 Confirmar CI verde da revisão final, fazer merge da PR #292 e publicar a revisão autorizada pelo procedimento inventariado. Não executar migrations nem limpeza de dados/imagens/volumes.
+- [ ] 6.4 Confirmar imagens/versões ativas, schema 0089, saúde, contratos HTTPS, integridade e continuidade; atualizar evidência, rollback e pendências.
+
+Validação da correção 4ae2c4ac: 60 testes focados passaram em Python 3.13 com PostgreSQL 17 temporário isolado, 2 skips condicionais, em 225,06 s; cobre todas as 17 falhas observadas. Lint completo de backend e OpenSpec estrito da change passaram.
