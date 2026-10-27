@@ -12,6 +12,7 @@ A PR #296 já integrou o limite de intensidade de prévias até 100% e a migrati
 - Verificar backup restaurável, identidade/saúde do projeto Markina, schema de origem, alvo e escopo exato; interromper somente os escritores Markina necessários, executar a migration aprovada e iniciar os runtimes compatíveis.
 - Validar schema, saúde e smoke tests após a operação, preservar evidências e não executar downgrade/restauração automática após o início da migration.
 - Manter o release API/web comum recusando migrations e não alterar serviços, dados ou infraestrutura de terceiros.
+- Reconciliar históricos encerrados fora dos alvos Compose com identidade no fingerprint e verificações de preservação antes/depois das operações, mediante prova real do Compose 2.35.1 em runner descartável; manter recusa de duplicidade ativa e de históricos selecionáveis.
 
 ## Capabilities
 

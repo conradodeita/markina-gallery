@@ -40,6 +40,8 @@ O run 40438693708 mostrou três web e três api parados, mas o resumo não disti
 
 ## Risks / Trade-offs
 
+Reconciliação aprovada no escopo da retomada de 2026-10-27: preservar todos os containers existentes, sem limpeza. O guard passa a distinguir ativos de históricos encerrados; mantém recusa de duplicidade ativa e de histórico API/web com config-hash presente. A fonte Docker Compose v2.35.1 usa presença de config-hash na listagem padrão (`pkg/compose/containers.go`); a proteção exige também ensaio real isolado de `run`/`up`, versão exata e `COMPOSE_REMOVE_ORPHANS=false`/`COMPOSE_IGNORE_ORPHANS=true` no ambiente dos subprocessos. Os três outros históricos são preservados como objetos fora dos alvos explícitos, mesmo quando seus nomes não são conhecidos pelo produto. Seus metadados completos relevantes são reduzidos a SHA-256, vinculados ao fingerprint e comparados sob lock antes e depois das mutações. Isso não comprova origem nem descartabilidade e não permite excluir volumes/dados. Nenhuma refatoração fora do executor/inventário é necessária.
+
 - **Base ativa mudou desde o registro:** o fingerprint e as exigências de SHA/schema abortam antes de construir ou mutar; renovar inventário e plano em vez de atualizar pins presumidamente.
 - **Migration começou e falhou:** preservar DDL e tráfego fechado; não fazer downgrade nem `pg_restore` automático; exigir diagnóstico e aprovação específica de recuperação.
 - **Worker ativo ou job em andamento:** aguardar parada graciosa e preservar fila; timeout, processo ainda terminando ou identidade divergente aborta antes da migration.

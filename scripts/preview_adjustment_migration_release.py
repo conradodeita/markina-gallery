@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from preview_adjustment_migration_inventory import (
-    BASE_SCHEMA, PROJECT, ROOT, STATE, TARGET_SCHEMA, TARGET_SHA,
-    Host as InventoryHost, InventoryError, canonical_fingerprint, require, validate_inventory,
+    BACKUPS, BASE_SCHEMA, COMPOSE_VERSION, PROJECT, ROOT, STATE, TARGET_SCHEMA, TARGET_SHA,
+    Host as InventoryHost, InventoryError, historical_identity, require, validate_inventory,
 )
 from preview_adjustment_migration_release_flow import execute
 
@@ -49,6 +49,7 @@ class ReleaseHost(InventoryHost):
             return subprocess.run(args, cwd=ROOT, input=input_data, stdout=stdout, stdin=stdin,
                                   stderr=subprocess.DEVNULL, timeout=timeout, check=True,
                                   env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0',
+                                       'COMPOSE_REMOVE_ORPHANS': 'false', 'COMPOSE_IGNORE_ORPHANS': 'true',
                                        **({'APP_VERSION': TARGET_SHA} if app_version else {})})
         except (OSError, subprocess.SubprocessError):
             raise InventoryError('acao_operacional_falhou; verificar recibo privado') from None
@@ -103,6 +104,8 @@ class ReleaseHost(InventoryHost):
         require(len(current) == 2 and current[0] == support_sha, 'main_mudou_apos_aprovacao')
 
     def compose_command(self, inventory: dict[str, Any], root: Path, image_overlay: Path | None = None):
+        require(self.run('docker', 'compose', 'version', '--short').removeprefix('v') == COMPOSE_VERSION,
+                'compose_version_nao_validada')
         require(ENV_FILE.is_file() and not ENV_FILE.is_symlink(), 'env_file_homolog_ausente')
         api_files = inventory['services']['api']['compose_files']
         require(api_files and api_files[0].endswith('docker-compose.yml'), 'compose_base_nao_identificado')
@@ -113,6 +116,11 @@ class ReleaseHost(InventoryHost):
         if image_overlay:
             command += ['-f', str(image_overlay)]
         return command + ['--profile', '*']
+
+    def assert_historical_preserved(self, inventory: dict[str, Any]) -> None:
+        for previous in inventory['historical_containers']:
+            current = historical_identity(self.inspect(previous['container_id']))
+            require(current == previous, 'container_historico_mudou')
 
     def preserve_images(self, inventory: dict[str, Any]) -> dict[str, str]:
         previous = {}

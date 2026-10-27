@@ -51,6 +51,7 @@ def valid_inventory():
         'backup': {'schema': BASE_SCHEMA, 'sha256': 'e' * 64, 'bytes': 1024,
                    'format': 'pg_dump_custom', 'restorable': True},
         'https_health': {'healthz': 200, 'api_health': 200, 'web': 200},
+        'historical_containers': [], 'compose_version': '2.35.1',
     }
 
 
