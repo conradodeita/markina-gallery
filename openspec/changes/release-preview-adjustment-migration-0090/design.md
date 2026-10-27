@@ -76,7 +76,7 @@ O diretório novo de backups deste fluxo é `/var/lib/markina-gallery/deploy-sta
 
 O preflight somente-leitura #40554411511 falhou antes de gerar fingerprint ou iniciar mutações com `resposta_ancestralidade_excessiva`. A consulta ao endpoint GitHub Compare incluía a lista padrão de commits, embora o gate use apenas `status`, `base_commit.sha` e `merge_base_commit.sha`. No SHA de suporte `2aaef7f...`, a API confirmou `status=ahead`, `total_commits=43`, `merge_base_commit.sha` igual ao candidato e apenas um commit retornado com `per_page=1`.
 
-Decisão: pedir explicitamente `per_page=1` para limitar o payload sem alterar a prova de ancestralidade. O inventário continuará exigindo `status` `ahead` ou `identical`, base igual ao SHA alvo e merge base igual ao SHA alvo; limite de bytes, origem HTTPS/API e validação da migration permanecem. Resposta malformada, excessiva ou divergente continua falhando fechada antes de fingerprint e release.
+Decisão: pedir explicitamente `per_page=1` para limitar o payload sem alterar a prova de ancestralidade. O inventário continuará exigindo `status` `ahead` ou `identical`, base igual ao SHA alvo e merge base igual ao SHA alvo; limite de bytes, origem HTTPS/API e validação da migration permanecem. Resposta malformada, excessiva ou divergente continua falhando fechada antes de fingerprint e release. Como o helper é carregado por SHA de blob, atualizar em conjunto os pins do wrapper read-only e do executor de release, sem alterar comandos permitidos ou a chave SSH.
 
 ## Open Questions
 
