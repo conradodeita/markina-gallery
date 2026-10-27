@@ -72,6 +72,12 @@ O diretório novo de backups deste fluxo é `/var/lib/markina-gallery/deploy-sta
 3. Despachar preflight somente-leitura e apresentar runtime, schema, serviços, portas, domínio, backup, impacto, fingerprint e recuperação; interromper se qualquer item diferir do baseline `c194418...`/`0089`.
 4. Após aprovação explícita do fingerprint, despachar release; confirmar schema `0090`, runtimes, saúde e HTTPS, registrar evidência minimizada e fechar a change somente após revisão humana.
 
+## Resposta grande da comparação de ancestralidade — 2026-10-27
+
+O preflight somente-leitura #40554411511 falhou antes de gerar fingerprint ou iniciar mutações com `resposta_ancestralidade_excessiva`. A consulta ao endpoint GitHub Compare incluía a lista padrão de commits, embora o gate use apenas `status`, `base_commit.sha` e `merge_base_commit.sha`. No SHA de suporte `2aaef7f...`, a API confirmou `status=ahead`, `total_commits=43`, `merge_base_commit.sha` igual ao candidato e apenas um commit retornado com `per_page=1`.
+
+Decisão: pedir explicitamente `per_page=1` para limitar o payload sem alterar a prova de ancestralidade. O inventário continuará exigindo `status` `ahead` ou `identical`, base igual ao SHA alvo e merge base igual ao SHA alvo; limite de bytes, origem HTTPS/API e validação da migration permanecem. Resposta malformada, excessiva ou divergente continua falhando fechada antes de fingerprint e release. Como o helper é carregado por SHA de blob, atualizar em conjunto os pins do wrapper read-only e do executor de release, sem alterar comandos permitidos ou a chave SSH.
+
 ## Open Questions
 
 Reconciliação observada em #40518739264 (27/10/2026): schema0089, checkout/API c1944189 limpos, 13 serviços saudáveis, nove históricos. Somente Nginx referencia docker-compose.raw-development.yml ausente. API/web e writers usam o mesmo manifesto consolidado regular em deploy-state; core preservado usa listas anteriores diferentes. A exigência de arquivo base docker-compose.yml e de listas idênticas em todos os serviços não corresponde à topologia publicada. Substituir essas suposições por validação da ordem exata API/web, arquivos seguros e `compose config --hash` de API/web igual aos rótulos ativos. O executor usa esses mesmos arquivos, preservando o manifesto e acrescentando apenas overlays aprovados. As listas dos demais serviços são proveniência vinculada ao fingerprint, não entradas para operações Compose; suas identidades/configurações permanecem verificadas e não são recriadas. Nenhum arquivo RAW é restaurado ou serviço aposentado reativado.
