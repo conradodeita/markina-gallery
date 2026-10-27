@@ -1,6 +1,7 @@
 """Fail-closed classification and preservation of stopped release resources."""
 import copy
 import io
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -123,18 +124,21 @@ class HistoricalContainerTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from scripts.preview_adjustment_migration_release import ReleaseHost
-        from scripts.preview_adjustment_migration_inventory import InventoryError
+        from scripts.preview_adjustment_migration_release import InventoryError
         with tempfile.TemporaryDirectory() as temporary:
             host = ReleaseHost()
-            def fail_fetch(args, **_kwargs):
-                self.assertEqual(args[:3], ['git', 'fetch', '--quiet'])
-                raise InventoryError('acao_operacional_falhou;verificar_recibo_privado')
-            host.command = fail_fetch
             with patch('scripts.preview_adjustment_migration_release.STATE', Path(temporary)), \
+                    patch('scripts.preview_adjustment_migration_release.subprocess.run',
+                          return_value=subprocess.CompletedProcess(
+                              ['git', 'fetch'], 128, stderr=b'private remote response')) as run, \
                     patch('sys.stdout', new_callable=io.StringIO) as output, \
-                    self.assertRaises(InventoryError):
+                    self.assertRaisesRegex(InventoryError,
+                                           'candidate_fetch_falhou;categoria=outro;codigo_saida=128'):
                 host.stage_candidate({'checkout_sha': 'a' * 40, 'services': {}})
+            self.assertEqual(run.call_args.args[0][:3], ['git', 'fetch', '--quiet'])
             self.assertIn('candidate_build_phase=fetch', output.getvalue())
+            self.assertIn('candidate_fetch_result=failed;categoria=outro;codigo_saida=128', output.getvalue())
+            self.assertNotIn('private remote response', output.getvalue())
             self.assertNotIn(temporary, output.getvalue())
 
     def test_release_refuses_missing_restarted_or_changed_history(self):
