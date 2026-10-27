@@ -106,7 +106,7 @@ class ReleaseHost(InventoryHost):
         require(len(current) == 2 and current[0] == support_sha, 'main_mudou_apos_aprovacao')
 
     def compose_command(self, inventory: dict[str, Any], root: Path, image_overlay: Path | None = None):
-        require(self.run('docker', 'compose', 'version', '--short').removeprefix('v') == COMPOSE_VERSION,
+        require(self.run('docker', 'compose', 'version', '--short').lstrip('v') == COMPOSE_VERSION,
                 'compose_version_nao_validada')
         require(ENV_FILE.is_file() and not ENV_FILE.is_symlink(), 'env_file_homolog_ausente')
         api_files = inventory['services']['api']['compose_files']
