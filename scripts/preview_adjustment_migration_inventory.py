@@ -551,7 +551,7 @@ class Host:
 
     def candidate_commit_chain(self, support_sha: str) -> str:
         url = ('https://api.github.com/repos/conradodeita/markina-gallery/compare/'
-               + TARGET_SHA + '...' + support_sha)
+               + TARGET_SHA + '...' + support_sha + '?per_page=1')
         request = Request(url, headers={'Accept': 'application/vnd.github+json',
                                         'X-GitHub-Api-Version': '2022-11-28'})
         try:

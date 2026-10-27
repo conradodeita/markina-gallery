@@ -175,6 +175,7 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
 
         with patch('preview_adjustment_migration_inventory.urlopen', side_effect=fetch):
             self.assertEqual(Host().candidate_commit_chain('a' * 40), source.decode())
+        self.assertIn('/compare/' + TARGET_SHA + '...' + 'a' * 40 + '?per_page=1', urls[0])
         self.assertTrue(urls[1].endswith('/' + TARGET_SHA + '/' + MIGRATION))
         source = b'revision = "20261026_0090"\ndown_revision = "wrong"\n'
         with patch('preview_adjustment_migration_inventory.urlopen', side_effect=fetch):
