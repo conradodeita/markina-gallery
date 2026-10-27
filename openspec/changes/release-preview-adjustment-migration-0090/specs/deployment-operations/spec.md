@@ -88,6 +88,12 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **WHEN** o preflight registra detalhes comparáveis das montagens históricas
 - **THEN** informa tipos reconhecidos, acesso somente leitura/escrita e hashes dos componentes Source, Destination, Name, Driver, Mode e Propagation, sem revelar valores ou paths brutos
 
+#### Scenario: Ordem de serialização das montagens históricas
+- **WHEN** o daemon retorna os mesmos objetos de montagem em ordem diferente entre inventário e revalidação
+- **THEN** a identidade compara uma cópia ordenada deterministicamente por representação canônica do objeto completo, sem depender da ordem do array
+- **AND** qualquer alteração, inclusão, ausência ou propriedade diferente em um objeto de montagem continua mudando a identidade e bloqueando o release
+- **AND** a ordem da lista utilizada pelos comandos Compose permanece inalterada
+
 #### Scenario: Falha ao buscar candidato antes de DDL
 - **WHEN** o `git fetch` do SHA candidato falha durante a construção prévia das imagens
 - **THEN** o executor registra somente a subfase e uma categoria fixa (`ref_indisponivel`, `rede_indisponivel`, `acesso_negado`, `transferencia_incompleta` ou `outro`), sem stderr, URL, argumentos, paths, credenciais ou stdout

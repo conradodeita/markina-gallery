@@ -7,7 +7,7 @@ umask 077
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly TARGET_SHA="0dd015a62447e0c8d4c6af16b381140c8118f2ec"
-readonly INVENTORY_BLOB_SHA="ec4fcacda04221a377da394e4cc9b590d6ec4e7b"
+readonly INVENTORY_BLOB_SHA="1296ccb0e0f6295bc07b30837fc5043e7dac4db6"
 readonly FLOW_BLOB_SHA="a5b898b614723e5ad73c583b73988034c5c16a3c"
 readonly RELEASE_BLOB_SHA="b4d59ff08ce44f3cfc8514340b4330452ea8c701"
 
