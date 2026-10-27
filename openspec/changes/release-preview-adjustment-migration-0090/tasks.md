@@ -19,6 +19,9 @@
 
 ## 4. Publicação protegida
 
+- [ ] 4.5 Diagnosticar a falha `servico_markina_duplicado` do run 40418469769 com mensagens sanitizadas que preservam a recusa; validar casos sintéticos, repinar inventário, revisar CI e atualizar wrapper protegido antes de repetir a consulta read-only. Implementação e testes sintéticos de rótulos/estados passaram; causa no host ainda não identificada, CI e atualização do wrapper pendentes.
+- [x] 4.6 Corrigir referência indefinida ao caminho da migration candidata 0090 na coleta da cadeia Alembic; validar respostas sintéticas aceitas e divergentes e preservar os dois pins do inventário. Evidência: teste com respostas HTTP sintéticas confirma caminho no SHA candidato, cadeia válida e recusa de down_revision divergente; `test_preview_adjustment_migration_inventory.py` 9/9 e política de release passaram.
+
 - [x] 4.1 Integrar o fluxo após PR revisada e CI verde. Evidência: PR #298 integrada em `b00ef246236a9ad547cc6f734ae8bbb0473557b1` após todos os checks exigidos passarem.
 - [ ] 4.2 Executar a operação manual protegida de instalação do wrapper, conferir `root:root 0755`, backup, SHA/blob e recusa de shell; não ampliar a chave SSH nem reiniciar serviços.
 - [ ] 4.3 Executar apenas o preflight read-only no host e registrar serviços, schema, portas, domínio, backup e fingerprint; apresentar o plano de impacto zero e aguardar aprovação do fingerprint exato.

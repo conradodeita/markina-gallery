@@ -24,10 +24,15 @@ BASE_SHA = 'c1944189761799be96eeeb921cad9906484d8b09'
 TARGET_SHA = '0dd015a62447e0c8d4c6af16b381140c8118f2ec'
 BASE_SCHEMA = '20261025_0089'
 TARGET_SCHEMA = '20261026_0090'
+MIGRATION = 'backend/migrations/versions/20261026_0090_preview_adjustment_strength_100.py'
 SHA1 = re.compile(r'^[0-9a-f]{40}$')
 SHA256 = re.compile(r'^[0-9a-f]{64}$')
 IMAGE = re.compile(r'^sha256:[0-9a-f]{64}$')
 REQUIRED_SERVICES = {'api', 'web', 'worker', 'db', 'redis', 'nginx'}
+KNOWN_SERVICES = REQUIRED_SERVICES | {'migrate', 'seed-admin', 'evolution-api', 'evolution-db',
+                                     'evolution-redis', 'face-search-worker', 'face-index-worker',
+                                     'face-maintenance-worker', 'preview-adjustment-worker'}
+DOCKER_STATES = {'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'}
 PENDING_MARKERS = ('web-in-flight.sha', 'app-in-flight.sha', 'app-rollback-in-flight.sha',
                    'web-pending.identity', 'infinitepay-retirement-in-flight.sha',
                    'pillow-in-flight.json', 'orders-in-flight.json',
@@ -43,6 +48,19 @@ class InventoryError(RuntimeError):
 def require(condition: bool, category: str) -> None:
     if not condition:
         raise InventoryError(category)
+
+
+def validate_service_identity(name: object, services: dict[str, Any], state: object) -> None:
+    """Report bounded, safe diagnostics while preserving the duplicate guard."""
+    if not isinstance(name, str) or not name:
+        raise InventoryError('servico_markina_duplicado;servico=ausente')
+    if name in services:
+        safe_name = name if name in KNOWN_SERVICES else 'desconhecido'
+        old_state = services[name].get('status')
+        old_state = old_state if isinstance(old_state, str) and old_state in DOCKER_STATES else 'desconhecido'
+        new_state = state if isinstance(state, str) and state in DOCKER_STATES else 'desconhecido'
+        raise InventoryError(f'servico_markina_duplicado;servico={safe_name};'
+                             f'contagem_ao_menos=2;estados={old_state},{new_state}')
 
 
 def canonical_fingerprint(value: dict[str, Any]) -> str:
@@ -303,7 +321,7 @@ class Host:
             d = self.inspect(ident)
             labels = d['Config'].get('Labels') or {}
             name = labels.get('com.docker.compose.service')
-            require(name and name not in services, 'servico_markina_duplicado')
+            validate_service_identity(name, services, d['State'].get('Status'))
             compose_files = (labels.get('com.docker.compose.project.config_files') or '').split(',')
             env = dict(part.split('=', 1) for part in d['Config'].get('Env', []) if '=' in part)
             if name == 'api':

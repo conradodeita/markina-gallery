@@ -37,3 +37,14 @@ O sistema SHALL oferecer uma operação manual protegida que instale atomicament
 #### Scenario: Blob, sudo ou chave restrita diverge
 - **WHEN** o arquivo, permissões, acesso root não interativo ou regra SSH restrita diferem do contrato esperado
 - **THEN** a instalação falha fechada, não altera `authorized_keys` nem serviços e não inicia preflight ou release
+### Requirement: Diagnóstico sanitizado de serviço duplicado no inventário 0090
+
+O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou duplicados, incluindo containers parados. Para permitir diagnóstico SHALL informar apenas nomes de serviço reconhecidos, estados Docker normalizados e contagem, sem IDs, variáveis de ambiente ou payloads de clientes.
+
+#### Scenario: Containers com nome de serviço repetido
+- **WHEN** dois ou mais containers do projeto compartilham o mesmo serviço
+- **THEN** o inventário falha fechado e informa o serviço conhecido, a quantidade e os estados, sem gerar fingerprint
+
+#### Scenario: Nome ausente ou desconhecido
+- **WHEN** o rótulo do serviço está ausente ou não integra a lista reconhecida
+- **THEN** o diagnóstico informa somente uma categoria genérica, preservando a recusa e sem imprimir o rótulo bruto
