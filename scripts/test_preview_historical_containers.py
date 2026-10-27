@@ -68,6 +68,22 @@ class HistoricalContainerTests(unittest.TestCase):
                 changed[field]['changed'] = True
             self.assertNotEqual(inventory.historical_identity(changed), baseline)
 
+    def test_exited_health_diagnostics_are_separate_from_operational_preservation(self):
+        original = container()
+        original['State']['Health'] = {'Status': 'unhealthy', 'FailingStreak': 1,
+                                       'Log': [{'Output': 'PRIVATE diagnostic', 'Start': 'old'}]}
+        changed = copy.deepcopy(original)
+        changed['State']['Health']['FailingStreak'] = 2
+        changed['State']['Health']['Log'][0]['Start'] = 'new'
+        self.assertEqual(inventory.historical_identity(original), inventory.historical_identity(changed))
+        hashes = inventory.historical_field_hashes([original, changed])
+        self.assertNotEqual(hashes[0]['campos_sha256']['State'], hashes[1]['campos_sha256']['State'])
+        self.assertEqual(hashes[0]['campos_sha256']['State_without_Health'],
+                         hashes[1]['campos_sha256']['State_without_Health'])
+        self.assertNotIn('PRIVATE', str(hashes))
+        changed['State']['StartedAt'] = 'restarted'
+        self.assertNotEqual(inventory.historical_identity(original), inventory.historical_identity(changed))
+
     def test_inventory_binds_history_and_refuses_other_compose_versions(self):
         data = valid_inventory()
         data['historical_containers'] = [inventory.historical_identity(container())]

@@ -20,7 +20,7 @@ from preview_adjustment_migration_inventory import (
     BACKUPS, BASE_SCHEMA, COMPOSE_VERSION, PROJECT, ROOT, STATE, TARGET_SCHEMA, TARGET_SHA,
     Host as InventoryHost, InventoryError, historical_identity, require, validate_inventory,
 )
-from preview_adjustment_migration_release_flow import execute, prepare_backup
+from preview_adjustment_migration_release_flow import ReleaseError, execute, prepare_backup
 
 PUBLIC_URL = 'https://markina.pickyourpic.com.br'
 ENV_FILE = ROOT / 'docker/.env.homolog'
@@ -33,6 +33,24 @@ QUEUE_TABLES = ('media_job', 'whatsapp_delivery', 'email_delivery', 'notificatio
                 'preview_adjustment', 'payment_notification_outbox', 'gallery_reopening_notification_outbox',
                 'gallery_membership_notification_outbox', 'facial_search_notification_outbox')
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
+
+
+def sanitized_failure(exc: Exception) -> str:
+    if isinstance(exc, InventoryError):
+        return str(exc)
+    if isinstance(exc, ReleaseError) and re.fullmatch(r'[a-z0-9_:]+', str(exc)):
+        return str(exc)
+    allowed = {'AttributeError', 'TypeError', 'NameError', 'KeyError', 'ValueError',
+               'RuntimeError', 'PermissionError', 'FileNotFoundError'}
+    category = type(exc).__name__ if type(exc).__name__ in allowed else 'Exception'
+    line = 0
+    frame = exc.__traceback__
+    while frame is not None:
+        if Path(frame.tb_frame.f_code.co_filename).name in (
+                'preview_adjustment_migration_release.py', 'preview_adjustment_migration_release_flow.py'):
+            line = frame.tb_lineno
+        frame = frame.tb_next
+    return 'falha_operacional;classe=' + category + ';linha=' + str(line)
 
 
 class ReleaseHost(InventoryHost):
@@ -506,7 +524,7 @@ def main() -> int:
     except (InventoryError, Exception) as exc:
         # Do not expose command output, environment, customer data or connection details.
         print('preview_adjustment_migration_release=failed')
-        print('criterio=' + (str(exc) if isinstance(exc, InventoryError) else 'falha_operacional; consultar recibo privado'))
+        print('criterio=' + sanitized_failure(exc))
         return 1
 
 

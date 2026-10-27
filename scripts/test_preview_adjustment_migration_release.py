@@ -14,6 +14,18 @@ from test_preview_adjustment_migration_inventory import valid_inventory  # noqa:
 
 
 class PreviewMigrationReleaseHostTests(unittest.TestCase):
+    def test_failure_report_keeps_controlled_criteria_but_never_private_exception_messages(self):
+        from preview_adjustment_migration_release_flow import ReleaseError
+        self.assertEqual(release.sanitized_failure(ReleaseError('schema_origem_divergente_antes_backup')),
+                         'schema_origem_divergente_antes_backup')
+        for error in (TypeError('PRIVATE credentials /secret/path'),
+                      ReleaseError('PRIVATE arbitrary response'), KeyError('PRIVATE customer payload')):
+            result = release.sanitized_failure(error)
+            self.assertNotIn('PRIVATE', result)
+            self.assertNotIn('/secret', result)
+            self.assertIn('classe=', result)
+            self.assertIn('linha=', result)
+
     def test_health_starting_is_waited_for_but_timeout_or_exit_fails(self):
         host = release.ReleaseHost()
         starting = {'State': {'Status': 'running', 'Health': {'Status': 'starting'}}}

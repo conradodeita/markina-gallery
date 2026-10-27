@@ -163,8 +163,26 @@ def historical_identity(container: dict[str, Any]) -> dict[str, str]:
         require(container.get('Name') != f'/{PROJECT}-{service}-1', 'historico_ocupa_nome_ativo')
     fields = ('Name', 'Image', 'Config', 'HostConfig', 'Mounts', 'State', 'NetworkSettings')
     require(all(key in container for key in fields), 'historico_metadados_incompletos')
+    metadata = {key: container[key] for key in fields}
+    # Health logs/counters are diagnostic records, not execution identity of an
+    # exited container. Keep every other State field so restarts/exits still bind.
+    metadata['State'] = {key: value for key, value in state.items() if key != 'Health'}
     return {'container_id': ident, 'image': image, 'status': 'exited',
-            'metadata_sha256': canonical_fingerprint({key: container[key] for key in fields})}
+            'metadata_sha256': canonical_fingerprint(metadata)}
+
+
+def historical_field_hashes(containers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for item in containers:
+        if item.get('State', {}).get('Status') != 'exited':
+            continue
+        identity = historical_identity(item)
+        fields = ('Name', 'Image', 'Config', 'HostConfig', 'Mounts', 'State', 'NetworkSettings')
+        hashes = {key: canonical_fingerprint(item[key]) for key in fields}
+        hashes['State_without_Health'] = canonical_fingerprint(
+            {key: value for key, value in item['State'].items() if key != 'Health'})
+        result.append({'id_prefixo': identity['container_id'][:12], 'campos_sha256': hashes})
+    return sorted(result, key=lambda row: row['id_prefixo'])
 
 
 def partition_containers(containers: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -546,6 +564,7 @@ class Host:
         ids = self.run('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
         require(len(ids) <= 100, 'muitos_containers_markina')
         containers = [self.inspect(ident) for ident in ids]
+        print('historicos_campos_sanitizados=' + json.dumps(historical_field_hashes(containers), sort_keys=True))
         compose_version = self.run('docker', 'compose', 'version', '--short').lstrip('v')
         require(compose_version == COMPOSE_VERSION, 'compose_version_nao_validada')
         try:
