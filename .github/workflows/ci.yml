@@ -111,12 +111,23 @@ jobs:
           set -Eeuo pipefail
           image='docker.io/library/python:3.8.20-slim-bookworm@sha256:1d52838af602b4b5a831beb13a0e4d073280665ea7be7f69ce2382f29c5a613f'
           name="markina-pid1-sigint-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
           docker pull "$image"
           docker run --detach --name "$name" --restart=no --network none "$image" \
-            python -c 'import time; time.sleep(5)'
+            python -c 'from pathlib import Path; import time; Path("/tmp/ready").touch(); time.sleep(30)'
+          ready=0
+          for _ in {1..20}; do
+            if docker exec "$name" python -c 'from pathlib import Path; assert Path("/tmp/ready").is_file()'; then
+              ready=1
+              break
+            fi
+            sleep 0.25
+          done
+          [[ "$ready" == 1 ]]
           docker kill --signal=SIGINT "$name"
           exit_code="$(docker wait "$name")"
-          docker rm "$name" >/dev/null
+          printf 'python_pid1_sigint_exit_code=%s\n' "$exit_code"
           [[ "$exit_code" == 130 ]]
       - name: Contratos de distribuição e cobertura backend
         run: python -m unittest scripts.test_backend_ci -v

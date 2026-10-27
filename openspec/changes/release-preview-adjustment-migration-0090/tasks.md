@@ -83,4 +83,6 @@ Evidência operacional da terceira tentativa: release #40582632304 chegou à apr
 
 - [ ] 4.25 Ajustar a parada protegida do `face-search-worker` legado: parar primeiro API e demais produtores; esperar até 120 segundos pela ausência de jobs faciais de busca e notificações em `queued`/`processing`; confirmar identidade/imagem e então enviar `SIGINT`, aceitando exclusivamente saída 130. Qualquer pendência, mudança de identidade ou timeout deve recuperar os mesmos containers antes da DDL. Cobrir ordem, guard e sinal em testes, mais prova em container descartável no CI. Após CI verde, integrar e validar a nova operação protegida no servidor antes de concluir.
 
+O CI push/main #40596722154 falhou somente na prova de SIGINT porque o sinal podia alcançar o container antes da prontidão do interpretador. A suíte de PR passou. Corrigir a sincronização com um marcador temporário de prontidão criado pelo PID 1 e registrar seu exit code para diagnóstico; repetir CI antes de novo release.
+
 Nenhum código de worker ou imagem facial será alterado no release 0090: o fluxo publicado substitui API/web e preserva os demais runtimes. A estratégia usa apenas interrupção do processo facial legado comprovadamente ocioso; os testes locais e remotos ainda precisam validar a ordem, a saída 130 e a falha fechada com fila pendente.
