@@ -232,7 +232,29 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
             'Image': item['image'], 'State': {'Status': 'exited', 'ExitCode': 143}}
         host.command = lambda *_args, **_kwargs: None
         host.record = lambda *_args, **_kwargs: None
-        self.assertEqual(host.stop_writers(data), ['api'])
+        with patch('sys.stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(host.stop_writers(data), ['api'])
+        self.assertEqual(output.getvalue(),
+                         'writer_stop_requested=api\nwriter_stop_completed=api\n')
+
+    def test_writer_stop_timeout_names_only_the_fixed_service(self):
+        host = release.ReleaseHost()
+        item = {'container_id': 'private-container-id', 'image': 'sha256:' + 'a' * 64,
+                'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}}
+        data = {'services': {'api': item}}
+        host.journal = {}
+        host.inspect = lambda _ident: {
+            'Image': item['image'], 'State': {'Status': 'running'}}
+        host.command = lambda *_args, **_kwargs: None
+        host.record = lambda *_args, **_kwargs: None
+        with patch.object(release.time, 'monotonic', side_effect=[0, 121]), \
+                patch.object(release.time, 'sleep'), \
+                patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(release.InventoryError, 'timeout_parada_graciosa_sem_sigkill'):
+            host.stop_writers(data)
+        self.assertEqual(output.getvalue(),
+                         'writer_stop_requested=api\nwriter_stop_timeout=api\n')
+        self.assertNotIn('private-container-id', output.getvalue())
 
     def test_interrupted_post_ddl_release_reinstalls_maintenance_fence(self):
         host = release.ReleaseHost()

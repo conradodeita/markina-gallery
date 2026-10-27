@@ -99,6 +99,12 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **THEN** o executor registra somente a subfase e uma categoria fixa (`ref_indisponivel`, `rede_indisponivel`, `acesso_negado`, `transferencia_incompleta` ou `outro`), sem stderr, URL, argumentos, paths, credenciais ou stdout
 - **AND** SHALL recuperar os serviços Markina anteriores, confirmar que a migration não começou e manter o release bloqueado até a causa ser corrigida
 
+#### Scenario: Diagnóstico sanitizado de encerramento de writer
+- **WHEN** o release solicita encerramento gracioso de um writer Markina
+- **THEN** registra somente o nome fixo do serviço ao solicitar e ao confirmar o encerramento, ou ao expirar o limite
+- **AND** nunca registra IDs de containers, saída de processo, logs do serviço ou outros dados privados
+- **AND** um timeout continua bloqueando backup final e DDL e executa a recuperação pré-DDL
+
 #### Scenario: Cliente Git rejeita opção metadata-only
 - **WHEN** o `git fetch` com `--no-write-fetch-head` retorna código de saída 129, independentemente do texto localizado do stderr privado
 - **THEN** o executor repete uma única vez o fetch do mesmo SHA integral, sem tags e sem atualizar refs/branches, usando o comportamento padrão de `FETCH_HEAD`
