@@ -56,18 +56,59 @@ def web_classification(container: dict[str, Any]) -> dict[str, str]:
     restart = container.get('HostConfig', {}).get('RestartPolicy', {}).get('Name')
     oneoff = labels.get('com.docker.compose.oneoff')
     number = labels.get('com.docker.compose.container-number')
+    ident = container.get('Id')
+    image_reference = container.get('Config', {}).get('Image')
+    exit_code = container.get('State', {}).get('ExitCode')
+    mounts = container.get('Mounts')
+    mounts_valid = isinstance(mounts, list) and all(isinstance(m, dict) and type(m.get('RW')) is bool for m in mounts)
+    if isinstance(image_reference, str) and image_reference in ('markina-gallery-web', 'markina-gallery-web:latest'):
+        image_kind = 'markina_web'
+    elif isinstance(image_reference, str) and re.search(r'(^|[/:_.-])(test|teste|synthetic)([/:_.-]|$)', image_reference, re.I):
+        image_kind = 'nome_sugere_teste'
+    else:
+        image_kind = 'outra_ou_ausente'
     return {
+        'id_prefixo': ident[:12] if isinstance(ident, str) and SHA256.fullmatch(ident) else 'desconhecido',
         'nome_canonico': 'sim' if container.get('Name') == '/markina-gallery-web-1' else 'nao',
-        'oneoff': ({'True': 'sim', 'False': 'nao', 'true': 'sim', 'false': 'nao'}.get(oneoff, 'ausente_ou_outro')
+        'oneoff': ({'True': 'sim', 'False': 'nao', 'true': 'sim', 'false': 'nao'}.get(oneoff, 'outro')
                    if isinstance(oneoff, str) else 'ausente_ou_outro'),
         'numero': 'padrao' if number == '1' else ('ausente' if number is None else 'outro'),
         'restart': restart if restart in ('no', 'always', 'unless-stopped', 'on-failure') else 'desconhecido',
+        'config_hash': 'presente' if isinstance(labels.get('com.docker.compose.config-hash'), str)
+                       and SHA256.fullmatch(labels['com.docker.compose.config-hash']) else 'ausente_ou_invalido',
+        'referencia_imagem': image_kind,
+        'codigo_saida': str(exit_code) if type(exit_code) is int and 0 <= exit_code <= 255 else 'desconhecido',
+        'montagens_gravaveis': str(sum(m['RW'] for m in mounts)) if mounts_valid and len(mounts) <= 100 else 'desconhecido',
     }
+
+
+def sanitized_container_summary(containers: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Bounded audit of this project's containers; never return raw Docker fields."""
+    require(len(containers) <= 100, 'muitos_containers_markina')
+    result = []
+    seen: set[str] = set()
+    for container in containers:
+        labels = container.get('Config', {}).get('Labels') or {}
+        require(labels.get('com.docker.compose.project') == PROJECT, 'projeto_container_divergente')
+        name = labels.get('com.docker.compose.service')
+        safe_name = name if isinstance(name, str) and name in KNOWN_SERVICES else 'desconhecido'
+        state = container.get('State', {}).get('Status')
+        safe_state = state if isinstance(state, str) and state in DOCKER_STATES else 'desconhecido'
+        data = web_classification(container)
+        prefix = data['id_prefixo']
+        require(prefix != 'desconhecido' and prefix not in seen, 'identidade_container_ambigua')
+        seen.add(prefix)
+        result.append({'servico': safe_name, 'estado': safe_state, 'id_prefixo': prefix,
+                       'oneoff': data['oneoff'], 'restart': data['restart'],
+                       'referencia_imagem': data['referencia_imagem'],
+                       'codigo_saida': data['codigo_saida'], 'montagens_gravaveis': data['montagens_gravaveis']})
+    return sorted(result, key=lambda row: (row['servico'], row['estado'], row['id_prefixo']))
 
 
 def validate_service_identity(name: object, services: dict[str, Any], state: object,
                               previous: dict[str, Any] | None = None,
-                              current: dict[str, Any] | None = None) -> None:
+                              current: dict[str, Any] | None = None,
+                              compose_version: str = 'desconhecida') -> None:
     """Report bounded, safe diagnostics while preserving the duplicate guard."""
     if not isinstance(name, str) or not name:
         raise InventoryError('servico_markina_duplicado;servico=ausente')
@@ -83,7 +124,9 @@ def validate_service_identity(name: object, services: dict[str, Any], state: obj
                                for image in (previous_image, current_image))
             same = ('sim' if previous_image == current_image else 'nao') if valid_images else 'desconhecido'
             safe = {'primeiro': web_classification(previous), 'segundo': web_classification(current),
-                    'mesma_imagem': same}
+                    'mesma_imagem': same,
+                    'compose_version': compose_version if isinstance(compose_version, str)
+                    and re.fullmatch(r'v?\d{1,3}\.\d{1,3}\.\d{1,3}', compose_version) else 'desconhecida'}
             detail = ';diagnostico=' + json.dumps(safe, sort_keys=True, separators=(',', ':'))
         raise InventoryError(f'servico_markina_duplicado;servico={safe_name};'
                              f'contagem_ao_menos=2;estados={old_state},{new_state}' + detail)
@@ -341,14 +384,27 @@ class Host:
         main_sha = self.run('git', 'ls-remote', 'origin', 'refs/heads/main').split()[0]
         require(main_sha == support_sha, 'support_sha_nao_e_main_atual')
         ids = self.run('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
+        require(len(ids) <= 100, 'muitos_containers_markina')
+        containers = [self.inspect(ident) for ident in ids]
         services: dict[str, Any] = {}
         web_diagnostic: dict[str, Any] | None = None
         active_sha = ''
-        for ident in ids:
-            d = self.inspect(ident)
+        for d in containers:
             labels = d['Config'].get('Labels') or {}
             name = labels.get('com.docker.compose.service')
-            validate_service_identity(name, services, d['State'].get('Status'), web_diagnostic, d)
+            compose_version = 'desconhecida'
+            if name == 'web' and name in services:
+                try:
+                    compose_version = self.run('docker', 'compose', 'version', '--short')
+                except InventoryError:
+                    pass
+            try:
+                validate_service_identity(name, services, d['State'].get('Status'), web_diagnostic, d, compose_version)
+            except InventoryError:
+                if name == 'web' and name in services:
+                    summary = sanitized_container_summary(containers)
+                    print('inventario_containers_markina=' + json.dumps(summary, sort_keys=True, separators=(',', ':')))
+                raise
             if name == 'web':
                 web_diagnostic = d
             compose_files = (labels.get('com.docker.compose.project.config_files') or '').split(',')
