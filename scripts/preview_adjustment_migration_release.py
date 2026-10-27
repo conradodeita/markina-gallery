@@ -315,18 +315,27 @@ class ReleaseHost(InventoryHost):
         services = inventory['services']
         targets = [name for name in services if name == 'api' or name in WRITERS or name.endswith('-worker')]
         require(set(targets).issubset(WRITERS), 'writer_markina_sem_classificacao')
-        # The legacy facial search process is Python PID 1 and has no SIGTERM
-        # handler. Stop its producers first, then require an empty durable search
-        # queue before using Python's default SIGINT/KeyboardInterrupt shutdown.
-        targets.sort(key=lambda name: (name == 'face-search-worker', name != 'api'))
+        # Stop API and every producer before facial consumers. The legacy facial
+        # PID 1 processes have no SIGTERM handler, so interrupt only after their
+        # eligible durable work has drained and their image still matches.
+        stop_order = {'api': 0, 'face-index-worker': 2,
+                      'face-maintenance-worker': 3, 'face-search-worker': 4}
+        targets.sort(key=lambda name: stop_order.get(name, 1))
         for name in targets:
             item = services[name]
             ident = item['container_id']
             require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
+            if name == 'face-index-worker':
+                self.wait_for_face_index_idle()
+                require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
+            if name == 'face-maintenance-worker':
+                self.wait_for_face_maintenance_idle()
+                require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
             if name == 'face-search-worker':
                 self.wait_for_face_search_idle()
                 require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
-            stop_signal = 'SIGINT' if name == 'face-search-worker' else 'SIGTERM'
+            stop_signal = 'SIGINT' if name in {
+                'face-index-worker', 'face-maintenance-worker', 'face-search-worker'} else 'SIGTERM'
             attempted = self.journal.get('attempted', [])
             if name not in attempted:
                 attempted.append(name)
@@ -368,6 +377,40 @@ class ReleaseHost(InventoryHost):
             if time.monotonic() >= deadline:
                 print('writer_idle_timeout=face-search-worker', flush=True)
                 raise InventoryError('fila_face_search_nao_ociosa')
+            time.sleep(1)
+
+    def wait_for_face_index_idle(self) -> None:
+        print('writer_idle_wait=face-index-worker', flush=True)
+        deadline = time.monotonic() + 120
+        while True:
+            pending = self.pg_scalar(
+                "SELECT count(*) FROM facial_job "
+                "WHERE kind='index' AND status IN ('queued', 'processing')"
+            )
+            if pending == 0:
+                self.record('face-index-queue-idle')
+                print('writer_idle_confirmed=face-index-worker', flush=True)
+                return
+            if time.monotonic() >= deadline:
+                print('writer_idle_timeout=face-index-worker', flush=True)
+                raise InventoryError('fila_face_index_nao_ociosa')
+            time.sleep(1)
+
+    def wait_for_face_maintenance_idle(self) -> None:
+        print('writer_idle_wait=face-maintenance-worker', flush=True)
+        deadline = time.monotonic() + 120
+        while True:
+            pending = self.pg_scalar(
+                "SELECT count(*) FROM facial_job "
+                "WHERE kind IN ('purge', 'cleanup') AND status IN ('queued', 'processing')"
+            )
+            if pending == 0:
+                self.record('face-maintenance-queue-idle')
+                print('writer_idle_confirmed=face-maintenance-worker', flush=True)
+                return
+            if time.monotonic() >= deadline:
+                print('writer_idle_timeout=face-maintenance-worker', flush=True)
+                raise InventoryError('fila_face_maintenance_nao_ociosa')
             time.sleep(1)
 
     def pg_scalar(self, sql: str) -> int:

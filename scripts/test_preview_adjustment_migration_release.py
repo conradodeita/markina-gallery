@@ -285,6 +285,98 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
         self.assertNotIn(['docker', 'kill', '--signal=SIGINT', 'facial-container'], commands)
         self.assertIn('writer_idle_timeout=face-search-worker\n', output.getvalue())
 
+    def test_legacy_face_index_waits_until_all_producers_stop_and_queue_drains(self):
+        host = release.ReleaseHost()
+        image = 'sha256:' + 'a' * 64
+        data = {'services': {
+            'face-index-worker': {'container_id': 'index-container', 'image': image,
+                                  'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'face-search-worker': {'container_id': 'search-container', 'image': image,
+                                   'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'face-maintenance-worker': {'container_id': 'maintenance-container', 'image': image,
+                                         'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'preview-adjustment-worker': {'container_id': 'preview-container', 'image': image,
+                                          'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'worker': {'container_id': 'worker-container', 'image': image,
+                       'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'api': {'container_id': 'api-container', 'image': image,
+                    'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+        }}
+        host.journal = {}
+        commands = []
+        idle_checks = []
+
+        def inspect(ident):
+            code = 130 if ident in {'index-container', 'search-container', 'maintenance-container'} else 143
+            return {'Image': image, 'State': {'Status': 'exited', 'ExitCode': code}}
+
+        def check_idle(sql):
+            idle_checks.append(sql)
+            return 0
+
+        host.inspect = inspect
+        host.command = lambda args, **_kwargs: commands.append(args)
+        host.pg_scalar = check_idle
+        host.record = lambda *_args, **_kwargs: None
+
+        stopped = host.stop_writers(data)
+        signals = [(args[-1], args[2]) for args in commands if args[1] == 'kill']
+        self.assertEqual(stopped, ['api', 'preview-adjustment-worker', 'worker',
+                                   'face-index-worker', 'face-maintenance-worker', 'face-search-worker'])
+        self.assertEqual(signals, [
+            ('api-container', '--signal=SIGTERM'),
+            ('preview-container', '--signal=SIGTERM'),
+            ('worker-container', '--signal=SIGTERM'),
+            ('index-container', '--signal=SIGINT'),
+            ('maintenance-container', '--signal=SIGINT'),
+            ('search-container', '--signal=SIGINT'),
+        ])
+        self.assertEqual(sum("kind='index'" in sql for sql in idle_checks), 1)
+        self.assertEqual(sum("'purge', 'cleanup'" in sql for sql in idle_checks), 1)
+
+    def test_legacy_face_index_pending_work_fails_before_signaling_index_worker(self):
+        host = release.ReleaseHost()
+        image = 'sha256:' + 'a' * 64
+        data = {'services': {
+            'api': {'container_id': 'api-container', 'image': image,
+                    'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'face-index-worker': {'container_id': 'index-container', 'image': image,
+                                  'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+        }}
+        host.journal = {}
+        commands = []
+        host.inspect = lambda _ident: {'Image': image,
+                                       'State': {'Status': 'exited', 'ExitCode': 143}}
+        host.command = lambda args, **_kwargs: commands.append(args)
+        host.wait_for_face_index_idle = lambda: (_ for _ in ()).throw(
+            release.InventoryError('fila_face_index_nao_ociosa'))
+        host.record = lambda *_args, **_kwargs: None
+
+        with self.assertRaisesRegex(release.InventoryError, 'fila_face_index_nao_ociosa'):
+            host.stop_writers(data)
+
+        signals = [args for args in commands if args[1:3] == ['kill', '--signal=SIGINT']]
+        self.assertEqual(signals, [])
+        self.assertFalse(any(args[-1] == 'index-container' and args[1] == 'update'
+                             for args in commands))
+
+    def test_legacy_face_maintenance_pending_work_times_out_without_private_data(self):
+        host = release.ReleaseHost()
+        queries = []
+        host.pg_scalar = lambda sql: queries.append(sql) or 1
+
+        with patch.object(release.time, 'monotonic', side_effect=[0, 121]), \
+                patch.object(release.time, 'sleep'), \
+                patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(release.InventoryError, 'fila_face_maintenance_nao_ociosa'):
+            host.wait_for_face_maintenance_idle()
+
+        self.assertEqual(len(queries), 1)
+        self.assertIn("kind IN ('purge', 'cleanup')", queries[0])
+        self.assertEqual(output.getvalue(),
+                         'writer_idle_wait=face-maintenance-worker\n'
+                         'writer_idle_timeout=face-maintenance-worker\n')
+
     def test_writer_stop_timeout_names_only_the_fixed_service(self):
         host = release.ReleaseHost()
         item = {'container_id': 'private-container-id', 'image': 'sha256:' + 'a' * 64,
