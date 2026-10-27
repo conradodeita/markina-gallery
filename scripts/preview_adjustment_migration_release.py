@@ -323,6 +323,7 @@ class ReleaseHost(InventoryHost):
             if name not in attempted:
                 attempted.append(name)
             self.record('writer-stop-requested', attempted=attempted)
+            print(f'writer_stop_requested={name}', flush=True)
             self.command(['docker', 'update', '--restart=no', ident])
             self.command(['docker', 'kill', '--signal=SIGTERM', ident])
             deadline = time.monotonic() + 120
@@ -333,8 +334,11 @@ class ReleaseHost(InventoryHost):
                             'writer_nao_encerrou_graciosamente')
                     stopped.append(name)
                     self.record('writer-stopped', stopped=stopped)
+                    print(f'writer_stop_completed={name}', flush=True)
                     break
-                require(time.monotonic() < deadline, 'timeout_parada_graciosa_sem_sigkill')
+                if time.monotonic() >= deadline:
+                    print(f'writer_stop_timeout={name}', flush=True)
+                    raise InventoryError('timeout_parada_graciosa_sem_sigkill')
                 time.sleep(0.5)
         return stopped
 

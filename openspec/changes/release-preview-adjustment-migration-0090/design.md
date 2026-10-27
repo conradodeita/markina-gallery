@@ -96,6 +96,12 @@ O release #40582632304 voltou a falhar na fase `build/fetch`, com código 129 e 
 
 Como o stderr não identifica o nome exato da opção no ambiente de produção, a hipótese anterior não explicou o exit 129. O próximo ajuste é limitado: qualquer exit 129 do primeiro fetch aciona um único retry do mesmo SHA integral, sem tags, sem destino de ref e sem atualização de branches; o retry usa o comportamento padrão de FETCH_HEAD. Saída diferente de 129 não aciona retry. Se o retry falhar, a operação continua fail-closed antes de maintenance/DDL e só categorias sanitizadas são registradas. A causa raiz permanece não confirmada; a próxima execução distingue se remover a opção resolve o erro sem expor stderr.
 
+### Fetch resolvido e timeout no encerramento gracioso — 2026-10-27
+
+O run #40587518811 comprovou o retry: o primeiro fetch retornou 129, o marcador sanitizado `candidate_fetch_compatibility=retry_com_fetch_head_padrao` foi emitido, o retry do mesmo SHA concluiu, e o build, a conferência do SHA e a preservação dos históricos passaram. O release avançou à manutenção e então expirou com `timeout_parada_graciosa_sem_sigkill`, antes da fase `ddl`. A coleta somente-leitura #40588327956 repetiu exatamente o fingerprint `feefe1f010950e87939bcef4c02f9aeb31bc91422d948768d069dbbbdf8f65ba` do preflight do release; schema0089, backup verificável, 13 serviços saudáveis, nove históricos, HTTPS 200 e nenhum marcador pendente foram confirmados. Assim, o retry de fetch está operacionalmente validado e a recuperação pré-DDL restaurou o estado observado.
+
+O inventário atual não registra qual writer excedeu os 120 segundos. Para a próxima execução, o executor registra somente `writer_stop_requested`, `writer_stop_completed` e `writer_stop_timeout` com o nome fixo do serviço; IDs, processo e logs dos containers continuam privados. Não aumentar o limite nem alterar workers até identificar o writer específico.
+
 ## Oscilação da ordem dos mounts em containers históricos — 2026-10-27
 
 Os preflights somente-leitura #40562896158 e #40563170202 passaram os gates, mas produziram fingerprints distintos. A comparação campo a campo isolou um container histórico encerrado, com divergência apenas nos hashes `Mounts` e `metadata_sha256`; as três entradas `montagens_sanitizadas` desse container formaram um multiconjunto idêntico nos dois runs (mesmos tipos, acesso e hashes de Source, Destination, Name, Driver, Mode e Propagation). A evidência aponta para mudança da ordem de serialização, mas o guard atual hash-eia o array na ordem retornada.
