@@ -51,6 +51,7 @@ def valid_inventory():
         'backup': {'schema': BASE_SCHEMA, 'sha256': 'e' * 64, 'bytes': 1024,
                    'format': 'pg_dump_custom', 'restorable': True},
         'https_health': {'healthz': 200, 'api_health': 200, 'web': 200},
+        'historical_containers': [], 'compose_version': '2.35.1',
     }
 
 
@@ -169,6 +170,16 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
         self.assertEqual(records[0]['servico'], 'web')
         self.assertEqual(records[0]['estado'], 'exited')
         self.assertEqual(records[0]['montagens_gravaveis'], '1')
+        self.assertEqual(records[0]['rotulo_config_hash'], 'ausente')
+        labelled = container('c' * 64)
+        labelled['Config']['Labels']['com.docker.compose.config-hash'] = 'private-invalid'
+        labelled['Config']['Labels']['com.docker.compose.oneoff'] = 'private-invalid'
+        labelled['Config']['Labels']['com.docker.compose.container-number'] = 'private-invalid'
+        classified = sanitized_container_summary([labelled])[0]
+        self.assertEqual(classified['rotulo_config_hash'], 'presente')
+        self.assertEqual(classified['rotulo_oneoff'], 'presente')
+        self.assertEqual(classified['rotulo_numero'], 'presente')
+        self.assertNotIn('private', str(classified))
         self.assertNotIn('private', str(records))
         self.assertNotIn('secret', str(records))
         with self.assertRaisesRegex(InventoryError, 'projeto_container_divergente'):
@@ -200,7 +211,7 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
     def test_rejects_schema_runtime_pending_or_migration_divergence(self):
         for field, mutation, expected in (
             ('database_revision', '20261024_0088', 'inventario_diverge:database_revision'),
-            ('active_sha', '1' * 40, 'inventario_diverge:checkout_sha'),
+            ('active_sha', '1' * 40, 'inventario_diverge:active_sha'),
             ('checkout_clean', False, 'inventario_diverge:checkout_clean'),
             ('pending_markers', ['web-in-flight.sha'], 'operacao_producao_pendente'),
         ):
