@@ -72,6 +72,51 @@ class ReleaseHost(InventoryHost):
         except (OSError, subprocess.SubprocessError):
             raise InventoryError('acao_operacional_falhou; verificar recibo privado') from None
 
+    @staticmethod
+    def classify_candidate_fetch_failure(stderr: bytes | str | None) -> str:
+        """Reduce Git diagnostics to fixed categories without retaining remote details."""
+        if isinstance(stderr, bytes):
+            message = stderr.decode('utf-8', errors='replace').lower()
+        elif isinstance(stderr, str):
+            message = stderr.lower()
+        else:
+            message = ''
+        categories = (
+            ('ref_indisponivel', ("couldn't find remote ref", 'could not find remote ref',
+                                  'not our ref', 'unadvertised object')),
+            ('acesso_negado', ('authentication failed', 'permission denied', 'repository not found',
+                               'could not read from remote repository', 'publickey')),
+            ('rede_indisponivel', ('could not resolve host', 'failed to connect', 'connection timed out',
+                                   'operation timed out', 'network is unreachable', 'connection reset',
+                                   'connection refused', "couldn't connect to server", 'unable to access')),
+            ('transferencia_incompleta', ('early eof', 'index-pack failed', 'unexpected disconnect',
+                                          'packfile', 'fetch-pack:')),
+        )
+        for category, indicators in categories:
+            if any(indicator in message for indicator in indicators):
+                return category
+        return 'outro'
+
+    def fetch_candidate(self) -> None:
+        args = ['git', 'fetch', '--quiet', '--no-tags', '--no-write-fetch-head', 'origin', TARGET_SHA]
+        env = {**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'COMPOSE_REMOVE_ORPHANS': 'false',
+               'COMPOSE_IGNORE_ORPHANS': 'true'}
+        try:
+            result = subprocess.run(args, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                    timeout=300, check=False, env=env)
+        except subprocess.TimeoutExpired:
+            print('candidate_fetch_result=failed;categoria=rede_indisponivel', flush=True)
+            raise InventoryError('candidate_fetch_falhou;categoria=rede_indisponivel') from None
+        except OSError:
+            print('candidate_fetch_result=failed;categoria=outro', flush=True)
+            raise InventoryError('candidate_fetch_falhou;categoria=outro') from None
+        if result.returncode != 0:
+            category = self.classify_candidate_fetch_failure(result.stderr)
+            code = result.returncode if isinstance(result.returncode, int) else 1
+            print(f'candidate_fetch_result=failed;categoria={category};codigo_saida={code}', flush=True)
+            raise InventoryError(f'candidate_fetch_falhou;categoria={category};codigo_saida={code}')
+        print('candidate_fetch_result=success', flush=True)
+
     def record(self, phase: str, **fields: Any) -> None:
         self.journal.update(fields)
         self.journal['phase'] = phase
@@ -166,8 +211,7 @@ class ReleaseHost(InventoryHost):
         self.work = Path(tempfile.mkdtemp(prefix='preview-adjustment-0090-', dir=STATE))
         self.work.rmdir()
         print('candidate_build_phase=fetch', flush=True)
-        self.command(['git', 'fetch', '--quiet', '--no-tags', '--no-write-fetch-head', 'origin', TARGET_SHA],
-                     timeout=300)
+        self.fetch_candidate()
         print('candidate_build_phase=worktree', flush=True)
         self.command(['git', 'worktree', 'add', '--detach', str(self.work), TARGET_SHA], timeout=180)
         self.worktree_added = True

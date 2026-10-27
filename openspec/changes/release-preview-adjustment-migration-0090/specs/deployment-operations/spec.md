@@ -88,6 +88,11 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **WHEN** o preflight registra detalhes comparáveis das montagens históricas
 - **THEN** informa tipos reconhecidos, acesso somente leitura/escrita e hashes dos componentes Source, Destination, Name, Driver, Mode e Propagation, sem revelar valores ou paths brutos
 
+#### Scenario: Falha ao buscar candidato antes de DDL
+- **WHEN** o `git fetch` do SHA candidato falha durante a construção prévia das imagens
+- **THEN** o executor registra somente a subfase e uma categoria fixa (`ref_indisponivel`, `rede_indisponivel`, `acesso_negado`, `transferencia_incompleta` ou `outro`), sem stderr, URL, argumentos, paths, credenciais ou stdout
+- **AND** SHALL recuperar os serviços Markina anteriores, confirmar que a migration não começou e manter o release bloqueado até a causa ser corrigida
+
 #### Scenario: Arquivo Compose referenciado está ausente ou inseguro
 - **WHEN** um path Compose necessário à operação API/web não pode ser validado
 - **THEN** o inventário permanece inapto e informa categorias sanitizadas de todos os paths, consumidores reconhecidos, schema e saúde observados e disponibilidade independente do backup, sem imprimir paths arbitrários, segredos, valores de configuração ou fingerprint de release

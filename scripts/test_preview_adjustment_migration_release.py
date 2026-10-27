@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import json
+import io
 import os
 import tempfile
 import unittest
@@ -14,6 +15,40 @@ from test_preview_adjustment_migration_inventory import valid_inventory  # noqa:
 
 
 class PreviewMigrationReleaseHostTests(unittest.TestCase):
+    def test_candidate_fetch_failure_categories_are_fixed_and_never_expose_stderr(self):
+        cases = (
+            (b"fatal: couldn't find remote ref secret-ref", 'ref_indisponivel'),
+            (b'Could not resolve host: private.example', 'rede_indisponivel'),
+            (b'Permission denied (publickey). https://user:token@private.example/path', 'acesso_negado'),
+            (b'early EOF; index-pack failed for /private/path', 'transferencia_incompleta'),
+            (b'opaque private server response', 'outro'),
+        )
+        for stderr, expected in cases:
+            with self.subTest(category=expected):
+                host = release.ReleaseHost()
+                self.assertEqual(host.classify_candidate_fetch_failure(stderr), expected)
+                with patch.object(release.subprocess, 'run', return_value=release.subprocess.CompletedProcess(
+                        ['git', 'fetch'], 128, stderr=stderr)), \
+                        patch('sys.stdout', new_callable=io.StringIO) as output, \
+                        self.assertRaisesRegex(release.InventoryError,
+                                               rf'candidate_fetch_falhou;categoria={expected};codigo_saida=128'):
+                    host.fetch_candidate()
+                text = output.getvalue()
+                self.assertIn(f'candidate_fetch_result=failed;categoria={expected};codigo_saida=128', text)
+                self.assertNotIn(stderr.decode(), text)
+                for private in ('private.example', 'secret-ref', 'token', '/private/path'):
+                    self.assertNotIn(private, text)
+
+    def test_candidate_fetch_timeout_is_reported_as_network_failure(self):
+        host = release.ReleaseHost()
+        with patch.object(release.subprocess, 'run', side_effect=release.subprocess.TimeoutExpired(
+                ['git', 'fetch'], 300, stderr=b'private endpoint')), \
+                patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(release.InventoryError,
+                                       'candidate_fetch_falhou;categoria=rede_indisponivel'):
+            host.fetch_candidate()
+        self.assertEqual(output.getvalue(), 'candidate_fetch_result=failed;categoria=rede_indisponivel\n')
+
     def test_failure_report_keeps_controlled_criteria_but_never_private_exception_messages(self):
         from preview_adjustment_migration_release_flow import ReleaseError
         self.assertEqual(release.sanitized_failure(ReleaseError('schema_origem_divergente_antes_backup')),
