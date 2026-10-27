@@ -99,6 +99,12 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **THEN** o executor registra somente a subfase e uma categoria fixa (`ref_indisponivel`, `rede_indisponivel`, `acesso_negado`, `transferencia_incompleta` ou `outro`), sem stderr, URL, argumentos, paths, credenciais ou stdout
 - **AND** SHALL recuperar os serviços Markina anteriores, confirmar que a migration não começou e manter o release bloqueado até a causa ser corrigida
 
+#### Scenario: Cliente Git rejeita opção metadata-only
+- **WHEN** o `git fetch` falha e o stderr privado identifica explicitamente que o cliente Git não reconhece `--no-write-fetch-head`
+- **THEN** o executor repete uma única vez o fetch do mesmo SHA integral, sem tags e sem atualizar refs/branches, usando o comportamento padrão de `FETCH_HEAD`
+- **AND** registra somente um marcador fixo de compatibilidade, sem expor stderr
+- **AND** qualquer falha do retry permanece sanitizada, recupera os serviços anteriores e impede manutenção/DDL
+
 #### Scenario: Comparação de ancestralidade com payload limitado
 - **WHEN** o inventário consulta o GitHub Compare para comprovar que o candidato integrado permanece ancestral da main atual
 - **THEN** solicita uma página de no máximo um commit e valida `status`, `base_commit.sha` e `merge_base_commit.sha` contra os SHAs esperados

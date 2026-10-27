@@ -49,6 +49,50 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
             host.fetch_candidate()
         self.assertEqual(output.getvalue(), 'candidate_fetch_result=failed;categoria=rede_indisponivel\n')
 
+    def test_fetch_head_option_fallback_requires_explicit_unsupported_option(self):
+        self.assertTrue(release.ReleaseHost.fetch_head_option_unsupported(
+            b"error: unknown option `--no-write-fetch-head'"))
+        self.assertTrue(release.ReleaseHost.fetch_head_option_unsupported(
+            'usage: git fetch --no-write-fetch-head origin <sha>'))
+        self.assertFalse(release.ReleaseHost.fetch_head_option_unsupported(
+            b"fatal: couldn't find remote ref --no-write-fetch-head"))
+        self.assertFalse(release.ReleaseHost.fetch_head_option_unsupported(
+            b'opaque private server response'))
+
+    def test_candidate_fetch_retries_without_optional_flag_only_on_unsupported_option(self):
+        host = release.ReleaseHost()
+        rejected = release.subprocess.CompletedProcess(
+            ['git', 'fetch'], 129, stderr=b"error: unknown option `--no-write-fetch-head'")
+        accepted = release.subprocess.CompletedProcess(['git', 'fetch'], 0, stderr=b'')
+        with patch('scripts.preview_adjustment_migration_release.subprocess.run',
+                   side_effect=[rejected, accepted]) as run, \
+                patch('sys.stdout', new_callable=io.StringIO) as output:
+            host.fetch_candidate()
+        self.assertEqual(run.call_count, 2)
+        self.assertIn('--no-write-fetch-head', run.call_args_list[0].args[0])
+        self.assertNotIn('--no-write-fetch-head', run.call_args_list[1].args[0])
+        self.assertEqual(run.call_args_list[1].args[0][-2:], ['origin', release.TARGET_SHA])
+        self.assertEqual(output.getvalue(),
+                         'candidate_fetch_compatibility=retry_com_fetch_head_padrao\n'
+                         'candidate_fetch_result=success\n')
+        self.assertNotIn('unknown option', output.getvalue())
+
+    def test_fetch_fallback_failure_keeps_fixed_diagnostics(self):
+        host = release.ReleaseHost()
+        rejected = release.subprocess.CompletedProcess(
+            ['git', 'fetch'], 129, stderr=b"error: unknown option `--no-write-fetch-head'")
+        denied = release.subprocess.CompletedProcess(
+            ['git', 'fetch'], 128, stderr=b'Permission denied private-host')
+        with patch('scripts.preview_adjustment_migration_release.subprocess.run',
+                   side_effect=[rejected, denied]) as run, \
+                patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(release.InventoryError,
+                                       'candidate_fetch_falhou;categoria=acesso_negado;codigo_saida=128'):
+            host.fetch_candidate()
+        self.assertEqual(run.call_count, 2)
+        self.assertNotIn('private-host', output.getvalue())
+        self.assertNotIn('Permission denied', output.getvalue())
+
     def test_failure_report_keeps_controlled_criteria_but_never_private_exception_messages(self):
         from preview_adjustment_migration_release_flow import ReleaseError
         self.assertEqual(release.sanitized_failure(ReleaseError('schema_origem_divergente_antes_backup')),
