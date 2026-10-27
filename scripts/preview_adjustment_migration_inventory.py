@@ -50,7 +50,24 @@ def require(condition: bool, category: str) -> None:
         raise InventoryError(category)
 
 
-def validate_service_identity(name: object, services: dict[str, Any], state: object) -> None:
+def web_classification(container: dict[str, Any]) -> dict[str, str]:
+    """Classify only fixed, non-sensitive Docker metadata without echoing raw values."""
+    labels = container.get('Config', {}).get('Labels') or {}
+    restart = container.get('HostConfig', {}).get('RestartPolicy', {}).get('Name')
+    oneoff = labels.get('com.docker.compose.oneoff')
+    number = labels.get('com.docker.compose.container-number')
+    return {
+        'nome_canonico': 'sim' if container.get('Name') == '/markina-gallery-web-1' else 'nao',
+        'oneoff': ({'True': 'sim', 'False': 'nao', 'true': 'sim', 'false': 'nao'}.get(oneoff, 'ausente_ou_outro')
+                   if isinstance(oneoff, str) else 'ausente_ou_outro'),
+        'numero': 'padrao' if number == '1' else ('ausente' if number is None else 'outro'),
+        'restart': restart if restart in ('no', 'always', 'unless-stopped', 'on-failure') else 'desconhecido',
+    }
+
+
+def validate_service_identity(name: object, services: dict[str, Any], state: object,
+                              previous: dict[str, Any] | None = None,
+                              current: dict[str, Any] | None = None) -> None:
     """Report bounded, safe diagnostics while preserving the duplicate guard."""
     if not isinstance(name, str) or not name:
         raise InventoryError('servico_markina_duplicado;servico=ausente')
@@ -59,8 +76,17 @@ def validate_service_identity(name: object, services: dict[str, Any], state: obj
         old_state = services[name].get('status')
         old_state = old_state if isinstance(old_state, str) and old_state in DOCKER_STATES else 'desconhecido'
         new_state = state if isinstance(state, str) and state in DOCKER_STATES else 'desconhecido'
+        detail = ''
+        if name == 'web' and previous is not None and current is not None:
+            previous_image, current_image = previous.get('Image'), current.get('Image')
+            valid_images = all(isinstance(image, str) and IMAGE.fullmatch(image)
+                               for image in (previous_image, current_image))
+            same = ('sim' if previous_image == current_image else 'nao') if valid_images else 'desconhecido'
+            safe = {'primeiro': web_classification(previous), 'segundo': web_classification(current),
+                    'mesma_imagem': same}
+            detail = ';diagnostico=' + json.dumps(safe, sort_keys=True, separators=(',', ':'))
         raise InventoryError(f'servico_markina_duplicado;servico={safe_name};'
-                             f'contagem_ao_menos=2;estados={old_state},{new_state}')
+                             f'contagem_ao_menos=2;estados={old_state},{new_state}' + detail)
 
 
 def canonical_fingerprint(value: dict[str, Any]) -> str:
@@ -316,12 +342,15 @@ class Host:
         require(main_sha == support_sha, 'support_sha_nao_e_main_atual')
         ids = self.run('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
         services: dict[str, Any] = {}
+        web_diagnostic: dict[str, Any] | None = None
         active_sha = ''
         for ident in ids:
             d = self.inspect(ident)
             labels = d['Config'].get('Labels') or {}
             name = labels.get('com.docker.compose.service')
-            validate_service_identity(name, services, d['State'].get('Status'))
+            validate_service_identity(name, services, d['State'].get('Status'), web_diagnostic, d)
+            if name == 'web':
+                web_diagnostic = d
             compose_files = (labels.get('com.docker.compose.project.config_files') or '').split(',')
             env = dict(part.split('=', 1) for part in d['Config'].get('Env', []) if '=' in part)
             if name == 'api':
