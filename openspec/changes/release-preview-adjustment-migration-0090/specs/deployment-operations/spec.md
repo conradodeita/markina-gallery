@@ -111,6 +111,13 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **AND** qualquer trabalho pendente, divergência, timeout ou saída diferente bloqueia a DDL e recupera os mesmos containers
 - **AND** o executor SHALL NOT usar `SIGKILL` nem aplicar essa exceção aos demais writers
 
+#### Scenario: Workers faciais legados só são interrompidos ociosos
+- **WHEN** API e todos os produtores Markina foram parados e não há jobs elegíveis em `queued`/`processing` para a classe de cada worker (`index`; `purge`/`cleanup`)
+- **THEN** o executor confirma novamente a identidade e imagem inventariadas antes de enviar `SIGINT` somente a `face-index-worker` e `face-maintenance-worker` legados, aceitando exclusivamente a saída `130`
+- **AND** qualquer job pendente, divergência, timeout ou saída diferente falha antes da DDL e recupera os mesmos containers
+- **AND** a reconciliação automática de políticas, que ocorre somente na inicialização do worker de indexação, não é tratada como produtor recorrente durante seu loop
+- **AND** o executor SHALL NOT usar `SIGKILL` nem aplicar essa exceção a outros writers
+
 #### Scenario: Cliente Git rejeita opção metadata-only
 - **WHEN** o `git fetch` com `--no-write-fetch-head` retorna código de saída 129, independentemente do texto localizado do stderr privado
 - **THEN** o executor repete uma única vez o fetch do mesmo SHA integral, sem tags e sem atualizar refs/branches, usando o comportamento padrão de `FETCH_HEAD`
