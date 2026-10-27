@@ -131,6 +131,15 @@ jobs:
           echo "7bdb2ce2916e5dd0354e5d129892bf96fdcdb1a9ab8eed69b9173e131db4c230  $DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum --check
           chmod 700 "$DOCKER_CONFIG/cli-plugins/docker-compose"
           python scripts/prove_preview_compose_preservation.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+      - name: Compatibilidade dos helpers operacionais com Python do host
+        run: >-
+          python -m unittest scripts.test_preview_historical_containers
+          scripts.test_preview_adjustment_migration_inventory
+          scripts.test_preview_adjustment_migration_release_flow
+          scripts.test_preview_adjustment_migration_release -q
 
   backend-tests:
     needs: [ci-scope]

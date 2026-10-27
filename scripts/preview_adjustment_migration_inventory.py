@@ -461,7 +461,7 @@ class Host:
         ids = self.run('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
         require(len(ids) <= 100, 'muitos_containers_markina')
         containers = [self.inspect(ident) for ident in ids]
-        compose_version = self.run('docker', 'compose', 'version', '--short').removeprefix('v')
+        compose_version = self.run('docker', 'compose', 'version', '--short').lstrip('v')
         require(compose_version == COMPOSE_VERSION, 'compose_version_nao_validada')
         try:
             containers, historical = partition_containers(containers)
