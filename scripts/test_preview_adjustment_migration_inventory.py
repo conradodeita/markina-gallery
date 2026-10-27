@@ -126,6 +126,60 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
         self.assertNotIn('sha256:', message)
         self.assertNotIn('approval_fingerprint', message)
 
+    def test_web_inspection_outputs_only_bounded_identifiers_and_categories(self):
+        from preview_adjustment_migration_inventory import InventoryError, validate_service_identity
+
+        active = {'Id': 'a' * 64, 'Name': '/markina-gallery-web-1', 'Image': 'sha256:' + 'a' * 64,
+                  'State': {'ExitCode': 0}, 'Mounts': [{'RW': True, 'Source': '/secret/path'}],
+                  'Config': {'Image': 'markina-gallery-web', 'Labels': {'com.docker.compose.oneoff': 'False'}},
+                  'HostConfig': {'RestartPolicy': {'Name': 'no'}}}
+        old = {'Id': 'b' * 64, 'Name': '/secret-container-name', 'Image': 'sha256:' + 'b' * 64,
+               'State': {'ExitCode': 137}, 'Mounts': [{'RW': False, 'Source': '/secret/backup'}],
+               'Config': {'Image': 'secret/test:private', 'Labels': {}},
+               'HostConfig': {'RestartPolicy': {'Name': 'no'}}}
+        with self.assertRaises(InventoryError) as error:
+            validate_service_identity('web', {'web': {'status': 'running'}}, 'exited', active, old, 'v2.32.4')
+        message = str(error.exception)
+        self.assertIn('"id_prefixo":"bbbbbbbbbbbb"', message)
+        self.assertIn('"montagens_gravaveis":"0"', message)
+        self.assertIn('"codigo_saida":"137"', message)
+        self.assertIn('"referencia_imagem":"nome_sugere_teste"', message)
+        self.assertIn('"compose_version":"v2.32.4"', message)
+        self.assertNotIn('secret', message)
+        self.assertNotIn('b' * 64, message)
+        with self.assertRaises(InventoryError) as error:
+            validate_service_identity('web', {'web': {'status': 'running'}}, 'exited', active, old, 'secret')
+        self.assertNotIn('secret', str(error.exception))
+        self.assertIn('"compose_version":"desconhecida"', str(error.exception))
+
+    def test_container_summary_is_project_bound_sanitized_and_unambiguous(self):
+        from preview_adjustment_migration_inventory import InventoryError, sanitized_container_summary
+
+        def container(ident, project=PROJECT):
+            return {'Id': ident, 'Name': '/private-name', 'Image': 'sha256:' + 'f' * 64,
+                    'Config': {'Image': 'secret/test:private', 'Env': ['PASSWORD=private-secret'],
+                               'Labels': {'com.docker.compose.project': project,
+                                          'com.docker.compose.service': 'web'}},
+                    'State': {'Status': 'exited', 'ExitCode': 0},
+                    'Mounts': [{'RW': True, 'Source': '/private-path'}],
+                    'HostConfig': {'RestartPolicy': {'Name': 'no'}}}
+
+        records = sanitized_container_summary([container('b' * 64), container('a' * 64)])
+        self.assertEqual([row['id_prefixo'] for row in records], ['a' * 12, 'b' * 12])
+        self.assertEqual(records[0]['servico'], 'web')
+        self.assertEqual(records[0]['estado'], 'exited')
+        self.assertEqual(records[0]['montagens_gravaveis'], '1')
+        self.assertNotIn('private', str(records))
+        self.assertNotIn('secret', str(records))
+        with self.assertRaisesRegex(InventoryError, 'projeto_container_divergente'):
+            sanitized_container_summary([container('a' * 64, project='firefly_telegram')])
+        with self.assertRaisesRegex(InventoryError, 'identidade_container_ambigua'):
+            sanitized_container_summary([container('a' * 64), container('a' * 12 + 'b' * 52)])
+        with self.assertRaisesRegex(InventoryError, 'identidade_container_ambigua'):
+            sanitized_container_summary([container('not-a-docker-id')])
+        with self.assertRaisesRegex(InventoryError, 'muitos_containers_markina'):
+            sanitized_container_summary([container('a' * 64)] * 101)
+
     def test_complete_minimized_inventory_has_deterministic_fingerprint(self):
         data = valid_inventory()
         ready, reason, fingerprint = validate_inventory(data)

@@ -39,7 +39,7 @@ O sistema SHALL oferecer uma operação manual protegida que instale atomicament
 - **THEN** a instalação falha fechada, não altera `authorized_keys` nem serviços e não inicia preflight ou release
 ### Requirement: Diagnóstico sanitizado de serviço duplicado no inventário 0090
 
-O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou duplicados, incluindo containers parados. Para duplicidade web SHALL informar classificações normalizadas de nome canônico, one-off, número Compose, política de restart e igualdade de imagem, sem revelar nomes brutos, IDs, digests, variáveis de ambiente ou payloads de clientes.
+O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou duplicados, incluindo containers parados. Para duplicidade web SHALL informar classificações normalizadas de identidade e estado, prefixo hexadecimal do container e versão numérica do Compose, sem revelar nomes brutos, digests, caminhos de montagens, variáveis de ambiente ou payloads de clientes. A saída não autoriza limpeza nem constitui fingerprint de release.
 
 #### Scenario: Containers com nome de serviço repetido
 - **WHEN** dois ou mais containers do projeto compartilham o mesmo serviço
@@ -48,6 +48,10 @@ O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou dupli
 #### Scenario: Identidade sanitizada de web duplicado
 - **WHEN** dois containers web são observados
 - **THEN** o diagnóstico informa classificações restritas da identidade e igualdade de imagem, sem imprimir dados arbitrários dos containers
+
+#### Scenario: Auditoria de containers da Markina durante conflito
+- **WHEN** o preflight detecta um conflito web e todos os objetos consultados pertencem ao projeto Markina
+- **THEN** o relatório lista até 100 objetos com metadados limitados e prefixos únicos, sem nomes brutos ou caminhos e sem afirmar que um container pode ser removido
 
 #### Scenario: Nome ausente ou desconhecido
 - **WHEN** o rótulo do serviço está ausente ou não integra a lista reconhecida
