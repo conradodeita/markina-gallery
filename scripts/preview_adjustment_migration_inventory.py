@@ -218,6 +218,7 @@ def validate_inventory(value: dict[str, Any]) -> tuple[bool, str, str | None]:
     for name, expected in (('host', 'clearbudget-vnic'), ('project', PROJECT), ('root', str(ROOT)),
                            ('repository', 'conradodeita/markina-gallery'),
                            ('target_sha', TARGET_SHA), ('main_sha', value['support_sha']),
+                           ('active_sha', BASE_SHA),
                            ('checkout_sha', value['active_sha']), ('checkout_clean', True),
                            ('database_revision', BASE_SCHEMA), ('public_url', PUBLIC_URL),
                            ('nginx_bind', '127.0.0.1:8080->80/tcp')):

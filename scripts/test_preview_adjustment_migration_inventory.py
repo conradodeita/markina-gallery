@@ -211,7 +211,7 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
     def test_rejects_schema_runtime_pending_or_migration_divergence(self):
         for field, mutation, expected in (
             ('database_revision', '20261024_0088', 'inventario_diverge:database_revision'),
-            ('active_sha', '1' * 40, 'inventario_diverge:checkout_sha'),
+            ('active_sha', '1' * 40, 'inventario_diverge:active_sha'),
             ('checkout_clean', False, 'inventario_diverge:checkout_clean'),
             ('pending_markers', ['web-in-flight.sha'], 'operacao_producao_pendente'),
         ):
